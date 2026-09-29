@@ -339,6 +339,18 @@ enum AuthCommands {
         /// New role (admin, user, readonly)
         role: String,
     },
+    /// Print an invite for a user: the link that sets koan up with the
+    /// account, and the email to send it in
+    Invite {
+        /// Username
+        username: String,
+        /// Address clients reach this server at (default: sharing.public_url)
+        #[arg(long)]
+        server: Option<String>,
+        /// Replace the password, signing the user's existing devices out
+        #[arg(long)]
+        reset_password: bool,
+    },
     /// Manage Subsonic API keys
     #[command(subcommand)]
     ApiKey(ApiKeyCommands),
@@ -512,6 +524,11 @@ fn main() {
             AuthCommands::SetRole { username, role } => {
                 commands::cmd_auth_set_role(&username, &role);
             }
+            AuthCommands::Invite {
+                username,
+                server,
+                reset_password,
+            } => commands::cmd_auth_invite(&username, server.as_deref(), reset_password),
             AuthCommands::ApiKey(sub) => match sub {
                 ApiKeyCommands::Create { username, name } => {
                     commands::cmd_auth_api_key_create(&username, &name);

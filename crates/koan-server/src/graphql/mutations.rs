@@ -1249,6 +1249,83 @@ impl MutationRoot {
         })
         .await
     }
+
+    // -- Accounts --
+
+    /// Make an account with a generated password and return its invite.
+    /// `server` is the address the invite points at; without it, the
+    /// configured `sharing.public_url`, then the address this request came in
+    /// on (which an in-process caller such as MCP does not have).
+    async fn create_user(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        role: GqlRole,
+        server: Option<String>,
+    ) -> async_graphql::Result<GqlInvite> {
+        require_role(ctx, Role::Admin)?;
+        let server = invite_server(ctx, server)?;
+        with_db(ctx, move |db| {
+            let key = koan_core::auth::subsonic_key()?;
+            let password =
+                koan_core::invite::create_account(&db.conn, &key, &username, role.into())?;
+            Ok(koan_core::invite::Invite::new(&server, &username, &password).into())
+        })
+        .await
+    }
+
+    /// An invite for an existing account. Its password is reused so its other
+    /// devices keep working; `resetPassword` replaces it instead, which signs
+    /// those devices out and is the only way to invite an account whose
+    /// password koan cannot recover.
+    async fn invite_user(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        #[graphql(default)] reset_password: bool,
+        server: Option<String>,
+    ) -> async_graphql::Result<GqlInvite> {
+        require_role(ctx, Role::Admin)?;
+        let server = invite_server(ctx, server)?;
+        with_db(ctx, move |db| {
+            let key = koan_core::auth::subsonic_key()?;
+            let password =
+                koan_core::invite::account_password(&db.conn, &key, &username, reset_password)?;
+            Ok(koan_core::invite::Invite::new(&server, &username, &password).into())
+        })
+        .await
+    }
+
+    async fn set_user_role(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        role: GqlRole,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::Admin)?;
+        with_db(ctx, move |db| {
+            koan_core::invite::set_role(&db.conn, &username, role.into())?;
+            Ok(GqlStatus::success(format!("{username} updated")))
+        })
+        .await
+    }
+
+    /// Delete an account, with its playlists, favourites and keys.
+    async fn delete_user(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::Admin)?;
+        if super::get_auth_user(ctx).username == username {
+            return Err("an account cannot delete itself".into());
+        }
+        with_db(ctx, move |db| {
+            koan_core::invite::delete_account(&db.conn, &username)?;
+            Ok(GqlStatus::success(format!("{username} deleted")))
+        })
+        .await
+    }
 }
 
 /// Star, unstar, or toggle — the three differ only in which write they run.
@@ -1413,4 +1490,18 @@ fn reach(sent: &[String], queued: &[String]) -> String {
     } else {
         parts.join("; ")
     }
+}
+
+/// Where an invite points: the caller's choice, `sharing.public_url`, or the
+/// address the request came in on.
+fn invite_server(ctx: &Context<'_>, server: Option<String>) -> async_graphql::Result<String> {
+    let configured = Config::load().ok().and_then(|c| c.sharing.public_url);
+    server
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| configured.filter(|s| !s.trim().is_empty()))
+        .or_else(|| ctx.data::<super::RequestOrigin>().ok().map(|o| o.0.clone()))
+        .map(|s| s.trim().trim_end_matches('/').to_owned())
+        .ok_or_else(|| {
+            "pass `server` or set sharing.public_url: this request has no address".into()
+        })
 }

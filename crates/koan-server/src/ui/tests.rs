@@ -81,6 +81,7 @@ fn setup(auth_enabled: bool) -> Fixture {
             state.clone(),
             auth_enabled,
             Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
+            None,
         ),
         dir,
         state,
@@ -628,6 +629,124 @@ async fn api_keys_are_shown_once_listed_and_revoked() {
     assert!(r.body.contains("No keys yet."), "{}", r.body);
     assert!(
         queries::api_keys::authenticate_api_key(&db.conn, &key)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn admins_create_invite_and_remove_accounts() {
+    static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    koan_core::config::set_config_dir(CONFIG.get_or_init(|| tempfile::tempdir().unwrap()).path());
+    let f = setup(true);
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+    let token = |id: i64, name: &str, role: Role| {
+        auth::mint_access_token(&f.state.private_pem, id, name, role, 900).unwrap()
+    };
+    let admin = token(boss, "boss", Role::Admin);
+    let post = |uri: &str, body: &str, access: &str| {
+        Request::post(uri)
+            .header(header::HOST, HOST)
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("datastar-request", "true")
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    };
+    let page = |access: &str| {
+        get("/users")
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let r = send(&f.app, page(&access_token(&f.state))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = send(
+        &f.app,
+        post("/users", r#"{"newuser":"x"}"#, &access_token(&f.state)),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    let r = send(&f.app, page(&admin)).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("alice") && r.body.contains("boss"),
+        "{}",
+        r.body
+    );
+
+    let r = send(
+        &f.app,
+        post(
+            "/users",
+            r#"{"newuser":"sarita","newrole":"readonly"}"#,
+            &admin,
+        ),
+    )
+    .await;
+    let link = r
+        .body
+        .split("id=invite-link readonly value=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("no link in {}", r.body))
+        .replace("&amp;", "&");
+    let invite = koan_core::invite::Invite::parse(&link).unwrap();
+    assert_eq!(invite.server, format!("http://{HOST}"));
+    assert_eq!(invite.username, "sarita");
+    assert!(r.body.contains("Server URL") && r.body.contains(&invite.password));
+    let row = queries::auth::get_user_by_username(&db.conn, "sarita")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.role, Role::Readonly);
+    auth::verify_password(&invite.password, &row.password_hash).unwrap();
+
+    // Inviting again hands out the same password, so other devices keep working.
+    let r = send(
+        &f.app,
+        post(&format!("/users/{}/invite", row.id), "{}", &admin),
+    )
+    .await;
+    assert!(r.body.contains(&invite.password), "{}", r.body);
+
+    // An account made before passwords were sealed needs a reset.
+    let r = send(&f.app, post("/users/1/invite", "{}", &admin)).await;
+    assert!(r.body.contains("not recoverable"), "{}", r.body);
+    let r = send(&f.app, post("/users/1/invite?reset=true", "{}", &admin)).await;
+    assert!(r.body.contains("id=invite-link"), "{}", r.body);
+
+    let r = send(
+        &f.app,
+        post(&format!("/users/{}/role?role=user", row.id), "{}", &admin),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = send(
+        &f.app,
+        post(&format!("/users/{boss}/role?role=user",), "{}", &admin),
+    )
+    .await;
+    assert!(r.body.contains("last admin"), "{}", r.body);
+    assert_eq!(
+        queries::auth::get_user_by_username(&db.conn, "sarita")
+            .unwrap()
+            .unwrap()
+            .role,
+        Role::User
+    );
+
+    let r = send(&f.app, post(&format!("/users/{boss}/delete"), "{}", &admin)).await;
+    assert!(r.body.contains("own account"), "{}", r.body);
+    send(
+        &f.app,
+        post(&format!("/users/{}/delete", row.id), "{}", &admin),
+    )
+    .await;
+    assert!(
+        queries::auth::get_user_by_username(&db.conn, "sarita")
             .unwrap()
             .is_none()
     );

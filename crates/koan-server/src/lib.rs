@@ -8,6 +8,7 @@ pub mod clients;
 pub mod covers;
 pub mod graphql;
 pub mod mcp;
+pub mod origin;
 pub mod push;
 pub mod share;
 pub mod subsonic;

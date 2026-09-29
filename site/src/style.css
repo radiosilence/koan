@@ -1,5 +1,5 @@
 @import "tailwindcss" source(none);
-@source "../public/*.html";
+@source "../public/**/*.html";
 
 @font-face {
   font-family: "Geist Mono";

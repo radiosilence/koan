@@ -18,6 +18,7 @@ mod pages;
 mod session;
 #[cfg(test)]
 mod tests;
+mod users;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,6 +59,8 @@ pub struct UiState {
     options: Arc<std::sync::Mutex<Option<(std::time::Instant, pages::Options)>>>,
     auth: AuthRouteState,
     auth_enabled: bool,
+    /// `sharing.public_url`, the address invites point clients at.
+    public_url: Option<String>,
 }
 
 pub fn router(
@@ -65,6 +68,7 @@ pub fn router(
     auth: AuthRouteState,
     auth_enabled: bool,
     covers: Arc<Covers>,
+    public_url: Option<String>,
 ) -> axum::Router {
     let state = UiState {
         pool,
@@ -72,6 +76,7 @@ pub fn router(
         options: Arc::default(),
         auth,
         auth_enabled,
+        public_url,
     };
     let gated = axum::Router::new()
         .route("/", get(pages::albums))
@@ -88,6 +93,10 @@ pub fn router(
         .route("/queue", get(pages::queue))
         .route("/keys", get(keys::page).post(keys::create))
         .route("/keys/{id}/revoke", post(keys::revoke))
+        .route("/users", get(users::page).post(users::create))
+        .route("/users/{id}/invite", post(users::invite))
+        .route("/users/{id}/role", post(users::set_role))
+        .route("/users/{id}/delete", post(users::delete))
         .route("/ui/stream/{id}", get(stream))
         .route("/ui/cover/{id}", get(cover))
         .layer(from_fn(require_datastar_on_post))

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Join · kōan</title>
+  <meta name="description" content="An invitation to listen on a kōan server.">
+  <meta name="robots" content="noindex">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="/icon-32.png" sizes="32x32">
+  <link rel="icon" href="/icon-192.png" sizes="192x192">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="preload" href="/geist-mono.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="mx-auto flex max-w-2xl items-center px-5 py-5">
+    <a class="flex items-center gap-3 text-ink no-underline" href="/"><img class="rounded-md" src="/icon-32.png" width="32" height="32" alt="">kōan</a>
+  </header>
+
+  <main id="main" class="mx-auto max-w-2xl px-5 pt-8 pb-12">
+    <div id="invite" hidden>
+      <h1 class="mb-4 text-4xl font-extralight">You're invited</h1>
+      <p>An account on <strong id="server-name"></strong> is waiting for you in kōan.</p>
+
+      <h2 class="mt-10">1. Get the app</h2>
+      <p class="flex flex-wrap gap-3">
+        <a class="rounded-full bg-brand px-4 py-2 font-semibold text-bg no-underline hover:text-bg hover:opacity-90" href="https://apps.apple.com/app/id6817137172">App Store · iPhone and iPad</a>
+        <a class="rounded-full border border-rule px-4 py-2 text-ink no-underline hover:border-muted hover:text-ink" href="https://github.com/radiosilence/koan/releases/latest">Mac download</a>
+      </p>
+
+      <h2 class="mt-10">2. Open the invite</h2>
+      <p>With kōan installed, this signs it in and loads the library.</p>
+      <p class="flex flex-wrap gap-3">
+        <a id="open" class="rounded-full bg-brand px-4 py-2 font-semibold text-bg no-underline hover:text-bg hover:opacity-90" href="#">Open in kōan</a>
+        <button id="copy-link" class="cursor-pointer rounded-full border border-rule px-4 py-2 text-ink hover:border-muted" type="button">Copy invite</button>
+      </p>
+      <p class="text-sm text-muted">If the button does nothing, copy the invite and paste it into the Server URL field in kōan's Settings.</p>
+
+      <h2 class="mt-10">Using another app?</h2>
+      <p>Any Subsonic app can sign in with these:</p>
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1">
+        <dt class="text-muted">Server URL</dt><dd id="server" class="m-0 break-all select-all"></dd>
+        <dt class="text-muted">Username</dt><dd id="username" class="m-0 break-all select-all"></dd>
+        <dt class="text-muted">Password</dt><dd id="password" class="m-0 break-all select-all"></dd>
+      </dl>
+      <p class="mt-8 text-sm text-muted">These details never left your browser: they are in the part of the link after the #, which is not sent to koan.rocks.</p>
+    </div>
+
+    <div id="broken" hidden>
+      <h1 class="mb-4 text-4xl font-extralight">This invite is incomplete</h1>
+      <p>The link is missing part of the account. Ask whoever sent it for the whole link, or for the server address, username and password.</p>
+    </div>
+  </main>
+
+  <script>
+    (() => {
+      const params = new URLSearchParams(location.hash.slice(1));
+      const server = params.get("server");
+      const username = params.get("username");
+      const password = params.get("password");
+      if (!server || !username || !password) {
+        document.getElementById("broken").hidden = false;
+        return;
+      }
+      const text = (id, value) => { document.getElementById(id).textContent = value; };
+      let host = server;
+      try { host = new URL(server).host; } catch {}
+      text("server-name", host);
+      text("server", server);
+      text("username", username);
+      text("password", password);
+      const query = new URLSearchParams({ server, username, password }).toString();
+      document.getElementById("open").href = "koan://join?" + query;
+      const copy = document.getElementById("copy-link");
+      copy.addEventListener("click", () => {
+        navigator.clipboard.writeText(location.href).then(() => { copy.textContent = "Copied"; });
+      });
+      document.getElementById("invite").hidden = false;
+    })();
+  </script>
+</body>
+</html>

@@ -859,6 +859,22 @@ impl QueryRoot {
         .await
     }
 
+    /// Every account on this server. Admins only.
+    async fn users(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlUser>> {
+        super::require_role(ctx, koan_core::auth::Role::Admin)?;
+        with_db(ctx, |db| {
+            Ok(queries::auth::list_users(&db.conn)?
+                .into_iter()
+                .map(|u| GqlUser {
+                    username: u.username,
+                    role: u.role.into(),
+                    created_at: u.created_at,
+                })
+                .collect())
+        })
+        .await
+    }
+
     /// Playlist version counter — bumped on every mutation. Use for change detection.
     async fn playlist_version(&self, ctx: &Context<'_>) -> async_graphql::Result<u64> {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;

@@ -1,0 +1,10 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["2256Q92VF2.cc.blit.koan"],
+        "components": [{ "/": "/join/*", "comment": "Invite links: the account is in the fragment" }]
+      }
+    ]
+  }
+}

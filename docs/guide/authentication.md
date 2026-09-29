@@ -85,6 +85,34 @@ days by default), so a machine that connects that often stays signed in until
 
 ## User management
 
+Admins manage accounts on the web UI's Users page, from the apps' Settings, over
+GraphQL (`users`, `createUser`, `inviteUser`, `setUserRole`, `deleteUser`, which
+MCP clients can call too), or with the CLI.
+
+### Invites
+
+An invite is the account as one link:
+`https://koan.rocks/join/#server=…&username=…&password=…`. On a device with
+koan installed it opens the app, which signs in and syncs the library with no
+further steps. Elsewhere, koan.rocks shows the downloads, an Open in koan
+button, and the details in plain text for other Subsonic apps. The link is the
+account itself; nothing is redeemed on the server, so it works offline and a
+mail scanner fetching it changes nothing. The credentials are in the fragment,
+which browsers never send, so koan.rocks does not see them.
+
+The server sends no mail. Creating an account or inviting one produces the email
+(plain text, rich text with a button, and a `mailto:`) for the admin to send
+themselves.
+
+An invite reuses the account's password, recovered from the sealed copy kept for
+Subsonic token auth, so the account's other devices keep working. Accounts made
+before koan kept that copy can only be invited with a new password, which signs
+their existing devices out.
+
+The link points at `sharing.public_url` when it is set, and otherwise at the
+address the admin reached the server on (honouring `X-Forwarded-Host` and
+`X-Forwarded-Proto` from a proxy).
+
 ```bash
 # List users
 koan auth list-users
@@ -102,6 +130,9 @@ koan auth reset-password alice
 
 # Change a user's role
 koan auth set-role alice admin
+
+# Print an invite: the link and the email to send it in
+koan auth invite alice --server https://music.example.com
 
 # Delete a user
 koan auth delete-user alice
