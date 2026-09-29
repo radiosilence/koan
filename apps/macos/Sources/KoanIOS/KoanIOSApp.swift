@@ -21,7 +21,7 @@ struct KoanIOSApp: App {
         WindowGroup {
             Group {
                 if let state {
-                    AdaptiveRootView()
+                    TabShell()
                         .environment(state)
                         .environment(state.player)
                         .environment(state.library)

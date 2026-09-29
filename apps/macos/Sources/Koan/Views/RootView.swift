@@ -12,11 +12,8 @@ import SwiftUI
 ///
 /// The wide layout: sidebar, stage, transport across the top.
 ///
-/// Not "the macOS one" — it is the layout for anything with the room for it, and
-/// an iPad running full screen has the room. What decides is
-/// `horizontalSizeClass`, in `AdaptiveRootView`; a phone and an iPad in Slide
-/// Over get the tab bar instead, because they are the same width and the same
-/// answer suits both.
+/// The Mac's. iOS, iPad included, uses `TabShell`, whose sidebar-adaptable tab
+/// bar is the platform's own iPad layout; this one was built for a pointer.
 ///
 /// `NavigationSplitView` is the root and stays the root. Wrapping it in a stack
 /// or putting an `HSplitView` in its detail column breaks width propagation:

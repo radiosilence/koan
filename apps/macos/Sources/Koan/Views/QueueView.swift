@@ -14,6 +14,17 @@ struct QueueView: View {
     private static let emptyDetail = "Find something to play from Albums or Artists."
     #endif
 
+    /// A phone's library is a server's, so an empty one means not signed in
+    /// yet: the first thing anyone opening the app sees, App Review included.
+    private var emptyDetail: String {
+        #if os(iOS)
+        if library.stats?.totalTracks == 0 {
+            return "Sign in to your music server in Settings → Server."
+        }
+        #endif
+        return Self.emptyDetail
+    }
+
     @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
     @Environment(Navigator.self) private var nav
@@ -72,9 +83,12 @@ struct QueueView: View {
                 EmptyState(
                     icon: "list.bullet",
                     title: "Queue is empty",
-                    detail: Self.emptyDetail
+                    detail: emptyDetail
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                #if os(iOS)
+                .task { if library.stats == nil { library.loadStats() } }
+                #endif
             } else {
                 ScrollViewReader { scroll in
                     List(selection: $selection) {
@@ -477,6 +491,9 @@ struct QueueView: View {
     /// name, so it is described by its size instead.
     @ViewBuilder
     private func organizeButton(trackIds: [Int64], title: String?) -> some View {
+        // Renames files on disk; a phone has no library folder, and no
+        // Organize window to open.
+        #if os(macOS)
         Button {
             // The window opens first: `begin` reads the config and resolves the
             // selection, and waiting on that would leave the click dead.
@@ -491,6 +508,7 @@ struct QueueView: View {
             Label("Organize Files…", systemImage: Icon.organize)
         }
         .disabled(trackIds.isEmpty)
+        #endif
     }
 
     // MARK: - Reordering

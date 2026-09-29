@@ -98,6 +98,9 @@ struct PlayableMenu: View {
             Button { share() } label: {
                 Label("Copy Share Link", systemImage: Icon.share)
             }
+            // Renames files on disk; a phone has no library folder, and no
+            // Organize window to open.
+            #if os(macOS)
             Button {
                 act { ids in
                     openWindow(id: OrganizeWindow.id)
@@ -106,6 +109,7 @@ struct PlayableMenu: View {
             } label: {
                 Label("Organize Files…", systemImage: Icon.organize)
             }
+            #endif
             cacheActions
         }
 

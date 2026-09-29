@@ -1,15 +1,15 @@
 import KoanFFI
 import SwiftUI
 
-/// The narrow layout: a tab bar, and the transport above it.
+/// The iOS layout: a tab bar, and the transport above it.
 ///
 /// Not a burger menu. A drawer hides the thing koan is mostly about behind a
 /// tap, and Apple's own guidance has argued against them for a decade — the
 /// answer to "the sidebar does not fit" is a tab bar.
 ///
-/// Reached when there is no room for `RootView`'s sidebar, which is a question
-/// about width rather than about which OS this is: an iPad in Slide Over lands
-/// here and the same iPad full screen does not. `AdaptiveRootView` decides.
+/// Every iPhone and iPad. `sidebarAdaptable` makes the tab bar the platform's
+/// own iPad layout, a bar across the top that opens into a sidebar, and it is
+/// one shell to test rather than two. `RootView`'s split view is the Mac's.
 ///
 /// The navigator stays authoritative either way — the tab bar sets a section,
 /// and going deeper inside a tab leaves the selection where it is, which is

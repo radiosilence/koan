@@ -35,13 +35,19 @@ struct MiniPlayer: View {
                 Button {
                     player.togglePlayPause()
                 } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
-                        .font(.title3)
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: Self.target, height: Self.target)
-                        .contentShape(Rectangle())
+                    Group {
+                        if player.isWaitingForTrack {
+                            ProgressView()
+                        } else {
+                            Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
+                                .font(.title3)
+                                .contentTransition(.symbolEffect(.replace))
+                        }
+                    }
+                    .frame(width: Self.target, height: Self.target)
+                    .contentShape(Rectangle())
                 }
-                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+                .accessibilityLabel(player.isWaitingForTrack ? "Loading" : player.isPlaying ? "Pause" : "Play")
 
                 Button { player.next() } label: {
                     Image(systemName: Icon.next)

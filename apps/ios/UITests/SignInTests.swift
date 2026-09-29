@@ -16,9 +16,7 @@ final class SignInTests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        let settings = app.tabBars.buttons["Settings"]
-        XCTAssert(settings.waitForExistence(timeout: 10))
-        settings.tap()
+        tab(app, "Settings")
         app.buttons["Server"].firstMatch.tap()
 
         if !app.buttons["Sign Out"].waitForExistence(timeout: 2) {
@@ -31,9 +29,15 @@ final class SignInTests: XCTestCase {
         XCTAssert(app.buttons["Sign Out"].waitForExistence(timeout: 30), "not signed in")
 
         // Signing in starts a sync; the albums are what the reviewer needs.
-        app.tabBars.buttons["Library"].tap()
+        tab(app, "Library")
         app.buttons["Albums"].firstMatch.tap()
         XCTAssert(app.images.firstMatch.waitForExistence(timeout: 180), "no albums after sync")
+    }
+
+    /// A phone's tabs are a tab bar; an iPad's are buttons in a bar across the top.
+    private func tab(_ app: XCUIApplication, _ name: String) {
+        let bar = app.tabBars.buttons[name]
+        if bar.waitForExistence(timeout: 10) { bar.tap() } else { app.buttons[name].firstMatch.tap() }
     }
 
     private func field(_ query: XCUIElementQuery, _ placeholder: String) -> XCUIElement {

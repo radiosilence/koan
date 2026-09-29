@@ -566,11 +566,35 @@ ios-project build="1": macos-ffi
         xcodegen generate --quiet --spec apps/ios/project.yml
     echo "generated apps/ios/Koan.xcodeproj"
 
+# Use the app as a listener does and check each step worked: browse, play,
+# pause, skip, favourite, queue, Now Playing, lyrics, playlists, search, play on
+# in the background, and seek into a track still downloading. What to run
+# before a submission, on an iPhone and an iPad simulator signed in with
+# `ios-signin`. Screenshots of each step land in target/ios-use.
+ios-use device="koan-dev": (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/ios-use
+    rm -rf "$out" && mkdir -p "$out"
+    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    xcrun simctl bootstatus "$udid" -b >/dev/null
+    trap 'xcrun simctl shutdown "$udid"' EXIT
+    status=0
+    xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "id=$udid" \
+        -only-testing:KoanUITests/UseTests -only-testing:KoanUITests/SeekTests \
+        -resultBundlePath "$out/use.xcresult" || status=$?
+    xcrun xcresulttool export attachments --path "$out/use.xcresult" --output-path "$out" >/dev/null
+    echo "screenshots in $out"
+    exit $status
+
 # Walk the app on a simulator and export a screenshot of every page.
 #
 # Runs `WalkTests` against whatever library that simulator holds, so sign it in
 # to a server first. Screenshots land in target/ios-walk.
-ios-walk device="koan-dev": (ios-ffi "iphonesimulator") ios-project
+ios-walk device="koan-dev" search="gabriel": (ios-ffi "iphonesimulator") ios-project
     #!/usr/bin/env bash
     set -euo pipefail
     out=target/ios-walk
@@ -583,7 +607,7 @@ ios-walk device="koan-dev": (ios-ffi "iphonesimulator") ios-project
         --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
     # A booted simulator is a running copy of iOS; leave none behind.
     trap 'xcrun simctl status_bar "$udid" clear; xcrun simctl shutdown "$udid"' EXIT
-    xcodebuild test -quiet \
+    TEST_RUNNER_KOAN_WALK_SEARCH='{{search}}' xcodebuild test -quiet \
         -project apps/ios/Koan.xcodeproj -scheme Koan \
         -destination "id=$udid" \
         -only-testing:KoanUITests/WalkTests \

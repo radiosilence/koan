@@ -106,11 +106,18 @@ struct NowPlayingSheet: View {
                 Image(systemName: Icon.previous).font(.title)
             }
             Button { player.togglePlayPause() } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
-                    .font(.system(size: 46))
-                    .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 56)
+                Group {
+                    if player.isWaitingForTrack {
+                        ProgressView().controlSize(.large)
+                    } else {
+                        Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
+                            .font(.system(size: 46))
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                }
+                .frame(width: 56, height: 56)
             }
+            .accessibilityLabel(player.isWaitingForTrack ? "Loading" : player.isPlaying ? "Pause" : "Play")
             Button { player.next() } label: {
                 Image(systemName: Icon.next).font(.title)
             }

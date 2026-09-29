@@ -81,7 +81,7 @@ final class WalkTests: XCTestCase {
         let field = app.searchFields.firstMatch
         if field.waitForExistence(timeout: 8) {
             field.tap()
-            field.typeText("gabriel")
+            field.typeText(ProcessInfo.processInfo.environment["KOAN_WALK_SEARCH"] ?? "gabriel")
             pause(3)
         }
         snap("08-search")
