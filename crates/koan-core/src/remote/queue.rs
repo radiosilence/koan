@@ -336,27 +336,32 @@ fn trim_cache(inner: &Inner) {
 }
 
 /// Worker loop: wait for work, download, repeat.
+///
+/// While the server is down, workers take nothing new: the download that found
+/// it down waits it out, and everything behind it stays `Pending` rather than
+/// each piling onto a server that is not answering.
 fn worker_loop(inner: Arc<Inner>) {
     loop {
-        let item = {
+        let item = loop {
+            if let Some(client) = &inner.client {
+                client.outage().hold();
+            }
             let mut q = inner.queue.lock();
-            loop {
-                match q.pending.pop_front() {
-                    Some(item) => {
-                        // Already being fetched: this entry waits on the one
-                        // transfer rather than starting a second over it.
-                        match q.in_flight.get_mut(&item.0) {
-                            Some(waiting) => {
-                                waiting.insert(item.1);
-                            }
-                            None => {
-                                q.in_flight.insert(item.0, HashSet::from([item.1]));
-                                break item;
-                            }
+            match q.pending.pop_front() {
+                Some(item) => {
+                    // Already being fetched: this entry waits on the one
+                    // transfer rather than starting a second over it.
+                    match q.in_flight.get_mut(&item.0) {
+                        Some(waiting) => {
+                            waiting.insert(item.1);
+                        }
+                        None => {
+                            q.in_flight.insert(item.0, HashSet::from([item.1]));
+                            break item;
                         }
                     }
-                    None => inner.has_work.wait(&mut q),
                 }
+                None => inner.has_work.wait(&mut q),
             }
         };
         let _claim = Claim {

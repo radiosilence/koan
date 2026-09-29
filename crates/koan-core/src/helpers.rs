@@ -13,7 +13,8 @@ use crate::db::queries;
 use crate::db::queries::shares::{ShareKind, Slice};
 use crate::player::commands::PlayerCommand;
 use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
-use crate::remote::client::{SubsonicAuth, SubsonicClient};
+use crate::remote::client::{SubsonicAuth, SubsonicClient, SubsonicError};
+use crate::remote::download::DownloadError;
 
 // ---------------------------------------------------------------------------
 // Subsonic client builder
@@ -1499,25 +1500,34 @@ pub fn download_track(
     let stream_ready_flag = stream_ready_sent.clone();
     // A retry restarts the byte count from zero, so a changed total re-announces.
     let announced_total = AtomicU64::new(u64::MAX);
-    let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
-        bytes_written_progress.set(downloaded);
-        // What knows a transfer moved is the code moving it. Held to a reading
-        // every 250ms inside, so a chunk landing costs an atomic and a compare.
-        store.progressed();
-        if announced_total.swap(total, Ordering::Relaxed) != total {
-            // The store, and only the store. The item's state says whether its
-            // file can be played, which a transfer in flight has not changed.
-            store.started(progress_qid, total, bytes_written_progress.clone());
-        }
-        if !stream_ready_flag.load(Ordering::Relaxed)
-            && downloaded >= crate::player::state::STREAM_THRESHOLD
-        {
-            stream_ready_flag.store(true, Ordering::Relaxed);
-            progress_tx
-                .send(PlayerCommand::TrackStreamReady(progress_qid))
-                .ok();
-        }
-    });
+    // Taken out of the queue, cleared or removed, while waiting out an outage.
+    let gone = || state.get_item(queue_id).is_none();
+    let result =
+        client.download_with_progress(&remote_id, &dest, &gone, move |downloaded, total| {
+            bytes_written_progress.set(downloaded);
+            // What knows a transfer moved is the code moving it. Held to a reading
+            // every 250ms inside, so a chunk landing costs an atomic and a compare.
+            store.progressed();
+            if announced_total.swap(total, Ordering::Relaxed) != total {
+                // The store, and only the store. The item's state says whether its
+                // file can be played, which a transfer in flight has not changed.
+                store.started(progress_qid, total, bytes_written_progress.clone());
+            }
+            if !stream_ready_flag.load(Ordering::Relaxed)
+                && downloaded >= crate::player::state::STREAM_THRESHOLD
+            {
+                stream_ready_flag.store(true, Ordering::Relaxed);
+                progress_tx
+                    .send(PlayerCommand::TrackStreamReady(progress_qid))
+                    .ok();
+            }
+        });
+
+    if let Err(SubsonicError::Download(DownloadError::Cancelled)) = result {
+        store.withdrawn(queue_id);
+        bytes_written.done();
+        return;
+    }
 
     // However it ended, a decoder reading the `.part` file may be parked at the
     // write head. It waits on the feed, so the feed has to wake it — and only
