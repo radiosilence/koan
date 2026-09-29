@@ -10,6 +10,7 @@ import SwiftUI
 /// sits above it rather than across the top.
 @main
 struct KoanIOSApp: App {
+    @UIApplicationDelegateAdaptor(PushDelegate.self) private var push
     @State private var state: AppState?
     @State private var startupError: String?
     @State private var session = AudioSession()
@@ -57,6 +58,7 @@ struct KoanIOSApp: App {
             }
             .onChange(of: scenePhase) { _, phase in
                 keepalive.setBackground(phase == .background)
+                state?.player.engine.logNote(message: "scene \(phase)")
                 // Suspended in the background, the link to the server went
                 // with the rest of the app; link again now rather than when
                 // its retry comes round.
@@ -70,6 +72,8 @@ struct KoanIOSApp: App {
                 do {
                     let built = try await AppState()
                     await built.start()
+                    PushDelegate.engine = built.player.engine
+                    PushDelegate.requestAlertsIfSignedIn()
                     // The session goes up before anything can be asked to play:
                     // a RemoteIO unit on an inactive session produces silence
                     // and reports success, which is the worst of both.
@@ -79,12 +83,15 @@ struct KoanIOSApp: App {
                     var interruptedPlaying = false
                     session.onInterrupted = { [weak built] in
                         interruptedPlaying = built?.player.isPlaying ?? false
+                        built?.player.engine.logNote(message: "interrupted while playing: \(interruptedPlaying)")
                         built?.player.pause()
                     }
                     session.onRouteLost = { [weak built] in built?.player.pause() }
+                    session.note = { [weak built] message in built?.player.engine.logNote(message: message) }
                     session.onInterruptionEnded = { [weak built] shouldResume in
                         guard let engine = built?.player.engine else { return }
                         let resume = shouldResume && interruptedPlaying
+                        engine.logNote(message: "interruption over: resume=\(resume) (system says \(shouldResume), was playing \(interruptedPlaying))")
                         interruptedPlaying = false
                         Task {
                             try? await engine.restartOutput()

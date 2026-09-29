@@ -26,6 +26,9 @@ final class AudioSession {
     var onInterruptionEnded: ((_ shouldResume: Bool) -> Void)?
     /// The route went away underneath us — headphones unplugged, a dock removed.
     var onRouteLost: (() -> Void)?
+    /// Where interruption events are written, so a failure to resume on a
+    /// real phone can be read back afterwards.
+    var note: ((String) -> Void)?
 
     /// Held apart from the actor so `deinit`, which is nonisolated, can still
     /// hand them back.
@@ -80,10 +83,13 @@ final class AudioSession {
             ) { [weak self] note in
                 let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
                 let options = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                let reason = note.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt ?? 0
                 guard let raw, let type = AVAudioSession.InterruptionType(rawValue: raw) else {
                     return
                 }
-                MainActor.assumeIsolated { self?.handleInterruption(type, options: options) }
+                MainActor.assumeIsolated {
+                    self?.handleInterruption(type, options: options, reason: reason)
+                }
             }
         )
         // A reset of the system's media services invalidates every audio
@@ -114,15 +120,20 @@ final class AudioSession {
     }
 
     private func handleInterruption(
-        _ type: AVAudioSession.InterruptionType, options: UInt
+        _ type: AVAudioSession.InterruptionType, options: UInt, reason: UInt
     ) {
+        note?("interruption \(type == .began ? "began" : "ended") options=\(options) reason=\(reason)")
         switch type {
         case .began:
             onInterrupted?()
         case .ended:
             // The output unit iOS stopped for the interruption will not start
             // again, so it is rebuilt whether or not playback resumes.
-            try? AVAudioSession.sharedInstance().setActive(true)
+            do {
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch {
+                note?("could not reactivate the session: \(error)")
+            }
             let resume = AVAudioSession.InterruptionOptions(rawValue: options)
                 .contains(.shouldResume)
             onInterruptionEnded?(resume)

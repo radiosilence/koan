@@ -264,6 +264,39 @@ impl KoanEngine {
         koan_core::remote::link::nudge();
     }
 
+    /// Write to koan's log, beside the engine's own lines: for events only the
+    /// app sees, such as an audio interruption, where the order relative to
+    /// what the engine did is the whole point.
+    pub fn log_note(&self, message: String) {
+        log::info!("app: {message}");
+    }
+
+    /// Where Apple's push service reaches this app, as the OS issued it. The
+    /// link sends it to the server, which can then wake the app once iOS has
+    /// suspended it. `sandbox` for a development build.
+    pub fn set_push_token(&self, token: String, sandbox: bool) {
+        koan_core::remote::link::set_push_token(token, sandbox);
+    }
+
+    /// Run a command a push notification carried (the JSON under `koan`): what
+    /// the server would have sent over the link had iOS not suspended the app.
+    /// Also links now, so anything else waiting follows.
+    pub async fn run_pushed_command(self: Arc<Self>, command: String) -> Result<(), KoanError> {
+        koan_core::remote::link::nudge();
+        let cmd = match koan_core::remote::link::parse_command(&command) {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                log::warn!("push: not a command ({e}): {command}");
+                return Ok(());
+            }
+        };
+        offload::sequenced(move || {
+            self.handle_link(cmd);
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn pause(self: Arc<Self>) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::Pause)).await
     }

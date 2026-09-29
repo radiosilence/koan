@@ -395,6 +395,35 @@ See [Authentication](../guide/authentication.md), [GraphQL API](../guide/graphql
 
 ---
 
+## `[push]`
+
+Push notifications to kōan's iOS app, for a server whose linked phones should
+stay reachable once iOS has suspended the app.
+
+```toml
+# config.local.toml -- the APNs key is a secret
+[push]
+key_path = "/path/to/AuthKey_XXXXXXXXXX.p8"  # or `key` (KOAN_PUSH__KEY) with the PEM itself
+key_id = "XXXXXXXXXX"
+team_id = "XXXXXXXXXX"
+topic = "cc.blit.koan"                       # the app's bundle id (default)
+```
+
+A linked app is reached over its WebSocket. iOS suspends a backgrounded app
+that is not playing, and the socket goes with it. With a key configured, the
+server then sends the app a background push, which wakes it to link and take
+what waits in its outbox (syncs, evictions), and turns a request to play on it
+into a notification the person taps: iOS does not let a suspended app start
+playing on its own. GraphQL's `playOnClient` says which happened.
+
+Apple accepts pushes only signed with the key of the team that ships the app,
+so only a server holding that key can send them. Without one, phones are
+reached only while linked, as before. Development builds of the app use
+Apple's sandbox gateway and release builds the production one; the app says
+which with its token, and the key works for both.
+
+---
+
 ## `[radio]`
 
 ```toml
