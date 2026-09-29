@@ -201,7 +201,9 @@ The user listens in kōan apps on their devices, linked to this server. Query \
 title artist current } }` to see each device, what it is playing and what it has queued. Every \
 command about the user's music goes to a device:
 - `controlClient(action: PAUSE|RESUME|NEXT|PREVIOUS)`, `seekOnClient(positionMs)`
-- `playOnClient(trackIds, startAt)` replaces the queue and plays; `enqueue: true` appends
+- `playOnClient(trackIds, startAt)` replaces the queue and plays; `enqueue: true` appends. \
+A phone iOS has suspended is not linked, but can still be sent these as a notification: the \
+message then says so, and nothing plays until the user taps it; tell them that
 - `playNextOnClient(trackIds)`, `jumpOnClient(trackId)` (skip to a track, queued or not), \
 `removeFromClient(trackIds)`, `clearClient`, `setClientRadio(enabled)`, `syncClient`
 - **Making a playlist the user asked for** (\"make me a cyberpunk playlist\"): research what \

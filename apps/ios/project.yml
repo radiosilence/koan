@@ -63,6 +63,12 @@ targets:
         # device and a simulator build never link each other's slice.
         LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/ios-link/$(PLATFORM_NAME)
         OTHER_LDFLAGS: -lkoan_ffi
+    # Push. `development` is the sandbox gateway a development build's token
+    # belongs to; exporting for the App Store rewrites it to `production`.
+    entitlements:
+      path: ../../target/ios-project/koan.entitlements
+      properties:
+        aps-environment: development
     info:
       path: ../../target/ios-project/Info.plist
       properties:
@@ -79,7 +85,9 @@ targets:
           UIColorName: LaunchBackground
         # Without this the process is suspended when the screen locks, and the
         # audio thread with it.
-        UIBackgroundModes: [audio]
+        # `remote-notification`: a background push from the server wakes the
+        # app to link and take what waits for it. See `PushDelegate`.
+        UIBackgroundModes: [audio, remote-notification]
         # A Navidrome on the home network is the common case, and iOS refuses
         # connections to local addresses until the user has been asked. The
         # engine's HTTP is its own sockets rather than URLSession, so App

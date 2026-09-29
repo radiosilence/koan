@@ -549,6 +549,10 @@ pub(super) struct GqlClient {
     pub last_played_at: Option<i64>,
     /// Its queue, or the part around the current track when it is long.
     pub queue: Vec<GqlClientQueueEntry>,
+    /// Reached by a notification rather than over its link: iOS had suspended
+    /// the app. What was sent runs when someone taps the notification, so say
+    /// that rather than that it is playing.
+    pub notified: bool,
 }
 
 #[derive(SimpleObject)]
@@ -594,6 +598,7 @@ impl From<crate::clients::ClientInfo> for GqlClient {
                     current: q.current,
                 })
                 .collect(),
+            notified: c.notified,
         }
     }
 }

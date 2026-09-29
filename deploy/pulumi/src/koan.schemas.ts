@@ -80,6 +80,24 @@ export const KoanConfSchema = z.strictObject({
     })
     .prefault({}),
   /**
+   * Push notifications to koan's iOS app, which reach a phone iOS has
+   * suspended. Off unless `existingSecret` names a Secret holding the team's
+   * APNs auth key (.p8) under `apns-key`: the key never appears in the
+   * Deployment.
+   */
+  push: z
+    .strictObject({
+      existingSecret: z.string().default(""),
+      /** The key's ten-character id. */
+      keyId: z.string().default(""),
+      /** The Apple developer team the key belongs to. */
+      teamId: z.string().default(""),
+    })
+    .refine((v) => !v.existingSecret || (v.keyId && v.teamId), {
+      message: "push.keyId and push.teamId are required with push.existingSecret",
+    })
+    .prefault({}),
+  /**
    * Pin the pod to one node when state or library use a hostPath: the
    * Deployment uses the Recreate strategy, and a hostPath is only ever the
    * node's own disk.

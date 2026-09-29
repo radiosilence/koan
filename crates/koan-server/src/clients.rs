@@ -30,6 +30,9 @@ pub struct ClientInfo {
     /// Whether the client has reported its state at all. An app older than
     /// the reports never does, and its `state` then says nothing about it.
     pub reports: bool,
+    /// Reached by a notification it shows rather than over its link: iOS had
+    /// suspended it. What was sent runs when someone taps the notification.
+    pub notified: bool,
 }
 
 impl ClientInfo {
@@ -130,6 +133,7 @@ impl Registry {
                 last_played_at: None,
                 state_at: chrono::Utc::now().timestamp_millis(),
                 reports: false,
+                notified: false,
             },
             device: device.to_string(),
             tx,
@@ -148,6 +152,11 @@ impl Registry {
             e.info.state_at = chrono::Utc::now().timestamp_millis();
             e.info.reports = true;
         }
+    }
+
+    /// Record where Apple's push service reaches this device.
+    pub fn set_push(&self, username: &str, device: &str, token: &str, sandbox: bool) {
+        outbox::save_push(username, device, token, sandbox);
     }
 
     pub fn unregister(&self, id: &str) {
@@ -181,9 +190,19 @@ impl Registry {
         let target = match id {
             Some(id) => clients
                 .iter()
-                .find(|c| c.id == id || c.name.eq_ignore_ascii_case(id))
-                .ok_or_else(|| format!("no linked client {id}; see `clients`"))?,
-            None => pick(&clients, chrono::Utc::now().timestamp())?,
+                .find(|c| c.id == id || c.name.eq_ignore_ascii_case(id)),
+            None if clients.is_empty() => None,
+            None => Some(pick(&clients, chrono::Utc::now().timestamp())?),
+        };
+        // Not linked: a phone iOS has suspended can still be asked, by a
+        // notification it shows.
+        let Some(target) = target else {
+            return notify(username, id, &cmd).unwrap_or_else(|| {
+                Err(match id {
+                    Some(id) => format!("no linked client {id}; see `clients`"),
+                    None => "no koan app is linked to this server; open koan on the device".into(),
+                })
+            });
         };
         let entries = self.entries.lock();
         let entry = entries
@@ -396,7 +415,107 @@ impl Registry {
             .map(|e| (e.device.clone(), e.info.username.clone()))
             .collect();
         let queued = outbox::queue_for_absent(username, &live, &cmd);
-        (sent, queued)
+        wake(&queued);
+        (sent, queued.into_iter().map(|q| q.name).collect())
+    }
+}
+
+/// Wake these absent devices, where a push can: each links, and takes what
+/// was just queued for it.
+fn wake(devices: &[outbox::Absent]) {
+    let Some(pusher) = crate::push::pusher() else {
+        return;
+    };
+    let targets: Vec<outbox::PushTarget> = outbox::push_targets(None)
+        .into_iter()
+        .filter(|t| {
+            devices
+                .iter()
+                .any(|d| d.device == t.device && d.username == t.username)
+        })
+        .collect();
+    if targets.is_empty() {
+        return;
+    }
+    std::thread::spawn(move || {
+        for t in targets {
+            deliver_push(pusher, &t, &crate::push::Push::Wake);
+        }
+    });
+}
+
+/// Ask a device that is not linked to run `cmd`, by a notification. `None`
+/// when a notification cannot carry it: not a request to play, no push key,
+/// or no device in scope that has given a push token.
+fn notify(
+    username: Option<&str>,
+    id: Option<&str>,
+    cmd: &LinkCommand,
+) -> Option<Result<ClientInfo, String>> {
+    let verb = match cmd {
+        LinkCommand::Play { .. } | LinkCommand::JumpTo { .. } => "Play",
+        LinkCommand::PlayNext { .. } => "Play next",
+        LinkCommand::Enqueue { .. } => "Add to queue",
+        _ => return None,
+    };
+    let pusher = crate::push::pusher()?;
+    let targets: Vec<outbox::PushTarget> = outbox::push_targets(username)
+        .into_iter()
+        .filter(|t| id.is_none_or(|id| t.device == id || t.name.eq_ignore_ascii_case(id)))
+        .collect();
+    let target = match targets.as_slice() {
+        [] => return None,
+        [only] => only.clone(),
+        several => {
+            return Some(Err(format!(
+                "no koan app is linked, and several can be sent a notification: {}. Ask which, then pass `client`",
+                several
+                    .iter()
+                    .map(|t| t.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+    };
+    let command = serde_json::to_value(cmd).ok()?;
+    let push = crate::push::Push::Notify {
+        title: format!("{verb} on {}", target.name),
+        body: outbox::describe(cmd).unwrap_or_else(|| "From your koan server".into()),
+        command,
+    };
+    let info = ClientInfo {
+        id: target.device.clone(),
+        name: target.name.clone(),
+        platform: target.platform.clone(),
+        username: target.username.clone(),
+        connected_at: 0,
+        state: LinkState::default(),
+        last_played_at: None,
+        state_at: 0,
+        reports: false,
+        notified: true,
+    };
+    std::thread::spawn(move || deliver_push(pusher, &target, &push));
+    Some(Ok(info))
+}
+
+/// Send one push, forgetting a token Apple says is no longer good.
+fn deliver_push(
+    pusher: &crate::push::Pusher,
+    target: &outbox::PushTarget,
+    push: &crate::push::Push,
+) {
+    use crate::push::Outcome;
+    match pusher.send(&target.token, target.sandbox, push) {
+        Outcome::Sent => log::info!("push: sent to {}", target.name),
+        Outcome::Gone => {
+            log::info!(
+                "push: {}'s token is no longer valid; forgotten",
+                target.name
+            );
+            outbox::forget_push(&target.username, &target.device);
+        }
+        Outcome::Failed(e) => log::warn!("push: to {} failed: {e}", target.name),
     }
 }
 
@@ -516,12 +635,19 @@ mod outbox {
             .collect()
     }
 
+    /// A known device that was not linked when something was queued for it.
+    pub struct Absent {
+        pub device: String,
+        pub username: String,
+        pub name: String,
+    }
+
     /// Queue `cmd` for each known device in scope that is not in `live`.
     pub fn queue_for_absent(
         username: Option<&str>,
         live: &[(String, String)],
         cmd: &LinkCommand,
-    ) -> Vec<String> {
+    ) -> Vec<Absent> {
         let Some(db) = db() else { return Vec::new() };
         let known: Vec<(String, String, String)> = db
             .conn
@@ -558,10 +684,113 @@ mod outbox {
                 )
                 .is_ok()
             {
-                queued.push(name);
+                queued.push(Absent {
+                    device,
+                    username: user,
+                    name,
+                });
             }
         }
         queued
+    }
+
+    /// A device Apple's push service can reach.
+    #[derive(Clone)]
+    pub struct PushTarget {
+        pub device: String,
+        pub username: String,
+        pub name: String,
+        pub platform: String,
+        pub token: String,
+        pub sandbox: bool,
+    }
+
+    pub fn save_push(username: &str, device: &str, token: &str, sandbox: bool) {
+        let Some(db) = db() else { return };
+        let _ = db.conn.execute(
+            "INSERT INTO link_push (device, username, token, sandbox, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (device, username) DO UPDATE SET token = ?3, sandbox = ?4, updated_at = ?5",
+            rusqlite::params![device, username, token, sandbox, chrono::Utc::now().timestamp()],
+        );
+    }
+
+    pub fn forget_push(username: &str, device: &str) {
+        if let Some(db) = db() {
+            let _ = db.conn.execute(
+                "DELETE FROM link_push WHERE device = ?1 AND username = ?2",
+                [device, username],
+            );
+        }
+    }
+
+    /// Devices in scope with a push token, most recently seen first.
+    pub fn push_targets(username: Option<&str>) -> Vec<PushTarget> {
+        let Some(db) = db() else { return Vec::new() };
+        db.conn
+            .prepare(
+                "SELECT p.device, p.username, d.name, d.platform, p.token, p.sandbox
+                   FROM link_push p JOIN link_devices d ON d.device = p.device AND d.username = p.username
+                  WHERE ?1 IS NULL OR p.username = ?1
+                  ORDER BY d.last_seen DESC",
+            )
+            .and_then(|mut s| {
+                s.query_map([username], |r| {
+                    Ok(PushTarget {
+                        device: r.get(0)?,
+                        username: r.get(1)?,
+                        name: r.get(2)?,
+                        platform: r.get(3)?,
+                        token: r.get(4)?,
+                        sandbox: r.get(5)?,
+                    })
+                })?
+                .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// What a playback command would play, for a notification to say:
+    /// "Golden Standard — Tony Petersen", or a track and how many follow.
+    pub fn describe(cmd: &LinkCommand) -> Option<String> {
+        let ids: Vec<i64> = match cmd {
+            LinkCommand::Play { track_ids, .. }
+            | LinkCommand::Enqueue { track_ids }
+            | LinkCommand::PlayNext { track_ids } => {
+                track_ids.iter().filter_map(|t| t.parse().ok()).collect()
+            }
+            LinkCommand::JumpTo { track_id } => vec![track_id.parse().ok()?],
+            _ => return None,
+        };
+        let db = db()?;
+        let row = |id: i64| {
+            db.conn
+                .query_row(
+                    "SELECT t.title, COALESCE(a.name, ''), COALESCE(al.title, ''), t.album_id
+                       FROM tracks t LEFT JOIN artists a ON a.id = t.artist_id
+                       LEFT JOIN albums al ON al.id = t.album_id WHERE t.id = ?1",
+                    [id],
+                    |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                            r.get::<_, Option<i64>>(3)?,
+                        ))
+                    },
+                )
+                .ok()
+        };
+        let (title, artist, album, album_id) = row(*ids.first()?)?;
+        let one_album = ids.len() > 1
+            && album_id.is_some()
+            && ids
+                .iter()
+                .all(|id| row(*id).is_some_and(|r| r.3 == album_id));
+        Some(match (one_album, ids.len()) {
+            (true, _) => format!("{album} — {artist}"),
+            (false, 1) => format!("{title} — {artist}"),
+            (false, n) => format!("{title} — {artist}, and {} more", n - 1),
+        })
     }
 }
 

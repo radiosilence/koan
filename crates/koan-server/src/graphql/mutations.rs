@@ -115,7 +115,7 @@ impl MutationRoot {
         let sent = send_to_client(ctx, client.as_deref(), cmd)?;
         Ok(GqlStatus::success(format!(
             "sent {count} tracks to {}",
-            sent.name
+            reached(&sent)
         )))
     }
 
@@ -136,7 +136,7 @@ impl MutationRoot {
                 track_id: track_id.0,
             },
         )?;
-        Ok(GqlStatus::success(format!("sent to {}", sent.name)))
+        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
     /// Insert tracks after the current one on a linked koan app.
@@ -152,7 +152,7 @@ impl MutationRoot {
         let sent = send_to_client(ctx, client.as_deref(), LinkCommand::PlayNext { track_ids })?;
         Ok(GqlStatus::success(format!(
             "{count} tracks next on {}",
-            sent.name
+            reached(&sent)
         )))
     }
 
@@ -1274,6 +1274,16 @@ fn send_to_client(
     crate::clients::registry()
         .send(scope.as_deref(), client, cmd)
         .map_err(async_graphql::Error::new)
+}
+
+/// Who a command reached, and how: a phone iOS has suspended is asked by a
+/// notification, and nothing plays until someone taps it.
+fn reached(c: &crate::clients::ClientInfo) -> String {
+    if c.notified {
+        format!("{} as a notification; it plays when tapped", c.name)
+    } else {
+        c.name.clone()
+    }
 }
 
 /// "sent to X; waiting for Y" for a delivery.
