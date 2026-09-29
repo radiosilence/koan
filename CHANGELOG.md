@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- koan.rocks no longer scrolls sideways on narrow phones: the header nav wraps under the logo instead of pushing the page wider than the screen.
+
 ## 0.41.0
 
 ### Added
