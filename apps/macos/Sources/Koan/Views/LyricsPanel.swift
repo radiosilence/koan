@@ -65,7 +65,7 @@ struct LyricsPanel: View {
     }
 
     /// Cache first so the panel fills instantly, then LRCLIB in the background
-    /// for a miss.
+    /// for a miss or a plain copy.
     private func load() async {
         guard let trackId = player.currentTrackId else {
             lyrics = nil
@@ -82,7 +82,9 @@ struct LyricsPanel: View {
             return
         }
         lyrics = cached
-        guard cached == nil else { return }
+        // A plain copy may have a synced one upstream by now; the engine
+        // decides whether it is old enough to ask again.
+        guard cached?.synced != true else { return }
 
         loading = true
         let engine = library.engine
@@ -90,7 +92,7 @@ struct LyricsPanel: View {
         loading = false
         // The track may have changed while LRCLIB was answering.
         guard loadedTrackId == trackId else { return }
-        lyrics = fetched ?? nil
+        lyrics = fetched ?? lyrics
     }
 }
 
