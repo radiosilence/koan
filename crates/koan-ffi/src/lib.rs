@@ -2018,6 +2018,92 @@ impl KoanEngine {
         .await
     }
 
+    /// Read an invite: the koan.rocks link, `koan://join`, or a server address
+    /// with the account in it. `None` for anything else, so a field can offer
+    /// to join only when what was pasted is one.
+    pub fn parse_invite(&self, link: String) -> Option<Invite> {
+        koan_core::invite::Invite::parse(&link).map(Into::into)
+    }
+
+    // -- Accounts on the signed-in server: koan servers, admins only --
+
+    /// The server's accounts. Fails on a server that is not koan, or for an
+    /// account that is not an admin, which is how the app knows to offer none
+    /// of this.
+    pub async fn server_accounts(self: Arc<Self>) -> Result<Vec<ServerAccount>, KoanError> {
+        offload::offload(move || {
+            Ok(account_client()?
+                .koan_users()
+                .map_err(remote_error)?
+                .into_iter()
+                .map(|u| ServerAccount {
+                    role: AccountRole::parse(&u.role),
+                    username: u.username,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// Make an account with a generated password; its invite comes back.
+    pub async fn create_server_account(
+        self: Arc<Self>,
+        username: String,
+        role: AccountRole,
+    ) -> Result<Invite, KoanError> {
+        offload::offload(move || {
+            let client = account_client()?;
+            let made = client
+                .koan_create_user(&username, role.as_str())
+                .map_err(remote_error)?;
+            Ok(
+                koan_core::invite::Invite::new(client.base_url(), &made.username, &made.password)
+                    .into(),
+            )
+        })
+        .await
+    }
+
+    /// An invite for an existing account. `reset` gives it a new password,
+    /// signing its devices out.
+    pub async fn invite_server_account(
+        self: Arc<Self>,
+        username: String,
+        reset: bool,
+    ) -> Result<Invite, KoanError> {
+        offload::offload(move || {
+            let client = account_client()?;
+            let made = client.koan_invite(&username, reset).map_err(remote_error)?;
+            Ok(
+                koan_core::invite::Invite::new(client.base_url(), &made.username, &made.password)
+                    .into(),
+            )
+        })
+        .await
+    }
+
+    pub async fn set_server_account_role(
+        self: Arc<Self>,
+        username: String,
+        role: AccountRole,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            account_client()?
+                .koan_set_user_role(&username, role.as_str())
+                .map_err(remote_error)
+        })
+        .await
+    }
+
+    pub async fn delete_server_account(self: Arc<Self>, username: String) -> Result<(), KoanError> {
+        offload::offload(move || {
+            account_client()?
+                .koan_delete_user(&username)
+                .map_err(remote_error)
+        })
+        .await
+    }
+
     /// Forget the server. Leaves the synced library alone — those tracks are
     /// still real, they just cannot be fetched until you sign in again.
     pub async fn sign_out_remote(self: Arc<Self>) -> Result<(), KoanError> {
@@ -4090,6 +4176,25 @@ fn link_queue(state: &SharedPlayerState) -> Vec<koan_core::remote::link::LinkQue
             current: Some(i.id) == cursor,
         })
         .collect()
+}
+
+fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    koan_core::helpers::subsonic_client(&Config::load().unwrap_or_default()).ok_or_else(|| {
+        KoanError::BadArgument {
+            message: "no remote server configured".into(),
+        }
+    })
+}
+
+/// A server that answered and refused is a bad request; one that did not
+/// answer is worth retrying.
+fn remote_error(e: SubsonicError) -> KoanError {
+    match e {
+        SubsonicError::Api { message, .. } => KoanError::BadArgument { message },
+        e => KoanError::Remote {
+            message: e.to_string(),
+        },
+    }
 }
 
 #[cfg(test)]

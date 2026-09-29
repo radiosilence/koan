@@ -6,6 +6,8 @@ struct KoanApp: App {
     @State private var state: AppState?
 
     @State private var startupError: String?
+    /// A link opened before the engine was up, handled once it is.
+    @State private var pendingURL: URL?
 
     var body: some Scene {
         Window("kōan", id: MainWindow.id) {
@@ -24,6 +26,7 @@ struct KoanApp: App {
                         .environment(state.activity)
                         .environment(state.levels)
                         .environment(state.mirror)
+                        .modifier(InviteConfirmation())
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
                         .tint(.koanAccent)
@@ -50,12 +53,19 @@ struct KoanApp: App {
             // when the lyrics panel opened resized the window under you, and a
             // window that jumps is worse than a window that is wide.
             .frame(minWidth: 1320, minHeight: 620)
+            .onOpenURL { url in
+                if let state { state.open(url: url) } else { pendingURL = url }
+            }
             .task {
                 guard state == nil, startupError == nil else { return }
                 do {
                     let created = try await AppState()
                     await created.start()
                     state = created
+                    if let pendingURL {
+                        created.open(url: pendingURL)
+                        self.pendingURL = nil
+                    }
                 } catch {
                     startupError = String(describing: error)
                 }
@@ -232,6 +242,7 @@ struct KoanApp: App {
         Settings {
             if let state {
                 SettingsView()
+                    .environment(state)
                     .environment(state.player)
                     .environment(state.library)
                     // A separate scene inherits nothing from the WindowGroup, so

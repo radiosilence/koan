@@ -184,6 +184,13 @@ macos-bundle: macos-build
         <key>LSMinimumSystemVersion</key><string>26.0</string>
         <key>NSHighResolutionCapable</key><true/>
         <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+        <key>CFBundleURLTypes</key>
+        <array>
+            <dict>
+                <key>CFBundleURLName</key><string>{{bundle_id}}</string>
+                <key>CFBundleURLSchemes</key><array><string>koan</string></array>
+            </dict>
+        </array>
         <key>UTExportedTypeDeclarations</key>
         <array>
             <dict>
@@ -538,6 +545,13 @@ ios-bundle: macos-ffi ios-ffi
         <!-- Without this the process is suspended when the screen locks, and
              the audio thread with it. -->
         <key>UIBackgroundModes</key><array><string>audio</string></array>
+        <key>CFBundleURLTypes</key>
+        <array>
+            <dict>
+                <key>CFBundleURLName</key><string>{{bundle_id}}</string>
+                <key>CFBundleURLSchemes</key><array><string>koan</string></array>
+            </dict>
+        </array>
         <key>NSBonjourServices</key><array><string>_koan._tcp</string></array>
         <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps on your network to play music on.</string>
     </dict>
@@ -672,6 +686,22 @@ ios-signin device url user password: (ios-ffi "iphonesimulator") ios-project
             -destination "id=$udid" \
             -only-testing:KoanUITests/SignInTests
     echo "{{device}} is signed in to {{url}}"
+
+# Open an invite link on a simulator and wait for its library, as a listener
+# tapping it would. `koan auth invite` prints one.
+ios-join device link: (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    xcrun simctl bootstatus "$udid" -b >/dev/null
+    TEST_RUNNER_KOAN_INVITE_LINK='{{link}}' \
+        xcodebuild test -quiet \
+            -project apps/ios/Koan.xcodeproj -scheme Koan \
+            -destination "id=$udid" \
+            -resultBundlePath target/ios-join.xcresult \
+            -only-testing:KoanUITests/InviteTests
+    echo "{{device}} joined through the invite"
 
 # Build, install and launch on the iPhone plugged in (or on the same Wi-Fi).
 #

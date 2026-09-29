@@ -943,6 +943,69 @@ pub struct ArtEvictions {
     pub tracks: Vec<i64>,
 }
 
+/// An account on a server, as one link. What a tapped invite carries and what
+/// an admin sends: `link` for koan, the details for any other Subsonic app.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct Invite {
+    pub server: String,
+    pub username: String,
+    pub password: String,
+    pub link: String,
+    pub email_subject: String,
+    pub email_text: String,
+    pub email_html: String,
+    pub mailto: String,
+}
+
+impl From<koan_core::invite::Invite> for Invite {
+    fn from(i: koan_core::invite::Invite) -> Self {
+        Self {
+            link: i.link(),
+            email_subject: i.email_subject(),
+            email_text: i.email_text(),
+            email_html: i.email_html(),
+            mailto: i.mailto(),
+            server: i.server,
+            username: i.username,
+            password: i.password,
+        }
+    }
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountRole {
+    /// Listens.
+    Readonly,
+    /// Also edits playlists and favourites.
+    User,
+    /// Also manages the server and its accounts.
+    Admin,
+}
+
+impl AccountRole {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Readonly => "readonly",
+            Self::User => "user",
+            Self::Admin => "admin",
+        }
+    }
+
+    pub(crate) fn parse(s: &str) -> Self {
+        match s {
+            "admin" => Self::Admin,
+            "user" => Self::User,
+            _ => Self::Readonly,
+        }
+    }
+}
+
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct ServerAccount {
+    pub username: String,
+    pub role: AccountRole,
+}
+
 /// Another device koan can play on: one on the same account, or one on the
 /// local network.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

@@ -74,6 +74,9 @@ targets:
         aps-environment: development
         # A request to play reaches through Focus: it was asked for just now.
         com.apple.developer.usernotifications.time-sensitive: true
+        # Invite links open the app rather than the join page.
+        com.apple.developer.associated-domains:
+          - applinks:koan.rocks
     info:
       path: ../../target/ios-project/Info.plist
       properties:
@@ -83,6 +86,11 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
+        # `koan://join`, the join page's button where a universal link did not
+        # open the app.
+        CFBundleURLTypes:
+          - CFBundleURLName: cc.blit.koan
+            CFBundleURLSchemes: [koan]
         # The ensō on the icon's ground, drawn by the system before koan has
         # run a line. `Splash` repeats it exactly, so the handoff is invisible.
         UILaunchScreen:

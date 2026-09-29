@@ -95,7 +95,10 @@ An invite is the account as one link:
 `https://koan.rocks/join/#server=…&username=…&password=…`. On a device with
 koan installed it opens the app, which signs in and syncs the library with no
 further steps. Elsewhere, koan.rocks shows the downloads, an Open in koan
-button, and the details in plain text for other Subsonic apps. The link is the
+button, and the details in plain text for other Subsonic apps. The Mac app is
+not a universal link target, since a Developer ID build carries no associated
+domains: there the page opens and its button hands over through `koan://join`.
+Pasting the link into Server URL in Settings works on either. The link is the
 account itself; nothing is redeemed on the server, so it works offline and a
 mail scanner fetching it changes nothing. The credentials are in the fragment,
 which browsers never send, so koan.rocks does not see them.

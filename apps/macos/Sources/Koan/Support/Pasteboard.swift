@@ -42,6 +42,22 @@ enum Pasteboard {
         #endif
     }
 
+    /// Rich text with a plain fallback, so a paste into a mail client keeps
+    /// the formatting and a paste anywhere else still reads.
+    static func write(html: String, text: String) {
+        #if canImport(AppKit)
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(html, forType: .html)
+        board.setString(text, forType: .string)
+        #else
+        UIPasteboard.general.setItems([[
+            UTType.html.identifier: html,
+            UTType.utf8PlainText.identifier: text,
+        ]])
+        #endif
+    }
+
     static func readTrackIds() -> [Int64] {
         guard let data = trackData(),
               let ids = try? JSONDecoder().decode([Int64].self, from: data)

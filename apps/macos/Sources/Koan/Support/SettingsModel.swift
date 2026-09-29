@@ -233,7 +233,11 @@ final class SettingsModel {
 
     /// Engine errors carry a message worth reading; Swift's default rendering
     /// of them does not.
-    private static func describe(_ error: Error) -> String {
+    func report(_ message: String) {
+        lastError = message
+    }
+
+    static func describe(_ error: Error) -> String {
         switch error {
         case let KoanError.BadArgument(message): message
         case let KoanError.Database(message): message

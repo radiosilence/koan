@@ -21,9 +21,9 @@ final class SignInTests: XCTestCase {
 
         if !app.buttons["Sign Out"].waitForExistence(timeout: 2) {
             // SwiftUI exposes a form's fields by their placeholder, not their label.
-            fill(field(app.textFields, "https://music.example.com"), url)
-            fill(field(app.textFields, "your account"), user)
-            fill(field(app.secureTextFields, "hunter2"), password)
+            fill(field(app.textFields, "Server URL"), url)
+            fill(field(app.textFields, "Username"), user)
+            fill(field(app.secureTextFields, "Password"), password)
             app.buttons["Sign In"].tap()
         }
         XCTAssert(app.buttons["Sign Out"].waitForExistence(timeout: 30), "not signed in")
