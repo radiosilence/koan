@@ -6,8 +6,9 @@
 
 use std::io::{Read, Write};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use parking_lot::{Condvar, Mutex};
 use thiserror::Error;
 
 /// Longest the TCP connect + TLS handshake may take.
@@ -38,6 +39,22 @@ pub const DEFAULT_ATTEMPTS: u32 = 3;
 /// Base backoff between attempts; doubles each retry.
 const BACKOFF_BASE: Duration = Duration::from_millis(500);
 
+/// Waits between tries at a server that is not answering, by how many times in
+/// a row it has not. The last repeats for as long as the outage lasts.
+const OUTAGE_BACKOFF: [Duration; 3] = [
+    Duration::from_secs(5),
+    Duration::from_secs(15),
+    Duration::from_secs(60),
+];
+
+/// Longest `Retry-After` koan honours. A server asking for more is asked again
+/// at this interval instead, so a phone does not sit silent for an hour on the
+/// word of a misconfigured proxy.
+const RETRY_AFTER_CAP: Duration = Duration::from_secs(600);
+
+/// How often a download waiting out an outage checks whether it is still wanted.
+const CANCEL_POLL: Duration = Duration::from_secs(1);
+
 #[derive(Debug, Error)]
 pub enum DownloadError {
     #[error("http error: {0}")]
@@ -46,10 +63,16 @@ pub enum DownloadError {
     Io(#[from] std::io::Error),
     #[error("incomplete download: got {got} of {expected} bytes")]
     Incomplete { got: u64, expected: u64 },
-    #[error("server returned {0}")]
-    Status(reqwest::StatusCode),
+    #[error("server returned {status}")]
+    Status {
+        status: reqwest::StatusCode,
+        /// The server's `Retry-After`, when it sent one in seconds.
+        retry_after: Option<Duration>,
+    },
     #[error("request could not be built: {0}")]
     Request(String),
+    #[error("no longer wanted")]
+    Cancelled,
 }
 
 impl DownloadError {
@@ -59,12 +82,160 @@ impl DownloadError {
         match self {
             DownloadError::Http(e) => e.is_timeout() || e.is_connect() || e.is_request(),
             DownloadError::Io(_) | DownloadError::Incomplete { .. } => true,
-            DownloadError::Status(s) => {
-                s.is_server_error() || *s == reqwest::StatusCode::TOO_MANY_REQUESTS
+            DownloadError::Status { status, .. } => {
+                status.is_server_error() || *status == reqwest::StatusCode::TOO_MANY_REQUESTS
             }
-            DownloadError::Request(_) => false,
+            DownloadError::Request(_) | DownloadError::Cancelled => false,
         }
     }
+
+    /// Whether this says the server is not answering at all, rather than that
+    /// this track cannot be had. Every other download would get the same
+    /// answer, so it is waited out instead of counted against the track.
+    ///
+    /// A 500, a 404, a body cut short or an error document are about the track.
+    pub fn is_unavailable(&self) -> bool {
+        use reqwest::StatusCode;
+        match self {
+            // Refused, no route, no DNS, and a connect that timed out.
+            DownloadError::Http(e) => e.is_connect(),
+            DownloadError::Status { status, .. } => matches!(
+                *status,
+                StatusCode::SERVICE_UNAVAILABLE
+                    | StatusCode::TOO_MANY_REQUESTS
+                    | StatusCode::BAD_GATEWAY
+                    | StatusCode::GATEWAY_TIMEOUT
+            ),
+            _ => false,
+        }
+    }
+
+    fn retry_after(&self) -> Option<Duration> {
+        match self {
+            DownloadError::Status { retry_after, .. } => *retry_after,
+            _ => None,
+        }
+    }
+}
+
+/// How long to wait before trying a server that has not answered `failures`
+/// times in a row (counting from 1). The server's own `Retry-After` wins.
+pub fn outage_backoff(failures: u32, retry_after: Option<Duration>) -> Duration {
+    if let Some(wait) = retry_after {
+        return wait.min(RETRY_AFTER_CAP);
+    }
+    let step = (failures.max(1) - 1) as usize;
+    OUTAGE_BACKOFF[step.min(OUTAGE_BACKOFF.len() - 1)]
+}
+
+/// `Retry-After` in delta-seconds. The HTTP-date form is left to the schedule.
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+        .map(Duration::from_secs)
+}
+
+/// Whether a server is answering, shared by every download against it.
+///
+/// One transfer finding it down makes the rest wait with it, and while it is
+/// down only one of them at a time asks again. Without this each download
+/// learnt of the outage for itself, gave up, and the player moved on to the
+/// next track to do the same.
+#[derive(Default)]
+pub struct Outage {
+    state: Mutex<OutageState>,
+    changed: Condvar,
+}
+
+#[derive(Default)]
+struct OutageState {
+    /// Unanswered tries in a row. Zero while the server is up.
+    failures: u32,
+    /// When the next try may go. `None` while the server is up.
+    retry_at: Option<Instant>,
+}
+
+impl Outage {
+    pub fn is_down(&self) -> bool {
+        self.state.lock().retry_at.is_some()
+    }
+
+    /// Block while the server is down and nobody is due to try it. Returns
+    /// immediately when it is up, or once a try is due.
+    pub fn hold(&self) {
+        let mut s = self.state.lock();
+        while let Some(at) = s.retry_at {
+            let now = Instant::now();
+            if now >= at {
+                break;
+            }
+            self.changed.wait_for(&mut s, at - now);
+        }
+    }
+
+    /// Wait until this download may try the server: at once when it is up,
+    /// otherwise when the next try is due and no other download has taken it.
+    /// Returns `false` if `cancelled` says the download stopped being wanted.
+    fn admit(&self, cancelled: &dyn Fn() -> bool) -> bool {
+        let mut s = self.state.lock();
+        loop {
+            // Asked outside the lock: it reads the player's state.
+            if parking_lot::MutexGuard::unlocked(&mut s, cancelled) {
+                return false;
+            }
+            let Some(at) = s.retry_at else {
+                return true;
+            };
+            let now = Instant::now();
+            if now >= at {
+                // This one tries; the rest wait for its answer. Pushed out
+                // rather than flagged, so a try that never reports back
+                // (it panicked, say) holds the others up for one step only.
+                s.retry_at = Some(now + outage_backoff(s.failures, None));
+                return true;
+            }
+            self.changed.wait_for(&mut s, (at - now).min(CANCEL_POLL));
+        }
+    }
+
+    /// The server did not answer. Returns how long until it is tried again.
+    fn down(&self, retry_after: Option<Duration>) -> Duration {
+        let mut s = self.state.lock();
+        s.failures += 1;
+        let wait = outage_backoff(s.failures, retry_after);
+        s.retry_at = Some(Instant::now() + wait);
+        drop(s);
+        // Those waiting for this answer take the new time from here.
+        self.changed.notify_all();
+        wait
+    }
+
+    /// The server answered, whatever it said.
+    fn up(&self) {
+        let mut s = self.state.lock();
+        if s.retry_at.is_none() {
+            return;
+        }
+        log::info!(
+            "remote server answering again after {} failed tries",
+            s.failures
+        );
+        *s = OutageState::default();
+        drop(s);
+        self.changed.notify_all();
+    }
+}
+
+/// Wait out a server that is not answering rather than fail against it.
+pub struct Patience<'a> {
+    pub outage: &'a Outage,
+    /// Asked while waiting; `true` ends the wait with `DownloadError::Cancelled`.
+    pub cancelled: &'a dyn Fn() -> bool,
 }
 
 /// HTTP client for streaming large bodies — bounded connect, bounded stalls,
@@ -94,48 +265,73 @@ pub fn api_client() -> reqwest::Result<reqwest::blocking::Client> {
 /// `(bytes_this_attempt, total)` where `total` is 0 if the server sent no
 /// Content-Length; it restarts from zero when an attempt is retried.
 ///
+/// With `patience`, a server that is not answering (`is_unavailable`) is waited
+/// out on its `Outage` for as long as it takes, and those tries do not count
+/// against `attempts`. Without it they are retried like any transient failure.
+///
 /// Returns the number of bytes written. `dest` is left untouched on failure.
 pub fn download_with_retries(
     dest: &Path,
     attempts: u32,
+    patience: Option<Patience<'_>>,
     request: impl Fn() -> Result<reqwest::blocking::RequestBuilder, DownloadError>,
     on_progress: impl Fn(u64, u64),
 ) -> Result<u64, DownloadError> {
     let attempts = attempts.max(1);
-    let mut last_err = None;
+    let mut failures = 0;
 
-    for attempt in 0..attempts {
-        if attempt > 0 {
-            let backoff = BACKOFF_BASE * 2u32.pow(attempt - 1);
-            log::warn!(
-                "download of {} failed ({}), retrying in {:?} ({}/{})",
-                dest.display(),
-                last_err
-                    .as_ref()
-                    .map(|e: &DownloadError| e.to_string())
-                    .unwrap_or_default(),
-                backoff,
-                attempt + 1,
-                attempts
-            );
-            std::thread::sleep(backoff);
+    let err = loop {
+        if let Some(p) = &patience
+            && !p.outage.admit(p.cancelled)
+        {
+            break DownloadError::Cancelled;
         }
 
-        match attempt_download(dest, &request, &on_progress) {
-            Ok(bytes) => return Ok(bytes),
-            Err(e) if e.is_retryable() && attempt + 1 < attempts => last_err = Some(e),
-            Err(e) => {
-                last_err = Some(e);
-                break;
+        let e = match attempt_download(dest, &request, &on_progress) {
+            Ok(bytes) => {
+                if let Some(p) = &patience {
+                    p.outage.up();
+                }
+                return Ok(bytes);
             }
-        }
-    }
+            Err(e) => e,
+        };
 
-    // Only once every attempt is spent. Between attempts the `.part` stays, and
-    // the next one truncates it in place: a stream already reading it holds that
-    // inode, and picks up again as the retry rewrites the same bytes.
+        if let Some(p) = &patience {
+            if e.is_unavailable() {
+                let wait = p.outage.down(e.retry_after());
+                log::warn!(
+                    "download of {}: server unavailable ({}), trying again in {:?}",
+                    dest.display(),
+                    e,
+                    wait
+                );
+                continue;
+            }
+            p.outage.up();
+        }
+
+        failures += 1;
+        if !e.is_retryable() || failures >= attempts {
+            break e;
+        }
+        let backoff = BACKOFF_BASE * 2u32.pow(failures - 1);
+        log::warn!(
+            "download of {} failed ({}), retrying in {:?} ({}/{})",
+            dest.display(),
+            e,
+            backoff,
+            failures + 1,
+            attempts
+        );
+        std::thread::sleep(backoff);
+    };
+
+    // Only once the download has given up. Between attempts the `.part` stays,
+    // and the next one truncates it in place: a stream already reading it holds
+    // that inode, and picks up again as the retry rewrites the same bytes.
     let _ = std::fs::remove_file(part_path(dest));
-    Err(last_err.expect("loop runs at least once and only exits here on error"))
+    Err(err)
 }
 
 fn attempt_download(
@@ -147,7 +343,10 @@ fn attempt_download(
     let status = resp.status();
     // Status first: a 503 with a JSON body is transient and worth retrying.
     if !status.is_success() {
-        return Err(DownloadError::Status(status));
+        return Err(DownloadError::Status {
+            status,
+            retry_after: parse_retry_after(resp.headers()),
+        });
     }
     // Subsonic reports failure with HTTP 200 and a JSON or XML error body, so a
     // success status proves nothing on a binary endpoint. Without this, an error
@@ -262,6 +461,8 @@ mod tests {
         /// does for transcoded streams when the connection drops.
         ChunkedTruncated(Vec<u8>),
         ServerError,
+        /// 503, with a `Retry-After` in seconds when given.
+        Unavailable(Option<u64>),
     }
 
     /// Single-threaded stub HTTP server. Serves `replies` in order, repeating
@@ -364,6 +565,15 @@ mod tests {
             Reply::ServerError => {
                 let _ = write!(stream, "HTTP/1.1 500 Internal Server Error\r\n\r\n");
             }
+            Reply::Unavailable(retry_after) => {
+                let header = retry_after
+                    .map(|s| format!("Retry-After: {s}\r\n"))
+                    .unwrap_or_default();
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 503 Service Unavailable\r\n{header}Content-Length: 0\r\n\r\n"
+                );
+            }
         }
         let _ = stream.flush();
         let _ = stream.shutdown(std::net::Shutdown::Both);
@@ -382,7 +592,8 @@ mod tests {
         let client = download_client().unwrap();
 
         let written =
-            download_with_retries(&dest, 1, || Ok(client.get(server.url())), |_, _| {}).unwrap();
+            download_with_retries(&dest, 1, None, || Ok(client.get(server.url())), |_, _| {})
+                .unwrap();
 
         assert_eq!(written, body.len() as u64);
         assert_eq!(std::fs::read(&dest).unwrap(), body);
@@ -399,7 +610,7 @@ mod tests {
         let dest = tmp_dest(&dir);
         let client = download_client().unwrap();
 
-        let err = download_with_retries(&dest, 1, || Ok(client.get(server.url())), |_, _| {})
+        let err = download_with_retries(&dest, 1, None, || Ok(client.get(server.url())), |_, _| {})
             .expect_err("a short body must not succeed");
 
         assert!(
@@ -419,7 +630,7 @@ mod tests {
         let dest = tmp_dest(&dir);
         let client = download_client().unwrap();
 
-        let err = download_with_retries(&dest, 1, || Ok(client.get(server.url())), |_, _| {})
+        let err = download_with_retries(&dest, 1, None, || Ok(client.get(server.url())), |_, _| {})
             .expect_err("a cut-off chunked body must not succeed");
 
         assert!(matches!(err, DownloadError::Io(_)), "unexpected: {err}");
@@ -443,7 +654,8 @@ mod tests {
         let client = download_client().unwrap();
 
         let written =
-            download_with_retries(&dest, 3, || Ok(client.get(server.url())), |_, _| {}).unwrap();
+            download_with_retries(&dest, 3, None, || Ok(client.get(server.url())), |_, _| {})
+                .unwrap();
 
         assert_eq!(written, body.len() as u64);
         assert_eq!(server.hits(), 3, "should have used all three attempts");
@@ -472,6 +684,7 @@ mod tests {
         download_with_retries(
             &dest,
             2,
+            None,
             || Ok(client.get(server.url())),
             |_, _| {
                 if let Ok(meta) = std::fs::metadata(part_path(&dest)) {
@@ -496,6 +709,7 @@ mod tests {
         download_with_retries(
             &dest,
             1,
+            None,
             || Ok(client.get(server.url())),
             |d, t| {
                 seen.lock().unwrap().push((d, t));
@@ -522,5 +736,223 @@ mod tests {
         let dest = Path::new("/tmp/a/Song.flac");
         assert_eq!(strip_part_suffix(&part_path(dest)), dest);
         assert_eq!(strip_part_suffix(dest), dest);
+    }
+
+    fn status(code: u16) -> DownloadError {
+        DownloadError::Status {
+            status: reqwest::StatusCode::from_u16(code).unwrap(),
+            retry_after: None,
+        }
+    }
+
+    #[test]
+    fn an_unanswering_server_is_told_apart_from_a_bad_track() {
+        for code in [503, 429, 502, 504] {
+            assert!(status(code).is_unavailable(), "{code} is the server");
+        }
+        for code in [404, 500, 403] {
+            assert!(!status(code).is_unavailable(), "{code} is the track");
+        }
+        assert!(
+            !DownloadError::Incomplete {
+                got: 1,
+                expected: 2
+            }
+            .is_unavailable()
+        );
+        assert!(!DownloadError::Request("error document".into()).is_unavailable());
+    }
+
+    #[test]
+    fn a_refused_connection_is_the_server_being_unavailable() {
+        // A port nothing listens on.
+        let addr = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let err = download_client()
+            .unwrap()
+            .get(format!("http://{addr}/file"))
+            .send()
+            .map(|_| ())
+            .map_err(DownloadError::from)
+            .expect_err("nothing is listening");
+        assert!(err.is_unavailable(), "unexpected: {err}");
+    }
+
+    #[test]
+    fn outage_backoff_steps_then_holds_and_defers_to_retry_after() {
+        let s = Duration::from_secs;
+        let schedule: Vec<_> = (1..=5).map(|n| outage_backoff(n, None)).collect();
+        assert_eq!(schedule, [s(5), s(15), s(60), s(60), s(60)]);
+        assert_eq!(outage_backoff(1, Some(s(2))), s(2));
+        assert_eq!(outage_backoff(4, Some(s(0))), s(0));
+        assert_eq!(outage_backoff(1, Some(s(86_400))), RETRY_AFTER_CAP);
+    }
+
+    fn patient<'a>(outage: &'a Outage, cancelled: &'a dyn Fn() -> bool) -> Option<Patience<'a>> {
+        Some(Patience { outage, cancelled })
+    }
+
+    #[test]
+    fn retry_after_is_read_and_honoured() {
+        let server = StubServer::start(vec![
+            Reply::Unavailable(Some(1)),
+            Reply::Complete(vec![1u8; 1_000]),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = tmp_dest(&dir);
+        let client = download_client().unwrap();
+        let outage = Outage::default();
+
+        let started = Instant::now();
+        download_with_retries(
+            &dest,
+            1,
+            patient(&outage, &|| false),
+            || Ok(client.get(server.url())),
+            |_, _| {},
+        )
+        .unwrap();
+
+        assert!(
+            started.elapsed() >= Duration::from_secs(1),
+            "waited as asked"
+        );
+        assert!(
+            started.elapsed() < OUTAGE_BACKOFF[0],
+            "not the default wait"
+        );
+        assert!(!outage.is_down(), "a success says the server is back");
+    }
+
+    #[test]
+    fn an_outage_does_not_spend_the_tracks_attempts() {
+        // Nine unanswered tries against one attempt: none of them is the
+        // track's fault, so none of them counts.
+        let mut replies = vec![Reply::Unavailable(Some(0)); 9];
+        replies.push(Reply::Complete(vec![2u8; 1_000]));
+        let server = StubServer::start(replies);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = tmp_dest(&dir);
+        let client = download_client().unwrap();
+
+        download_with_retries(
+            &dest,
+            1,
+            patient(&Outage::default(), &|| false),
+            || Ok(client.get(server.url())),
+            |_, _| {},
+        )
+        .unwrap();
+        assert_eq!(server.hits(), 10);
+    }
+
+    #[test]
+    fn without_patience_an_outage_fails_as_before() {
+        let server = StubServer::start(vec![Reply::Unavailable(Some(0))]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = tmp_dest(&dir);
+        let client = download_client().unwrap();
+
+        let err = download_with_retries(&dest, 2, None, || Ok(client.get(server.url())), |_, _| {})
+            .expect_err("bounded attempts");
+        assert!(err.is_unavailable());
+        assert_eq!(server.hits(), 2);
+    }
+
+    #[test]
+    fn a_download_waiting_out_an_outage_stops_when_no_longer_wanted() {
+        let server = StubServer::start(vec![Reply::Unavailable(None)]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = tmp_dest(&dir);
+        let client = download_client().unwrap();
+        let outage = Outage::default();
+        let wanted = std::sync::atomic::AtomicBool::new(true);
+
+        let started = Instant::now();
+        let err = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(200));
+                wanted.store(false, Ordering::Relaxed);
+            });
+            download_with_retries(
+                &dest,
+                3,
+                patient(&outage, &|| !wanted.load(Ordering::Relaxed)),
+                || Ok(client.get(server.url())),
+                |_, _| {},
+            )
+            .expect_err("cancelled")
+        });
+
+        assert!(matches!(err, DownloadError::Cancelled), "unexpected: {err}");
+        assert!(
+            started.elapsed() < OUTAGE_BACKOFF[0],
+            "stopped within a poll, not at the next try"
+        );
+        assert_eq!(server.hits(), 1);
+        assert!(!part_path(&dest).exists());
+    }
+
+    #[test]
+    fn hold_blocks_while_down_and_lets_go_when_the_server_answers() {
+        let outage = Outage::default();
+        outage.down(Some(Duration::from_secs(60)));
+        assert!(outage.is_down());
+
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(100));
+                outage.up();
+            });
+            outage.hold();
+        });
+        let waited = started.elapsed();
+        assert!(waited >= Duration::from_millis(100), "held while down");
+        assert!(waited < Duration::from_secs(5), "released by the answer");
+    }
+
+    /// The queue's discipline — each worker holds while the server is down,
+    /// then downloads — against a server that answers nothing for a while.
+    #[test]
+    fn a_queue_against_an_unavailable_server_fails_nothing_and_resumes() {
+        const TRACKS: usize = 6;
+        const UNANSWERED: usize = 12;
+        let mut replies = vec![Reply::Unavailable(Some(0)); UNANSWERED];
+        replies.push(Reply::Complete(vec![5u8; 10_000]));
+        let server = StubServer::start(replies);
+        let dir = tempfile::tempdir().unwrap();
+        let client = download_client().unwrap();
+        let outage = Outage::default();
+
+        let results: Vec<_> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..TRACKS)
+                .map(|i| {
+                    let (client, outage, server, dir) = (&client, &outage, &server, &dir);
+                    scope.spawn(move || {
+                        outage.hold();
+                        let dest = dir.path().join(format!("{i}.flac"));
+                        download_with_retries(
+                            &dest,
+                            DEFAULT_ATTEMPTS,
+                            patient(outage, &|| false),
+                            || Ok(client.get(server.url())),
+                            |_, _| {},
+                        )
+                        .map(|_| dest)
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+
+        for result in results {
+            let dest = result.expect("no track fails for the server being down");
+            assert_eq!(std::fs::read(dest).unwrap().len(), 10_000);
+        }
+        assert_eq!(server.hits(), UNANSWERED + TRACKS);
+        assert!(!outage.is_down());
     }
 }

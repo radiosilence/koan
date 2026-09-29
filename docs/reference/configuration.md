@@ -256,7 +256,8 @@ refresh_token = "..."              # exchanged for short-lived access tokens
 ```
 
 Written by `koan auth login` and cleared by `koan auth logout`, which also
-revokes the token at the server. Unlike a password this is revocable, so losing
+revokes the token at the server. `koan play --server` reads it, and rewrites
+`refresh_token` each time it refreshes, since the server revokes the old one. Unlike a password this is revocable, so losing
 it costs you one session rather than the account.
 
 See [Authentication](../guide/authentication.md).
@@ -415,6 +416,11 @@ server then sends the app a background push, which wakes it to link and take
 what waits in its outbox (syncs, evictions), and turns a request to play on it
 into a notification the person taps: iOS does not let a suspended app start
 playing on its own. GraphQL's `playOnClient` says which happened.
+
+With `sharing.public_url` set, that notification shows the album's cover. It
+carries a link to `/push/cover/…` that opens that one cover for ten minutes,
+signed with a key the server mints at start-up and never stores, so the app's
+notification extension can fetch it without a login.
 
 Apple accepts pushes only signed with the key of the team that ships the app,
 so only a server holding that key can send them. Without one, phones are

@@ -23,11 +23,11 @@ struct AlbumBrowser: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 22) {
                         ForEach(library.visibleAlbums, id: \.id) { album in
-                            AlbumGridCell(album: album, selectable: true)
+                            AlbumGridCell(album: album, selection: library.selection)
                         }
                     }
                     .padding(20)
-                    .modifier(SelectionDrag())
+                    .modifier(SelectionDrag(selection: library.selection))
                 }
             }
             // ⌘A picks everything the filter is showing, starting a selection
@@ -36,7 +36,7 @@ struct AlbumBrowser: View {
             // drop it.
             .onChange(of: ui.selectAllToken) { _, _ in
                 guard onStage else { return }
-                library.selection.selectAll(library.visibleAlbums)
+                library.selection.selectAll()
             }
             .onChange(of: ui.clearSelectionToken) { _, _ in library.selection.end() }
             .onChange(of: onStage) { _, now in if !now { library.selection.end() } }
@@ -116,18 +116,17 @@ struct EmptyState: View {
 /// selection: that was a read of the ticks in the grid's body, and every tick
 /// re-diffed the grid. What it costs is the preview — a stack of ticks drags as
 /// the one tile under the pointer.
-private struct SelectionDrag: ViewModifier {
-    @Environment(LibraryModel.self) private var library
+struct SelectionDrag: ViewModifier {
+    let selection: AlbumSelection
 
     func body(content: Content) -> some View {
         #if os(macOS)
         content.dragContainer(for: PlayableTransfer.self, itemID: \.id) { grabbed in
-            let selection = library.selection
             let ids = grabbed.contains(where: selection.contains)
                 ? selection.ids
                 : Array(grabbed)
             return ids.map { id in
-                let name = library.visibleAlbums.first { $0.id == id }?.title ?? ""
+                let name = selection.grid().first { $0.id == id }?.title ?? ""
                 return PlayableTransfer(kind: .album, id: id, name: name)
             }
         }

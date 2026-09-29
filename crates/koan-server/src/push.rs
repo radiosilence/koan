@@ -9,18 +9,34 @@
 //!
 //! Token auth: a JWT signed with the team's `.p8` key, reused for under an
 //! hour as Apple asks. HTTP/2, which is all the gateway speaks.
+//!
+//! A notification carries a link to its album's cover, which the app's
+//! notification service extension fetches and attaches. The extension holds no
+//! credentials, so the link authorises itself: an HMAC over one track id and
+//! an expiry, keyed by a secret that lives only in this process. It opens that
+//! one cover for a few minutes and nothing else.
 
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use axum::extract::{Path as UrlPath, State};
+use axum::response::Response;
+use axum::routing::get;
+use hmac::{Hmac, Mac};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use koan_core::config::PushConfig;
+use koan_core::db::pool::Pool;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 /// Apple rejects a token older than an hour and throttles one refreshed more
 /// often than every twenty minutes.
 const TOKEN_LIFE: Duration = Duration::from_secs(50 * 60);
+
+/// How long a notification's cover link opens its cover. The extension fetches
+/// it as the notification arrives; a notification delivered later than this
+/// shows without art.
+const COVER_LIFE: u64 = 10 * 60;
 
 pub struct Pusher {
     key: EncodingKey,
@@ -32,6 +48,9 @@ pub struct Pusher {
     /// client runs a runtime, and building one inside the server's async
     /// runtime panics.
     http: std::sync::OnceLock<reqwest::blocking::Client>,
+    /// `sharing.public_url`, which cover links are built on. Without it
+    /// notifications carry no art.
+    public_url: Option<String>,
 }
 
 /// What became of a push.
@@ -53,6 +72,8 @@ pub enum Push {
         title: String,
         body: String,
         command: Value,
+        /// A cover link from `Pusher::cover_link`.
+        image: Option<String>,
     },
 }
 
@@ -81,7 +102,16 @@ impl Pusher {
             topic: cfg.topic.clone(),
             bearer: Mutex::new(None),
             http: std::sync::OnceLock::new(),
+            public_url: None,
         })
+    }
+
+    /// A link that opens the cover of `track_id`'s album for `COVER_LIFE`.
+    pub fn cover_link(&self, track_id: i64) -> Option<String> {
+        let base = self.public_url.as_deref()?.trim_end_matches('/');
+        let expires = unix_now() + COVER_LIFE;
+        let sig = cover_sig(track_id, expires);
+        Some(format!("{base}/push/cover/{track_id}/{expires}/{sig}"))
     }
 
     fn bearer(&self) -> Result<String, String> {
@@ -132,10 +162,7 @@ impl Pusher {
             // "Play this" an hour late is not what anyone asked for.
             Push::Notify { .. } => ("alert", "10", 10 * 60),
         };
-        let expiration = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() + expires_in)
-            .unwrap_or_default();
+        let expiration = unix_now() + expires_in;
         let response = http
             .post(format!("https://{host}/3/device/{token}"))
             .bearer_auth(bearer)
@@ -179,13 +206,25 @@ pub fn payload(push: &Push) -> Value {
             title,
             body,
             command,
-        } => json!({
-            "aps": {
-                "alert": { "title": title, "body": body },
-                "sound": "default",
-            },
-            "koan": command,
-        }),
+            image,
+        } => {
+            let mut body = json!({
+                "aps": {
+                    "alert": { "title": title, "body": body },
+                    "sound": "default",
+                    // Asked for this moment, by the person it is for: through Focus.
+                    "interruption-level": "time-sensitive",
+                },
+                "koan": command,
+            });
+            if let Some(image) = image {
+                // Hands the notification to the service extension, which
+                // attaches the cover before it is shown.
+                body["aps"]["mutable-content"] = json!(1);
+                body["image"] = json!(image);
+            }
+            body
+        }
     }
 }
 
@@ -204,13 +243,86 @@ fn read_key(path: &Path) -> Option<String> {
 pub fn pusher() -> Option<&'static Pusher> {
     static PUSHER: std::sync::LazyLock<Option<Pusher>> = std::sync::LazyLock::new(|| {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
-        let pusher = Pusher::from_config(&cfg.push);
+        let pusher = Pusher::from_config(&cfg.push).map(|p| Pusher {
+            public_url: cfg.sharing.public_url.filter(|u| !u.trim().is_empty()),
+            ..p
+        });
         if pusher.is_some() {
             log::info!("push: APNs key {} for {}", cfg.push.key_id, cfg.push.topic);
         }
         pusher
     });
     PUSHER.as_ref()
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Minted at start-up and never stored: a restart voids outstanding cover
+/// links, which live minutes anyway.
+fn cover_mac() -> Hmac<sha2::Sha256> {
+    static KEY: std::sync::LazyLock<[u8; 32]> = std::sync::LazyLock::new(|| {
+        let mut key = [0; 32];
+        getrandom::fill(&mut key).expect("system randomness");
+        key
+    });
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(&*KEY).expect("any key length");
+    mac.update(b"koan notification cover\0");
+    mac
+}
+
+fn cover_sig(track_id: i64, expires: u64) -> String {
+    use base64::Engine;
+    let mut mac = cover_mac();
+    mac.update(format!("{track_id}.{expires}").as_bytes());
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+}
+
+fn cover_sig_valid(track_id: i64, expires: u64, sig: &str) -> bool {
+    use base64::Engine;
+    let Ok(sig) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(sig) else {
+        return false;
+    };
+    let mut mac = cover_mac();
+    mac.update(format!("{track_id}.{expires}").as_bytes());
+    expires >= unix_now() && mac.verify_slice(&sig).is_ok()
+}
+
+#[derive(Clone)]
+struct CoverState {
+    pool: std::sync::Arc<Pool>,
+    covers: std::sync::Arc<crate::covers::Covers>,
+}
+
+/// `/push/cover/{track}/{expires}/{sig}`: public, since the extension that
+/// fetches it has no login. Anything but a valid, unexpired link is a 404.
+pub fn router(
+    pool: std::sync::Arc<Pool>,
+    covers: std::sync::Arc<crate::covers::Covers>,
+) -> axum::Router {
+    axum::Router::new()
+        .route("/push/cover/{track}/{expires}/{sig}", get(cover))
+        .with_state(CoverState { pool, covers })
+}
+
+async fn cover(
+    State(s): State<CoverState>,
+    UrlPath((track, expires, sig)): UrlPath<(i64, u64, String)>,
+) -> Response {
+    if !cover_sig_valid(track, expires, &sig) {
+        return crate::share::not_found();
+    }
+    let art = crate::share::blocking(move || {
+        let db = s.pool.get().ok()?;
+        let row = koan_core::db::queries::get_track_row(&db.conn, track).ok()??;
+        s.covers
+            .cover(std::slice::from_ref(&row), crate::covers::LARGE)
+    })
+    .await;
+    crate::share::jpeg(art, false)
 }
 
 #[cfg(test)]
@@ -255,9 +367,33 @@ AtQSJr6Wg9OtOkzZdoOhdRVcNFW8q9peFQ+S7qIcWNbXlhi+cAlpf0ce
             title: "Play on this iPhone".into(),
             body: "Golden Standard".into(),
             command: command.clone(),
+            image: None,
         });
         assert_eq!(body["koan"], command);
         assert_eq!(body["aps"]["alert"]["body"], "Golden Standard");
+        assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
+        assert!(body["aps"].get("mutable-content").is_none());
         assert_eq!(payload(&Push::Wake)["aps"]["content-available"], 1);
+
+        let body = payload(&Push::Notify {
+            title: "Play on this iPhone".into(),
+            body: "Golden Standard".into(),
+            command,
+            image: Some("https://koan.example/push/cover/1/2/x".into()),
+        });
+        assert_eq!(body["aps"]["mutable-content"], 1);
+        assert_eq!(body["image"], "https://koan.example/push/cover/1/2/x");
+    }
+
+    #[test]
+    fn cover_links_open_one_cover_until_they_expire() {
+        let later = unix_now() + 60;
+        let sig = cover_sig(7, later);
+        assert!(cover_sig_valid(7, later, &sig));
+        assert!(!cover_sig_valid(8, later, &sig));
+        assert!(!cover_sig_valid(7, later + 1, &sig));
+        assert!(!cover_sig_valid(7, later, "not-a-signature"));
+        let past = unix_now() - 1;
+        assert!(!cover_sig_valid(7, past, &cover_sig(7, past)));
     }
 }

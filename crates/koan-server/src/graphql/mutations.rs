@@ -1040,12 +1040,14 @@ impl MutationRoot {
         require_role(ctx, Role::Admin)?;
         spawn_job(ctx, "scan", |db, _| {
             let cfg = Config::load().unwrap_or_default();
+            crate::clients::changed_if_library_moved(&db.conn);
             let result = koan_core::index::scanner::full_scan(
                 &db,
                 &cfg.library.folders,
                 koan_core::index::scanner::ScanOptions::default(),
                 None,
             );
+            crate::clients::changed_if_library_moved(&db.conn);
             Ok(format!(
                 "{} added, {} updated, {} unchanged",
                 result.added, result.updated, result.skipped
@@ -1060,6 +1062,7 @@ impl MutationRoot {
             let cfg = Config::load().unwrap_or_default();
             let client = koan_core::helpers::subsonic_client(&cfg)
                 .ok_or_else(|| "remote not configured".to_string())?;
+            crate::clients::changed_if_library_moved(&db.conn);
             let synced = koan_core::helpers::sync_remote(
                 &db,
                 &client,
@@ -1067,8 +1070,9 @@ impl MutationRoot {
                 &cfg.remote.url,
                 &cfg.remote.username,
                 &|p| job.progress(p.done, p.total, describe_sync(p)),
-            )
-            .map_err(|e| e.to_string())?;
+            );
+            crate::clients::changed_if_library_moved(&db.conn);
+            let synced = synced.map_err(|e| e.to_string())?;
             if synced.library.is_complete() {
                 Ok("remote sync complete".to_string())
             } else {
@@ -1307,7 +1311,7 @@ fn send_to_client(
 fn reached(c: &crate::clients::ClientInfo) -> String {
     if c.notified {
         format!(
-            "{}, which was asleep: woken to take it (if iOS will not start the music there, it gets a notification to tap)",
+            "{}, which was asleep: music comes up as a notification to tap, since iOS will not start it there; anything else is applied as it wakes",
             c.name
         )
     } else {

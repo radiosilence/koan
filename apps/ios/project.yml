@@ -51,6 +51,7 @@ targets:
       - path: PrivacyInfo.xcprivacy
     dependencies:
       - target: KoanFFI
+      - target: NotificationService
     settings:
       base:
         PRODUCT_NAME: koan
@@ -69,6 +70,8 @@ targets:
       path: ../../target/ios-project/koan.entitlements
       properties:
         aps-environment: development
+        # A request to play reaches through Focus: it was asked for just now.
+        com.apple.developer.usernotifications.time-sensitive: true
     info:
       path: ../../target/ios-project/Info.plist
       properties:
@@ -103,6 +106,30 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+
+  # Attaches the album cover to a notification before it is shown.
+  NotificationService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: NotificationService
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan.NotificationService
+        # App Store Connect refuses an extension whose version differs from
+        # its app's.
+        MARKETING_VERSION: ${KOAN_VERSION}
+        CURRENT_PROJECT_VERSION: ${KOAN_BUILD}
+        TARGETED_DEVICE_FAMILY: "1,2"
+    info:
+      path: ../../target/ios-project/NotificationService-Info.plist
+      properties:
+        CFBundleDisplayName: kōan
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
 
   KoanUITests:
     type: bundle.ui-testing

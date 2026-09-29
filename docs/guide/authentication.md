@@ -72,8 +72,16 @@ KOAN_PASSWORD=secret koan auth create-user --username alice --role user
 koan auth login --server http://localhost:4000 --username admin
 # Prompts for password interactively
 
-# Token auto-refreshes — no need to login again until the refresh token expires (30 days)
 ```
+
+`koan play --server <url>` signs in with the stored token when its `server`
+matches `<url>`. Access tokens are short-lived; when the server refuses one,
+koan spends the refresh token for a new pair and retries once. The server
+revokes a refresh token on use, so each refresh writes its replacement back to
+`config.local.toml`. Each replacement starts a fresh `refresh_token_ttl` (30
+days by default), so a machine that connects that often stays signed in until
+`koan auth logout`. A refused or missing sign-in stops
+`koan play --server` at startup with the server's reason.
 
 ## User management
 

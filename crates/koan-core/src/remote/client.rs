@@ -102,6 +102,8 @@ pub struct SubsonicClient {
     auth: SubsonicAuth,
     http: reqwest::blocking::Client,
     downloader: reqwest::blocking::Client,
+    /// Whether the server is answering downloads, as the last of them found.
+    outage: download::Outage,
 }
 
 impl SubsonicClient {
@@ -120,7 +122,13 @@ impl SubsonicClient {
                 log::warn!("falling back to default download client: {}", e);
                 reqwest::blocking::Client::new()
             }),
+            outage: download::Outage::default(),
         }
+    }
+
+    /// Whether downloads from this server are waiting out an outage.
+    pub fn outage(&self) -> &download::Outage {
+        &self.outage
     }
 
     fn auth_params(&self) -> Result<HashMap<String, String>, SubsonicError> {
@@ -258,7 +266,7 @@ impl SubsonicClient {
 
     /// Download a track to a local path.
     pub fn download(&self, track_id: &str, dest: &Path) -> Result<(), SubsonicError> {
-        self.download_with_progress(track_id, dest, |_, _| {})
+        self.fetch_to_file("download", track_id, dest, None, |_, _| {})
     }
 
     /// Download a track with progress reporting.
@@ -266,13 +274,21 @@ impl SubsonicClient {
     /// The callback receives `(bytes_downloaded, total_bytes)`; total is 0 when
     /// the server sends no Content-Length, and the count restarts from zero if
     /// an attempt is retried. `dest` only appears once the file is complete.
+    ///
+    /// A server that is not answering is waited out, however long that takes,
+    /// until `cancelled` says the track is no longer wanted.
     pub fn download_with_progress(
         &self,
         track_id: &str,
         dest: &Path,
+        cancelled: &dyn Fn() -> bool,
         on_progress: impl Fn(u64, u64),
     ) -> Result<(), SubsonicError> {
-        self.fetch_to_file("download", track_id, dest, on_progress)
+        let patience = download::Patience {
+            outage: &self.outage,
+            cancelled,
+        };
+        self.fetch_to_file("download", track_id, dest, Some(patience), on_progress)
     }
 
     /// Fetch a track through `/rest/stream` instead of `/rest/download`.
@@ -286,7 +302,7 @@ impl SubsonicClient {
         dest: &Path,
         on_progress: impl Fn(u64, u64),
     ) -> Result<(), SubsonicError> {
-        self.fetch_to_file("stream", track_id, dest, on_progress)
+        self.fetch_to_file("stream", track_id, dest, None, on_progress)
     }
 
     fn fetch_to_file(
@@ -294,12 +310,14 @@ impl SubsonicClient {
         endpoint: &str,
         track_id: &str,
         dest: &Path,
+        patience: Option<download::Patience<'_>>,
         on_progress: impl Fn(u64, u64),
     ) -> Result<(), SubsonicError> {
         let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
         download::download_with_retries(
             dest,
             download::DEFAULT_ATTEMPTS,
+            patience,
             || {
                 // Fresh auth params per attempt — the salt must not be replayed.
                 let mut params = self

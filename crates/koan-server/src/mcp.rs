@@ -206,10 +206,10 @@ title artist current } }` to see each device, what it is playing and what it has
 command about the user's music goes to a device:
 - `controlClient(action: PAUSE|RESUME|NEXT|PREVIOUS)`, `seekOnClient(positionMs)`
 - `playOnClient(trackIds, startAt)` replaces the queue and plays; `enqueue: true` appends. \
-A phone iOS has suspended is not linked but is still reached: it is woken to take the \
-command, and music iOS will not start on its own (an app the user force-quit) comes up as a \
-notification to tap. The message says when a device was asleep; tell the user if they may need \
-to tap
+A phone iOS has suspended is not linked but is still reached. Music comes up there as a \
+notification to tap, since iOS lets no app start audio on its own from sleep; queue, radio and \
+other changes are applied as it wakes. The message says when a device was asleep: tell the user \
+to tap the notification
 - `playNextOnClient(trackIds)`, `jumpOnClient(trackId)` (skip to a track, queued or not), \
 `removeFromClient(trackIds)`, `clearClient`, `setClientRadio(enabled)`, `syncClient`
 - **Making a playlist the user asked for** (\"make me a cyberpunk playlist\"): research what \

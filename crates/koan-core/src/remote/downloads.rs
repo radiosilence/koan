@@ -293,6 +293,15 @@ impl DownloadStore {
         self.settle_one(id, DownloadState::Failed(reason));
     }
 
+    /// It stopped because nothing wants it any more. Not a failure, so it
+    /// leaves no row behind.
+    pub fn withdrawn(&self, id: QueueItemId) {
+        self.entries.write().retain(|d| d.id != id);
+        self.samples.lock().remove(&id);
+        self.figures.fetch_add(1, Ordering::Release);
+        self.bump();
+    }
+
     /// Drop everything that has already settled. The running ones are not this
     /// call's business — stopping a transfer is a different verb.
     pub fn clear_settled(&self) {

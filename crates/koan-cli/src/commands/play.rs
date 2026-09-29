@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use koan_core::config;
 use koan_core::db::queries;
+use koan_core::graphql_client::{GraphQLClient, GraphQLError};
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::ItemState;
@@ -223,7 +224,7 @@ pub fn cmd_play(
 pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
     eprintln!("connecting to kōan server at {}...", server_url);
 
-    let client = koan_core::graphql_client::GraphQLClient::new(server_url);
+    let client = GraphQLClient::from_config(server_url);
     match client.library_stats() {
         Ok(stats) => {
             let total = stats["libraryStats"]["totalTracks"].as_i64().unwrap_or(0);
@@ -233,6 +234,25 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
                 "connected — {} tracks, {} artists, {} albums",
                 total, artists, albums
             );
+        }
+        Err(GraphQLError::Unauthorized(reason)) => {
+            eprintln!(
+                "{} {} refused the connection: {}",
+                "error:".red().bold(),
+                server_url,
+                reason
+            );
+            if !client.has_session() {
+                let cfg = config::Config::load().unwrap_or_default();
+                if !cfg.auth.server.is_empty() {
+                    eprintln!("the stored sign-in is for {}", cfg.auth.server);
+                }
+            }
+            eprintln!(
+                "sign in with: koan auth login --server {} --username <name>",
+                server_url
+            );
+            std::process::exit(1);
         }
         Err(e) => {
             eprintln!(
@@ -249,7 +269,7 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         eprintln!("jukebox mode — server plays audio, client is remote control");
     }
     let (state, _timeline, viz_snapshot, cmd_tx) =
-        koan_tui::remote_bridge::spawn_remote_bridge(server_url, jukebox);
+        koan_tui::remote_bridge::spawn_remote_bridge(client, jukebox);
 
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
