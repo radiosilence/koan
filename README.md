@@ -33,7 +33,7 @@ brew install --cask radiosilence/koan/koan-app
 ```
 
 You may have to update brew's trust settings to trust the tap.
-Alternatively you can get `Koan.dmg` from the releases page.
+Alternatively, [download `Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) from the latest release.
 
 CLI/TUI:
 

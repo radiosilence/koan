@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The DMG opens to an install window**: the app beside an Applications link to drag it onto, over a background in koan.rocks' colours. Finder draws icon labels in black whenever a window has a background image, so each label sits on a light plate. The layout is written by dmgbuild rather than by scripting Finder, so it builds on CI runners with no logged-in session.
+- **koan.rocks links the DMG directly.** "Download for Mac" points at the latest release's `Koan.dmg`, which GitHub redirects to whichever release is newest, so the site never needs updating for a release.
+
 ## 0.44.1
 
 ### Added

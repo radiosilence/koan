@@ -342,12 +342,28 @@ macos-dev *ARGS: macos-bundle
         {{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app {{ARGS}}
 
 # Package the app as a DMG for release.
+# The window opens with the app, an Applications link to drop it on, and a
+# background drawn by `dmg/background.swift`. dmgbuild lays the window out by
+# writing .DS_Store directly, so this needs no Finder session and runs in CI.
+# It comes from uv where there is one, else pipx (preinstalled on GitHub's
+# macOS runners).
+#
+# Package kōan.app into Koan.dmg.
 macos-dmg: macos-bundle
     #!/usr/bin/env bash
     set -euo pipefail
     out={{app_dir}}/.build/pkg
+    bg={{app_dir}}/.build/dmg
+    mkdir -p "$bg"
+    swift {{app_dir}}/dmg/background.swift {{app_dir}}/Resources/AppIcon.svg site/public/geist-mono.woff2 "$bg"
+    tiffutil -cathidpicheck "$bg/background.png" "$bg/background@2x.png" -out "$bg/background.tiff" >/dev/null
+    if command -v uvx >/dev/null; then dmgbuild=(uvx --from dmgbuild==1.6.7 dmgbuild)
+    else dmgbuild=(pipx run --spec dmgbuild==1.6.7 dmgbuild); fi
     rm -f "$out/Koan.dmg"
-    hdiutil create -volname "koan" -srcfolder "$out/kōan.app" -ov -format UDZO "$out/Koan.dmg"
+    "${dmgbuild[@]}" -s {{app_dir}}/dmg/settings.py \
+        -D app="$out/kōan.app" -D background="$bg/background.tiff" \
+        -D volume_icon={{app_dir}}/Resources/AppIcon.icns \
+        kōan "$out/Koan.dmg"
     echo "built $out/Koan.dmg"
 
 # Needs KOAN_SIGN_IDENTITY (a "Developer ID Application" identity in the
