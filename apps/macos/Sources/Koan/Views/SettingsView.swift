@@ -50,6 +50,8 @@ struct SettingsView: View {
                         .tabItem { Label("Playback", systemImage: "hifispeaker") }
                     RadioSettings(model: model)
                         .tabItem { Label("Radio", systemImage: "dot.radiowaves.left.and.right") }
+                    DevicesSettings(model: model)
+                        .tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
                     AppearanceSettings()
                         .tabItem { Label("Appearance", systemImage: "paintpalette") }
                 }
@@ -66,6 +68,7 @@ struct SettingsView: View {
                     pane("Server", "server.rack") { RemoteSettings(model: model) }
                     pane("Playback", "hifispeaker") { PlaybackSettings(model: model) }
                     pane("Radio", "dot.radiowaves.left.and.right") { RadioSettings(model: model) }
+                    pane("Devices", "laptopcomputer.and.iphone") { DevicesSettings(model: model) }
                     Section {} footer: {
                         Text(AppVersion.text)
                             .font(.caption)
@@ -295,6 +298,7 @@ private struct RemoteSettings: View {
                     }
                     .rowButtons()
                 }
+                ServerOffers()
             } else {
                 Section {
                     // The prompt names the field: an iOS form shows only the
@@ -507,6 +511,120 @@ private struct ReachableSection: View {
     }
 }
 #endif
+
+// MARK: - Server
+
+/// What the server said it is when koan signed in, and what that turns on.
+/// koan's own features are OpenSubsonic extensions, so a server lists them the
+/// same way it lists any other.
+private struct ServerOffers: View {
+    @Environment(EngineMirror.self) private var mirror
+
+    var body: some View {
+        Section {
+            if let c = mirror.connection, c.serverKind != nil || c.openSubsonic {
+                LabeledContent("Server", value: server(c))
+                LabeledContent("OpenSubsonic", value: c.openSubsonic ? "Yes" : "No")
+                LabeledContent("Your devices", value: devices(c))
+                if !c.extensions.isEmpty {
+                    DisclosureGroup("Extensions (\(c.extensions.count))") {
+                        ForEach(c.extensions, id: \.name) { e in
+                            LabeledContent(e.name, value: e.versions.map { "v\($0)" }.joined(separator: ", "))
+                                .font(.callout)
+                        }
+                    }
+                }
+            } else {
+                Text("Not reached yet")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("What the server offers")
+        } footer: {
+            Text("Asked when kōan signs in and whenever its link to the server reconnects. Features beyond Subsonic are used only where the server lists them.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func server(_ c: ConnectionInfo) -> String {
+        let name = switch c.serverKind {
+        case "koan": "kōan"
+        case let kind?: kind.prefix(1).uppercased() + kind.dropFirst()
+        case nil: "Subsonic"
+        }
+        return [name, c.serverVersion].compactMap { $0 }.joined(separator: " ")
+    }
+
+    private func devices(_ c: ConnectionInfo) -> String {
+        guard c.devices else { return "Not offered" }
+        return c.linked ? "Connected" : "Offered, not connected"
+    }
+}
+
+// MARK: - Devices
+
+/// Being found and controlled by koan apps on the same network, and reaching
+/// devices on networks that do not announce them.
+private struct DevicesSettings: View {
+    @Bindable var model: SettingsModel
+    @Environment(EngineMirror.self) private var mirror
+    @State private var address = ""
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Discoverable on this network", isOn: Binding(
+                    get: { model.settings.devicesDiscoverable },
+                    set: { on in model.edit { $0.devicesDiscoverable = on } }
+                ))
+                if let port = mirror.connection?.listeningPort {
+                    LabeledContent("Listening on port", value: String(port))
+                }
+            } header: {
+                Text("This device")
+            } footer: {
+                Text("Any kōan app on this network can then see what is playing here and control it, whoever is signed in there. Your own devices reach each other through your server either way.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Section {
+                ForEach(model.settings.devicesAddresses, id: \.self) { addr in
+                    HStack {
+                        Text(addr).font(.callout.monospaced())
+                        Spacer()
+                        Button("Remove", role: .destructive) {
+                            model.edit { $0.devicesAddresses.removeAll { $0 == addr } }
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                HStack {
+                    TextField("Address", text: $address, prompt: Text("host or host:port"))
+                        .verbatimEntry(.url)
+                        .onSubmit(add)
+                    Button("Add", action: add)
+                        .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: {
+                Text("Devices by address")
+            } footer: {
+                Text("For networks that do not announce devices, such as a tailnet. The port is 5626 unless the other device says otherwise.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func add() {
+        let a = address.trimmingCharacters(in: .whitespaces)
+        guard !a.isEmpty, !model.settings.devicesAddresses.contains(a) else { return }
+        model.edit { $0.devicesAddresses.append(a) }
+        address = ""
+    }
+}
 
 // MARK: - Appearance
 

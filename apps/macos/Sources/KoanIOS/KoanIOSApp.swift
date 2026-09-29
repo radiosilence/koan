@@ -15,6 +15,7 @@ struct KoanIOSApp: App {
     @State private var startupError: String?
     @State private var session = AudioSession()
     @State private var keepalive = Keepalive()
+    @State private var remoteActivity: RemoteActivityController?
     @Environment(\.scenePhase) private var scenePhase
     @State private var powerSaving = ProcessInfo.processInfo.isLowPowerModeEnabled
 
@@ -74,6 +75,7 @@ struct KoanIOSApp: App {
                     let built = try await AppState()
                     await built.start()
                     PushDelegate.engine = built.player.engine
+                    remoteActivity = RemoteActivityController(engine: built.player.engine, mirror: built.mirror)
                     PushDelegate.requestAlertsIfSignedIn()
                     // The session goes up before anything can be asked to play:
                     // a RemoteIO unit on an inactive session produces silence

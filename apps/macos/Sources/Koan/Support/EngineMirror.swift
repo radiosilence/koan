@@ -61,6 +61,10 @@ final class EngineMirror: Observable {
     private var _scanning = false
     private var _syncing = false
     private var _syncProgress: SyncProgress?
+    private var _devices: [DeviceInfo] = []
+    private var _devicesAt = Date.now
+    private var _target: String?
+    private var _connection: ConnectionInfo?
 
     /// Everything a transport bar shows other than the position. Changes per
     /// track, per state, per format — not per tick.
@@ -109,6 +113,32 @@ final class EngineMirror: Observable {
     var queue: [QueueItem] {
         access(\.queue)
         return _queue
+    }
+
+    /// The other devices koan can play on. Their playheads are as reported
+    /// when this arrived; see `devicesAt`.
+    var devices: [DeviceInfo] {
+        access(\.devices)
+        return _devices
+    }
+
+    /// When `devices` arrived, to run a playing device's playhead on from.
+    var devicesAt: Date {
+        access(\.devices)
+        return _devicesAt
+    }
+
+    /// The device this app is controlling; `nil` for this one. While it is
+    /// another, `playback`, `playhead` and `queue` are that device's.
+    var target: String? {
+        access(\.devices)
+        return _target
+    }
+
+    /// The server and the network, as far as devices go.
+    var connection: ConnectionInfo? {
+        access(\.connection)
+        return _connection
     }
 
     /// Bumped by every queue mutation. Observed as `queue`: it arrives with the
@@ -274,6 +304,14 @@ final class EngineMirror: Observable {
             }
         case .sync(let progress):
             mutate(\.syncProgress) { _syncProgress = progress }
+        case .devices(let devices, let target):
+            mutate(\.devices) {
+                _devices = devices
+                _devicesAt = .now
+                _target = target
+            }
+        case .connection(let connection):
+            mutate(\.connection) { _connection = connection }
         }
     }
 

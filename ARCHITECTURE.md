@@ -286,6 +286,11 @@ fb2k-compatible template engine.
 | `download.rs` | The one place bytes are streamed to disk: `.part` temp file → verify → atomic rename, progress callback, retry with backoff. A server that is not answering (503, 429, 502, 504, no connection) is waited out on a per-client `Outage` rather than failing each track in turn. Shared by `client.rs` and the TUI remote bridge |
 | `sync.rs` | Library sync: stable `alphabeticalByName` album list (500/page), then on a first or full sync every song via empty-query `search3` (500/page, four in flight) joined to it, one transaction per page. Servers that list no songs that way, and incremental syncs, fetch albums one at a time with rayon. Reports progress per page. `last_sync` only advances on a run with zero failures |
 | `lrclib.rs` | LRCLIB API client for lyrics fetching (synced LRC + plain text) |
+| `profile.rs` | What the signed-in server is: `ping` and `getOpenSubsonicExtensions`, probed once per sign-in. koan's features are gated on the extensions listed (`koanLink`, `koanDevices`), not on the server's name |
+| `link.rs` | The client's WebSocket to a koan server (`/rest/koanLink`): `LinkCommand`s down, `LinkReport`s up (state, push token, relayed commands, Live Activity token). The wire format every device speaks, LAN connections included |
+| `wire.rs` | Runs a WebSocket session event-driven: one `poll` on the socket and a pipe the engine's change signal rings, so a link reports a change at once and sleeps otherwise |
+| `devices.rs` | The devices this one can play on (the account's, from the link; the network's, from `nearby`), which one the app controls, and routing a command to it: LAN connection, then the link, then one `koanCommand` request |
+| `nearby.rs` | LAN discovery and control: a listener on `devices.port`, Bonjour through the system's `dns_sd`, a connection to every device found or listed by address. Commands from the network are limited to playback and the queue |
 
 ### Other
 
@@ -330,6 +335,7 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 | `graphql/` | async-graphql schema, resolvers, axum HTTP server. Relay pagination, rich filters, mutations for playback/queue/library/favourites/playlists/radio. rusqlite is blocking, so resolvers run their DB and HTTP work on `spawn_blocking` with a pooled connection; parent → child edges go through dataloaders. |
 | `subsonic/` | Subsonic REST API endpoints for compatibility with existing clients (DSub, Symfonium, play:Sub). |
 | `mcp.rs` | MCP server on stdio -- exposes `schema_sdl` and `graphql` tools for Claude Desktop integration. |
+| `clients.rs` | Linked apps by account. Sends each link that asks the account's other devices whenever one changes, relays commands between them, and pushes Live Activity updates for a device a phone is controlling. |
 | `auth.rs` | JWT middleware, Ed25519 token generation/validation, role-based guards. |
 
 ## Picker actions
@@ -385,6 +391,8 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 **Atomic visible queue snapshot:** One `derive_visible_queue()` call per frame, cached in `vq_cache`. All render/mouse operations see consistent state within a frame.
 
 **Figment-layered config:** Four layers (defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars) merged by [figment](https://docs.rs/figment). Env vars use `KOAN_SECTION__FIELD` naming (double underscore splits into nested keys). `Config::load()` returns the fully merged result, and `Config::cached()` the shared `Arc`. `KOAN_CONFIG_DIR` moves the whole directory, which is how one machine runs more than one library and how tests avoid reading the configuration of whoever ran them — see `config::isolate_config_for_tests`. Reads go through a process-wide cache keyed on both files' mtimes — koan reaches config from paths that run per frame, and a merge costs two file reads — so a hand-edited config is still picked up while `update_base`/`patch_local` invalidate explicitly. **`Config::update_base()`** is the safe way to programmatically modify `config.toml` — it reads only the base file, applies a mutation closure, and writes back. **`patch_local(section, values)`** writes targeted updates to `config.local.toml` with `0o600` permissions — used for machine-specific values like remote credentials and library paths.
+
+**Controlling another device is a mode of the engine, not of the UI:** while the app controls another device, `koan-ffi` publishes that device's playback, playhead and queue in the slices its own would go in, and translates each `PlayerCommand` into a `LinkCommand` for it (queue entries by the ids that device reported, tracks by server id). Every page, Control Center and the media keys follow without knowing. A handoff is always carried out by the device that holds the queue, so taking music and sending it are the same command (`handOff { to }`).
 
 **Track dedup across sources:** Local file + Subsonic remote entry for the same song = one DB row. Local path always wins for playback.
 

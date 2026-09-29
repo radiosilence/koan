@@ -28,7 +28,7 @@ Three kinds of setting are machine-scoped and always land in
 | Kind | Settings |
 |------|----------|
 | Secrets | `remote.password`, `subsonic.password` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username`, `devices.discoverable/port/addresses` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
@@ -427,6 +427,28 @@ so only a server holding that key can send them. Without one, phones are
 reached only while linked, as before. Development builds of the app use
 Apple's sandbox gateway and release builds the production one; the app says
 which with its token, and the key works for both.
+
+---
+
+## `[devices]`
+
+Controlling this device from koan apps on the same network, and reaching
+devices on networks that do not announce them. Devices on the same account
+reach each other through the server whatever this says. See
+[Playing on another device](../guide/devices.md).
+
+```toml
+# config.local.toml -- whether a machine is open to its network is its own business
+[devices]
+discoverable = true                 # listen, and announce this device over Bonjour
+port = 5626                         # fixed, so a typed address keeps working
+addresses = ["mac-mini:5626"]       # dialled directly: for a tailnet, which carries no Bonjour
+```
+
+A discoverable device can be seen and controlled by any koan app on the
+network, whoever is signed in there: playback and the queue, never the library
+or the files on disk. If the port is taken, koan listens on another and
+announces that one, so only typed addresses miss it.
 
 ---
 

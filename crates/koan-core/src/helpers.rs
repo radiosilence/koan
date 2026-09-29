@@ -1197,7 +1197,7 @@ pub fn share_url(public_url: &str, id: &str) -> String {
 /// Its `al-` prefix says which is meant. Other servers get the id as they
 /// issued it: some also number albums, and would not know the prefix.
 fn album_share_id(client: &crate::remote::client::SubsonicClient, remote_id: String) -> String {
-    let koan = matches!(client.server_type(), Ok(Some(t)) if t == "koan");
+    let koan = crate::remote::profile::is_koan(client.auth());
     album_share_id_for(koan, remote_id)
 }
 

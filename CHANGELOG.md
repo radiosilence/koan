@@ -2,9 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- **Play on another device** ([#574](https://github.com/radiosilence/koan/issues/574)). The Play on button lists the other kōan apps this one can reach: the account's devices on any network, through a kōan server, and anyone's on the local network, found over Bonjour. Picking one makes it the device the app controls: this one pauses, and the transport, queue, heart and Now Playing (Control Center and the media keys included) act on that device until another is picked. **Move here** sends the controlled device's queue and playhead to another and controls it there, so a Mac's music can be taken out on the phone or sent back. Tracks the server does not have stay behind, and the app says how many. See [Playing on another device](docs/guide/devices.md).
+- **A lock-screen remote on iOS.** While the phone controls another device, a Live Activity shows what is playing there with previous, play-pause and next. The server pushes it each change once iOS has suspended the app (with the `[push]` key), and its buttons reach the server in one request when the app's link is down.
+- **Devices on the same network, and by address.** Each app listens on port 5626 and announces itself as `_koan._tcp`; `[devices]` turns that off, or lists addresses to dial where Bonjour does not reach, such as a tailnet. A device on the network may control playback and the queue, never the library or the files on disk.
+- **The client knows what it signed in to.** koan's extensions are listed in `getOpenSubsonicExtensions` (`koanLink`, `koanDevices`), and the app probes `ping` and that list once per sign-in rather than checking whether the server calls itself koan, so a feature is offered only where the server has it. Settings → Server shows the server, its version and the extensions it listed.
+
 ### Changed
 
 - **Every artist, album, track and playlist has one id on every device** ([#501](https://github.com/radiosilence/koan/issues/501)): a UUIDv7, published as its id over Subsonic, GraphQL and the link. Row ids are numbered per table, so an endpoint that takes any kind (`createShare`, `star`, `getCoverArt`) read album 5 as song 5; they are also numbered per database, so an id meant nothing on another device. A client syncing from a koan server takes the server's uids for its rows, including rows it merged with local files, so the server and every device name a track the same way. Bare and prefixed row ids (`5`, `al-5`) are still accepted everywhere. GraphQL id fields are now `ID` strings rather than `Int`. The library upgrades itself, and a build older than this one then refuses it. Each client's first sync after the server is upgraded re-reads the whole library, since every id changed; rows, history and favourites are kept. A device still on an older build lists each remote track twice after its next sync, because older builds keep two remote rows with different ids apart; updating it, or running a full sync, folds them back into one.
+- **The link to the server reports on change rather than every few seconds.** It waits on its socket and on the engine's change signal, so a pause on one device shows on the other at once and a quiet link wakes only to ping.
+- **Favouriting on one device has the account's other linked devices sync**, so the heart lights on the Mac for a track favourited on the phone.
+- GraphQL: `handOffClient(to, from)` moves one linked app's music to another, and `Client.device` is each app's stable id.
 
 ## 0.43.0
 

@@ -240,6 +240,30 @@ impl SubsonicClient {
         Ok(self.get("ping")?.server_type)
     }
 
+    /// What this server says it is and which OpenSubsonic extensions it
+    /// offers: `ping`, then `getOpenSubsonicExtensions` when it speaks
+    /// OpenSubsonic. A server that does not has no extensions to list.
+    pub fn profile(&self) -> Result<crate::remote::profile::ServerProfile, SubsonicError> {
+        let ping = self.get("ping")?;
+        let extensions = if ping.open_subsonic {
+            self.get("getOpenSubsonicExtensions")
+                .ok()
+                .and_then(|r| r.open_subsonic_extensions)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|e| (e.name, e.versions))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(crate::remote::profile::ServerProfile {
+            kind: ping.server_type,
+            version: ping.server_version,
+            open_subsonic: ping.open_subsonic,
+            extensions,
+        })
+    }
+
     /// Get all artists (indexed).
     pub fn get_artists(&self) -> Result<Vec<SubsonicArtist>, SubsonicError> {
         let resp = self.get("getArtists")?;
@@ -669,6 +693,17 @@ impl SubsonicClient {
         Ok(())
     }
 
+    /// Have the server hand `command` (a link command, as JSON) to the device
+    /// `to` on this account: a koan extension, `koanDevices`.
+    pub fn koan_command(&self, to: &str, command: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("koanCommand", &[("to", to), ("command", command)])?;
+        Ok(())
+    }
+
+    pub fn auth(&self) -> &SubsonicAuth {
+        &self.auth
+    }
+
     /// The configured server base URL (for constructing share links etc).
     pub fn base_url(&self) -> &str {
         &self.auth.base_url
@@ -691,6 +726,10 @@ struct SubsonicResponse {
     /// that predate OpenSubsonic.
     #[serde(rename = "type")]
     server_type: Option<String>,
+    server_version: Option<String>,
+    #[serde(default)]
+    open_subsonic: bool,
+    open_subsonic_extensions: Option<Vec<SubsonicExtension>>,
     error: Option<SubsonicApiError>,
     artists: Option<SubsonicArtists>,
     album: Option<SubsonicAlbumFull>,
@@ -703,7 +742,6 @@ struct SubsonicResponse {
     playlists: Option<SubsonicPlaylists>,
     playlist: Option<SubsonicPlaylistFull>,
     scan_status: Option<SubsonicScanStatus>,
-    open_subsonic_extensions: Option<Vec<OpenSubsonicExtension>>,
 }
 
 impl SubsonicResponse {
@@ -716,8 +754,10 @@ impl SubsonicResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct OpenSubsonicExtension {
+struct SubsonicExtension {
     name: String,
+    #[serde(default)]
+    versions: Vec<i64>,
 }
 
 #[derive(Debug, Deserialize)]

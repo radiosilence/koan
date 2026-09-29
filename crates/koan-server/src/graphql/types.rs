@@ -536,6 +536,8 @@ pub(super) struct GqlLibraryStats {
 #[graphql(name = "Client")]
 pub(super) struct GqlClient {
     pub id: String,
+    /// The device's own id: stable across its reconnects, unlike `id`.
+    pub device: String,
     /// What the device calls itself, e.g. "James's iPhone".
     pub name: String,
     /// `ios`, `macos` or `linux`.
@@ -581,6 +583,7 @@ impl From<crate::clients::ClientInfo> for GqlClient {
         let position_ms = c.position_ms();
         Self {
             id: c.id,
+            device: c.device,
             name: c.name,
             platform: c.platform,
             username: c.username,
