@@ -46,7 +46,9 @@ struct Running {
 
 struct Dialer {
     stop: Arc<Stop>,
-    /// Where it is dialled; moved by a fresh announcement.
+    /// Where it is dialled; moved by a fresh announcement, which only
+    /// Bonjour makes.
+    #[cfg_attr(not(target_vendor = "apple"), allow(dead_code))]
     addr: Arc<Mutex<String>>,
 }
 
