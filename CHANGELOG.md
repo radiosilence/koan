@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The iOS app builds for release again.** The Live Activity code handed an `Activity` across actors, which Swift 6 rejects, and 0.44.0's TestFlight archive failed on it. `just ios-typecheck` checked types only, and a data race is found after that, so it had passed; it now runs the same checks the archive does.
+
+### Changed
+
+- **CI caches what it builds.** The cache was over GitHub's 10 GB limit, so entries were evicted before they were reused and the TestFlight job compiled everything each time. Pull requests now read the cache without writing to it. The iOS job's cache covers its own target directory and is kept when the archive fails. The container image caches its dependencies in a layer of their own (cargo-chef), which survives source changes. The TestFlight job no longer builds the engine a second time for the Mac to generate the Swift bindings: they are read from the iOS build, by a bindings generator that is a crate of its own (`tools/uniffi-bindgen`) and builds nothing else.
+
 ## 0.44.0
 
 ### Added

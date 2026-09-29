@@ -56,7 +56,8 @@ final class RemoteActivityController {
         if let activity, activity.attributes.deviceId == target {
             guard state != shown else { return }
             shown = state
-            Task { await activity.update(ActivityContent(state: state, staleDate: nil)) }
+            let id = activity.id
+            Task.detached { await Self.running(id)?.update(ActivityContent(state: state, staleDate: nil)) }
         } else {
             end()
             start(target, state)
@@ -98,6 +99,13 @@ final class RemoteActivityController {
         activity = nil
         shown = nil
         engine.setLiveActivity(token: nil, device: nil, sandbox: false)
-        Task { await ending.end(nil, dismissalPolicy: .immediate) }
+        let id = ending.id
+        Task.detached { await Self.running(id)?.end(nil, dismissalPolicy: .immediate) }
+    }
+
+    /// The activity with this id, found where it is used. An `Activity` is not
+    /// `Sendable`, so the one held here cannot be handed to a task; its id can.
+    private nonisolated static func running(_ id: String) -> Activity<RemoteActivity>? {
+        Activity<RemoteActivity>.activities.first { $0.id == id }
     }
 }

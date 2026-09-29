@@ -46,9 +46,18 @@ jobs:
         with:
           toolchain: stable
           targets: aarch64-apple-ios
+      # The engine builds for iOS into a target directory of its own (see
+      # `ios-ffi`), which rust-cache does not look in unless told. Saved even
+      # when the archive fails: the Rust built fine, and a failed upload
+      # otherwise starts the next attempt from nothing.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: ios
+          cache-on-failure: true
+          workspaces: |
+            . -> target/ios-26.0
+            . -> target
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       - run: brew install xcodegen uv
       # The key is the one the macOS release notarises with: one App Store
