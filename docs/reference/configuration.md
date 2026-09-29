@@ -417,6 +417,11 @@ what waits in its outbox (syncs, evictions), and turns a request to play on it
 into a notification the person taps: iOS does not let a suspended app start
 playing on its own. GraphQL's `playOnClient` says which happened.
 
+With `sharing.public_url` set, that notification shows the album's cover. It
+carries a link to `/push/cover/…` that opens that one cover for ten minutes,
+signed with a key the server mints at start-up and never stores, so the app's
+notification extension can fetch it without a login.
+
 Apple accepts pushes only signed with the key of the team that ships the app,
 so only a server holding that key can send them. Without one, phones are
 reached only while linked, as before. Development builds of the app use

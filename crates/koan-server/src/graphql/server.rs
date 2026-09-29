@@ -310,12 +310,14 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // URL off the GraphQL base.
         // Built once and cloned: each build re-read the config from disk.
         // Public by design, so outside the auth layers: each route answers for
-        // one share's own tracks and nothing else. The Host guard still applies.
+        // one share's own tracks, or the one cover a notification's signed
+        // link names, and nothing else. The Host guard still applies.
         let share_routes = crate::share::router(
             pool.clone(),
             cfg.sharing.public_url.clone(),
-            covers,
-        );
+            covers.clone(),
+        )
+        .merge(crate::push::router(pool.clone(), covers));
         let subsonic_merged = crate::subsonic::subsonic_router(pool);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
