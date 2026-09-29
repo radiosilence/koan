@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- **The lock-screen remote shows the record's sleeve.** The server puts a small cover in each Live Activity push, so it is there with the app suspended.
+
+### Fixed
+
+- **A phone stays controlling the Mac across backgrounding and relaunches**, and the Live Activity stays with it. The device being controlled is kept on disk and is never let go of because it dropped out of a list, which happened whenever the link reconnected before the Mac's did (a server restart, the Mac asleep); it shows as out of reach until it is back.
+- **Other devices appear the moment the app opens.** The last device list is kept on disk and drawn at once. Coming to the front, every connection is pinged and one that does not answer within two seconds is replaced, rather than waiting up to 45 seconds on a socket iOS closed while the app was suspended; the server's profile is no longer asked again before each reconnect.
+- **Devices on the same network are found reliably.** Each device's last address is dialled at launch before Bonjour answers, and Bonjour browsing, the listener and the announcement are restarted when iOS has closed them. A device that is announced but cannot be reached is listed with the reason, and the picker says when iOS is keeping kōan off the local network, with a button to Settings, instead of showing nothing.
+
+## Unreleased
+
 ### Changed
 
 - **The DMG opens to an install window**: the app beside an Applications link to drag it onto, over a background in koan.rocks' colours. Finder draws icon labels in black whenever a window has a background image, so each label sits on a light plate. The layout is written by dmgbuild rather than by scripting Finder, so it builds on CI runners with no logged-in session.

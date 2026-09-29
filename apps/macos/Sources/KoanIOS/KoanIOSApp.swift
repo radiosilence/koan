@@ -75,7 +75,7 @@ struct KoanIOSApp: App {
                     let built = try await AppState()
                     await built.start()
                     PushDelegate.engine = built.player.engine
-                    remoteActivity = RemoteActivityController(engine: built.player.engine, mirror: built.mirror)
+                    remoteActivity = RemoteActivityController(engine: built.player.engine, mirror: built.mirror, art: built.art)
                     PushDelegate.requestAlertsIfSignedIn()
                     // The session goes up before anything can be asked to play:
                     // a RemoteIO unit on an inactive session produces silence

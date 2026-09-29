@@ -7,28 +7,34 @@ import SwiftUI
 ///
 /// Updated from here while the app runs, and by the server's pushes once iOS
 /// has suspended it; the push token goes up the link for that.
+///
+/// It lasts exactly as long as the phone controls another device, which the
+/// engine keeps on disk: an app iOS suspended or killed comes back controlling
+/// the same device, and takes up the activity it left rather than starting a
+/// second one.
 @MainActor
 final class RemoteActivityController {
     private let engine: KoanEngine
     private let mirror: EngineMirror
+    private let art: CoverArtCache
     private var activity: Activity<RemoteActivity>?
     private var tokens: Task<Void, Never>?
     private var shown: RemoteActivity.ContentState?
+    /// The sleeve as the activity carries it, and which record it is of.
+    private var sleeve: (album: Int64, data: Data?)?
 
-    init(engine: KoanEngine, mirror: EngineMirror) {
+    init(engine: KoanEngine, mirror: EngineMirror, art: CoverArtCache) {
         self.engine = engine
         self.mirror = mirror
+        self.art = art
         Task {
             await RemoteActivityCommands.shared.set { device, command in
                 try await engine.commandDevice(id: device, command: command)
             }
         }
-        // An activity outlives the process. Controlling its device again is
-        // what the person left the phone doing.
         if let left = Activity<RemoteActivity>.activities.first {
             activity = left
             follow(left)
-            Task { try? await engine.controlDevice(id: left.attributes.deviceId) }
         }
         mirror.follow { [weak self] in self?.refresh() }
     }
@@ -37,8 +43,6 @@ final class RemoteActivityController {
         guard let target = mirror.target,
               let device = mirror.devices.first(where: { $0.id == target })
         else {
-            // The target may be listed again in a moment (a link reconnecting);
-            // only a return to this device ends the activity.
             if mirror.target == nil { end() }
             return
         }
@@ -51,7 +55,8 @@ final class RemoteActivityController {
             playing: device.state == .playing,
             positionMs: device.positionMs,
             durationMs: device.durationMs,
-            at: mirror.devicesAt.timeIntervalSince1970
+            at: mirror.devicesAt.timeIntervalSince1970,
+            art: thumbnail(for: device.albumId)
         )
         if let activity, activity.attributes.deviceId == target {
             guard state != shown else { return }
@@ -62,6 +67,35 @@ final class RemoteActivityController {
             end()
             start(target, state)
         }
+    }
+
+    /// The record's sleeve at a size the activity can carry, once it has been
+    /// fetched. The fetch itself runs off to one side and refreshes when done.
+    private func thumbnail(for album: Int64?) -> Data? {
+        guard let album else { return nil }
+        if let sleeve, sleeve.album == album { return sleeve.data }
+        if let image = art.cached(.album(album), size: .thumb) {
+            let data = Self.jpeg(image)
+            sleeve = (album, data)
+            return data
+        }
+        Task {
+            _ = await art.image(for: .album(album), size: .thumb)
+            refresh()
+        }
+        return nil
+    }
+
+    /// Small enough for the 4 KB Apple allows an activity's state.
+    private static func jpeg(_ image: UIImage) -> Data? {
+        let side: CGFloat = 72
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side))
+        let small = renderer.image { _ in
+            image.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+        }
+        return [0.6, 0.45, 0.3].lazy
+            .compactMap { small.jpegData(compressionQuality: $0) }
+            .first { $0.count <= 1900 }
     }
 
     private func start(_ target: String, _ state: RemoteActivity.ContentState) {

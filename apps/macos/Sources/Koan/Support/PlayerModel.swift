@@ -390,7 +390,10 @@ final class PlayerModel {
     }
 
     /// Any other device to play on is known of.
-    var hasOtherDevices: Bool { !mirror.devices.isEmpty }
+    /// Or iOS is hiding them: the picker is where that is explained.
+    var hasOtherDevices: Bool {
+        !mirror.devices.isEmpty || mirror.connection?.localNetworkBlocked == true
+    }
 
     /// Controlling another device, whether or not it is still listed.
     var isControllingAnother: Bool { mirror.target != nil }
@@ -418,8 +421,9 @@ final class PlayerModel {
     /// there must be something to move.
     func canMoveMusic(to destination: DeviceInfo?) -> Bool {
         if destination?.id == mirror.target { return false }
+        if destination?.problem != nil { return false }
         if let source = controlled {
-            guard source.sameLibrary, source.state != .stopped else { return false }
+            guard source.sameLibrary, source.state != .stopped, source.problem == nil else { return false }
         } else if queue.isEmpty {
             return false
         }

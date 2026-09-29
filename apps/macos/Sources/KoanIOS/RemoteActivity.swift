@@ -24,6 +24,8 @@ struct RemoteActivity: ActivityAttributes {
         var durationMs: UInt64
         /// When `positionMs` was true, in Unix seconds.
         var at: Double
+        /// The sleeve, a small JPEG; base64 in the server's pushes.
+        var art: Data?
 
         /// When the track started, had it played without a pause since.
         var started: Date {

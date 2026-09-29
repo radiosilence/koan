@@ -417,10 +417,16 @@ fn run(local: Local) {
                 }
                 *LINK.lock() = None;
                 crate::remote::devices::set_linked(false);
-                // The server may have been upgraded while the link was down.
+            }
+            Err(e) => {
+                log::warn!("link: {e}");
+                // Asked again before the next attempt: the server may have
+                // been replaced by one that does not link. Not after a link
+                // that simply dropped, which is every time iOS suspends the
+                // app, and re-asking then put two round trips in front of
+                // every reconnect.
                 profile::forget();
             }
-            Err(e) => log::warn!("link: {e}"),
         }
         if rest(wait) {
             wait = RETRY_MIN;

@@ -20,6 +20,14 @@ this one can reach.
 - **Devices by address.** A tailnet carries no Bonjour; add the other device's
   name and port (`mac-mini:5626`) under Settings → Devices.
 
+A device that is found but cannot be reached is listed with the reason. On
+iOS, finding anything on the network needs **Local Network** allowed for kōan
+(Settings → Privacy & Security); the picker says so when it is not.
+
+The device being controlled and the devices last seen are kept between runs,
+so reopening the app shows them at once, still controlling the same device;
+each is checked as the app comes to the front.
+
 ## Controlling and moving
 
 Picking a device controls it. This device pauses, and the transport, the queue
