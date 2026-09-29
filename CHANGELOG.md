@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.44.0
 
 ### Added
 
@@ -16,7 +16,12 @@
 - **Every artist, album, track and playlist has one id on every device** ([#501](https://github.com/radiosilence/koan/issues/501)): a UUIDv7, published as its id over Subsonic, GraphQL and the link. Row ids are numbered per table, so an endpoint that takes any kind (`createShare`, `star`, `getCoverArt`) read album 5 as song 5; they are also numbered per database, so an id meant nothing on another device. A client syncing from a koan server takes the server's uids for its rows, including rows it merged with local files, so the server and every device name a track the same way. Bare and prefixed row ids (`5`, `al-5`) are still accepted everywhere. GraphQL id fields are now `ID` strings rather than `Int`. The library upgrades itself, and a build older than this one then refuses it. Each client's first sync after the server is upgraded re-reads the whole library, since every id changed; rows, history and favourites are kept. A device still on an older build lists each remote track twice after its next sync, because older builds keep two remote rows with different ids apart; updating it, or running a full sync, folds them back into one.
 - **The link to the server reports on change rather than every few seconds.** It waits on its socket and on the engine's change signal, so a pause on one device shows on the other at once and a quiet link wakes only to ping.
 - **Favouriting on one device has the account's other linked devices sync**, so the heart lights on the Mac for a track favourited on the phone.
+- **TestFlight builds say what changed.** Each upload's "What to Test" is that version's changelog section ([#581](https://github.com/radiosilence/koan/pull/581)).
 - GraphQL: `handOffClient(to, from)` moves one linked app's music to another, and `Client.device` is each app's stable id.
+
+### Fixed
+
+- **iOS builds reach TestFlight again** ([#580](https://github.com/radiosilence/koan/pull/580)). CI signed each archive with a fresh Apple Development certificate until the account ran out, and 0.43.0 never uploaded; it now reuses one stored certificate.
 
 ## 0.43.0
 
