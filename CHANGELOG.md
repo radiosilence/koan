@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **macOS release binaries are signed with a Developer ID and notarised.** Downloaded through a browser, the ad-hoc signed binaries were quarantined and Gatekeeper refused to run them until the quarantine attribute was cleared.
+
 ### Fixed
 
 - koan.rocks no longer scrolls sideways on narrow phones: the header nav wraps under the logo instead of pushing the page wider than the screen.
