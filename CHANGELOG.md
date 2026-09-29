@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- **The "Play on …" notification shows the album's cover.** The server puts a link to the cover in the notification, and a notification service extension in the iOS app fetches and attaches it before iOS shows it. The extension holds no sign-in, so the link authorises itself: an HMAC over one track and an expiry ten minutes out, keyed by a secret that lives only in the server's process, opening that one cover and nothing else. Needs `sharing.public_url`; without it the notification shows as before.
+
 ### Fixed
 
+- **koan.rocks no longer renders new pages against an old stylesheet.** The server caches every file for a year as immutable, and the stylesheet lived at a fixed URL, so a browser that had visited before kept the old rules under new markup (the header nav lost its spacing). The stylesheet's URL now carries a hash of its content.
 - **Lyrics cached before a synced copy existed upstream now upgrade to it** ([#215](https://github.com/radiosilence/koan/issues/215)). Any cached copy used to be final, so a track first fetched as plain text never highlighted. A plain copy older than 30 days is checked against LRCLIB again when it is next shown, and kept (with its clock reset) if there is still no synced one. Synced copies are never re-fetched.
 
 ## 0.42.1
@@ -11,6 +16,7 @@
 ### Changed
 
 - **Music for a sleeping phone is a notification at once.** iOS does not let an app it woke start audio, which the phone's log showed plainly: the woken app took the command and the output unit refused to start. So a request to play on a phone iOS has suspended is sent straight away as the "Play on …" notification, time-sensitive so it reaches through Focus, rather than after a wake and a wait that could not succeed. Every other command still goes to the outbox and wakes the phone to take it. The app no longer switches to a mixable audio session when woken.
+- **Release notes no longer carry the quarantine workaround.** Every release since 0.40.0 is notarised, so the `xattr` instructions only applied to builds nobody downloads.
 
 ### Fixed
 
@@ -333,6 +339,7 @@
 
 ### Changed
 
+- **The server sign-in fields say what they are.** An iOS form shows a field's prompt and not its label, so the prompts were the only text on screen, and they were examples (`https://music.example.com`, `your account`, `hunter2`). They now read Server URL, Username and Password.
 - **The share page plays gaplessly, and looks like the rest of the estate.** Tracks the browser can decode are decoded ahead and each is started on the sample the last one ends, so albums that run into each other play without a gap; a track too long to hold decoded (over fifteen minutes) streams instead. One player with previous, play and next, a seek bar, and lock-screen and headphone controls through the Media Session API. The script and stylesheet are served by koan (`/share/assets/*`) and the CSP allows those and nothing else; without script, each track is a plain link.
 
 ## Unreleased

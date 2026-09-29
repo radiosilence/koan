@@ -14,9 +14,19 @@ import Observation
 /// Held in the order things were ticked, not the order of the grid. A pick can
 /// span several filters — narrow, tick, narrow again, tick more — and the grid
 /// has no order for a record it is no longer showing.
+///
+/// One per grid: a pick belongs to the grid it was made in, and ends when that
+/// grid leaves the screen.
 @MainActor
 @Observable
 final class AlbumSelection {
+    /// What the grid is showing, in its order — where ⇧ and ⌘A look.
+    @ObservationIgnored let grid: @MainActor () -> [Album]
+
+    init(grid: @escaping @MainActor () -> [Album]) {
+        self.grid = grid
+    }
+
     private(set) var isActive = false
     private(set) var ids: [Int64] = []
 
@@ -43,19 +53,19 @@ final class AlbumSelection {
 
     /// A click on a tile: ⇧ extends from the last one clicked, anything else
     /// flips just this one. A tap has no ⇧, so it always flips.
-    func click(_ id: Int64, in grid: [Album]) {
+    func click(_ id: Int64) {
         #if canImport(AppKit)
         if NSEvent.modifierFlags.contains(.shift), let anchor {
-            extend(from: anchor, to: id, in: grid)
+            extend(from: anchor, to: id, in: grid())
             return
         }
         #endif
         toggle(id)
     }
 
-    func selectAll(_ grid: [Album]) {
+    func selectAll() {
         isActive = true
-        add(grid.map(\.id))
+        add(grid().map(\.id))
     }
 
     private func toggle(_ id: Int64) {

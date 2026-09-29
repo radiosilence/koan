@@ -228,7 +228,14 @@ struct RootView: View {
                 ToolbarSpacer(.fixed, placement: .primaryAction)
 
                 ToolbarItem(placement: .primaryAction) {
-                    AlbumSelectionControls()
+                    AlbumSelectionControls(selection: library.selection)
+                }
+            }
+
+            // An artist's records are a grid too, and are picked the same way.
+            if case .artist = nav.current {
+                ToolbarItem(placement: .primaryAction) {
+                    AlbumSelectionControls(selection: library.artistSelection)
                 }
             }
 
@@ -433,11 +440,12 @@ private struct TransportOverlay: View {
 /// Select, or what to do with what has been selected. The only reader of the
 /// selection outside the tiles, so a tick re-runs this and not the root.
 private struct AlbumSelectionControls: View {
+    let selection: AlbumSelection
+
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
 
     var body: some View {
-        let selection = library.selection
         if selection.isActive {
             let count = selection.ids.count
             HStack(spacing: 2) {
