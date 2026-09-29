@@ -32,6 +32,7 @@ log = "0.4"
 # Subsonic/Navidrome
 getrandom = "0.4"
 md5 = "0.8"
+url = "2"
 # Async/threading
 parking_lot = "0.12"
 # Only `sync`: `watch` is the analyser telling its subscribers a frame is

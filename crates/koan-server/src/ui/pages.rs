@@ -59,9 +59,14 @@ fn head(title: &str) -> String {
 
 fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> String {
     let signout = if auth_enabled {
+        let users = if user.role == Role::Admin {
+            "<a href=\"/users\" data-nav=users>Users</a>"
+        } else {
+            ""
+        };
         format!(
             "<form class=account method=post action=\"/auth/signout\"><span>{}</span>\
-<a href=\"/keys\" data-nav=keys>API keys</a><button class=quiet>Sign out</button></form>",
+{users}<a href=\"/keys\" data-nav=keys>API keys</a><button class=quiet>Sign out</button></form>",
             escape(&user.username)
         )
     } else {

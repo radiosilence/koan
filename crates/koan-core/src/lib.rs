@@ -7,6 +7,7 @@ pub mod format;
 pub mod graphql_client;
 pub mod helpers;
 pub mod index;
+pub mod invite;
 pub mod lyrics;
 pub mod organize;
 pub mod player;

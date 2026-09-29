@@ -78,6 +78,18 @@ img.missing { visibility: hidden; }
 .hero .info { min-width: 0; flex: 1; }
 .hero h1 { margin-bottom: 4px; }
 .actions, .controls .buttons { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+a.button { display: inline-block; color: var(--text); background: var(--line); border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; text-decoration: none; }
+a.button:hover { border-color: var(--hover); text-decoration: none; }
+.users li { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 10px 4px; border-bottom: 1px solid var(--line); min-width: 0; }
+.users .t { flex: 1; min-width: 8em; overflow-wrap: anywhere; }
+.users .t small { margin-left: 8px; color: var(--dim); font-size: 13px; }
+.users select, .keyform select { padding: 6px 8px; }
+.invite { margin: 8px 0 16px; padding: 4px 16px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; max-width: 560px; }
+.invite-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.details { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 14px 0 0; font-size: 14px; }
+.details dt { color: var(--dim); }
+.details dd { margin: 0; overflow-wrap: anywhere; user-select: all; }
 .share { display: flex; gap: 8px; margin-top: 12px; max-width: 520px; }
 .share input { flex: 1; font-size: 14px; }
 .share.error { display: block; font-size: 14px; }

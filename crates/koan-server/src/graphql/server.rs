@@ -275,6 +275,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             auth_route_state.clone(),
             auth_enabled,
             covers.clone(),
+            cfg.sharing.public_url.clone(),
         );
 
         // Auth routes — always accessible (no auth middleware).
