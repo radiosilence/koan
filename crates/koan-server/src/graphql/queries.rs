@@ -36,6 +36,7 @@ impl QueryRoot {
         #[graphql(default_with = "SortDirection::Asc")] sort_dir: SortDirection,
     ) -> async_graphql::Result<Conn<GqlArtist>> {
         let ids = super::opt_row_ids(ctx, UidKind::Artist, ids.as_deref()).await?;
+        let user = super::user_id(ctx);
         let rows = with_db(ctx, move |db| {
             let mut artists = if let Some(ref query) = search {
                 queries::find_artists(&db.conn, query)
@@ -61,7 +62,7 @@ impl QueryRoot {
             }
 
             if favourites_only {
-                let fav_ids = queries::favourite_artist_ids_batch(&db.conn)
+                let fav_ids = queries::favourite_artist_ids_batch(&db.conn, user)
                     .map_err(|e| super::internal_error("db", e))?;
                 artists.retain(|a| fav_ids.contains(&a.id));
             }
@@ -121,6 +122,7 @@ impl QueryRoot {
         let ids = super::opt_row_ids(ctx, UidKind::Album, ids.as_deref()).await?;
         let artist_id = super::opt_row_id(ctx, UidKind::Artist, artist_id.as_ref()).await?;
         let artist_ids = super::opt_row_ids(ctx, UidKind::Artist, artist_ids.as_deref()).await?;
+        let user = super::user_id(ctx);
         let rows = with_db(ctx, move |db| {
             let mut albums = if let Some(aid) = artist_id {
                 queries::albums_for_artist(&db.conn, aid)
@@ -196,7 +198,7 @@ impl QueryRoot {
             }
 
             if favourites_only {
-                let fav_ids = queries::favourite_album_ids_batch(&db.conn)
+                let fav_ids = queries::favourite_album_ids_batch(&db.conn, user)
                     .map_err(|e| super::internal_error("db", e))?;
                 albums.retain(|a| fav_ids.contains(&a.id));
             }
@@ -294,7 +296,7 @@ impl QueryRoot {
             channels,
             min_duration_ms,
             max_duration_ms,
-            favourites_only,
+            favourites_of: favourites_only.then(|| super::user_id(ctx)),
         };
 
         let offset = page_offset(after.as_deref());
@@ -443,9 +445,10 @@ impl QueryRoot {
     ) -> async_graphql::Result<Conn<GqlTrack>> {
         let offset = page_offset(after.as_deref());
         let limit = page_size(first);
+        let user = super::user_id(ctx);
         let rows = with_db(ctx, move |db| {
             let filter = TrackFilter {
-                favourites_only: true,
+                favourites_of: Some(user),
                 ..Default::default()
             };
             queries::batch::filter_tracks(
@@ -467,16 +470,17 @@ impl QueryRoot {
         ))
     }
 
-    /// Share links this server serves, newest first, expired ones included
-    /// so they can be renewed or removed.
+    /// The caller's share links (everyone's for an admin), newest first,
+    /// expired ones included so they can be renewed or removed.
     async fn shares(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlShareLink>> {
         super::require_role(ctx, koan_core::auth::Role::User)?;
-        with_db(ctx, |db| {
+        let owner = super::share_owner(ctx);
+        with_db(ctx, move |db| {
             let cfg = Config::load().unwrap_or_default();
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs() as i64);
-            let list = queries::shares::list_shares(&db.conn)
+            let list = queries::shares::list_shares(&db.conn, owner)
                 .map_err(|e| super::internal_error("db", e))?;
             Ok(list
                 .into_iter()
@@ -503,11 +507,13 @@ impl QueryRoot {
         .await
     }
 
-    /// Every playlist, in the order the owner arranged them.
+    /// The caller's playlists and everyone's public ones, in the order the
+    /// owner arranged them.
     async fn playlists(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlPlaylist>> {
-        with_db(ctx, |db| {
-            let list =
-                queries::list_playlists(&db.conn).map_err(|e| super::internal_error("db", e))?;
+        let user = super::user_id(ctx);
+        with_db(ctx, move |db| {
+            let list = queries::list_playlists(&db.conn, user)
+                .map_err(|e| super::internal_error("db", e))?;
             Ok(list.into_iter().map(GqlPlaylist::from).collect())
         })
         .await
@@ -520,7 +526,9 @@ impl QueryRoot {
         id: async_graphql::ID,
     ) -> async_graphql::Result<Vec<GqlTrack>> {
         let id = super::row_id(ctx, UidKind::Playlist, &id).await?;
+        let user = super::user_id(ctx);
         with_db(ctx, move |db| {
+            super::readable_playlist(db, user, id)?;
             let rows = queries::playlist_tracks(&db.conn, id)
                 .map_err(|e| super::internal_error("db", e))?;
             Ok(rows.into_iter().map(|row| GqlTrack { row }).collect())
@@ -568,8 +576,9 @@ impl QueryRoot {
     ) -> async_graphql::Result<Vec<GqlPlayHistoryEntry>> {
         let limit = limit.clamp(0, MAX_PAGE as i32) as u32;
         let offset = offset.max(0) as u32;
+        let user = super::user_id(ctx);
         with_db(ctx, move |db| {
-            let entries = queries::get_play_history(&db.conn, limit, offset)
+            let entries = queries::get_play_history(&db.conn, user, limit, offset)
                 .map_err(|e| super::internal_error("db", e))?;
             // One lookup for the whole page rather than one per entry.
             let ids: Vec<i64> = entries.iter().map(|e| e.track_id).collect();

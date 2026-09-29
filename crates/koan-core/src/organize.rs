@@ -2371,7 +2371,7 @@ mod tests {
         add_track(&db, &source, "Airbag", 1);
         let source_str = source.to_string_lossy().into_owned();
 
-        queries::add_favourite(&db.conn, &source).unwrap();
+        queries::add_favourite(&db.conn, crate::db::queries::LOCAL_USER, &source).unwrap();
         let item = PersistedQueueItem {
             path: source_str.clone(),
             title: "Airbag".into(),
@@ -2392,7 +2392,8 @@ mod tests {
         let dest = result.moves().next().unwrap().dest().to_path_buf();
         let dest_str = dest.to_string_lossy().into_owned();
 
-        let favourites = queries::load_favourites(&db.conn).unwrap();
+        let favourites =
+            queries::load_favourites(&db.conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(favourites.contains(&dest));
         assert!(!favourites.contains(&source));
 
@@ -2402,7 +2403,8 @@ mod tests {
 
         assert_eq!(undo(&db).unwrap().restored, 1);
 
-        let favourites = queries::load_favourites(&db.conn).unwrap();
+        let favourites =
+            queries::load_favourites(&db.conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(favourites.contains(&source));
         assert!(!favourites.contains(&dest));
         let state = queries::load_playback_state(&db.conn).unwrap().unwrap();

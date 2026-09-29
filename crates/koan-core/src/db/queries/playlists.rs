@@ -14,6 +14,7 @@
 use rusqlite::{Connection, params};
 
 use super::TrackRow;
+use super::auth::resolve_user;
 use crate::db::connection::DbError;
 
 /// A playlist and what can be known about it without reading its tracks.
@@ -25,7 +26,10 @@ pub struct PlaylistRow {
     pub name: String,
     pub comment: Option<String>,
     pub public: bool,
+    /// The server's name for whoever owns it, or the owning account's.
     pub owner: Option<String>,
+    /// The user it belongs to, resolved (see `queries::auth::resolve_user`).
+    pub user_id: i64,
     pub remote_id: Option<String>,
     pub created_at: String,
     pub changed_at: String,
@@ -38,11 +42,12 @@ pub struct PlaylistRow {
     pub duration_ms: i64,
 }
 
-const SELECT: &str = "SELECT p.id, p.name, p.comment, p.public, p.owner, p.remote_id,
-            p.created_at, p.changed_at, p.sort_order, p.grouped,
-            COUNT(pt.track_id), COALESCE(SUM(t.duration_ms), 0),
+const SELECT: &str = "SELECT p.id, p.name, p.comment, p.public, COALESCE(p.owner, u.username),
+            p.remote_id, p.created_at, p.changed_at, p.sort_order, p.grouped,
+            COUNT(pt.track_id), COALESCE(SUM(t.duration_ms), 0), p.user_id,
             COALESCE(p.uid, CAST(p.id AS TEXT))
      FROM playlists p
+     LEFT JOIN users u ON u.id = p.user_id
      LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
      LEFT JOIN tracks t ON t.id = pt.track_id";
 
@@ -60,17 +65,31 @@ fn row_to_playlist(row: &rusqlite::Row) -> rusqlite::Result<PlaylistRow> {
         grouped: row.get::<_, Option<i64>>(9)?.map(|g| g != 0),
         track_count: row.get(10)?,
         duration_ms: row.get(11)?,
-        uid: row.get(12)?,
+        user_id: row.get(12)?,
+        uid: row.get(13)?,
     })
 }
 
-/// Every playlist, in sidebar order.
-pub fn list_playlists(conn: &Connection) -> Result<Vec<PlaylistRow>, DbError> {
+impl PlaylistRow {
+    /// Whether `user` (resolved) may see it: their own, or anyone's public one.
+    pub fn readable_by(&self, user: i64) -> bool {
+        self.user_id == user || self.public
+    }
+
+    /// Whether `user` (resolved) may change it: their own only.
+    pub fn editable_by(&self, user: i64) -> bool {
+        self.user_id == user
+    }
+}
+
+/// `user`'s playlists and everyone's public ones, in sidebar order.
+pub fn list_playlists(conn: &Connection, user: i64) -> Result<Vec<PlaylistRow>, DbError> {
     let mut stmt = conn.prepare(&format!(
-        "{SELECT} GROUP BY p.id ORDER BY p.sort_order, p.name COLLATE LIBRARY"
+        "{SELECT} WHERE p.user_id = ?1 OR p.public = 1
+         GROUP BY p.id ORDER BY p.sort_order, p.name COLLATE LIBRARY"
     ))?;
     let rows = stmt
-        .query_map([], row_to_playlist)?
+        .query_map([resolve_user(conn, user)?], row_to_playlist)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -104,12 +123,13 @@ pub fn playlist_by_remote_id(
     }
 }
 
-/// Create an empty playlist and return its id.
+/// Create an empty playlist of `user`'s and return its id.
 ///
 /// New playlists go to the top of the sidebar: you just made it, so it is the
 /// one you are about to use.
 pub fn create_playlist(
     conn: &Connection,
+    user: i64,
     name: &str,
     comment: Option<&str>,
 ) -> Result<i64, DbError> {
@@ -121,8 +141,8 @@ pub fn create_playlist(
         )
         .unwrap_or(0);
     conn.execute(
-        "INSERT INTO playlists (name, comment, sort_order) VALUES (?1, ?2, ?3)",
-        params![name, comment, top],
+        "INSERT INTO playlists (name, comment, sort_order, user_id) VALUES (?1, ?2, ?3, ?4)",
+        params![name, comment, top, resolve_user(conn, user)?],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -430,13 +450,13 @@ pub fn playlist_cover_album_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, 
     Ok(rows)
 }
 
-/// Playlists that have never been pushed to a server.
-pub fn playlists_without_remote(conn: &Connection) -> Result<Vec<PlaylistRow>, DbError> {
+/// `user`'s playlists that have never been pushed to a server.
+pub fn playlists_without_remote(conn: &Connection, user: i64) -> Result<Vec<PlaylistRow>, DbError> {
     let mut stmt = conn.prepare(&format!(
-        "{SELECT} WHERE p.remote_id IS NULL GROUP BY p.id ORDER BY p.sort_order"
+        "{SELECT} WHERE p.remote_id IS NULL AND p.user_id = ?1 GROUP BY p.id ORDER BY p.sort_order"
     ))?;
     let rows = stmt
-        .query_map([], row_to_playlist)?
+        .query_map([resolve_user(conn, user)?], row_to_playlist)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -489,6 +509,7 @@ fn touch(conn: &Connection, id: i64) -> Result<(), DbError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::queries::LOCAL_USER;
     use crate::db::queries::{sample_meta, upsert_track};
 
     fn test_conn() -> Connection {
@@ -507,7 +528,7 @@ mod tests {
         let conn = test_conn();
         let a = track(&conn, "One", "Album");
         let b = track(&conn, "Two", "Album");
-        let id = create_playlist(&conn, "Evening", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Evening", None).unwrap();
 
         assert_eq!(add_tracks(&conn, id, &[b, a]).unwrap().len(), 2);
         assert_eq!(playlist_track_ids(&conn, id).unwrap(), vec![b, a]);
@@ -522,7 +543,7 @@ mod tests {
     fn the_same_track_can_appear_twice() {
         let conn = test_conn();
         let a = track(&conn, "One", "Album");
-        let id = create_playlist(&conn, "Repeat", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Repeat", None).unwrap();
 
         add_tracks(&conn, id, &[a, a]).unwrap();
         assert_eq!(playlist_track_ids(&conn, id).unwrap(), vec![a, a]);
@@ -534,7 +555,7 @@ mod tests {
         let conn = test_conn();
         let a = track(&conn, "One", "Album");
         let b = track(&conn, "Two", "Album");
-        let id = create_playlist(&conn, "Mix", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
         let made = add_tracks(&conn, id, &[a, b]).unwrap();
 
         reorder_entries(&conn, id, &[made[1], made[0]]).unwrap();
@@ -559,7 +580,7 @@ mod tests {
         let conn = test_conn();
         let a = track(&conn, "One", "Album");
         let b = track(&conn, "Two", "Album");
-        let id = create_playlist(&conn, "Repeat", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Repeat", None).unwrap();
         let made = add_tracks(&conn, id, &[a, b, a]).unwrap();
         assert_eq!(made.len(), 3);
         assert_ne!(made[0], made[2], "same track, different rows");
@@ -578,7 +599,7 @@ mod tests {
         let a = track(&conn, "One", "Album");
         let b = track(&conn, "Two", "Album");
         let c = track(&conn, "Three", "Album");
-        let id = create_playlist(&conn, "Mix", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
         let made = add_tracks(&conn, id, &[a, b, c]).unwrap();
 
         assert_eq!(remove_entries(&conn, id, &[made[1]]).unwrap(), 1);
@@ -600,7 +621,7 @@ mod tests {
         let a = track(&conn, "One", "Album");
         let b = track(&conn, "Two", "Album");
         let c = track(&conn, "Three", "Album");
-        let id = create_playlist(&conn, "Mix", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
         add_tracks(&conn, id, &[a, b, c]).unwrap();
 
         set_playlist_tracks(&conn, id, &[c, a]).unwrap();
@@ -611,7 +632,7 @@ mod tests {
     fn tracks_that_no_longer_exist_are_left_out_rather_than_failing() {
         let conn = test_conn();
         let a = track(&conn, "One", "Album");
-        let id = create_playlist(&conn, "Mix", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
 
         assert_eq!(add_tracks(&conn, id, &[a, 9999]).unwrap().len(), 1);
         assert_eq!(playlist_track_ids(&conn, id).unwrap(), vec![a]);
@@ -621,7 +642,7 @@ mod tests {
     fn deleting_a_playlist_takes_its_members_with_it() {
         let conn = test_conn();
         let a = track(&conn, "One", "Album");
-        let id = create_playlist(&conn, "Doomed", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Doomed", None).unwrap();
         add_tracks(&conn, id, &[a]).unwrap();
 
         assert!(delete_playlist(&conn, id).unwrap());
@@ -637,7 +658,7 @@ mod tests {
         let conn = test_conn();
         let a = track(&conn, "One", "Album");
         let b = track(&conn, "Two", "Album");
-        let id = create_playlist(&conn, "Mix", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
         add_tracks(&conn, id, &[a, b]).unwrap();
 
         conn.execute("DELETE FROM tracks WHERE id = ?1", params![a])
@@ -651,7 +672,7 @@ mod tests {
         let a1 = track(&conn, "A1", "First");
         let a2 = track(&conn, "A2", "First");
         let b1 = track(&conn, "B1", "Second");
-        let id = create_playlist(&conn, "Mix", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
         add_tracks(&conn, id, &[a1, a2, b1]).unwrap();
 
         let album_of = |track_id: i64| {
@@ -671,12 +692,12 @@ mod tests {
     #[test]
     fn sidebar_order_is_what_reorder_was_given() {
         let conn = test_conn();
-        let a = create_playlist(&conn, "A", None).unwrap();
-        let b = create_playlist(&conn, "B", None).unwrap();
-        let c = create_playlist(&conn, "C", None).unwrap();
+        let a = create_playlist(&conn, LOCAL_USER, "A", None).unwrap();
+        let b = create_playlist(&conn, LOCAL_USER, "B", None).unwrap();
+        let c = create_playlist(&conn, LOCAL_USER, "C", None).unwrap();
 
         reorder_playlists(&conn, &[c, a, b]).unwrap();
-        let order: Vec<i64> = list_playlists(&conn)
+        let order: Vec<i64> = list_playlists(&conn, LOCAL_USER)
             .unwrap()
             .iter()
             .map(|p| p.id)
@@ -687,7 +708,7 @@ mod tests {
     #[test]
     fn the_view_preference_survives_a_round_trip() {
         let conn = test_conn();
-        let id = create_playlist(&conn, "Mix", None).unwrap();
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
         assert_eq!(get_playlist(&conn, id).unwrap().unwrap().grouped, None);
 
         set_playlist_grouped(&conn, id, Some(true)).unwrap();

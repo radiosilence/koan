@@ -37,9 +37,9 @@ pub(super) struct UidOf(pub UidKind, pub i64);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct RowOf(pub UidKind, pub String);
 
-/// Favourite lookup keyed by the track's playback path.
+/// Favourite lookup keyed by whose favourites and the track's playback path.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) struct FavouritePath(pub String);
+pub(super) struct FavouritePath(pub i64, pub String);
 
 pub(super) struct DbLoader {
     handle: DbHandle,
@@ -204,13 +204,23 @@ impl Loader<FavouritePath> for DbLoader {
         keys: &[FavouritePath],
     ) -> Result<HashMap<FavouritePath, Self::Value>, Self::Error> {
         self.batch(keys, |db, keys| {
-            let paths: Vec<String> = keys.iter().map(|k| k.0.clone()).collect();
-            let starred = queries::batch::favourite_paths(&db.conn, &paths)
-                .map_err(|e| internal_error("db", e))?;
+            // One request is one user, so this is one query in practice.
+            let mut by_user: HashMap<i64, Vec<String>> = HashMap::new();
+            for k in &keys {
+                by_user.entry(k.0).or_default().push(k.1.clone());
+            }
+            let mut starred = std::collections::HashSet::new();
+            for (user, paths) in by_user {
+                for path in queries::batch::favourite_paths(&db.conn, user, &paths)
+                    .map_err(|e| internal_error("db", e))?
+                {
+                    starred.insert((user, path));
+                }
+            }
             Ok(keys
                 .into_iter()
                 .map(|k| {
-                    let hit = starred.contains(&k.0);
+                    let hit = starred.contains(&(k.0, k.1.clone()));
                     (k, hit)
                 })
                 .collect())

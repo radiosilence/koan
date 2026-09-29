@@ -91,8 +91,10 @@ fn new_id() -> Result<String, DbError> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// Make a share on `user`'s behalf.
 pub fn create_share(
     conn: &Connection,
+    user: i64,
     slice: Slice,
     track_ids: &[i64],
     description: Option<&str>,
@@ -102,8 +104,8 @@ pub fn create_share(
     let id = new_id()?;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "INSERT INTO shares (id, description, created_at, expires_at, kind, subject_id, start_track_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO shares (id, description, created_at, expires_at, kind, subject_id, start_track_id, user_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             id,
             description,
@@ -111,7 +113,8 @@ pub fn create_share(
             expires_at,
             slice.kind.as_str(),
             slice.subject_id,
-            slice.start_track_id
+            slice.start_track_id,
+            super::auth::resolve_user(&tx, user)?
         ],
     )?;
     {
@@ -176,33 +179,51 @@ pub fn get_share(conn: &Connection, id: &str) -> Result<Option<ShareRow>, DbErro
     Ok(Some(share))
 }
 
-/// Newest first.
-pub fn list_shares(conn: &Connection) -> Result<Vec<ShareRow>, DbError> {
+/// Whose shares a listing or an edit reaches: `Some(user)` for that user's
+/// own, `None` for everyone's (an admin).
+fn owned_by(conn: &Connection, owner: Option<i64>) -> Result<Option<i64>, DbError> {
+    Ok(match owner {
+        Some(user) => Some(super::auth::resolve_user(conn, user)?),
+        None => None,
+    })
+}
+
+/// `owner`'s shares, or everyone's for `None`. Newest first.
+pub fn list_shares(conn: &Connection, owner: Option<i64>) -> Result<Vec<ShareRow>, DbError> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT {COLUMNS} FROM shares ORDER BY created_at DESC, id"
+        "SELECT {COLUMNS} FROM shares WHERE ?1 IS NULL OR user_id = ?1
+         ORDER BY created_at DESC, id"
     ))?;
-    let mut shares: Vec<ShareRow> = stmt.query_map([], row)?.collect::<Result<_, _>>()?;
+    let mut shares: Vec<ShareRow> = stmt
+        .query_map([owned_by(conn, owner)?], row)?
+        .collect::<Result<_, _>>()?;
     for share in &mut shares {
         share.track_ids = tracks_of(conn, &share.id)?;
     }
     Ok(shares)
 }
 
-/// `true` when there was such a share.
-pub fn delete_share(conn: &Connection, id: &str) -> Result<bool, DbError> {
-    Ok(conn.execute("DELETE FROM shares WHERE id = ?1", [id])? > 0)
+/// `true` when there was such a share of `owner`'s (anyone's for `None`).
+pub fn delete_share(conn: &Connection, owner: Option<i64>, id: &str) -> Result<bool, DbError> {
+    Ok(conn.execute(
+        "DELETE FROM shares WHERE id = ?1 AND (?2 IS NULL OR user_id = ?2)",
+        params![id, owned_by(conn, owner)?],
+    )? > 0)
 }
 
-/// Change the description and expiry. `true` when there was such a share.
+/// Change the description and expiry. `true` when there was such a share of
+/// `owner`'s (anyone's for `None`).
 pub fn update_share(
     conn: &Connection,
+    owner: Option<i64>,
     id: &str,
     description: Option<&str>,
     expires_at: Option<i64>,
 ) -> Result<bool, DbError> {
     Ok(conn.execute(
-        "UPDATE shares SET description = ?2, expires_at = ?3 WHERE id = ?1",
-        params![id, description, expires_at],
+        "UPDATE shares SET description = ?2, expires_at = ?3
+         WHERE id = ?1 AND (?4 IS NULL OR user_id = ?4)",
+        params![id, description, expires_at, owned_by(conn, owner)?],
     )? > 0)
 }
 
@@ -231,8 +252,26 @@ mod tests {
     #[test]
     fn a_share_keeps_its_tracks_in_order_and_goes_when_deleted() {
         let (conn, [t1, t2, t3]) = test_conn();
-        let a = create_share(&conn, Slice::TRACKS, &[t3, t1, t2], Some("mix"), 100, None).unwrap();
-        let b = create_share(&conn, Slice::TRACKS, &[t1], None, 200, Some(300)).unwrap();
+        let a = create_share(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            Slice::TRACKS,
+            &[t3, t1, t2],
+            Some("mix"),
+            100,
+            None,
+        )
+        .unwrap();
+        let b = create_share(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            Slice::TRACKS,
+            &[t1],
+            None,
+            200,
+            Some(300),
+        )
+        .unwrap();
         assert_eq!(a.id.len(), 32);
         assert_ne!(a.id, b.id);
         assert_eq!(
@@ -240,16 +279,16 @@ mod tests {
             [t3, t1, t2]
         );
         assert_eq!(
-            list_shares(&conn)
+            list_shares(&conn, None)
                 .unwrap()
                 .iter()
                 .map(|s| s.id.clone())
                 .collect::<Vec<_>>(),
             [b.id.clone(), a.id.clone()]
         );
-        assert!(delete_share(&conn, &a.id).unwrap());
+        assert!(delete_share(&conn, None, &a.id).unwrap());
         assert!(get_share(&conn, &a.id).unwrap().is_none());
-        assert!(!delete_share(&conn, &a.id).unwrap());
+        assert!(!delete_share(&conn, None, &a.id).unwrap());
         let n: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM share_tracks WHERE share_id = ?1",
@@ -268,7 +307,16 @@ mod tests {
             subject_id: Some(7),
             start_track_id: Some(t2),
         };
-        let s = create_share(&conn, slice, &[t1, t2], None, 100, None).unwrap();
+        let s = create_share(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            slice,
+            &[t1, t2],
+            None,
+            100,
+            None,
+        )
+        .unwrap();
         let back = get_share(&conn, &s.id).unwrap().unwrap();
         assert_eq!(back.slice, slice);
         assert_eq!(back.track_ids, [t1, t2]);
@@ -277,12 +325,48 @@ mod tests {
     #[test]
     fn expiry_and_visits() {
         let (conn, [t1, ..]) = test_conn();
-        let s = create_share(&conn, Slice::TRACKS, &[t1], None, 100, Some(200)).unwrap();
+        let s = create_share(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            Slice::TRACKS,
+            &[t1],
+            None,
+            100,
+            Some(200),
+        )
+        .unwrap();
         assert!(s.is_live(199) && !s.is_live(200));
         record_visit(&conn, &s.id, 150).unwrap();
         let s = get_share(&conn, &s.id).unwrap().unwrap();
         assert_eq!((s.visits, s.last_visited), (1, Some(150)));
-        assert!(update_share(&conn, &s.id, Some("x"), None).unwrap());
+        assert!(update_share(&conn, None, &s.id, Some("x"), None).unwrap());
         assert!(get_share(&conn, &s.id).unwrap().unwrap().is_live(i64::MAX));
+    }
+
+    #[test]
+    fn a_share_is_listed_and_changed_by_its_owner_alone() {
+        let (conn, [t1, ..]) = test_conn();
+        let make = |user| create_share(&conn, user, Slice::TRACKS, &[t1], None, 0, None).unwrap();
+        let (a, b) = (make(1), make(2));
+        let ids = |owner| -> Vec<String> {
+            list_shares(&conn, owner)
+                .unwrap()
+                .into_iter()
+                .map(|s| s.id)
+                .collect()
+        };
+
+        assert_eq!(ids(Some(1)), vec![a.id.clone()]);
+        assert_eq!(ids(None).len(), 2, "unscoped is everyone's");
+        assert!(!update_share(&conn, Some(1), &b.id, Some("mine now"), None).unwrap());
+        assert!(!delete_share(&conn, Some(1), &b.id).unwrap());
+        assert!(
+            get_share(&conn, &b.id)
+                .unwrap()
+                .unwrap()
+                .description
+                .is_none()
+        );
+        assert!(delete_share(&conn, Some(2), &b.id).unwrap());
     }
 }

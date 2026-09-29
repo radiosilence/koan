@@ -269,16 +269,22 @@ pub fn artist_stats(
 
 /// Which of the given paths are favourited — one query instead of a full table
 /// scan per track.
-pub fn favourite_paths(conn: &Connection, paths: &[String]) -> Result<HashSet<String>, DbError> {
+pub fn favourite_paths(
+    conn: &Connection,
+    user: i64,
+    paths: &[String],
+) -> Result<HashSet<String>, DbError> {
     if paths.is_empty() {
         return Ok(HashSet::new());
     }
     let sql = format!(
-        "SELECT track_path FROM favourites WHERE track_path IN {}",
+        "SELECT track_path FROM favourites WHERE user_id = ? AND track_path IN {}",
         placeholders(paths.len())
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(paths), |row| row.get::<_, String>(0))?;
+    let user = super::auth::resolve_user(conn, user)?;
+    let binds = std::iter::once(&user as &dyn ToSql).chain(paths.iter().map(|p| p as &dyn ToSql));
+    let rows = stmt.query_map(params_from_iter(binds), |row| row.get::<_, String>(0))?;
     rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }
 
@@ -367,7 +373,8 @@ pub struct TrackFilter {
     pub channels: Option<i32>,
     pub min_duration_ms: Option<i64>,
     pub max_duration_ms: Option<i64>,
-    pub favourites_only: bool,
+    /// Only tracks this user has favourited.
+    pub favourites_of: Option<i64>,
 }
 
 /// Fetch a page of tracks matching `filter`.
@@ -480,12 +487,14 @@ pub fn filter_tracks(
         }
     }
 
-    if filter.favourites_only {
+    if let Some(user) = filter.favourites_of {
         clauses.push(
             "EXISTS (SELECT 1 FROM favourites f
-                     WHERE f.track_path = t.path OR f.track_path = t.cached_path)"
+                     WHERE f.user_id = ?
+                       AND (f.track_path = t.path OR f.track_path = t.cached_path))"
                 .to_string(),
         );
+        binds.push(Box::new(super::auth::resolve_user(conn, user)?));
     }
 
     let dir = if descending { "DESC" } else { "ASC" };
@@ -641,11 +650,13 @@ mod tests {
         seed(&db);
         add_favourite(
             &db.conn,
+            crate::db::queries::LOCAL_USER,
             std::path::Path::new("/music/Drukqs/Vordhosbn.flac"),
         )
         .unwrap();
         let hits = favourite_paths(
             &db.conn,
+            crate::db::queries::LOCAL_USER,
             &[
                 "/music/Drukqs/Vordhosbn.flac".to_string(),
                 "/music/MHTRTC/Roygbiv.flac".to_string(),

@@ -1770,6 +1770,7 @@ mod tests {
             .unwrap();
         queries::add_favourite(
             &db.conn,
+            queries::LOCAL_USER,
             std::path::Path::new(before.remote_url.as_deref().unwrap()),
         )
         .unwrap();
@@ -1793,7 +1794,12 @@ mod tests {
         assert_eq!(remote_id, uid);
         assert_eq!(album, format!("album-of-{uid}"));
         assert_eq!(artist, format!("artist-of-{uid}"));
-        let favourites = queries::load_favourites(&db.conn).unwrap();
+        let adopted: String = db
+            .conn
+            .query_row("SELECT uid FROM tracks WHERE id = ?1", [row], |r| r.get(0))
+            .unwrap();
+        assert_eq!(adopted, uid, "the row takes the server's uid");
+        let favourites = queries::load_favourites(&db.conn, queries::LOCAL_USER).unwrap();
         assert_eq!(
             favourites,
             HashSet::from([std::path::PathBuf::from(after.remote_url.unwrap())]),
