@@ -66,6 +66,12 @@ struct SettingsView: View {
                     pane("Server", "server.rack") { RemoteSettings(model: model) }
                     pane("Playback", "hifispeaker") { PlaybackSettings(model: model) }
                     pane("Radio", "dot.radiowaves.left.and.right") { RadioSettings(model: model) }
+                    Section {} footer: {
+                        Text(AppVersion.text)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity)
+                    }
                 }
                 .navigationTitle("Settings")
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
