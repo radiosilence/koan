@@ -25,11 +25,11 @@ final class LibraryModel {
     /// The album browser's pick and the artist page's, each over its own grid.
     /// Unobserved, so reaching one subscribes nothing; what it holds is
     /// observed where it is drawn.
-    @ObservationIgnored private(set) lazy var selection = AlbumSelection { [unowned self] in
-        visibleAlbums
+    @ObservationIgnored private(set) lazy var selection = PlayableSelection { [unowned self] in
+        visibleAlbums.map(Playable.album)
     }
-    @ObservationIgnored private(set) lazy var artistSelection = AlbumSelection { [unowned self] in
-        detailArtist?.albums ?? []
+    @ObservationIgnored private(set) lazy var artistSelection = PlayableSelection { [unowned self] in
+        (detailArtist?.albums ?? []).map(Playable.album)
     }
 
     /// What is on screen. Written only by the navigator, which owns it — the

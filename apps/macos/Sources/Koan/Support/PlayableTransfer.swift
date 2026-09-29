@@ -58,6 +58,8 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         self.origin = origin
     }
 
+    var key: Playable.Key { Playable.Key(kind: kind, id: id) }
+
     init(_ playable: Playable) {
         origin = nil
         switch playable {
