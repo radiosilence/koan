@@ -1,12 +1,15 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
-/// Load all favourite track paths from the database.
-pub fn load_favourites(conn: &Connection) -> rusqlite::Result<HashSet<PathBuf>> {
-    let mut stmt = conn.prepare("SELECT track_path FROM favourites")?;
-    let rows = stmt.query_map([], |row| {
+use super::auth::resolve_user;
+
+/// Load all of `user`'s favourite track paths.
+pub fn load_favourites(conn: &Connection, user: i64) -> rusqlite::Result<HashSet<PathBuf>> {
+    let user = resolve_user(conn, user)?;
+    let mut stmt = conn.prepare("SELECT track_path FROM favourites WHERE user_id = ?1")?;
+    let rows = stmt.query_map([user], |row| {
         let p: String = row.get(0)?;
         Ok(PathBuf::from(p))
     })?;
@@ -18,36 +21,36 @@ pub fn load_favourites(conn: &Connection) -> rusqlite::Result<HashSet<PathBuf>> 
 }
 
 /// Add a track path to favourites. Idempotent.
-pub fn add_favourite(conn: &Connection, path: &Path) -> rusqlite::Result<()> {
+pub fn add_favourite(conn: &Connection, user: i64, path: &Path) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT OR IGNORE INTO favourites (track_path) VALUES (?1)",
-        [path.to_string_lossy().as_ref()],
+        "INSERT OR IGNORE INTO favourites (user_id, track_path) VALUES (?1, ?2)",
+        params![resolve_user(conn, user)?, path.to_string_lossy()],
     )?;
     Ok(())
 }
 
 /// Remove a track path from favourites.
-pub fn remove_favourite(conn: &Connection, path: &Path) -> rusqlite::Result<()> {
+pub fn remove_favourite(conn: &Connection, user: i64, path: &Path) -> rusqlite::Result<()> {
     conn.execute(
-        "DELETE FROM favourites WHERE track_path = ?1",
-        [path.to_string_lossy().as_ref()],
+        "DELETE FROM favourites WHERE user_id = ?1 AND track_path = ?2",
+        params![resolve_user(conn, user)?, path.to_string_lossy()],
     )?;
     Ok(())
 }
 
 /// Toggle a favourite. Returns true if the track is now a favourite.
-pub fn toggle_favourite(conn: &Connection, path: &Path) -> rusqlite::Result<bool> {
-    let path_str = path.to_string_lossy();
+pub fn toggle_favourite(conn: &Connection, user: i64, path: &Path) -> rusqlite::Result<bool> {
+    let user = resolve_user(conn, user)?;
     let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM favourites WHERE track_path = ?1)",
-        [path_str.as_ref()],
+        "SELECT EXISTS(SELECT 1 FROM favourites WHERE user_id = ?1 AND track_path = ?2)",
+        params![user, path.to_string_lossy()],
         |row| row.get(0),
     )?;
     if exists {
-        remove_favourite(conn, path)?;
+        remove_favourite(conn, user, path)?;
         Ok(false)
     } else {
-        add_favourite(conn, path)?;
+        add_favourite(conn, user, path)?;
         Ok(true)
     }
 }
@@ -61,90 +64,101 @@ pub fn toggle_favourite(conn: &Connection, path: &Path) -> rusqlite::Result<bool
 /// Make an album a favourite, or stop it being one. Idempotent either way.
 pub fn set_favourite_album(
     conn: &Connection,
+    user: i64,
     artist: &str,
     album: &str,
     favourite: bool,
 ) -> rusqlite::Result<()> {
     let sql = if favourite {
-        "INSERT OR IGNORE INTO favourite_albums (artist_name, album_title) VALUES (?1, ?2)"
+        "INSERT OR IGNORE INTO favourite_albums (user_id, artist_name, album_title) VALUES (?1, ?2, ?3)"
     } else {
-        "DELETE FROM favourite_albums WHERE artist_name = ?1 AND album_title = ?2"
+        "DELETE FROM favourite_albums WHERE user_id = ?1 AND artist_name = ?2 AND album_title = ?3"
     };
-    conn.execute(sql, [artist, album])?;
+    conn.execute(sql, params![resolve_user(conn, user)?, artist, album])?;
     Ok(())
 }
 
 /// Make an artist a favourite, or stop them being one. Idempotent either way.
 pub fn set_favourite_artist(
     conn: &Connection,
+    user: i64,
     artist: &str,
     favourite: bool,
 ) -> rusqlite::Result<()> {
     let sql = if favourite {
-        "INSERT OR IGNORE INTO favourite_artists (artist_name) VALUES (?1)"
+        "INSERT OR IGNORE INTO favourite_artists (user_id, artist_name) VALUES (?1, ?2)"
     } else {
-        "DELETE FROM favourite_artists WHERE artist_name = ?1"
+        "DELETE FROM favourite_artists WHERE user_id = ?1 AND artist_name = ?2"
     };
-    conn.execute(sql, [artist])?;
+    conn.execute(sql, params![resolve_user(conn, user)?, artist])?;
     Ok(())
 }
 
 /// Toggle an album favourite. Returns true if the album is now a favourite.
 pub fn toggle_favourite_album(
     conn: &Connection,
+    user: i64,
     artist: &str,
     album: &str,
 ) -> rusqlite::Result<bool> {
+    let user = resolve_user(conn, user)?;
     let removed = conn.execute(
-        "DELETE FROM favourite_albums WHERE artist_name = ?1 AND album_title = ?2",
-        [artist, album],
+        "DELETE FROM favourite_albums WHERE user_id = ?1 AND artist_name = ?2 AND album_title = ?3",
+        params![user, artist, album],
     )?;
     if removed > 0 {
         return Ok(false);
     }
     conn.execute(
-        "INSERT OR IGNORE INTO favourite_albums (artist_name, album_title) VALUES (?1, ?2)",
-        [artist, album],
+        "INSERT OR IGNORE INTO favourite_albums (user_id, artist_name, album_title) VALUES (?1, ?2, ?3)",
+        params![user, artist, album],
     )?;
     Ok(true)
 }
 
 /// Toggle an artist favourite. Returns true if the artist is now a favourite.
-pub fn toggle_favourite_artist(conn: &Connection, artist: &str) -> rusqlite::Result<bool> {
+pub fn toggle_favourite_artist(
+    conn: &Connection,
+    user: i64,
+    artist: &str,
+) -> rusqlite::Result<bool> {
+    let user = resolve_user(conn, user)?;
     let removed = conn.execute(
-        "DELETE FROM favourite_artists WHERE artist_name = ?1",
-        [artist],
+        "DELETE FROM favourite_artists WHERE user_id = ?1 AND artist_name = ?2",
+        params![user, artist],
     )?;
     if removed > 0 {
         return Ok(false);
     }
     conn.execute(
-        "INSERT OR IGNORE INTO favourite_artists (artist_name) VALUES (?1)",
-        [artist],
+        "INSERT OR IGNORE INTO favourite_artists (user_id, artist_name) VALUES (?1, ?2)",
+        params![user, artist],
     )?;
     Ok(true)
 }
 
 /// Every album id that is a favourite, resolved through the album's title and
 /// artist. One query per listing rather than one per row.
-pub fn favourite_album_id_set(conn: &Connection) -> rusqlite::Result<HashSet<i64>> {
+pub fn favourite_album_id_set(conn: &Connection, user: i64) -> rusqlite::Result<HashSet<i64>> {
     let mut stmt = conn.prepare(
         "SELECT al.id FROM albums al
          JOIN artists ar ON al.artist_id = ar.id
          JOIN favourite_albums f
-           ON f.artist_name = ar.name AND f.album_title = al.title",
+           ON f.artist_name = ar.name AND f.album_title = al.title
+         WHERE f.user_id = ?1",
     )?;
-    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    let rows = stmt.query_map([resolve_user(conn, user)?], |row| row.get::<_, i64>(0))?;
     rows.collect()
 }
 
 /// Every artist id that is a favourite.
-pub fn favourite_artist_id_set(conn: &Connection) -> rusqlite::Result<HashSet<i64>> {
+pub fn favourite_artist_id_set(conn: &Connection, user: i64) -> rusqlite::Result<HashSet<i64>> {
     let mut stmt = conn.prepare(
         "SELECT ar.id FROM artists ar
-         JOIN favourite_artists f ON f.artist_name = ar.name",
+         JOIN favourite_artists f ON f.artist_name = ar.name
+         WHERE f.user_id = ?1",
     )?;
-    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    let rows = stmt.query_map([resolve_user(conn, user)?], |row| row.get::<_, i64>(0))?;
     rows.collect()
 }
 
@@ -196,26 +210,36 @@ pub fn artist_favourite_key(conn: &Connection, artist_id: i64) -> rusqlite::Resu
 }
 
 /// Favourited albums that exist on the server, as (album_id, remote_id).
-pub fn favourite_albums_with_remote_id(conn: &Connection) -> rusqlite::Result<Vec<(i64, String)>> {
+pub fn favourite_albums_with_remote_id(
+    conn: &Connection,
+    user: i64,
+) -> rusqlite::Result<Vec<(i64, String)>> {
     let mut stmt = conn.prepare(
         "SELECT al.id, al.remote_id FROM albums al
          JOIN artists ar ON al.artist_id = ar.id
          JOIN favourite_albums f
            ON f.artist_name = ar.name AND f.album_title = al.title
-         WHERE al.remote_id IS NOT NULL",
+         WHERE al.remote_id IS NOT NULL AND f.user_id = ?1",
     )?;
-    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let rows = stmt.query_map([resolve_user(conn, user)?], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?;
     rows.collect()
 }
 
 /// Favourited artists that exist on the server, as (artist_id, remote_id).
-pub fn favourite_artists_with_remote_id(conn: &Connection) -> rusqlite::Result<Vec<(i64, String)>> {
+pub fn favourite_artists_with_remote_id(
+    conn: &Connection,
+    user: i64,
+) -> rusqlite::Result<Vec<(i64, String)>> {
     let mut stmt = conn.prepare(
         "SELECT ar.id, ar.remote_id FROM artists ar
          JOIN favourite_artists f ON f.artist_name = ar.name
-         WHERE ar.remote_id IS NOT NULL",
+         WHERE ar.remote_id IS NOT NULL AND f.user_id = ?1",
     )?;
-    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let rows = stmt.query_map([resolve_user(conn, user)?], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?;
     rows.collect()
 }
 
@@ -223,8 +247,10 @@ pub fn favourite_artists_with_remote_id(conn: &Connection) -> rusqlite::Result<V
 /// many were new.
 pub fn import_remote_favourite_albums(
     conn: &Connection,
+    user: i64,
     starred_remote_ids: &[String],
 ) -> rusqlite::Result<usize> {
+    let user = resolve_user(conn, user)?;
     let mut count = 0;
     for rid in starred_remote_ids {
         let names: Option<(String, String)> = conn
@@ -238,8 +264,9 @@ pub fn import_remote_favourite_albums(
             .optional()?;
         if let Some((artist, album)) = names {
             count += conn.execute(
-                "INSERT OR IGNORE INTO favourite_albums (artist_name, album_title) VALUES (?1, ?2)",
-                [&artist, &album],
+                "INSERT OR IGNORE INTO favourite_albums (user_id, artist_name, album_title)
+                 VALUES (?1, ?2, ?3)",
+                params![user, artist, album],
             )?;
         }
     }
@@ -249,8 +276,10 @@ pub fn import_remote_favourite_albums(
 /// Import starred artists from the server, matched by remote id.
 pub fn import_remote_favourite_artists(
     conn: &Connection,
+    user: i64,
     starred_remote_ids: &[String],
 ) -> rusqlite::Result<usize> {
+    let user = resolve_user(conn, user)?;
     let mut count = 0;
     for rid in starred_remote_ids {
         let name: Option<String> = conn
@@ -262,8 +291,8 @@ pub fn import_remote_favourite_artists(
             .optional()?;
         if let Some(name) = name {
             count += conn.execute(
-                "INSERT OR IGNORE INTO favourite_artists (artist_name) VALUES (?1)",
-                [&name],
+                "INSERT OR IGNORE INTO favourite_artists (user_id, artist_name) VALUES (?1, ?2)",
+                params![user, name],
             )?;
         }
     }
@@ -310,18 +339,24 @@ pub fn album_remote_id_for_path(
 /// A union of three indexed lookups rather than a join on an `OR` across the
 /// three path columns, which SQLite cannot index and answered by reading every
 /// track in the library.
-pub fn favourites_with_remote_id(conn: &Connection) -> rusqlite::Result<Vec<(PathBuf, String)>> {
+pub fn favourites_with_remote_id(
+    conn: &Connection,
+    user: i64,
+) -> rusqlite::Result<Vec<(PathBuf, String)>> {
     let mut stmt = conn.prepare(
         "SELECT path, remote_id FROM tracks
-          WHERE remote_id IS NOT NULL AND path IN (SELECT track_path FROM favourites)
+          WHERE remote_id IS NOT NULL
+            AND path IN (SELECT track_path FROM favourites WHERE user_id = ?1)
          UNION
          SELECT cached_path, remote_id FROM tracks
-          WHERE remote_id IS NOT NULL AND cached_path IN (SELECT track_path FROM favourites)
+          WHERE remote_id IS NOT NULL
+            AND cached_path IN (SELECT track_path FROM favourites WHERE user_id = ?1)
          UNION
          SELECT remote_url, remote_id FROM tracks
-          WHERE remote_id IS NOT NULL AND remote_url IN (SELECT track_path FROM favourites)",
+          WHERE remote_id IS NOT NULL
+            AND remote_url IN (SELECT track_path FROM favourites WHERE user_id = ?1)",
     )?;
-    let rows = stmt.query_map([], |row| {
+    let rows = stmt.query_map([resolve_user(conn, user)?], |row| {
         let path: String = row.get(0)?;
         let rid: String = row.get(1)?;
         Ok((PathBuf::from(path), rid))
@@ -338,8 +373,10 @@ pub fn favourites_with_remote_id(conn: &Connection) -> rusqlite::Result<Vec<(Pat
 /// Returns the number of new favourites added.
 pub fn import_remote_favourites(
     conn: &Connection,
+    user: i64,
     starred_remote_ids: &[String],
 ) -> rusqlite::Result<usize> {
+    let user = resolve_user(conn, user)?;
     let mut count = 0;
     for rid in starred_remote_ids {
         // Find the local path for this remote_id.
@@ -352,8 +389,8 @@ pub fn import_remote_favourites(
             .optional()?;
         if let Some(p) = path {
             let inserted: usize = conn.execute(
-                "INSERT OR IGNORE INTO favourites (track_path) VALUES (?1)",
-                [&p],
+                "INSERT OR IGNORE INTO favourites (user_id, track_path) VALUES (?1, ?2)",
+                params![user, p],
             )?;
             count += inserted;
         }
@@ -427,7 +464,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut found = favourites_with_remote_id(&conn).unwrap();
+        let mut found = favourites_with_remote_id(&conn, crate::db::queries::LOCAL_USER).unwrap();
         found.sort();
         assert_eq!(
             found,
@@ -442,7 +479,7 @@ mod tests {
     #[test]
     fn test_load_favourites_returns_empty_when_none_added() {
         let conn = test_conn();
-        let favs = load_favourites(&conn).unwrap();
+        let favs = load_favourites(&conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(
             favs.is_empty(),
             "expected no favourites in a fresh database"
@@ -454,15 +491,15 @@ mod tests {
         let conn = test_conn();
         let path = Path::new("/music/track.flac");
 
-        add_favourite(&conn, path).unwrap();
-        let favs = load_favourites(&conn).unwrap();
+        add_favourite(&conn, crate::db::queries::LOCAL_USER, path).unwrap();
+        let favs = load_favourites(&conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(
             favs.contains(path),
             "track should be in favourites after add"
         );
 
-        remove_favourite(&conn, path).unwrap();
-        let favs = load_favourites(&conn).unwrap();
+        remove_favourite(&conn, crate::db::queries::LOCAL_USER, path).unwrap();
+        let favs = load_favourites(&conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(
             !favs.contains(path),
             "track should not be in favourites after remove"
@@ -474,9 +511,9 @@ mod tests {
         let conn = test_conn();
         let path = Path::new("/music/idempotent.flac");
 
-        add_favourite(&conn, path).unwrap();
-        add_favourite(&conn, path).unwrap(); // second call must not error
-        let favs = load_favourites(&conn).unwrap();
+        add_favourite(&conn, crate::db::queries::LOCAL_USER, path).unwrap();
+        add_favourite(&conn, crate::db::queries::LOCAL_USER, path).unwrap(); // second call must not error
+        let favs = load_favourites(&conn, crate::db::queries::LOCAL_USER).unwrap();
         assert_eq!(favs.len(), 1, "duplicate add should not create two rows");
     }
 
@@ -486,26 +523,26 @@ mod tests {
         let path = Path::new("/music/toggle.flac");
 
         // First toggle: not present → should be added, returns true.
-        let now_fav = toggle_favourite(&conn, path).unwrap();
+        let now_fav = toggle_favourite(&conn, crate::db::queries::LOCAL_USER, path).unwrap();
         assert!(
             now_fav,
             "toggle on empty should add the favourite and return true"
         );
 
-        let favs = load_favourites(&conn).unwrap();
+        let favs = load_favourites(&conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(
             favs.contains(path),
             "track should be in favourites after first toggle"
         );
 
         // Second toggle: present → should be removed, returns false.
-        let now_fav = toggle_favourite(&conn, path).unwrap();
+        let now_fav = toggle_favourite(&conn, crate::db::queries::LOCAL_USER, path).unwrap();
         assert!(
             !now_fav,
             "second toggle should remove the favourite and return false"
         );
 
-        let favs = load_favourites(&conn).unwrap();
+        let favs = load_favourites(&conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(
             !favs.contains(path),
             "track should not be in favourites after second toggle"
@@ -520,7 +557,7 @@ mod tests {
         let conn = test_conn();
         let path = Path::new("/music/does-not-exist-in-tracks.flac");
 
-        let result = toggle_favourite(&conn, path);
+        let result = toggle_favourite(&conn, crate::db::queries::LOCAL_USER, path);
         assert!(
             result.is_ok(),
             "toggling a path with no track row should not error"
@@ -530,7 +567,7 @@ mod tests {
             "non-existent path should be added on first toggle"
         );
 
-        let favs = load_favourites(&conn).unwrap();
+        let favs = load_favourites(&conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(
             favs.contains(path),
             "path should appear in favourites even without a matching track row"
@@ -542,10 +579,15 @@ mod tests {
         let conn = test_conn();
         insert_track_with_remote_id(&conn, "/music/remote-track.flac", "remote-001");
 
-        let added = import_remote_favourites(&conn, &["remote-001".to_string()]).unwrap();
+        let added = import_remote_favourites(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            &["remote-001".to_string()],
+        )
+        .unwrap();
         assert_eq!(added, 1, "should have imported one favourite");
 
-        let favs = load_favourites(&conn).unwrap();
+        let favs = load_favourites(&conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(
             favs.contains(Path::new("/music/remote-track.flac")),
             "imported track path should be in favourites"
@@ -556,10 +598,15 @@ mod tests {
     fn test_import_remote_favourites_skips_unknown_remote_ids() {
         let conn = test_conn();
 
-        let added = import_remote_favourites(&conn, &["unknown-remote-id".to_string()]).unwrap();
+        let added = import_remote_favourites(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            &["unknown-remote-id".to_string()],
+        )
+        .unwrap();
         assert_eq!(added, 0, "unknown remote_id should not add any favourites");
 
-        let favs = load_favourites(&conn).unwrap();
+        let favs = load_favourites(&conn, crate::db::queries::LOCAL_USER).unwrap();
         assert!(favs.is_empty());
     }
 
@@ -593,11 +640,35 @@ mod tests {
         let conn = test_conn();
         let id = insert_album(&conn, "Russian Circles", "Enter", None);
 
-        assert!(toggle_favourite_album(&conn, "Russian Circles", "Enter").unwrap());
-        assert!(favourite_album_id_set(&conn).unwrap().contains(&id));
+        assert!(
+            toggle_favourite_album(
+                &conn,
+                crate::db::queries::LOCAL_USER,
+                "Russian Circles",
+                "Enter"
+            )
+            .unwrap()
+        );
+        assert!(
+            favourite_album_id_set(&conn, crate::db::queries::LOCAL_USER)
+                .unwrap()
+                .contains(&id)
+        );
 
-        assert!(!toggle_favourite_album(&conn, "Russian Circles", "Enter").unwrap());
-        assert!(favourite_album_id_set(&conn).unwrap().is_empty());
+        assert!(
+            !toggle_favourite_album(
+                &conn,
+                crate::db::queries::LOCAL_USER,
+                "Russian Circles",
+                "Enter"
+            )
+            .unwrap()
+        );
+        assert!(
+            favourite_album_id_set(&conn, crate::db::queries::LOCAL_USER)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -610,11 +681,23 @@ mod tests {
             })
             .unwrap();
 
-        assert!(toggle_favourite_artist(&conn, "Godspeed").unwrap());
-        assert!(favourite_artist_id_set(&conn).unwrap().contains(&artist_id));
+        assert!(
+            toggle_favourite_artist(&conn, crate::db::queries::LOCAL_USER, "Godspeed").unwrap()
+        );
+        assert!(
+            favourite_artist_id_set(&conn, crate::db::queries::LOCAL_USER)
+                .unwrap()
+                .contains(&artist_id)
+        );
 
-        assert!(!toggle_favourite_artist(&conn, "Godspeed").unwrap());
-        assert!(favourite_artist_id_set(&conn).unwrap().is_empty());
+        assert!(
+            !toggle_favourite_artist(&conn, crate::db::queries::LOCAL_USER, "Godspeed").unwrap()
+        );
+        assert!(
+            favourite_artist_id_set(&conn, crate::db::queries::LOCAL_USER)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// Favourites are keyed by name so a reindex cannot lose them. Rebuilding
@@ -624,14 +707,22 @@ mod tests {
     fn an_album_favourite_survives_new_row_ids() {
         let conn = test_conn();
         insert_album(&conn, "Boards of Canada", "Geogaddi", None);
-        toggle_favourite_album(&conn, "Boards of Canada", "Geogaddi").unwrap();
+        toggle_favourite_album(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            "Boards of Canada",
+            "Geogaddi",
+        )
+        .unwrap();
 
         conn.execute("DELETE FROM albums", []).unwrap();
         conn.execute("DELETE FROM artists", []).unwrap();
         let new_id = insert_album(&conn, "Boards of Canada", "Geogaddi", None);
 
         assert!(
-            favourite_album_id_set(&conn).unwrap().contains(&new_id),
+            favourite_album_id_set(&conn, crate::db::queries::LOCAL_USER)
+                .unwrap()
+                .contains(&new_id),
             "the favourite should resolve to the rebuilt album row"
         );
     }
@@ -641,11 +732,25 @@ mod tests {
         let conn = test_conn();
         let id = insert_album(&conn, "Phace", "Mammoth", Some("remote-album-1"));
 
-        let added = import_remote_favourite_albums(&conn, &["remote-album-1".to_string()]).unwrap();
+        let added = import_remote_favourite_albums(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            &["remote-album-1".to_string()],
+        )
+        .unwrap();
         assert_eq!(added, 1);
-        assert!(favourite_album_id_set(&conn).unwrap().contains(&id));
+        assert!(
+            favourite_album_id_set(&conn, crate::db::queries::LOCAL_USER)
+                .unwrap()
+                .contains(&id)
+        );
 
-        let again = import_remote_favourite_albums(&conn, &["remote-album-1".to_string()]).unwrap();
+        let again = import_remote_favourite_albums(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            &["remote-album-1".to_string()],
+        )
+        .unwrap();
         assert_eq!(again, 0, "re-importing should not add a second row");
     }
 
@@ -654,10 +759,18 @@ mod tests {
         let conn = test_conn();
         insert_album(&conn, "Local Only", "Demo", None);
         insert_album(&conn, "On The Server", "Record", Some("remote-album-2"));
-        toggle_favourite_album(&conn, "Local Only", "Demo").unwrap();
-        toggle_favourite_album(&conn, "On The Server", "Record").unwrap();
+        toggle_favourite_album(&conn, crate::db::queries::LOCAL_USER, "Local Only", "Demo")
+            .unwrap();
+        toggle_favourite_album(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            "On The Server",
+            "Record",
+        )
+        .unwrap();
 
-        let pushable = favourite_albums_with_remote_id(&conn).unwrap();
+        let pushable =
+            favourite_albums_with_remote_id(&conn, crate::db::queries::LOCAL_USER).unwrap();
         assert_eq!(pushable.len(), 1);
         assert_eq!(pushable[0].1, "remote-album-2");
     }
@@ -667,13 +780,28 @@ mod tests {
         let conn = test_conn();
         insert_track_with_remote_id(&conn, "/music/idempotent-remote.flac", "remote-002");
 
-        import_remote_favourites(&conn, &["remote-002".to_string()]).unwrap();
-        let added = import_remote_favourites(&conn, &["remote-002".to_string()]).unwrap();
+        import_remote_favourites(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            &["remote-002".to_string()],
+        )
+        .unwrap();
+        let added = import_remote_favourites(
+            &conn,
+            crate::db::queries::LOCAL_USER,
+            &["remote-002".to_string()],
+        )
+        .unwrap();
 
         assert_eq!(
             added, 0,
             "re-importing an already-favourited track should add 0 rows"
         );
-        assert_eq!(load_favourites(&conn).unwrap().len(), 1);
+        assert_eq!(
+            load_favourites(&conn, crate::db::queries::LOCAL_USER)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

@@ -331,6 +331,51 @@ fn get_auth_user(ctx: &Context<'_>) -> AuthUser {
         .unwrap_or_else(|_| AuthUser::anonymous_admin())
 }
 
+/// Whose favourites, playlists and history the current request reads and writes.
+fn user_id(ctx: &Context<'_>) -> i64 {
+    get_auth_user(ctx).user_id
+}
+
+/// Whose shares the current user may list and change: their own, or
+/// everyone's for an admin.
+fn share_owner(ctx: &Context<'_>) -> Option<i64> {
+    let user = get_auth_user(ctx);
+    (user.role != Role::Admin).then_some(user.user_id)
+}
+
+/// A playlist `user` may see: their own, or anyone's public one. Anyone
+/// else's is not there, as far as they can tell.
+fn readable_playlist(
+    db: &Database,
+    user: i64,
+    id: i64,
+) -> async_graphql::Result<koan_core::db::queries::PlaylistRow> {
+    use koan_core::db::queries;
+    let me = queries::auth::resolve_user(&db.conn, user).map_err(|e| internal_error("db", e))?;
+    queries::get_playlist(&db.conn, id)
+        .map_err(|e| internal_error("db", e))?
+        .filter(|p| p.readable_by(me))
+        .ok_or_else(|| async_graphql::Error::new(format!("playlist {id} not found")))
+}
+
+/// A playlist `user` may change: their own only.
+fn editable_playlist(
+    db: &Database,
+    user: i64,
+    id: i64,
+) -> async_graphql::Result<koan_core::db::queries::PlaylistRow> {
+    let list = readable_playlist(db, user, id)?;
+    let me = koan_core::db::queries::auth::resolve_user(&db.conn, user)
+        .map_err(|e| internal_error("db", e))?;
+    if list.editable_by(me) {
+        Ok(list)
+    } else {
+        Err(async_graphql::Error::new(format!(
+            "playlist {id} belongs to someone else"
+        )))
+    }
+}
+
 /// Whose linked clients the current user may see and command: their own, or
 /// every account's for an admin.
 fn client_scope(ctx: &Context<'_>) -> Option<String> {

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -8,6 +9,7 @@ use super::download::{self, DownloadError};
 
 const API_VERSION: &str = "1.16.1";
 const CLIENT_NAME: &str = "koan";
+const PLAYBACK_REPORT_EXTENSION: &str = "playbackReport";
 
 #[derive(Debug, Error)]
 pub enum SubsonicError {
@@ -104,6 +106,26 @@ pub struct SubsonicClient {
     downloader: reqwest::blocking::Client,
     /// Whether the server is answering downloads, as the last of them found.
     outage: download::Outage,
+    /// Whether the server offers `reportPlayback`, once it has said.
+    playback_report: OnceLock<bool>,
+}
+
+/// What a playback report says the player is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaybackReportState {
+    Playing,
+    Paused,
+    Stopped,
+}
+
+impl PlaybackReportState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Playing => "playing",
+            Self::Paused => "paused",
+            Self::Stopped => "stopped",
+        }
+    }
 }
 
 impl SubsonicClient {
@@ -123,6 +145,7 @@ impl SubsonicClient {
                 reqwest::blocking::Client::new()
             }),
             outage: download::Outage::default(),
+            playback_report: OnceLock::new(),
         }
     }
 
@@ -393,23 +416,72 @@ impl SubsonicClient {
         Ok(resp.search_result3.unwrap_or_default())
     }
 
-    /// Report a play. With `heard_at_ms` (ms since the epoch the listen
-    /// began) it is a scrobble that counts; without, it only marks the track
-    /// as now playing (`submission=false`).
-    pub fn scrobble(&self, track_id: &str, heard_at_ms: Option<u64>) -> Result<(), SubsonicError> {
-        match heard_at_ms {
-            Some(at) => {
-                let at = at.to_string();
-                self.get_with_params(
-                    "scrobble",
-                    &[("id", track_id), ("submission", "true"), ("time", &at)],
-                )?
-            }
-            None => {
-                self.get_with_params("scrobble", &[("id", track_id), ("submission", "false")])?
-            }
-        };
+    /// Scrobble a play that counts, dated to `heard_at_ms` (ms since the
+    /// epoch the listen began).
+    pub fn scrobble(&self, track_id: &str, heard_at_ms: u64) -> Result<(), SubsonicError> {
+        let at = heard_at_ms.to_string();
+        self.get_with_params(
+            "scrobble",
+            &[("id", track_id), ("submission", "true"), ("time", &at)],
+        )?;
         Ok(())
+    }
+
+    /// Tell the server where playback of a track stands, so its Now Playing
+    /// follows pauses, seeks and stops.
+    ///
+    /// Uses OpenSubsonic's `reportPlayback` where the server offers it, always
+    /// with `ignoreScrobble`: koan decides what counts as a play and scrobbles
+    /// it itself. Elsewhere only `playing` can be said, as a now-playing
+    /// `scrobble` from `position` (seconds, as Navidrome reads it); a pause or
+    /// a stop has no equivalent there and is not sent.
+    pub fn report_playback(
+        &self,
+        track_id: &str,
+        state: PlaybackReportState,
+        position_ms: u64,
+    ) -> Result<(), SubsonicError> {
+        if self.supports_playback_report() {
+            let position = position_ms.to_string();
+            self.get_with_params(
+                "reportPlayback",
+                &[
+                    ("mediaId", track_id),
+                    ("mediaType", "song"),
+                    ("positionMs", &position),
+                    ("state", state.as_str()),
+                    ("ignoreScrobble", "true"),
+                ],
+            )?;
+            return Ok(());
+        }
+        if state == PlaybackReportState::Playing {
+            let position = (position_ms / 1000).to_string();
+            self.get_with_params(
+                "scrobble",
+                &[
+                    ("id", track_id),
+                    ("submission", "false"),
+                    ("position", &position),
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Whether the server advertises the `playbackReport` extension. Asked
+    /// once per client; any answer, including an error, is kept. Only a
+    /// failure to reach the server at all is asked again next time.
+    fn supports_playback_report(&self) -> bool {
+        if let Some(&known) = self.playback_report.get() {
+            return known;
+        }
+        let supported = match self.get("getOpenSubsonicExtensions") {
+            Ok(resp) => resp.has_extension(PLAYBACK_REPORT_EXTENSION),
+            Err(SubsonicError::Http(e)) if e.is_connect() || e.is_timeout() => return false,
+            Err(_) => false,
+        };
+        *self.playback_report.get_or_init(|| supported)
     }
 
     /// Star (favourite) a track on the server.
@@ -672,6 +744,15 @@ struct SubsonicResponse {
     scan_status: Option<SubsonicScanStatus>,
 }
 
+impl SubsonicResponse {
+    fn has_extension(&self, name: &str) -> bool {
+        self.open_subsonic_extensions
+            .iter()
+            .flatten()
+            .any(|ext| ext.name == name)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct SubsonicExtension {
     name: String,
@@ -905,6 +986,38 @@ fn random_salt() -> Result<String, getrandom::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn response(json: &str) -> SubsonicResponse {
+        serde_json::from_str::<SubsonicResponseWrapper>(json)
+            .unwrap()
+            .subsonic_response
+    }
+
+    #[test]
+    fn playback_report_is_read_from_the_advertised_extensions() {
+        let navidrome = response(
+            r#"{"subsonic-response": {
+                "status": "ok", "version": "1.16.1", "type": "navidrome",
+                "openSubsonic": true,
+                "openSubsonicExtensions": [
+                    {"name": "transcodeOffset", "versions": [1]},
+                    {"name": "playbackReport", "versions": [1]}
+                ]
+            }}"#,
+        );
+        assert!(navidrome.has_extension(PLAYBACK_REPORT_EXTENSION));
+
+        let without = response(
+            r#"{"subsonic-response": {
+                "status": "ok", "version": "1.16.1",
+                "openSubsonicExtensions": [{"name": "songLyrics", "versions": [1, 2]}]
+            }}"#,
+        );
+        assert!(!without.has_extension(PLAYBACK_REPORT_EXTENSION));
+
+        let plain = response(r#"{"subsonic-response": {"status": "ok", "version": "1.16.1"}}"#);
+        assert!(!plain.has_extension(PLAYBACK_REPORT_EXTENSION));
+    }
 
     // --- SubsonicSong deserialization ---
 

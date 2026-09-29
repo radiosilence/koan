@@ -991,8 +991,14 @@ impl KoanEngine {
     ) -> Result<Vec<PlayHistoryEntry>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = queries::play_history_with_tracks(&db.conn, trimmed(&search), None, 0)
-                .map_err(db_err)?;
+            let rows = queries::play_history_with_tracks(
+                &db.conn,
+                queries::LOCAL_USER,
+                trimmed(&search),
+                None,
+                0,
+            )
+            .map_err(db_err)?;
             let (plays, tracks): (Vec<_>, Vec<_>) = rows
                 .into_iter()
                 .map(|r| ((r.id, r.played_at, r.listened_ms, r.source), r.track))
@@ -1019,7 +1025,7 @@ impl KoanEngine {
     pub async fn play_count(self: Arc<Self>, track_id: i64) -> Result<i64, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            queries::play_count(&db.conn, track_id).map_err(db_err)
+            queries::play_count(&db.conn, queries::LOCAL_USER, track_id).map_err(db_err)
         })
         .await
     }
@@ -1028,7 +1034,8 @@ impl KoanEngine {
     pub async fn delete_plays(self: Arc<Self>, ids: Vec<i64>) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let removed = queries::delete_plays(&db.conn, &ids).map_err(db_err)?;
+            let removed =
+                queries::delete_plays(&db.conn, queries::LOCAL_USER, &ids).map_err(db_err)?;
             Ok(removed as u32)
         })
         .await
@@ -1038,7 +1045,8 @@ impl KoanEngine {
     pub async fn clear_play_history(self: Arc<Self>) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let removed = queries::clear_play_history(&db.conn).map_err(db_err)?;
+            let removed =
+                queries::clear_play_history(&db.conn, queries::LOCAL_USER).map_err(db_err)?;
             Ok(removed as u32)
         })
         .await
@@ -1053,7 +1061,8 @@ impl KoanEngine {
     ) -> Result<Vec<Track>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = queries::favourite_tracks(&db.conn, trimmed(&search)).map_err(db_err)?;
+            let rows = queries::favourite_tracks(&db.conn, queries::LOCAL_USER, trimmed(&search))
+                .map_err(db_err)?;
             Ok(self.decorate(&db, rows))
         })
         .await
@@ -1070,7 +1079,7 @@ impl KoanEngine {
                 &db.conn,
                 &queries::AlbumQuery {
                     search: trimmed(&search),
-                    favourites_only: true,
+                    favourites_of: Some(queries::LOCAL_USER),
                     ..Default::default()
                 },
             )
@@ -1091,7 +1100,7 @@ impl KoanEngine {
                 &db.conn,
                 &queries::ArtistQuery {
                     search: trimmed(&search),
-                    favourites_only: true,
+                    favourites_of: Some(queries::LOCAL_USER),
                     ..Default::default()
                 },
             )
@@ -1113,7 +1122,8 @@ impl KoanEngine {
                 })?;
 
             let now_favourite =
-                queries::toggle_favourite(&db.conn, Path::new(&path)).map_err(fav_err)?;
+                queries::toggle_favourite(&db.conn, queries::LOCAL_USER, Path::new(&path))
+                    .map_err(fav_err)?;
             koan_core::helpers::sync_favourite_to_remote(&db, Path::new(&path), now_favourite);
             Ok(now_favourite)
         })
@@ -1125,10 +1135,12 @@ impl KoanEngine {
     pub async fn favourite_track_ids(self: Arc<Self>) -> Result<Vec<i64>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            Ok(queries::favourite_track_ids_batch(&db.conn)
-                .map_err(db_err)?
-                .into_iter()
-                .collect())
+            Ok(
+                queries::favourite_track_ids_batch(&db.conn, queries::LOCAL_USER)
+                    .map_err(db_err)?
+                    .into_iter()
+                    .collect(),
+            )
         })
         .await
     }
@@ -1136,10 +1148,12 @@ impl KoanEngine {
     pub async fn favourite_album_ids(self: Arc<Self>) -> Result<Vec<i64>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            Ok(queries::favourite_album_id_set(&db.conn)
-                .map_err(fav_err)?
-                .into_iter()
-                .collect())
+            Ok(
+                queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER)
+                    .map_err(fav_err)?
+                    .into_iter()
+                    .collect(),
+            )
         })
         .await
     }
@@ -1147,10 +1161,12 @@ impl KoanEngine {
     pub async fn favourite_artist_ids(self: Arc<Self>) -> Result<Vec<i64>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            Ok(queries::favourite_artist_id_set(&db.conn)
-                .map_err(fav_err)?
-                .into_iter()
-                .collect())
+            Ok(
+                queries::favourite_artist_id_set(&db.conn, queries::LOCAL_USER)
+                    .map_err(fav_err)?
+                    .into_iter()
+                    .collect(),
+            )
         })
         .await
     }
@@ -1165,7 +1181,8 @@ impl KoanEngine {
                     message: format!("album {album_id}"),
                 })?;
             let now =
-                queries::toggle_favourite_album(&db.conn, &artist, &title).map_err(fav_err)?;
+                queries::toggle_favourite_album(&db.conn, queries::LOCAL_USER, &artist, &title)
+                    .map_err(fav_err)?;
             koan_core::helpers::sync_collection_favourite_to_remote(
                 &db,
                 koan_core::helpers::FavouriteKind::Album,
@@ -1189,7 +1206,8 @@ impl KoanEngine {
                 .ok_or_else(|| KoanError::NotFound {
                     message: format!("artist {artist_id}"),
                 })?;
-            let now = queries::toggle_favourite_artist(&db.conn, &name).map_err(fav_err)?;
+            let now = queries::toggle_favourite_artist(&db.conn, queries::LOCAL_USER, &name)
+                .map_err(fav_err)?;
             koan_core::helpers::sync_collection_favourite_to_remote(
                 &db,
                 koan_core::helpers::FavouriteKind::Artist,
@@ -1211,7 +1229,7 @@ impl KoanEngine {
     pub async fn playlists(self: Arc<Self>) -> Result<Vec<Playlist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            Ok(queries::list_playlists(&db.conn)
+            Ok(queries::list_playlists(&db.conn, queries::LOCAL_USER)
                 .map_err(db_err)?
                 .into_iter()
                 .map(Playlist::from)
@@ -1273,7 +1291,8 @@ impl KoanEngine {
     ) -> Result<Playlist, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let id = queries::create_playlist(&db.conn, &name, None).map_err(db_err)?;
+            let id = queries::create_playlist(&db.conn, queries::LOCAL_USER, &name, None)
+                .map_err(db_err)?;
             if !track_ids.is_empty() {
                 queries::add_tracks(&db.conn, id, &track_ids).map_err(db_err)?;
             }
@@ -2229,6 +2248,7 @@ impl KoanEngine {
             let cfg = Config::load().unwrap_or_default();
             koan_core::helpers::create_share(
                 &db,
+                queries::LOCAL_USER,
                 &cfg,
                 &koan_core::helpers::ShareTarget::Tracks(track_ids),
                 description.as_deref(),
@@ -3820,7 +3840,8 @@ impl KoanEngine {
     /// whichever path a track happens to have, and a never-cached remote track
     /// only has a URL.
     fn decorate(&self, db: &Database, rows: Vec<queries::TrackRow>) -> Vec<Track> {
-        let favs: HashSet<i64> = queries::favourite_track_ids_batch(&db.conn).unwrap_or_default();
+        let favs: HashSet<i64> =
+            queries::favourite_track_ids_batch(&db.conn, queries::LOCAL_USER).unwrap_or_default();
         rows.into_iter()
             .map(|r| {
                 let is_fav = favs.contains(&r.id);

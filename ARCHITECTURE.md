@@ -244,7 +244,7 @@ A download that gives up sends `TrackFailed` instead, and the parked cursor adva
 | `queries/scan_cache.rs` | Mtime+size change detection to skip unchanged files |
 | `queries/stats.rs` | Library statistics |
 | `queries/lyrics.rs` | Lyrics caching (synced + plain, per-track) |
-| `queries/favourites.rs` | Favourite/star status (syncs with Navidrome) |
+| `queries/favourites.rs` | Favourite/star status (syncs with Navidrome). Favourites, playlists, play history and shares carry a `user_id`: each account on a server has its own, as Navidrome keeps them. `LOCAL_USER` (0) is the caller with no account — the apps, the TUI, auth-disabled mode, the Subsonic shared secret — and resolves to the first admin once one exists, so a local library and a single-user server behave the same (`queries/auth.rs`) |
 | `queries/history.rs` | Play history — one row per play, written when a track starts |
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |
 
@@ -280,7 +280,7 @@ fb2k-compatible template engine.
 
 | File | Purpose |
 |---|---|
-| `client.rs` | Subsonic/Navidrome HTTP client. Token auth (MD5+salt). Endpoints: ping, getArtists, getAlbumList2, getAlbum, search3, scrobble, download. Two HTTP clients: total-deadline for JSON, stall-bounded for downloads |
+| `client.rs` | Subsonic/Navidrome HTTP client. Token auth (MD5+salt). Endpoints: ping, getArtists, getAlbumList2, getAlbum, search3, scrobble, reportPlayback (OpenSubsonic `playbackReport`, probed once per client), download. Two HTTP clients: total-deadline for JSON, stall-bounded for downloads |
 | `download.rs` | The one place bytes are streamed to disk: `.part` temp file → verify → atomic rename, progress callback, retry with backoff. A server that is not answering (503, 429, 502, 504, no connection) is waited out on a per-client `Outage` rather than failing each track in turn. Shared by `client.rs` and the TUI remote bridge |
 | `sync.rs` | Library sync: stable `alphabeticalByName` album list (500/page), then on a first or full sync every song via empty-query `search3` (500/page, four in flight) joined to it, one transaction per page. Servers that list no songs that way, and incremental syncs, fetch albums one at a time with rayon. Reports progress per page. `last_sync` only advances on a run with zero failures |
 | `lrclib.rs` | LRCLIB API client for lyrics fetching (synced LRC + plain text) |

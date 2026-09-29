@@ -294,9 +294,13 @@ data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><sp
 
 /// One page of albums as `b` narrows and orders them, and the URL of the next
 /// page if there is one.
-fn album_page(s: &UiState, b: &Browse) -> Option<(Vec<AlbumRow>, Option<String>, Versions)> {
+fn album_page(
+    s: &UiState,
+    user: i64,
+    b: &Browse,
+) -> Option<(Vec<AlbumRow>, Option<String>, Versions)> {
     let db = open(&s.pool)?;
-    let mut albums = queries::list_albums(&db.conn, &b.albums(ALBUMS_PAGE + 1)).ok()?;
+    let mut albums = queries::list_albums(&db.conn, &b.albums(user, ALBUMS_PAGE + 1)).ok()?;
     let next = (albums.len() > ALBUMS_PAGE as usize)
         .then(|| format!("/albums/more?{}", b.query(b.offset + ALBUMS_PAGE)));
     albums.truncate(ALBUMS_PAGE as usize);
@@ -311,8 +315,8 @@ pub(super) async fn albums(
     headers: HeaderMap,
 ) -> Response {
     let b = b.seeded();
-    let (st, bb) = (s.clone(), b.clone());
-    let found = blocking(move || Some((album_page(&st, &bb)?, filter_options(&st)?))).await;
+    let (st, bb, id) = (s.clone(), b.clone(), user.user_id);
+    let found = blocking(move || Some((album_page(&st, id, &bb)?, filter_options(&st)?))).await;
     let Some(((albums, next, versions), options)) = found else {
         return unavailable();
     };
@@ -332,8 +336,13 @@ pub(super) async fn albums(
     respond(&s, &headers, &user, "Albums", "albums", &inner)
 }
 
-pub(super) async fn albums_more(State(s): State<UiState>, Query(b): Query<Browse>) -> Response {
-    let Some((albums, next, versions)) = blocking(move || album_page(&s, &b)).await else {
+pub(super) async fn albums_more(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Query(b): Query<Browse>,
+) -> Response {
+    let Some((albums, next, versions)) = blocking(move || album_page(&s, user.user_id, &b)).await
+    else {
         return unavailable();
     };
     let mut out = Vec::new();
@@ -464,7 +473,7 @@ async fn share(s: UiState, user: AuthUser, target: ShareTarget) -> Response {
             let db = open(&s.pool)?;
             let cfg = koan_core::config::Config::load().unwrap_or_default();
             Some(
-                koan_core::helpers::create_share(&db, &cfg, &target, None)
+                koan_core::helpers::create_share(&db, user.user_id, &cfg, &target, None)
                     .map(|o| o.url)
                     .map_err(|e| e.to_string()),
             )
@@ -502,9 +511,13 @@ fn artist_list(artists: &[queries::ArtistRow]) -> String {
     })
 }
 
-fn artist_page(s: &UiState, b: &Browse) -> Option<(Vec<queries::ArtistRow>, Option<String>)> {
+fn artist_page(
+    s: &UiState,
+    user: i64,
+    b: &Browse,
+) -> Option<(Vec<queries::ArtistRow>, Option<String>)> {
     let db = open(&s.pool)?;
-    let mut artists = queries::list_artists(&db.conn, &b.artists(ARTISTS_PAGE + 1)).ok()?;
+    let mut artists = queries::list_artists(&db.conn, &b.artists(user, ARTISTS_PAGE + 1)).ok()?;
     let next = (artists.len() > ARTISTS_PAGE as usize)
         .then(|| format!("/artists/more?{}", b.query(b.offset + ARTISTS_PAGE)));
     artists.truncate(ARTISTS_PAGE as usize);
@@ -517,8 +530,8 @@ pub(super) async fn artists(
     Query(b): Query<Browse>,
     headers: HeaderMap,
 ) -> Response {
-    let (st, bb) = (s.clone(), b.clone());
-    let found = blocking(move || Some((artist_page(&st, &bb)?, filter_options(&st)?))).await;
+    let (st, bb, id) = (s.clone(), b.clone(), user.user_id);
+    let found = blocking(move || Some((artist_page(&st, id, &bb)?, filter_options(&st)?))).await;
     let Some(((artists, next), options)) = found else {
         return unavailable();
     };
@@ -538,8 +551,12 @@ pub(super) async fn artists(
     respond(&s, &headers, &user, "Artists", "artists", &inner)
 }
 
-pub(super) async fn artists_more(State(s): State<UiState>, Query(b): Query<Browse>) -> Response {
-    let Some((artists, next)) = blocking(move || artist_page(&s, &b)).await else {
+pub(super) async fn artists_more(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Query(b): Query<Browse>,
+) -> Response {
+    let Some((artists, next)) = blocking(move || artist_page(&s, user.user_id, &b)).await else {
         return unavailable();
     };
     let mut out = Vec::new();

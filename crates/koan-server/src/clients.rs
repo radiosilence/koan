@@ -679,6 +679,7 @@ fn reach_absent(
             title: format!("{verb} on {}", target.name),
             body: outbox::describe(cmd).unwrap_or_else(|| "From your koan server".into()),
             command: serde_json::to_value(cmd).ok()?,
+            image: cover_track(cmd).and_then(|t| pusher.cover_link(t)),
         },
         None => {
             outbox::queue_for(&target.device, &target.username, cmd);
@@ -687,6 +688,23 @@ fn reach_absent(
     };
     std::thread::spawn(move || deliver_push(pusher, &target, &push));
     Some(Ok(info))
+}
+
+/// The track whose album cover a notification for `cmd` shows.
+fn cover_track(cmd: &LinkCommand) -> Option<i64> {
+    match cmd {
+        LinkCommand::Play {
+            track_ids,
+            start_at,
+            ..
+        } => track_ids
+            .get(*start_at as usize)
+            .or(track_ids.first())?
+            .parse()
+            .ok(),
+        LinkCommand::JumpTo { track_id } => track_id.parse().ok(),
+        _ => None,
+    }
 }
 
 /// Send one push, forgetting a token Apple says is no longer good.
@@ -1122,8 +1140,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("koan.db");
         let db = koan_core::db::connection::Database::open(&path).unwrap();
-        let playlist =
-            koan_core::db::queries::create_playlist(&db.conn, "cyberpunk", None).unwrap();
+        let playlist = koan_core::db::queries::create_playlist(
+            &db.conn,
+            koan_core::db::queries::LOCAL_USER,
+            "cyberpunk",
+            None,
+        )
+        .unwrap();
         let order = Order {
             id: "o1".into(),
             username: None,
