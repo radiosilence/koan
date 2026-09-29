@@ -36,7 +36,7 @@ struct DevicePicker: View {
     }
 
     private var thisDevice: some View {
-        PickerRow(
+        DeviceChoiceRow(
             icon: Self.icon(for: Self.platform),
             name: "This \(Self.deviceNoun)",
             detail: player.isControllingAnother ? "Paused while you control another device" : "Music plays here",
@@ -98,7 +98,7 @@ private struct DeviceRow: View {
     let device: DeviceInfo
 
     var body: some View {
-        PickerRow(
+        DeviceChoiceRow(
             icon: DevicePicker.icon(for: device.platform),
             name: device.name,
             detail: detail,
@@ -126,7 +126,7 @@ private struct DeviceRow: View {
 }
 
 /// One device: tap to control it, and a button to move the music there.
-private struct PickerRow: View {
+private struct DeviceChoiceRow: View {
     let icon: String
     let name: String
     let detail: String

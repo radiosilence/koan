@@ -668,6 +668,7 @@ mod bonjour {
             return;
         };
         let mut seen: Vec<Seen> = Vec::new();
+        let mut interfaces: std::collections::HashMap<String, usize> = Default::default();
         let mut sd: Ref = std::ptr::null_mut();
         // SAFETY: `seen` outlives the reference, which is never deallocated:
         // this browses for the life of the process.
@@ -705,8 +706,19 @@ mod bonjour {
             }
             for s in seen.drain(..) {
                 let name = s.name.to_string_lossy().into_owned();
+                // Announced once per interface it is reached on: gone only
+                // when gone from all of them, found on the first.
+                let count = interfaces.entry(name.clone()).or_insert(0usize);
                 if !s.add {
-                    super::lost(&name);
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        interfaces.remove(&name);
+                        super::lost(&name);
+                    }
+                    continue;
+                }
+                *count += 1;
+                if *count > 1 {
                     continue;
                 }
                 std::thread::spawn(move || {
