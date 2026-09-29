@@ -9,6 +9,7 @@
 use std::sync::LazyLock;
 
 use koan_core::remote::link::{LinkCommand, LinkState};
+use outbox::Absent;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -406,22 +407,40 @@ impl Registry {
     /// link. For commands still right hours later (`Sync`, `Evict`), never
     /// playback. The names reached now, and the names it waits for.
     pub fn deliver(&self, username: Option<&str>, cmd: LinkCommand) -> (Vec<String>, Vec<String>) {
+        let (sent, queued) = self.link_or_queue(username, &cmd);
+        wake(&queued.iter().map(Absent::key).collect::<Vec<_>>());
+        (sent, queued.into_iter().map(|q| q.name).collect())
+    }
+
+    fn link_or_queue(
+        &self,
+        username: Option<&str>,
+        cmd: &LinkCommand,
+    ) -> (Vec<String>, Vec<Absent>) {
         let sent = self.broadcast(username, cmd.clone());
-        let live: Vec<(String, String)> = self
-            .entries
+        let queued = outbox::queue_for_absent(username, &self.live(), cmd);
+        (sent, queued)
+    }
+
+    /// Each linked device, as `(device, username)`.
+    fn live(&self) -> Vec<(String, String)> {
+        self.entries
             .lock()
             .iter()
             .map(|e| (e.device.clone(), e.info.username.clone()))
-            .collect();
-        let queued = outbox::queue_for_absent(username, &live, &cmd);
-        wake(&queued);
-        (sent, queued.into_iter().map(|q| q.name).collect())
+            .collect()
     }
 }
 
-/// Wake these absent devices, where a push can: each links, and takes what
-/// was just queued for it.
-fn wake(devices: &[outbox::Absent]) {
+impl Absent {
+    fn key(&self) -> (String, String) {
+        (self.device.clone(), self.username.clone())
+    }
+}
+
+/// Wake these absent devices, each a `(device, username)`, where a push can:
+/// each links, and takes what was queued for it.
+fn wake(devices: &[(String, String)]) {
     let Some(pusher) = crate::push::pusher() else {
         return;
     };
@@ -430,7 +449,7 @@ fn wake(devices: &[outbox::Absent]) {
         .filter(|t| {
             devices
                 .iter()
-                .any(|d| d.device == t.device && d.username == t.username)
+                .any(|(device, username)| *device == t.device && *username == t.username)
         })
         .collect();
     if targets.is_empty() {
@@ -527,20 +546,110 @@ fn deliver_push(
 
 /// Have every device pull what the server just changed (a playlist edited,
 /// albums added): at once where linked, on next link where not. Syncs waiting
-/// for a device collapse into one.
+/// for a device collapse into one, and so do the pushes that wake it: see
+/// `Wakes`.
 pub fn changed() {
-    registry().deliver(None, LinkCommand::Sync { full: false });
+    let (_, queued) = registry().link_or_queue(None, &LinkCommand::Sync { full: false });
+    if queued.is_empty() || crate::push::pusher().is_none() {
+        return;
+    }
+    let mut wakes = WAKES.lock();
+    wakes.add(queued.iter().map(Absent::key), std::time::Instant::now());
+    if !wakes.timer {
+        wakes.timer = true;
+        std::thread::spawn(send_wakes);
+    }
 }
 
-/// After a library scan: if the library holds different tracks or albums from
-/// the last scan, tell every device. A scan that found nothing new, which is
-/// most of them, sends nothing.
-pub fn changed_if_library_moved(db_path: &std::path::Path) {
+/// How long the library has to stay still before a suspended device is woken
+/// to sync. A download of several albums scans after each one; iOS rations
+/// background pushes, and the device needs waking once, at the end.
+const QUIET: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// However busy the library stays, a device waits no longer than this.
+const LONGEST_WAIT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+static WAKES: Mutex<Wakes> = Mutex::new(Wakes {
+    pending: Vec::new(),
+    timer: false,
+});
+
+/// Background pushes held back until the library is quiet: at most one
+/// pending per device.
+struct Wakes {
+    /// `(device, username)`, when first asked for, when last asked for.
+    pending: Vec<((String, String), std::time::Instant, std::time::Instant)>,
+    /// Whether a thread is waiting to send them.
+    timer: bool,
+}
+
+impl Wakes {
+    fn add(
+        &mut self,
+        devices: impl IntoIterator<Item = (String, String)>,
+        now: std::time::Instant,
+    ) {
+        for key in devices {
+            match self.pending.iter_mut().find(|(k, _, _)| *k == key) {
+                Some((_, _, last)) => *last = now,
+                None => self.pending.push((key, now, now)),
+            }
+        }
+    }
+
+    fn due_at(first: std::time::Instant, last: std::time::Instant) -> std::time::Instant {
+        (last + QUIET).min(first + LONGEST_WAIT)
+    }
+
+    /// The earliest a pending wake is due.
+    fn next(&self) -> Option<std::time::Instant> {
+        self.pending
+            .iter()
+            .map(|(_, first, last)| Self::due_at(*first, *last))
+            .min()
+    }
+
+    /// Take the wakes due by `now`.
+    fn take_due(&mut self, now: std::time::Instant) -> Vec<(String, String)> {
+        let (due, waiting) = std::mem::take(&mut self.pending)
+            .into_iter()
+            .partition(|(_, first, last)| Self::due_at(*first, *last) <= now);
+        self.pending = waiting;
+        due.into_iter().map(|(key, _, _)| key).collect()
+    }
+}
+
+/// Send each wake once it is due, until none is pending. A device that has
+/// linked meanwhile took its sync down the link and is not pushed.
+fn send_wakes() {
+    loop {
+        let (due, next) = {
+            let mut wakes = WAKES.lock();
+            let due = wakes.take_due(std::time::Instant::now());
+            let next = wakes.next();
+            if due.is_empty() && next.is_none() {
+                wakes.timer = false;
+                return;
+            }
+            (due, next)
+        };
+        let live = registry().live();
+        let absent: Vec<(String, String)> = due.into_iter().filter(|d| !live.contains(d)).collect();
+        if !absent.is_empty() {
+            wake(&absent);
+        }
+        if let Some(next) = next {
+            std::thread::sleep(next.saturating_duration_since(std::time::Instant::now()));
+        }
+    }
+}
+
+/// After a library scan or sync: if the library holds different tracks or
+/// albums from when this was last asked, tell every device. A scan that found
+/// nothing new, which is most of them, sends nothing.
+pub fn changed_if_library_moved(conn: &rusqlite::Connection) {
     static LAST: parking_lot::Mutex<Option<(i64, i64, i64)>> = parking_lot::Mutex::new(None);
-    let Ok(db) = koan_core::db::connection::Database::open(db_path) else {
-        return;
-    };
-    let Ok(now) = db.conn.query_row(
+    let Ok(now) = conn.query_row(
         "SELECT (SELECT COUNT(*) FROM tracks), (SELECT COALESCE(MAX(id), 0) FROM tracks),
                 (SELECT COUNT(*) FROM albums)",
         [],
@@ -915,6 +1024,50 @@ mod tests {
 
         reg.unregister(&id);
         assert!(reg.send(Some("j"), None, LinkCommand::Pause).is_err());
+    }
+
+    #[test]
+    fn a_burst_of_changes_wakes_each_device_once_when_it_goes_quiet() {
+        let t0 = std::time::Instant::now();
+        let s = std::time::Duration::from_secs;
+        let phone = || ("dev-1".to_string(), "j".to_string());
+        let ipad = || ("dev-2".to_string(), "j".to_string());
+        let mut wakes = Wakes {
+            pending: Vec::new(),
+            timer: false,
+        };
+
+        wakes.add([phone()], t0);
+        wakes.add([phone(), ipad()], t0 + s(10));
+        wakes.add([phone()], t0 + s(20));
+        assert_eq!(wakes.pending.len(), 2);
+
+        // Quiet is measured from each device's last change.
+        assert!(wakes.take_due(t0 + s(39)).is_empty());
+        assert_eq!(wakes.take_due(t0 + s(40)), [ipad()]);
+        assert_eq!(wakes.next(), Some(t0 + s(50)));
+        assert_eq!(wakes.take_due(t0 + s(50)), [phone()]);
+        assert_eq!(wakes.next(), None);
+    }
+
+    #[test]
+    fn a_library_that_never_goes_quiet_still_wakes_devices() {
+        let t0 = std::time::Instant::now();
+        let phone = || ("dev-1".to_string(), "j".to_string());
+        let mut wakes = Wakes {
+            pending: Vec::new(),
+            timer: false,
+        };
+        let mut sent = 0;
+        for i in 0..40 {
+            let now = t0 + std::time::Duration::from_secs(i * 10);
+            sent += wakes.take_due(now).len();
+            wakes.add([phone()], now);
+        }
+        // Six and a half minutes of changes every ten seconds: one push at
+        // the five-minute mark, and one pending.
+        assert_eq!(sent, 1);
+        assert_eq!(wakes.pending.len(), 1);
     }
 
     #[test]
