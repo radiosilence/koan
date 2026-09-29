@@ -44,18 +44,23 @@ def token():
 
 
 def call(method, path, body=None):
-    req = urllib.request.Request(
-        API + path,
-        method=method,
-        data=json.dumps(body).encode() if body is not None else None,
-        headers={"Authorization": f"Bearer {token()}", "Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req) as r:
-            text = r.read()
-            return json.loads(text) if text else {}
-    except urllib.error.HTTPError as e:
-        sys.exit(f"{method} {path}: {e.code}\n{e.read().decode()}")
+    # App Store Connect answers 500 now and then and succeeds on a retry.
+    for attempt in range(4):
+        req = urllib.request.Request(
+            API + path,
+            method=method,
+            data=json.dumps(body).encode() if body is not None else None,
+            headers={"Authorization": f"Bearer {token()}", "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req) as r:
+                text = r.read()
+                return json.loads(text) if text else {}
+        except urllib.error.HTTPError as e:
+            if e.code >= 500 and attempt < 3:
+                time.sleep(2 * (attempt + 1))
+                continue
+            sys.exit(f"{method} {path}: {e.code}\n{e.read().decode()}")
 
 
 def patch(kind, id, attributes, relationships=None):

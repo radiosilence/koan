@@ -607,7 +607,7 @@ ios-walk device="koan-dev" search="gabriel": (ios-ffi "iphonesimulator") ios-pro
         --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
     # A booted simulator is a running copy of iOS; leave none behind.
     trap 'xcrun simctl status_bar "$udid" clear; xcrun simctl shutdown "$udid"' EXIT
-    TEST_RUNNER_KOAN_WALK_SEARCH='{{search}}' xcodebuild test -quiet \
+    TEST_RUNNER_KOAN_WALK_SEARCH='{{search}}' TEST_RUNNER_KOAN_WALK_SETTLE="${KOAN_WALK_SETTLE:-0}" xcodebuild test -quiet \
         -project apps/ios/Koan.xcodeproj -scheme Koan \
         -destination "id=$udid" \
         -only-testing:KoanUITests/WalkTests \
@@ -710,6 +710,13 @@ ios-testflight build: (ios-ffi "iphoneos") (ios-project build)
         -exportPath "$out/export" \
         "${auth[@]}"
     echo "uploaded build {{build}} to App Store Connect"
+
+# Frame a walk's screenshots for the App Store: each screen on a blur of its
+# own colours, captioned from apps/ios/store/captions.toml, at the size it was
+# taken. `just ios-store-shots target/ios-walk target/shots-iphone`, and
+# `captions-ipad` for an iPad's walk.
+ios-store-shots src out captions="captions":
+    uv run apps/ios/store/frame.py apps/ios/store/{{captions}}.toml {{src}} {{out}}
 
 # Push the App Store listing (apps/ios/store/listing.toml) through the App
 # Store Connect API: text, review details, the newest processed build, and

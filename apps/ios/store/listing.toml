@@ -76,7 +76,7 @@ kōan is a player for a music library on the user's own Subsonic-compatible serv
 To review it with a library, sign in to Navidrome's public demonstration server, which holds only Creative Commons \
 music:
 
-1. Open the Settings tab and choose Server.
+1. Open the Settings tab (at the bottom on iPhone, in the bar across the top on iPad) and choose Server.
 2. Server: https://demo.navidrome.org
    Username: demo
    Password: demo

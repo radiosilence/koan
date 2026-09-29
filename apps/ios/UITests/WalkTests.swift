@@ -18,6 +18,10 @@ final class WalkTests: XCTestCase {
 
     func testWalk() {
         pause(3)
+        // The launch sync's card floats over every page until it is done.
+        // Waited out rather than polled: reading the screen while a launch is
+        // still laying out can time out the test driver.
+        pause(Double(ProcessInfo.processInfo.environment["KOAN_WALK_SETTLE"] ?? "0") ?? 0)
         snap("01-queue")
 
         tab("Library")
@@ -45,7 +49,9 @@ final class WalkTests: XCTestCase {
         let play = app.buttons["play.fill"].firstMatch
         if play.waitForExistence(timeout: 3) { play.tap() }
         pause(4)
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.868)).tap()
+        // The mini player: above the tab bar on a phone, at the foot on an iPad.
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        app.coordinate(withNormalizedOffset: CGVector(dx: pad ? 0.2 : 0.35, dy: pad ? 0.965 : 0.868)).tap()
         let lyrics = app.buttons["Show lyrics"]
         if lyrics.waitForExistence(timeout: 5) {
             pause(2)

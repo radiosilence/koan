@@ -87,6 +87,7 @@ just ios-walk       # UI test that screenshots every page, into target/ios-walk
 just ios-testflight BUILD # archive, sign and upload to TestFlight (needs the ASC key)
 just ios-signin DEV URL USER PASS # sign a simulator in through Settings, as App Review does
 just ios-use DEV      # use the app like a listener and check each step; run before submitting
+just ios-store-shots SRC OUT [captions-ipad] # frame a walk's screenshots for the App Store
 just ios-store [iphone=DIR ipad=DIR] # push apps/ios/store/listing.toml (+ screenshots) to App Store Connect
 ```
 
