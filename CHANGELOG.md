@@ -11,6 +11,7 @@
 ### Changed
 
 - **Music for a sleeping phone is a notification at once.** iOS does not let an app it woke start audio, which the phone's log showed plainly: the woken app took the command and the output unit refused to start. So a request to play on a phone iOS has suspended is sent straight away as the "Play on …" notification, time-sensitive so it reaches through Focus, rather than after a wake and a wait that could not succeed. Every other command still goes to the outbox and wakes the phone to take it. The app no longer switches to a mixable audio session when woken.
+- **Release notes no longer carry the quarantine workaround.** Every release since 0.40.0 is notarised, so the `xattr` instructions only applied to builds nobody downloads.
 
 ### Fixed
 
@@ -333,6 +334,7 @@
 
 ### Changed
 
+- **The server sign-in fields say what they are.** An iOS form shows a field's prompt and not its label, so the prompts were the only text on screen, and they were examples (`https://music.example.com`, `your account`, `hunter2`). They now read Server URL, Username and Password.
 - **The share page plays gaplessly, and looks like the rest of the estate.** Tracks the browser can decode are decoded ahead and each is started on the sample the last one ends, so albums that run into each other play without a gap; a track too long to hold decoded (over fifteen minutes) streams instead. One player with previous, play and next, a seek bar, and lock-screen and headphone controls through the Media Session API. The script and stylesheet are served by koan (`/share/assets/*`) and the CSP allows those and nothing else; without script, each track is a plain link.
 
 ## Unreleased
