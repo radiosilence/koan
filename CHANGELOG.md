@@ -333,6 +333,7 @@
 
 ### Changed
 
+- **The server sign-in fields say what they are.** An iOS form shows a field's prompt and not its label, so the prompts were the only text on screen, and they were examples (`https://music.example.com`, `your account`, `hunter2`). They now read Server URL, Username and Password.
 - **The share page plays gaplessly, and looks like the rest of the estate.** Tracks the browser can decode are decoded ahead and each is started on the sample the last one ends, so albums that run into each other play without a gap; a track too long to hold decoded (over fifteen minutes) streams instead. One player with previous, play and next, a seek bar, and lock-screen and headphone controls through the Media Session API. The script and stylesheet are served by koan (`/share/assets/*`) and the CSP allows those and nothing else; without script, each track is a plain link.
 
 ## Unreleased
