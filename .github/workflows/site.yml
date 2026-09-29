@@ -41,6 +41,15 @@ jobs:
         working-directory: site
         run: mise run css
 
+      # The server marks every file immutable for a year, so a stylesheet at a fixed URL is never fetched again once a
+      # browser has it: new markup would render against old rules. Its URL carries a hash of its content instead.
+      - name: Stamp the stylesheet URL
+        working-directory: site
+        run: |
+          v=$(sha256sum public/style.css | cut -c1-12)
+          sed -i "s|href=\"/style.css\"|href=\"/style.css?v=$v\"|" public/*.html
+          grep -q "style.css?v=$v" public/index.html
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 

@@ -9,16 +9,19 @@
 //! leaves.
 //!
 //! The remote server is held to a stricter standard, because its plays feed
-//! Last.fm and friends: it is told what is playing when a track starts, and is
-//! sent a scrobble only once the track has been heard (see [`counts_as_heard`]).
+//! Last.fm and friends: it is told what is playing, and where, as playback
+//! starts, pauses, seeks and stops, and is sent a scrobble only once the track
+//! has been heard (see [`counts_as_heard`]).
 
 use std::thread;
+use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Sender, TrySendError};
+use crossbeam_channel::{RecvTimeoutError, Sender, TrySendError};
 
 use crate::db::connection::Database;
 use crate::db::queries;
 use crate::player::state::QueueItemId;
+use crate::remote::client::PlaybackReportState;
 
 /// A position jump larger than this is a seek, not playback, and buys no
 /// credit. The player polls every 50ms, so a real tick is far below it.
@@ -33,6 +36,10 @@ const SCROBBLE_ENOUGH_MS: u64 = 4 * 60_000;
 /// Events waiting to be written. Bounded because the writer can block on a
 /// remote server; a wedged one must not grow this without limit.
 const QUEUE_DEPTH: usize = 64;
+
+/// The server hears at most one `playing` report per this. Dragging the seek
+/// bar restarts playback at every step, and only where it lands matters.
+const REPORT_INTERVAL: Duration = Duration::from_secs(1);
 
 /// The track under the needle, and how much of it has been heard.
 ///
@@ -81,12 +88,23 @@ impl InFlight {
     }
 }
 
+/// Where playback of a track stands, for the remote server's Now Playing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaybackReport {
+    pub track_id: i64,
+    pub state: PlaybackReportState,
+    pub position_ms: u64,
+}
+
 /// What the writer thread is told.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlayEvent {
-    /// A track started. Written straight away, so history stays in play order
-    /// even for tracks that are skipped a moment later.
-    Started { track_id: i64 },
+    /// A track started, at `position_ms` when resumed partway. Written straight
+    /// away, so history stays in play order even for tracks that are skipped a
+    /// moment later.
+    Started { track_id: i64, position_ms: u64 },
+    /// The track playing was paused, resumed, sought or stopped.
+    Playback(PlaybackReport),
     /// The needle left it, having heard this much.
     Finished { track_id: i64, listened_ms: u64 },
 }
@@ -116,14 +134,29 @@ impl PlayRecorder {
             .name("koan-history".into())
             .spawn(move || {
                 let mut writer = Writer::new(db);
-                for event in rx {
-                    writer.handle(event);
+                loop {
+                    let next = match writer.reports.deadline() {
+                        Some(deadline) => rx.recv_deadline(deadline),
+                        None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                    };
+                    match next {
+                        Ok(event) => writer.handle(event),
+                        Err(RecvTimeoutError::Timeout) => writer.send_due_report(),
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
                 }
             })
             .map_err(|e| log::warn!("play history disabled — cannot spawn writer: {e}"))
             .ok()?;
 
         Some(Self { tx })
+    }
+
+    /// A recorder with no writer behind it, and the events it is handed.
+    #[cfg(test)]
+    pub fn capture() -> (Self, crossbeam_channel::Receiver<PlayEvent>) {
+        let (tx, rx) = crossbeam_channel::bounded(QUEUE_DEPTH);
+        (Self { tx }, rx)
     }
 
     pub fn record(&self, event: PlayEvent) {
@@ -137,14 +170,15 @@ impl PlayRecorder {
     }
 }
 
-/// Owns the connection and the one bit of state history needs: which row the
-/// track now playing was written to, so its listening time can land on it.
+/// Owns the connection, which row the track now playing was written to (so
+/// its listening time can land on it), and the playback reports held back.
 struct Writer {
     db: Database,
     open: Option<(i64, i64)>,
     /// The track now playing and when it started, in ms since the epoch: a
     /// scrobble is dated to when the listen began, not when it ended.
     started: Option<(i64, u64)>,
+    reports: Coalescer,
 }
 
 impl Writer {
@@ -153,12 +187,16 @@ impl Writer {
             db,
             open: None,
             started: None,
+            reports: Coalescer::default(),
         }
     }
 
     fn handle(&mut self, event: PlayEvent) {
         match event {
-            PlayEvent::Started { track_id } => {
+            PlayEvent::Started {
+                track_id,
+                position_ms,
+            } => {
                 match queries::record_play(&self.db.conn, track_id, None) {
                     Ok(id) => self.open = Some((id, track_id)),
                     Err(e) => {
@@ -167,8 +205,13 @@ impl Writer {
                     }
                 }
                 self.started = Some((track_id, now_ms()));
-                report_to_remote(&self.db, track_id, Report::NowPlaying);
+                self.report(PlaybackReport {
+                    track_id,
+                    state: PlaybackReportState::Playing,
+                    position_ms,
+                });
             }
+            PlayEvent::Playback(report) => self.report(report),
             PlayEvent::Finished {
                 track_id,
                 listened_ms,
@@ -176,7 +219,7 @@ impl Writer {
                 if let Some((started_track, at_ms)) = self.started.take()
                     && started_track == track_id
                 {
-                    report_to_remote(&self.db, track_id, Report::Heard { listened_ms, at_ms });
+                    scrobble_if_heard(&self.db, track_id, listened_ms, at_ms);
                 }
                 let Some((id, started)) = self.open.take() else {
                     return;
@@ -191,6 +234,58 @@ impl Writer {
                 }
             }
         }
+    }
+
+    fn report(&mut self, report: PlaybackReport) {
+        if let Some(report) = self.reports.offer(report, Instant::now()) {
+            send_report(&self.db, report);
+        }
+    }
+
+    fn send_due_report(&mut self) {
+        if let Some(report) = self.reports.due(Instant::now()) {
+            send_report(&self.db, report);
+        }
+    }
+}
+
+/// Holds back `playing` reports that follow another report too closely,
+/// keeping only the newest. `paused` and `stopped` go straight out and
+/// supersede whatever was held: they are the state the server is left in.
+#[derive(Debug, Default)]
+struct Coalescer {
+    last_sent: Option<Instant>,
+    pending: Option<PlaybackReport>,
+}
+
+impl Coalescer {
+    /// What to send now, if anything.
+    fn offer(&mut self, report: PlaybackReport, now: Instant) -> Option<PlaybackReport> {
+        let recent = self
+            .last_sent
+            .is_some_and(|at| now.duration_since(at) < REPORT_INTERVAL);
+        if report.state == PlaybackReportState::Playing && recent {
+            self.pending = Some(report);
+            return None;
+        }
+        self.pending = None;
+        self.last_sent = Some(now);
+        Some(report)
+    }
+
+    /// When the held report falls due.
+    fn deadline(&self) -> Option<Instant> {
+        self.pending?;
+        Some(self.last_sent? + REPORT_INTERVAL)
+    }
+
+    /// The held report, once it is due.
+    fn due(&mut self, now: Instant) -> Option<PlaybackReport> {
+        if self.deadline()? > now {
+            return None;
+        }
+        self.last_sent = Some(now);
+        self.pending.take()
     }
 }
 
@@ -210,35 +305,45 @@ fn counts_as_heard(listened_ms: u64, duration_ms: Option<u64>) -> bool {
     }
 }
 
-enum Report {
-    /// A track started: shows in the server's Now Playing, counts nothing.
-    NowPlaying,
-    /// A track ended having been heard for `listened_ms`, starting at `at_ms`.
-    Heard { listened_ms: u64, at_ms: u64 },
+/// A library track's id on the remote server and its duration, if it came
+/// from one. A track koan only has locally has nothing to report.
+fn remote_track(db: &Database, track_id: i64) -> Option<(String, Option<u64>)> {
+    let track = queries::get_track_row(&db.conn, track_id).ok()??;
+    let duration_ms = track.duration_ms.map(|d| d.max(0) as u64);
+    Some((track.remote_id?, duration_ms))
 }
 
-/// Tell the remote server about a play, if the track came from one.
-///
-/// Best-effort: a server that is down, or a track koan only has locally, both
-/// mean nothing to send, and neither is worth surfacing.
-fn report_to_remote(db: &Database, track_id: i64, report: Report) {
-    let Ok(Some(track)) = queries::get_track_row(&db.conn, track_id) else {
-        return;
-    };
-    let Some(remote_id) = track.remote_id else {
-        return;
-    };
-    let at_ms = match report {
-        Report::NowPlaying => None,
-        Report::Heard { listened_ms, at_ms } => {
-            if !counts_as_heard(listened_ms, track.duration_ms.map(|d| d.max(0) as u64)) {
-                return;
-            }
-            Some(at_ms)
-        }
-    };
+fn remote_client() -> Option<std::sync::Arc<crate::remote::client::SubsonicClient>> {
     let cfg = crate::config::Config::load().unwrap_or_default();
-    let Some(client) = crate::helpers::subsonic_client(&cfg) else {
+    crate::helpers::subsonic_client(&cfg)
+}
+
+/// Best-effort, like everything sent to the server: one that is down is not
+/// worth surfacing.
+fn send_report(db: &Database, report: PlaybackReport) {
+    let Some((remote_id, _)) = remote_track(db, report.track_id) else {
+        return;
+    };
+    let Some(client) = remote_client() else {
+        return;
+    };
+    if let Err(e) = client.report_playback(&remote_id, report.state, report.position_ms) {
+        log::warn!(
+            "failed to report playback of track {} to remote: {e}",
+            report.track_id
+        );
+    }
+}
+
+/// Scrobble a finished listen to the remote server, if it counts as a play.
+fn scrobble_if_heard(db: &Database, track_id: i64, listened_ms: u64, at_ms: u64) {
+    let Some((remote_id, duration_ms)) = remote_track(db, track_id) else {
+        return;
+    };
+    if !counts_as_heard(listened_ms, duration_ms) {
+        return;
+    }
+    let Some(client) = remote_client() else {
         return;
     };
     if let Err(e) = client.scrobble(&remote_id, at_ms) {
@@ -249,6 +354,65 @@ fn report_to_remote(db: &Database, track_id: i64, report: Report) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn report(state: PlaybackReportState, position_ms: u64) -> PlaybackReport {
+        PlaybackReport {
+            track_id: 1,
+            state,
+            position_ms,
+        }
+    }
+
+    #[test]
+    fn a_seek_bar_drag_sends_where_it_lands() {
+        use PlaybackReportState::Playing;
+        let mut c = Coalescer::default();
+        let t0 = Instant::now();
+        assert_eq!(c.offer(report(Playing, 0), t0), Some(report(Playing, 0)));
+
+        for step in 1..=20 {
+            let at = t0 + Duration::from_millis(step * 30);
+            assert_eq!(c.offer(report(Playing, step * 5_000), at), None);
+        }
+        assert_eq!(c.deadline(), Some(t0 + REPORT_INTERVAL));
+        assert_eq!(c.due(t0 + Duration::from_millis(900)), None, "not yet");
+        assert_eq!(
+            c.due(t0 + REPORT_INTERVAL),
+            Some(report(Playing, 100_000)),
+            "only the last step"
+        );
+        assert_eq!(c.deadline(), None);
+    }
+
+    #[test]
+    fn playing_after_a_quiet_second_goes_straight_out() {
+        use PlaybackReportState::Playing;
+        let mut c = Coalescer::default();
+        let t0 = Instant::now();
+        c.offer(report(Playing, 0), t0);
+        assert_eq!(
+            c.offer(report(Playing, 60_000), t0 + REPORT_INTERVAL),
+            Some(report(Playing, 60_000))
+        );
+    }
+
+    #[test]
+    fn a_pause_or_stop_is_never_held_and_supersedes_a_held_seek() {
+        use PlaybackReportState::{Paused, Playing, Stopped};
+        let mut c = Coalescer::default();
+        let t0 = Instant::now();
+        c.offer(report(Playing, 0), t0);
+        assert_eq!(c.offer(report(Playing, 30_000), t0), None);
+        assert_eq!(
+            c.offer(report(Paused, 30_000), t0),
+            Some(report(Paused, 30_000))
+        );
+        assert_eq!(c.deadline(), None, "the held seek is gone");
+        assert_eq!(
+            c.offer(report(Stopped, 30_000), t0),
+            Some(report(Stopped, 30_000))
+        );
+    }
 
     fn flight() -> InFlight {
         InFlight::new(QueueItemId::new(), Some(1))

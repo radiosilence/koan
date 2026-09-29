@@ -6,9 +6,11 @@
 
 - **Invite links and account management** ([#572](https://github.com/radiosilence/koan/issues/572)). Admins create accounts, pick their access level, change it and delete accounts from the web UI's Users page, over GraphQL (so from MCP too), with `koan auth invite`, and through koan-specific Subsonic endpoints (`koanUsers`, `koanCreateUser`, `koanInvite`, `koanSetUserRole`, `koanDeleteUser`). Creating or inviting an account produces an invite: a koan.rocks link carrying the server, username and password in its fragment, and an email to send it in (copy as rich text, `mailto:`, or the share sheet; the server sends no mail). The details are shown in plain text for other Subsonic apps. An invite reuses the account's password, recovered from its sealed copy, so its other devices keep working.
 - **koan.rocks/join** is the page an invite opens where the app is not installed, and koan.rocks serves the app-site association that makes `/join/` a universal link into the iOS app.
+- **The "Play on …" notification shows the album's cover.** The server puts a link to the cover in the notification, and a notification service extension in the iOS app fetches and attaches it before iOS shows it. The extension holds no sign-in, so the link authorises itself: an HMAC over one track and an expiry ten minutes out, keyed by a secret that lives only in the server's process, opening that one cover and nothing else. Needs `sharing.public_url`; without it the notification shows as before.
 
 ### Fixed
 
+- **koan.rocks no longer renders new pages against an old stylesheet.** The server caches every file for a year as immutable, and the stylesheet lived at a fixed URL, so a browser that had visited before kept the old rules under new markup (the header nav lost its spacing). The stylesheet's URL now carries a hash of its content.
 - **Lyrics cached before a synced copy existed upstream now upgrade to it** ([#215](https://github.com/radiosilence/koan/issues/215)). Any cached copy used to be final, so a track first fetched as plain text never highlighted. A plain copy older than 30 days is checked against LRCLIB again when it is next shown, and kept (with its clock reset) if there is still no synced one. Synced copies are never re-fetched.
 
 ## 0.42.1
