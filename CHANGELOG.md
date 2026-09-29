@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- **Play works after an audio route drops mid-interruption.** A Bluetooth speaker losing power, or a voice assistant handing the speaker back, interrupts with a route disconnection that iOS never ends; the session stayed inactive and every play afterwards was silent. koan now takes the session back, and again whenever it returns to the front with an interruption still open. It stays paused when the route that went was the one it was playing through. Route changes are logged beside interruptions.
 - **Playback resumes after an interruption that iOS announces more than once.** A voice assistant taking the audio sends several "interruption began" in a row; the later ones found playback already paused by the first and recorded that nothing had been playing, so when the interruption ended with iOS asking koan to resume, it did not. What the first one saw now holds until the interruption ends.
 - **A failed release can be re-run.** The release job created the tag first, so re-running it after a failed upload failed on the tag it had already made. It now skips a tag that exists and goes on to the uploads.
 

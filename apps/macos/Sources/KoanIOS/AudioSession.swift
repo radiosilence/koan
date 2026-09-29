@@ -119,33 +119,75 @@ final class AudioSession {
         )
     }
 
+    /// An interruption began and nothing has ended it yet. The session is
+    /// inactive until something reactivates it, and until then every play
+    /// goes nowhere.
+    private var interrupted = false
+    /// When the route last went away under us, so an interruption that comes
+    /// with it is not taken as one to play on through: headphones pulled out
+    /// must stay paused.
+    private var routeLostAt: Date?
+
     private func handleInterruption(
         _ type: AVAudioSession.InterruptionType, options: UInt, reason: UInt
     ) {
         note?("interruption \(type == .began ? "began" : "ended") options=\(options) reason=\(reason)")
         switch type {
         case .began:
+            interrupted = true
             onInterrupted?()
-        case .ended:
-            // The output unit iOS stopped for the interruption will not start
-            // again, so it is rebuilt whether or not playback resumes.
-            do {
-                try AVAudioSession.sharedInstance().setActive(true)
-            } catch {
-                note?("could not reactivate the session: \(error)")
+            // iOS ends most interruptions with an "ended". One for a route
+            // that went away never gets one (a voice assistant handing the
+            // speaker back does this), and the session stays down with it. Take
+            // the session back once the route has settled.
+            if AVAudioSession.InterruptionReason(rawValue: reason) == .routeDisconnected {
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(1))
+                    guard let self, self.interrupted else { return }
+                    let lostRoute = self.routeLostAt.map { Date().timeIntervalSince($0) < 3 } ?? false
+                    self.end(resume: !lostRoute)
+                }
             }
+        case .ended:
             let resume = AVAudioSession.InterruptionOptions(rawValue: options)
                 .contains(.shouldResume)
-            onInterruptionEnded?(resume)
+            end(resume: resume)
         @unknown default:
             break
         }
     }
 
+    /// The app is in front again. An interruption nothing ended leaves the
+    /// session down; take it back, so pressing play plays. Resuming is the
+    /// person's to do.
+    func recoverIfInterrupted() {
+        guard interrupted else { return }
+        note?("session still interrupted on returning; taking it back")
+        end(resume: false)
+    }
+
+    /// Reactivate the session and have the output rebuilt: the unit iOS
+    /// stopped for the interruption will not start again on its own.
+    private func end(resume: Bool) {
+        interrupted = false
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            note?("could not reactivate the session: \(error)")
+        }
+        onInterruptionEnded?(resume)
+    }
+
     private func handleRouteChange(_ reason: AVAudioSession.RouteChangeReason) {
+        let route = AVAudioSession.sharedInstance().currentRoute.outputs
+            .map { $0.portType.rawValue }.joined(separator: ",")
+        note?("route change reason=\(reason.rawValue) now=\(route)")
         // The only reason that must pause. The others — a better route
         // appearing, a category change — are not the user walking away.
-        if reason == .oldDeviceUnavailable { onRouteLost?() }
+        if reason == .oldDeviceUnavailable {
+            routeLostAt = Date()
+            onRouteLost?()
+        }
     }
 
     deinit {

@@ -59,6 +59,7 @@ struct KoanIOSApp: App {
             .onChange(of: scenePhase) { _, phase in
                 keepalive.setBackground(phase == .background)
                 state?.player.engine.logNote(message: "scene \(phase)")
+                if phase == .active { session.recoverIfInterrupted() }
                 // Suspended in the background, the link to the server went
                 // with the rest of the app; link again now rather than when
                 // its retry comes round.
@@ -86,7 +87,7 @@ struct KoanIOSApp: App {
                         // The later ones find playback already paused (by the
                         // first), so they must not overwrite what the first saw,
                         // or the "resume" at the end finds nothing to resume.
-                        interruptedPlaying = interruptedPlaying || (built?.player.isPlaying ?? false)
+                        interruptedPlaying = interruptedPlaying || (built?.player.engine.isPlaying() ?? false)
                         built?.player.engine.logNote(message: "interrupted while playing: \(interruptedPlaying)")
                         built?.player.pause()
                     }

@@ -350,6 +350,13 @@ impl KoanEngine {
 
     /// Cheap enough to poll every frame — use it to decide whether to call
     /// `queue()`, which allocates the whole list.
+    /// Whether the player is playing, read from the engine now. For code that
+    /// runs with the app in the background, where the mirror, refreshed for
+    /// what is on screen, can still say what it said before.
+    pub fn is_playing(&self) -> bool {
+        self.state.playback_state() == koan_core::player::state::PlaybackState::Playing
+    }
+
     pub fn playlist_version(&self) -> u64 {
         self.state.playlist_version()
     }
