@@ -85,6 +85,8 @@ just ios-smoke FILE # play a file through the real Player on the simulator
 just ios-phone      # install on the plugged-in iPhone (personal team)
 just ios-walk       # UI test that screenshots every page, into target/ios-walk
 just ios-testflight BUILD # archive, sign and upload to TestFlight (needs the ASC key)
+just ios-signin DEV URL USER PASS # sign a simulator in through Settings, as App Review does
+just ios-store [iphone=DIR ipad=DIR] # push apps/ios/store/listing.toml (+ screenshots) to App Store Connect
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
