@@ -23,6 +23,15 @@ const STALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Total deadline for JSON API calls, whose bodies are small and read in one go.
 pub const API_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Names the device class, so a server that tells players apart by user agent
+/// (Navidrome does) sees a Mac and a phone as two players, not one.
+#[cfg(target_os = "macos")]
+const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (Macintosh)");
+#[cfg(target_os = "ios")]
+const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (iOS)");
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (Linux)");
+
 /// Attempts a download gets before giving up.
 pub const DEFAULT_ATTEMPTS: u32 = 3;
 
@@ -64,6 +73,7 @@ pub fn download_client() -> reqwest::Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(STALL_TIMEOUT)
+        .user_agent(USER_AGENT)
         .build()
 }
 
@@ -72,6 +82,7 @@ pub fn api_client() -> reqwest::Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(API_TIMEOUT)
+        .user_agent(USER_AGENT)
         .build()
 }
 
