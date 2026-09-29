@@ -87,8 +87,7 @@ music ──► │ library · web UI · shares · MCP   │
       <h3>macOS app</h3>
       <pre><code>brew install --cask radiosilence/koan/koan-app</code></pre>
       <p>You may have to update Homebrew's trust settings to trust the tap. Alternatively, download <code>Koan.dmg</code> from the <a href="https://github.com/radiosilence/koan/releases">releases page</a>.</p>
-      <p class="text-muted">The app is signed but not notarised, because notarisation needs a paid Apple developer account. macOS therefore refuses the first open and offers only “Move to Trash”. Drag the app to Applications and run this once; the cask does it for you:</p>
-      <pre><code>xattr -dr com.apple.quarantine /Applications/kōan.app</code></pre>
+      <p class="text-muted">The app is signed with a Developer ID and notarised by Apple, so it opens like any other download.</p>
       <p>Requires macOS 26 or later.</p>
 
       <h3>iOS app</h3>
