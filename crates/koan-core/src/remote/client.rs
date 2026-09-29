@@ -351,9 +351,22 @@ impl SubsonicClient {
         Ok(resp.search_result3.unwrap_or_default())
     }
 
-    /// Report a play (scrobble).
-    pub fn scrobble(&self, track_id: &str) -> Result<(), SubsonicError> {
-        self.get_with_params("scrobble", &[("id", track_id)])?;
+    /// Report a play. With `heard_at_ms` (ms since the epoch the listen
+    /// began) it is a scrobble that counts; without, it only marks the track
+    /// as now playing (`submission=false`).
+    pub fn scrobble(&self, track_id: &str, heard_at_ms: Option<u64>) -> Result<(), SubsonicError> {
+        match heard_at_ms {
+            Some(at) => {
+                let at = at.to_string();
+                self.get_with_params(
+                    "scrobble",
+                    &[("id", track_id), ("submission", "true"), ("time", &at)],
+                )?
+            }
+            None => {
+                self.get_with_params("scrobble", &[("id", track_id), ("submission", "false")])?
+            }
+        };
         Ok(())
     }
 

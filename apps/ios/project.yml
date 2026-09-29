@@ -69,6 +69,8 @@ targets:
       path: ../../target/ios-project/koan.entitlements
       properties:
         aps-environment: development
+        # A request to play reaches through Focus: it was asked for just now.
+        com.apple.developer.usernotifications.time-sensitive: true
     info:
       path: ../../target/ios-project/Info.plist
       properties:
