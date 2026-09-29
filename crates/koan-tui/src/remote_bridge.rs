@@ -172,7 +172,7 @@ fn prune_stream_cache(cache_dir: &Path, budget: u64, keep: &Path) {
 /// Downloads a track from the server and plays it via the local player.
 fn download_and_play(
     streamer: &SubsonicClient,
-    track_id: i64,
+    track_id: &str,
     dest: &Path,
     queue_id: QueueItemId,
     state: &Arc<SharedPlayerState>,
@@ -199,7 +199,8 @@ fn download_and_play(
     let store = downloads::store();
     store.queued(downloads::Download {
         id: queue_id,
-        track_id,
+        // The track has no row in this library; it is the server's.
+        track_id: 0,
         title: dest
             .file_stem()
             .map(|n| n.to_string_lossy().into_owned())
@@ -215,7 +216,7 @@ fn download_and_play(
 
     // Once per attempt, not per chunk — see `helpers::download_track`.
     let announced_total = AtomicU64::new(u64::MAX);
-    let result = streamer.stream_to_file(&track_id.to_string(), dest, |downloaded, total| {
+    let result = streamer.stream_to_file(track_id, dest, |downloaded, total| {
         bytes_written.set(downloaded);
         if announced_total.swap(total, Ordering::Relaxed) != total {
             store.started(queue_id, total, bytes_written.clone());
@@ -320,10 +321,10 @@ fn poll_and_stream_loop(
                             local_tx.send(PlayerCommand::ClearPlaylist).ok();
                             local_tx.send(PlayerCommand::AddToPlaylist(vec![item])).ok();
 
-                            // `/rest/stream` takes the server's library row id.
-                            // The queue item id was a UUIDv7 the endpoint could
-                            // never resolve, so every request 400'd.
-                            match (streamer.clone(), track.track_id) {
+                            // `/rest/stream` takes the track's id. The queue
+                            // item id names a queue entry, which the endpoint
+                            // cannot resolve.
+                            match (streamer.clone(), track.track_id.clone()) {
                                 (Some(streamer), Some(track_id)) => {
                                     let state_dl = state.clone();
                                     let tx_dl = local_tx.clone();
@@ -337,7 +338,7 @@ fn poll_and_stream_loop(
                                                 &dest,
                                             );
                                             download_and_play(
-                                                &streamer, track_id, &dest, queue_id, &state_dl,
+                                                &streamer, &track_id, &dest, queue_id, &state_dl,
                                                 &tx_dl,
                                             );
                                         })

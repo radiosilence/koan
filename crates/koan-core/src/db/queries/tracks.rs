@@ -151,11 +151,38 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
 /// `upsert_track`, additionally reporting whether a new row was inserted (`true`)
 /// or an existing one updated (`false`).
 pub fn upsert_track_status(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool), DbError> {
+    upsert_track_with(conn, meta, None)
+}
+
+/// `upsert_track` for a remote sync, which knows the server ids it has seen so
+/// far. A row in the same slot whose id the sync has not seen is taken to be
+/// this track under the id it had before: a server that renumbers its library
+/// keeps its rows, history and favourites rather than gaining a second copy of
+/// every track. An id already seen belongs to a track of its own, so two
+/// entries the server lists with identical tags stay two rows.
+pub fn upsert_synced_track(
+    conn: &Connection,
+    meta: &TrackMeta,
+    seen: &HashSet<String>,
+) -> Result<i64, DbError> {
+    upsert_track_with(conn, meta, Some(seen)).map(|(id, _)| id)
+}
+
+fn upsert_track_with(
+    conn: &Connection,
+    meta: &TrackMeta,
+    seen: Option<&HashSet<String>>,
+) -> Result<(i64, bool), DbError> {
     // Use a savepoint so this works both standalone and inside an existing
     // transaction (e.g. the chunk transactions in scan_folder).
     conn.execute_batch("SAVEPOINT upsert_track")?;
 
-    let result = upsert_track_inner(conn, meta);
+    let result = upsert_track_inner(conn, meta, seen).and_then(|(id, inserted)| {
+        if let Some(rid) = &meta.remote_id {
+            super::adopt_uid(conn, super::UidKind::Track, id, rid)?;
+        }
+        Ok((id, inserted))
+    });
     match &result {
         Ok(_) => conn.execute_batch("RELEASE upsert_track")?,
         Err(_) => conn.execute_batch("ROLLBACK TO upsert_track; RELEASE upsert_track")?,
@@ -163,7 +190,11 @@ pub fn upsert_track_status(conn: &Connection, meta: &TrackMeta) -> Result<(i64, 
     result
 }
 
-fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool), DbError> {
+fn upsert_track_inner(
+    conn: &Connection,
+    meta: &TrackMeta,
+    seen: Option<&HashSet<String>>,
+) -> Result<(i64, bool), DbError> {
     // Disc 0 is no disc. Taggers write it for a single-disc release and servers
     // leave the field out, and a zero on one side only splits every track in two.
     let disc = meta.disc.filter(|d| *d > 0);
@@ -219,11 +250,39 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
         })
     });
 
+    // 2b. The same slot under a server id this sync has not seen: the id this
+    // track had before the server renumbered it. See `upsert_synced_track`.
+    let track_id = track_id.or_else(|| {
+        let (seen, rid) = (seen?, meta.remote_id.as_ref()?);
+        let mut stmt = conn
+            .prepare_cached(
+                "SELECT id, remote_id FROM tracks
+                 WHERE album_id = ?1 AND title = ?2
+                   AND COALESCE(track_number, -1) = COALESCE(?3, -1)
+                   AND COALESCE(disc, -1) = COALESCE(?4, -1)
+                   AND remote_id IS NOT NULL AND remote_id != ?5
+                 ORDER BY id",
+            )
+            .ok()?;
+        let candidates: Vec<(i64, String)> = stmt
+            .query_map(
+                params![album_id, meta.title, meta.track_number, disc, rid],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok()?
+            .filter_map(Result::ok)
+            .collect();
+        candidates
+            .into_iter()
+            .find(|(_, old)| !seen.contains(old))
+            .map(|(id, _)| id)
+    });
+
     // 3. Content match: same artist + album + disc + track# + title (cross-source dedup).
     // The two NULL clauses keep this to genuine local<->remote merges: two files on
     // disk are two tracks however identical their tags, and so are two entries on the
-    // same server. A server that rotates its IDs now yields visible duplicates rather
-    // than silently swallowing one of them — losing beats confusing.
+    // same server. A server that renumbers is step 2b's to recognise, which only a
+    // sync can, since it knows which ids are still live.
     let track_id = track_id.or_else(|| {
         conn.query_row(
             "SELECT id FROM tracks
@@ -367,6 +426,16 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
         };
         let merged_remote_id = meta.remote_id.as_ref().or(existing.remote_id.as_ref());
         let merged_remote_url = meta.remote_url.as_ref().or(existing.remote_url.as_ref());
+        // A track known only by its stream address is favourited by it, so a
+        // new address takes the favourite along.
+        if let (Some(old), Some(new)) = (existing.remote_url.as_ref(), merged_remote_url)
+            && old != new
+        {
+            conn.execute(
+                "UPDATE OR IGNORE favourites SET track_path = ?1 WHERE track_path = ?2",
+                params![new, old],
+            )?;
+        }
         // Whatever was already downloaded stays reachable; dropping the reference
         // would leak the file into the cache with nothing left pointing at it.
         let merged_cached_path = existing.cached_path.as_ref();
@@ -2134,6 +2203,70 @@ mod tests {
             "two server entries must not collapse into one row"
         );
         assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 2);
+    }
+
+    fn uid_of(db: &Database, table: &str, id: i64) -> String {
+        db.conn
+            .query_row(
+                &format!("SELECT uid FROM {table} WHERE id = ?1"),
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn a_track_synced_from_koan_takes_the_servers_uids() {
+        let db = test_db();
+        let [track, album, artist] = [(); 3].map(|_| uuid::Uuid::now_v7().to_string());
+        let mut meta = remote_meta("Archangel", "Burial", "Untrue", &track);
+        meta.album_remote_id = Some(album.clone());
+        meta.artist_remote_id = Some(artist.clone());
+
+        let id = upsert_track(&db.conn, &meta).unwrap();
+
+        let row = get_track_row(&db.conn, id).unwrap().unwrap();
+        assert_eq!(uid_of(&db, "tracks", id), track);
+        assert_eq!(uid_of(&db, "albums", row.album_id.unwrap()), album);
+        assert_eq!(uid_of(&db, "artists", row.artist_id.unwrap()), artist);
+    }
+
+    #[test]
+    fn a_local_file_merged_with_its_koan_copy_takes_the_servers_uid() {
+        let db = test_db();
+        let local = upsert_track(&db.conn, &sample_meta("Archangel", "Burial", "Untrue")).unwrap();
+        let minted = uid_of(&db, "tracks", local);
+
+        let server = uuid::Uuid::now_v7().to_string();
+        let merged = upsert_track(
+            &db.conn,
+            &remote_meta("Archangel", "Burial", "Untrue", &server),
+        )
+        .unwrap();
+
+        assert_eq!(merged, local);
+        assert_ne!(minted, server);
+        assert_eq!(uid_of(&db, "tracks", local), server);
+    }
+
+    #[test]
+    fn ids_from_other_servers_leave_the_minted_uid() {
+        let db = test_db();
+        for remote_id in [
+            "3xJ9kQ2pZ",
+            "42",
+            "0f8fad5b-d9cb-469f-a165-70867728950e",
+            "018f8fad5bd9cb769fa16570867728950e",
+        ] {
+            let id = upsert_track(
+                &db.conn,
+                &remote_meta(remote_id, "Burial", "Untrue", remote_id),
+            )
+            .unwrap();
+            let uid = uid_of(&db, "tracks", id);
+            assert_ne!(uid, remote_id);
+            assert!(super::super::is_uid(&uid), "{uid}");
+        }
     }
 
     /// The remote copy of a track: no path, a remote id, correct tags.

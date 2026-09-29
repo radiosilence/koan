@@ -18,6 +18,7 @@ use async_graphql::{Context, Schema};
 use crossbeam_channel::{Sender, TrySendError};
 use koan_core::audio::viz::VizSnapshot;
 use koan_core::db::connection::Database;
+use koan_core::db::queries::{UidKind, is_uid};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueItemId, SharedPlayerState};
 use uuid::Uuid;
@@ -232,6 +233,119 @@ where
         f(&db)
     })
     .await
+}
+
+/// A row as its published id: its uid, the same on the server and every device
+/// synced from it. See `koan_core::db::queries::uids`.
+async fn uid(
+    ctx: &Context<'_>,
+    kind: UidKind,
+    id: i64,
+) -> async_graphql::Result<async_graphql::ID> {
+    Ok(async_graphql::ID(
+        id_loader(ctx)?
+            .load_one(loaders::UidOf(kind, id))
+            .await?
+            .unwrap_or_else(|| id.to_string()),
+    ))
+}
+
+async fn uids(
+    ctx: &Context<'_>,
+    kind: UidKind,
+    ids: &[i64],
+) -> async_graphql::Result<Vec<async_graphql::ID>> {
+    let found = id_loader(ctx)?
+        .load_many(ids.iter().map(|&id| loaders::UidOf(kind, id)))
+        .await?;
+    Ok(ids
+        .iter()
+        .map(|&id| {
+            async_graphql::ID(
+                found
+                    .get(&loaders::UidOf(kind, id))
+                    .cloned()
+                    .unwrap_or_else(|| id.to_string()),
+            )
+        })
+        .collect())
+}
+
+async fn opt_uid(
+    ctx: &Context<'_>,
+    kind: UidKind,
+    id: Option<i64>,
+) -> async_graphql::Result<Option<async_graphql::ID>> {
+    match id {
+        Some(id) => uid(ctx, kind, id).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+/// The row an id argument names: its uid, or the bare row id that callers
+/// from before uids still send.
+async fn row_id(ctx: &Context<'_>, kind: UidKind, id: &str) -> async_graphql::Result<i64> {
+    Ok(row_ids(ctx, kind, &[id]).await?[0])
+}
+
+/// `row_id` for each, in one lookup.
+async fn row_ids<S: AsRef<str> + Sync>(
+    ctx: &Context<'_>,
+    kind: UidKind,
+    ids: &[S],
+) -> async_graphql::Result<Vec<i64>> {
+    let loader = id_loader(ctx)?;
+    let uids = ids
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|id| id.parse::<i64>().is_err())
+        .map(|id| {
+            if is_uid(id) {
+                Ok(loaders::RowOf(kind, id.to_string()))
+            } else {
+                Err(async_graphql::Error::new(format!("not an id: {id}")))
+            }
+        })
+        .collect::<async_graphql::Result<Vec<_>>>()?;
+    let found = loader.load_many(uids).await?;
+    ids.iter()
+        .map(AsRef::as_ref)
+        .map(|id| match id.parse::<i64>() {
+            Ok(row) => Ok(row),
+            Err(_) => found
+                .get(&loaders::RowOf(kind, id.to_string()))
+                .copied()
+                .ok_or_else(|| {
+                    async_graphql::Error::new(format!("no {kind:?} with id {id}").to_lowercase())
+                }),
+        })
+        .collect()
+}
+
+async fn opt_row_id(
+    ctx: &Context<'_>,
+    kind: UidKind,
+    id: Option<&async_graphql::ID>,
+) -> async_graphql::Result<Option<i64>> {
+    match id {
+        Some(id) => row_id(ctx, kind, id).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+async fn opt_row_ids(
+    ctx: &Context<'_>,
+    kind: UidKind,
+    ids: Option<&[async_graphql::ID]>,
+) -> async_graphql::Result<Option<Vec<i64>>> {
+    match ids {
+        Some(ids) => row_ids(ctx, kind, ids).await.map(Some),
+        None => Ok(None),
+    }
+}
+
+fn id_loader<'a>(ctx: &'a Context<'_>) -> async_graphql::Result<&'a DataLoader<DbLoader>> {
+    ctx.data::<DataLoader<DbLoader>>()
 }
 
 /// Run any other blocking work (HTTP fetches, file decoding, tag reads) off the
@@ -780,6 +894,40 @@ mod tests {
 
     // ---- Playlists ----
 
+    /// Ids are published as uids; an argument takes a uid, or the bare row id
+    /// older callers send, and a uid only names a row of the kind asked for.
+    #[tokio::test]
+    async fn ids_are_uids_and_arguments_take_either() {
+        let (schema, _rx, tmp) = test_schema();
+        let row = insert_test_track(&tmp.path().join("test.db"), "Archangel", "Burial", "Untrue");
+
+        let resp = schema
+            .execute("{ tracks { edges { node { id albumId artistId } } } }")
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let node = &data["tracks"]["edges"][0]["node"];
+        let [id, album, artist] = ["id", "albumId", "artistId"].map(|k| {
+            let v = node[k].as_str().unwrap().to_string();
+            assert!(is_uid(&v), "{k}: {v}");
+            v
+        });
+        assert!(id != album && album != artist);
+
+        for arg in [format!("\"{id}\""), row.to_string()] {
+            let resp = schema
+                .execute(format!("{{ track(id: {arg}) {{ id }} }}"))
+                .await;
+            assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+            assert_eq!(resp.data.into_json().unwrap()["track"]["id"], id);
+        }
+
+        let resp = schema
+            .execute(format!("{{ track(id: \"{album}\") {{ id }} }}"))
+            .await;
+        assert!(!resp.errors.is_empty(), "an album's uid named a track");
+    }
+
     /// The whole life of a playlist over the API: made, added to, reordered,
     /// renamed, played, deleted.
     #[tokio::test]
@@ -801,7 +949,10 @@ mod tests {
         let data = resp.data.into_json().unwrap();
         assert_eq!(data["createPlaylist"]["name"], "Evening");
         assert_eq!(data["createPlaylist"]["trackCount"], 2);
-        let id = data["createPlaylist"]["id"].as_i64().unwrap();
+        assert!(is_uid(data["createPlaylist"]["id"].as_str().unwrap()));
+        // As a quoted GraphQL literal; the track ids stay bare row ids, which
+        // arguments still accept.
+        let id = data["createPlaylist"]["id"].to_string();
 
         let resp = schema
             .execute(&format!(

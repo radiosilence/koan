@@ -8,6 +8,7 @@
 
 use std::sync::LazyLock;
 
+use koan_core::db::queries::{self, UidKind};
 use koan_core::remote::link::{LinkCommand, LinkState};
 use outbox::Absent;
 use parking_lot::Mutex;
@@ -250,8 +251,8 @@ impl Registry {
     }
 
     /// Send every order whose album the library now holds, and drop it.
-    /// `find` answers an order with the album's track ids, in order.
-    pub fn fulfil_orders(&self, find: impl Fn(&Order) -> Option<Vec<i64>>) {
+    /// `find` answers an order with the album's track uids, in order.
+    pub fn fulfil_orders(&self, find: impl Fn(&Order) -> Option<Vec<String>>) {
         let now = chrono::Utc::now().timestamp();
         let pending: Vec<Order> = {
             let mut orders = self.orders.lock();
@@ -265,7 +266,7 @@ impl Registry {
             let Some(ids) = find(&order).filter(|ids| !ids.is_empty()) else {
                 continue;
             };
-            let track_ids = ids.iter().map(i64::to_string).collect();
+            let track_ids = ids;
             let cmd = if order.play_next {
                 LinkCommand::PlayNext { track_ids }
             } else {
@@ -335,7 +336,10 @@ pub fn fulfil_from(db_path: &std::path::Path) {
     if edited {
         changed();
     }
-    registry.fulfil_orders(|order| order_tracks(&db.conn, order));
+    registry.fulfil_orders(|order| {
+        let rows = order_tracks(&db.conn, order)?;
+        queries::uids_in_order(&db.conn, UidKind::Track, &rows).ok()
+    });
 }
 
 /// The tracks an order asks for, once its album is in the library: all of
@@ -683,6 +687,7 @@ pub fn changed_if_library_moved(conn: &rusqlite::Connection) {
 /// The server-side record of devices and their waiting commands, in the
 /// library database so it outlives a restart.
 mod outbox {
+    use koan_core::db::queries;
     use koan_core::remote::link::LinkCommand;
 
     /// Dropped undelivered after this long: a device away a month re-syncs
@@ -895,16 +900,22 @@ mod outbox {
     /// What a playback command would play, for a notification to say:
     /// "Golden Standard — Tony Petersen", or a track and how many follow.
     pub fn describe(cmd: &LinkCommand) -> Option<String> {
-        let ids: Vec<i64> = match cmd {
+        let ids: Vec<&String> = match cmd {
             LinkCommand::Play { track_ids, .. }
             | LinkCommand::Enqueue { track_ids }
-            | LinkCommand::PlayNext { track_ids } => {
-                track_ids.iter().filter_map(|t| t.parse().ok()).collect()
-            }
-            LinkCommand::JumpTo { track_id } => vec![track_id.parse().ok()?],
+            | LinkCommand::PlayNext { track_ids } => track_ids.iter().collect(),
+            LinkCommand::JumpTo { track_id } => vec![track_id],
             _ => return None,
         };
         let db = db()?;
+        let ids: Vec<i64> = ids
+            .into_iter()
+            .filter_map(|t| {
+                queries::resolve_id(&db.conn, queries::UidKind::Track, t)
+                    .ok()
+                    .flatten()
+            })
+            .collect();
         let row = |id: i64| {
             db.conn
                 .query_row(
