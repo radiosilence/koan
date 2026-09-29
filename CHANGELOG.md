@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **macOS release binaries are signed with a Developer ID and notarised.** Downloaded through a browser, the ad-hoc signed binaries were quarantined and Gatekeeper refused to run them until the quarantine attribute was cleared.
+
 ### Added
 
 - **The iOS app shows its version**, at the foot of Settings and under the ensō while it starts: which build is running, for a bug report or to see a TestFlight update arrived.
