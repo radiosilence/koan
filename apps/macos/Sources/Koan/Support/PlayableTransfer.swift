@@ -19,6 +19,8 @@ extension UTType {
 struct PlayableTransfer: Codable, Transferable, Hashable {
     enum Kind: String, Codable {
         case track, album, artist, playlist
+        /// A file or folder dropped from outside koan; `name` is its path.
+        case file
     }
 
     let kind: Kind
@@ -42,6 +44,11 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         // So a drag into a text field or another app still says something
         // useful rather than failing silently.
         ProxyRepresentation(exporting: \.name)
+        // Files from Finder, so every place that takes a playable takes them
+        // too. They are indexed where they lie when the drop resolves.
+        ProxyRepresentation(importing: { (url: URL) in
+            PlayableTransfer(kind: .file, id: 0, name: url.path)
+        })
     }
 
     init(kind: Kind, id: Int64, name: String, origin: Origin? = nil) {
@@ -85,6 +92,8 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
             return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
         case .playlist:
             return (try? await engine.playlistTracks(playlistId: id))?.map(\.id) ?? []
+        case .file:
+            return (try? await engine.importFiles(paths: [name]))?.trackIds ?? []
         }
     }
 }

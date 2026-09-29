@@ -183,6 +183,8 @@ pub fn payload(push: &Push) -> Value {
             "aps": {
                 "alert": { "title": title, "body": body },
                 "sound": "default",
+                // Asked for this moment, by the person it is for: through Focus.
+                "interruption-level": "time-sensitive",
             },
             "koan": command,
         }),
@@ -258,6 +260,7 @@ AtQSJr6Wg9OtOkzZdoOhdRVcNFW8q9peFQ+S7qIcWNbXlhi+cAlpf0ce
         });
         assert_eq!(body["koan"], command);
         assert_eq!(body["aps"]["alert"]["body"], "Golden Standard");
+        assert_eq!(body["aps"]["interruption-level"], "time-sensitive");
         assert_eq!(payload(&Push::Wake)["aps"]["content-available"], 1);
     }
 }

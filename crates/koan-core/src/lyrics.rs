@@ -5,7 +5,7 @@
 use rusqlite::Connection;
 
 use crate::db::connection::DbError;
-use crate::db::queries::lyrics::{cache_lyrics, get_cached_lyrics};
+use crate::db::queries::lyrics::{cache_lyrics, get_cached_lyrics, lyrics_fetched_at};
 use crate::remote::lrclib::{self, LrclibError};
 
 // ---------------------------------------------------------------------------
@@ -130,9 +130,15 @@ pub fn current_line_index(lines: &[LrcLine], position_secs: f64) -> Option<usize
 // Fetch pipeline
 // ---------------------------------------------------------------------------
 
+/// How long a plain (unsynced) cached copy is trusted before LRCLIB is asked
+/// again. Synced lyrics are often added upstream after plain ones, and a plain
+/// copy held forever would never highlight.
+const PLAIN_RECHECK_SECS: i64 = 30 * 24 * 60 * 60;
+
 /// Fetch lyrics for a track using the priority chain:
 ///
-/// 1. DB cache (instant, no network)
+/// 1. DB cache (instant, no network). A synced copy is final; a plain one is
+///    re-checked against LRCLIB once it is older than [`PLAIN_RECHECK_SECS`]
 /// 2. Embedded lyrics tag (stub — returns `None` in Phase 1)
 /// 3. Sidecar `.lrc` file (stub — returns `None` in Phase 1)
 /// 4. LRCLIB API
@@ -148,14 +154,56 @@ pub fn fetch_lyrics(
     duration_secs: u64,
 ) -> Result<Lyrics, LyricsError> {
     // 1. Check DB cache first.
-    if let Some((content, synced)) = get_cached_lyrics(conn, track_id)? {
-        return Ok(Lyrics {
-            content,
-            synced,
-            source: LyricsSource::Cache,
-        });
+    let cached = get_cached_lyrics(conn, track_id)?;
+    if let Some((content, synced)) = &cached {
+        let stale = !synced
+            && lyrics_fetched_at(conn, track_id)?
+                .is_none_or(|at| now_secs() - at >= PLAIN_RECHECK_SECS);
+        if !stale {
+            return Ok(Lyrics {
+                content: content.clone(),
+                synced: *synced,
+                source: LyricsSource::Cache,
+            });
+        }
     }
+    let fetched = fetch_from_lrclib(conn, track_id, artist, title, album, duration_secs);
+    match (fetched, cached) {
+        (Ok(lyrics), _) => Ok(lyrics),
+        // No synced copy upstream, or LRCLIB unreachable: keep the plain one,
+        // and restart its clock so the next play does not ask again.
+        (Err(_), Some((content, synced))) => {
+            cache_lyrics(
+                conn,
+                track_id,
+                LyricsSource::Lrclib.as_str(),
+                synced,
+                &content,
+            )?;
+            Ok(Lyrics {
+                content,
+                synced,
+                source: LyricsSource::Cache,
+            })
+        }
+        (Err(e), None) => Err(e),
+    }
+}
 
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+fn fetch_from_lrclib(
+    conn: &Connection,
+    track_id: i64,
+    artist: &str,
+    title: &str,
+    album: &str,
+    duration_secs: u64,
+) -> Result<Lyrics, LyricsError> {
     // 2. Embedded lyrics (stub — Phase 2 will read via lofty ItemKey::Lyrics).
     // 3. Sidecar .lrc (stub — Phase 2 will check `track_path.with_extension("lrc")`).
 
@@ -198,6 +246,51 @@ pub fn fetch_lyrics(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn db_with_track() -> (rusqlite::Connection, i64) {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let meta = crate::db::queries::sample_meta("Windowlicker", "Aphex Twin", "Windowlicker EP");
+        let id = crate::db::queries::tracks::upsert_track(&conn, &meta).unwrap();
+        (conn, id)
+    }
+
+    /// A recent plain copy is answered from the cache, with no network: this
+    /// test would fail against an unreachable LRCLIB if it asked.
+    #[test]
+    fn a_fresh_plain_copy_is_served_from_cache() {
+        let (conn, id) = db_with_track();
+        cache_lyrics(&conn, id, "lrclib", false, "plain").unwrap();
+        let got = fetch_lyrics(
+            &conn,
+            id,
+            "Aphex Twin",
+            "Windowlicker",
+            "Windowlicker EP",
+            0,
+        )
+        .unwrap();
+        assert!(!got.synced);
+        assert_eq!(got.content, "plain");
+    }
+
+    #[test]
+    fn a_synced_copy_is_final_however_old() {
+        let (conn, id) = db_with_track();
+        cache_lyrics(&conn, id, "lrclib", true, "[00:01.00]line").unwrap();
+        conn.execute("UPDATE lyrics_cache SET fetched_at = 0", [])
+            .unwrap();
+        let got = fetch_lyrics(
+            &conn,
+            id,
+            "Aphex Twin",
+            "Windowlicker",
+            "Windowlicker EP",
+            0,
+        )
+        .unwrap();
+        assert!(got.synced);
+    }
 
     #[test]
     fn test_parse_lrc_basic() {
