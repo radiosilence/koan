@@ -9,6 +9,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -57,7 +58,7 @@ impl Waker {
         self.read.as_raw_fd()
     }
 
-    fn drain(&self) {
+    pub fn drain(&self) {
         let mut buf = [0u8; 64];
         // SAFETY: reads into a live buffer of the length given.
         while unsafe { libc::read(self.read.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) } > 0 {
@@ -110,6 +111,27 @@ pub trait Session {
 /// noticed rather than waited on forever.
 pub const IDLE: Duration = Duration::from_secs(45);
 
+/// How long a connection has to answer a probe.
+const PROBE_WAIT: Duration = Duration::from_secs(2);
+
+static PROBES: AtomicU64 = AtomicU64::new(0);
+static SESSIONS: Mutex<Vec<Weak<Waker>>> = Mutex::new(Vec::new());
+
+/// Have every connection prove it is alive now, and drop those that do not
+/// answer within two seconds. For an app coming back from suspension: its
+/// sockets look open, but the far end gave up on them long ago, and waiting
+/// for the idle ping to find out keeps the other devices out of sight.
+pub fn probe_all() {
+    PROBES.fetch_add(1, Ordering::Relaxed);
+    SESSIONS.lock().retain(|w| match w.upgrade() {
+        Some(w) => {
+            w.wake();
+            true
+        }
+        None => false,
+    });
+}
+
 /// The descriptor under a client's socket, and put it in non-blocking mode.
 pub fn prepare(stream: &MaybeTlsStream<TcpStream>) -> Result<RawFd, String> {
     let tcp = match stream {
@@ -127,11 +149,18 @@ pub fn prepare(stream: &MaybeTlsStream<TcpStream>) -> Result<RawFd, String> {
 pub fn drive<S: Read + Write>(
     socket: &mut WebSocket<S>,
     fd: RawFd,
-    waker: &Waker,
+    waker: &Arc<Waker>,
     session: &mut impl Session,
 ) -> Result<(), String> {
     let mut heard = Instant::now();
     let mut pinged = false;
+    let mut probes = PROBES.load(Ordering::Relaxed);
+    let mut probed: Option<Instant> = None;
+    {
+        let mut sessions = SESSIONS.lock();
+        sessions.retain(|w| w.strong_count() > 0);
+        sessions.push(Arc::downgrade(waker));
+    }
     loop {
         if session.done() {
             let _ = socket.close(None);
@@ -169,7 +198,26 @@ pub fn drive<S: Read + Write>(
             Err(tungstenite::Error::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock => true,
             Err(e) => return Err(e.to_string()),
         };
-        let left = IDLE.saturating_sub(heard.elapsed());
+        let now = PROBES.load(Ordering::Relaxed);
+        if now != probes {
+            probes = now;
+            let _ = socket.write(Message::Ping(Vec::new().into()));
+            let _ = socket.flush();
+            probed = Some(Instant::now());
+            continue;
+        }
+        let mut left = IDLE.saturating_sub(heard.elapsed());
+        if let Some(at) = probed {
+            if heard >= at {
+                probed = None;
+            } else {
+                let wait = PROBE_WAIT.saturating_sub(at.elapsed());
+                if wait.is_zero() {
+                    return Err("no answer after waking".into());
+                }
+                left = left.min(wait);
+            }
+        }
         if left.is_zero() {
             if pinged {
                 return Err("no answer to a ping".into());

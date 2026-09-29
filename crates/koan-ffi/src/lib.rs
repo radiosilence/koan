@@ -258,10 +258,12 @@ impl KoanEngine {
         offload::sequenced(move || self.send(PlayerCommand::Play(parse_qid(&queue_item_id)?))).await
     }
 
-    /// Link to the server again now, if the link is down. For an app coming
-    /// back to the foreground; see `koan_core::remote::link::nudge`.
+    /// The app is in front again, perhaps after iOS suspended it: link now,
+    /// prove every connection is alive and look at the network afresh, so
+    /// the other devices are there the moment it opens. See
+    /// `koan_core::remote::devices::resume`.
     pub fn link_nudge(&self) {
-        koan_core::remote::link::nudge();
+        koan_core::remote::devices::resume();
     }
 
     /// Write to koan's log, beside the engine's own lines: for events only the
@@ -1664,6 +1666,9 @@ impl KoanEngine {
 
             // Restored whether or not there is a queue left to play.
             self.state.set_radio_mode(saved.radio_enabled);
+            // Controlling another device, as the last run left it: this one's
+            // queue comes back, but not playing over that device's.
+            let resume = saved.was_playing && koan_core::remote::devices::target().is_none();
 
             let (items, pending) = restore_items(&db, &saved.items);
             if items.is_empty() {
@@ -1686,7 +1691,7 @@ impl KoanEngine {
 
             if let Some(id) = cursor {
                 self.state.set_cursor(Some(id));
-                self.park_at(id, saved.position_ms, saved.was_playing);
+                self.park_at(id, saved.position_ms, resume);
             }
 
             Ok(count)
@@ -2888,6 +2893,7 @@ impl KoanEngine {
                     album_id: row.and_then(|r| r.album_id),
                     position_ms: st.position_ms,
                     duration_ms: st.duration_ms,
+                    problem: d.problem.clone(),
                 }
             })
             .collect()
@@ -4042,6 +4048,7 @@ fn connection_info() -> ConnectionInfo {
         devices: p.as_ref().is_some_and(|p| p.offers(profile::DEVICES)),
         linked: devices::linked(),
         listening_port: nearby::listening_port(),
+        local_network_blocked: nearby::local_network_blocked(),
         this_device: devices::local()
             .map(|l| l.identity.name.clone())
             .unwrap_or_default(),

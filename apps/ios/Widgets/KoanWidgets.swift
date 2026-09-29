@@ -23,12 +23,16 @@ struct RemoteActivityWidget: Widget {
             let device = context.attributes.deviceId
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Label(state.device, systemImage: "laptopcomputer.and.iphone")
-                        .font(.caption)
-                        .lineLimit(1)
+                    Sleeve(art: state.art, side: 44)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Titles(state: state)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(state.device, systemImage: "laptopcomputer.and.iphone")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Titles(state: state)
+                    }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 8) {
@@ -37,7 +41,7 @@ struct RemoteActivityWidget: Widget {
                     }
                 }
             } compactLeading: {
-                Image(systemName: "laptopcomputer.and.iphone")
+                Sleeve(art: state.art, side: 22, placeholder: "laptopcomputer.and.iphone")
             } compactTrailing: {
                 Image(systemName: state.playing ? "waveform" : "pause.fill")
             } minimal: {
@@ -57,12 +61,38 @@ private struct LockScreen: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(alignment: .center, spacing: 12) {
+                Sleeve(art: state.art, side: 48)
                 Titles(state: state)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Buttons(state: state, device: device)
             }
             Progress(state: state)
         }
+    }
+}
+
+/// The record's sleeve as the state carries it, or a quiet stand-in.
+private struct Sleeve: View {
+    let art: Data?
+    let side: CGFloat
+    var placeholder = "music.note"
+
+    var body: some View {
+        Group {
+            if let art, let image = UIImage(data: art) {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Image(systemName: placeholder)
+                    .font(.system(size: side * 0.45))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.quaternary)
+            }
+        }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: side * 0.18))
     }
 }
 

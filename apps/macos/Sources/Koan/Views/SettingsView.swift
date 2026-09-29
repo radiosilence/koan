@@ -581,6 +581,14 @@ private struct DevicesSettings: View {
                 if let port = mirror.connection?.listeningPort {
                     LabeledContent("Listening on port", value: String(port))
                 }
+                if mirror.connection?.localNetworkBlocked == true {
+                    Label(
+                        "Blocked by iOS. Allow Local Network for kōan in Settings → Privacy & Security.",
+                        systemImage: "wifi.exclamationmark"
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                }
             } header: {
                 Text("This device")
             } footer: {

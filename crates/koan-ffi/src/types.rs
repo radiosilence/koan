@@ -973,6 +973,9 @@ pub struct DeviceInfo {
     /// playing.
     pub position_ms: u64,
     pub duration_ms: u64,
+    /// Why it cannot be reached, for a device found but not connected or
+    /// the one being controlled while it is out of reach.
+    pub problem: Option<String>,
 }
 
 /// What the server this app signs in to turned out to be, and what it and
@@ -993,6 +996,9 @@ pub struct ConnectionInfo {
     /// The port this device listens on for others on the network, while it
     /// is discoverable.
     pub listening_port: Option<u16>,
+    /// iOS has not let this app onto the local network, so nothing there can
+    /// be found or reached until the person allows it in Settings.
+    pub local_network_blocked: bool,
     /// This device, as others see it.
     pub this_device: String,
 }

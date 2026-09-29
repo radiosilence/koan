@@ -4,6 +4,10 @@
 //! link, and whatever answers on the local network (`remote::nearby`), which
 //! may belong to anyone. A device found both ways is one device, reached over
 //! the local network while that connection is up: it is the shorter path.
+//!
+//! The device being controlled and the account's devices as last heard of are
+//! kept on disk, so an app iOS suspended or killed opens still controlling the
+//! same device, with the list drawn at once rather than after the link is back.
 
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -32,6 +36,9 @@ pub struct Device {
     pub state: Option<LinkState>,
     /// When `state` was heard.
     pub heard: Instant,
+    /// Why it cannot be reached, when found but not connected: shown rather
+    /// than leaving the device out, so the picker says what is wrong.
+    pub problem: Option<String>,
 }
 
 impl Device {
@@ -55,8 +62,42 @@ struct Store {
     linked: bool,
     account: Vec<(LinkDevice, Instant)>,
     nearby: Vec<Nearby>,
-    target: Option<String>,
+    seen: Vec<SeenNearby>,
+    target: Option<Remembered>,
     version: u64,
+}
+
+/// What is kept on disk. See the module note.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+struct Saved {
+    target: Option<Remembered>,
+    account: Vec<LinkDevice>,
+    #[serde(default)]
+    nearby: Vec<SeenNearby>,
+}
+
+/// A device reached on the local network, and where: dialled there at once
+/// on the next run, before Bonjour has announced anything.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SeenNearby {
+    pub id: String,
+    pub name: String,
+    pub platform: String,
+    pub addr: String,
+    /// Unix seconds.
+    pub at: i64,
+}
+
+/// A device not reached on the network in this long is forgotten.
+const NEARBY_KEPT: i64 = 7 * 24 * 60 * 60;
+
+/// The device being controlled, named so that it can be shown while it is
+/// out of reach.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Remembered {
+    id: String,
+    name: String,
+    platform: String,
 }
 
 struct Nearby {
@@ -85,18 +126,46 @@ fn changed<R>(f: impl FnOnce(&mut Store) -> R) -> R {
 }
 
 impl Store {
-    /// A target that has gone from both lists is no longer something to
-    /// control; the app is back to playing here. Asked only of a fresh list:
-    /// a link that dropped says nothing about the devices on it.
-    fn let_go_of_lost_target(&mut self) {
-        if let Some(t) = &self.target
-            && !self.account.iter().any(|(d, _)| d.id == *t)
-            && !self.nearby.iter().any(|n| n.hello.id == *t)
-        {
-            log::info!("devices: {t} has gone; controlling this device again");
-            self.target = None;
+    fn save(&self) {
+        let saved = Saved {
+            target: self.target.clone(),
+            account: self.account.iter().map(|(d, _)| d.clone()).collect(),
+            nearby: self.seen.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&saved) {
+            let _ = std::fs::write(saved_path(), json);
         }
     }
+}
+
+fn saved_path() -> std::path::PathBuf {
+    crate::config::config_dir().join("devices.json")
+}
+
+/// The target and account devices as the last run left them.
+fn restore() {
+    let Ok(text) = std::fs::read_to_string(saved_path()) else {
+        return;
+    };
+    let Ok(saved) = serde_json::from_str::<Saved>(&text) else {
+        return;
+    };
+    let now = Instant::now();
+    let cutoff = chrono::Utc::now().timestamp() - NEARBY_KEPT;
+    changed(|s| {
+        s.target = saved.target;
+        s.seen = saved
+            .nearby
+            .into_iter()
+            .filter(|n| n.at >= cutoff)
+            .collect();
+        // Not linked until the server says so: shown as last heard of.
+        s.account = saved
+            .account
+            .into_iter()
+            .map(|d| (LinkDevice { linked: false, ..d }, now))
+            .collect();
+    });
 }
 
 /// Link to the server and open this device to the local network, serving
@@ -105,6 +174,7 @@ pub fn start(local: Local) {
     if LOCAL.set(local.clone()).is_err() {
         return;
     }
+    restore();
     link::spawn(local.clone());
     crate::remote::nearby::start(local);
 }
@@ -118,6 +188,10 @@ pub fn local() -> Option<&'static Local> {
 /// last heard of: iOS drops the link each time it suspends the app, and a
 /// phone controlling a Mac should still be when it wakes. The server sends
 /// them afresh when the link is back.
+///
+/// Nothing here lets go of the target. A device that drops out of every list
+/// (a Mac asleep, a server restarting) is still the one the person picked,
+/// and the app shows it as out of reach until it is back or another is.
 pub fn set_linked(linked: bool) {
     changed(|s| s.linked = linked);
 }
@@ -126,12 +200,26 @@ pub fn set_account(devices: Vec<LinkDevice>) {
     let now = Instant::now();
     changed(|s| {
         s.account = devices.into_iter().map(|d| (d, now)).collect();
-        s.let_go_of_lost_target();
+        s.save();
     });
 }
 
-pub fn nearby_hello(hello: LinkHello) {
+/// The devices reached on this network before, to dial first.
+pub fn remembered_nearby() -> Vec<SeenNearby> {
+    with(|s| s.seen.clone())
+}
+
+pub fn nearby_hello(hello: LinkHello, addr: &str) {
     changed(|s| {
+        s.seen.retain(|n| n.id != hello.id);
+        s.seen.push(SeenNearby {
+            id: hello.id.clone(),
+            name: hello.name.clone(),
+            platform: hello.platform.clone(),
+            addr: addr.to_string(),
+            at: chrono::Utc::now().timestamp(),
+        });
+        s.save();
         s.nearby.retain(|n| n.hello.id != hello.id);
         s.nearby.push(Nearby {
             hello,
@@ -151,10 +239,7 @@ pub fn nearby_state(id: &str, state: LinkState) {
 }
 
 pub fn nearby_gone(id: &str) {
-    changed(|s| {
-        s.nearby.retain(|n| n.hello.id != id);
-        s.let_go_of_lost_target();
-    });
+    changed(|s| s.nearby.retain(|n| n.hello.id != id));
 }
 
 /// Something beside the list that the app shows with it has changed: the
@@ -196,6 +281,7 @@ pub fn list() -> Vec<Device> {
                         None => d.state.clone(),
                     },
                     heard: near.map_or(*at, |n| n.at),
+                    problem: None,
                 }
             })
             .collect();
@@ -213,6 +299,45 @@ pub fn list() -> Vec<Device> {
                 same_library: ours.is_some() && n.hello.library == ours,
                 state: n.state.clone(),
                 heard: n.at,
+                problem: None,
+            });
+        }
+        // Announced on this network but not connected: listed with the reason.
+        for f in crate::remote::nearby::found() {
+            let id =
+                f.id.clone()
+                    .unwrap_or_else(|| format!("bonjour:{}", f.name));
+            if out.iter().any(|d| d.id == id) || f.id.is_some() && f.id == this_id() {
+                continue;
+            }
+            out.push(Device {
+                id,
+                name: f.name,
+                platform: f.platform.unwrap_or_default(),
+                account: false,
+                nearby: false,
+                awake: false,
+                same_library: false,
+                state: None,
+                heard: Instant::now(),
+                problem: Some(f.problem.unwrap_or_else(|| "Connecting…".into())),
+            });
+        }
+        // The device being controlled, out of every list for now.
+        if let Some(t) = &s.target
+            && !out.iter().any(|d| d.id == t.id)
+        {
+            out.push(Device {
+                id: t.id.clone(),
+                name: t.name.clone(),
+                platform: t.platform.clone(),
+                account: false,
+                nearby: false,
+                awake: false,
+                same_library: true,
+                state: None,
+                heard: Instant::now(),
+                problem: Some("Out of reach".into()),
             });
         }
         out.sort_by_key(|d| {
@@ -228,11 +353,38 @@ pub fn list() -> Vec<Device> {
 
 /// The device the app is controlling; `None` for this one.
 pub fn target() -> Option<String> {
-    with(|s| s.target.clone())
+    with(|s| s.target.as_ref().map(|t| t.id.clone()))
 }
 
 pub fn set_target(id: Option<String>) {
-    changed(|s| s.target = id);
+    let listed = id
+        .as_ref()
+        .and_then(|id| list().into_iter().find(|d| d.id == *id));
+    changed(|s| {
+        s.target = id.map(|id| match listed {
+            Some(d) => Remembered {
+                id,
+                name: d.name,
+                platform: d.platform,
+            },
+            None => Remembered {
+                name: id.clone(),
+                id,
+                platform: String::new(),
+            },
+        });
+        s.save();
+    });
+}
+
+/// The app is in front again after iOS may have suspended it: link now,
+/// prove every connection is still alive, and look at the network afresh.
+/// What makes the other devices appear the moment the app opens rather than
+/// when a dead socket finally times out.
+pub fn resume() {
+    link::nudge();
+    crate::remote::wire::probe_all();
+    crate::remote::nearby::refresh();
 }
 
 /// The target as `list` would give it.
@@ -298,24 +450,31 @@ mod tests {
     // The store is process-wide; one test walks it through its states rather
     // than several racing each other over it.
     #[test]
-    fn a_device_found_both_ways_is_one_and_a_lost_target_lets_go() {
+    fn a_device_found_both_ways_is_one_and_a_lost_target_is_kept() {
+        crate::config::isolate_config_for_tests();
         set_account(vec![device("mac", false), device("phone", true)]);
         let listed = list();
         assert_eq!(listed[0].id, "phone", "playing first");
         assert_eq!(listed.len(), 2);
 
-        nearby_hello(LinkHello {
-            id: "mac".into(),
-            name: "Mac".into(),
-            platform: "macos".into(),
-            library: None,
-        });
-        nearby_hello(LinkHello {
-            id: "tv".into(),
-            name: "Living room".into(),
-            platform: "macos".into(),
-            library: Some("elsewhere".into()),
-        });
+        nearby_hello(
+            LinkHello {
+                id: "mac".into(),
+                name: "Mac".into(),
+                platform: "macos".into(),
+                library: None,
+            },
+            "mac.local:5626",
+        );
+        nearby_hello(
+            LinkHello {
+                id: "tv".into(),
+                name: "Living room".into(),
+                platform: "macos".into(),
+                library: Some("elsewhere".into()),
+            },
+            "10.0.0.9:5626",
+        );
         let listed = list();
         assert_eq!(listed.len(), 3);
         let mac = listed.iter().find(|d| d.id == "mac").unwrap();
@@ -324,9 +483,29 @@ mod tests {
         assert!(!tv.account && !tv.same_library);
 
         set_target(Some("tv".into()));
-        assert_eq!(target(), Some("tv".into()));
         nearby_gone("tv");
-        assert_eq!(target(), None, "a target that has gone is let go");
+        assert_eq!(target(), Some("tv".into()), "kept while out of reach");
+        let tv = list().into_iter().find(|d| d.id == "tv").unwrap();
+        assert_eq!(tv.name, "Living room");
+        assert!(!tv.awake && tv.problem.is_some());
+
+        // What a relaunch finds.
+        with(|s| *s = Store::default());
+        restore();
+        assert_eq!(target(), Some("tv".into()));
+        let listed = list();
+        assert!(
+            listed.iter().any(|d| d.id == "mac" && !d.awake),
+            "last heard of, not linked"
+        );
+        let remembered = remembered_nearby();
+        assert!(
+            remembered
+                .iter()
+                .any(|n| n.id == "tv" && n.addr == "10.0.0.9:5626")
+        );
+
+        set_target(None);
         set_account(Vec::new());
         nearby_gone("mac");
         assert!(list().is_empty());

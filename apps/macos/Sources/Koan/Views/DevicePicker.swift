@@ -23,6 +23,12 @@ struct DevicePicker: View {
                 .padding(.top, 12)
                 .padding(.bottom, 6)
 
+            if mirror.connection?.localNetworkBlocked == true {
+                LocalNetworkBlocked()
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+            }
+
             thisDevice
             ForEach(mirror.devices, id: \.id) { device in
                 DeviceRow(device: device)
@@ -106,12 +112,16 @@ private struct DeviceRow: View {
             reachHelp: device.nearby ? "On this network" : "Through your server",
             selected: player.controlled?.id == device.id,
             canMove: player.canMoveMusic(to: device),
+            unreachable: device.problem != nil,
             onSelect: { player.control(device.id) },
             onMove: { player.moveMusic(to: device.id) }
         )
     }
 
     private var detail: String {
+        if let problem = device.problem {
+            return problem
+        }
         if !device.awake {
             return "Asleep. Music sent here arrives as a notification to tap."
         }
@@ -134,6 +144,9 @@ private struct DeviceChoiceRow: View {
     var reachHelp: String?
     let selected: Bool
     let canMove: Bool
+    /// Found but not reached: shown with the reason, and not pickable unless
+    /// it is already the one picked.
+    var unreachable = false
     let onSelect: () -> Void
     let onMove: () -> Void
 
@@ -160,7 +173,7 @@ private struct DeviceChoiceRow: View {
                         }
                         Text(detail)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(unreachable ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
                             .lineLimit(2)
                     }
                     Spacer(minLength: 0)
@@ -174,6 +187,7 @@ private struct DeviceChoiceRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .disabled(unreachable && !selected)
 
             if canMove {
                 Button("Move here", action: onMove)
@@ -188,6 +202,34 @@ private struct DeviceChoiceRow: View {
         .background(selected ? Color.accentColor.opacity(0.08) : .clear)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// iOS keeps an app off the local network until the person allows it, and
+/// says nothing otherwise: without this the picker would just be empty.
+private struct LocalNetworkBlocked: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("kōan can't see this network", systemImage: "wifi.exclamationmark")
+                .font(.callout.weight(.medium))
+            Text("Allow Local Network for kōan in Settings → Privacy & Security to find devices here.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            #if os(iOS)
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            .font(.caption)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            #endif
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

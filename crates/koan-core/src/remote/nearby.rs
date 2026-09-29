@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::os::fd::AsRawFd;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -38,13 +38,109 @@ static CONNS: Mutex<Option<HashMap<String, Conn>>> = Mutex::new(None);
 struct Running {
     local: Local,
     listener: Option<Arc<Stop>>,
-    /// One per address being dialled, keyed by the address or the Bonjour
-    /// name it came from.
-    dialers: HashMap<String, Arc<Stop>>,
+    /// One per device being dialled: `id:<device id>` when its id is known
+    /// (announced, or remembered from a previous run), `bonjour:<name>` when
+    /// an announcement carried none, or the address as typed.
+    dialers: HashMap<String, Dialer>,
+}
+
+struct Dialer {
+    stop: Arc<Stop>,
+    /// Where it is dialled; moved by a fresh announcement.
+    addr: Arc<Mutex<String>>,
 }
 
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
 static PORT: Mutex<Option<u16>> = Mutex::new(None);
+
+/// A device announced on this network, remembered from a previous run, or
+/// listed by address, and why it is not connected when it is not.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Found {
+    /// Its name, or the address as typed.
+    pub name: String,
+    /// The Bonjour service it was announced as, for when it is withdrawn.
+    pub bonjour: Option<String>,
+    /// Its device id, from the announcement.
+    pub id: Option<String>,
+    pub platform: Option<String>,
+    pub problem: Option<String>,
+}
+
+/// Keyed as the dialers are.
+static FOUND: Mutex<Vec<(String, Found)>> = Mutex::new(Vec::new());
+
+/// iOS refused this app the local network: the person has not allowed it.
+static BLOCKED: AtomicBool = AtomicBool::new(false);
+
+/// Bumped to have every dialer try again at once.
+static REDIAL: AtomicU64 = AtomicU64::new(0);
+
+/// Every device announced here or listed by address that is not this one.
+pub fn found() -> Vec<Found> {
+    FOUND.lock().iter().map(|(_, f)| f.clone()).collect()
+}
+
+/// Whether iOS is keeping this app off the local network. The fix is the
+/// person's: Settings → Privacy & Security → Local Network.
+pub fn local_network_blocked() -> bool {
+    BLOCKED.load(Ordering::Relaxed)
+}
+
+fn set_blocked(blocked: bool) {
+    if BLOCKED.swap(blocked, Ordering::Relaxed) != blocked {
+        if blocked {
+            log::warn!("nearby: the local network is blocked for this app");
+        }
+        devices::touch();
+    }
+}
+
+fn note(key: &str, problem: Option<String>) {
+    let mut found = FOUND.lock();
+    if let Some((_, f)) = found.iter_mut().find(|(k, _)| k == key)
+        && f.problem != problem
+    {
+        f.problem = problem;
+        drop(found);
+        devices::touch();
+    }
+}
+
+/// What a failed connection means to someone looking at the picker.
+fn explain(error: &str) -> String {
+    let e = error.to_lowercase();
+    if e.contains("no route to host") || e.contains("network is unreachable") {
+        "Blocked: allow Local Network for kōan in Settings".into()
+    } else if e.contains("refused") {
+        "Not accepting connections. Is kōan open there, and discoverable?".into()
+    } else if e.contains("timed out") || e.contains("would block") {
+        "Not answering on this network".into()
+    } else if e.contains("lookup") || e.contains("nodename") || e.contains("not known") {
+        "Address not found".into()
+    } else {
+        format!("Cannot connect: {error}")
+    }
+}
+
+/// The app is in front again: whatever iOS closed while it was suspended is
+/// opened again, and every device is dialled now rather than when its backoff
+/// runs out.
+pub fn refresh() {
+    let listener = RUNNING.lock().as_mut().and_then(|r| r.listener.take());
+    if let Some(stop) = listener {
+        stop.stop();
+    }
+    reconfigure();
+    REDIAL.fetch_add(1, Ordering::Relaxed);
+    if let Some(r) = RUNNING.lock().as_ref() {
+        for d in r.dialers.values() {
+            d.stop.waker.wake();
+        }
+    }
+    #[cfg(target_vendor = "apple")]
+    bonjour::restart();
+}
 
 /// A flag, and a way to interrupt every thread that watches it.
 struct Stop {
@@ -83,7 +179,9 @@ impl Stop {
     }
 }
 
-/// Open this device to the network as the config says, and look for others.
+/// Open this device to the network as the config says, and look for others:
+/// first at the addresses devices were last reached at, which answers before
+/// Bonjour has said anything, then wherever Bonjour finds them.
 pub fn start(local: Local) {
     *RUNNING.lock() = Some(Running {
         local,
@@ -91,6 +189,22 @@ pub fn start(local: Local) {
         dialers: HashMap::new(),
     });
     reconfigure();
+    if let Some(r) = RUNNING.lock().as_mut() {
+        for seen in devices::remembered_nearby() {
+            let key = format!("id:{}", seen.id);
+            FOUND.lock().push((
+                key.clone(),
+                Found {
+                    name: seen.name,
+                    bonjour: None,
+                    id: Some(seen.id),
+                    platform: Some(seen.platform),
+                    problem: None,
+                },
+            ));
+            spawn_dialer(r, key, seen.addr);
+        }
+    }
     #[cfg(target_vendor = "apple")]
     std::thread::Builder::new()
         .name("koan-bonjour".into())
@@ -128,10 +242,11 @@ pub fn reconfigure() {
         .map(|a| a.trim().to_string())
         .filter(|a| !a.is_empty())
         .collect();
-    r.dialers.retain(|key, stop| {
-        let keep = key.starts_with("bonjour:") || wanted.contains(key);
+    r.dialers.retain(|key, d| {
+        let keep = key.starts_with("bonjour:") || key.starts_with("id:") || wanted.contains(key);
         if !keep {
-            stop.stop();
+            d.stop.stop();
+            FOUND.lock().retain(|(k, _)| k != key);
         }
         keep
     });
@@ -162,27 +277,50 @@ pub fn send(id: &str, cmd: LinkCommand) -> bool {
 // --- The listening end ------------------------------------------------------
 
 fn listen(local: Local, port: u16, stop: Arc<Stop>) {
-    let bind = |port: u16| {
-        TcpListener::bind(("::", port)).or_else(|_| TcpListener::bind(("0.0.0.0", port)))
-    };
+    // A listener that stops accepting (iOS closes it while the app is
+    // suspended) is replaced rather than retried.
+    while !stop.stopped() {
+        if let Err(e) = listen_once(&local, port, &stop) {
+            log::warn!("nearby: {e}; listening again");
+            let mut fds = [libc::pollfd {
+                fd: stop.waker_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            }];
+            // SAFETY: a live array of the length given.
+            unsafe { libc::poll(fds.as_mut_ptr(), 1, 1000) };
+        }
+    }
+    *PORT.lock() = None;
+    devices::touch();
+    log::info!("nearby: stopped listening");
+}
+
+fn bind(port: u16) -> std::io::Result<TcpListener> {
+    TcpListener::bind(("::", port)).or_else(|_| TcpListener::bind(("0.0.0.0", port)))
+}
+
+/// Listen until stopped or until accepting fails.
+fn listen_once(local: &Local, port: u16, stop: &Arc<Stop>) -> Result<(), String> {
+    // The listener this replaces may take a moment to let the port go.
+    let mut listener = bind(port);
+    for _ in 0..20 {
+        if listener.is_ok() || stop.stopped() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        listener = bind(port);
+    }
     // Another process on the port: an ephemeral one still works on this
     // network, where it is announced; only a typed address would miss it.
-    let listener = match bind(port).or_else(|e| {
-        log::warn!("nearby: port {port} is taken ({e}); listening elsewhere");
-        bind(0)
-    }) {
-        Ok(l) => l,
-        Err(e) => {
-            log::warn!("nearby: cannot listen: {e}");
-            return;
-        }
-    };
-    let Ok(port) = listener.local_addr().map(|a| a.port()) else {
-        return;
-    };
-    if listener.set_nonblocking(true).is_err() {
-        return;
-    }
+    let listener = listener
+        .or_else(|e| {
+            log::warn!("nearby: port {port} is taken ({e}); listening elsewhere");
+            bind(0)
+        })
+        .map_err(|e| format!("cannot listen: {e}"))?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     *PORT.lock() = Some(port);
     devices::touch();
     log::info!("nearby: listening on {port}");
@@ -217,20 +355,20 @@ fn listen(local: Local, port: u16, stop: Arc<Stop>) {
                 // SAFETY: a live array of the length given.
                 unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
             }
-            Err(e) => {
-                log::warn!("nearby: accept: {e}");
-                std::thread::sleep(Duration::from_secs(1));
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(format!("accept: {e}")),
         }
     }
-    *PORT.lock() = None;
-    devices::touch();
-    log::info!("nearby: stopped listening");
+    Ok(())
 }
 
 impl Stop {
     fn waker_fd(&self) -> i32 {
         self.waker.read_fd()
+    }
+
+    fn drain(&self) {
+        self.waker.drain();
     }
 }
 
@@ -313,17 +451,42 @@ const RETRY_MAX: Duration = Duration::from_secs(60);
 
 fn spawn_dialer(r: &mut Running, key: String, addr: String) {
     let Some(stop) = Stop::new() else { return };
-    r.dialers.insert(key, stop.clone());
+    let addr = Arc::new(Mutex::new(addr));
+    r.dialers.insert(
+        key.clone(),
+        Dialer {
+            stop: stop.clone(),
+            addr: addr.clone(),
+        },
+    );
+    {
+        let mut found = FOUND.lock();
+        if !found.iter().any(|(k, _)| *k == key) {
+            // Typed in: listed under the address until it says who it is.
+            found.push((
+                key.clone(),
+                Found {
+                    name: addr.lock().clone(),
+                    bonjour: None,
+                    id: None,
+                    platform: None,
+                    problem: None,
+                },
+            ));
+        }
+    }
+    devices::touch();
     let _ = std::thread::Builder::new()
         .name("koan-nearby-dial".into())
-        .spawn(move || dial(addr, stop));
+        .spawn(move || dial(key, addr, stop));
 }
 
 /// Stay connected to `addr` until stopped, or until it turns out to be this
 /// device.
-fn dial(addr: String, stop: Arc<Stop>) {
+fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>) {
     let mut wait = RETRY_MIN;
     while !stop.stopped() {
+        let addr = at.lock().clone();
         match connect(&addr) {
             Ok(mut socket) => {
                 wait = RETRY_MIN;
@@ -333,6 +496,8 @@ fn dial(addr: String, stop: Arc<Stop>) {
                 let mut session = Controlling {
                     stop: &stop,
                     waker: waker.clone(),
+                    key: &key,
+                    addr: &addr,
                     id: None,
                     this_device: false,
                     duplicate: false,
@@ -345,14 +510,24 @@ fn dial(addr: String, stop: Arc<Stop>) {
                     devices::nearby_gone(&id);
                 }
                 if session.this_device {
+                    FOUND.lock().retain(|(k, _)| *k != key);
+                    devices::touch();
                     return;
                 }
                 if let Err(e) = result {
                     log::info!("nearby: {addr}: {e}");
                 }
             }
-            Err(e) => log::debug!("nearby: {addr}: {e}"),
+            Err(e) => {
+                log::debug!("nearby: {addr}: {e}");
+                let problem = explain(&e);
+                if problem.starts_with("Blocked") {
+                    set_blocked(true);
+                }
+                note(&key, Some(problem));
+            }
         }
+        let redials = REDIAL.load(Ordering::Relaxed);
         let mut fds = [libc::pollfd {
             fd: stop.waker_fd(),
             events: libc::POLLIN,
@@ -360,7 +535,12 @@ fn dial(addr: String, stop: Arc<Stop>) {
         }];
         // SAFETY: a live array of the length given.
         unsafe { libc::poll(fds.as_mut_ptr(), 1, wait.as_millis() as i32) };
-        wait = (wait * 2).min(RETRY_MAX);
+        stop.drain();
+        wait = if REDIAL.load(Ordering::Relaxed) != redials {
+            RETRY_MIN
+        } else {
+            (wait * 2).min(RETRY_MAX)
+        };
     }
 }
 
@@ -401,6 +581,10 @@ fn connect(addr: &str) -> Result<tungstenite::WebSocket<TcpStream>, String> {
 struct Controlling<'a> {
     stop: &'a Arc<Stop>,
     waker: Arc<Waker>,
+    /// Which entry of `FOUND` this connection is for.
+    key: &'a str,
+    /// Where it was reached, remembered for the next run.
+    addr: &'a str,
     id: Option<String>,
     this_device: bool,
     /// Already connected to this device another way: announced and typed in.
@@ -447,7 +631,16 @@ impl wire::Session for Controlling<'_> {
                 self.id = Some(hello.id.clone());
                 log::info!("nearby: found {} ({})", hello.name, hello.platform);
                 drop(guard);
-                devices::nearby_hello(hello);
+                set_blocked(false);
+                {
+                    let mut found = FOUND.lock();
+                    if let Some((_, f)) = found.iter_mut().find(|(k, _)| k == self.key) {
+                        f.id = Some(hello.id.clone());
+                        f.platform = Some(hello.platform.clone());
+                        f.problem = None;
+                    }
+                }
+                devices::nearby_hello(hello, self.addr);
             }
             Ok(LinkReport::State(state)) => {
                 if let Some(id) = &self.id {
@@ -465,26 +658,69 @@ impl wire::Session for Controlling<'_> {
 }
 
 #[cfg(target_vendor = "apple")]
-fn found(name: String, host: String, port: u16, id: Option<String>) {
+fn announced(name: String, host: String, port: u16, id: Option<String>, platform: Option<String>) {
     if id.is_some() && id == devices::this_id() {
         return;
     }
+    set_blocked(false);
+    let key = match &id {
+        Some(id) => format!("id:{id}"),
+        None => format!("bonjour:{name}"),
+    };
+    let addr = format!("{}:{port}", host.trim_end_matches('.'));
+    {
+        let mut found = FOUND.lock();
+        let problem = found
+            .iter()
+            .find(|(k, _)| *k == key)
+            .and_then(|(_, f)| f.problem.clone());
+        found.retain(|(k, _)| *k != key);
+        found.push((
+            key.clone(),
+            Found {
+                name: name.clone(),
+                bonjour: Some(name),
+                id,
+                platform,
+                problem,
+            },
+        ));
+    }
+    devices::touch();
     let mut running = RUNNING.lock();
     let Some(r) = running.as_mut() else { return };
-    let key = format!("bonjour:{name}");
-    if r.dialers.contains_key(&key) {
-        return;
+    match r.dialers.get(&key) {
+        // Already dialled, from a previous run's address or an earlier
+        // announcement: dial where it is now, and now rather than when the
+        // backoff runs out.
+        Some(d) => {
+            *d.addr.lock() = addr;
+            REDIAL.fetch_add(1, Ordering::Relaxed);
+            d.stop.waker.wake();
+        }
+        None => spawn_dialer(r, key, addr),
     }
-    let host = host.trim_end_matches('.');
-    spawn_dialer(r, key, format!("{host}:{port}"));
 }
 
 #[cfg(target_vendor = "apple")]
 fn lost(name: &str) {
+    let key = {
+        let mut found = FOUND.lock();
+        let key = found
+            .iter()
+            .find(|(_, f)| f.bonjour.as_deref() == Some(name))
+            .map(|(k, _)| k.clone());
+        if let Some(k) = &key {
+            found.retain(|(kk, _)| kk != k);
+        }
+        key
+    };
+    let Some(key) = key else { return };
+    devices::touch();
     if let Some(r) = RUNNING.lock().as_mut()
-        && let Some(stop) = r.dialers.remove(&format!("bonjour:{name}"))
+        && let Some(d) = r.dialers.remove(&key)
     {
-        stop.stop();
+        d.stop.stop();
     }
 }
 
@@ -595,6 +831,9 @@ mod bonjour {
         };
         if err != 0 {
             log::warn!("nearby: cannot announce this device ({err})");
+            if err == POLICY_DENIED {
+                super::set_blocked(true);
+            }
             return None;
         }
         Some(Advert(sd))
@@ -646,9 +885,10 @@ mod bonjour {
         context: *mut c_void,
     ) {
         if err != 0 {
+            BROWSE_ERR.store(err, std::sync::atomic::Ordering::Relaxed);
             return;
         }
-        // SAFETY: the context is the Vec `browse_forever` passed, alive for
+        // SAFETY: the context is the Vec `browse_once` passed, alive for
         // the call to DNSServiceProcessResult that runs this; the strings are
         // the responder's, valid for this callback.
         unsafe {
@@ -663,15 +903,66 @@ mod bonjour {
         }
     }
 
+    /// What the responder answers when iOS has not let this app onto the
+    /// local network.
+    const POLICY_DENIED: i32 = -65570;
+
+    static BROWSE_ERR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    static RESTART: std::sync::OnceLock<std::sync::Arc<crate::remote::wire::Waker>> =
+        std::sync::OnceLock::new();
+    static RESTART_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// Browse afresh: after iOS suspended the app its connection to the
+    /// responder may be gone, and a live one says nothing new until
+    /// something changes.
+    pub fn restart() {
+        RESTART_ASKED.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(w) = RESTART.get() {
+            w.wake();
+        }
+    }
+
+    /// Browse for the life of the process, starting again whenever the
+    /// responder drops the browse or `restart` is asked for.
     pub fn browse_forever() {
-        let Ok(regtype) = CString::new(super::SERVICE) else {
+        let Ok(waker) = crate::remote::wire::Waker::new() else {
             return;
         };
+        let _ = RESTART.set(waker.clone());
+        loop {
+            if let Err(e) = browse_once(&waker) {
+                log::warn!("nearby: browsing stopped: {e}");
+            }
+            let mut fds = [libc::pollfd {
+                fd: waker.read_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            }];
+            if !RESTART_ASKED.load(std::sync::atomic::Ordering::Relaxed) {
+                // SAFETY: a live array of the length given.
+                unsafe { libc::poll(fds.as_mut_ptr(), 1, 2000) };
+            }
+            waker.drain();
+        }
+    }
+
+    fn browse_once(waker: &crate::remote::wire::Waker) -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+        RESTART_ASKED.store(false, Ordering::Relaxed);
+        let regtype = CString::new(super::SERVICE).map_err(|e| e.to_string())?;
         let mut seen: Vec<Seen> = Vec::new();
         let mut interfaces: std::collections::HashMap<String, usize> = Default::default();
+        // What was announced before this browse began: anything not announced
+        // again shortly is gone, withdrawn while this app was not looking.
+        let mut unconfirmed: std::collections::HashSet<String> = super::FOUND
+            .lock()
+            .iter()
+            .filter_map(|(_, f)| f.bonjour.clone())
+            .collect();
+        let settle = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let mut sd: Ref = std::ptr::null_mut();
-        // SAFETY: `seen` outlives the reference, which is never deallocated:
-        // this browses for the life of the process.
+        // SAFETY: `seen` outlives the reference, which is deallocated before
+        // this returns.
         let err = unsafe {
             DNSServiceBrowse(
                 &mut sd,
@@ -684,25 +975,58 @@ mod bonjour {
             )
         };
         if err != 0 {
-            log::warn!("nearby: cannot browse ({err})");
-            return;
+            super::set_blocked(err == POLICY_DENIED);
+            return Err(format!("cannot browse ({err})"));
         }
+        let finish = |sd: Ref, result: Result<(), String>| {
+            // SAFETY: the reference DNSServiceBrowse returned, freed once.
+            unsafe { DNSServiceRefDeallocate(sd) };
+            result
+        };
         // SAFETY: a live reference.
         let fd = unsafe { DNSServiceRefSockFD(sd) };
         loop {
-            let mut fds = [libc::pollfd {
-                fd,
-                events: libc::POLLIN,
-                revents: 0,
-            }];
+            let wait = if unconfirmed.is_empty() {
+                -1
+            } else {
+                settle
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_millis() as i32
+            };
+            let mut fds = [
+                libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: waker.read_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+            ];
             // SAFETY: a live array of the length given.
-            if unsafe { libc::poll(fds.as_mut_ptr(), 1, -1) } < 0 {
+            let ready = unsafe { libc::poll(fds.as_mut_ptr(), 2, wait) };
+            if RESTART_ASKED.load(Ordering::Relaxed) {
+                return finish(sd, Ok(()));
+            }
+            waker.drain();
+            if !unconfirmed.is_empty() && std::time::Instant::now() >= settle {
+                for name in unconfirmed.drain() {
+                    super::lost(&name);
+                }
+            }
+            if ready <= 0 || fds[0].revents == 0 {
                 continue;
             }
             // SAFETY: a live reference with a reply waiting.
             if unsafe { DNSServiceProcessResult(sd) } != 0 {
-                log::warn!("nearby: browsing stopped");
-                return;
+                return finish(sd, Err("the responder went away".into()));
+            }
+            let err = BROWSE_ERR.swap(0, Ordering::Relaxed);
+            if err != 0 {
+                super::set_blocked(err == POLICY_DENIED);
+                return finish(sd, Err(format!("browse error {err}")));
             }
             for s in seen.drain(..) {
                 let name = s.name.to_string_lossy().into_owned();
@@ -713,24 +1037,26 @@ mod bonjour {
                     *count = count.saturating_sub(1);
                     if *count == 0 {
                         interfaces.remove(&name);
+                        unconfirmed.remove(&name);
                         super::lost(&name);
                     }
                     continue;
                 }
+                unconfirmed.remove(&name);
                 *count += 1;
                 if *count > 1 {
                     continue;
                 }
                 std::thread::spawn(move || {
-                    if let Some((host, port, id)) = resolve(&s) {
-                        super::found(name, host, port, id);
+                    if let Some((host, port, id, platform)) = resolve(&s) {
+                        super::announced(name, host, port, id, platform);
                     }
                 });
             }
         }
     }
 
-    type Resolved = Option<(String, u16, Option<String>)>;
+    type Resolved = Option<(String, u16, Option<String>, Option<String>)>;
 
     extern "C" fn on_resolve(
         _: Ref,
@@ -756,6 +1082,7 @@ mod bonjour {
                 CStr::from_ptr(host).to_string_lossy().into_owned(),
                 u16::from_be(port),
                 txt_value(txt, "id"),
+                txt_value(txt, "platform"),
             ));
         }
     }

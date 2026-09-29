@@ -261,6 +261,10 @@ pub struct ActivityState {
     pub duration_ms: u64,
     /// When `position_ms` was true, in Unix seconds.
     pub at: f64,
+    /// The sleeve, as a small base64 JPEG: a Live Activity cannot fetch
+    /// anything, and this is how it gets one while the app is suspended.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub art: Option<String>,
 }
 
 /// A Live Activity nobody has updated in this long shows as stale.
@@ -278,6 +282,13 @@ impl ActivityState {
             position_ms: info.position_ms(),
             duration_ms: info.state.duration_ms,
             at: chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
+            art: info
+                .state
+                .queue
+                .iter()
+                .find(|e| e.current)
+                .and_then(|e| e.track_id.as_deref())
+                .and_then(activity_art),
         }
     }
 
@@ -299,6 +310,55 @@ impl ActivityState {
         };
         self.position_ms.abs_diff(expected) > 3000
     }
+}
+
+/// Apple refuses a Live Activity push over 4 KB, and the text, the times and
+/// the envelope take well under a kilobyte of it.
+const ART_BUDGET: usize = 2600;
+
+/// The cover of `track` (a uid or a row id) small enough to ride in a Live
+/// Activity push, as base64. Worked out once per track: the state it goes in
+/// is reported far more often than the track changes.
+fn activity_art(track: &str) -> Option<String> {
+    use base64::Engine as _;
+    static LAST: parking_lot::Mutex<Option<(String, Option<String>)>> =
+        parking_lot::Mutex::new(None);
+    static COVERS: std::sync::LazyLock<crate::covers::Covers> =
+        std::sync::LazyLock::new(crate::covers::Covers::in_config_dir);
+    if cfg!(test) {
+        return None;
+    }
+    if let Some((held, art)) = LAST.lock().as_ref()
+        && held == track
+    {
+        return art.clone();
+    }
+    let art = (|| {
+        let db = koan_core::db::pool::shared().get().ok()?;
+        let id = koan_core::db::queries::resolve_id(
+            &db.conn,
+            koan_core::db::queries::UidKind::Track,
+            track,
+        )
+        .ok()??;
+        let row = koan_core::db::queries::get_track_row(&db.conn, id).ok()??;
+        let cover = COVERS.cover(std::slice::from_ref(&row), crate::covers::SIZES[0])?;
+        let img = image::load_from_memory(&cover).ok()?;
+        // Smaller and rougher until it fits.
+        [(72, 60), (60, 50), (48, 40)]
+            .into_iter()
+            .find_map(|(side, quality)| {
+                let mut out = Vec::new();
+                let small = img.thumbnail(side, side).to_rgb8();
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality)
+                    .encode_image(&small)
+                    .ok()?;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&out);
+                (b64.len() <= ART_BUDGET).then_some(b64)
+            })
+    })();
+    *LAST.lock() = Some((track.to_string(), art.clone()));
+    art
 }
 
 fn read_key(path: &Path) -> Option<String> {
