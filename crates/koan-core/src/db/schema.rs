@@ -3,7 +3,7 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
@@ -436,7 +436,23 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("play_history", "user_id", "INTEGER NOT NULL DEFAULT 0"),
     ("playlists", "user_id", "INTEGER NOT NULL DEFAULT 0"),
     ("shares", "user_id", "INTEGER NOT NULL DEFAULT 0"),
+    // The id every surface publishes; see `queries::uids`. Row ids are
+    // numbered per table and per database, so album 5 and song 5 were the same
+    // id to an endpoint that takes either, and neither meant anything on
+    // another device.
+    ("artists", "uid", "TEXT"),
+    ("albums", "uid", "TEXT"),
+    ("tracks", "uid", "TEXT"),
+    ("playlists", "uid", "TEXT"),
 ];
+
+/// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a
+/// trigger covers every insert, however it is written, where a Rust-side
+/// default would have to be remembered at each one.
+const SQL_UUID7: &str = "(SELECT substr(t, 1, 8) || '-' || substr(t, 9, 4) || '-7' || substr(r, 1, 3)
+        || '-' || substr('89ab', 1 + (random() & 3), 1) || substr(r, 4, 3) || '-' || substr(r, 7, 12)
+    FROM (SELECT printf('%012x', CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)) AS t,
+                 lower(hex(randomblob(9))) AS r))";
 
 fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
@@ -520,6 +536,19 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
          END;",
     )?;
     crate::db::queries::auth::adopt_local_rows(conn)?;
+
+    for table in ["artists", "albums", "tracks", "playlists"] {
+        conn.execute_batch(&format!(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_uid ON {table}(uid);
+             CREATE TRIGGER IF NOT EXISTS {table}_uid AFTER INSERT ON {table}
+               WHEN NEW.uid IS NULL
+             BEGIN
+               UPDATE {table} SET uid = {SQL_UUID7} WHERE id = NEW.id;
+             END;"
+        ))?;
+        backfill_uids(conn, table)?;
+    }
+
     // Once: `upsert_track` stores no new zeros, and the sweep reads every track.
     if found < 3 {
         crate::db::queries::tracks::clear_zero_discs(conn)?;
@@ -598,6 +627,36 @@ fn snapshots_to_playlists(conn: &Connection) -> rusqlite::Result<()> {
 
     conn.execute("DROP TABLE queue_snapshots", [])?;
     Ok(())
+}
+
+/// Give every row of `table` that has none a `uid`, in row order so the ids
+/// keep the order the rows were added in. Rows written since the trigger
+/// existed already have one, so after the first run this finds nothing.
+fn backfill_uids(conn: &Connection, table: &str) -> rusqlite::Result<()> {
+    let ids: Vec<i64> = conn
+        .prepare(&format!(
+            "SELECT id FROM {table} WHERE uid IS NULL ORDER BY id"
+        ))?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    if ids.is_empty() {
+        return Ok(());
+    }
+    conn.execute_batch("SAVEPOINT backfill_uids")?;
+    let written = (|| {
+        let mut update = conn.prepare(&format!("UPDATE {table} SET uid = ?1 WHERE id = ?2"))?;
+        for id in ids {
+            update.execute(rusqlite::params![uuid::Uuid::now_v7().to_string(), id])?;
+        }
+        Ok(())
+    })();
+    match written {
+        Ok(()) => conn.execute_batch("RELEASE backfill_uids"),
+        Err(e) => {
+            conn.execute_batch("ROLLBACK TO backfill_uids; RELEASE backfill_uids")?;
+            Err(e)
+        }
+    }
 }
 
 /// Rebuild the favourite tables keyed by user, keeping every row.
@@ -1211,6 +1270,69 @@ mod tests {
                 .unwrap();
             assert_eq!(found, 1, "{table}.{column} was not migrated");
         }
+    }
+
+    #[test]
+    fn rows_from_before_uids_are_given_one_and_new_rows_get_their_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        {
+            let db = Database::open(&path).unwrap();
+            db.conn
+                .execute_batch(
+                    "DROP TRIGGER artists_uid; DROP TRIGGER albums_uid; DROP TRIGGER tracks_uid;
+                     DROP INDEX idx_artists_uid; DROP INDEX idx_albums_uid; DROP INDEX idx_tracks_uid;
+                     ALTER TABLE artists DROP COLUMN uid;
+                     ALTER TABLE albums DROP COLUMN uid;
+                     ALTER TABLE tracks DROP COLUMN uid;
+                     INSERT INTO artists (id, name) VALUES (5, 'Burial');
+                     INSERT INTO albums (id, title, artist_id) VALUES (5, 'Untrue', 5);
+                     INSERT INTO tracks (id, title, album_id, artist_id, path) VALUES
+                         (5, 'Archangel', 5, 5, '/a.flac'), (6, 'Near Dark', 5, 5, '/b.flac');
+                     PRAGMA user_version = 6;",
+                )
+                .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO tracks (title, album_id, artist_id, path) VALUES ('Ghost Hardware', 5, 5, '/c.flac')",
+                [],
+            )
+            .unwrap();
+        let uids: Vec<String> = db
+            .conn
+            .prepare(
+                "SELECT uid FROM artists UNION ALL SELECT uid FROM albums
+                 UNION ALL SELECT uid FROM tracks",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(uids.len(), 5);
+        for uid in &uids {
+            let parsed = uuid::Uuid::parse_str(uid).unwrap();
+            assert_eq!(parsed.get_version_num(), 7, "{uid}");
+            assert_eq!(parsed.to_string(), *uid, "stored hyphenated and lower case");
+        }
+        let distinct: std::collections::HashSet<_> = uids.iter().collect();
+        assert_eq!(distinct.len(), uids.len());
+
+        // Backfilled in row order.
+        let tracks: Vec<String> = db
+            .conn
+            .prepare("SELECT uid FROM tracks WHERE id IN (5, 6) ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let mut sorted = tracks.clone();
+        sorted.sort();
+        assert_eq!(tracks, sorted);
     }
 
     #[test]
