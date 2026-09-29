@@ -67,6 +67,10 @@ pub fn spawn_library_watch(
     const CHECK: Duration = Duration::from_secs(30);
     // Past this many directories one walk of the library is cheaper than many.
     const MAX_DIRS: usize = 200;
+    // A full scan now and then, for the events a platform drops without
+    // asking for a rescan. Unchanged files are skipped on mtime and size, so an
+    // idle one is a second's work.
+    const RESCAN: Duration = Duration::from_secs(15 * 60);
 
     std::thread::Builder::new()
         .name("koan-library-watch".into())
@@ -145,9 +149,12 @@ pub fn spawn_library_watch(
             let mut everything = false;
             let mut settle_at: Option<Instant> = None;
             let mut check_at = Instant::now() + CHECK;
+            let mut rescan_at = Instant::now() + RESCAN;
             loop {
                 let now = Instant::now();
-                let wake = settle_at.map_or(check_at, |at| at.min(check_at));
+                let wake = settle_at
+                    .map_or(check_at, |at| at.min(check_at))
+                    .min(rescan_at);
                 match rx.recv_timeout(wake.saturating_duration_since(now)) {
                     Ok(Ok(event)) if event.need_rescan() => {
                         everything = true;
@@ -178,11 +185,16 @@ pub fn spawn_library_watch(
                         scanner::minimal_dirs(std::mem::take(&mut dirs).into_iter().collect());
                     if everything || changed.len() > MAX_DIRS {
                         scan("watched change", &folders(), None);
+                        rescan_at = Instant::now() + RESCAN;
                     } else {
                         scan("watched change", &folders(), Some(&changed));
                     }
                     everything = false;
                     settle_at = None;
+                }
+                if now >= rescan_at {
+                    scan("periodic", &folders(), None);
+                    rescan_at = Instant::now() + RESCAN;
                 }
                 if now >= check_at {
                     let fresh = rewatch(&mut roots);
