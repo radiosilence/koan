@@ -9,8 +9,10 @@ import UIKit
 /// playing: the app stays alive and the link stays up. It costs the audio
 /// hardware staying awake, so on battery it lasts `minutes` after playback
 /// stops, and on the charger it lasts as long as the app is in the background.
-/// A push notification is the proper way to wake an app, and needs a paid
-/// developer account.
+/// A push notification is the proper way to wake an app.
+///
+/// Off in App Store builds (`KOAN_STORE`): App Review rejects background audio
+/// that plays nothing (guideline 2.5.4).
 @MainActor
 final class Keepalive {
     /// UserDefaults keys the Settings pane writes.
@@ -67,7 +69,11 @@ final class Keepalive {
     /// Re-read the settings; call after they change.
     func update() {
         let defaults = UserDefaults.standard
+        #if KOAN_STORE
+        let enabled = false
+        #else
         let enabled = defaults.object(forKey: Self.enabledKey) as? Bool ?? true
+        #endif
         let minutes = defaults.object(forKey: Self.minutesKey) as? Int ?? Self.defaultMinutes
         let charging = [.charging, .full].contains(UIDevice.current.batteryState)
         let deadline = stoppedAt.addingTimeInterval(TimeInterval(minutes * 60))

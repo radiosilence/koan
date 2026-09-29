@@ -48,6 +48,7 @@ targets:
           - Support/MenuShortcuts.swift
           - Views/ShortcutsSheet.swift
       - path: ../macos/Resources/Assets.xcassets
+      - path: PrivacyInfo.xcprivacy
     dependencies:
       - target: KoanFFI
     settings:
@@ -66,6 +67,10 @@ targets:
       path: ../../target/ios-project/Info.plist
       properties:
         CFBundleDisplayName: kōan
+        # XcodeGen writes 1.0 and 1 here unless told otherwise, whatever the
+        # build settings above say, and App Store Connect reads these.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSRequiresIPhoneOS: true
         # The ensō on the icon's ground, drawn by the system before koan has
         # run a line. `Splash` repeats it exactly, so the handoff is invisible.
