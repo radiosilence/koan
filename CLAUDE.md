@@ -62,6 +62,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - **Decode cursor ≠ UI cursor** — decode thread peeks ahead for gapless without moving the playlist cursor.
 - **One `derive_visible_queue()` per frame** — cached snapshot, all render/mouse ops see consistent state.
 - **Track dedup across sources** — local file + remote entry = one DB row. Match: path → remote_id → content → MusicBrainz recording + release.
+- **Uids, not row ids, leave the database** — every artist, album, track and playlist has a UUIDv7 `uid`, published by Subsonic, GraphQL and the link. Clients syncing from a koan server adopt its uids, so ids mean the same thing on every device. See `db/queries/uids.rs`.
 - **Figment-layered config** — defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. All writes go through `Config::persist()`, which diffs the mutation and routes each changed key by `config::layer_of` — secrets, this machine's paths/hardware/account and volatile UI state to `config.local.toml`, taste to `config.toml`. Comments survive; untouched keys are never rewritten.
 
 ## Git

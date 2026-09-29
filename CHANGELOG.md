@@ -6,6 +6,10 @@
 
 - **The "Play on …" notification shows the album's cover.** The server puts a link to the cover in the notification, and a notification service extension in the iOS app fetches and attaches it before iOS shows it. The extension holds no sign-in, so the link authorises itself: an HMAC over one track and an expiry ten minutes out, keyed by a secret that lives only in the server's process, opening that one cover and nothing else. Needs `sharing.public_url`; without it the notification shows as before.
 
+### Changed
+
+- **Every artist, album, track and playlist has one id on every device** ([#501](https://github.com/radiosilence/koan/issues/501)): a UUIDv7, published as its id over Subsonic, GraphQL and the link. Row ids are numbered per table, so an endpoint that takes any kind (`createShare`, `star`, `getCoverArt`) read album 5 as song 5; they are also numbered per database, so an id meant nothing on another device. A client syncing from a koan server takes the server's uids for its rows, including rows it merged with local files, so the server and every device name a track the same way. Bare and prefixed row ids (`5`, `al-5`) are still accepted everywhere. GraphQL id fields are now `ID` strings rather than `Int`. The library upgrades itself, and a build older than this one then refuses it. Each client's first sync after the server is upgraded re-reads the whole library, since every id changed; rows, history and favourites are kept.
+
 ### Fixed
 
 - **koan.rocks no longer renders new pages against an old stylesheet.** The server caches every file for a year as immutable, and the stylesheet lived at a fixed URL, so a browser that had visited before kept the old rules under new markup (the header nav lost its spacing). The stylesheet's URL now carries a hash of its content.
