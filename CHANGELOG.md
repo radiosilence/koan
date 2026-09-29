@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Music for a sleeping phone is a notification at once.** iOS does not let an app it woke start audio, which the phone's log showed plainly: the woken app took the command and the output unit refused to start. So a request to play on a phone iOS has suspended is sent straight away as the "Play on …" notification, time-sensitive so it reaches through Focus, rather than after a wake and a wait that could not succeed. Every other command still goes to the outbox and wakes the phone to take it. The app no longer switches to a mixable audio session when woken.
+
 ### Fixed
 
 - **A remote server is sent a scrobble only once a track has been heard** ([#546](https://github.com/radiosilence/koan/issues/546)): half the track or four minutes, and never a track under thirty seconds, as Last.fm counts a play. Scrobbling at the start sent skipped and failed tracks to Last.fm. When a track starts the server is told it is now playing, so koan shows in Navidrome's Now Playing, and each scrobble is dated to when the listen began. Local play history is unchanged and still records every start.
