@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A remote server is sent a scrobble only once a track has been heard** ([#546](https://github.com/radiosilence/koan/issues/546)): half the track or four minutes, and never a track under thirty seconds, as Last.fm counts a play. Scrobbling at the start sent skipped and failed tracks to Last.fm. When a track starts the server is told it is now playing, so koan shows in Navidrome's Now Playing, and each scrobble is dated to when the listen began. Local play history is unchanged and still records every start.
+- **koan sends a User-Agent to the server** (`koan/<version> (Macintosh)`, `(iOS)` or `(Linux)`), so Navidrome lists a Mac and a phone as two players rather than one `koan []`.
+
 ## 0.42.0
 
 ### Added
