@@ -297,16 +297,16 @@ private struct RemoteSettings: View {
                 }
             } else {
                 Section {
-                    // Label on the left, example inside the field. Passing the
-                    // example as the title made the URL the label.
-                    TextField("Server", text: $url, prompt: Text("https://music.example.com"))
+                    // The prompt names the field: an iOS form shows only the
+                    // prompt, so an example there leaves the field unlabelled.
+                    TextField("Server URL", text: $url, prompt: Text("Server URL"))
                         .verbatimEntry(.url)
-                    TextField("Username", text: $username, prompt: Text("your account"))
+                    TextField("Username", text: $username, prompt: Text("Username"))
                         .verbatimEntry()
                     SecureField(
                         "Password",
                         text: Binding(get: { model.password }, set: { model.password = $0 }),
-                        prompt: Text("hunter2")
+                        prompt: Text("Password")
                     )
                     .verbatimEntry()
                     Button("Sign In") { model.signIn(url: url, username: username) }

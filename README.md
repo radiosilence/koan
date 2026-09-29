@@ -33,9 +33,7 @@ brew install --cask radiosilence/koan/koan-app
 ```
 
 You may have to update brew's trust settings to trust the tap.
-Alternatively you can get `Koan.dmg` from the releases page. From 0.40.0 the app
-is signed with a Developer ID and notarised by Apple, so it opens like any other
-download.
+Alternatively you can get `Koan.dmg` from the releases page.
 
 CLI/TUI:
 
