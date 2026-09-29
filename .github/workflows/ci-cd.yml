@@ -550,9 +550,7 @@ jobs:
           tag_name: v${{ needs.check-version.outputs.version }}
           name: v${{ needs.check-version.outputs.version }}
           generate_release_notes: true
-          # Prepended to the generated notes. Every direct download of the app
-          # hits Gatekeeper, and the dialog it shows offers only "Move to Trash"
-          # — so the way out belongs where people are already standing.
+          # Prepended to the generated notes.
           body: |
             ## Install
 
@@ -560,19 +558,6 @@ jobs:
             brew install radiosilence/koan/koan            # the CLI and TUI
             brew install --cask radiosilence/koan/koan-app # the macOS app
             ```
-
-            ### Opening `Koan.dmg` directly
-
-            The app is signed with a Developer ID and notarised by Apple, so it
-            opens like any other download. If macOS refuses it with "Apple
-            could not verify koan is free of malware" (a build made without the
-            signing credentials), drag it to Applications, then:
-
-            ```bash
-            xattr -dr com.apple.quarantine /Applications/kōan.app
-            ```
-
-            It opens normally from then on.
 
             ---
           files: |
