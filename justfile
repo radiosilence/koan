@@ -581,13 +581,35 @@ ios-walk device="koan-dev": (ios-ffi "iphonesimulator") ios-project
     # Apple's clean status bar, so the screenshots can go anywhere.
     xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active \
         --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
-    trap 'xcrun simctl status_bar "$udid" clear' EXIT
+    # A booted simulator is a running copy of iOS; leave none behind.
+    trap 'xcrun simctl status_bar "$udid" clear; xcrun simctl shutdown "$udid"' EXIT
     xcodebuild test -quiet \
         -project apps/ios/Koan.xcodeproj -scheme Koan \
         -destination "id=$udid" \
+        -only-testing:KoanUITests/WalkTests \
         -resultBundlePath "$out/walk.xcresult" || true
     xcrun xcresulttool export attachments --path "$out/walk.xcresult" --output-path "$out"
     echo "screenshots in $out"
+
+# Sign a simulator in to a server through Settings, as App Review does, and
+# wait for its albums: the check that the review account works, and how a
+# screenshot simulator gets a library. `just ios-signin koan-shots-iphone
+# https://demo.navidrome.org demo demo`.
+ios-signin device url user password: (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    xcrun simctl bootstatus "$udid" -b >/dev/null
+    trap 'xcrun simctl shutdown "$udid"' EXIT
+    TEST_RUNNER_KOAN_SIGNIN_URL='{{url}}' \
+    TEST_RUNNER_KOAN_SIGNIN_USER='{{user}}' \
+    TEST_RUNNER_KOAN_SIGNIN_PASSWORD='{{password}}' \
+        xcodebuild test -quiet \
+            -project apps/ios/Koan.xcodeproj -scheme Koan \
+            -destination "id=$udid" \
+            -only-testing:KoanUITests/SignInTests
+    echo "{{device}} is signed in to {{url}}"
 
 # Build, install and launch on the iPhone plugged in (or on the same Wi-Fi).
 #
@@ -661,3 +683,10 @@ ios-testflight build: (ios-ffi "iphoneos") (ios-project build)
         -exportPath "$out/export" \
         "${auth[@]}"
     echo "uploaded build {{build}} to App Store Connect"
+
+# Push the App Store listing (apps/ios/store/listing.toml) through the App
+# Store Connect API: text, review details, the newest processed build, and
+# screenshots when given as `iphone=DIR ipad=DIR`. Never submits for review.
+# Needs the same APPLE_API_* environment as ios-testflight.
+ios-store *screenshots:
+    uv run apps/ios/store/push.py {{screenshots}}

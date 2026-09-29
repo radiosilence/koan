@@ -1,0 +1,88 @@
+# The App Store listing for the iOS app, pushed by `just ios-store`.
+#
+# Apple's limits are in the comments. What is left out is left out on purpose:
+# third-party service names stay out of the keywords (guideline 2.3.7), and
+# nothing here describes fetching music, only playing a library the user has.
+
+locale = "en-GB"
+
+[app]
+name = "kōan music"                        # 30
+subtitle = "Player for your music server"  # 30
+primary_category = "MUSIC"
+privacy_policy_url = "https://koan.rocks/privacy.html"
+
+[version]
+copyright = "2026 James Cleveland"
+support_url = "https://github.com/radiosilence/koan/issues"
+marketing_url = "https://koan.rocks"
+
+# 100, comma-separated, no spaces needed after commas.
+keywords = "music player,library,gapless,flac,lossless,self-hosted,server,stream,offline,albums,queue,hifi"
+
+# 170. Can be changed without a new version.
+promotional_text = """
+A fast, native player for the music library on your own server. Gapless, lossless where the file is, and a queue \
+that does what you tell it.\
+"""
+
+# 4000.
+description = """
+kōan plays the music library you already have, from a Subsonic-compatible server such as Navidrome or a kōan server. \
+It is built for large collections, which browse and search as quickly as small ones.
+
+YOUR LIBRARY, PROPERLY
+Albums, artists and tracks as your tags describe them, with full-size artwork. Search covers the whole library at once, \
+and sorting and filtering happen as you type.
+
+A QUEUE THAT BEHAVES
+Albums stay grouped in the queue. Add, reorder and remove as you like; what is playing is never interrupted by an edit. \
+Playback is gapless, so live albums and continuous mixes play as recorded.
+
+SOUND
+kōan decodes FLAC, ALAC, WAV, AIFF, MP3, AAC, Opus and Vorbis with its own engine, the same one as the kōan Mac app. \
+ReplayGain is applied from your tags, by track or by album.
+
+OFFLINE AND ON THE MOVE
+Tracks are cached on the phone as you play them, within a limit you set, so what you listen to often plays without a \
+connection. Playback continues in the background and from the lock screen.
+
+IN SYNC WITH THE SERVER
+Favourites, playlists and play history are kept in step with your server, so the phone, the Mac app and the web agree.
+
+RADIO
+Turn on radio from Now Playing, and when the queue runs out kōan carries on with related music from your own library.
+
+PRIVATE
+kōan has no account of its own, no analytics and no advertising. It talks to your server and to public music \
+databases for artist information, and to nothing else.
+
+kōan is open source under the MIT licence. You need a Subsonic-compatible music server with your own music on it; \
+kōan does not provide music.\
+"""
+
+[review]
+first_name = "James"
+last_name = "Cleveland"
+email = "jc@blit.cc"
+# The phone number App Review requires is not kept here: `ios-store` reads it
+# from APPLE_REVIEW_PHONE, in international format.
+demo_required = true
+demo_user = "demo"
+demo_password = "demo"
+notes = """
+kōan is a player for a music library on the user's own Subsonic-compatible server. It provides no music itself.
+
+To review it with a library, sign in to Navidrome's public demonstration server, which holds only Creative Commons \
+music:
+
+1. Open the Settings tab and choose Server.
+2. Server: https://demo.navidrome.org
+   Username: demo
+   Password: demo
+3. Tap Sign In. The library syncs in under a minute.
+4. Browse from the Library tab; tap an album to play it. The queue is on the Queue tab.
+
+The app declares the audio background mode so that music continues playing when the app is in the background or the \
+screen is locked.\
+"""
