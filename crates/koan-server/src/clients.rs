@@ -974,8 +974,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("koan.db");
         let db = koan_core::db::connection::Database::open(&path).unwrap();
-        let playlist =
-            koan_core::db::queries::create_playlist(&db.conn, "cyberpunk", None).unwrap();
+        let playlist = koan_core::db::queries::create_playlist(
+            &db.conn,
+            koan_core::db::queries::LOCAL_USER,
+            "cyberpunk",
+            None,
+        )
+        .unwrap();
         let order = Order {
             id: "o1".into(),
             username: None,

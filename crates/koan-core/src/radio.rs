@@ -100,7 +100,8 @@ impl RadioContext {
         }
 
         // Build seed from recent plays (drifting seed).
-        let recent = queries::recent_track_ids(conn, seed_window).unwrap_or_default();
+        let recent =
+            queries::recent_track_ids(conn, queries::LOCAL_USER, seed_window).unwrap_or_default();
         let seed_count = recent.len().max(1) as f64;
 
         for (i, track_id) in recent.iter().enumerate() {
@@ -145,12 +146,14 @@ impl RadioContext {
         }
 
         // Build exclusion window from play history.
-        let excluded = queries::recent_track_ids(conn, history_window).unwrap_or_default();
+        let excluded = queries::recent_track_ids(conn, queries::LOCAL_USER, history_window)
+            .unwrap_or_default();
         ctx.excluded_track_ids = excluded.into_iter().collect();
 
         // Compute average year from seed tracks.
         let mut years: Vec<i32> = Vec::new();
-        let seed_ids = queries::recent_track_ids(conn, seed_window).unwrap_or_default();
+        let seed_ids =
+            queries::recent_track_ids(conn, queries::LOCAL_USER, seed_window).unwrap_or_default();
         for tid in &seed_ids {
             if let Ok(Some(track)) = queries::get_track_row(conn, *tid)
                 && let Some(album_id) = track.album_id
@@ -334,7 +337,7 @@ fn compute_score(
 /// Compute recency bonus for a track. Higher = more desirable.
 /// Never-played tracks get the highest bonus.
 fn compute_recency_bonus(conn: &Connection, track_id: i64, discovery_weight: f64) -> f64 {
-    let last_played = queries::last_played_at(conn, track_id).unwrap_or(None);
+    let last_played = queries::last_played_at(conn, queries::LOCAL_USER, track_id).unwrap_or(None);
     match last_played {
         None => {
             // Never played — big bonus, scaled by discovery_weight.
@@ -761,7 +764,8 @@ fn gather_acoustic_candidates(
     candidates: &mut Vec<Candidate>,
 ) {
     // The same seeds that drive seed_artists — one window, one answer.
-    let seed_ids = queries::recent_track_ids(conn, seed_window).unwrap_or_default();
+    let seed_ids =
+        queries::recent_track_ids(conn, queries::LOCAL_USER, seed_window).unwrap_or_default();
     let mut seed_embeddings = Vec::new();
     for tid in &seed_ids {
         if let Ok(Some(emb)) = queries::get_vector(conn, *tid) {
@@ -1213,7 +1217,13 @@ mod tests {
             .query_row("SELECT id FROM tracks LIMIT 1", [], |row| row.get(0))
             .unwrap();
 
-        queries::record_play(&db.conn, track_id, Some(240_000)).unwrap();
+        queries::record_play(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            track_id,
+            Some(240_000),
+        )
+        .unwrap();
 
         let bonus = compute_recency_bonus(&db.conn, track_id, 0.3);
         assert!(
@@ -1348,7 +1358,8 @@ mod tests {
                     |row| row.get(0),
                 )
                 .unwrap();
-            queries::record_play(&db.conn, id, Some(240_000)).unwrap();
+            queries::record_play(&db.conn, crate::db::queries::LOCAL_USER, id, Some(240_000))
+                .unwrap();
             ids.push(id);
         }
 

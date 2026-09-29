@@ -670,6 +670,17 @@ fn xml_escape(s: &str) -> String {
 struct Caller {
     username: String,
     role: Role,
+    /// Whose favourites, playlists and history the request reads and writes:
+    /// the account's, or the local user's for the shared secret.
+    user_id: i64,
+}
+
+impl Caller {
+    /// Whose shares the caller may list and change: their own, or everyone's
+    /// for an admin.
+    fn share_owner(&self) -> Option<i64> {
+        (self.role != Role::Admin).then_some(self.user_id)
+    }
 }
 
 /// Authenticate a request.
@@ -701,6 +712,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         return Ok(Caller {
             username: user.username,
             role: user.role,
+            user_id: user.id,
         });
     }
 
@@ -708,10 +720,11 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         .u
         .as_deref()
         .ok_or_else(|| SubsonicError::missing_param("u"))?;
-    let caller = |role| {
+    let caller = |(user_id, role)| {
         Ok(Caller {
             username: username.to_owned(),
             role,
+            user_id,
         })
     };
     let shared = |given: &str| {
@@ -730,7 +743,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         {
             let expected = format!("{:x}", md5::compute(format!("{secret}{salt}")));
             return if bool::from(token.as_bytes().ct_eq(expected.as_bytes())) {
-                caller(Role::User)
+                caller((queries::LOCAL_USER, Role::User))
             } else {
                 Err(SubsonicError::wrong_auth())
             };
@@ -739,7 +752,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         // signed in by password since this existed) token auth can't be
         // checked, which 41 tells the client so it can fall back.
         return match state.users.verify_token(username, token, salt) {
-            Some(role) => caller(role),
+            Some(account) => caller(account),
             None if state.users.has_sealed(username) => Err(SubsonicError::wrong_auth()),
             None => Err(SubsonicError::token_auth_unsupported()),
         };
@@ -753,13 +766,13 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         None => p.to_string(),
     };
     if shared(&password) {
-        return caller(Role::User);
+        return caller((queries::LOCAL_USER, Role::User));
     }
-    let role = state
+    let account = state
         .users
         .verify(username, &password)
         .ok_or_else(SubsonicError::wrong_auth)?;
-    caller(role)
+    caller(account)
 }
 
 fn decode_hex(hex: &str) -> Option<String> {
@@ -803,17 +816,38 @@ fn respond_db_as(
     need: Role,
     f: impl FnOnce(&Database, XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
 ) -> Response {
+    respond_db_user(state, auth, need, |db, _, b| f(db, b))
+}
+
+/// As `respond_db_as`, for an endpoint that reads or writes the caller's own
+/// favourites, playlists or history. It is handed the caller's user id.
+fn respond_db_user(
+    state: &AppState,
+    auth: &SubsonicParams,
+    need: Role,
+    f: impl FnOnce(&Database, i64, XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
+) -> Response {
+    respond_db_caller(state, auth, need, |db, caller, b| f(db, caller.user_id, b))
+}
+
+/// As `respond_db_user`, handing over the whole caller.
+fn respond_db_caller(
+    state: &AppState,
+    auth: &SubsonicParams,
+    need: Role,
+    f: impl FnOnce(&Database, &Caller, XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
+) -> Response {
     let json = auth.wants_json();
     let result = validate_auth(auth, state)
         .and_then(|caller| {
             if need == Role::Readonly {
-                Ok(())
+                Ok(caller)
             } else {
-                require_write(caller.role)
+                require_write(caller.role).map(|()| caller)
             }
         })
-        .and_then(|()| state.open_db())
-        .and_then(|db| f(&db, SubsonicResponse::ok(json)));
+        .and_then(|caller| Ok((state.open_db()?, caller)))
+        .and_then(|(db, caller)| f(&db, &caller, SubsonicResponse::ok(json)));
     match result {
         Ok(builder) => builder.build(),
         Err(e) => SubsonicResponse::error(json, &e),
@@ -2264,7 +2298,7 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_as(&state, &auth, Role::User, |db, b| {
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let mut targets = Vec::new();
             for raw in params.all("id") {
                 let (kind, id) =
@@ -2285,7 +2319,7 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
                 return Err(SubsonicError::missing_param("id"));
             }
             for (kind, id) in targets {
-                set_star(db, kind, id, star)?;
+                set_star(db, user, kind, id, star)?;
             }
             Ok(b)
         })
@@ -2293,7 +2327,13 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
     .await
 }
 
-fn set_star(db: &Database, kind: EntityKind, id: i64, star: bool) -> Result<(), SubsonicError> {
+fn set_star(
+    db: &Database,
+    user: i64,
+    kind: EntityKind,
+    id: i64,
+    star: bool,
+) -> Result<(), SubsonicError> {
     let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
     match kind {
         EntityKind::Song => {
@@ -2306,21 +2346,24 @@ fn set_star(db: &Database, kind: EntityKind, id: i64, star: bool) -> Result<(), 
             } else {
                 queries::remove_favourite
             };
-            op(&db.conn, path).map_err(internal)?;
-            koan_core::helpers::sync_favourite_to_remote(db, path, star);
+            op(&db.conn, user, path).map_err(internal)?;
+            // The upstream server has one account, and it is the local user's.
+            if queries::auth::is_local_user(&db.conn, user).map_err(internal)? {
+                koan_core::helpers::sync_favourite_to_remote(db, path, star);
+            }
         }
         EntityKind::Album => {
             let album = queries::get_album(&db.conn, id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Album"))?;
-            queries::set_favourite_album(&db.conn, &album.artist_name, &album.title, star)
+            queries::set_favourite_album(&db.conn, user, &album.artist_name, &album.title, star)
                 .map_err(internal)?;
         }
         EntityKind::Artist => {
             let artist = queries::get_artist(&db.conn, id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Artist"))?;
-            queries::set_favourite_artist(&db.conn, &artist.name, star).map_err(internal)?;
+            queries::set_favourite_artist(&db.conn, user, &artist.name, star).map_err(internal)?;
         }
     }
     Ok(())
@@ -2331,8 +2374,8 @@ async fn get_starred2(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
-            let favourites = queries::load_favourites(&db.conn)
+        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
+            let favourites = queries::load_favourites(&db.conn, user)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
             let tracks: Vec<queries::TrackRow> = favourites
@@ -2346,7 +2389,7 @@ async fn get_starred2(
             let extras = song_extras(db, &tracks)?;
 
             let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
-            let mut album_ids: Vec<i64> = queries::favourite_album_id_set(&db.conn)
+            let mut album_ids: Vec<i64> = queries::favourite_album_id_set(&db.conn, user)
                 .map_err(internal)?
                 .into_iter()
                 .collect();
@@ -2355,7 +2398,7 @@ async fn get_starred2(
                 .into_iter()
                 .filter_map(|id| queries::get_album(&db.conn, id).ok().flatten())
                 .collect();
-            let mut artist_ids: Vec<i64> = queries::favourite_artist_id_set(&db.conn)
+            let mut artist_ids: Vec<i64> = queries::favourite_artist_id_set(&db.conn, user)
                 .map_err(internal)?
                 .into_iter()
                 .collect();
@@ -2391,7 +2434,7 @@ async fn scrobble(
     Query(params): Query<ScrobbleParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db_as(&state, &params.auth, Role::User, |db, b| {
+        respond_db_user(&state, &params.auth, Role::User, |db, user, b| {
             let track_id = require_id(params.id.as_deref())?;
 
             queries::get_track_row(&db.conn, track_id)
@@ -2417,6 +2460,7 @@ async fn scrobble(
 
             queries::record_play_at(
                 &db.conn,
+                user,
                 track_id,
                 played_at,
                 None,
@@ -2655,8 +2699,8 @@ async fn get_playlists(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
-            let lists = queries::list_playlists(&db.conn)
+        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
+            let lists = queries::list_playlists(&db.conn, user)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
             let mut playlists_node = XmlNode::new("playlists").array_of("playlist");
@@ -2711,6 +2755,26 @@ fn playlist_node(db: &Database, id: i64, owner: &str) -> Result<XmlNode, Subsoni
     Ok(node)
 }
 
+/// Playlist `id` if `user` may see it (their own, or a public one) — and, with
+/// `edit`, change it (their own only).
+fn playlist_for(
+    db: &Database,
+    user: i64,
+    id: i64,
+    edit: bool,
+) -> Result<queries::PlaylistRow, SubsonicError> {
+    let me = queries::auth::resolve_user(&db.conn, user)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+    let list = queries::get_playlist(&db.conn, id)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+        .filter(|p| p.readable_by(me))
+        .ok_or_else(|| SubsonicError::not_found("Playlist"))?;
+    if edit && !list.editable_by(me) {
+        return Err(SubsonicError::not_authorized());
+    }
+    Ok(list)
+}
+
 /// Parse a playlist id. Subsonic ids are opaque strings; koan's are its row ids.
 fn playlist_id(raw: Option<&str>) -> Result<i64, SubsonicError> {
     raw.ok_or_else(|| SubsonicError::missing_param("id"))?
@@ -2723,8 +2787,9 @@ async fn get_playlist(
     Query(params): Query<IdParam>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params.auth, |db, b| {
+        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
             let id = playlist_id(params.id.as_deref())?;
+            playlist_for(db, user, id, false)?;
             Ok(b.child(playlist_node(db, id, &state.username)?))
         })
     })
@@ -2739,7 +2804,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
 
-        respond_db_as(&state, &auth, Role::User, |db, b| {
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let track_ids: Vec<i64> = params
                 .all("songId")
                 .filter_map(|id| id.parse::<i64>().ok())
@@ -2748,6 +2813,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
             let id = match params.get("playlistId") {
                 Some(existing) => {
                     let id = playlist_id(Some(existing))?;
+                    playlist_for(db, user, id, true)?;
                     if let Some(name) = params.get("name") {
                         queries::rename_playlist(&db.conn, id, name)
                             .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -2760,7 +2826,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                     let name = params
                         .get("name")
                         .ok_or_else(|| SubsonicError::missing_param("name"))?;
-                    let id = queries::create_playlist(&db.conn, name, None)
+                    let id = queries::create_playlist(&db.conn, user, name, None)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
                     queries::add_tracks(&db.conn, id, &track_ids)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -2785,14 +2851,9 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
 
-        respond_db_as(&state, &auth, Role::User, |db, b| {
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let id = playlist_id(params.get("playlistId").or_else(|| params.get("id")))?;
-            if queries::get_playlist(&db.conn, id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?
-                .is_none()
-            {
-                return Err(SubsonicError::not_found("Playlist"));
-            }
+            playlist_for(db, user, id, true)?;
 
             if let Some(name) = params.get("name") {
                 queries::rename_playlist(&db.conn, id, name)
@@ -2837,8 +2898,9 @@ async fn delete_playlist(
     Query(params): Query<IdParam>,
 ) -> Response {
     offload_response(move || {
-        respond_db_as(&state, &params.auth, Role::User, |db, b| {
+        respond_db_user(&state, &params.auth, Role::User, |db, user, b| {
             let id = playlist_id(params.id.as_deref())?;
+            playlist_for(db, user, id, true)?;
             match queries::delete_playlist(&db.conn, id) {
                 Ok(true) => Ok(b),
                 Ok(false) => Err(SubsonicError::not_found("Playlist")),
@@ -2973,7 +3035,7 @@ async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_as(&state, &auth, Role::User, |db, b| {
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let base = share_base()?;
             let ids: Vec<_> = params
                 .all("id")
@@ -2990,6 +3052,7 @@ async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
             let now = chrono::Utc::now().timestamp();
             let share = queries::shares::create_share(
                 &db.conn,
+                user,
                 slice,
                 &track_ids,
                 params.get("description"),
@@ -3015,10 +3078,10 @@ async fn get_shares(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
+        respond_db_caller(&state, &params, Role::Readonly, |db, caller, b| {
             let base = share_base()?;
             let mut node = XmlNode::new("shares").array_of("share");
-            for share in queries::shares::list_shares(&db.conn)
+            for share in queries::shares::list_shares(&db.conn, caller.share_owner())
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
             {
                 node = node.child(share_node(db, &share, &base, &state.username)?);
@@ -3033,12 +3096,13 @@ async fn update_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_as(&state, &auth, Role::User, |db, b| {
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
             let id = params
                 .get("id")
                 .ok_or_else(|| SubsonicError::missing_param("id"))?;
             let found = queries::shares::update_share(
                 &db.conn,
+                caller.share_owner(),
                 id,
                 params.get("description"),
                 expires_param(&params),
@@ -3058,11 +3122,11 @@ async fn delete_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_as(&state, &auth, Role::User, |db, b| {
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
             let id = params
                 .get("id")
                 .ok_or_else(|| SubsonicError::missing_param("id"))?;
-            let found = queries::shares::delete_share(&db.conn, id)
+            let found = queries::shares::delete_share(&db.conn, caller.share_owner(), id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             if found {
                 Ok(b)
@@ -4729,7 +4793,10 @@ mod tests {
         )
         .await;
         assert!(body.contains("status=\"ok\""));
-        assert_eq!(queries::play_count(&db.conn, track_id).unwrap(), 0);
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, track_id).unwrap(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -4748,9 +4815,13 @@ mod tests {
         assert!(body.contains("status=\"ok\""), "{}", body);
 
         // The album, not one of its tracks.
-        assert!(queries::load_favourites(&db.conn).unwrap().is_empty());
         assert!(
-            queries::favourite_album_id_set(&db.conn)
+            queries::load_favourites(&db.conn, koan_core::db::queries::LOCAL_USER)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            queries::favourite_album_id_set(&db.conn, koan_core::db::queries::LOCAL_USER)
                 .unwrap()
                 .contains(&album_id)
         );
@@ -4808,12 +4879,12 @@ mod tests {
         .await;
         assert!(body.contains("status=\"ok\""), "{}", body);
         assert!(
-            queries::favourite_album_id_set(&db.conn)
+            queries::favourite_album_id_set(&db.conn, koan_core::db::queries::LOCAL_USER)
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            queries::favourite_artist_id_set(&db.conn)
+            queries::favourite_artist_id_set(&db.conn, koan_core::db::queries::LOCAL_USER)
                 .unwrap()
                 .is_empty()
         );
@@ -5258,7 +5329,15 @@ mod tests {
         assert_eq!(song["artists"][0]["name"], "Test Artist");
         assert!(song.get("played").is_none());
 
-        queries::record_play_at(&db.conn, track.id, 1_700_000_000, None, "local").unwrap();
+        queries::record_play_at(
+            &db.conn,
+            koan_core::db::queries::LOCAL_USER,
+            track.id,
+            1_700_000_000,
+            None,
+            "local",
+        )
+        .unwrap();
         let r = json_of(
             app(),
             &format!("/rest/getSong?{}&id={}", auth_query("f=json"), track.id),

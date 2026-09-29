@@ -295,6 +295,11 @@ impl MutationRoot {
         titles: Option<Vec<String>>,
     ) -> async_graphql::Result<GqlClientOrder> {
         require_role(ctx, Role::User)?;
+        let user = super::user_id(ctx);
+        with_db(ctx, move |db| {
+            super::editable_playlist(db, user, playlist_id).map(drop)
+        })
+        .await?;
         let order = crate::clients::Order {
             id: uuid::Uuid::now_v7().to_string(),
             username: super::client_scope(ctx),
@@ -654,8 +659,9 @@ impl MutationRoot {
         track_ids: Option<Vec<i64>>,
     ) -> async_graphql::Result<GqlPlaylist> {
         require_role(ctx, Role::User)?;
+        let user = super::user_id(ctx);
         with_db(ctx, move |db| {
-            let id = queries::create_playlist(&db.conn, &name, None)
+            let id = queries::create_playlist(&db.conn, user, &name, None)
                 .map_err(|e| super::internal_error("db", e))?;
             if let Some(track_ids) = &track_ids {
                 queries::add_tracks(&db.conn, id, track_ids)
@@ -697,7 +703,9 @@ impl MutationRoot {
         name: String,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
+        let user = super::user_id(ctx);
         with_db(ctx, move |db| {
+            super::editable_playlist(db, user, id)?;
             if !queries::rename_playlist(&db.conn, id, &name)
                 .map_err(|e| super::internal_error("db", e))?
             {
@@ -718,13 +726,11 @@ impl MutationRoot {
         id: i64,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
+        let user = super::user_id(ctx);
         with_db(ctx, move |db| {
             // Read before deleting: the delete has to reach the server too, or
             // the next sync brings the playlist back.
-            let remote_id = queries::get_playlist(&db.conn, id)
-                .ok()
-                .flatten()
-                .and_then(|p| p.remote_id);
+            let remote_id = super::editable_playlist(db, user, id)?.remote_id;
             if !queries::delete_playlist(&db.conn, id)
                 .map_err(|e| super::internal_error("db", e))?
             {
@@ -748,7 +754,9 @@ impl MutationRoot {
         track_ids: Vec<i64>,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
+        let user = super::user_id(ctx);
         with_db(ctx, move |db| {
+            super::editable_playlist(db, user, id)?;
             let added = queries::add_tracks(&db.conn, id, &track_ids)
                 .map_err(|e| super::internal_error("db", e))?;
             koan_core::playlists::push_to_remote(id);
@@ -770,7 +778,9 @@ impl MutationRoot {
         track_ids: Vec<i64>,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
+        let user = super::user_id(ctx);
         with_db(ctx, move |db| {
+            super::editable_playlist(db, user, id)?;
             queries::set_playlist_tracks(&db.conn, id, &track_ids)
                 .map_err(|e| super::internal_error("db", e))?;
             koan_core::playlists::push_to_remote(id);
@@ -791,7 +801,9 @@ impl MutationRoot {
         #[graphql(default = false)] shuffled: bool,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
+        let user = super::user_id(ctx);
         let resolved = with_db(ctx, move |db| {
+            super::readable_playlist(db, user, id)?;
             let mut entries = queries::playlist_entries(&db.conn, id)
                 .map_err(|e| super::internal_error("db", e))?;
             if shuffled {
@@ -1082,8 +1094,9 @@ impl MutationRoot {
         id: String,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
+        let owner = super::share_owner(ctx);
         with_db(ctx, move |db| {
-            let found = queries::shares::delete_share(&db.conn, &id)
+            let found = queries::shares::delete_share(&db.conn, owner, &id)
                 .map_err(|e| super::internal_error("db", e))?;
             Ok(GqlStatus {
                 success: found,
@@ -1107,10 +1120,16 @@ impl MutationRoot {
         expires_at: Option<i64>,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
+        let owner = super::share_owner(ctx);
         with_db(ctx, move |db| {
-            let found =
-                queries::shares::update_share(&db.conn, &id, description.as_deref(), expires_at)
-                    .map_err(|e| super::internal_error("db", e))?;
+            let found = queries::shares::update_share(
+                &db.conn,
+                owner,
+                &id,
+                description.as_deref(),
+                expires_at,
+            )
+            .map_err(|e| super::internal_error("db", e))?;
             Ok(GqlStatus {
                 success: found,
                 message: if found {
@@ -1150,6 +1169,7 @@ impl MutationRoot {
                 ));
             }
         };
+        let user = super::user_id(ctx);
         with_db(ctx, move |db| {
             let cfg = Config::load().unwrap_or_default();
             // One query for the remote ids rather than one per track, a link
@@ -1157,7 +1177,7 @@ impl MutationRoot {
             // distinct error for each way this can fail — all shared with the
             // FFI and the TUI so the three cannot drift.
             let outcome =
-                koan_core::helpers::create_share(db, &cfg, &target, description.as_deref())
+                koan_core::helpers::create_share(db, user, &cfg, &target, description.as_deref())
                     .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
             Ok(GqlShare {
@@ -1177,6 +1197,7 @@ async fn set_favourite(
     track_id: i64,
     star: Option<bool>,
 ) -> async_graphql::Result<GqlTrack> {
+    let user = super::user_id(ctx);
     with_db(ctx, move |db| {
         let track = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| super::internal_error("db", e))?
@@ -1188,20 +1209,25 @@ async fn set_favourite(
 
         let now_starred = match star {
             Some(true) => {
-                queries::add_favourite(&db.conn, fs_path)
+                queries::add_favourite(&db.conn, user, fs_path)
                     .map_err(|e| super::internal_error("db", e))?;
                 true
             }
             Some(false) => {
-                queries::remove_favourite(&db.conn, fs_path)
+                queries::remove_favourite(&db.conn, user, fs_path)
                     .map_err(|e| super::internal_error("db", e))?;
                 false
             }
-            None => queries::toggle_favourite(&db.conn, fs_path)
+            None => queries::toggle_favourite(&db.conn, user, fs_path)
                 .map_err(|e| super::internal_error("db", e))?,
         };
 
-        sync_favourite_to_remote(db, &path, now_starred);
+        // The upstream server has one account, and it is the local user's.
+        if queries::auth::is_local_user(&db.conn, user)
+            .map_err(|e| super::internal_error("db", e))?
+        {
+            sync_favourite_to_remote(db, &path, now_starred);
+        }
         Ok(GqlTrack { row: track })
     })
     .await

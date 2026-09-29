@@ -80,8 +80,8 @@ impl ArtistOrder {
 pub struct ArtistQuery<'a> {
     /// Case-insensitive substring over the name.
     pub search: Option<&'a str>,
-    /// Favourited artists only.
-    pub favourites_only: bool,
+    /// Only artists this user has favourited.
+    pub favourites_of: Option<i64>,
     /// Albums that count; an artist with none left is not listed, and the
     /// counts are of what is left.
     pub filter: super::albums::AlbumFilter<'a>,
@@ -101,11 +101,11 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
          INNER JOIN albums al ON al.artist_id = a.id
          LEFT JOIN tracks t ON t.album_id = al.id",
     );
-    if q.favourites_only {
-        sql.push_str(" JOIN favourite_artists f ON f.artist_name = a.name");
-    }
-
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(user) = q.favourites_of {
+        params.push(Box::new(super::auth::resolve_user(conn, user)?));
+        sql.push_str(" JOIN favourite_artists f ON f.artist_name = a.name AND f.user_id = ?");
+    }
     let mut wheres: Vec<String> = Vec::new();
     if let Some(query) = q.search {
         params.push(Box::new(format!("%{}%", escape_like(query))));
@@ -252,11 +252,11 @@ mod tests {
     fn favourites_only_lists_what_was_hearted() {
         use crate::db::queries::toggle_favourite_artist;
         let db = stocked_db();
-        toggle_favourite_artist(&db.conn, "Coil").unwrap();
+        toggle_favourite_artist(&db.conn, crate::db::queries::LOCAL_USER, "Coil").unwrap();
         let rows = list_artists(
             &db.conn,
             &ArtistQuery {
-                favourites_only: true,
+                favourites_of: Some(crate::db::queries::LOCAL_USER),
                 ..Default::default()
             },
         )

@@ -47,10 +47,10 @@ impl PasswordVerifier {
         }
     }
 
-    /// The user's role when `token` is `md5(password + salt)` for their
-    /// password. Needs the sealed copy a password sign-in leaves; the opened
+    /// The user's id and role when `token` is `md5(password + salt)` for
+    /// their password. Needs the sealed copy a password sign-in leaves; the opened
     /// password is then checked like any other, so a stale copy fails.
-    pub fn verify_token(&self, username: &str, token: &str, salt: &str) -> Option<Role> {
+    pub fn verify_token(&self, username: &str, token: &str, salt: &str) -> Option<(i64, Role)> {
         use subtle::ConstantTimeEq;
         let key = self.sealing.as_ref()?;
         let sealed =
@@ -80,8 +80,8 @@ impl PasswordVerifier {
                 .is_some()
     }
 
-    /// The user's role when the password is theirs.
-    pub fn verify(&self, username: &str, password: &str) -> Option<Role> {
+    /// The user's id and role when the password is theirs.
+    pub fn verify(&self, username: &str, password: &str) -> Option<(i64, Role)> {
         let db = self.pool.get().ok()?;
         let Some(user) = auth_queries::get_user_by_username(&db.conn, username).ok()? else {
             // Pay for a verify anyway, so response time doesn't say which
@@ -111,7 +111,7 @@ impl PasswordVerifier {
                 let _ = auth_queries::set_sealed_password(&db.conn, username, &sealed);
             }
         }
-        Some(user.role)
+        Some((user.id, user.role))
     }
 }
 
@@ -135,9 +135,9 @@ mod tests {
     #[test]
     fn right_password_gives_the_users_role() {
         let (v, _dir) = verifier();
-        assert_eq!(v.verify("mate", "hunter22"), Some(Role::Readonly));
+        assert_eq!(v.verify("mate", "hunter22"), Some((1, Role::Readonly)));
         // Remembered, and still answered from the database's role.
-        assert_eq!(v.verify("mate", "hunter22"), Some(Role::Readonly));
+        assert_eq!(v.verify("mate", "hunter22"), Some((1, Role::Readonly)));
     }
 
     #[test]
@@ -153,7 +153,7 @@ mod tests {
         assert!(v.has_sealed("mate"));
         assert_eq!(
             v.verify_token("mate", &token("hunter22", "abc"), "abc"),
-            Some(Role::Readonly)
+            Some((1, Role::Readonly))
         );
         assert_eq!(
             v.verify_token("mate", &token("hunter2", "abc"), "abc"),
@@ -200,6 +200,6 @@ mod tests {
         let db = Database::open(&dir.path().join("test.db")).unwrap();
         auth_queries::update_password(&db.conn, "mate", "correct horse").unwrap();
         assert_eq!(v.verify("mate", "hunter22"), None);
-        assert_eq!(v.verify("mate", "correct horse"), Some(Role::Readonly));
+        assert_eq!(v.verify("mate", "correct horse"), Some((1, Role::Readonly)));
     }
 }

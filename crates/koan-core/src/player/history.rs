@@ -197,7 +197,7 @@ impl Writer {
                 track_id,
                 position_ms,
             } => {
-                match queries::record_play(&self.db.conn, track_id, None) {
+                match queries::record_play(&self.db.conn, queries::LOCAL_USER, track_id, None) {
                     Ok(id) => self.open = Some((id, track_id)),
                     Err(e) => {
                         self.open = None;
