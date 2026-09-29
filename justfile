@@ -650,10 +650,17 @@ ios-phone config="Debug": (ios-ffi "iphoneos")
         | grep -oE '[0-9A-F]{8}-[0-9A-F]{16}' | head -1 || true)
     [ -n "$phone" ] || { echo "No iPhone found — plug it in, or unlock it if it is on Wi-Fi." >&2; exit 1; }
     APPLE_TEAM_ID=${APPLE_TEAM_ID:-2256Q92VF2} just ios-project
+    # With the App Store Connect key, xcodebuild fetches a development profile
+    # itself, one that carries the push entitlement; without it, it needs an
+    # account signed in to Xcode.
+    auth=(-allowProvisioningUpdates)
+    if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+        auth+=(-authenticationKeyPath "$APPLE_API_KEY_PATH" -authenticationKeyID "$APPLE_API_KEY_ID" -authenticationKeyIssuerID "$APPLE_API_ISSUER_ID")
+    fi
     xcodebuild build -quiet \
         -project apps/ios/Koan.xcodeproj -scheme Koan -configuration {{config}} \
         -destination "id=$phone" -derivedDataPath target/ios-build \
-        -allowProvisioningUpdates
+        "${auth[@]}"
     xcrun devicectl device install app --device "$phone" \
         "target/ios-build/Build/Products/{{config}}-iphoneos/koan.app"
     xcrun devicectl device process launch --device "$phone" {{bundle_id}}
