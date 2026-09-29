@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- **Playback resumes after an interruption that iOS announces more than once.** A voice assistant taking the audio sends several "interruption began" in a row; the later ones found playback already paused by the first and recorded that nothing had been playing, so when the interruption ended with iOS asking koan to resume, it did not. What the first one saw now holds until the interruption ends.
 - **A failed release can be re-run.** The release job created the tag first, so re-running it after a failed upload failed on the tag it had already made. It now skips a tag that exists and goes on to the uploads.
 
 ## 0.40.0

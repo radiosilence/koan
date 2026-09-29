@@ -82,7 +82,11 @@ struct KoanIOSApp: App {
                     // began, which the pause below makes unreadable after.
                     var interruptedPlaying = false
                     session.onInterrupted = { [weak built] in
-                        interruptedPlaying = built?.player.isPlaying ?? false
+                        // iOS can send several "began" for one interruption.
+                        // The later ones find playback already paused (by the
+                        // first), so they must not overwrite what the first saw,
+                        // or the "resume" at the end finds nothing to resume.
+                        interruptedPlaying = interruptedPlaying || (built?.player.isPlaying ?? false)
                         built?.player.engine.logNote(message: "interrupted while playing: \(interruptedPlaying)")
                         built?.player.pause()
                     }
