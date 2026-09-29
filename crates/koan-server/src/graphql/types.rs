@@ -343,7 +343,7 @@ impl GqlTrack {
             return Ok(false);
         };
         Ok(loader(ctx)?
-            .load_one(FavouritePath(path.clone()))
+            .load_one(FavouritePath(super::user_id(ctx), path.clone()))
             .await?
             .unwrap_or(false))
     }

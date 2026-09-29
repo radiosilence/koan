@@ -159,7 +159,7 @@ impl Writer {
     fn handle(&mut self, event: PlayEvent) {
         match event {
             PlayEvent::Started { track_id } => {
-                match queries::record_play(&self.db.conn, track_id, None) {
+                match queries::record_play(&self.db.conn, queries::LOCAL_USER, track_id, None) {
                     Ok(id) => self.open = Some((id, track_id)),
                     Err(e) => {
                         self.open = None;

@@ -70,7 +70,8 @@ impl Browse {
         }
     }
 
-    pub(super) fn albums(&self, limit: u32) -> AlbumQuery<'_> {
+    /// `user` is whose favourites the favourites toggle narrows to.
+    pub(super) fn albums(&self, user: i64, limit: u32) -> AlbumQuery<'_> {
         let order = match self.sort.as_str() {
             "title" => AlbumOrder::Title,
             "artist" => AlbumOrder::ArtistThenDate,
@@ -80,7 +81,7 @@ impl Browse {
         };
         AlbumQuery {
             order,
-            favourites_only: set(&self.fav).is_some(),
+            favourites_of: set(&self.fav).map(|_| user),
             filter: self.filter(),
             limit: Some(limit),
             offset: self.offset,
@@ -88,7 +89,8 @@ impl Browse {
         }
     }
 
-    pub(super) fn artists(&self, limit: u32) -> ArtistQuery<'_> {
+    /// `user` is whose favourites the favourites toggle narrows to.
+    pub(super) fn artists(&self, user: i64, limit: u32) -> ArtistQuery<'_> {
         let order = match self.sort.as_str() {
             "albums" => ArtistOrder::AlbumCount,
             "recent" => ArtistOrder::RecentlyAdded,
@@ -96,7 +98,7 @@ impl Browse {
         };
         ArtistQuery {
             order,
-            favourites_only: set(&self.fav).is_some(),
+            favourites_of: set(&self.fav).map(|_| user),
             filter: self.filter(),
             limit: Some(limit),
             offset: self.offset,
@@ -257,9 +259,9 @@ mod tests {
     #[test]
     fn blank_fields_are_unset_and_the_query_round_trips() {
         let b = browse("sort=year&fav=&lossless=1&codec=&from=1990&to=&genre=Drum+%26+Bass");
-        let q = b.albums(60);
+        let q = b.albums(0, 60);
         assert_eq!(q.order, AlbumOrder::YearDesc);
-        assert!(!q.favourites_only && q.filter.lossless);
+        assert!(q.favourites_of.is_none() && q.filter.lossless);
         assert_eq!(
             (q.filter.codec, q.filter.year_from, q.filter.year_to),
             (None, Some(1990), None)
@@ -276,7 +278,7 @@ mod tests {
     fn a_random_order_keeps_its_seed_and_hostile_values_stay_encoded() {
         let b = browse("sort=random").seeded();
         let seed = b.seed.unwrap();
-        assert_eq!(b.albums(1).order, AlbumOrder::Random(seed));
+        assert_eq!(b.albums(0, 1).order, AlbumOrder::Random(seed));
         assert!(b.query(0).contains(&format!("seed={seed}")));
         let evil = browse("genre=%27%29%3Balert(1)%2F%2F%22%3E%3C");
         let q = evil.query(0);

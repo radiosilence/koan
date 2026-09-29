@@ -140,8 +140,12 @@ pub fn reconcile_playlists(db: &Database, client: &SubsonicClient, username: &st
         let id = match local {
             Some(local) => local.id,
             None => {
-                match queries::create_playlist(&db.conn, &summary.name, summary.comment.as_deref())
-                {
+                match queries::create_playlist(
+                    &db.conn,
+                    queries::LOCAL_USER,
+                    &summary.name,
+                    summary.comment.as_deref(),
+                ) {
                     Ok(id) => id,
                     Err(e) => {
                         log::warn!("could not store playlist {}: {e}", summary.name);
@@ -190,7 +194,7 @@ pub fn reconcile_playlists(db: &Database, client: &SubsonicClient, username: &st
 
     // A playlist we hold a server id for that the server no longer lists was
     // deleted there.
-    for local in queries::list_playlists(&db.conn).unwrap_or_default() {
+    for local in queries::list_playlists(&db.conn, queries::LOCAL_USER).unwrap_or_default() {
         if let Some(remote_id) = &local.remote_id
             && !seen_remote_ids.contains(remote_id)
         {
@@ -198,7 +202,9 @@ pub fn reconcile_playlists(db: &Database, client: &SubsonicClient, username: &st
         }
     }
 
-    for local in queries::playlists_without_remote(&db.conn).unwrap_or_default() {
+    for local in
+        queries::playlists_without_remote(&db.conn, queries::LOCAL_USER).unwrap_or_default()
+    {
         if push(db, client, local.id, None).is_ok() {
             out.pushed += 1;
         }
@@ -315,11 +321,17 @@ pub fn push_to_remote(id: i64) {
             let Ok(db) = crate::db::pool::shared().get() else {
                 return;
             };
-            let remote_id = queries::get_playlist(&db.conn, id)
-                .ok()
-                .flatten()
-                .and_then(|p| p.remote_id);
-            let _ = push(&db, &client, id, remote_id.as_deref());
+            let Ok(Some(list)) = queries::get_playlist(&db.conn, id) else {
+                return;
+            };
+            // The upstream server has one account, and it is the local user's.
+            if !matches!(
+                queries::auth::is_local_user(&db.conn, list.user_id),
+                Ok(true)
+            ) {
+                return;
+            }
+            let _ = push(&db, &client, id, list.remote_id.as_deref());
         })
         .ok();
 }
@@ -449,7 +461,9 @@ mod tests {
         let a = upsert_track(&db.conn, &meta("A", &dir.path().join("a.flac"))).unwrap();
         let b = upsert_track(&db.conn, &meta("B", &dir.path().join("b.flac"))).unwrap();
 
-        let id = queries::create_playlist(&db.conn, "Evening", None).unwrap();
+        let id =
+            queries::create_playlist(&db.conn, crate::db::queries::LOCAL_USER, "Evening", None)
+                .unwrap();
         let entries = queries::add_tracks(&db.conn, id, &[a, b]).unwrap();
 
         let state = SharedPlayerState::new();
@@ -499,7 +513,9 @@ mod tests {
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
         let a = upsert_track(&db.conn, &meta("A", &dir.path().join("a.flac"))).unwrap();
         let b = upsert_track(&db.conn, &meta("B", &dir.path().join("b.flac"))).unwrap();
-        let id = queries::create_playlist(&db.conn, "Evening", None).unwrap();
+        let id =
+            queries::create_playlist(&db.conn, crate::db::queries::LOCAL_USER, "Evening", None)
+                .unwrap();
         let entries = queries::add_tracks(&db.conn, id, &[a, b]).unwrap();
 
         let state = SharedPlayerState::new();
@@ -594,7 +610,9 @@ mod tests {
         let here = upsert_track(&db.conn, &meta("Here", &present)).unwrap();
         let gone = upsert_track(&db.conn, &meta("Gone", &dir.path().join("gone.flac"))).unwrap();
 
-        let id = queries::create_playlist(&db.conn, "Evening", None).unwrap();
+        let id =
+            queries::create_playlist(&db.conn, crate::db::queries::LOCAL_USER, "Evening", None)
+                .unwrap();
         queries::add_tracks(&db.conn, id, &[here, gone]).unwrap();
 
         let dest = dir.path().join("evening.m3u8");

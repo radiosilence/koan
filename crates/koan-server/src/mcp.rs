@@ -73,12 +73,16 @@ impl KoanMcpServer {
         }
     }
 
-    /// The role a request acts with: the account in its headers, or
-    /// `mcp_role()` when it names none. With `KOAN_MCP_REQUIRE_LOGIN=1`, a
-    /// request naming no account is refused.
-    fn role(&self, extensions: &rmcp::model::Extensions) -> Result<koan_core::auth::Role, String> {
+    /// The user id and role a request acts with: the account in its headers,
+    /// or the local user at `mcp_role()` when it names none. With
+    /// `KOAN_MCP_REQUIRE_LOGIN=1`, a request naming no account is refused.
+    fn role(
+        &self,
+        extensions: &rmcp::model::Extensions,
+    ) -> Result<(i64, koan_core::auth::Role), String> {
+        let local = (koan_core::db::queries::LOCAL_USER, mcp_role());
         let Some(users) = &self.users else {
-            return Ok(mcp_role());
+            return Ok(local);
         };
         let parts = extensions.get::<axum::http::request::Parts>();
         let get = |h: &str| {
@@ -95,7 +99,7 @@ impl KoanMcpServer {
             _ if std::env::var("KOAN_MCP_REQUIRE_LOGIN").is_ok_and(|v| v == "1") => Err(format!(
                 "this kōan needs an account: send {USERNAME_HEADER} and {PASSWORD_HEADER}"
             )),
-            _ => Ok(mcp_role()),
+            _ => Ok(local),
         }
     }
 }
@@ -160,9 +164,9 @@ impl KoanMcpServer {
             tokio::runtime::Handle::try_current().map_err(|_| "no tokio runtime".to_string())?;
         // Inside block_in_place too: a first sign-in runs argon2.
         let result = tokio::task::block_in_place(|| {
-            let role = self.role(&extensions)?;
+            let (user_id, role) = self.role(&extensions)?;
             Ok::<_, String>(rt.block_on(crate::graphql::execute_in_process(
-                &schema, &query, variables, role,
+                &schema, &query, variables, user_id, role,
             )))
         })?;
         Ok(Json(GraphqlResponse { result }))
@@ -401,11 +405,14 @@ mod tests {
         let as_ = |u: &str, p: &str| {
             server.role(&with_headers(&[(USERNAME_HEADER, u), (PASSWORD_HEADER, p)]))
         };
-        assert_eq!(as_("owner", "sesame"), Ok(Role::Admin));
-        assert_eq!(as_("mate", "hunter22"), Ok(Role::Readonly));
+        assert_eq!(as_("owner", "sesame"), Ok((1, Role::Admin)));
+        assert_eq!(as_("mate", "hunter22"), Ok((2, Role::Readonly)));
         assert!(as_("owner", "wrong").is_err());
-        // No account named: the transport's default role.
-        assert_eq!(server.role(&with_headers(&[])), Ok(mcp_role()));
+        // No account named: the local user, at the transport's default role.
+        assert_eq!(
+            server.role(&with_headers(&[])),
+            Ok((queries::LOCAL_USER, mcp_role()))
+        );
     }
 
     fn insert_test_track(db_path: &std::path::Path, title: &str, artist: &str, album: &str) -> i64 {

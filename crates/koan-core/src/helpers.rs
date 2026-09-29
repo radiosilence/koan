@@ -670,18 +670,22 @@ pub struct FavouriteSync {
 pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> FavouriteSync {
     let mut out = FavouriteSync::default();
 
-    let tracks = queries::favourites_with_remote_id(&db.conn).unwrap_or_default();
+    let tracks =
+        queries::favourites_with_remote_id(&db.conn, queries::LOCAL_USER).unwrap_or_default();
     for (_path, remote_id) in &tracks {
         if client.star(remote_id).is_ok() {
             out.pushed += 1;
         }
     }
-    for (_id, remote_id) in queries::favourite_albums_with_remote_id(&db.conn).unwrap_or_default() {
+    for (_id, remote_id) in
+        queries::favourite_albums_with_remote_id(&db.conn, queries::LOCAL_USER).unwrap_or_default()
+    {
         if client.star_album(&remote_id).is_ok() {
             out.pushed += 1;
         }
     }
-    for (_id, remote_id) in queries::favourite_artists_with_remote_id(&db.conn).unwrap_or_default()
+    for (_id, remote_id) in
+        queries::favourite_artists_with_remote_id(&db.conn, queries::LOCAL_USER).unwrap_or_default()
     {
         if client.star_artist(&remote_id).is_ok() {
             out.pushed += 1;
@@ -699,9 +703,13 @@ pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> Favourite
     let songs: Vec<String> = starred.song.into_iter().map(|s| s.id).collect();
     let albums: Vec<String> = starred.album.into_iter().map(|a| a.id).collect();
     let artists: Vec<String> = starred.artist.into_iter().map(|a| a.id).collect();
-    out.imported += queries::import_remote_favourites(&db.conn, &songs).unwrap_or(0);
-    out.imported += queries::import_remote_favourite_albums(&db.conn, &albums).unwrap_or(0);
-    out.imported += queries::import_remote_favourite_artists(&db.conn, &artists).unwrap_or(0);
+    out.imported +=
+        queries::import_remote_favourites(&db.conn, queries::LOCAL_USER, &songs).unwrap_or(0);
+    out.imported += queries::import_remote_favourite_albums(&db.conn, queries::LOCAL_USER, &albums)
+        .unwrap_or(0);
+    out.imported +=
+        queries::import_remote_favourite_artists(&db.conn, queries::LOCAL_USER, &artists)
+            .unwrap_or(0);
     out
 }
 
@@ -984,15 +992,18 @@ pub fn resolve_share(
 /// rest rather than failing whole — half a link beats none, as long as the
 /// caller says which half.
 ///
+/// `user` is who is sharing, recorded on a link this koan makes itself.
+///
 /// May be network-bound. Callers keep it off whatever thread draws.
 pub fn create_share(
     db: &Database,
+    user: i64,
     cfg: &Config,
     target: &ShareTarget,
     description: Option<&str>,
 ) -> Result<ShareOutcome, ShareError> {
     let Some(client) = subsonic_client(cfg) else {
-        return create_native_share(db, cfg, target, description);
+        return create_native_share(db, user, cfg, target, description);
     };
     // A remote server makes its own kind of link from what it is given, so it
     // is given exactly what was picked.
@@ -1048,6 +1059,7 @@ pub fn create_share(
 /// A share this koan serves at `{sharing.public_url}/share/{id}`.
 fn create_native_share(
     db: &Database,
+    user: i64,
     cfg: &Config,
     target: &ShareTarget,
     description: Option<&str>,
@@ -1062,7 +1074,7 @@ fn create_native_share(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
-    let share = queries::shares::create_share(&db.conn, slice, &ids, description, now, None)?;
+    let share = queries::shares::create_share(&db.conn, user, slice, &ids, description, now, None)?;
     Ok(ShareOutcome {
         url: share_url(base, &share.id),
         id: share.id,
@@ -1753,7 +1765,12 @@ mod rebuild_tests {
         let track_id = queries::upsert_track(&db.conn, &meta).unwrap();
 
         // Favourites key on the path; lyrics key on the row id.
-        queries::toggle_favourite(&db.conn, Path::new("/music/windowlicker.flac")).unwrap();
+        queries::toggle_favourite(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            Path::new("/music/windowlicker.flac"),
+        )
+        .unwrap();
         db.conn
             .execute(
                 "INSERT INTO lyrics_cache (track_id, source, content, fetched_at)
@@ -1909,12 +1926,19 @@ mod native_share_tests {
         let b = upsert_track(&db.conn, &sample_meta("B", "X", "Y")).unwrap();
         let mut cfg = Config::default();
         assert!(matches!(
-            create_share(&db, &cfg, &ShareTarget::Tracks(vec![a]), None),
+            create_share(
+                &db,
+                queries::LOCAL_USER,
+                &cfg,
+                &ShareTarget::Tracks(vec![a]),
+                None
+            ),
             Err(ShareError::NoPublicUrl)
         ));
         cfg.sharing.public_url = Some("https://koan.example/".into());
         let out = create_share(
             &db,
+            queries::LOCAL_USER,
             &cfg,
             &ShareTarget::Tracks(vec![b, 9999, a]),
             Some("mix"),
@@ -1927,7 +1951,13 @@ mod native_share_tests {
             .unwrap();
         assert_eq!(share.track_ids, [b, a]);
         assert!(matches!(
-            create_share(&db, &cfg, &ShareTarget::Tracks(vec![9999]), None),
+            create_share(
+                &db,
+                queries::LOCAL_USER,
+                &cfg,
+                &ShareTarget::Tracks(vec![9999]),
+                None
+            ),
             Err(ShareError::NothingToShare)
         ));
     }

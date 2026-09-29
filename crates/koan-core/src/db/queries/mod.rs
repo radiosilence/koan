@@ -21,6 +21,7 @@ use std::path::PathBuf;
 // Re-export all public items so `use queries::*` still works.
 pub use albums::*;
 pub use artists::*;
+pub use auth::LOCAL_USER;
 pub use batch::*;
 pub use favourites::*;
 pub use history::*;

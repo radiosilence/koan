@@ -27,6 +27,78 @@ pub struct RefreshTokenRow {
 }
 
 // ---------------------------------------------------------------------------
+// Whose data
+// ---------------------------------------------------------------------------
+
+/// The user a caller with no account acts as: the macOS app, the TUI, a server
+/// with auth disabled, the Subsonic shared secret.
+///
+/// Favourites, playlists and play history are per user. An install with no
+/// admin account keeps them under this id; once there is one, the first admin
+/// owns them and this id [resolves](resolve_user) to theirs, so a single-user
+/// server and a local library behave the same.
+pub const LOCAL_USER: i64 = 0;
+
+/// The first admin account, which answers for [`LOCAL_USER`].
+pub fn first_admin(conn: &Connection) -> Result<Option<i64>, rusqlite::Error> {
+    conn.query_row("SELECT MIN(id) FROM users WHERE role = 'admin'", [], |r| {
+        r.get(0)
+    })
+}
+
+/// The id whose rows `user` reads and writes: `user` itself for an account,
+/// the first admin (or [`LOCAL_USER`] while there is none) for the implicit user.
+pub fn resolve_user(conn: &Connection, user: i64) -> Result<i64, rusqlite::Error> {
+    if user != LOCAL_USER {
+        return Ok(user);
+    }
+    Ok(first_admin(conn)?.unwrap_or(LOCAL_USER))
+}
+
+/// Whether `user` is the one [`LOCAL_USER`] resolves to: whose favourites and
+/// playlists this koan syncs with an upstream server.
+pub fn is_local_user(conn: &Connection, user: i64) -> Result<bool, rusqlite::Error> {
+    Ok(resolve_user(conn, user)? == resolve_user(conn, LOCAL_USER)?)
+}
+
+/// Hand the implicit user's rows to the first admin, once there is one.
+///
+/// Where a row would duplicate one the admin already has, theirs is kept.
+pub fn adopt_local_rows(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let Some(admin) = first_admin(conn)? else {
+        return Ok(());
+    };
+    for table in [
+        "favourites",
+        "favourite_albums",
+        "favourite_artists",
+        "play_history",
+        "playlists",
+        "shares",
+    ] {
+        // Runs on every open: a read, so it takes no write lock when there is
+        // nothing to hand over.
+        let pending: bool = conn.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE user_id = ?1)"),
+            params![LOCAL_USER],
+            |r| r.get(0),
+        )?;
+        if !pending {
+            continue;
+        }
+        conn.execute(
+            &format!("UPDATE OR IGNORE {table} SET user_id = ?1 WHERE user_id = ?2"),
+            params![admin, LOCAL_USER],
+        )?;
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE user_id = ?1"),
+            params![LOCAL_USER],
+        )?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // User CRUD
 // ---------------------------------------------------------------------------
 
@@ -87,7 +159,9 @@ pub fn create_user(
         "INSERT INTO users (username, password_hash, role) VALUES (?1, ?2, ?3)",
         params![username, hash, role.as_str()],
     )?;
-    Ok(conn.last_insert_rowid())
+    let id = conn.last_insert_rowid();
+    adopt_local_rows(conn)?;
+    Ok(id)
 }
 
 /// Get a user by username.
@@ -189,6 +263,7 @@ pub fn update_role(
         "UPDATE users SET role = ?1 WHERE username = ?2",
         params![role.as_str(), username],
     )?;
+    adopt_local_rows(conn)?;
     Ok(updated > 0)
 }
 
@@ -427,5 +502,160 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+
+    // -- Per-user data ------------------------------------------------------
+
+    use crate::db::queries::{self, sample_meta, upsert_track};
+    use std::path::Path;
+
+    fn count(db: &Database, sql: &str) -> i64 {
+        db.conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn two_users_star_the_same_track_independently() {
+        let (db, _tmp) = test_db();
+        let admin = create_user(&db.conn, "owner", "pw", Role::Admin).unwrap();
+        let mate = create_user(&db.conn, "mate", "pw", Role::User).unwrap();
+        let path = Path::new("/music/a.flac");
+
+        queries::add_favourite(&db.conn, admin, path).unwrap();
+        queries::add_favourite(&db.conn, mate, path).unwrap();
+        queries::remove_favourite(&db.conn, admin, path).unwrap();
+
+        assert!(
+            queries::load_favourites(&db.conn, admin)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            queries::load_favourites(&db.conn, mate)
+                .unwrap()
+                .contains(path)
+        );
+        assert!(queries::toggle_favourite_album(&db.conn, mate, "Coil", "Scatology").unwrap());
+        assert!(queries::toggle_favourite_album(&db.conn, admin, "Coil", "Scatology").unwrap());
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM favourite_albums"), 2);
+    }
+
+    #[test]
+    fn the_local_user_is_the_first_admin_once_there_is_one() {
+        let (db, _tmp) = test_db();
+        let path = Path::new("/music/a.flac");
+        let track = upsert_track(&db.conn, &sample_meta("T", "A", "B")).unwrap();
+        queries::add_favourite(&db.conn, LOCAL_USER, path).unwrap();
+        queries::record_play(&db.conn, LOCAL_USER, track, None).unwrap();
+        let list = queries::create_playlist(&db.conn, LOCAL_USER, "Mine", None).unwrap();
+        assert_eq!(resolve_user(&db.conn, LOCAL_USER).unwrap(), LOCAL_USER);
+
+        create_user(&db.conn, "mate", "pw", Role::User).unwrap();
+        assert_eq!(resolve_user(&db.conn, LOCAL_USER).unwrap(), LOCAL_USER);
+        let admin = create_user(&db.conn, "owner", "pw", Role::Admin).unwrap();
+
+        assert_eq!(resolve_user(&db.conn, LOCAL_USER).unwrap(), admin);
+        assert!(
+            queries::load_favourites(&db.conn, admin)
+                .unwrap()
+                .contains(path)
+        );
+        assert_eq!(queries::play_count(&db.conn, admin, track).unwrap(), 1);
+        assert_eq!(
+            queries::get_playlist(&db.conn, list)
+                .unwrap()
+                .unwrap()
+                .user_id,
+            admin
+        );
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM favourites WHERE user_id = 0"),
+            0
+        );
+    }
+
+    #[test]
+    fn playlists_are_the_owners_plus_everyones_public_ones() {
+        let (db, _tmp) = test_db();
+        let admin = create_user(&db.conn, "owner", "pw", Role::Admin).unwrap();
+        let mate = create_user(&db.conn, "mate", "pw", Role::User).unwrap();
+        let private = queries::create_playlist(&db.conn, admin, "Private", None).unwrap();
+        let public = queries::create_playlist(&db.conn, admin, "Public", None).unwrap();
+        db.conn
+            .execute("UPDATE playlists SET public = 1 WHERE id = ?1", [public])
+            .unwrap();
+        let own = queries::create_playlist(&db.conn, mate, "Mate's", None).unwrap();
+
+        let ids = |user| -> Vec<i64> {
+            let mut ids: Vec<i64> = queries::list_playlists(&db.conn, user)
+                .unwrap()
+                .into_iter()
+                .map(|p| p.id)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        assert_eq!(ids(mate), vec![public, own]);
+        assert_eq!(ids(admin), vec![private, public]);
+        // The implicit user is the first admin.
+        assert_eq!(ids(LOCAL_USER), vec![private, public]);
+
+        let row = queries::get_playlist(&db.conn, public).unwrap().unwrap();
+        assert!(row.readable_by(mate) && !row.editable_by(mate));
+        assert_eq!(row.owner.as_deref(), Some("owner"));
+        let row = queries::get_playlist(&db.conn, private).unwrap().unwrap();
+        assert!(!row.readable_by(mate));
+    }
+
+    #[test]
+    fn deleting_an_account_takes_its_data_with_it() {
+        let (db, _tmp) = test_db();
+        let admin = create_user(&db.conn, "owner", "pw", Role::Admin).unwrap();
+        let mate = create_user(&db.conn, "mate", "pw", Role::User).unwrap();
+        let track = upsert_track(&db.conn, &sample_meta("T", "A", "B")).unwrap();
+        for user in [admin, mate] {
+            queries::add_favourite(&db.conn, user, Path::new("/music/a.flac")).unwrap();
+            queries::set_favourite_album(&db.conn, user, "A", "B", true).unwrap();
+            queries::set_favourite_artist(&db.conn, user, "A", true).unwrap();
+            queries::record_play(&db.conn, user, track, None).unwrap();
+            queries::create_playlist(&db.conn, user, "List", None).unwrap();
+            queries::shares::create_share(
+                &db.conn,
+                user,
+                queries::shares::Slice::TRACKS,
+                &[track],
+                None,
+                0,
+                None,
+            )
+            .unwrap();
+        }
+
+        assert!(delete_user(&db.conn, mate).unwrap());
+
+        for table in [
+            "favourites",
+            "favourite_albums",
+            "favourite_artists",
+            "play_history",
+            "playlists",
+            "shares",
+        ] {
+            assert_eq!(
+                count(
+                    &db,
+                    &format!("SELECT COUNT(*) FROM {table} WHERE user_id = {mate}")
+                ),
+                0,
+                "{table} kept the deleted account's rows"
+            );
+            assert_eq!(
+                count(
+                    &db,
+                    &format!("SELECT COUNT(*) FROM {table} WHERE user_id = {admin}")
+                ),
+                1,
+                "{table} lost another account's rows"
+            );
+        }
     }
 }
