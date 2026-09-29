@@ -20,6 +20,8 @@ use crate::db::connection::DbError;
 #[derive(Debug, Clone)]
 pub struct PlaylistRow {
     pub id: i64,
+    /// What every surface publishes as its id; see `queries::uids`.
+    pub uid: String,
     pub name: String,
     pub comment: Option<String>,
     pub public: bool,
@@ -38,7 +40,8 @@ pub struct PlaylistRow {
 
 const SELECT: &str = "SELECT p.id, p.name, p.comment, p.public, p.owner, p.remote_id,
             p.created_at, p.changed_at, p.sort_order, p.grouped,
-            COUNT(pt.track_id), COALESCE(SUM(t.duration_ms), 0)
+            COUNT(pt.track_id), COALESCE(SUM(t.duration_ms), 0),
+            COALESCE(p.uid, CAST(p.id AS TEXT))
      FROM playlists p
      LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
      LEFT JOIN tracks t ON t.id = pt.track_id";
@@ -57,6 +60,7 @@ fn row_to_playlist(row: &rusqlite::Row) -> rusqlite::Result<PlaylistRow> {
         grouped: row.get::<_, Option<i64>>(9)?.map(|g| g != 0),
         track_count: row.get(10)?,
         duration_ms: row.get(11)?,
+        uid: row.get(12)?,
     })
 }
 
@@ -179,6 +183,7 @@ pub fn set_playlist_remote(
             changed_at.unwrap_or("")
         ],
     )?;
+    super::adopt_uid(conn, super::UidKind::Playlist, id, remote_id)?;
     Ok(())
 }
 

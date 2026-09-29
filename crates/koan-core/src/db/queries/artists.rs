@@ -32,12 +32,14 @@ pub fn get_or_create_artist(
         .ok();
 
     if let Some(id) = existing {
-        // Update remote_id if we have one and the existing doesn't.
+        // The server's current id wins: one that renumbers its library would
+        // otherwise leave the artist under an id it no longer answers to.
         if let Some(rid) = remote_id {
             conn.execute(
-                "UPDATE artists SET remote_id = ?1 WHERE id = ?2 AND remote_id IS NULL",
+                "UPDATE artists SET remote_id = ?1 WHERE id = ?2 AND remote_id IS NOT ?1",
                 params![rid, id],
             )?;
+            super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
         }
         return Ok(id);
     }
@@ -46,7 +48,11 @@ pub fn get_or_create_artist(
         "INSERT INTO artists (name, remote_id) VALUES (?1, ?2)",
         params![name, remote_id],
     )?;
-    Ok(conn.last_insert_rowid())
+    let id = conn.last_insert_rowid();
+    if let Some(rid) = remote_id {
+        super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
+    }
+    Ok(id)
 }
 
 /// How to order the artist listing.

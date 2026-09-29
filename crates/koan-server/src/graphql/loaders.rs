@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use async_graphql::dataloader::Loader;
 use koan_core::db::queries::batch::{AlbumStats, ArtistStats};
-use koan_core::db::queries::{self, AlbumRow, TrackRow};
+use koan_core::db::queries::{self, AlbumRow, TrackRow, UidKind};
 
 use super::{DbHandle, blocking, internal_error};
 
@@ -28,6 +28,14 @@ id_key!(
     AlbumTracks,
     AlbumStatsOf
 );
+
+/// A row's uid: what every id field publishes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct UidOf(pub UidKind, pub i64);
+
+/// The row a uid names.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct RowOf(pub UidKind, pub String);
 
 /// Favourite lookup keyed by the track's playback path.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -206,6 +214,50 @@ impl Loader<FavouritePath> for DbLoader {
                     (k, hit)
                 })
                 .collect())
+        })
+        .await
+    }
+}
+
+impl Loader<UidOf> for DbLoader {
+    type Value = String;
+    type Error = async_graphql::Error;
+
+    async fn load(&self, keys: &[UidOf]) -> Result<HashMap<UidOf, Self::Value>, Self::Error> {
+        self.batch(keys, |db, keys| {
+            let mut out = HashMap::new();
+            for kind in [
+                UidKind::Artist,
+                UidKind::Album,
+                UidKind::Track,
+                UidKind::Playlist,
+            ] {
+                let ids = keys.iter().filter(|k| k.0 == kind).map(|k| k.1);
+                let uids =
+                    queries::uids_for(&db.conn, kind, ids).map_err(|e| internal_error("db", e))?;
+                out.extend(uids.into_iter().map(|(id, uid)| (UidOf(kind, id), uid)));
+            }
+            Ok(out)
+        })
+        .await
+    }
+}
+
+impl Loader<RowOf> for DbLoader {
+    type Value = i64;
+    type Error = async_graphql::Error;
+
+    async fn load(&self, keys: &[RowOf]) -> Result<HashMap<RowOf, Self::Value>, Self::Error> {
+        self.batch(keys, |db, keys| {
+            let mut out = HashMap::new();
+            for key in keys {
+                if let Some(id) = queries::id_for_uid(&db.conn, key.0, &key.1)
+                    .map_err(|e| internal_error("db", e))?
+                {
+                    out.insert(key, id);
+                }
+            }
+            Ok(out)
         })
         .await
     }

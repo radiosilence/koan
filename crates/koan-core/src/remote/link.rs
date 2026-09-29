@@ -77,6 +77,29 @@ pub enum LinkCommand {
     Previous,
 }
 
+impl LinkCommand {
+    /// Every track id the command carries, for translating between the
+    /// server's row ids and the uids it publishes.
+    pub fn track_ids_mut(&mut self) -> Vec<&mut String> {
+        match self {
+            Self::Play { track_ids, .. }
+            | Self::Enqueue { track_ids }
+            | Self::PlayNext { track_ids }
+            | Self::Remove { track_ids }
+            | Self::Evict { track_ids } => track_ids.iter_mut().collect(),
+            Self::JumpTo { track_id } => vec![track_id],
+            Self::Clear
+            | Self::Radio { .. }
+            | Self::Sync { .. }
+            | Self::Seek { .. }
+            | Self::Pause
+            | Self::Resume
+            | Self::Next
+            | Self::Previous => Vec::new(),
+        }
+    }
+}
+
 /// What a linked client tells the server about itself, as it changes.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -392,9 +415,10 @@ fn serve(
 /// This library's tracks for the server's ids, in the order given, and
 /// whether a sync ran to find them.
 ///
-/// A server can name a track added since the last sync; if any are missing, an
-/// incremental sync runs first, and whatever is still missing after it is left
-/// out.
+/// A koan server names a track by its uid, which this library adopted when it
+/// synced the track; another server by the id it issued. A server can name a
+/// track added since the last sync; if any are missing, an incremental sync
+/// runs first, and whatever is still missing after it is left out.
 pub fn resolve_tracks(
     db: &crate::db::connection::Database,
     remote_ids: &[String],
@@ -402,7 +426,10 @@ pub fn resolve_tracks(
     let lookup = |db: &crate::db::connection::Database| {
         let mut stmt = db
             .conn
-            .prepare_cached("SELECT id FROM tracks WHERE remote_id = ?1")
+            .prepare_cached(
+                "SELECT id FROM tracks WHERE uid = ?1
+                 UNION ALL SELECT id FROM tracks WHERE remote_id = ?1 LIMIT 1",
+            )
             .ok();
         remote_ids
             .iter()

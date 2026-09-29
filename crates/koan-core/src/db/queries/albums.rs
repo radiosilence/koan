@@ -62,6 +62,9 @@ pub fn get_or_create_album(
              WHERE id = ?6",
             params![codec, date, label, remote_id, added_at, id],
         )?;
+        if let Some(rid) = remote_id {
+            super::adopt_uid(conn, super::UidKind::Album, id, rid)?;
+        }
         return Ok(id);
     }
 
@@ -70,7 +73,11 @@ pub fn get_or_create_album(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at],
     )?;
-    Ok(conn.last_insert_rowid())
+    let id = conn.last_insert_rowid();
+    if let Some(rid) = remote_id {
+        super::adopt_uid(conn, super::UidKind::Album, id, rid)?;
+    }
+    Ok(id)
 }
 
 /// How a listing of albums is ordered.

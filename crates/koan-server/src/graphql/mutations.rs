@@ -4,6 +4,7 @@ use async_graphql::{Context, Object};
 use crossbeam_channel::Sender;
 use koan_core::config::Config;
 use koan_core::db::queries;
+use koan_core::db::queries::UidKind;
 use koan_core::db::queries::playback_state::PersistedQueueItem;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState};
@@ -112,7 +113,7 @@ impl MutationRoot {
                 start_at: start_at.unwrap_or(0),
             }
         };
-        let sent = send_to_client(ctx, client.as_deref(), cmd)?;
+        let sent = send_to_client(ctx, client.as_deref(), cmd).await?;
         Ok(GqlStatus::success(format!(
             "sent {count} tracks to {}",
             reached(&sent)
@@ -135,7 +136,8 @@ impl MutationRoot {
             LinkCommand::JumpTo {
                 track_id: track_id.0,
             },
-        )?;
+        )
+        .await?;
         Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
@@ -149,7 +151,8 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let track_ids: Vec<String> = track_ids.into_iter().map(|id| id.0).collect();
         let count = track_ids.len();
-        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::PlayNext { track_ids })?;
+        let sent =
+            send_to_client(ctx, client.as_deref(), LinkCommand::PlayNext { track_ids }).await?;
         Ok(GqlStatus::success(format!(
             "{count} tracks next on {}",
             reached(&sent)
@@ -165,7 +168,8 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         let track_ids = track_ids.into_iter().map(|id| id.0).collect();
-        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Remove { track_ids })?;
+        let sent =
+            send_to_client(ctx, client.as_deref(), LinkCommand::Remove { track_ids }).await?;
         Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
@@ -177,7 +181,8 @@ impl MutationRoot {
         client: Option<String>,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Sync { full: false })?;
+        let sent =
+            send_to_client(ctx, client.as_deref(), LinkCommand::Sync { full: false }).await?;
         Ok(GqlStatus::success(format!("syncing {}", reached(&sent))))
     }
 
@@ -211,9 +216,9 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         let track_ids = track_ids.into_iter().map(|id| id.0).collect();
+        let cmd = published(ctx, LinkCommand::Evict { track_ids }).await?;
         let scope = super::client_scope(ctx);
-        let (reached, queued) =
-            crate::clients::registry().deliver(scope.as_deref(), LinkCommand::Evict { track_ids });
+        let (reached, queued) = crate::clients::registry().deliver(scope.as_deref(), cmd);
         if reached.is_empty() && queued.is_empty() {
             return Err(async_graphql::Error::new(
                 "no koan app has ever linked to this server",
@@ -229,7 +234,7 @@ impl MutationRoot {
         client: Option<String>,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Clear)?;
+        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Clear).await?;
         Ok(GqlStatus::success(format!("cleared {}", reached(&sent))))
     }
 
@@ -242,7 +247,7 @@ impl MutationRoot {
         client: Option<String>,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Radio { enabled })?;
+        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Radio { enabled }).await?;
         Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
@@ -289,11 +294,12 @@ impl MutationRoot {
     async fn add_to_playlist_when_added(
         &self,
         ctx: &Context<'_>,
-        playlist_id: i64,
+        playlist_id: async_graphql::ID,
         artist: String,
         album: String,
         titles: Option<Vec<String>>,
     ) -> async_graphql::Result<GqlClientOrder> {
+        let playlist_id = super::row_id(ctx, UidKind::Playlist, &playlist_id).await?;
         require_role(ctx, Role::User)?;
         let order = crate::clients::Order {
             id: uuid::Uuid::now_v7().to_string(),
@@ -338,7 +344,8 @@ impl MutationRoot {
         client: Option<String>,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Seek { position_ms })?;
+        let sent =
+            send_to_client(ctx, client.as_deref(), LinkCommand::Seek { position_ms }).await?;
         Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
@@ -356,7 +363,7 @@ impl MutationRoot {
             GqlClientAction::Next => LinkCommand::Next,
             GqlClientAction::Previous => LinkCommand::Previous,
         };
-        let sent = send_to_client(ctx, client.as_deref(), cmd)?;
+        let sent = send_to_client(ctx, client.as_deref(), cmd).await?;
         Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
@@ -410,8 +417,9 @@ impl MutationRoot {
     async fn add_to_queue(
         &self,
         ctx: &Context<'_>,
-        track_ids: Vec<i64>,
+        track_ids: Vec<async_graphql::ID>,
     ) -> async_graphql::Result<GqlQueueMutationResult> {
+        let track_ids = super::row_ids(ctx, UidKind::Track, &track_ids).await?;
         require_role(ctx, Role::User)?;
         let resolved = resolve_tracks(ctx, track_ids).await?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
@@ -454,9 +462,10 @@ impl MutationRoot {
     async fn replace_queue(
         &self,
         ctx: &Context<'_>,
-        track_ids: Vec<i64>,
+        track_ids: Vec<async_graphql::ID>,
         start_at: Option<i32>,
     ) -> async_graphql::Result<GqlQueueMutationResult> {
+        let track_ids = super::row_ids(ctx, UidKind::Track, &track_ids).await?;
         require_role(ctx, Role::User)?;
         let resolved = resolve_tracks(ctx, track_ids).await?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
@@ -566,7 +575,12 @@ impl MutationRoot {
 
     // -- Favourites --
 
-    async fn favourite(&self, ctx: &Context<'_>, track_id: i64) -> async_graphql::Result<GqlTrack> {
+    async fn favourite(
+        &self,
+        ctx: &Context<'_>,
+        track_id: async_graphql::ID,
+    ) -> async_graphql::Result<GqlTrack> {
+        let track_id = super::row_id(ctx, UidKind::Track, &track_id).await?;
         require_role(ctx, Role::User)?;
         set_favourite(ctx, track_id, Some(true)).await
     }
@@ -574,8 +588,9 @@ impl MutationRoot {
     async fn unfavourite(
         &self,
         ctx: &Context<'_>,
-        track_id: i64,
+        track_id: async_graphql::ID,
     ) -> async_graphql::Result<GqlTrack> {
+        let track_id = super::row_id(ctx, UidKind::Track, &track_id).await?;
         require_role(ctx, Role::User)?;
         set_favourite(ctx, track_id, Some(false)).await
     }
@@ -583,8 +598,9 @@ impl MutationRoot {
     async fn toggle_favourite(
         &self,
         ctx: &Context<'_>,
-        track_id: i64,
+        track_id: async_graphql::ID,
     ) -> async_graphql::Result<GqlTrack> {
+        let track_id = super::row_id(ctx, UidKind::Track, &track_id).await?;
         require_role(ctx, Role::User)?;
         set_favourite(ctx, track_id, None).await
     }
@@ -651,8 +667,9 @@ impl MutationRoot {
         &self,
         ctx: &Context<'_>,
         name: String,
-        track_ids: Option<Vec<i64>>,
+        track_ids: Option<Vec<async_graphql::ID>>,
     ) -> async_graphql::Result<GqlPlaylist> {
+        let track_ids = super::opt_row_ids(ctx, UidKind::Track, track_ids.as_deref()).await?;
         require_role(ctx, Role::User)?;
         with_db(ctx, move |db| {
             let id = queries::create_playlist(&db.conn, &name, None)
@@ -681,11 +698,12 @@ impl MutationRoot {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         // A queue item with no library row behind it cannot come across: a
         // playlist points at rows, not at paths.
-        let track_ids: Vec<i64> = state
+        let track_ids = state
             .snapshot_playlist()
             .0
             .iter()
             .filter_map(|item| item.db_id)
+            .map(async_graphql::ID::from)
             .collect();
         self.create_playlist(ctx, name, Some(track_ids)).await
     }
@@ -693,9 +711,10 @@ impl MutationRoot {
     async fn rename_playlist(
         &self,
         ctx: &Context<'_>,
-        id: i64,
+        id: async_graphql::ID,
         name: String,
     ) -> async_graphql::Result<GqlStatus> {
+        let id = super::row_id(ctx, UidKind::Playlist, &id).await?;
         require_role(ctx, Role::User)?;
         with_db(ctx, move |db| {
             if !queries::rename_playlist(&db.conn, id, &name)
@@ -715,8 +734,9 @@ impl MutationRoot {
     async fn delete_playlist(
         &self,
         ctx: &Context<'_>,
-        id: i64,
+        id: async_graphql::ID,
     ) -> async_graphql::Result<GqlStatus> {
+        let id = super::row_id(ctx, UidKind::Playlist, &id).await?;
         require_role(ctx, Role::User)?;
         with_db(ctx, move |db| {
             // Read before deleting: the delete has to reach the server too, or
@@ -744,9 +764,11 @@ impl MutationRoot {
     async fn add_to_playlist(
         &self,
         ctx: &Context<'_>,
-        id: i64,
-        track_ids: Vec<i64>,
+        id: async_graphql::ID,
+        track_ids: Vec<async_graphql::ID>,
     ) -> async_graphql::Result<GqlStatus> {
+        let id = super::row_id(ctx, UidKind::Playlist, &id).await?;
+        let track_ids = super::row_ids(ctx, UidKind::Track, &track_ids).await?;
         require_role(ctx, Role::User)?;
         with_db(ctx, move |db| {
             let added = queries::add_tracks(&db.conn, id, &track_ids)
@@ -766,9 +788,11 @@ impl MutationRoot {
     async fn set_playlist_tracks(
         &self,
         ctx: &Context<'_>,
-        id: i64,
-        track_ids: Vec<i64>,
+        id: async_graphql::ID,
+        track_ids: Vec<async_graphql::ID>,
     ) -> async_graphql::Result<GqlStatus> {
+        let id = super::row_id(ctx, UidKind::Playlist, &id).await?;
+        let track_ids = super::row_ids(ctx, UidKind::Track, &track_ids).await?;
         require_role(ctx, Role::User)?;
         with_db(ctx, move |db| {
             queries::set_playlist_tracks(&db.conn, id, &track_ids)
@@ -787,9 +811,10 @@ impl MutationRoot {
     async fn play_playlist(
         &self,
         ctx: &Context<'_>,
-        id: i64,
+        id: async_graphql::ID,
         #[graphql(default = false)] shuffled: bool,
     ) -> async_graphql::Result<GqlStatus> {
+        let id = super::row_id(ctx, UidKind::Playlist, &id).await?;
         require_role(ctx, Role::User)?;
         let resolved = with_db(ctx, move |db| {
             let mut entries = queries::playlist_entries(&db.conn, id)
@@ -860,8 +885,9 @@ impl MutationRoot {
         &self,
         ctx: &Context<'_>,
         pattern: String,
-        track_ids: Option<Vec<i64>>,
+        track_ids: Option<Vec<async_graphql::ID>>,
     ) -> async_graphql::Result<GqlOrganizePlan> {
+        let track_ids = super::opt_row_ids(ctx, UidKind::Track, track_ids.as_deref()).await?;
         require_role(ctx, Role::Admin)?;
         with_db(ctx, move |db| {
             require_organize()?;
@@ -881,8 +907,9 @@ impl MutationRoot {
         &self,
         ctx: &Context<'_>,
         pattern: String,
-        track_ids: Option<Vec<i64>>,
+        track_ids: Option<Vec<async_graphql::ID>>,
     ) -> async_graphql::Result<GqlOrganizePlan> {
+        let track_ids = super::opt_row_ids(ctx, UidKind::Track, track_ids.as_deref()).await?;
         require_role(ctx, Role::Admin)?;
         with_db(ctx, move |db| {
             require_organize()?;
@@ -1129,12 +1156,17 @@ impl MutationRoot {
     async fn create_share(
         &self,
         ctx: &Context<'_>,
-        track_ids: Option<Vec<i64>>,
-        album_id: Option<i64>,
-        artist_id: Option<i64>,
-        start_track_id: Option<i64>,
+        track_ids: Option<Vec<async_graphql::ID>>,
+        album_id: Option<async_graphql::ID>,
+        artist_id: Option<async_graphql::ID>,
+        start_track_id: Option<async_graphql::ID>,
         description: Option<String>,
     ) -> async_graphql::Result<GqlShare> {
+        let track_ids = super::opt_row_ids(ctx, UidKind::Track, track_ids.as_deref()).await?;
+        let album_id = super::opt_row_id(ctx, UidKind::Album, album_id.as_ref()).await?;
+        let artist_id = super::opt_row_id(ctx, UidKind::Artist, artist_id.as_ref()).await?;
+        let start_track_id =
+            super::opt_row_id(ctx, UidKind::Track, start_track_id.as_ref()).await?;
         use koan_core::helpers::ShareTarget;
         require_role(ctx, Role::User)?;
         let target = match (artist_id, album_id, track_ids) {
@@ -1269,15 +1301,35 @@ where
     Ok(job.into())
 }
 
-fn send_to_client(
+async fn send_to_client(
     ctx: &Context<'_>,
     client: Option<&str>,
     cmd: LinkCommand,
 ) -> async_graphql::Result<crate::clients::ClientInfo> {
+    let cmd = published(ctx, cmd).await?;
     let scope = super::client_scope(ctx);
     crate::clients::registry()
         .send(scope.as_deref(), client, cmd)
         .map_err(async_graphql::Error::new)
+}
+
+/// `cmd` with each track named by its uid, however the caller named it: the
+/// device holds the same uid for it.
+async fn published(ctx: &Context<'_>, mut cmd: LinkCommand) -> async_graphql::Result<LinkCommand> {
+    let ids: Vec<String> = cmd
+        .track_ids_mut()
+        .into_iter()
+        .map(|id| id.clone())
+        .collect();
+    if ids.is_empty() {
+        return Ok(cmd);
+    }
+    let rows = super::row_ids(ctx, UidKind::Track, &ids).await?;
+    let uids = super::uids(ctx, UidKind::Track, &rows).await?;
+    for (id, uid) in cmd.track_ids_mut().into_iter().zip(uids) {
+        *id = uid.0;
+    }
+    Ok(cmd)
 }
 
 /// Who a command reached, and how: a phone iOS has suspended is woken to take

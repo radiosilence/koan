@@ -721,7 +721,7 @@ fn write_albums(
                 album_added_at: album.created.clone(),
             };
 
-            match queries::upsert_track(&db.conn, &meta) {
+            match queries::upsert_synced_track(&db.conn, &meta, song_ids) {
                 Ok(_) => result.tracks_synced += 1,
                 Err(e) => log::warn!("failed to insert remote track {}: {}", song.title, e),
             }
@@ -1469,9 +1469,9 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(rows.len(), 1, "the dead row is folded into the live one");
+        assert_eq!(rows.len(), 1, "the dead row takes the live id");
         let (id, remote_id, remote_url) = &rows[0];
-        assert_ne!(*id, ghost_id);
+        assert_eq!(*id, ghost_id);
         assert_eq!(remote_id, "sa0000");
         let favourites: Vec<String> = db
             .conn
@@ -1757,5 +1757,65 @@ mod tests {
             stats.total_tracks, 1,
             "should have exactly 1 track after dedup"
         );
+    }
+
+    /// A koan server once published row ids and now publishes UUIDs; any
+    /// server that rescans can renumber. A re-sync keeps the row, and with it
+    /// the history and the favourite, rather than adding a second copy.
+    #[test]
+    fn resyncing_a_track_under_a_new_server_id_keeps_one_row() {
+        let (db, _dir) = test_db();
+        let before = remote_track_meta("46215", "Archangel", "Burial", "Untrue");
+        let row = queries::upsert_synced_track(&db.conn, &before, &HashSet::from(["46215".into()]))
+            .unwrap();
+        queries::add_favourite(
+            &db.conn,
+            std::path::Path::new(before.remote_url.as_deref().unwrap()),
+        )
+        .unwrap();
+
+        let uid = "0199a0b2-7c4e-7d3a-9f1b-2c3d4e5f6a7b";
+        let after = remote_track_meta(uid, "Archangel", "Burial", "Untrue");
+        let again =
+            queries::upsert_synced_track(&db.conn, &after, &HashSet::from([uid.into()])).unwrap();
+
+        assert_eq!(again, row, "the same row, not a second copy");
+        assert_eq!(queries::library_stats(&db.conn).unwrap().total_tracks, 1);
+        let (remote_id, album, artist): (String, String, String) = db
+            .conn
+            .query_row(
+                "SELECT t.remote_id, al.remote_id, ar.remote_id FROM tracks t
+                 JOIN albums al ON al.id = t.album_id JOIN artists ar ON ar.id = t.artist_id",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(remote_id, uid);
+        assert_eq!(album, format!("album-of-{uid}"));
+        assert_eq!(artist, format!("artist-of-{uid}"));
+        let favourites = queries::load_favourites(&db.conn).unwrap();
+        assert_eq!(
+            favourites,
+            HashSet::from([std::path::PathBuf::from(after.remote_url.unwrap())]),
+            "the favourite follows the new stream address"
+        );
+    }
+
+    /// Two entries a server lists with the same tags are two tracks, however
+    /// alike: the second is not taken for the first under an old id.
+    #[test]
+    fn identical_entries_in_one_sync_stay_two_rows() {
+        let (db, _dir) = test_db();
+        let mut seen = HashSet::new();
+        for id in ["dup-1", "dup-2"] {
+            seen.insert(id.to_string());
+            queries::upsert_synced_track(
+                &db.conn,
+                &remote_track_meta(id, "Archangel", "Burial", "Untrue"),
+                &seen,
+            )
+            .unwrap();
+        }
+        assert_eq!(queries::library_stats(&db.conn).unwrap().total_tracks, 2);
     }
 }
