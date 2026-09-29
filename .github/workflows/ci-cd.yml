@@ -242,10 +242,10 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           key: msrv
-      # koan-ffi is excluded deliberately: it is unpublished, built only as part
-      # of the macOS app, and uniffi's bindgen floors it at 1.91. The MSRV that
-      # matters is the one the published crates promise.
-      - run: cargo check --workspace --all-targets --exclude koan-ffi
+      # koan-ffi and the bindings generator are excluded deliberately: they are
+      # unpublished, built only for the apps, and uniffi floors them at 1.91.
+      # The MSRV that matters is the one the published crates promise.
+      - run: cargo check --workspace --all-targets --exclude koan-ffi --exclude uniffi-bindgen
 
   audit:
     name: Security Audit
