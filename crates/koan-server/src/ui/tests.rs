@@ -663,16 +663,28 @@ async fn admins_create_invite_and_remove_accounts() {
 
     let r = send(&f.app, page(&access_token(&f.state))).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
-    let r = send(&f.app, post("/users", r#"{"newuser":"x"}"#, &access_token(&f.state))).await;
+    let r = send(
+        &f.app,
+        post("/users", r#"{"newuser":"x"}"#, &access_token(&f.state)),
+    )
+    .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
     let r = send(&f.app, page(&admin)).await;
     assert_eq!(r.status, StatusCode::OK);
-    assert!(r.body.contains("alice") && r.body.contains("boss"), "{}", r.body);
+    assert!(
+        r.body.contains("alice") && r.body.contains("boss"),
+        "{}",
+        r.body
+    );
 
     let r = send(
         &f.app,
-        post("/users", r#"{"newuser":"sarita","newrole":"readonly"}"#, &admin),
+        post(
+            "/users",
+            r#"{"newuser":"sarita","newrole":"readonly"}"#,
+            &admin,
+        ),
     )
     .await;
     let link = r
@@ -693,7 +705,11 @@ async fn admins_create_invite_and_remove_accounts() {
     auth::verify_password(&invite.password, &row.password_hash).unwrap();
 
     // Inviting again hands out the same password, so other devices keep working.
-    let r = send(&f.app, post(&format!("/users/{}/invite", row.id), "{}", &admin)).await;
+    let r = send(
+        &f.app,
+        post(&format!("/users/{}/invite", row.id), "{}", &admin),
+    )
+    .await;
     assert!(r.body.contains(&invite.password), "{}", r.body);
 
     // An account made before passwords were sealed needs a reset.
@@ -702,17 +718,36 @@ async fn admins_create_invite_and_remove_accounts() {
     let r = send(&f.app, post("/users/1/invite?reset=true", "{}", &admin)).await;
     assert!(r.body.contains("id=invite-link"), "{}", r.body);
 
-    let r = send(&f.app, post(&format!("/users/{}/role?role=user", row.id), "{}", &admin)).await;
+    let r = send(
+        &f.app,
+        post(&format!("/users/{}/role?role=user", row.id), "{}", &admin),
+    )
+    .await;
     assert_eq!(r.status, StatusCode::OK);
-    let r = send(&f.app, post(&format!("/users/{boss}/role?role=user", ), "{}", &admin)).await;
+    let r = send(
+        &f.app,
+        post(&format!("/users/{boss}/role?role=user",), "{}", &admin),
+    )
+    .await;
     assert!(r.body.contains("last admin"), "{}", r.body);
     assert_eq!(
-        queries::auth::get_user_by_username(&db.conn, "sarita").unwrap().unwrap().role,
+        queries::auth::get_user_by_username(&db.conn, "sarita")
+            .unwrap()
+            .unwrap()
+            .role,
         Role::User
     );
 
     let r = send(&f.app, post(&format!("/users/{boss}/delete"), "{}", &admin)).await;
     assert!(r.body.contains("own account"), "{}", r.body);
-    send(&f.app, post(&format!("/users/{}/delete", row.id), "{}", &admin)).await;
-    assert!(queries::auth::get_user_by_username(&db.conn, "sarita").unwrap().is_none());
+    send(
+        &f.app,
+        post(&format!("/users/{}/delete", row.id), "{}", &admin),
+    )
+    .await;
+    assert!(
+        queries::auth::get_user_by_username(&db.conn, "sarita")
+            .unwrap()
+            .is_none()
+    );
 }

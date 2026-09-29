@@ -1100,3 +1100,73 @@ impl GqlQueueMutationResult {
         &self.queue_item_ids
     }
 }
+
+/// Access to this server. `READONLY` listens; `USER` also edits playlists and
+/// favourites; `ADMIN` manages the server and its accounts.
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+#[graphql(name = "Role")]
+pub(super) enum GqlRole {
+    Admin,
+    User,
+    Readonly,
+}
+
+impl From<koan_core::auth::Role> for GqlRole {
+    fn from(r: koan_core::auth::Role) -> Self {
+        use koan_core::auth::Role;
+        match r {
+            Role::Admin => Self::Admin,
+            Role::User => Self::User,
+            Role::Readonly => Self::Readonly,
+        }
+    }
+}
+
+impl From<GqlRole> for koan_core::auth::Role {
+    fn from(r: GqlRole) -> Self {
+        match r {
+            GqlRole::Admin => Self::Admin,
+            GqlRole::User => Self::User,
+            GqlRole::Readonly => Self::Readonly,
+        }
+    }
+}
+
+#[derive(SimpleObject)]
+#[graphql(name = "User")]
+pub(super) struct GqlUser {
+    pub username: String,
+    pub role: GqlRole,
+    pub created_at: Option<String>,
+}
+
+/// An account as one link. `link` opens koan and signs it in; the email is
+/// for the admin to send from their own client, since the server sends no
+/// mail. The details also work in any Subsonic app.
+#[derive(SimpleObject)]
+#[graphql(name = "Invite")]
+pub(super) struct GqlInvite {
+    pub server: String,
+    pub username: String,
+    pub password: String,
+    pub link: String,
+    pub email_subject: String,
+    pub email_text: String,
+    pub email_html: String,
+    pub mailto: String,
+}
+
+impl From<koan_core::invite::Invite> for GqlInvite {
+    fn from(i: koan_core::invite::Invite) -> Self {
+        Self {
+            link: i.link(),
+            email_subject: i.email_subject(),
+            email_text: i.email_text(),
+            email_html: i.email_html(),
+            mailto: i.mailto(),
+            server: i.server,
+            username: i.username,
+            password: i.password,
+        }
+    }
+}

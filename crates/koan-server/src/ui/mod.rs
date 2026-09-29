@@ -16,9 +16,9 @@ mod browse;
 mod keys;
 mod pages;
 mod session;
-mod users;
 #[cfg(test)]
 mod tests;
+mod users;
 
 use std::path::PathBuf;
 use std::sync::Arc;

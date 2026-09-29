@@ -584,9 +584,13 @@ async fn shutdown_signal() {
 async fn graphql_handler(
     axum::Extension(user): axum::Extension<AuthUser>,
     axum::extract::State(schema): axum::extract::State<KoanSchema>,
+    headers: axum::http::HeaderMap,
     req: async_graphql_axum::GraphQLRequest,
 ) -> async_graphql_axum::GraphQLResponse {
     let mut request = req.into_inner();
+    if let Some(origin) = crate::origin::origin(&headers, None) {
+        request = request.data(super::RequestOrigin(origin));
+    }
     // The auth middleware always injects AuthUser (anonymous_admin when auth is
     // disabled, or a real user when auth is enabled). No fallback needed here.
     request = request.data(user);

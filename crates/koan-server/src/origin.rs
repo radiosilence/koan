@@ -51,13 +51,19 @@ mod tests {
             ("x-forwarded-host", "music.example.com"),
             ("x-forwarded-proto", "https"),
         ]);
-        assert_eq!(origin(&h, None).as_deref(), Some("https://music.example.com"));
+        assert_eq!(
+            origin(&h, None).as_deref(),
+            Some("https://music.example.com")
+        );
     }
 
     #[test]
     fn a_direct_request_is_plain_http() {
         let h = headers(&[("host", "192.168.1.5:4000")]);
-        assert_eq!(origin(&h, Some("")).as_deref(), Some("http://192.168.1.5:4000"));
+        assert_eq!(
+            origin(&h, Some("")).as_deref(),
+            Some("http://192.168.1.5:4000")
+        );
         assert_eq!(origin(&HeaderMap::new(), None), None);
     }
 }

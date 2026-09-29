@@ -8,8 +8,8 @@ use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
 use axum::response::sse::Event;
+use axum::response::{IntoResponse, Response};
 use koan_core::auth::{self, Role};
 use koan_core::db::queries::auth::{self as users, UserRow};
 use koan_core::invite::{self, AccountError, Invite};
@@ -139,8 +139,16 @@ An invite is a link that sets koan up with the account in one tap.</p>";
     let rows = blocking(move || Some(list(&st))).await.unwrap_or_default();
     let mut options = String::new();
     for (role, label) in ROLES {
-        let sel = if role == Role::Readonly { " selected" } else { "" };
-        let _ = write!(options, "<option value={}{sel}>{label}</option>", role.as_str());
+        let sel = if role == Role::Readonly {
+            " selected"
+        } else {
+            ""
+        };
+        let _ = write!(
+            options,
+            "<option value={}{sel}>{label}</option>",
+            role.as_str()
+        );
     }
     let inner = format!(
         "{intro}<form class=keyform data-on:submit__prevent=\"@post('/users')\">\
@@ -276,10 +284,7 @@ pub(super) async fn set_role(
     })
     .await;
     match done {
-        Some((Ok(()), rows)) => events(vec![
-            patch(&user_list(&rows, me), None),
-            result(""),
-        ]),
+        Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me), None), result("")]),
         // Redraw the list too, so the select goes back to what is stored.
         Some((Err(e), rows)) => events(vec![
             patch(&user_list(&rows, me), None),
@@ -309,10 +314,7 @@ pub(super) async fn delete(
     })
     .await;
     match done {
-        Some((Ok(()), rows)) => events(vec![
-            patch(&user_list(&rows, me), None),
-            result(""),
-        ]),
+        Some((Ok(()), rows)) => events(vec![patch(&user_list(&rows, me), None), result("")]),
         Some((Err(e), _)) => events(vec![failure(&e.to_string())]),
         None => events(vec![failure("No such account.")]),
     }

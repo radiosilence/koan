@@ -325,6 +325,10 @@ fn send_cmd_via(tx: &Sender<PlayerCommand>, cmd: PlayerCommand) -> async_graphql
 
 /// Extract the authenticated user from GraphQL context.
 /// Returns anonymous admin if no user is present (auth disabled or in-process).
+/// The address the request came in on, for links that point back at it.
+#[derive(Clone)]
+pub(crate) struct RequestOrigin(pub String);
+
 fn get_auth_user(ctx: &Context<'_>) -> AuthUser {
     ctx.data::<AuthUser>()
         .cloned()
@@ -1224,5 +1228,51 @@ mod tests {
                 "no other task ran while the queries were in flight"
             );
         });
+    }
+
+    #[tokio::test]
+    async fn accounts_are_made_and_invited_through_graphql() {
+        let (schema, _rx, _tmp) = test_schema();
+        let run = |q: &str| {
+            schema.execute(
+                async_graphql::Request::new(q)
+                    .data(RequestOrigin("https://music.example.com".into())),
+            )
+        };
+        let r = run(r#"mutation { createUser(username: "sarita", role: READONLY) { username link password emailText } }"#).await;
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        let v = r.data.into_json().unwrap();
+        let link = v["createUser"]["link"].as_str().unwrap();
+        let invite = koan_core::invite::Invite::parse(link).unwrap();
+        assert_eq!(invite.server, "https://music.example.com");
+        assert_eq!(
+            invite.password,
+            v["createUser"]["password"].as_str().unwrap()
+        );
+
+        let r = run(r#"mutation { inviteUser(username: "sarita", server: "https://other.example.com") { server password } }"#).await;
+        let v = r.data.into_json().unwrap();
+        assert_eq!(v["inviteUser"]["server"], "https://other.example.com");
+        assert_eq!(
+            v["inviteUser"]["password"].as_str().unwrap(),
+            invite.password
+        );
+
+        let r = run(r#"mutation { setUserRole(username: "sarita", role: USER) { ok } }"#).await;
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        let r = run("{ users { username role } }").await;
+        let v = r.data.into_json().unwrap();
+        assert_eq!(v["users"][0]["role"], "USER");
+
+        let r = run(r#"mutation { deleteUser(username: "sarita") { ok } }"#).await;
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        let r = run("{ users { username } }").await;
+        assert_eq!(
+            r.data.into_json().unwrap()["users"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
     }
 }

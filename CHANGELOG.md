@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **Invite links and account management** ([#572](https://github.com/radiosilence/koan/issues/572)). Admins create accounts, pick their access level, change it and delete accounts from the web UI's Users page, over GraphQL (so from MCP too), with `koan auth invite`, and through koan endpoints the apps will use. Creating or inviting an account produces an invite: a koan.rocks link carrying the server, username and password in its fragment, and an email to send it in (copy as rich text, `mailto:`, or the share sheet; the server sends no mail). The details are shown in plain text for other Subsonic apps. An invite reuses the account's password, recovered from its sealed copy, so its other devices keep working.
+- **koan.rocks/join** is the page an invite opens where the app is not installed, and koan.rocks serves the app-site association that makes `/join/` a universal link into the iOS app.
+
 ### Fixed
 
 - **Lyrics cached before a synced copy existed upstream now upgrade to it** ([#215](https://github.com/radiosilence/koan/issues/215)). Any cached copy used to be final, so a track first fetched as plain text never highlighted. A plain copy older than 30 days is checked against LRCLIB again when it is next shown, and kept (with its clock reset) if there is still no synced one. Synced copies are never re-fetched.

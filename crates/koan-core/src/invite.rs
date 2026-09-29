@@ -92,7 +92,9 @@ impl Invite {
         }
         let (server, username, password) = (server?, username?, password?);
         let scheme = Url::parse(&server).ok()?.scheme().to_owned();
-        if !matches!(scheme.as_str(), "http" | "https") || username.is_empty() || password.is_empty()
+        if !matches!(scheme.as_str(), "http" | "https")
+            || username.is_empty()
+            || password.is_empty()
         {
             return None;
         }
@@ -349,9 +351,18 @@ mod tests {
     #[test]
     fn other_links_and_missing_fields_are_refused() {
         assert_eq!(Invite::parse("https://example.com/join/#server=x"), None);
-        assert_eq!(Invite::parse("https://koan.rocks/#server=https://a&username=u&password=p"), None);
-        assert_eq!(Invite::parse("koan://join?server=https://a&username=u"), None);
-        assert_eq!(Invite::parse("koan://join?server=ftp://a&username=u&password=p"), None);
+        assert_eq!(
+            Invite::parse("https://koan.rocks/#server=https://a&username=u&password=p"),
+            None
+        );
+        assert_eq!(
+            Invite::parse("koan://join?server=https://a&username=u"),
+            None
+        );
+        assert_eq!(
+            Invite::parse("koan://join?server=ftp://a&username=u&password=p"),
+            None
+        );
         assert_eq!(Invite::parse("not a url"), None);
     }
 

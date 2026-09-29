@@ -3074,6 +3074,148 @@ async fn delete_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
     .await
 }
 
+// ---------------------------------------------------------------------------
+// Accounts (koan extension, admins only)
+// ---------------------------------------------------------------------------
+//
+// What the apps manage this server's accounts through. An invite comes back
+// as the account's username and password; the app builds the link from the
+// address it already reaches this server at.
+
+fn respond_admin(
+    state: &AppState,
+    auth: &SubsonicParams,
+    f: impl FnOnce(&Database, &Caller, XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
+) -> Response {
+    let json = auth.wants_json();
+    let result = validate_auth(auth, state).and_then(|caller| {
+        if caller.role != Role::Admin {
+            return Err(SubsonicError::not_authorized());
+        }
+        let db = state.open_db()?;
+        f(&db, &caller, SubsonicResponse::ok(json))
+    });
+    match result {
+        Ok(builder) => builder.build(),
+        Err(e) => SubsonicResponse::error(json, &e),
+    }
+}
+
+fn account_error(e: koan_core::invite::AccountError) -> SubsonicError {
+    use koan_core::invite::AccountError;
+    match e {
+        AccountError::NoSuchUser(_) => SubsonicError::not_found("User"),
+        AccountError::Other(e) => SubsonicError::internal(e.to_string()),
+        e => SubsonicError::new(SubsonicErrorCode::Generic, e.to_string()),
+    }
+}
+
+fn role_param(params: &RawParams) -> Result<Role, SubsonicError> {
+    params
+        .get("role")
+        .ok_or_else(|| SubsonicError::missing_param("role"))?
+        .parse()
+        .map_err(|_| SubsonicError::bad_param("role"))
+}
+
+fn username_param(params: &RawParams) -> Result<&str, SubsonicError> {
+    params
+        .get("username")
+        .ok_or_else(|| SubsonicError::missing_param("username"))
+}
+
+fn invite_node(username: &str, password: &str) -> XmlNode {
+    XmlNode::new("invite")
+        .attr("username", username)
+        .attr("password", password)
+}
+
+fn sealing_key() -> Result<[u8; 32], SubsonicError> {
+    koan_core::auth::subsonic_key().map_err(|e| SubsonicError::internal(e.to_string()))
+}
+
+async fn koan_users(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_admin(&state, &params.auth(), |db, _, b| {
+            let users = queries::auth::list_users(&db.conn)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(XmlNode::new("users").list(
+                "user",
+                users.iter().map(|u| {
+                    XmlNode::new("user")
+                        .attr("username", &u.username)
+                        .attr("role", u.role.as_str())
+                }),
+            )))
+        })
+    })
+    .await
+}
+
+async fn koan_create_user(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_admin(&state, &params.auth(), |db, _, b| {
+            let username = username_param(&params)?;
+            let role = role_param(&params)?;
+            let password =
+                koan_core::invite::create_account(&db.conn, &sealing_key()?, username, role)
+                    .map_err(account_error)?;
+            Ok(b.child(invite_node(username.trim(), &password)))
+        })
+    })
+    .await
+}
+
+async fn koan_invite(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_admin(&state, &params.auth(), |db, _, b| {
+            let username = username_param(&params)?;
+            let reset = params.get("reset") == Some("true");
+            let password =
+                koan_core::invite::account_password(&db.conn, &sealing_key()?, username, reset)
+                    .map_err(account_error)?;
+            Ok(b.child(invite_node(username, &password)))
+        })
+    })
+    .await
+}
+
+async fn koan_set_user_role(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_admin(&state, &params.auth(), |db, _, b| {
+            koan_core::invite::set_role(&db.conn, username_param(&params)?, role_param(&params)?)
+                .map_err(account_error)?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
+async fn koan_delete_user(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_admin(&state, &params.auth(), |db, caller, b| {
+            let username = username_param(&params)?;
+            if username == caller.username {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::Generic,
+                    "an account cannot delete itself",
+                ));
+            }
+            koan_core::invite::delete_account(&db.conn, username).map_err(account_error)?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
 /// OpenSubsonic `formPost`: the parameters of an
 /// `application/x-www-form-urlencoded` POST body are appended to the query
 /// string, so every handler reads one set of parameters however they were
@@ -3214,6 +3356,20 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         // koan's own: a koan client's standing connection, for the server to
         // command it. See `crate::clients`.
         .route("/rest/koanLink", get(koan_link))
+        .route("/rest/koanUsers", get(koan_users).post(koan_users))
+        .route(
+            "/rest/koanCreateUser",
+            get(koan_create_user).post(koan_create_user),
+        )
+        .route("/rest/koanInvite", get(koan_invite).post(koan_invite))
+        .route(
+            "/rest/koanSetUserRole",
+            get(koan_set_user_role).post(koan_set_user_role),
+        )
+        .route(
+            "/rest/koanDeleteUser",
+            get(koan_delete_user).post(koan_delete_user),
+        )
         .route("/rest/ping.view", get(ping).post(ping))
         // Sharing
         .route("/rest/createShare", get(create_share).post(create_share))
@@ -3878,6 +4034,62 @@ mod tests {
         )
         .await;
         assert!(body.contains("adminRole=\"true\""), "{body}");
+    }
+
+    #[tokio::test]
+    async fn admins_manage_accounts_through_the_koan_endpoints() {
+        static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+        koan_core::config::set_config_dir(
+            CONFIG.get_or_init(|| tempfile::tempdir().unwrap()).path(),
+        );
+        let (state, _dir) = test_state();
+        let call = |path: String| {
+            let state = state.clone();
+            async move { get_response(build_test_router(state), &path).await.1 }
+        };
+        let owner = "u=owner&p=sesame&v=1.16.1&c=test&f=json";
+
+        let body = call("/rest/koanUsers?u=mate&p=hunter22&v=1.16.1&c=test".to_owned()).await;
+        assert!(body.contains("code=\"50\""), "{body}");
+
+        let body = call(format!(
+            "/rest/koanCreateUser?username=sarita&role=readonly&{owner}"
+        ))
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let password = v["subsonic-response"]["invite"]["password"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(v["subsonic-response"]["invite"]["username"], "sarita");
+
+        // The account signs in with what the invite carries.
+        let body = call(format!("/rest/ping?u=sarita&p={password}&v=1.16.1&c=test")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+
+        let body = call(format!("/rest/koanInvite?username=sarita&{owner}")).await;
+        assert!(body.contains(&password), "{body}");
+
+        let body = call(format!(
+            "/rest/koanSetUserRole?username=owner&role=user&{owner}"
+        ))
+        .await;
+        assert!(body.contains("last admin"), "{body}");
+        call(format!(
+            "/rest/koanSetUserRole?username=sarita&role=user&{owner}"
+        ))
+        .await;
+        let body = call(format!("/rest/koanUsers?{owner}")).await;
+        assert!(
+            body.contains("{\"role\":\"user\",\"username\":\"sarita\"}"),
+            "{body}"
+        );
+
+        let body = call(format!("/rest/koanDeleteUser?username=owner&{owner}")).await;
+        assert!(body.contains("cannot delete itself"), "{body}");
+        call(format!("/rest/koanDeleteUser?username=sarita&{owner}")).await;
+        let body = call(format!("/rest/koanUsers?{owner}")).await;
+        assert!(!body.contains("sarita"), "{body}");
     }
 
     #[tokio::test]
