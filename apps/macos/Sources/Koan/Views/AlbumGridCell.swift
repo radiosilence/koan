@@ -9,8 +9,8 @@ struct AlbumGridCell: View {
     /// An artist's own page already says whose records these are.
     var showArtist: Bool = true
     /// The grid's pick, when it takes part in picking several records at once
-    /// — see `AlbumSelection`.
-    var selection: AlbumSelection?
+    /// — see `PlayableSelection`.
+    var selection: PlayableSelection?
 
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
@@ -24,7 +24,7 @@ struct AlbumGridCell: View {
                 .shadow(color: .black.opacity(0.28), radius: 7, y: 3)
                 .overlay {
                     if selecting, let selection {
-                        SelectionMark(albumId: album.id, selection: selection)
+                        SelectionMark(key: Playable.album(album).key, selection: selection)
                     }
                 }
                 .overlay(alignment: .topTrailing) {
@@ -75,7 +75,7 @@ struct AlbumGridCell: View {
             if selecting, let selection {
                 Color.clear
                     .contentShape(.rect)
-                    .onTapGesture { selection.click(album.id) }
+                    .onTapGesture { selection.click(.album(album)) }
             }
         }
         // ⌘-click starts a selection with this one in it. Over the art's own
@@ -83,13 +83,13 @@ struct AlbumGridCell: View {
         #if os(macOS)
         .highPriorityGesture(
             TapGesture().modifiers(.command).onEnded {
-                selection?.begin(with: album.id)
+                selection?.begin(with: .album(album))
             },
             including: selection != nil && !selecting ? .all : .subviews
         )
         #endif
         .contextMenu { PlayableMenu(playable: .album(album)) }
-        .modifier(AlbumDrag(album: album, inContainer: selection != nil))
+        .modifier(SelectableDrag(playable: .album(album), inContainer: selection != nil))
     }
 
     /// Read here and nowhere else in the tile: it flips entering and leaving
@@ -125,11 +125,11 @@ private struct AlbumTileHeart: View {
 /// The tick on a tile, and the only part of it that reads what is selected — a
 /// tick re-runs these and nothing else in the grid.
 private struct SelectionMark: View {
-    let albumId: Int64
-    let selection: AlbumSelection
+    let key: Playable.Key
+    let selection: PlayableSelection
 
     var body: some View {
-        let selected = selection.contains(albumId)
+        let selected = selection.contains(key)
         RoundedRectangle(cornerRadius: 6)
             .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), lineWidth: 3)
             .overlay(alignment: .topLeading) {
@@ -143,25 +143,38 @@ private struct SelectionMark: View {
     }
 }
 
-/// A tile in a selectable grid is an item of the grid's drag container, which
-/// says what a drag carries — the whole selection when the tile is part of it.
+/// A tick for a row or a pill, where there is no artwork to ring. Its own view
+/// so that a tick re-runs it and not the row.
+struct SelectionTick: View {
+    let key: Playable.Key
+    let selection: PlayableSelection
+
+    var body: some View {
+        let selected = selection.contains(key)
+        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+            .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+    }
+}
+
+/// An item on a selectable page is an item of the page's drag container, which
+/// says what a drag carries — the whole selection when the item is part of it.
 /// Anywhere else it drags itself.
-private struct AlbumDrag: ViewModifier {
-    let album: Album
+struct SelectableDrag: ViewModifier {
+    let playable: Playable
     let inContainer: Bool
 
     func body(content: Content) -> some View {
         // A drag container is the Mac's: the iOS SDKs koan builds against mark
-        // it unavailable or newer than the target. On a phone a tile drags
+        // it unavailable or newer than the target. On a phone an item drags
         // itself, which is all a touch drag ever carries anyway.
         #if os(macOS)
         if inContainer {
-            content.draggable(containerItemID: album.id)
+            content.draggable(containerItemID: playable.key)
         } else {
-            content.draggablePlayable(.album(album))
+            content.draggablePlayable(playable)
         }
         #else
-        content.draggablePlayable(.album(album))
+        content.draggablePlayable(playable)
         #endif
     }
 }
