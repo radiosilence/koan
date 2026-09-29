@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use async_graphql::connection::{DisableNodesField, EmptyFields};
 use async_graphql::dataloader::DataLoader;
-use async_graphql::{Context, Enum, InputObject, Object, SimpleObject};
-use koan_core::db::queries;
+use async_graphql::{ComplexObject, Context, Enum, ID, InputObject, Object, SimpleObject};
+use koan_core::db::queries::{self, UidKind};
 use koan_core::player::state::{PlaybackState, QueueEntryStatus, SharedPlayerState};
 
 use super::helpers::paginate;
@@ -11,6 +11,7 @@ use super::jobs::{Job, JobState};
 use super::loaders::{
     AlbumStatsOf, AlbumTracks, ArtistAlbums, ArtistStatsOf, ArtistTracks, DbLoader, FavouritePath,
 };
+use super::{opt_uid, uid, uids};
 
 /// Connection type alias — standard async-graphql Connection with `nodes` field disabled.
 /// Exposes `edges` + `pageInfo` only (proper Relay spec).
@@ -117,8 +118,8 @@ pub(super) struct GqlArtist {
 
 #[Object(name = "Artist")]
 impl GqlArtist {
-    async fn id(&self) -> i64 {
-        self.row.id
+    async fn id(&self, ctx: &Context<'_>) -> async_graphql::Result<ID> {
+        uid(ctx, UidKind::Artist, self.row.id).await
     }
 
     async fn name(&self) -> &str {
@@ -182,16 +183,16 @@ pub(super) struct GqlAlbum {
 
 #[Object(name = "Album")]
 impl GqlAlbum {
-    async fn id(&self) -> i64 {
-        self.row.id
+    async fn id(&self, ctx: &Context<'_>) -> async_graphql::Result<ID> {
+        uid(ctx, UidKind::Album, self.row.id).await
     }
 
     async fn title(&self) -> &str {
         &self.row.title
     }
 
-    async fn artist_id(&self) -> i64 {
-        self.row.artist_id
+    async fn artist_id(&self, ctx: &Context<'_>) -> async_graphql::Result<ID> {
+        uid(ctx, UidKind::Artist, self.row.artist_id).await
     }
 
     async fn artist_name(&self) -> &str {
@@ -254,8 +255,8 @@ pub(super) struct GqlTrack {
 
 #[Object(name = "Track")]
 impl GqlTrack {
-    async fn id(&self) -> i64 {
-        self.row.id
+    async fn id(&self, ctx: &Context<'_>) -> async_graphql::Result<ID> {
+        uid(ctx, UidKind::Track, self.row.id).await
     }
 
     async fn title(&self) -> &str {
@@ -274,12 +275,12 @@ impl GqlTrack {
         &self.row.album_title
     }
 
-    async fn album_id(&self) -> Option<i64> {
-        self.row.album_id
+    async fn album_id(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<ID>> {
+        opt_uid(ctx, UidKind::Album, self.row.album_id).await
     }
 
-    async fn artist_id(&self) -> Option<i64> {
-        self.row.artist_id
+    async fn artist_id(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<ID>> {
+        opt_uid(ctx, UidKind::Artist, self.row.artist_id).await
     }
 
     async fn disc(&self) -> Option<i32> {
@@ -343,7 +344,7 @@ impl GqlTrack {
             return Ok(false);
         };
         Ok(loader(ctx)?
-            .load_one(FavouritePath(path.clone()))
+            .load_one(FavouritePath(super::user_id(ctx), path.clone()))
             .await?
             .unwrap_or(false))
     }
@@ -368,11 +369,9 @@ pub(super) struct GqlNowPlaying {
 }
 
 #[derive(SimpleObject)]
-#[graphql(name = "NowPlayingTrack")]
+#[graphql(name = "NowPlayingTrack", complex)]
 pub(super) struct GqlNowPlayingTrack {
-    /// Library row id, when the queue entry came from the database. The remote
-    /// bridge streams `/rest/stream?id=<trackId>`; without it a client had no
-    /// way to name the track the server is playing.
+    #[graphql(skip)]
     pub track_id: Option<i64>,
     pub title: String,
     pub artist: String,
@@ -387,6 +386,16 @@ pub(super) struct GqlNowPlayingTrack {
     /// `sampleRate` means koan handed the device the samples as they are;
     /// anything else means something resampled to reach it.
     pub output_sample_rate: Option<u32>,
+}
+
+#[ComplexObject]
+impl GqlNowPlayingTrack {
+    /// The track's id, when the queue entry came from the library. The remote
+    /// bridge streams `/rest/stream?id=<trackId>`; without it a client had no
+    /// way to name the track the server is playing.
+    async fn track_id(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<ID>> {
+        opt_uid(ctx, UidKind::Track, self.track_id).await
+    }
 }
 
 impl GqlNowPlaying {
@@ -458,9 +467,9 @@ impl GqlQueueEntry {
         &self.queue_item_id
     }
 
-    /// Library row id — see `NowPlayingTrack::trackId`.
-    async fn track_id(&self) -> Option<i64> {
-        self.track_id
+    /// See `NowPlayingTrack::trackId`.
+    async fn track_id(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<ID>> {
+        opt_uid(ctx, UidKind::Track, self.track_id).await
     }
 
     async fn title(&self) -> &str {
@@ -527,6 +536,8 @@ pub(super) struct GqlLibraryStats {
 #[graphql(name = "Client")]
 pub(super) struct GqlClient {
     pub id: String,
+    /// The device's own id: stable across its reconnects, unlike `id`.
+    pub device: String,
     /// What the device calls itself, e.g. "James's iPhone".
     pub name: String,
     /// `ios`, `macos` or `linux`.
@@ -572,6 +583,7 @@ impl From<crate::clients::ClientInfo> for GqlClient {
         let position_ms = c.position_ms();
         Self {
             id: c.id,
+            device: c.device,
             name: c.name,
             platform: c.platform,
             username: c.username,
@@ -605,18 +617,26 @@ impl From<crate::clients::ClientInfo> for GqlClient {
 
 /// An album to queue on a device once it is in the library.
 #[derive(SimpleObject)]
-#[graphql(name = "ClientOrder")]
+#[graphql(name = "ClientOrder", complex)]
 pub(super) struct GqlClientOrder {
     pub id: String,
     pub artist: String,
     pub album: String,
     pub client: Option<String>,
     pub play_next: bool,
-    /// The playlist it adds to, for `addToPlaylistWhenAdded`.
+    #[graphql(skip)]
     pub playlist_id: Option<i64>,
     pub titles: Vec<String>,
     /// Unix seconds.
     pub created_at: i64,
+}
+
+#[ComplexObject]
+impl GqlClientOrder {
+    /// The playlist it adds to, for `addToPlaylistWhenAdded`.
+    async fn playlist_id(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<ID>> {
+        opt_uid(ctx, UidKind::Playlist, self.playlist_id).await
+    }
 }
 
 impl From<crate::clients::Order> for GqlClientOrder {
@@ -661,19 +681,35 @@ pub(super) struct GqlSimilarArtist {
 }
 
 #[derive(SimpleObject)]
-#[graphql(name = "SimilarArtistInfo")]
+#[graphql(name = "SimilarArtistInfo", complex)]
 pub(super) struct GqlSimilarArtistInfo {
+    #[graphql(skip)]
     pub id: i64,
     pub name: String,
 }
 
+#[ComplexObject]
+impl GqlSimilarArtistInfo {
+    async fn id(&self, ctx: &Context<'_>) -> async_graphql::Result<ID> {
+        uid(ctx, UidKind::Artist, self.id).await
+    }
+}
+
 #[derive(SimpleObject)]
-#[graphql(name = "PlayHistoryEntry")]
+#[graphql(name = "PlayHistoryEntry", complex)]
 pub(super) struct GqlPlayHistoryEntry {
+    #[graphql(skip)]
     pub track_id: i64,
     pub played_at: i64,
     pub duration_ms: Option<i64>,
     pub track: Option<GqlPlayHistoryTrack>,
+}
+
+#[ComplexObject]
+impl GqlPlayHistoryEntry {
+    async fn track_id(&self, ctx: &Context<'_>) -> async_graphql::Result<ID> {
+        uid(ctx, UidKind::Track, self.track_id).await
+    }
 }
 
 #[derive(SimpleObject)]
@@ -687,7 +723,7 @@ pub(super) struct GqlPlayHistoryTrack {
 #[derive(SimpleObject)]
 #[graphql(name = "Playlist")]
 pub(super) struct GqlPlaylist {
-    pub id: i64,
+    pub id: ID,
     pub name: String,
     pub comment: Option<String>,
     /// Present once the playlist exists on the upstream server.
@@ -703,7 +739,7 @@ pub(super) struct GqlPlaylist {
 impl From<koan_core::db::queries::PlaylistRow> for GqlPlaylist {
     fn from(p: koan_core::db::queries::PlaylistRow) -> Self {
         Self {
-            id: p.id,
+            id: ID(p.uid),
             name: p.name,
             comment: p.comment,
             remote_id: p.remote_id,
@@ -724,12 +760,25 @@ pub(super) struct GqlRadioStatus {
 }
 
 #[derive(SimpleObject)]
-#[graphql(name = "FuzzyMatch")]
+#[graphql(name = "FuzzyMatch", complex)]
 pub(super) struct GqlFuzzyMatch {
+    #[graphql(skip)]
     pub id: i64,
     pub name: String,
     pub rank: i32,
     pub kind: FuzzySearchKind,
+}
+
+#[ComplexObject]
+impl GqlFuzzyMatch {
+    async fn id(&self, ctx: &Context<'_>) -> async_graphql::Result<ID> {
+        let kind = match self.kind {
+            FuzzySearchKind::Track => UidKind::Track,
+            FuzzySearchKind::Album => UidKind::Album,
+            FuzzySearchKind::Artist => UidKind::Artist,
+        };
+        uid(ctx, kind, self.id).await
+    }
 }
 
 #[derive(SimpleObject)]
@@ -764,9 +813,9 @@ pub(super) enum GqlPlanOutcome {
 
 /// One file's place in a plan.
 #[derive(SimpleObject)]
-#[graphql(name = "FileMove")]
+#[graphql(name = "FileMove", complex)]
 pub(super) struct GqlFileMove {
-    /// Null for a file the library doesn't hold a row for.
+    #[graphql(skip)]
     pub track_id: Option<i64>,
     pub from_path: String,
     /// Null only when the pattern failed before producing a path at all.
@@ -774,6 +823,14 @@ pub(super) struct GqlFileMove {
     pub outcome: GqlPlanOutcome,
     /// Why this file isn't moving. Null when it is.
     pub reason: Option<String>,
+}
+
+#[ComplexObject]
+impl GqlFileMove {
+    /// Null for a file the library doesn't hold a row for.
+    async fn track_id(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<ID>> {
+        opt_uid(ctx, UidKind::Track, self.track_id).await
+    }
 }
 
 /// Every selected file and what happens to it, in plan order. Preview and
@@ -859,7 +916,7 @@ pub(super) struct GqlShare {
 
 /// A share link this server serves, as managed by its owner.
 #[derive(SimpleObject)]
-#[graphql(name = "ShareLink")]
+#[graphql(name = "ShareLink", complex)]
 pub(super) struct GqlShareLink {
     pub id: String,
     /// `None` when `sharing.public_url` is not set.
@@ -874,12 +931,35 @@ pub(super) struct GqlShareLink {
     pub last_visited: Option<i64>,
     /// What the share is a slice of: `tracks`, `album` or `artist`.
     pub kind: String,
-    /// The album or artist id, for an album or artist share.
+    #[graphql(skip)]
     pub subject_id: Option<i64>,
-    /// The track playback is cued to.
+    #[graphql(skip)]
     pub start_track_id: Option<i64>,
-    /// In shared order.
+    #[graphql(skip)]
     pub track_ids: Vec<i64>,
+}
+
+#[ComplexObject]
+impl GqlShareLink {
+    /// The album or artist id, for an album or artist share.
+    async fn subject_id(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<ID>> {
+        let kind = match self.kind.as_str() {
+            "album" => UidKind::Album,
+            "artist" => UidKind::Artist,
+            _ => return Ok(None),
+        };
+        opt_uid(ctx, kind, self.subject_id).await
+    }
+
+    /// The track playback is cued to.
+    async fn start_track_id(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<ID>> {
+        opt_uid(ctx, UidKind::Track, self.start_track_id).await
+    }
+
+    /// In shared order.
+    async fn track_ids(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<ID>> {
+        uids(ctx, UidKind::Track, &self.track_ids).await
+    }
 }
 
 pub(super) struct GqlSimilarTrack {
@@ -889,8 +969,8 @@ pub(super) struct GqlSimilarTrack {
 
 #[Object(name = "SimilarTrack")]
 impl GqlSimilarTrack {
-    async fn track_id(&self) -> i64 {
-        self.row.id
+    async fn track_id(&self, ctx: &Context<'_>) -> async_graphql::Result<ID> {
+        uid(ctx, UidKind::Track, self.row.id).await
     }
 
     async fn title(&self) -> &str {

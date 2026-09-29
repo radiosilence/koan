@@ -2,13 +2,70 @@
 
 ## Unreleased
 
+### Changed
+
+- **The DMG opens to an install window**: the app beside an Applications link to drag it onto, over a background in koan.rocks' colours. Finder draws icon labels in black whenever a window has a background image, so each label sits on a light plate. The layout is written by dmgbuild rather than by scripting Finder, so it builds on CI runners with no logged-in session.
+- **koan.rocks links the DMG directly.** "Download for Mac" points at the latest release's `Koan.dmg`, which GitHub redirects to whichever release is newest, so the site never needs updating for a release.
+
+## 0.44.1
+
+### Added
+
+- **Search results can be selected like the album grid**: artists, albums and tracks, with Select in the toolbar, ⌘-click, ⇧-click for a range and ⌘A, then Play or Add to Queue. A pick survives a new query, so it can gather from several searches, and dragging a ticked result drags the whole pick.
+
+### Changed
+
+- **Releases build each thing once.** The binaries CI already builds for every commit on main (the CLI for macOS arm64 and Linux x86_64, and the macOS app) are passed to the release jobs as artifacts, which sign, notarise and package them rather than compiling the same commit again; the crates publish no longer waits behind notarisation. The TestFlight job no longer builds the engine a second time for the Mac to generate the Swift bindings: they are read from the iOS build, by a bindings generator that is a crate of its own (`tools/uniffi-bindgen`) and builds nothing else.
+- **CI caches what it builds.** The cache was over GitHub's 10 GB limit, so entries were evicted before they were reused and the TestFlight job compiled everything each time. Pull requests now read the cache without writing to it. The iOS job's cache covers its own target directory and is kept when the archive fails. The container image caches its dependencies in a layer of their own (cargo-chef), which survives source changes.
+
+### Fixed
+
+- **The iOS app builds for release again.** The Live Activity code handed an `Activity` across actors, which Swift 6 rejects, and 0.44.0's TestFlight archive failed on it. `just ios-typecheck` checked types only, and a data race is found after that, so it had passed; it now runs the same checks the archive does.
+
+## 0.44.0
+
 ### Added
 
 - **Invite links and account management** ([#572](https://github.com/radiosilence/koan/issues/572)). Admins create accounts, pick their access level, change it and delete accounts from the web UI's Users page, over GraphQL (so from MCP too), with `koan auth invite`, and through koan-specific Subsonic endpoints (`koanUsers`, `koanCreateUser`, `koanInvite`, `koanSetUserRole`, `koanDeleteUser`). Creating or inviting an account produces an invite: a koan.rocks link carrying the server, username and password in its fragment, and an email to send it in (copy as rich text, `mailto:`, or the share sheet; the server sends no mail). The details are shown in plain text for other Subsonic apps. An invite reuses the account's password, recovered from its sealed copy, so its other devices keep working.
 - **koan.rocks/join** is the page an invite opens where the app is not installed, and koan.rocks serves the app-site association that makes `/join/` a universal link into the iOS app.
+- **Play on another device** ([#574](https://github.com/radiosilence/koan/issues/574)). The Play on button lists the other kōan apps this one can reach: the account's devices on any network, through a kōan server, and anyone's on the local network, found over Bonjour. Picking one makes it the device the app controls: this one pauses, and the transport, queue, heart and Now Playing (Control Center and the media keys included) act on that device until another is picked. **Move here** sends the controlled device's queue and playhead to another and controls it there, so a Mac's music can be taken out on the phone or sent back. Tracks the server does not have stay behind, and the app says how many. See [Playing on another device](docs/guide/devices.md).
+- **A lock-screen remote on iOS.** While the phone controls another device, a Live Activity shows what is playing there with previous, play-pause and next. The server pushes it each change once iOS has suspended the app (with the `[push]` key), and its buttons reach the server in one request when the app's link is down.
+- **Devices on the same network, and by address.** Each app listens on port 5626 and announces itself as `_koan._tcp`; `[devices]` turns that off, or lists addresses to dial where Bonjour does not reach, such as a tailnet. A device on the network may control playback and the queue, never the library or the files on disk.
+- **The client knows what it signed in to.** koan's extensions are listed in `getOpenSubsonicExtensions` (`koanLink`, `koanDevices`), and the app probes `ping` and that list once per sign-in rather than checking whether the server calls itself koan, so a feature is offered only where the server has it. Settings → Server shows the server, its version and the extensions it listed.
+
+### Changed
+
+- **Every artist, album, track and playlist has one id on every device** ([#501](https://github.com/radiosilence/koan/issues/501)): a UUIDv7, published as its id over Subsonic, GraphQL and the link. Row ids are numbered per table, so an endpoint that takes any kind (`createShare`, `star`, `getCoverArt`) read album 5 as song 5; they are also numbered per database, so an id meant nothing on another device. A client syncing from a koan server takes the server's uids for its rows, including rows it merged with local files, so the server and every device name a track the same way. Bare and prefixed row ids (`5`, `al-5`) are still accepted everywhere. GraphQL id fields are now `ID` strings rather than `Int`. The library upgrades itself, and a build older than this one then refuses it. Each client's first sync after the server is upgraded re-reads the whole library, since every id changed; rows, history and favourites are kept. A device still on an older build lists each remote track twice after its next sync, because older builds keep two remote rows with different ids apart; updating it, or running a full sync, folds them back into one.
+- **The link to the server reports on change rather than every few seconds.** It waits on its socket and on the engine's change signal, so a pause on one device shows on the other at once and a quiet link wakes only to ping.
+- **Favouriting on one device has the account's other linked devices sync**, so the heart lights on the Mac for a track favourited on the phone.
+- **TestFlight builds say what changed.** Each upload's "What to Test" is that version's changelog section ([#581](https://github.com/radiosilence/koan/pull/581)).
+- GraphQL: `handOffClient(to, from)` moves one linked app's music to another, and `Client.device` is each app's stable id.
 
 ### Fixed
 
+- **iOS builds reach TestFlight again** ([#580](https://github.com/radiosilence/koan/pull/580)). CI signed each archive with a fresh Apple Development certificate until the account ran out, and 0.43.0 never uploaded; it now reuses one stored certificate.
+
+## 0.43.0
+
+### Added
+
+- **The "Play on …" notification shows the album's cover.** The server puts a link to the cover in the notification, and a notification service extension in the iOS app fetches and attaches it before iOS shows it. The extension holds no sign-in, so the link authorises itself: an HMAC over one track and an expiry ten minutes out, keyed by a secret that lives only in the server's process, opening that one cover and nothing else. Needs `sharing.public_url`; without it the notification shows as before.
+
+- **Favourites, playlists, play history and shares belong to a user** ([#576](https://github.com/radiosilence/koan/pull/576)). On a server with several accounts, one account no longer sees or edits another's favourites, playlists, plays or share links, through koan's own clients or Subsonic ones.
+- **Select mode on an artist page's albums** ([#569](https://github.com/radiosilence/koan/pull/569)), as the library grid already had. A click on a record there played it and replaced the queue, which was easy to do by accident when picking a few to add.
+
+### Changed
+
+- **The library watcher scans only the directories a change touches** ([#568](https://github.com/radiosilence/koan/pull/568)), ignores events that cannot change the index, and keeps its watches in step with the folder list and mounts. It ran a whole-library scan for any event, which on a large library on a spinning disk was a steady stream of walks that found nothing.
+- **A burst of library changes wakes a suspended phone once** ([#565](https://github.com/radiosilence/koan/issues/559)). Each change sent every absent device its own background push, so downloading several albums sent a phone a burst of them; wakes now wait for the library to go quiet and collapse per device.
+
+### Fixed
+
+- **Pause, seek and stop reach the server's Now Playing** ([#570](https://github.com/radiosilence/koan/issues/570)). Only starts and scrobbles were reported, so Navidrome's Now Playing ran on through pauses, ignored seeks and stayed up after a stop.
+- **An unreachable server is waited out** ([#421](https://github.com/radiosilence/koan/issues/421)). Every download spent its retries and failed, and the player skipped through the queue; downloads now wait for the server to answer again.
+- **`koan play --server` signs in with the stored refresh token** ([#173](https://github.com/radiosilence/koan/issues/173)). It sent no credentials, so a server with `auth_enabled` refused every request, reported at startup as "error decoding response body".
+- **The server sign-in fields say what they want on iOS** ([#571](https://github.com/radiosilence/koan/pull/571)). An iOS form shows a field's prompt and not its label, so the fields were labelled only by examples.
+- **koan.rocks no longer renders new pages against an old stylesheet.** The server caches every file for a year as immutable, and the stylesheet lived at a fixed URL, so a browser that had visited before kept the old rules under new markup (the header nav lost its spacing). The stylesheet's URL now carries a hash of its content.
 - **Lyrics cached before a synced copy existed upstream now upgrade to it** ([#215](https://github.com/radiosilence/koan/issues/215)). Any cached copy used to be final, so a track first fetched as plain text never highlighted. A plain copy older than 30 days is checked against LRCLIB again when it is next shown, and kept (with its clock reset) if there is still no synced one. Synced copies are never re-fetched.
 
 ## 0.42.1

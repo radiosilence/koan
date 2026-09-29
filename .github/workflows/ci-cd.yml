@@ -82,6 +82,8 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -113,6 +115,8 @@ jobs:
           toolchain: stable
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - if: env.RUN == 'true'
         run: cargo clippy --all-targets -- -D warnings
 
@@ -145,6 +149,8 @@ jobs:
           toolchain: stable
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - if: env.RUN == 'true'
         run: cargo test --all-targets
       - if: env.RUN == 'true'
@@ -161,6 +167,11 @@ jobs:
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest]
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
     # A matrix job skipped at job level reports one check named after the
     # unexpanded expression -- `Build (${{ matrix.os }})` -- so the per-OS
     # contexts the ruleset requires never appear and the pull request waits
@@ -179,8 +190,21 @@ jobs:
           toolchain: stable
       - if: env.RUN == 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - if: env.RUN == 'true'
         run: cargo build --release
+      # On main the binary goes on to the release jobs, which package this
+      # build rather than compiling the same commit again. Tarred, because an
+      # artifact does not keep the executable bit.
+      - if: env.RUN == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: tar czf koan-build.tar.gz -C target/release koan
+      - if: env.RUN == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-koan-${{ matrix.target }}
+          path: koan-build.tar.gz
+          retention-days: 1
 
   macos-app:
     name: macOS App
@@ -203,12 +227,23 @@ jobs:
         # `cargo build --release -p koan-ffi`. The release job only runs on a
         # release commit, so its own cache was always cold.
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: macos-app
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       # Builds koan-ffi, regenerates the Swift bindings from it, then compiles
       # the app. The bindings are generated, so this catches drift between the
       # Rust surface and the Swift that calls it.
       - run: just macos-build
+      # The release job signs and packages this binary rather than building
+      # the app again.
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: tar czf koan-app-build.tar.gz -C apps/macos/.build/release Koan
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-koan-app
+          path: koan-app-build.tar.gz
+          retention-days: 1
       # The shared sources are meant to build for iOS too, and there is no iOS
       # app yet to notice when they stop. Rides in this job because it needs the
       # same bindings and nothing else -- no Rust iOS build, no simulator.
@@ -231,11 +266,12 @@ jobs:
           toolchain: "1.89"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           key: msrv
-      # koan-ffi is excluded deliberately: it is unpublished, built only as part
-      # of the macOS app, and uniffi's bindgen floors it at 1.91. The MSRV that
-      # matters is the one the published crates promise.
-      - run: cargo check --workspace --all-targets --exclude koan-ffi
+      # koan-ffi and the bindings generator are excluded deliberately: they are
+      # unpublished, built only for the apps, and uniffi floors them at 1.91.
+      # The MSRV that matters is the one the published crates promise.
+      - run: cargo check --workspace --all-targets --exclude koan-ffi --exclude uniffi-bindgen
 
   audit:
     name: Security Audit
@@ -383,7 +419,9 @@ jobs:
     name: Release (${{ matrix.binary_name }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
-    needs: [check-version]
+    # `build` has already compiled the two targets its runners are: those are
+    # packaged from its artifact, and only the other two are built here.
+    needs: [check-version, build]
     if: needs.check-version.outputs.should_release == 'true'
     permissions:
       contents: write
@@ -394,28 +432,44 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
             binary_name: koan-macos-arm64
+            prebuilt: true
           - target: x86_64-apple-darwin
             runner: macos-latest
             binary_name: koan-macos-x86_64
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
             binary_name: koan-linux-x86_64
+            prebuilt: true
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
             binary_name: koan-linux-arm64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: matrix.prebuilt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: build-koan-${{ matrix.target }}
+      - if: matrix.prebuilt
+        run: |
+          mkdir -p target/${{ matrix.target }}/release
+          tar xzf koan-build.tar.gz -C target/${{ matrix.target }}/release
       - name: Install system deps (Linux)
-        if: runner.os == 'Linux'
+        if: ${{ !matrix.prebuilt && runner.os == 'Linux' }}
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+      - if: ${{ !matrix.prebuilt }}
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - if: ${{ !matrix.prebuilt }}
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           key: release-${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }}
+      # The CLI alone: the workspace would also build koan-ffi, which no
+      # binary here contains.
+      - if: ${{ !matrix.prebuilt }}
+        run: cargo build --release --target ${{ matrix.target }} -p koan-cli
       # Developer ID signed and notarised, so the tarball runs from a browser
       # download without clearing quarantine. Pull requests stay ad-hoc signed.
       - name: Sign and notarise (macOS)
@@ -442,7 +496,9 @@ jobs:
     name: Release (kōan.app)
     runs-on: macos-latest
     timeout-minutes: 45
-    needs: [check-version]
+    # Packages the binary the macOS App job built from this commit: signing,
+    # the bundle, the DMG and notarisation are all that is left to do.
+    needs: [check-version, macos-app]
     if: needs.check-version.outputs.should_release == 'true'
     # Signing is present only in this repository; without it (a fork) the app
     # is built ad-hoc signed as before rather than the release failing.
@@ -454,13 +510,13 @@ jobs:
       APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: macos-app
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: build-koan-app
+      - run: |
+          tar xzf koan-app-build.tar.gz -C "$RUNNER_TEMP"
+          echo "KOAN_APP_BINARY=$RUNNER_TEMP/Koan" >> "$GITHUB_ENV"
       # The Developer ID certificate goes into a keychain made for this job
       # alone, with a random password, and codesign is allowed to use its key
       # without a prompt. The identity's full name is read back from it, so the
@@ -486,16 +542,8 @@ jobs:
       # Bundle, check, then package. `macos-verify` inspects the assembled
       # kōan.app, so it has to come after something that assembles one —
       # `macos-dmg` does that itself via `macos-bundle`, which put the check
-      # before the thing it checks.
-      #
-      # `macos-bundle` builds what it needs, so nothing is asked for twice.
-      # The job used to run `macos-ffi` for both slices and a universal
-      # `swift build` itself, and then call `macos-bundle`, which re-entered
-      # `macos-ffi` with no targets — a third full optimised build of koan-ffi
-      # that overwrote the universal archive staged for SwiftPM and forced a
-      # single-arch relink on top of the universal build that had just
-      # finished. The app stayed universal only because the bundle step
-      # preferred a product left over from that earlier build.
+      # before the thing it checks. With KOAN_APP_BINARY set, `macos-build`
+      # takes that binary and compiles nothing.
       - run: just macos-bundle
       - run: just macos-verify arm64
       - run: just macos-dmg
@@ -531,6 +579,8 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
+          # What is shipped, not the builds it was packaged from.
+          pattern: koan-*
       # A re-run finds the tag from the first attempt, and has only the
       # release's missing uploads left to do: skip the tag rather than fail on it.
       - name: Create tag and release
@@ -568,7 +618,11 @@ jobs:
     name: Publish to crates.io
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [fmt, clippy, test, build, create-release, check-version]
+    # Not after the release binaries: crates do not contain them, and waiting
+    # put this behind the slowest notarisation. Publishing is skipped when the
+    # version is already out (below), so a release re-run after a binary fails
+    # passes straight through here.
+    needs: [fmt, clippy, test, build, check-version]
     if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
@@ -580,6 +634,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          key: publish
       - name: Publish crates
         # `cargo publish --workspace` resolves dependency order itself and waits
         # for each crate to appear in the index before publishing its dependents.
@@ -599,6 +657,11 @@ jobs:
             exit 0
           fi
           cargo publish --workspace
+      # `cargo publish` unpacks each crate under target/package, and the cache
+      # step's clean-up of target trips over what it left there. The compiled
+      # dependencies it caches live elsewhere in target.
+      - if: always()
+        run: rm -rf target/package
 
   update-homebrew:
     name: Update Homebrew Tap
@@ -610,14 +673,18 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
+          # What is shipped, not the builds it was packaged from.
+          pattern: koan-*
       - name: Update tap formula
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
+          # A release that leaves Homebrew on the old version has failed, so a
+          # missing token fails the job rather than passing it green.
           if [ -z "$GITHUB_TOKEN" ]; then
-            echo "RELEASE_TOKEN not set, skipping"
-            exit 0
+            echo "::error::RELEASE_TOKEN is not set; the Homebrew tap cannot be updated"
+            exit 1
           fi
           VERSION="${{ needs.check-version.outputs.version }}"
           # Locate rather than assume, and stop if anything is missing.

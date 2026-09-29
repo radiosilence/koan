@@ -885,6 +885,11 @@ pub struct Settings {
     pub radio_lookahead: u32,
     pub radio_batch_size: u32,
     pub radio_discovery_weight: f64,
+
+    /// Open to control from any koan app on the local network.
+    pub devices_discoverable: bool,
+    /// Devices to reach by address where Bonjour does not: `host:port`.
+    pub devices_addresses: Vec<String>,
 }
 
 /// A scanned folder, and what it contributed.
@@ -999,4 +1004,64 @@ impl AccountRole {
 pub struct ServerAccount {
     pub username: String,
     pub role: AccountRole,
+}
+
+/// Another device koan can play on: one on the same account, or one on the
+/// local network.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DeviceInfo {
+    pub id: String,
+    pub name: String,
+    /// `ios`, `macos` or `linux`.
+    pub platform: String,
+    /// Signed in to the same account: reachable from anywhere, through the
+    /// server.
+    pub account: bool,
+    /// Found on the local network.
+    pub nearby: bool,
+    /// Reachable at once. False for a phone iOS has suspended, which a
+    /// command wakes and music reaches as a notification to tap.
+    pub awake: bool,
+    /// Plays from the same library, so music can be handed between the two.
+    pub same_library: bool,
+    pub state: PlayState,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    /// This library's row for what it is playing, when it has one: for its
+    /// artwork and its heart.
+    pub track_id: Option<i64>,
+    pub album_id: Option<i64>,
+    /// As reported; the client runs it on from arrival while `state` is
+    /// playing.
+    pub position_ms: u64,
+    pub duration_ms: u64,
+}
+
+/// What the server this app signs in to turned out to be, and what it and
+/// this device offer. Settings shows it.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct ConnectionInfo {
+    /// OpenSubsonic's `type`: `koan`, `navidrome`. `None` from an older
+    /// server, or before one has answered.
+    pub server_kind: Option<String>,
+    pub server_version: Option<String>,
+    pub open_subsonic: bool,
+    /// Each extension and the versions the server offers, e.g. `koanLink 1`.
+    pub extensions: Vec<ServerExtension>,
+    /// The server can pass commands between this account's devices.
+    pub devices: bool,
+    /// The link to the server is up.
+    pub linked: bool,
+    /// The port this device listens on for others on the network, while it
+    /// is discoverable.
+    pub listening_port: Option<u16>,
+    /// This device, as others see it.
+    pub this_device: String,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct ServerExtension {
+    pub name: String,
+    pub versions: Vec<i64>,
 }

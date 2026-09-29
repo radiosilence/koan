@@ -311,12 +311,14 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // URL off the GraphQL base.
         // Built once and cloned: each build re-read the config from disk.
         // Public by design, so outside the auth layers: each route answers for
-        // one share's own tracks and nothing else. The Host guard still applies.
+        // one share's own tracks, or the one cover a notification's signed
+        // link names, and nothing else. The Host guard still applies.
         let share_routes = crate::share::router(
             pool.clone(),
             cfg.sharing.public_url.clone(),
-            covers,
-        );
+            covers.clone(),
+        )
+        .merge(crate::push::router(pool.clone(), covers));
         let subsonic_merged = crate::subsonic::subsonic_router(pool);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
@@ -704,16 +706,18 @@ pub fn cmd_serve_daemon(
 
 /// Execute a GraphQL query in-process (no HTTP round-trip).
 ///
-/// There is no credential to check, so the caller states the role it wants the
-/// query executed at — see `mcp::mcp_role`.
+/// There is no credential to check, so the caller states who the query runs as
+/// and at what role — see `mcp::mcp_role`.
 pub async fn execute_in_process(
     schema: &KoanSchema,
     query: &str,
     variables: Option<serde_json::Value>,
+    user_id: i64,
     role: koan_core::auth::Role,
 ) -> serde_json::Value {
     let mut request = async_graphql::Request::new(query);
     request = request.data(AuthUser {
+        user_id,
         role,
         ..AuthUser::anonymous_admin()
     });

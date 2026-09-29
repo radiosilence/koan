@@ -39,6 +39,14 @@ final class SearchModel {
     private(set) var tracks: [Track] = []
     private(set) var isSearching = false
 
+    /// A pick across the results, held through new queries — see
+    /// `PlayableSelection`. Unobserved, like the library's.
+    @ObservationIgnored private(set) lazy var selection = PlayableSelection { [unowned self] in
+        artists.map { .artist(id: $0.id, name: $0.name) }
+            + albums.map(Playable.album)
+            + tracks.map(Playable.track)
+    }
+
     private var task: Task<Void, Never>?
     /// Where to put the user back when they clear the field — the whole
     /// location, so a detail view you searched from is still there afterwards.

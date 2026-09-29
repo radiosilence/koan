@@ -85,7 +85,6 @@ macos-ffi:
     export MACOSX_DEPLOYMENT_TARGET=26.0
     cargo build --release -p koan-ffi
     lib=target/release/libkoan_ffi.a
-    dylib=target/release/libkoan_ffi.dylib
     # Stage the archive somewhere holding nothing else, and link against that.
     #
     # `-lkoan_ffi` over a directory containing both a .a and a .dylib picks the
@@ -98,19 +97,35 @@ macos-ffi:
     mkdir -p target/swift-link
     cp "$lib" target/swift-link/libkoan_ffi.a
 
-    # Bindings are generated from the dylib's embedded metadata, not the sources.
-    cargo run --release -q -p koan-ffi --bin uniffi-bindgen -- \
-        generate --library "$dylib" --language swift --out-dir target/uniffi
+    just ffi-bindings "$lib"
+    echo "koan-ffi ready: $lib"
+
+# Generate the Swift bindings from a built koan-ffi library: from the metadata
+# embedded in it, not the sources, so any build of the engine serves, the iOS
+# one included. The generator is a crate of its own and builds nothing else.
+ffi-bindings lib:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo run -q -p uniffi-bindgen -- \
+        generate --library "{{lib}}" --language swift --out-dir target/uniffi
     # These directories hold only generated files, so git doesn't carry them.
     mkdir -p {{app_dir}}/Sources/KoanFFI {{app_dir}}/Sources/koan_ffiFFI
     cp target/uniffi/koan_ffi.swift {{app_dir}}/Sources/KoanFFI/
     cp target/uniffi/koan_ffiFFI.h {{app_dir}}/Sources/koan_ffiFFI/
-    echo "koan-ffi ready: $lib"
 
-# Compile the SwiftUI app.
-macos-build: macos-ffi
+# Compile the SwiftUI app. With KOAN_APP_BINARY naming an app binary built
+# already, that is used and nothing is compiled: the release packages the one
+# CI's macOS App job built from the same commit rather than building it again.
+macos-build:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "${KOAN_APP_BINARY:-}" ]; then
+        mkdir -p {{app_dir}}/.build/release
+        cp "$KOAN_APP_BINARY" {{app_dir}}/.build/release/Koan
+        echo "using the app binary built earlier: $KOAN_APP_BINARY"
+        exit 0
+    fi
+    just macos-ffi
     # SwiftPM links libkoan_ffi.a through a systemLibrary target and linker
     # flags, so it has no idea the library is an input: a Rust change with no
     # Swift change leaves the previous binary in place and the app silently runs
@@ -334,12 +349,28 @@ macos-dev *ARGS: macos-bundle
         {{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app {{ARGS}}
 
 # Package the app as a DMG for release.
+# The window opens with the app, an Applications link to drop it on, and a
+# background drawn by `dmg/background.swift`. dmgbuild lays the window out by
+# writing .DS_Store directly, so this needs no Finder session and runs in CI.
+# It comes from uv where there is one, else pipx (preinstalled on GitHub's
+# macOS runners).
+#
+# Package kōan.app into Koan.dmg.
 macos-dmg: macos-bundle
     #!/usr/bin/env bash
     set -euo pipefail
     out={{app_dir}}/.build/pkg
+    bg={{app_dir}}/.build/dmg
+    mkdir -p "$bg"
+    swift {{app_dir}}/dmg/background.swift {{app_dir}}/Resources/AppIcon.svg site/public/geist-mono.woff2 "$bg"
+    tiffutil -cathidpicheck "$bg/background.png" "$bg/background@2x.png" -out "$bg/background.tiff" >/dev/null
+    if command -v uvx >/dev/null; then dmgbuild=(uvx --from dmgbuild==1.6.7 dmgbuild)
+    else dmgbuild=(pipx run --spec dmgbuild==1.6.7 dmgbuild); fi
     rm -f "$out/Koan.dmg"
-    hdiutil create -volname "koan" -srcfolder "$out/kōan.app" -ov -format UDZO "$out/Koan.dmg"
+    "${dmgbuild[@]}" -s {{app_dir}}/dmg/settings.py \
+        -D app="$out/kōan.app" -D background="$bg/background.tiff" \
+        -D volume_icon={{app_dir}}/Resources/AppIcon.icns \
+        kōan "$out/Koan.dmg"
     echo "built $out/Koan.dmg"
 
 # Needs KOAN_SIGN_IDENTITY (a "Developer ID Application" identity in the
@@ -395,9 +426,11 @@ ios-typecheck: macos-ffi
         -emit-module -module-name KoanFFI -emit-module-path "$mod/KoanFFI.swiftmodule" \
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
         {{app_dir}}/Sources/KoanFFI/koan_ffi.swift
+    # SIL, not just a typecheck: Swift 6's data-race checks run on SIL, and
+    # `-typecheck` stops before them. A race it missed failed the 0.44.0 archive.
     xcrun -sdk iphonesimulator swiftc -target "$target" -swift-version 6 \
         -package-name koan \
-        -typecheck -module-name Koan -I "$mod" \
+        -wmo -emit-sil -o /dev/null -module-name Koan -I "$mod" \
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
         $(find {{app_dir}}/Sources/KoanIOS -name '*.swift') \
         $(find {{app_dir}}/Sources/Koan -name '*.swift' "${find_args[@]}")
@@ -427,6 +460,9 @@ ios-ffi platform="iphonesimulator":
     cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
     rm -rf "target/ios-link/{{platform}}" && mkdir -p "target/ios-link/{{platform}}"
     cp "$out/$triple/release/libkoan_ffi.a" "target/ios-link/{{platform}}/"
+    # From this build rather than the Mac's, so an iOS build needs no second
+    # build of the engine for the host.
+    just ffi-bindings "target/ios-link/{{platform}}/libkoan_ffi.a"
     echo "koan-ffi ready for {{platform}}"
 
 # Assemble koan.app for the iOS simulator.
@@ -516,6 +552,8 @@ ios-bundle: macos-ffi ios-ffi
                 <key>CFBundleURLSchemes</key><array><string>koan</string></array>
             </dict>
         </array>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string></array>
+        <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps on your network to play music on.</string>
     </dict>
     </plist>
     PLIST
@@ -568,8 +606,9 @@ ios-smoke FILE:
 # SwiftPM has no app product, which is fine for a simulator bundle and not for
 # anything that has to be signed for a device. The project is generated from
 # `apps/ios/project.yml` rather than checked in. The team defaults to empty,
-# which builds but cannot sign.
-ios-project build="1": macos-ffi
+# which builds but cannot sign. Links what `ios-ffi` staged and compiles the
+# bindings it generated, so that runs first.
+ios-project build="1":
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p target/ios-project

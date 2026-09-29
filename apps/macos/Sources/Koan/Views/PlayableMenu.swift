@@ -42,6 +42,22 @@ enum Playable {
         if case .playlist = self { false } else { true }
     }
 
+    /// What it is, without the row — enough to tell two apart when artists,
+    /// records and tracks share a page and their ids can collide.
+    struct Key: Hashable, Sendable {
+        let kind: PlayableTransfer.Kind
+        let id: Int64
+    }
+
+    var key: Key {
+        switch self {
+        case .track(let t): Key(kind: .track, id: t.id)
+        case .album(let a): Key(kind: .album, id: a.id)
+        case .artist(let id, _): Key(kind: .artist, id: id)
+        case .playlist(let id, _): Key(kind: .playlist, id: id)
+        }
+    }
+
     func trackIds(using engine: KoanEngine) async -> [Int64] {
         switch self {
         case .track(let t):

@@ -228,14 +228,21 @@ struct RootView: View {
                 ToolbarSpacer(.fixed, placement: .primaryAction)
 
                 ToolbarItem(placement: .primaryAction) {
-                    AlbumSelectionControls(selection: library.selection)
+                    SelectionControls(selection: library.selection)
                 }
             }
 
             // An artist's records are a grid too, and are picked the same way.
             if case .artist = nav.current {
                 ToolbarItem(placement: .primaryAction) {
-                    AlbumSelectionControls(selection: library.artistSelection)
+                    SelectionControls(selection: library.artistSelection)
+                }
+            }
+
+            // Search results are picked the same way, across all three kinds.
+            if nav.section == .searchResults {
+                ToolbarItem(placement: .primaryAction) {
+                    SelectionControls(selection: search.selection)
                 }
             }
 
@@ -439,15 +446,15 @@ private struct TransportOverlay: View {
 
 /// Select, or what to do with what has been selected. The only reader of the
 /// selection outside the tiles, so a tick re-runs this and not the root.
-private struct AlbumSelectionControls: View {
-    let selection: AlbumSelection
+private struct SelectionControls: View {
+    let selection: PlayableSelection
 
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
 
     var body: some View {
         if selection.isActive {
-            let count = selection.ids.count
+            let count = selection.picked.count
             HStack(spacing: 2) {
                 Button {
                     selection.commit(engine: library.engine, player: player, play: true)
@@ -456,7 +463,7 @@ private struct AlbumSelectionControls: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .disabled(count == 0)
-                .help("Play the selected albums, replacing the queue")
+                .help("Play the selection, replacing the queue")
                 Button {
                     selection.commit(engine: library.engine, player: player, play: false)
                 } label: {
@@ -464,7 +471,7 @@ private struct AlbumSelectionControls: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .disabled(count == 0)
-                .help("Add the selected albums to the end of the queue")
+                .help("Add the selection to the end of the queue")
                 Button("Done") { selection.end() }
                     .help("Stop selecting (Esc)")
             }
@@ -474,7 +481,7 @@ private struct AlbumSelectionControls: View {
             } label: {
                 Label("Select", systemImage: Icon.selectAll)
             }
-            .help("Pick several albums to play or queue (⌘-click a cover, or ⌘A)")
+            .help("Pick several to play or queue (⌘-click one, or ⌘A)")
         }
     }
 }

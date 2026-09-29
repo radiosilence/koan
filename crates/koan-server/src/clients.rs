@@ -8,7 +8,8 @@
 
 use std::sync::LazyLock;
 
-use koan_core::remote::link::{LinkCommand, LinkState};
+use koan_core::db::queries::{self, UidKind};
+use koan_core::remote::link::{LinkCommand, LinkDevice, LinkState};
 use outbox::Absent;
 use parking_lot::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
@@ -17,6 +18,8 @@ use tokio::sync::mpsc::UnboundedSender;
 #[derive(Debug, Clone)]
 pub struct ClientInfo {
     pub id: String,
+    /// The device's own id, stable across its reconnects.
+    pub device: String,
     pub name: String,
     pub platform: String,
     pub username: String,
@@ -58,6 +61,23 @@ struct Entry {
     /// The client's own id for itself, so a reconnect replaces its entry.
     device: String,
     tx: UnboundedSender<LinkCommand>,
+    /// Sent the account's other devices whenever one changes. Asked for by
+    /// the client; one that predates them would log each as a bad command.
+    wants_devices: bool,
+}
+
+/// A Live Activity on a phone showing another device, and where to push its
+/// updates.
+struct Activity {
+    username: String,
+    /// The phone showing it.
+    watcher: String,
+    /// The device it shows.
+    target: String,
+    token: String,
+    sandbox: bool,
+    /// What it was last sent, so only a change goes out: Apple budgets these.
+    sent: Option<crate::push::ActivityState>,
 }
 
 /// "When this album is in the library, queue it on my device": a request made
@@ -91,6 +111,7 @@ const ORDER_TTL: i64 = 24 * 60 * 60;
 pub struct Registry {
     entries: Mutex<Vec<Entry>>,
     orders: Mutex<Vec<Order>>,
+    activities: Mutex<Vec<Activity>>,
 }
 
 /// One registry per process: the WebSocket route and the GraphQL schema are
@@ -114,6 +135,7 @@ impl Registry {
         platform: &str,
         device: &str,
         tx: UnboundedSender<LinkCommand>,
+        wants_devices: bool,
     ) -> String {
         let id = uuid::Uuid::now_v7().to_string();
         // What waited for this device while it was away goes down the new
@@ -126,6 +148,7 @@ impl Registry {
         entries.push(Entry {
             info: ClientInfo {
                 id: id.clone(),
+                device: device.to_string(),
                 name: name.to_string(),
                 platform: platform.to_string(),
                 username: username.to_string(),
@@ -138,7 +161,10 @@ impl Registry {
             },
             device: device.to_string(),
             tx,
+            wants_devices,
         });
+        drop(entries);
+        self.announce(username);
         id
     }
 
@@ -152,6 +178,10 @@ impl Registry {
             e.info.state = state;
             e.info.state_at = chrono::Utc::now().timestamp_millis();
             e.info.reports = true;
+            let (username, device) = (e.info.username.clone(), e.device.clone());
+            drop(entries);
+            self.announce(&username);
+            self.update_activities(&username, &device);
         }
     }
 
@@ -161,7 +191,142 @@ impl Registry {
     }
 
     pub fn unregister(&self, id: &str) {
-        self.entries.lock().retain(|e| e.info.id != id);
+        let mut entries = self.entries.lock();
+        let username = entries
+            .iter()
+            .find(|e| e.info.id == id)
+            .map(|e| e.info.username.clone());
+        entries.retain(|e| e.info.id != id);
+        drop(entries);
+        if let Some(username) = username {
+            self.announce(&username);
+        }
+    }
+
+    /// Send each of `username`'s links that asked for them the account's
+    /// other devices: those linked, with what each is doing, and those a push
+    /// can wake.
+    fn announce(&self, username: &str) {
+        let asleep = outbox::push_targets(Some(username));
+        let entries = self.entries.lock();
+        let ours: Vec<&Entry> = entries
+            .iter()
+            .filter(|e| e.info.username == username)
+            .collect();
+        if !ours.iter().any(|e| e.wants_devices) {
+            return;
+        }
+        let mut all: Vec<LinkDevice> = ours
+            .iter()
+            .map(|e| LinkDevice {
+                id: e.device.clone(),
+                name: e.info.name.clone(),
+                platform: e.info.platform.clone(),
+                linked: true,
+                state: e.info.reports.then(|| LinkState {
+                    position_ms: e.info.position_ms(),
+                    ..e.info.state.clone()
+                }),
+            })
+            .collect();
+        for t in asleep {
+            if !all.iter().any(|d| d.id == t.device) {
+                all.push(LinkDevice {
+                    id: t.device,
+                    name: t.name,
+                    platform: t.platform,
+                    linked: false,
+                    state: None,
+                });
+            }
+        }
+        for e in ours.iter().filter(|e| e.wants_devices) {
+            let devices = all.iter().filter(|d| d.id != e.device).cloned().collect();
+            let _ = e.tx.send(LinkCommand::Devices { devices });
+        }
+    }
+
+    /// Relay `command` from one of `username`'s devices to another, `to`.
+    pub fn relay(
+        &self,
+        username: &str,
+        to: &str,
+        command: LinkCommand,
+    ) -> Result<ClientInfo, String> {
+        if matches!(command, LinkCommand::Devices { .. }) {
+            return Err("not a command".into());
+        }
+        self.send(Some(username), Some(to), command)
+    }
+
+    /// Where to push a Live Activity's updates: `watcher` shows `target`.
+    /// `None` ends it.
+    pub fn set_activity(
+        &self,
+        username: &str,
+        watcher: &str,
+        activity: Option<(String, String, bool)>,
+    ) {
+        let mut activities = self.activities.lock();
+        activities.retain(|a| !(a.username == username && a.watcher == watcher));
+        let Some((token, target, sandbox)) = activity else {
+            return;
+        };
+        activities.push(Activity {
+            username: username.to_string(),
+            watcher: watcher.to_string(),
+            target: target.clone(),
+            token,
+            sandbox,
+            sent: None,
+        });
+        drop(activities);
+        self.update_activities(username, &target);
+    }
+
+    /// Push `target`'s state to every Live Activity showing it, where it has
+    /// changed in a way the activity shows.
+    fn update_activities(&self, username: &str, target: &str) {
+        let Some(pusher) = crate::push::pusher() else {
+            return;
+        };
+        let Some(info) = self
+            .list(Some(username))
+            .into_iter()
+            .find(|c| c.device == target)
+        else {
+            return;
+        };
+        let state = crate::push::ActivityState::of(&info);
+        let mut due = Vec::new();
+        for a in self.activities.lock().iter_mut() {
+            if a.username == username
+                && a.target == target
+                && a.sent.as_ref().is_none_or(|s| s.differs(&state))
+            {
+                a.sent = Some(state.clone());
+                due.push((a.token.clone(), a.sandbox, a.watcher.clone()));
+            }
+        }
+        if due.is_empty() {
+            return;
+        }
+        let username = username.to_string();
+        std::thread::spawn(move || {
+            for (token, sandbox, watcher) in due {
+                let push = crate::push::Push::Activity(state.clone());
+                match pusher.send(&token, sandbox, &push) {
+                    crate::push::Outcome::Sent => {}
+                    crate::push::Outcome::Gone => {
+                        log::info!("push: a Live Activity on {watcher} has ended");
+                        registry().set_activity(&username, &watcher, None);
+                    }
+                    crate::push::Outcome::Failed(e) => {
+                        log::warn!("push: Live Activity on {watcher}: {e}");
+                    }
+                }
+            }
+        });
     }
 
     /// Clients `username` may command, newest first; every client for `None`.
@@ -191,7 +356,7 @@ impl Registry {
         let target = match id {
             Some(id) => clients
                 .iter()
-                .find(|c| c.id == id || c.name.eq_ignore_ascii_case(id)),
+                .find(|c| c.id == id || c.device == id || c.name.eq_ignore_ascii_case(id)),
             None if clients.is_empty() => None,
             None => Some(pick(&clients, chrono::Utc::now().timestamp())?),
         };
@@ -250,8 +415,8 @@ impl Registry {
     }
 
     /// Send every order whose album the library now holds, and drop it.
-    /// `find` answers an order with the album's track ids, in order.
-    pub fn fulfil_orders(&self, find: impl Fn(&Order) -> Option<Vec<i64>>) {
+    /// `find` answers an order with the album's track uids, in order.
+    pub fn fulfil_orders(&self, find: impl Fn(&Order) -> Option<Vec<String>>) {
         let now = chrono::Utc::now().timestamp();
         let pending: Vec<Order> = {
             let mut orders = self.orders.lock();
@@ -265,7 +430,7 @@ impl Registry {
             let Some(ids) = find(&order).filter(|ids| !ids.is_empty()) else {
                 continue;
             };
-            let track_ids = ids.iter().map(i64::to_string).collect();
+            let track_ids = ids;
             let cmd = if order.play_next {
                 LinkCommand::PlayNext { track_ids }
             } else {
@@ -335,7 +500,10 @@ pub fn fulfil_from(db_path: &std::path::Path) {
     if edited {
         changed();
     }
-    registry.fulfil_orders(|order| order_tracks(&db.conn, order));
+    registry.fulfil_orders(|order| {
+        let rows = order_tracks(&db.conn, order)?;
+        queries::uids_in_order(&db.conn, UidKind::Track, &rows).ok()
+    });
 }
 
 /// The tracks an order asks for, once its album is in the library: all of
@@ -495,6 +663,7 @@ fn reach_absent(
     };
     let info = ClientInfo {
         id: target.device.clone(),
+        device: target.device.clone(),
         name: target.name.clone(),
         platform: target.platform.clone(),
         username: target.username.clone(),
@@ -514,6 +683,7 @@ fn reach_absent(
             title: format!("{verb} on {}", target.name),
             body: outbox::describe(cmd).unwrap_or_else(|| "From your koan server".into()),
             command: serde_json::to_value(cmd).ok()?,
+            image: cover_track(cmd).and_then(|t| pusher.cover_link(t)),
         },
         None => {
             outbox::queue_for(&target.device, &target.username, cmd);
@@ -522,6 +692,23 @@ fn reach_absent(
     };
     std::thread::spawn(move || deliver_push(pusher, &target, &push));
     Some(Ok(info))
+}
+
+/// The track whose album cover a notification for `cmd` shows.
+fn cover_track(cmd: &LinkCommand) -> Option<i64> {
+    match cmd {
+        LinkCommand::Play {
+            track_ids,
+            start_at,
+            ..
+        } => track_ids
+            .get(*start_at as usize)
+            .or(track_ids.first())?
+            .parse()
+            .ok(),
+        LinkCommand::JumpTo { track_id } => track_id.parse().ok(),
+        _ => None,
+    }
 }
 
 /// Send one push, forgetting a token Apple says is no longer good.
@@ -666,6 +853,7 @@ pub fn changed_if_library_moved(conn: &rusqlite::Connection) {
 /// The server-side record of devices and their waiting commands, in the
 /// library database so it outlives a restart.
 mod outbox {
+    use koan_core::db::queries;
     use koan_core::remote::link::LinkCommand;
 
     /// Dropped undelivered after this long: a device away a month re-syncs
@@ -878,16 +1066,22 @@ mod outbox {
     /// What a playback command would play, for a notification to say:
     /// "Golden Standard — Tony Petersen", or a track and how many follow.
     pub fn describe(cmd: &LinkCommand) -> Option<String> {
-        let ids: Vec<i64> = match cmd {
+        let ids: Vec<&String> = match cmd {
             LinkCommand::Play { track_ids, .. }
             | LinkCommand::Enqueue { track_ids }
-            | LinkCommand::PlayNext { track_ids } => {
-                track_ids.iter().filter_map(|t| t.parse().ok()).collect()
-            }
-            LinkCommand::JumpTo { track_id } => vec![track_id.parse().ok()?],
+            | LinkCommand::PlayNext { track_ids } => track_ids.iter().collect(),
+            LinkCommand::JumpTo { track_id } => vec![track_id],
             _ => return None,
         };
         let db = db()?;
+        let ids: Vec<i64> = ids
+            .into_iter()
+            .filter_map(|t| {
+                queries::resolve_id(&db.conn, queries::UidKind::Track, t)
+                    .ok()
+                    .flatten()
+            })
+            .collect();
         let row = |id: i64| {
             db.conn
                 .query_row(
@@ -957,8 +1151,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("koan.db");
         let db = koan_core::db::connection::Database::open(&path).unwrap();
-        let playlist =
-            koan_core::db::queries::create_playlist(&db.conn, "cyberpunk", None).unwrap();
+        let playlist = koan_core::db::queries::create_playlist(
+            &db.conn,
+            koan_core::db::queries::LOCAL_USER,
+            "cyberpunk",
+            None,
+        )
+        .unwrap();
         let order = Order {
             id: "o1".into(),
             username: None,
@@ -1005,9 +1204,9 @@ mod tests {
         let (tx1, _rx1) = tokio::sync::mpsc::unbounded_channel();
         let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
         let (tx3, _rx3) = tokio::sync::mpsc::unbounded_channel();
-        reg.register("j", "phone", "ios", "dev-1", tx1);
-        let id = reg.register("j", "phone", "ios", "dev-1", tx2);
-        reg.register("someone", "laptop", "macos", "dev-2", tx3);
+        reg.register("j", "phone", "ios", "dev-1", tx1, false);
+        let id = reg.register("j", "phone", "ios", "dev-1", tx2, false);
+        reg.register("someone", "laptop", "macos", "dev-2", tx3, false);
 
         assert_eq!(reg.list(Some("j")).len(), 1);
         assert_eq!(reg.list(None).len(), 2);
@@ -1075,8 +1274,8 @@ mod tests {
         let reg = Registry::default();
         let (tx1, _rx1) = tokio::sync::mpsc::unbounded_channel();
         let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
-        let mac = reg.register("j", "mac", "macos", "dev-1", tx1);
-        let phone = reg.register("j", "phone", "ios", "dev-2", tx2);
+        let mac = reg.register("j", "mac", "macos", "dev-1", tx1, false);
+        let phone = reg.register("j", "phone", "ios", "dev-2", tx2, false);
 
         // Two idle devices: no telling, so the caller is told to ask.
         let err = reg.send(Some("j"), None, LinkCommand::Pause).unwrap_err();
@@ -1102,5 +1301,51 @@ mod tests {
             phone
         );
         let _ = mac;
+    }
+
+    #[test]
+    fn a_device_hears_its_peers_and_commands_reach_them_by_device_id() {
+        let reg = Registry::default();
+        let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
+        let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
+        let (tx3, mut rx3) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("j", "mac", "macos", "dev-mac", tx1, true);
+        let phone = reg.register("j", "phone", "ios", "dev-phone", tx2, true);
+        reg.register("someone", "laptop", "macos", "dev-other", tx3, true);
+
+        reg.report(
+            &phone,
+            LinkState {
+                playing: true,
+                title: Some("Roygbiv".into()),
+                ..Default::default()
+            },
+        );
+        let mut last = None;
+        while let Ok(LinkCommand::Devices { devices }) = rx1.try_recv() {
+            last = Some(devices);
+        }
+        let devices = last.expect("the Mac is told of the phone");
+        assert_eq!(devices.len(), 1, "not itself, not another account's");
+        assert_eq!(devices[0].id, "dev-phone");
+        assert_eq!(
+            devices[0].state.as_ref().and_then(|s| s.title.as_deref()),
+            Some("Roygbiv")
+        );
+        while rx3.try_recv().is_ok() {}
+        assert!(rx3.try_recv().is_err());
+
+        while rx2.try_recv().is_ok() {}
+        reg.relay("j", "dev-phone", LinkCommand::Pause).unwrap();
+        assert_eq!(rx2.try_recv().unwrap(), LinkCommand::Pause);
+        assert!(
+            reg.relay("someone", "dev-phone", LinkCommand::Pause)
+                .is_err(),
+            "another account cannot reach it"
+        );
+        assert!(
+            reg.relay("j", "dev-phone", LinkCommand::Devices { devices: vec![] })
+                .is_err()
+        );
     }
 }

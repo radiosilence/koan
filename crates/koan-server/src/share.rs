@@ -587,8 +587,16 @@ mod tests {
         std::fs::write(&other, b"secret").unwrap();
         let a = queries::upsert_track(&db.conn, &meta(&shared, "Wet <Moss> & Stone", 1)).unwrap();
         let b = queries::upsert_track(&db.conn, &meta(&other, "Unshared", 2)).unwrap();
-        let share =
-            queries::shares::create_share(&db.conn, Slice::TRACKS, &[a], None, 0, None).unwrap();
+        let share = queries::shares::create_share(
+            &db.conn,
+            queries::LOCAL_USER,
+            Slice::TRACKS,
+            &[a],
+            None,
+            0,
+            None,
+        )
+        .unwrap();
         let covers = test_covers(&dir);
         (
             dir,
@@ -664,11 +672,27 @@ mod tests {
     async fn unknown_expired_and_revoked_shares_look_alike() {
         let (dir, app, id, _) = setup();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
-        let expired =
-            queries::shares::create_share(&db.conn, Slice::TRACKS, &[1], None, 0, Some(1)).unwrap();
-        let revoked =
-            queries::shares::create_share(&db.conn, Slice::TRACKS, &[1], None, 0, None).unwrap();
-        queries::shares::delete_share(&db.conn, &revoked.id).unwrap();
+        let expired = queries::shares::create_share(
+            &db.conn,
+            queries::LOCAL_USER,
+            Slice::TRACKS,
+            &[1],
+            None,
+            0,
+            Some(1),
+        )
+        .unwrap();
+        let revoked = queries::shares::create_share(
+            &db.conn,
+            queries::LOCAL_USER,
+            Slice::TRACKS,
+            &[1],
+            None,
+            0,
+            None,
+        )
+        .unwrap();
+        queries::shares::delete_share(&db.conn, None, &revoked.id).unwrap();
         let unknown = "0".repeat(32);
         let mut answers = Vec::new();
         for gone in [&expired.id, &revoked.id, &unknown, &"nonsense".to_string()] {
@@ -741,9 +765,17 @@ mod tests {
     impl Library {
         fn share(&self, target: ShareTarget) -> String {
             let (slice, ids) = resolve_share(&self.db.conn, &target).unwrap();
-            queries::shares::create_share(&self.db.conn, slice, &ids, None, 0, None)
-                .unwrap()
-                .id
+            queries::shares::create_share(
+                &self.db.conn,
+                queries::LOCAL_USER,
+                slice,
+                &ids,
+                None,
+                0,
+                None,
+            )
+            .unwrap()
+            .id
         }
 
         async fn page(&self, id: &str) -> String {

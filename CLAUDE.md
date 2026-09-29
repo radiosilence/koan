@@ -10,6 +10,8 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus a native 
 - **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift. Depends on koan-core only. Not published to crates.io.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
+Plus **tools/uniffi-bindgen** — the Swift bindings generator (`just ffi-bindings`). A crate of its own so that running it builds uniffi and nothing else; it reads the bindings from any built koan-ffi library, the iOS one included.
+
 Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ffi.
 
 Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
@@ -62,6 +64,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - **Decode cursor ≠ UI cursor** — decode thread peeks ahead for gapless without moving the playlist cursor.
 - **One `derive_visible_queue()` per frame** — cached snapshot, all render/mouse ops see consistent state.
 - **Track dedup across sources** — local file + remote entry = one DB row. Match: path → remote_id → content → MusicBrainz recording + release.
+- **Uids, not row ids, leave the database** — every artist, album, track and playlist has a UUIDv7 `uid`, published by Subsonic, GraphQL and the link. Clients syncing from a koan server adopt its uids, so ids mean the same thing on every device. See `db/queries/uids.rs`.
 - **Figment-layered config** — defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. All writes go through `Config::persist()`, which diffs the mutation and routes each changed key by `config::layer_of` — secrets, this machine's paths/hardware/account and volatile UI state to `config.local.toml`, taste to `config.toml`. Comments survive; untouched keys are never rewritten.
 
 ## Git
@@ -136,6 +139,10 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
 | `remote/sync.rs` | Library sync: album list, then songs paged in bulk via empty-query `search3` (per-album `getAlbum` for incremental syncs and servers that cannot), one transaction per page, progress per page |
 | `remote/link.rs` | The standing WebSocket a client keeps to a koan server (`/rest/koanLink`), and the `LinkCommand`s the server sends down it: play, enqueue, pause, skip. Reconnects on its own; ids are resolved to local tracks, syncing first if one is new |
+| `remote/profile.rs` | What the signed-in server is: `ping` + `getOpenSubsonicExtensions`, once per sign-in. Gate koan features on the extension (`koanLink`, `koanDevices`), never on the server's name |
+| `remote/devices.rs` | The devices this one can play on — the account's from the link, the network's from `nearby` — which one the app controls, and getting a command to it |
+| `remote/nearby.rs` | LAN control: listener on `devices.port`, Bonjour via `dns_sd`, a connection per device found or listed by address. Strangers get playback and the queue only (`LinkCommand::allowed_nearby`) |
+| `remote/wire.rs` | Event-driven WebSocket sessions: one `poll` on the socket and a pipe the engine's change signal rings |
 | `remote/wikimedia.rs` | Wikidata items, Wikipedia lead sections and Commons images — where artist bios and photos come from |
 | `remote/queue.rs` | The download queue: worker pool, a priority lane for the track under the cursor, cursor-aware reordering |
 | `remote/downloads.rs` | The download store — what koan is fetching and what it just fetched. One place every front end reads, rather than each deriving its own |
@@ -200,7 +207,7 @@ follows the top of the stack in front — see `TabShell`.
 | `Support/PlayerModel.swift` | What the app *does* to the player — commands, and the little that is genuinely local. Reads everything through the mirror |
 | `Support/Navigator.swift` | Where the app is: one page, the linear history of pages visited, and a cursor. No `NavigationStack` — koan navigates like a browser, any page from any page |
 | `Support/LibraryModel.swift` | Browse state. Holds what the section on screen is showing and nothing else — narrowing and sorting happen in SQL, listings arrive whole. Follows the navigator; never moves it |
-| `Support/AlbumSelection.swift` | Albums picked out of the grid to play or queue together. A mode, because a click on a tile already plays it. Held in tick order, so a pick can span several filters |
+| `Support/PlayableSelection.swift` | Things picked out of a page to play or queue together — the album grid, an artist's records, search results of every kind. A mode, because a click already plays or navigates. Held in tick order, so a pick can span several filters or queries |
 | `Support/CoverArtCache.swift` | Album-keyed art cache: bytes once per record on disk, bitmaps per record and draw size in a bounded `NSCache`. Deliberately off the main actor — see the note there. Each miss is an HTTP round trip on remote libraries |
 | `Support/ImageWork.swift` | The two lanes image work runs in, neither of them the cooperative pool: a wide one for blocking file reads, a bounded one for decoding |
 | `Support/Platform.swift` | The few types AppKit and UIKit disagree about. `KoanApp`, `RootView`, `Hotkeys`, `TextFocus`, `EditCommands`, `MenuShortcuts` and `ShortcutsSheet` are the macOS shell and have no iOS counterpart; everything else builds for both |
@@ -211,9 +218,11 @@ follows the top of the stack in front — see `TabShell`.
 | `Views/PickerSheet.swift` | ⇧⌘K picker: multi-select, add / add-and-play / replace queue |
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |
 | `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |
-| `Views/SettingsView.swift` | Library / Server / Playback / Radio — everything needed to set koan up without a terminal |
+| `Views/SettingsView.swift` | Library / Server / Playback / Radio / Devices — everything needed to set koan up without a terminal |
 | `Views/ActivityIndicator.swift` | The running-task rows at the foot of the sidebar |
 | `Views/FavouriteButton.swift` | The heart, wherever something can be favourited |
+| `Views/DevicePicker.swift` | Play on: pick a device to control, Move here to send the music there. While another device is controlled the engine publishes its state as the app's own — see ARCHITECTURE |
+| `KoanIOS/RemoteActivity.swift` | The Live Activity for a device the phone controls, and the intent its buttons run. Compiled into the widget extension too (`apps/ios/Widgets`) |
 | `Views/HistoryView.swift` | Play history, grouped by day — read-only, select and ⌫ to forget |
 | `Views/PlaylistView.swift` | A playlist, laid out like the queue — grouped or flat, drag reorder, drop to add |
 | `Support/PlaylistsModel.swift` | The playlists and everything done to them. Rows held whole; contents one at a time |
@@ -232,7 +241,7 @@ follows the top of the stack in front — see `TabShell`.
 | `graphql/types.rs` | GraphQL type definitions (GqlArtist, GqlTrack, GqlNowPlaying, etc.) |
 | `graphql/server.rs` | HTTP server (axum), `cmd_serve`, `start_api_background`, daemon mode, timeout/load-shed/panic-catch layers |
 | `subsonic.rs` | Subsonic-compatible REST API (XML/JSON, auth, streaming, cover art), plus koan's `/rest/koanLink` WebSocket |
-| `clients.rs` | Linked koan apps by account, and sending them `LinkCommand`s — what `clients`, `playOnClient` and `controlClient` use |
+| `clients.rs` | Linked koan apps by account, and sending them `LinkCommand`s — what `clients`, `playOnClient` and `controlClient` use. Sends each link the account's other devices as they change, relays commands between them (`koanCommand` too), pushes Live Activity updates |
 | `mcp.rs` | MCP server for Claude Desktop (schema_sdl + graphql tools) |
 | `push.rs` | Apple push notifications to the iOS app: ES256 token auth, HTTP/2 to APNs. A background push wakes a suspended app to link; a play request becomes a notification to tap |
 | `share.rs` | Public share pages and their audio, answering for a share's own tracks only |

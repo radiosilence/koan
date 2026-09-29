@@ -33,7 +33,7 @@ brew install --cask radiosilence/koan/koan-app
 ```
 
 You may have to update brew's trust settings to trust the tap.
-Alternatively you can get `Koan.dmg` from the releases page.
+Alternatively, [download `Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) from the latest release.
 
 CLI/TUI:
 
@@ -258,6 +258,15 @@ just ios-walk     # screenshot every page on a simulator
 ```
 
 Requires iOS 26+.
+
+## Playing on another device
+
+Any kōan app can control another, like AirPlay or Spotify Connect: the phone
+as a remote for the Mac, with a lock-screen Live Activity; the Mac's queue
+moved to the phone on the way out; a heart on the phone for what the Mac is
+playing. Your devices find each other through a kōan server from anywhere;
+anyone's find each other on the local network over Bonjour, and a tailnet by
+address. See [Playing on another device](docs/guide/devices.md).
 
 ## Coming soon
 

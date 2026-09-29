@@ -48,6 +48,9 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     ("apiKeyAuthentication", &[1]),
     ("formPost", &[1]),
     ("songLyrics", &[1]),
+    // koan's own. See `koan_core::remote::profile`.
+    (koan_core::remote::profile::LINK, &[1]),
+    (koan_core::remote::profile::DEVICES, &[1]),
 ];
 const MIN_COVER_SIZE: u32 = 16;
 const MAX_COVER_SIZE: u32 = 2048;
@@ -670,6 +673,17 @@ fn xml_escape(s: &str) -> String {
 struct Caller {
     username: String,
     role: Role,
+    /// Whose favourites, playlists and history the request reads and writes:
+    /// the account's, or the local user's for the shared secret.
+    user_id: i64,
+}
+
+impl Caller {
+    /// Whose shares the caller may list and change: their own, or everyone's
+    /// for an admin.
+    fn share_owner(&self) -> Option<i64> {
+        (self.role != Role::Admin).then_some(self.user_id)
+    }
 }
 
 /// Authenticate a request.
@@ -701,6 +715,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         return Ok(Caller {
             username: user.username,
             role: user.role,
+            user_id: user.id,
         });
     }
 
@@ -708,10 +723,11 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         .u
         .as_deref()
         .ok_or_else(|| SubsonicError::missing_param("u"))?;
-    let caller = |role| {
+    let caller = |(user_id, role)| {
         Ok(Caller {
             username: username.to_owned(),
             role,
+            user_id,
         })
     };
     let shared = |given: &str| {
@@ -730,7 +746,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         {
             let expected = format!("{:x}", md5::compute(format!("{secret}{salt}")));
             return if bool::from(token.as_bytes().ct_eq(expected.as_bytes())) {
-                caller(Role::User)
+                caller((queries::LOCAL_USER, Role::User))
             } else {
                 Err(SubsonicError::wrong_auth())
             };
@@ -739,7 +755,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         // signed in by password since this existed) token auth can't be
         // checked, which 41 tells the client so it can fall back.
         return match state.users.verify_token(username, token, salt) {
-            Some(role) => caller(role),
+            Some(account) => caller(account),
             None if state.users.has_sealed(username) => Err(SubsonicError::wrong_auth()),
             None => Err(SubsonicError::token_auth_unsupported()),
         };
@@ -753,13 +769,13 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         None => p.to_string(),
     };
     if shared(&password) {
-        return caller(Role::User);
+        return caller((queries::LOCAL_USER, Role::User));
     }
-    let role = state
+    let account = state
         .users
         .verify(username, &password)
         .ok_or_else(SubsonicError::wrong_auth)?;
-    caller(role)
+    caller(account)
 }
 
 fn decode_hex(hex: &str) -> Option<String> {
@@ -803,17 +819,38 @@ fn respond_db_as(
     need: Role,
     f: impl FnOnce(&Database, XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
 ) -> Response {
+    respond_db_user(state, auth, need, |db, _, b| f(db, b))
+}
+
+/// As `respond_db_as`, for an endpoint that reads or writes the caller's own
+/// favourites, playlists or history. It is handed the caller's user id.
+fn respond_db_user(
+    state: &AppState,
+    auth: &SubsonicParams,
+    need: Role,
+    f: impl FnOnce(&Database, i64, XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
+) -> Response {
+    respond_db_caller(state, auth, need, |db, caller, b| f(db, caller.user_id, b))
+}
+
+/// As `respond_db_user`, handing over the whole caller.
+fn respond_db_caller(
+    state: &AppState,
+    auth: &SubsonicParams,
+    need: Role,
+    f: impl FnOnce(&Database, &Caller, XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
+) -> Response {
     let json = auth.wants_json();
     let result = validate_auth(auth, state)
         .and_then(|caller| {
             if need == Role::Readonly {
-                Ok(())
+                Ok(caller)
             } else {
-                require_write(caller.role)
+                require_write(caller.role).map(|()| caller)
             }
         })
-        .and_then(|()| state.open_db())
-        .and_then(|db| f(&db, SubsonicResponse::ok(json)));
+        .and_then(|caller| Ok((state.open_db()?, caller)))
+        .and_then(|(db, caller)| f(&db, &caller, SubsonicResponse::ok(json)));
     match result {
         Ok(builder) => builder.build(),
         Err(e) => SubsonicResponse::error(json, &e),
@@ -864,10 +901,11 @@ fn authed_db<'a>(state: &'a AppState, auth: &SubsonicParams) -> Result<Handle<'a
 // Entity ids
 // ---------------------------------------------------------------------------
 
-/// Artists, albums and songs all draw their ids from the same `i64` space, so
-/// any id a client can hand back to a *different* endpoint carries a type
-/// prefix — without one, `getCoverArt?id=5` meaning "album 5" silently served
-/// track 5's art. Navidrome spells these the same way.
+/// koan publishes each artist, album and song by its uid, which no two rows of
+/// any kind share. Clients that synced before uids existed still hold row ids,
+/// which artists, albums and songs number separately: those arrive bare or with
+/// a type prefix, and without one, `getCoverArt?id=5` cannot say whether it
+/// means album 5 or track 5. Navidrome spells the prefixes the same way.
 const ARTIST_PREFIX: &str = "ar-";
 const ALBUM_PREFIX: &str = "al-";
 const SONG_PREFIX: &str = "mf-";
@@ -879,10 +917,36 @@ enum EntityKind {
     Song,
 }
 
-/// Parse `ar-3`, `al-3`, `mf-3`, or a bare `3`.
-///
-/// The ID3 endpoints (`getArtists`, `getAlbum`, `getSong`) still publish bare
-/// ids, so both spellings arrive and both have to resolve.
+impl EntityKind {
+    fn uid_kind(self) -> queries::UidKind {
+        match self {
+            Self::Artist => queries::UidKind::Artist,
+            Self::Album => queries::UidKind::Album,
+            Self::Song => queries::UidKind::Track,
+        }
+    }
+
+    fn noun(self) -> &'static str {
+        match self {
+            Self::Artist => "Artist",
+            Self::Album => "Album",
+            Self::Song => "Song",
+        }
+    }
+}
+
+impl EntityKind {
+    fn of(kind: queries::UidKind) -> Option<Self> {
+        match kind {
+            queries::UidKind::Artist => Some(Self::Artist),
+            queries::UidKind::Album => Some(Self::Album),
+            queries::UidKind::Track => Some(Self::Song),
+            queries::UidKind::Playlist => None,
+        }
+    }
+}
+
+/// Parse a row id: `ar-3`, `al-3`, `mf-3`, or a bare `3`.
 fn parse_entity_id(raw: &str) -> Option<(Option<EntityKind>, i64)> {
     for (prefix, kind) in [
         (ARTIST_PREFIX, EntityKind::Artist),
@@ -896,19 +960,110 @@ fn parse_entity_id(raw: &str) -> Option<(Option<EntityKind>, i64)> {
     raw.parse().ok().map(|id| (None, id))
 }
 
-/// The `id` parameter as a plain row id, ignoring any type prefix.
-fn require_id(raw: Option<&str>) -> Result<i64, SubsonicError> {
-    let raw = raw.ok_or_else(|| SubsonicError::missing_param("id"))?;
-    parse_entity_id(raw)
-        .map(|(_, id)| id)
-        .ok_or_else(|| SubsonicError::bad_param("id"))
+/// The row an id names, with its kind when the id carries one: a uid always
+/// does, a bare row id never.
+fn resolve_entity(db: &Database, raw: &str) -> Result<(Option<EntityKind>, i64), SubsonicError> {
+    if let Some(parsed) = parse_entity_id(raw) {
+        return Ok(parsed);
+    }
+    if !queries::is_uid(raw) {
+        return Err(SubsonicError::bad_param("id"));
+    }
+    queries::find_uid(&db.conn, raw)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+        .and_then(|(kind, id)| Some((Some(EntityKind::of(kind)?), id)))
+        .ok_or_else(|| SubsonicError::not_found("Item"))
 }
 
-/// The `id` parameter with its type prefix, for endpoints that serve more than
-/// one kind of entity.
-fn require_entity(raw: Option<&str>) -> Result<(Option<EntityKind>, i64), SubsonicError> {
+/// The row of `kind` an id names. A uid is looked up among that kind only, so
+/// an album's uid given to `getSong` is not found rather than read as a song;
+/// a row id's prefix is ignored, as it always was.
+fn resolve_as(
+    db: &Database,
+    raw: &str,
+    kind: EntityKind,
+    param: &str,
+) -> Result<i64, SubsonicError> {
+    if let Some((_, id)) = parse_entity_id(raw) {
+        return Ok(id);
+    }
+    if !queries::is_uid(raw) {
+        return Err(SubsonicError::bad_param(param));
+    }
+    queries::resolve_id(&db.conn, kind.uid_kind(), raw)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+        .ok_or_else(|| SubsonicError::not_found(kind.noun()))
+}
+
+/// The `id` parameter as a row of `kind`.
+fn require_id(db: &Database, raw: Option<&str>, kind: EntityKind) -> Result<i64, SubsonicError> {
     let raw = raw.ok_or_else(|| SubsonicError::missing_param("id"))?;
-    parse_entity_id(raw).ok_or_else(|| SubsonicError::bad_param("id"))
+    resolve_as(db, raw, kind, "id")
+}
+
+/// The `id` parameter for endpoints that serve more than one kind of entity.
+fn require_entity(
+    db: &Database,
+    raw: Option<&str>,
+) -> Result<(Option<EntityKind>, i64), SubsonicError> {
+    let raw = raw.ok_or_else(|| SubsonicError::missing_param("id"))?;
+    resolve_entity(db, raw)
+}
+
+/// Song ids from a repeated parameter, skipping any that name no song.
+fn song_ids<'a>(db: &Database, raws: impl Iterator<Item = &'a str>) -> Vec<i64> {
+    raws.filter_map(|raw| resolve_as(db, raw, EntityKind::Song, "songId").ok())
+        .collect()
+}
+
+/// The uid each row in a response is published as, read once per response.
+/// A row without one falls back to its prefixed row id, which is still
+/// accepted everywhere.
+#[derive(Default)]
+struct Uids {
+    artists: HashMap<i64, String>,
+    albums: HashMap<i64, String>,
+    tracks: HashMap<i64, String>,
+}
+
+impl Uids {
+    fn load(
+        db: &Database,
+        artists: impl IntoIterator<Item = i64>,
+        albums: impl IntoIterator<Item = i64>,
+        tracks: impl IntoIterator<Item = i64>,
+    ) -> Result<Self, SubsonicError> {
+        let read = |kind, ids| {
+            queries::uids_for(&db.conn, kind, ids)
+                .map_err(|e| SubsonicError::internal(e.to_string()))
+        };
+        Ok(Self {
+            artists: read(
+                queries::UidKind::Artist,
+                artists.into_iter().collect::<Vec<_>>(),
+            )?,
+            albums: read(queries::UidKind::Album, albums.into_iter().collect())?,
+            tracks: read(queries::UidKind::Track, tracks.into_iter().collect())?,
+        })
+    }
+
+    fn artist(&self, id: i64) -> String {
+        published(&self.artists, ARTIST_PREFIX, id)
+    }
+
+    fn album(&self, id: i64) -> String {
+        published(&self.albums, ALBUM_PREFIX, id)
+    }
+
+    fn track(&self, id: i64) -> String {
+        published(&self.tracks, SONG_PREFIX, id)
+    }
+}
+
+fn published(uids: &HashMap<i64, String>, prefix: &str, id: i64) -> String {
+    uids.get(&id)
+        .cloned()
+        .unwrap_or_else(|| format!("{prefix}{id}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -930,7 +1085,7 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
         .map(codec_to_mime)
         .unwrap_or(("bin", "application/octet-stream"));
     XmlNode::new(tag)
-        .attr("id", &track.id.to_string())
+        .attr("id", &extras.uids.track(track.id))
         .attr("title", &track.title)
         .attr("album", &track.album_title)
         .attr("artist", &track.artist_name)
@@ -943,20 +1098,17 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
         .attr_opt("genre", track.genre.as_deref())
         .attr_opt(
             "albumId",
-            track.album_id.map(|id| id.to_string()).as_deref(),
+            track.album_id.map(|id| extras.uids.album(id)).as_deref(),
         )
         .attr_opt(
             "artistId",
-            track.artist_id.map(|id| id.to_string()).as_deref(),
+            track.artist_id.map(|id| extras.uids.artist(id)).as_deref(),
         )
         .attr_opt(
             "parent",
-            track
-                .album_id
-                .map(|id| format!("{}{}", ALBUM_PREFIX, id))
-                .as_deref(),
+            track.album_id.map(|id| extras.uids.album(id)).as_deref(),
         )
-        .attr("coverArt", &format!("{}{}", SONG_PREFIX, track.id))
+        .attr("coverArt", &extras.uids.track(track.id))
         .attr("type", "music")
         .attr_bool("isDir", false)
         .attr("mediaType", "song")
@@ -978,7 +1130,7 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             "artists",
             track
                 .artist_id
-                .map(|id| artist_ref("artists", id, &track.artist_name)),
+                .map(|id| artist_ref("artists", &extras.uids.artist(id), &track.artist_name)),
         )
 }
 
@@ -991,10 +1143,8 @@ fn genre_node(name: &str) -> XmlNode {
 }
 
 /// An `ArtistID3` inside a list field, with only its required fields.
-fn artist_ref(tag: &str, id: i64, name: &str) -> XmlNode {
-    XmlNode::new(tag)
-        .attr("id", &id.to_string())
-        .attr("name", name)
+fn artist_ref(tag: &str, id: &str, name: &str) -> XmlNode {
+    XmlNode::new(tag).attr("id", id).attr("name", name)
 }
 
 fn year_from_date(date: Option<&str>) -> Option<i64> {
@@ -1035,13 +1185,13 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
         .map(Vec::as_slice)
         .unwrap_or_default();
     XmlNode::new("album")
-        .attr("id", &album.id.to_string())
+        .attr("id", &extras.uids.album(album.id))
         .attr("name", &album.title)
         .attr("title", &album.title)
         .attr("artist", &album.artist_name)
-        .attr("artistId", &album.artist_id.to_string())
-        .attr("parent", &format!("{}{}", ARTIST_PREFIX, album.artist_id))
-        .attr("coverArt", &format!("{}{}", ALBUM_PREFIX, album.id))
+        .attr("artistId", &extras.uids.artist(album.artist_id))
+        .attr("parent", &extras.uids.artist(album.artist_id))
+        .attr("coverArt", &extras.uids.album(album.id))
         .attr_int("songCount", stats.track_count)
         .attr_int("duration", stats.total_duration_ms / 1000)
         .attr_opt("created", album.added_at.as_deref())
@@ -1059,7 +1209,11 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
         .list("genres", genres.iter().map(|g| genre_node(g)))
         .list(
             "artists",
-            [artist_ref("artists", album.artist_id, &album.artist_name)],
+            [artist_ref(
+                "artists",
+                &extras.uids.artist(album.artist_id),
+                &album.artist_name,
+            )],
         )
         .list(
             "recordLabels",
@@ -1074,14 +1228,15 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
 /// caller knows its own way.
 fn artist_id3_node(id: i64, name: &str, extras: &ArtistExtras) -> XmlNode {
     let (mbid, sort_name) = extras
-        .0
+        .names
         .get(&id)
         .map(|(m, s)| (m.as_deref(), s.as_deref()))
         .unwrap_or_default();
+    let uid = extras.uids.artist(id);
     XmlNode::new("artist")
-        .attr("id", &id.to_string())
+        .attr("id", &uid)
         .attr("name", name)
-        .attr("coverArt", &format!("{}{}", ARTIST_PREFIX, id))
+        .attr("coverArt", &uid)
         .attr("musicBrainzId", mbid.unwrap_or_default())
         .attr("sortName", sort_name.unwrap_or_default())
 }
@@ -1116,6 +1271,7 @@ fn by_id<T>(
 /// What `Child` carries beyond `TrackRow`.
 #[derive(Default)]
 struct SongExtras {
+    uids: Uids,
     mbid: HashMap<i64, String>,
     /// Last play, seconds since the epoch.
     played: HashMap<i64, i64>,
@@ -1125,8 +1281,15 @@ fn song_extras<'a>(
     db: &Database,
     tracks: impl IntoIterator<Item = &'a queries::TrackRow>,
 ) -> Result<SongExtras, SubsonicError> {
-    let ids = json_ids(tracks.into_iter().map(|t| t.id));
+    let tracks: Vec<_> = tracks.into_iter().collect();
+    let ids = json_ids(tracks.iter().map(|t| t.id));
     Ok(SongExtras {
+        uids: Uids::load(
+            db,
+            tracks.iter().filter_map(|t| t.artist_id),
+            tracks.iter().filter_map(|t| t.album_id),
+            tracks.iter().map(|t| t.id),
+        )?,
         mbid: by_id(
             db,
             "SELECT id, mbid FROM tracks
@@ -1151,6 +1314,7 @@ fn song_extras<'a>(
 /// What `AlbumID3` carries beyond `AlbumRow`.
 #[derive(Default)]
 struct AlbumExtras {
+    uids: Uids,
     /// MusicBrainz release id and sort name.
     names: HashMap<i64, (Option<String>, Option<String>)>,
     genres: HashMap<i64, Vec<String>>,
@@ -1162,7 +1326,8 @@ fn album_extras<'a>(
     db: &Database,
     albums: impl IntoIterator<Item = &'a queries::AlbumRow>,
 ) -> Result<AlbumExtras, SubsonicError> {
-    let album_ids: Vec<i64> = albums.into_iter().map(|a| a.id).collect();
+    let albums: Vec<_> = albums.into_iter().collect();
+    let album_ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
     let ids = json_ids(album_ids.iter().copied());
     let mut genres: HashMap<i64, Vec<String>> = HashMap::new();
     for (id, genre) in by_id(
@@ -1176,6 +1341,12 @@ fn album_extras<'a>(
         genres.entry(id).or_default().push(genre);
     }
     Ok(AlbumExtras {
+        uids: Uids::load(
+            db,
+            albums.iter().map(|a| a.artist_id),
+            album_ids.iter().copied(),
+            [],
+        )?,
         names: by_id(
             db,
             "SELECT id, mbid, sort_name FROM albums WHERE id IN (SELECT value FROM json_each(?1))",
@@ -1200,15 +1371,21 @@ fn album_extras<'a>(
     })
 }
 
-/// MusicBrainz artist id and sort name, which `ArtistID3` carries.
-struct ArtistExtras(HashMap<i64, (Option<String>, Option<String>)>);
+/// What `ArtistID3` carries beyond a name.
+struct ArtistExtras {
+    uids: Uids,
+    /// MusicBrainz artist id and sort name.
+    names: HashMap<i64, (Option<String>, Option<String>)>,
+}
 
 fn artist_extras(
     db: &Database,
     ids: impl IntoIterator<Item = i64>,
 ) -> Result<ArtistExtras, SubsonicError> {
-    Ok(ArtistExtras(
-        by_id(
+    let ids: Vec<i64> = ids.into_iter().collect();
+    Ok(ArtistExtras {
+        uids: Uids::load(db, ids.iter().copied(), [], [])?,
+        names: by_id(
             db,
             "SELECT id, mbid, sort_name FROM artists WHERE id IN (SELECT value FROM json_each(?1))",
             &json_ids(ids),
@@ -1216,19 +1393,18 @@ fn artist_extras(
         )?
         .into_iter()
         .collect(),
-    ))
+    })
 }
 
-/// An album as a directory `child`, for the file-browse endpoints. The id is
-/// prefixed here because it comes straight back as `getMusicDirectory?id=`.
-fn album_child_node(album: &queries::AlbumRow) -> XmlNode {
+/// An album as a directory `child`, for the file-browse endpoints.
+fn album_child_node(album: &queries::AlbumRow, uids: &Uids) -> XmlNode {
     XmlNode::new("child")
-        .attr("id", &format!("{}{}", ALBUM_PREFIX, album.id))
-        .attr("parent", &format!("{}{}", ARTIST_PREFIX, album.artist_id))
+        .attr("id", &uids.album(album.id))
+        .attr("parent", &uids.artist(album.artist_id))
         .attr("title", &album.title)
         .attr("album", &album.title)
         .attr("artist", &album.artist_name)
-        .attr("coverArt", &format!("{}{}", ALBUM_PREFIX, album.id))
+        .attr("coverArt", &uids.album(album.id))
         .attr_opt_int("year", year_from_date(album.date.as_deref()))
         .attr_bool("isDir", true)
 }
@@ -1455,6 +1631,7 @@ async fn get_indexes(
     offload_response(move || {
         respond_db(&state, &params, |db, b| {
             let (index_map, _) = artist_index(db)?;
+            let uids = Uids::load(db, index_map.values().flatten().map(|a| a.id), [], [])?;
             let last_modified: i64 = db
                 .conn
                 .query_row(
@@ -1475,7 +1652,7 @@ async fn get_indexes(
                 for artist in group {
                     index_node = index_node.child(
                         XmlNode::new("artist")
-                            .attr("id", &format!("{}{}", ARTIST_PREFIX, artist.id))
+                            .attr("id", &uids.artist(artist.id))
                             .attr("name", &artist.name),
                     );
                 }
@@ -1496,23 +1673,24 @@ async fn get_music_directory(
 ) -> Response {
     offload_response(move || {
         respond_db(&state, &params.auth, |db, b| {
-            let (kind, id) = require_entity(params.id.as_deref())?;
+            let (kind, id) = require_entity(db, params.id.as_deref())?;
 
-            // A bare id is ambiguous — artists and albums share the number space —
+            // A bare row id is ambiguous — artists and albums number separately —
             // so try the artist table first and fall through. Clients that arrived
-            // via `getIndexes` always send a prefix and never hit this.
+            // via `getIndexes` send a uid and never hit this.
             if kind != Some(EntityKind::Album) {
                 let artists = queries::all_artists(&db.conn)
                     .map_err(|e| SubsonicError::internal(e.to_string()))?;
                 if let Some(artist) = artists.into_iter().find(|a| a.id == id) {
                     let albums = queries::albums_for_artist(&db.conn, id)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                    let uids = Uids::load(db, [artist.id], albums.iter().map(|a| a.id), [])?;
                     let mut dir = XmlNode::new("directory")
-                        .attr("id", &format!("{}{}", ARTIST_PREFIX, artist.id))
+                        .attr("id", &uids.artist(artist.id))
                         .attr("name", &artist.name)
                         .array_of("child");
                     for album in &albums {
-                        dir = dir.child(album_child_node(album));
+                        dir = dir.child(album_child_node(album, &uids));
                     }
                     return Ok(b.child(dir));
                 }
@@ -1524,9 +1702,10 @@ async fn get_music_directory(
             let tracks = queries::tracks_for_album(&db.conn, id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
+            let uids = Uids::load(db, [album.artist_id], [album.id], [])?;
             let mut dir = XmlNode::new("directory")
-                .attr("id", &format!("{}{}", ALBUM_PREFIX, album.id))
-                .attr("parent", &format!("{}{}", ARTIST_PREFIX, album.artist_id))
+                .attr("id", &uids.album(album.id))
+                .attr("parent", &uids.artist(album.artist_id))
                 .attr("name", &album.title)
                 .array_of("child");
             let extras = song_extras(db, &tracks)?;
@@ -1542,7 +1721,7 @@ async fn get_music_directory(
 async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
     offload_response(move || {
         respond_db(&state, &params.auth, |db, b| {
-            let artist_id = require_id(params.id.as_deref())?;
+            let artist_id = require_id(db, params.id.as_deref(), EntityKind::Artist)?;
 
             let all = queries::all_artists(&db.conn)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -1572,7 +1751,7 @@ async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdP
 async fn get_album(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
     offload_response(move || {
         respond_db(&state, &params.auth, |db, b| {
-            let album_id = require_id(params.id.as_deref())?;
+            let album_id = require_id(db, params.id.as_deref(), EntityKind::Album)?;
 
             let album = queries::get_album(&db.conn, album_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
@@ -1666,7 +1845,7 @@ async fn get_album_list2(
 async fn get_song(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
     offload_response(move || {
         respond_db(&state, &params.auth, |db, b| {
-            let track_id = require_id(params.id.as_deref())?;
+            let track_id = require_id(db, params.id.as_deref(), EntityKind::Song)?;
             let track = queries::get_track_row(&db.conn, track_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Song"))?;
@@ -1686,7 +1865,7 @@ async fn get_lyrics_by_song_id(
 ) -> Response {
     offload_response(move || {
         respond_db(&state, &params.auth, |db, b| {
-            let track_id = require_id(params.id.as_deref())?;
+            let track_id = require_id(db, params.id.as_deref(), EntityKind::Song)?;
             let track = queries::get_track_row(&db.conn, track_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Song"))?;
@@ -1908,7 +2087,7 @@ async fn stream_inner(
     let lookup = state.clone();
     let track = offload(move || {
         let db = authed_db(&lookup, &params.auth)?;
-        let track_id = require_id(params.id.as_deref())?;
+        let track_id = require_id(&db, params.id.as_deref(), EntityKind::Song)?;
         queries::get_track_row(&db.conn, track_id)
             .map_err(|e| SubsonicError::internal(e.to_string()))?
             .ok_or_else(|| SubsonicError::not_found("Track"))
@@ -2132,7 +2311,7 @@ async fn get_cover_art(
 
 fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response, SubsonicError> {
     let db = authed_db(state, &params.auth)?;
-    let (kind, id) = require_entity(params.id.as_deref())?;
+    let (kind, id) = require_entity(&db, params.id.as_deref())?;
     let size = params.size.map(|s| s.clamp(MIN_COVER_SIZE, MAX_COVER_SIZE));
 
     let key = (
@@ -2259,16 +2438,15 @@ async fn unstar(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> 
 }
 
 /// `star` and `unstar`. `id`, `albumId` and `artistId` may each repeat, and
-/// an `id` may name an album or artist by its prefix as well as a song.
+/// an `id` may name an album or artist, by its uid or prefix, as well as a song.
 async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> Response {
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_as(&state, &auth, Role::User, |db, b| {
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let mut targets = Vec::new();
             for raw in params.all("id") {
-                let (kind, id) =
-                    parse_entity_id(raw).ok_or_else(|| SubsonicError::bad_param("id"))?;
+                let (kind, id) = resolve_entity(db, raw)?;
                 targets.push((kind.unwrap_or(EntityKind::Song), id));
             }
             for (key, kind) in [
@@ -2276,16 +2454,22 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
                 ("artistId", EntityKind::Artist),
             ] {
                 for raw in params.all(key) {
-                    let (_, id) =
-                        parse_entity_id(raw).ok_or_else(|| SubsonicError::bad_param(key))?;
-                    targets.push((kind, id));
+                    targets.push((kind, resolve_as(db, raw, kind, key)?));
                 }
             }
             if targets.is_empty() {
                 return Err(SubsonicError::missing_param("id"));
             }
             for (kind, id) in targets {
-                set_star(db, kind, id, star)?;
+                set_star(db, user, kind, id, star)?;
+            }
+            // The caller's other apps show hearts too: a track favourited on
+            // a phone while it plays on the Mac should light up there.
+            if let Ok(caller) = validate_auth(&auth, &state) {
+                crate::clients::registry().broadcast(
+                    Some(&caller.username),
+                    koan_core::remote::link::LinkCommand::Sync { full: false },
+                );
             }
             Ok(b)
         })
@@ -2293,7 +2477,13 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
     .await
 }
 
-fn set_star(db: &Database, kind: EntityKind, id: i64, star: bool) -> Result<(), SubsonicError> {
+fn set_star(
+    db: &Database,
+    user: i64,
+    kind: EntityKind,
+    id: i64,
+    star: bool,
+) -> Result<(), SubsonicError> {
     let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
     match kind {
         EntityKind::Song => {
@@ -2306,21 +2496,24 @@ fn set_star(db: &Database, kind: EntityKind, id: i64, star: bool) -> Result<(), 
             } else {
                 queries::remove_favourite
             };
-            op(&db.conn, path).map_err(internal)?;
-            koan_core::helpers::sync_favourite_to_remote(db, path, star);
+            op(&db.conn, user, path).map_err(internal)?;
+            // The upstream server has one account, and it is the local user's.
+            if queries::auth::is_local_user(&db.conn, user).map_err(internal)? {
+                koan_core::helpers::sync_favourite_to_remote(db, path, star);
+            }
         }
         EntityKind::Album => {
             let album = queries::get_album(&db.conn, id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Album"))?;
-            queries::set_favourite_album(&db.conn, &album.artist_name, &album.title, star)
+            queries::set_favourite_album(&db.conn, user, &album.artist_name, &album.title, star)
                 .map_err(internal)?;
         }
         EntityKind::Artist => {
             let artist = queries::get_artist(&db.conn, id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Artist"))?;
-            queries::set_favourite_artist(&db.conn, &artist.name, star).map_err(internal)?;
+            queries::set_favourite_artist(&db.conn, user, &artist.name, star).map_err(internal)?;
         }
     }
     Ok(())
@@ -2331,8 +2524,8 @@ async fn get_starred2(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
-            let favourites = queries::load_favourites(&db.conn)
+        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
+            let favourites = queries::load_favourites(&db.conn, user)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
             let tracks: Vec<queries::TrackRow> = favourites
@@ -2346,7 +2539,7 @@ async fn get_starred2(
             let extras = song_extras(db, &tracks)?;
 
             let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
-            let mut album_ids: Vec<i64> = queries::favourite_album_id_set(&db.conn)
+            let mut album_ids: Vec<i64> = queries::favourite_album_id_set(&db.conn, user)
                 .map_err(internal)?
                 .into_iter()
                 .collect();
@@ -2355,7 +2548,7 @@ async fn get_starred2(
                 .into_iter()
                 .filter_map(|id| queries::get_album(&db.conn, id).ok().flatten())
                 .collect();
-            let mut artist_ids: Vec<i64> = queries::favourite_artist_id_set(&db.conn)
+            let mut artist_ids: Vec<i64> = queries::favourite_artist_id_set(&db.conn, user)
                 .map_err(internal)?
                 .into_iter()
                 .collect();
@@ -2391,8 +2584,8 @@ async fn scrobble(
     Query(params): Query<ScrobbleParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db_as(&state, &params.auth, Role::User, |db, b| {
-            let track_id = require_id(params.id.as_deref())?;
+        respond_db_user(&state, &params.auth, Role::User, |db, user, b| {
+            let track_id = require_id(db, params.id.as_deref(), EntityKind::Song)?;
 
             queries::get_track_row(&db.conn, track_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
@@ -2417,6 +2610,7 @@ async fn scrobble(
 
             queries::record_play_at(
                 &db.conn,
+                user,
                 track_id,
                 played_at,
                 None,
@@ -2463,7 +2657,7 @@ async fn get_similar_songs2(
 ) -> Response {
     offload_response(move || {
         respond_db(&state, &params.auth, |db, b| {
-            let track_id = require_id(params.id.as_deref())?;
+            let track_id = require_id(db, params.id.as_deref(), EntityKind::Song)?;
             let count = params.count.unwrap_or(50);
 
             let track = queries::get_track_row(&db.conn, track_id)
@@ -2655,8 +2849,8 @@ async fn get_playlists(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
-            let lists = queries::list_playlists(&db.conn)
+        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
+            let lists = queries::list_playlists(&db.conn, user)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
             let mut playlists_node = XmlNode::new("playlists").array_of("playlist");
@@ -2677,7 +2871,7 @@ async fn get_playlists(
 /// The attributes every `<playlist>` carries, list or detail.
 fn playlist_attrs(node: XmlNode, list: &queries::PlaylistRow, username: &str) -> XmlNode {
     let node = node
-        .attr("id", &list.id.to_string())
+        .attr("id", &list.uid)
         .attr("name", &list.name)
         .attr_int("songCount", list.track_count)
         .attr_int("duration", list.duration_ms / 1000)
@@ -2711,11 +2905,33 @@ fn playlist_node(db: &Database, id: i64, owner: &str) -> Result<XmlNode, Subsoni
     Ok(node)
 }
 
+/// Playlist `id` if `user` may see it (their own, or a public one) — and, with
+/// `edit`, change it (their own only).
+fn playlist_for(
+    db: &Database,
+    user: i64,
+    id: i64,
+    edit: bool,
+) -> Result<queries::PlaylistRow, SubsonicError> {
+    let me = queries::auth::resolve_user(&db.conn, user)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+    let list = queries::get_playlist(&db.conn, id)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+        .filter(|p| p.readable_by(me))
+        .ok_or_else(|| SubsonicError::not_found("Playlist"))?;
+    if edit && !list.editable_by(me) {
+        return Err(SubsonicError::not_authorized());
+    }
+    Ok(list)
+}
+
 /// Parse a playlist id. Subsonic ids are opaque strings; koan's are its row ids.
-fn playlist_id(raw: Option<&str>) -> Result<i64, SubsonicError> {
-    raw.ok_or_else(|| SubsonicError::missing_param("id"))?
-        .parse()
-        .map_err(|_| SubsonicError::not_found("Playlist"))
+/// A playlist by its uid, or by the row id clients from before uids hold.
+fn playlist_id(db: &Database, raw: Option<&str>) -> Result<i64, SubsonicError> {
+    let raw = raw.ok_or_else(|| SubsonicError::missing_param("id"))?;
+    queries::resolve_id(&db.conn, queries::UidKind::Playlist, raw)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+        .ok_or_else(|| SubsonicError::not_found("Playlist"))
 }
 
 async fn get_playlist(
@@ -2723,8 +2939,9 @@ async fn get_playlist(
     Query(params): Query<IdParam>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params.auth, |db, b| {
-            let id = playlist_id(params.id.as_deref())?;
+        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
+            let id = playlist_id(db, params.id.as_deref())?;
+            playlist_for(db, user, id, false)?;
             Ok(b.child(playlist_node(db, id, &state.username)?))
         })
     })
@@ -2739,15 +2956,13 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
 
-        respond_db_as(&state, &auth, Role::User, |db, b| {
-            let track_ids: Vec<i64> = params
-                .all("songId")
-                .filter_map(|id| id.parse::<i64>().ok())
-                .collect();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let track_ids = song_ids(db, params.all("songId"));
 
             let id = match params.get("playlistId") {
                 Some(existing) => {
-                    let id = playlist_id(Some(existing))?;
+                    let id = playlist_id(db, Some(existing))?;
+                    playlist_for(db, user, id, true)?;
                     if let Some(name) = params.get("name") {
                         queries::rename_playlist(&db.conn, id, name)
                             .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -2760,7 +2975,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                     let name = params
                         .get("name")
                         .ok_or_else(|| SubsonicError::missing_param("name"))?;
-                    let id = queries::create_playlist(&db.conn, name, None)
+                    let id = queries::create_playlist(&db.conn, user, name, None)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
                     queries::add_tracks(&db.conn, id, &track_ids)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -2785,14 +3000,9 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
 
-        respond_db_as(&state, &auth, Role::User, |db, b| {
-            let id = playlist_id(params.get("playlistId").or_else(|| params.get("id")))?;
-            if queries::get_playlist(&db.conn, id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?
-                .is_none()
-            {
-                return Err(SubsonicError::not_found("Playlist"));
-            }
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let id = playlist_id(db, params.get("playlistId").or_else(|| params.get("id")))?;
+            playlist_for(db, user, id, true)?;
 
             if let Some(name) = params.get("name") {
                 queries::rename_playlist(&db.conn, id, name)
@@ -2817,10 +3027,7 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                     .map_err(|e| SubsonicError::internal(e.to_string()))?;
             }
 
-            let added: Vec<i64> = params
-                .all("songIdToAdd")
-                .filter_map(|s| s.parse::<i64>().ok())
-                .collect();
+            let added = song_ids(db, params.all("songIdToAdd"));
             if !added.is_empty() {
                 queries::add_tracks(&db.conn, id, &added)
                     .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -2837,8 +3044,9 @@ async fn delete_playlist(
     Query(params): Query<IdParam>,
 ) -> Response {
     offload_response(move || {
-        respond_db_as(&state, &params.auth, Role::User, |db, b| {
-            let id = playlist_id(params.id.as_deref())?;
+        respond_db_user(&state, &params.auth, Role::User, |db, user, b| {
+            let id = playlist_id(db, params.id.as_deref())?;
+            playlist_for(db, user, id, true)?;
             match queries::delete_playlist(&db.conn, id) {
                 Ok(true) => Ok(b),
                 Ok(false) => Err(SubsonicError::not_found("Playlist")),
@@ -2973,11 +3181,11 @@ async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_as(&state, &auth, Role::User, |db, b| {
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let base = share_base()?;
             let ids: Vec<_> = params
                 .all("id")
-                .map(|raw| parse_entity_id(raw).ok_or_else(|| SubsonicError::bad_param("id")))
+                .map(|raw| resolve_entity(db, raw))
                 .collect::<Result<_, _>>()?;
             let target = share_target(db, &ids)?;
             let (slice, track_ids) =
@@ -2990,6 +3198,7 @@ async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
             let now = chrono::Utc::now().timestamp();
             let share = queries::shares::create_share(
                 &db.conn,
+                user,
                 slice,
                 &track_ids,
                 params.get("description"),
@@ -3015,10 +3224,10 @@ async fn get_shares(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
+        respond_db_caller(&state, &params, Role::Readonly, |db, caller, b| {
             let base = share_base()?;
             let mut node = XmlNode::new("shares").array_of("share");
-            for share in queries::shares::list_shares(&db.conn)
+            for share in queries::shares::list_shares(&db.conn, caller.share_owner())
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
             {
                 node = node.child(share_node(db, &share, &base, &state.username)?);
@@ -3033,12 +3242,13 @@ async fn update_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_as(&state, &auth, Role::User, |db, b| {
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
             let id = params
                 .get("id")
                 .ok_or_else(|| SubsonicError::missing_param("id"))?;
             let found = queries::shares::update_share(
                 &db.conn,
+                caller.share_owner(),
                 id,
                 params.get("description"),
                 expires_param(&params),
@@ -3058,11 +3268,11 @@ async fn delete_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_as(&state, &auth, Role::User, |db, b| {
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
             let id = params
                 .get("id")
                 .ok_or_else(|| SubsonicError::missing_param("id"))?;
-            let found = queries::shares::delete_share(&db.conn, id)
+            let found = queries::shares::delete_share(&db.conn, caller.share_owner(), id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             if found {
                 Ok(b)
@@ -3288,24 +3498,69 @@ async fn koan_link(
         .get("device")
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
-    ws.on_upgrade(move |socket| link_session(socket, caller.username, name, platform, device))
+    let wants_devices = params.get("devices") == Some("1");
+    ws.on_upgrade(move |socket| {
+        link_session(
+            socket,
+            caller.username,
+            LinkPeer {
+                name,
+                platform,
+                device,
+                wants_devices,
+            },
+        )
+    })
+}
+
+/// Who is at the far end of a link.
+struct LinkPeer {
+    name: String,
+    platform: String,
+    device: String,
+    wants_devices: bool,
+}
+
+/// Hand a link command to another of the caller's devices, in one request:
+/// what a phone has when iOS has taken its link down and a button on its lock
+/// screen is pressed. `to` is the device's id, `command` the command as the
+/// link carries it.
+async fn koan_command(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond(&state, &auth, |caller, b| {
+            let to = params
+                .get("to")
+                .ok_or_else(|| SubsonicError::missing_param("to"))?;
+            let command = params
+                .get("command")
+                .and_then(|c| koan_core::remote::link::parse_command(c).ok())
+                .ok_or_else(|| SubsonicError::bad_param("command"))?;
+            crate::clients::registry()
+                .relay(&caller.username, to, command)
+                .map_err(|e| SubsonicError::not_found(&e))?;
+            Ok(b)
+        })
+    })
+    .await
 }
 
 const LINK_CHECK: Duration = Duration::from_secs(15);
 /// Over twice the client's idle ping interval.
 const LINK_SILENCE: Duration = Duration::from_secs(100);
 
-async fn link_session(
-    mut socket: axum::extract::ws::WebSocket,
-    username: String,
-    name: String,
-    platform: String,
-    device: String,
-) {
+async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String, peer: LinkPeer) {
     use axum::extract::ws::Message;
+    let LinkPeer {
+        name,
+        platform,
+        device,
+        wants_devices,
+    } = peer;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let registry = crate::clients::registry();
-    let id = registry.register(&username, &name, &platform, &device, tx);
+    let id = registry.register(&username, &name, &platform, &device, tx, wants_devices);
     log::info!("link: {name} ({platform}) linked for {username}");
     // A client pings when it has heard nothing for a while. A phone the OS
     // has suspended never closes its socket, so one that goes quiet is gone.
@@ -3337,7 +3592,23 @@ async fn link_session(
                             Ok(LinkReport::Push { token, sandbox }) => {
                                 registry.set_push(&username, &device, &token, sandbox);
                             }
-                            Err(_) => {}
+                            Ok(LinkReport::Command { to, command }) => {
+                                // Relaying may push to a phone, which blocks.
+                                let username = username.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let Err(e) = registry.relay(&username, &to, command) {
+                                        log::info!("link: relay to {to}: {e}");
+                                    }
+                                });
+                            }
+                            Ok(LinkReport::Activity { token, device: shown, sandbox }) => {
+                                let activity = token.zip(shown).map(|(t, d)| (t, d, sandbox));
+                                let (username, device) = (username.clone(), device.clone());
+                                tokio::task::spawn_blocking(move || {
+                                    registry.set_activity(&username, &device, activity);
+                                });
+                            }
+                            Ok(LinkReport::Hello(_)) | Err(_) => {}
                         }
                     }
                 }
@@ -3369,6 +3640,11 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route(
             "/rest/koanDeleteUser",
             get(koan_delete_user).post(koan_delete_user),
+        )
+        .route("/rest/koanCommand", get(koan_command).post(koan_command))
+        .route(
+            "/rest/koanCommand.view",
+            get(koan_command).post(koan_command),
         )
         .route("/rest/ping.view", get(ping).post(ping))
         // Sharing
@@ -3722,6 +3998,12 @@ mod tests {
             album_mbid: None,
             album_added_at: None,
         }
+    }
+
+    /// What the API publishes as this row's id.
+    fn uid_of(state: &AppState, kind: queries::UidKind, id: i64) -> String {
+        let db = Database::open(state.pool.path()).unwrap();
+        queries::uids_for(&db.conn, kind, [id]).unwrap()[&id].clone()
     }
 
     fn seed_data(state: &AppState) {
@@ -4296,12 +4578,15 @@ mod tests {
         seed_data(&state);
 
         let db = Database::open(state.pool.path()).unwrap();
-        let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
+        let track = queries::all_tracks(&db.conn).unwrap()[0].clone();
+        let id = uid_of(&state, queries::UidKind::Track, track.id);
+        let album = uid_of(&state, queries::UidKind::Album, track.album_id.unwrap());
+        let artist = uid_of(&state, queries::UidKind::Artist, track.artist_id.unwrap());
 
         let app = build_test_router(state);
         let (_, body) = get_response(
             app,
-            &format!("/rest/getSong?{}&id={}", auth_query(""), track_id),
+            &format!("/rest/getSong?{}&id={}", auth_query(""), track.id),
         )
         .await;
 
@@ -4317,13 +4602,15 @@ mod tests {
                 concat!(
                     r#"<song id="{id}" title="Test Song" album="Test Album" artist="Test Artist" "#,
                     r#"track="1" discNumber="1" duration="240" bitRate="1411" suffix="flac" "#,
-                    r#"contentType="audio/flac" genre="Rock" albumId="1" artistId="1" "#,
-                    r#"parent="al-1" coverArt="mf-{id}" type="music" isDir="false" "#,
+                    r#"contentType="audio/flac" genre="Rock" albumId="{album}" artistId="{artist}" "#,
+                    r#"parent="{album}" coverArt="{id}" type="music" isDir="false" "#,
                     r#"mediaType="song" bitDepth="16" samplingRate="44100" channelCount="2" "#,
                     r#"displayArtist="Test Artist" displayAlbumArtist="Test Artist" "#,
                     r#"musicBrainzId="">"#
                 ),
-                id = track_id
+                id = id,
+                album = album,
+                artist = artist,
             )
         );
     }
@@ -4353,7 +4640,7 @@ mod tests {
         let db = Database::open(state.pool.path()).unwrap();
         let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
 
-        let app = build_test_router(state);
+        let app = build_test_router(state.clone());
         let (_, body) = get_response(
             app,
             &format!("/rest/getSong?{}&id={}", auth_query("f=json"), track_id),
@@ -4364,7 +4651,8 @@ mod tests {
         let song: StrictSong =
             serde_json::from_value(parsed["subsonic-response"]["song"].clone()).unwrap();
 
-        assert_eq!(song.id, track_id.to_string());
+        let uid = uid_of(&state, queries::UidKind::Track, track_id);
+        assert_eq!(song.id, uid);
         assert_eq!(song.title, "Test Song");
         assert_eq!(song.duration, 240);
         assert_eq!(song.track, 1);
@@ -4372,7 +4660,7 @@ mod tests {
         assert_eq!(song.disc_number, 1);
         assert!(!song.is_dir);
         assert_eq!(song.kind, "music");
-        assert_eq!(song.cover_art, format!("mf-{}", track_id));
+        assert_eq!(song.cover_art, uid);
     }
 
     #[tokio::test]
@@ -4383,7 +4671,7 @@ mod tests {
         let db = Database::open(state.pool.path()).unwrap();
         let album_id = queries::all_albums(&db.conn).unwrap()[0].id;
 
-        let app = build_test_router(state);
+        let app = build_test_router(state.clone());
         let (_, body) = get_response(
             app,
             &format!("/rest/getAlbum?{}&id={}", auth_query("f=json"), album_id),
@@ -4395,7 +4683,10 @@ mod tests {
         assert_eq!(album["songCount"], serde_json::json!(1));
         assert_eq!(album["year"], serde_json::json!(2020));
         assert_eq!(album["isDir"], serde_json::json!(true));
-        assert_eq!(album["coverArt"], format!("al-{}", album_id));
+        assert_eq!(
+            album["coverArt"],
+            uid_of(&state, queries::UidKind::Album, album_id)
+        );
     }
 
     #[tokio::test]
@@ -4548,26 +4839,26 @@ mod tests {
         let artist_id = queries::all_artists(&db.conn).unwrap()[0].id;
         let album_id = queries::all_albums(&db.conn).unwrap()[0].id;
 
+        let artist = uid_of(&state, queries::UidKind::Artist, artist_id);
+        let album = uid_of(&state, queries::UidKind::Album, album_id);
+
         let app = build_test_router(state.clone());
         let (_, body) = get_response(app, &format!("/rest/getIndexes?{}", auth_query(""))).await;
         assert!(body.contains("<indexes"));
-        assert!(body.contains(&format!("id=\"ar-{}\"", artist_id)));
+        assert!(body.contains(&format!("id=\"{artist}\"")));
 
         // Artist directory lists albums.
         let app = build_test_router(state.clone());
         let (_, body) = get_response(
             app,
-            &format!(
-                "/rest/getMusicDirectory?{}&id=ar-{}",
-                auth_query(""),
-                artist_id
-            ),
+            &format!("/rest/getMusicDirectory?{}&id={artist}", auth_query("")),
         )
         .await;
-        assert!(body.contains(&format!("id=\"al-{}\"", album_id)));
+        assert!(body.contains(&format!("id=\"{album}\"")));
         assert!(body.contains("isDir=\"true\""));
 
-        // Album directory lists songs.
+        // Album directory lists songs, by the prefixed row id clients from
+        // before uids hold.
         let app = build_test_router(state);
         let (_, body) = get_response(
             app,
@@ -4646,11 +4937,18 @@ mod tests {
         parsed["subsonic-response"]["searchResult3"].clone()
     }
 
-    fn ids(list: &serde_json::Value) -> Vec<i64> {
+    /// The rows a listing names, by the uids it publishes.
+    fn ids(state: &AppState, list: &serde_json::Value) -> Vec<i64> {
+        let db = Database::open(state.pool.path()).unwrap();
         list.as_array()
             .map(|a| {
                 a.iter()
-                    .map(|v| v["id"].as_str().unwrap().parse().unwrap())
+                    .map(|v| {
+                        queries::find_uid(&db.conn, v["id"].as_str().unwrap())
+                            .unwrap()
+                            .unwrap()
+                            .1
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -4669,9 +4967,9 @@ mod tests {
                 &format!("{query}&songCount=100&albumCount=100&artistCount=100"),
             )
             .await;
-            assert_eq!(ids(&r["song"]), tracks, "{query}");
-            assert_eq!(ids(&r["album"]).len(), 3, "{query}");
-            assert_eq!(ids(&r["artist"]).len(), 1, "{query}");
+            assert_eq!(ids(&state, &r["song"]), tracks, "{query}");
+            assert_eq!(ids(&state, &r["album"]).len(), 3, "{query}");
+            assert_eq!(ids(&state, &r["artist"]).len(), 1, "{query}");
         }
     }
 
@@ -4688,8 +4986,8 @@ mod tests {
                 &format!("query=&songCount=3&songOffset={offset}&albumCount=0&artistCount=0"),
             )
             .await;
-            assert!(ids(&r["album"]).is_empty() && ids(&r["artist"]).is_empty());
-            let page = ids(&r["song"]);
+            assert!(ids(&state, &r["album"]).is_empty() && ids(&state, &r["artist"]).is_empty());
+            let page = ids(&state, &r["song"]);
             if page.is_empty() {
                 break;
             }
@@ -4703,18 +5001,28 @@ mod tests {
         let (state, _dir) = test_state();
         seed_library(&state);
 
-        let all = ids(&search3_json(&state, "query=&albumCount=10&songCount=0").await["album"]);
+        let all = ids(
+            &state,
+            &search3_json(&state, "query=&albumCount=10&songCount=0").await["album"],
+        );
         let second = ids(
+            &state,
             &search3_json(&state, "query=&albumCount=1&albumOffset=1&songCount=0").await["album"],
         );
         assert_eq!(second, vec![all[1]]);
 
         let past = search3_json(&state, "query=&artistCount=5&artistOffset=1&songCount=0").await;
-        assert!(ids(&past["artist"]).is_empty());
+        assert!(ids(&state, &past["artist"]).is_empty());
 
         // A text search pages its songs too.
-        let first = ids(&search3_json(&state, "query=Song&songCount=2").await["song"]);
-        let next = ids(&search3_json(&state, "query=Song&songCount=2&songOffset=2").await["song"]);
+        let first = ids(
+            &state,
+            &search3_json(&state, "query=Song&songCount=2").await["song"],
+        );
+        let next = ids(
+            &state,
+            &search3_json(&state, "query=Song&songCount=2&songOffset=2").await["song"],
+        );
         assert_eq!(first.len(), 2);
         assert_eq!(next.len(), 2);
         assert!(first.iter().all(|id| !next.contains(id)));
@@ -4736,7 +5044,7 @@ mod tests {
             db.conn.execute_batch("COMMIT").unwrap();
         }
         let r = search3_json(&state, "query=&songCount=5000&albumCount=0&artistCount=0").await;
-        assert_eq!(ids(&r["song"]).len(), SEARCH_PAGE_MAX as usize);
+        assert_eq!(ids(&state, &r["song"]).len(), SEARCH_PAGE_MAX as usize);
     }
 
     #[tokio::test]
@@ -4901,7 +5209,10 @@ mod tests {
         assert!(body.contains("status=\"ok\""), "updatePlaylist: {}", body);
 
         let db = Database::open(state.pool.path()).unwrap();
-        let left = queries::playlist_track_ids(&db.conn, id.parse().unwrap()).unwrap();
+        let row = queries::id_for_uid(&db.conn, queries::UidKind::Playlist, &id)
+            .unwrap()
+            .unwrap();
+        let left = queries::playlist_track_ids(&db.conn, row).unwrap();
         assert_eq!(left, vec![c, a]);
     }
 
@@ -4941,7 +5252,10 @@ mod tests {
         )
         .await;
         assert!(body.contains("status=\"ok\""));
-        assert_eq!(queries::play_count(&db.conn, track_id).unwrap(), 0);
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, track_id).unwrap(),
+            0
+        );
     }
 
     #[tokio::test]
@@ -4960,9 +5274,57 @@ mod tests {
         assert!(body.contains("status=\"ok\""), "{}", body);
 
         // The album, not one of its tracks.
-        assert!(queries::load_favourites(&db.conn).unwrap().is_empty());
         assert!(
-            queries::favourite_album_id_set(&db.conn)
+            queries::load_favourites(&db.conn, koan_core::db::queries::LOCAL_USER)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            queries::favourite_album_id_set(&db.conn, koan_core::db::queries::LOCAL_USER)
+                .unwrap()
+                .contains(&album_id)
+        );
+    }
+
+    /// A uid names its row whatever endpoint takes it, and only a row of the
+    /// kind the endpoint serves.
+    #[tokio::test]
+    async fn test_uids_name_one_row_of_one_kind() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let db = Database::open(state.pool.path()).unwrap();
+        let track = queries::all_tracks(&db.conn).unwrap()[0].clone();
+        let album_id = track.album_id.unwrap();
+        let song = uid_of(&state, queries::UidKind::Track, track.id);
+        let album = uid_of(&state, queries::UidKind::Album, album_id);
+
+        let get = |path: String| {
+            let app = build_test_router(state.clone());
+            async move { get_response(app, &path).await.1 }
+        };
+        let body = get(format!("/rest/getSong?{}&id={song}", auth_query(""))).await;
+        assert!(body.contains("title=\"Test Song\""), "{body}");
+        let body = get(format!("/rest/getSong?{}&id={album}", auth_query(""))).await;
+        assert!(body.contains("status=\"failed\""), "{body}");
+        let body = get(format!("/rest/getAlbum?{}&id={album}", auth_query(""))).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = get(format!(
+            "/rest/getSong?{}&id=01a0ee12-0000-7000-8000-000000000000",
+            auth_query("")
+        ))
+        .await;
+        assert!(body.contains("status=\"failed\""), "{body}");
+
+        // `star` takes any kind by `id`: the uid says which.
+        let body = get(format!("/rest/star?{}&id={album}", auth_query(""))).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        assert!(
+            queries::load_favourites(&db.conn, queries::LOCAL_USER)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            queries::favourite_album_id_set(&db.conn, queries::LOCAL_USER)
                 .unwrap()
                 .contains(&album_id)
         );
@@ -5020,12 +5382,12 @@ mod tests {
         .await;
         assert!(body.contains("status=\"ok\""), "{}", body);
         assert!(
-            queries::favourite_album_id_set(&db.conn)
+            queries::favourite_album_id_set(&db.conn, koan_core::db::queries::LOCAL_USER)
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            queries::favourite_artist_id_set(&db.conn)
+            queries::favourite_artist_id_set(&db.conn, koan_core::db::queries::LOCAL_USER)
                 .unwrap()
                 .is_empty()
         );
@@ -5342,7 +5704,13 @@ mod tests {
             .as_array()
             .unwrap();
         let ids: Vec<_> = entries.iter().map(|e| e["id"].clone()).collect();
-        assert_eq!(ids, [first.to_string(), second.to_string()]);
+        assert_eq!(
+            ids,
+            [
+                uid_of(&state, queries::UidKind::Track, first),
+                uid_of(&state, queries::UidKind::Track, second)
+            ]
+        );
     }
 
     #[tokio::test]
@@ -5470,7 +5838,15 @@ mod tests {
         assert_eq!(song["artists"][0]["name"], "Test Artist");
         assert!(song.get("played").is_none());
 
-        queries::record_play_at(&db.conn, track.id, 1_700_000_000, None, "local").unwrap();
+        queries::record_play_at(
+            &db.conn,
+            koan_core::db::queries::LOCAL_USER,
+            track.id,
+            1_700_000_000,
+            None,
+            "local",
+        )
+        .unwrap();
         let r = json_of(
             app(),
             &format!("/rest/getSong?{}&id={}", auth_query("f=json"), track.id),

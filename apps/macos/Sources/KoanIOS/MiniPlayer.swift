@@ -22,7 +22,14 @@ struct MiniPlayer: View {
                 Text(entry?.title ?? "Nothing playing")
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
-                if let artist = entry?.artist, !artist.isEmpty {
+                if player.isControllingAnother {
+                    // Where it is playing matters more than who by, when it
+                    // is not here.
+                    Label(player.controlled?.name ?? "Another device", systemImage: "laptopcomputer.and.iphone")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                        .lineLimit(1)
+                } else if let artist = entry?.artist, !artist.isEmpty {
                     Text(artist)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -32,6 +39,14 @@ struct MiniPlayer: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 0) {
+                // Reachable with nothing playing here, which is when a phone
+                // is most likely to be wanted as a remote.
+                if player.hasOtherDevices || player.isControllingAnother {
+                    DevicePickerButton(labelled: false)
+                        .font(.body)
+                        .frame(width: Self.target, height: Self.target)
+                }
+
                 Button {
                     player.togglePlayPause()
                 } label: {
@@ -48,6 +63,7 @@ struct MiniPlayer: View {
                     .contentShape(Rectangle())
                 }
                 .accessibilityLabel(player.isWaitingForTrack ? "Loading" : player.isPlaying ? "Pause" : "Play")
+                .disabled(entry == nil)
 
                 Button { player.next() } label: {
                     Image(systemName: Icon.next)
@@ -56,9 +72,9 @@ struct MiniPlayer: View {
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Next")
+                .disabled(entry == nil)
             }
             .buttonStyle(.plain)
-            .disabled(entry == nil)
         }
         // The bar is a capsule of fixed height, so its ends are half-circles:
         // a square sleeve needs to sit well in from one to clear the curve,

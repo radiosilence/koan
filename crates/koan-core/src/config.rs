@@ -36,6 +36,7 @@ pub struct Config {
     pub auth: AuthConfig,
     pub sharing: SharingConfig,
     pub push: PushConfig,
+    pub devices: DevicesConfig,
 }
 
 /// Share links this koan serves itself.
@@ -423,6 +424,36 @@ pub struct AuthConfig {
     pub refresh_token: String,
 }
 
+/// Controlling this device from others on the local network, and finding
+/// them. Devices on the same account reach each other through the server
+/// whatever this says.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DevicesConfig {
+    /// Listen on the local network and announce this device there, so any
+    /// koan app on it can see what is playing and control it.
+    pub discoverable: bool,
+    /// The port listened on. Fixed so that an address typed into another
+    /// device (over Tailscale, where nothing is announced) keeps working.
+    pub port: u16,
+    /// Devices to connect to by address, `host:port`: for networks that do
+    /// not carry Bonjour, such as a tailnet.
+    pub addresses: Vec<String>,
+}
+
+impl Default for DevicesConfig {
+    fn default() -> Self {
+        Self {
+            discoverable: true,
+            port: DEVICES_PORT,
+            addresses: Vec::new(),
+        }
+    }
+}
+
+/// "koan" on a phone keypad.
+pub const DEVICES_PORT: u16 = 5626;
+
 /// Radio / infinite play mode configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -494,6 +525,10 @@ pub fn layer_of(path: &str) -> Layer {
         | "subsonic.enabled"
         | "subsonic.port"
         | "subsonic.username"
+        // Whether this machine is open to its network, and where others are.
+        | "devices.discoverable"
+        | "devices.port"
+        | "devices.addresses"
         // Which koan server this machine signs in to.
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.
