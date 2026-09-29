@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.44.1
 
 ### Added
 
@@ -8,7 +8,8 @@
 
 ### Changed
 
-- **CI caches what it builds.** The cache was over GitHub's 10 GB limit, so entries were evicted before they were reused and the TestFlight job compiled everything each time. Pull requests now read the cache without writing to it. The iOS job's cache covers its own target directory and is kept when the archive fails. The container image caches its dependencies in a layer of their own (cargo-chef), which survives source changes. The TestFlight job no longer builds the engine a second time for the Mac to generate the Swift bindings: they are read from the iOS build, by a bindings generator that is a crate of its own (`tools/uniffi-bindgen`) and builds nothing else.
+- **Releases build each thing once.** The binaries CI already builds for every commit on main (the CLI for macOS arm64 and Linux x86_64, and the macOS app) are passed to the release jobs as artifacts, which sign, notarise and package them rather than compiling the same commit again; the crates publish no longer waits behind notarisation. The TestFlight job no longer builds the engine a second time for the Mac to generate the Swift bindings: they are read from the iOS build, by a bindings generator that is a crate of its own (`tools/uniffi-bindgen`) and builds nothing else.
+- **CI caches what it builds.** The cache was over GitHub's 10 GB limit, so entries were evicted before they were reused and the TestFlight job compiled everything each time. Pull requests now read the cache without writing to it. The iOS job's cache covers its own target directory and is kept when the archive fails. The container image caches its dependencies in a layer of their own (cargo-chef), which survives source changes.
 
 ### Fixed
 

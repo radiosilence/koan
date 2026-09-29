@@ -113,10 +113,19 @@ ffi-bindings lib:
     cp target/uniffi/koan_ffi.swift {{app_dir}}/Sources/KoanFFI/
     cp target/uniffi/koan_ffiFFI.h {{app_dir}}/Sources/koan_ffiFFI/
 
-# Compile the SwiftUI app.
-macos-build: macos-ffi
+# Compile the SwiftUI app. With KOAN_APP_BINARY naming an app binary built
+# already, that is used and nothing is compiled: the release packages the one
+# CI's macOS App job built from the same commit rather than building it again.
+macos-build:
     #!/usr/bin/env bash
     set -euo pipefail
+    if [ -n "${KOAN_APP_BINARY:-}" ]; then
+        mkdir -p {{app_dir}}/.build/release
+        cp "$KOAN_APP_BINARY" {{app_dir}}/.build/release/Koan
+        echo "using the app binary built earlier: $KOAN_APP_BINARY"
+        exit 0
+    fi
+    just macos-ffi
     # SwiftPM links libkoan_ffi.a through a systemLibrary target and linker
     # flags, so it has no idea the library is an input: a Rust change with no
     # Swift change leaves the previous binary in place and the app silently runs
