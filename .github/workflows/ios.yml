@@ -61,6 +61,30 @@ jobs:
           key="$RUNNER_TEMP/AuthKey.p8"
           printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$key"
           echo "APPLE_API_KEY_PATH=$key" >> "$GITHUB_ENV"
+      # Automatic signing archives with an Apple Development identity, and a
+      # runner has none, so without this Xcode had Apple mint a new
+      # certificate on every run until the account hit its limit and the
+      # archive failed. One certificate, kept as a secret, is found in the
+      # keychain and reused. Kept in 1Password as "Apple Development certificate for CI".
+      - name: Import the Apple Development certificate
+        env:
+          IOS_CERTIFICATE_P12: ${{ secrets.IOS_CERTIFICATE_P12 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+        if: env.IOS_CERTIFICATE_P12 != ''
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 24)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$IOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain" | grep -q "Apple Development" \
+            || { echo "::error::no Apple Development identity in IOS_CERTIFICATE_P12"; exit 1; }
       # A build number has to rise with every upload of a version. The run
       # number cannot: called from CI/CD it is that workflow's, dispatched by
       # hand it is this one's. The time always rises.
