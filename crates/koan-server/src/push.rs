@@ -75,6 +75,8 @@ pub enum Push {
         /// A cover link from `Pusher::cover_link`.
         image: Option<String>,
     },
+    /// Update a Live Activity that shows another device.
+    Activity(ActivityState),
 }
 
 impl Pusher {
@@ -161,12 +163,19 @@ impl Pusher {
             Push::Wake => ("background", "5", 60 * 60),
             // "Play this" an hour late is not what anyone asked for.
             Push::Notify { .. } => ("alert", "10", 10 * 60),
+            // Stale within the minute: the device will have moved on.
+            Push::Activity(_) => ("liveactivity", "10", 60),
+        };
+        // A Live Activity's pushes go to the app's topic with a suffix.
+        let topic = match push {
+            Push::Activity(_) => format!("{}.push-type.liveactivity", self.topic),
+            _ => self.topic.clone(),
         };
         let expiration = unix_now() + expires_in;
         let response = http
             .post(format!("https://{host}/3/device/{token}"))
             .bearer_auth(bearer)
-            .header("apns-topic", &self.topic)
+            .header("apns-topic", topic)
             .header("apns-push-type", kind)
             .header("apns-priority", priority)
             .header("apns-expiration", expiration.to_string())
@@ -201,6 +210,15 @@ impl Pusher {
 /// `aps`, so the app can act on it without asking the server first.
 pub fn payload(push: &Push) -> Value {
     match push {
+        Push::Activity(state) => json!({
+            "aps": {
+                "timestamp": state.at as u64,
+                "event": "update",
+                "content-state": state,
+                // Past this the lock screen dims it: nothing has been heard.
+                "stale-date": state.at as u64 + ACTIVITY_STALE_SECS,
+            },
+        }),
         Push::Wake => json!({ "aps": { "content-available": 1 } }),
         Push::Notify {
             title,
@@ -225,6 +243,61 @@ pub fn payload(push: &Push) -> Value {
             }
             body
         }
+    }
+}
+
+/// What a Live Activity shows of the device it follows. The field names are
+/// the app's `RemoteActivity.ContentState`, which decodes it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityState {
+    pub device: String,
+    pub linked: bool,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub playing: bool,
+    pub position_ms: u64,
+    pub duration_ms: u64,
+    /// When `position_ms` was true, in Unix seconds.
+    pub at: f64,
+}
+
+/// A Live Activity nobody has updated in this long shows as stale.
+const ACTIVITY_STALE_SECS: u64 = 8 * 60 * 60;
+
+impl ActivityState {
+    pub fn of(info: &crate::clients::ClientInfo) -> Self {
+        Self {
+            device: info.name.clone(),
+            linked: true,
+            title: info.state.title.clone(),
+            artist: info.state.artist.clone(),
+            album: info.state.album.clone(),
+            playing: info.state.playing,
+            position_ms: info.position_ms(),
+            duration_ms: info.state.duration_ms,
+            at: chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
+        }
+    }
+
+    /// Whether the activity would show something different from `sent`. A
+    /// playhead moving on time is drawn by the activity itself.
+    pub fn differs(&self, sent: &Self) -> bool {
+        let strip = |s: &Self| Self {
+            position_ms: 0,
+            at: 0.0,
+            ..s.clone()
+        };
+        if strip(self) != strip(sent) {
+            return true;
+        }
+        let expected = if sent.playing {
+            sent.position_ms + ((self.at - sent.at).max(0.0) * 1000.0) as u64
+        } else {
+            sent.position_ms
+        };
+        self.position_ms.abs_diff(expected) > 3000
     }
 }
 

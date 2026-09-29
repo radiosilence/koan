@@ -23,7 +23,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
 
     /// Which of Apple's two gateways issued the token. A development build is
     /// signed for the sandbox; TestFlight and the App Store for production.
-    private static let sandbox: Bool = {
+    static let sandbox: Bool = {
         #if DEBUG
         true
         #else

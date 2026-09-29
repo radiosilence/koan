@@ -51,6 +51,8 @@ targets:
       - path: PrivacyInfo.xcprivacy
     dependencies:
       - target: KoanFFI
+      # The Live Activity for another device this phone controls.
+      - target: KoanWidgets
       - target: NotificationService
     settings:
       base:
@@ -96,7 +98,12 @@ targets:
         # engine's HTTP is its own sockets rather than URLSession, so App
         # Transport Security does not apply; local network privacy does.
         NSLocalNetworkUsageDescription: >-
-          koan connects to your music server when it is on your local network.
+          koan connects to your music server when it is on your local network,
+          and finds other koan apps on it to play music on.
+        # How koan apps on one network find each other. See `remote::nearby`.
+        NSBonjourServices: [_koan._tcp]
+        # Controlling another device shows it on the lock screen.
+        NSSupportsLiveActivities: true
         # HTTPS and nothing else, which is exempt from export documentation.
         ITSAppUsesNonExemptEncryption: false
         UISupportedInterfaceOrientations~iphone:
@@ -106,6 +113,32 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+
+  # Draws the Live Activity; the intents its buttons run are the app's.
+  KoanWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widgets
+      - path: ../macos/Sources/KoanIOS/RemoteActivity.swift
+    settings:
+      base:
+        PRODUCT_NAME: KoanWidgets
+        PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan.widgets
+        MARKETING_VERSION: ${KOAN_VERSION}
+        CURRENT_PROJECT_VERSION: ${KOAN_BUILD}
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # Nothing here imports the engine.
+        OTHER_SWIFT_FLAGS: -package-name koan
+        SWIFT_INCLUDE_PATHS: ""
+    info:
+      path: ../../target/ios-project/Widgets-Info.plist
+      properties:
+        CFBundleDisplayName: kōan
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
 
   # Attaches the album cover to a notification before it is shown.
   NotificationService:

@@ -3,7 +3,7 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 8;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
@@ -219,24 +219,34 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             fetched_at    INTEGER NOT NULL
         );
 
+        -- Favourites, playlists, play history and shares belong to a user:
+        -- an account's id, or 0 for the implicit user of an install with no
+        -- admin account (see `queries::auth::LOCAL_USER`). 0 names no row in
+        -- `users`, so there is no foreign key; the `users_personal_data`
+        -- trigger does the cascading one would.
         CREATE TABLE IF NOT EXISTS favourites (
-            track_path  TEXT PRIMARY KEY,
-            created_at  TEXT DEFAULT (datetime('now'))
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            track_path  TEXT NOT NULL,
+            created_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, track_path)
         );
 
         -- Albums and artists are favourited by name, not by row id, for the
         -- same reason tracks are favourited by path: a rebuilt index assigns
         -- new ids, and losing every favourite to a reindex is not acceptable.
         CREATE TABLE IF NOT EXISTS favourite_albums (
+            user_id     INTEGER NOT NULL DEFAULT 0,
             artist_name TEXT NOT NULL,
             album_title TEXT NOT NULL,
             created_at  TEXT DEFAULT (datetime('now')),
-            PRIMARY KEY (artist_name, album_title)
+            PRIMARY KEY (user_id, artist_name, album_title)
         );
 
         CREATE TABLE IF NOT EXISTS favourite_artists (
-            artist_name TEXT PRIMARY KEY,
-            created_at  TEXT DEFAULT (datetime('now'))
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            artist_name TEXT NOT NULL,
+            created_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, artist_name)
         );
 
         CREATE TABLE IF NOT EXISTS playback_state (
@@ -422,7 +432,27 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("shares", "kind", "TEXT NOT NULL DEFAULT 'tracks'"),
     ("shares", "subject_id", "INTEGER"),
     ("shares", "start_track_id", "INTEGER"),
+    // Whose it is. See the note above `favourites`.
+    ("play_history", "user_id", "INTEGER NOT NULL DEFAULT 0"),
+    ("playlists", "user_id", "INTEGER NOT NULL DEFAULT 0"),
+    ("shares", "user_id", "INTEGER NOT NULL DEFAULT 0"),
+    // The id every surface publishes; see `queries::uids`. Row ids are
+    // numbered per table and per database, so album 5 and song 5 were the same
+    // id to an endpoint that takes either, and neither meant anything on
+    // another device.
+    ("artists", "uid", "TEXT"),
+    ("albums", "uid", "TEXT"),
+    ("tracks", "uid", "TEXT"),
+    ("playlists", "uid", "TEXT"),
 ];
+
+/// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a
+/// trigger covers every insert, however it is written, where a Rust-side
+/// default would have to be remembered at each one.
+const SQL_UUID7: &str = "(SELECT substr(t, 1, 8) || '-' || substr(t, 9, 4) || '-7' || substr(r, 1, 3)
+        || '-' || substr('89ab', 1 + (random() & 3), 1) || substr(r, 4, 3) || '-' || substr(r, 7, 12)
+    FROM (SELECT printf('%012x', CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)) AS t,
+                 lower(hex(randomblob(9))) AS r))";
 
 fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
@@ -492,6 +522,33 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     )?;
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
+    per_user_favourites(conn)?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_play_history_user ON play_history(user_id, played_at);
+         CREATE INDEX IF NOT EXISTS idx_playlists_user ON playlists(user_id);
+         CREATE TRIGGER IF NOT EXISTS users_personal_data AFTER DELETE ON users BEGIN
+             DELETE FROM favourites WHERE user_id = OLD.id;
+             DELETE FROM favourite_albums WHERE user_id = OLD.id;
+             DELETE FROM favourite_artists WHERE user_id = OLD.id;
+             DELETE FROM play_history WHERE user_id = OLD.id;
+             DELETE FROM playlists WHERE user_id = OLD.id;
+             DELETE FROM shares WHERE user_id = OLD.id;
+         END;",
+    )?;
+    crate::db::queries::auth::adopt_local_rows(conn)?;
+
+    for table in ["artists", "albums", "tracks", "playlists"] {
+        conn.execute_batch(&format!(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_uid ON {table}(uid);
+             CREATE TRIGGER IF NOT EXISTS {table}_uid AFTER INSERT ON {table}
+               WHEN NEW.uid IS NULL
+             BEGIN
+               UPDATE {table} SET uid = {SQL_UUID7} WHERE id = NEW.id;
+             END;"
+        ))?;
+        backfill_uids(conn, table)?;
+    }
+
     // Once: `upsert_track` stores no new zeros, and the sweep reads every track.
     if found < 3 {
         crate::db::queries::tracks::clear_zero_discs(conn)?;
@@ -570,6 +627,87 @@ fn snapshots_to_playlists(conn: &Connection) -> rusqlite::Result<()> {
 
     conn.execute("DROP TABLE queue_snapshots", [])?;
     Ok(())
+}
+
+/// Give every row of `table` that has none a `uid`, in row order so the ids
+/// keep the order the rows were added in. Rows written since the trigger
+/// existed already have one, so after the first run this finds nothing.
+fn backfill_uids(conn: &Connection, table: &str) -> rusqlite::Result<()> {
+    let ids: Vec<i64> = conn
+        .prepare(&format!(
+            "SELECT id FROM {table} WHERE uid IS NULL ORDER BY id"
+        ))?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    if ids.is_empty() {
+        return Ok(());
+    }
+    conn.execute_batch("SAVEPOINT backfill_uids")?;
+    let written = (|| {
+        let mut update = conn.prepare(&format!("UPDATE {table} SET uid = ?1 WHERE id = ?2"))?;
+        for id in ids {
+            update.execute(rusqlite::params![uuid::Uuid::now_v7().to_string(), id])?;
+        }
+        Ok(())
+    })();
+    match written {
+        Ok(()) => conn.execute_batch("RELEASE backfill_uids"),
+        Err(e) => {
+            conn.execute_batch("ROLLBACK TO backfill_uids; RELEASE backfill_uids")?;
+            Err(e)
+        }
+    }
+}
+
+/// Rebuild the favourite tables keyed by user, keeping every row.
+///
+/// They were keyed by what was favourited alone, and SQLite cannot change a
+/// primary key in place. Existing rows come across as the implicit local user;
+/// `adopt_local_rows` then hands them to the first admin, if there is one.
+fn per_user_favourites(conn: &Connection) -> rusqlite::Result<()> {
+    if column_exists(conn, "favourites", "user_id")? {
+        return Ok(());
+    }
+    // A trigger naming a table mid-rebuild fails the rename that completes
+    // it. `apply_migrations` recreates it afterwards.
+    conn.execute_batch(
+        "DROP TRIGGER IF EXISTS users_personal_data;
+         BEGIN;
+         CREATE TABLE favourites_new (
+             user_id     INTEGER NOT NULL DEFAULT 0,
+             track_path  TEXT NOT NULL,
+             created_at  TEXT DEFAULT (datetime('now')),
+             PRIMARY KEY (user_id, track_path)
+         );
+         INSERT INTO favourites_new (track_path, created_at)
+             SELECT track_path, created_at FROM favourites;
+         DROP TABLE favourites;
+         ALTER TABLE favourites_new RENAME TO favourites;
+
+         CREATE TABLE favourite_albums_new (
+             user_id     INTEGER NOT NULL DEFAULT 0,
+             artist_name TEXT NOT NULL,
+             album_title TEXT NOT NULL,
+             created_at  TEXT DEFAULT (datetime('now')),
+             PRIMARY KEY (user_id, artist_name, album_title)
+         );
+         INSERT INTO favourite_albums_new (artist_name, album_title, created_at)
+             SELECT artist_name, album_title, created_at FROM favourite_albums;
+         DROP TABLE favourite_albums;
+         ALTER TABLE favourite_albums_new RENAME TO favourite_albums;
+
+         CREATE TABLE favourite_artists_new (
+             user_id     INTEGER NOT NULL DEFAULT 0,
+             artist_name TEXT NOT NULL,
+             created_at  TEXT DEFAULT (datetime('now')),
+             PRIMARY KEY (user_id, artist_name)
+         );
+         INSERT INTO favourite_artists_new (artist_name, created_at)
+             SELECT artist_name, created_at FROM favourite_artists;
+         DROP TABLE favourite_artists;
+         ALTER TABLE favourite_artists_new RENAME TO favourite_artists;
+         COMMIT;",
+    )
 }
 
 /// Whether `table` exists.
@@ -672,19 +810,22 @@ fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
 
     // Pragma changes are no-ops inside a transaction, so this must bracket it.
     conn.pragma_update(None, "foreign_keys", "off")?;
+    // Recreated by `apply_migrations`; see `per_user_favourites`.
     let rebuild = conn.execute_batch(
-        "BEGIN;
+        "DROP TRIGGER IF EXISTS users_personal_data;
+         BEGIN;
          CREATE TABLE play_history_new (
              id          INTEGER PRIMARY KEY,
              track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
              played_at   INTEGER NOT NULL,
              duration_ms INTEGER,
-             source      TEXT DEFAULT 'local'
+             source      TEXT DEFAULT 'local',
+             user_id     INTEGER NOT NULL DEFAULT 0
          );
          -- Entries whose track has already gone would violate the new
          -- constraint the moment it is enforced. They are unreachable anyway.
-         INSERT INTO play_history_new (id, track_id, played_at, duration_ms, source)
-             SELECT id, track_id, played_at, duration_ms, source FROM play_history
+         INSERT INTO play_history_new (id, track_id, played_at, duration_ms, source, user_id)
+             SELECT id, track_id, played_at, duration_ms, source, user_id FROM play_history
              WHERE track_id IS NULL OR track_id IN (SELECT id FROM tracks);
          DROP TABLE play_history;
          ALTER TABLE play_history_new RENAME TO play_history;
@@ -872,12 +1013,12 @@ mod tests {
                      OR t.album_id IN (SELECT id FROM albums WHERE artist_id = ?1)",
             ),
             (
-                "every favourited track",
-                "SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites)
+                "every track a user favourited",
+                "SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites WHERE user_id = ?1)
                  UNION
-                 SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites)
+                 SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites WHERE user_id = ?1)
                  UNION
-                 SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites)",
+                 SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites WHERE user_id = ?1)",
             ),
             (
                 "tracks under a folder",
@@ -1132,6 +1273,69 @@ mod tests {
     }
 
     #[test]
+    fn rows_from_before_uids_are_given_one_and_new_rows_get_their_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        {
+            let db = Database::open(&path).unwrap();
+            db.conn
+                .execute_batch(
+                    "DROP TRIGGER artists_uid; DROP TRIGGER albums_uid; DROP TRIGGER tracks_uid;
+                     DROP INDEX idx_artists_uid; DROP INDEX idx_albums_uid; DROP INDEX idx_tracks_uid;
+                     ALTER TABLE artists DROP COLUMN uid;
+                     ALTER TABLE albums DROP COLUMN uid;
+                     ALTER TABLE tracks DROP COLUMN uid;
+                     INSERT INTO artists (id, name) VALUES (5, 'Burial');
+                     INSERT INTO albums (id, title, artist_id) VALUES (5, 'Untrue', 5);
+                     INSERT INTO tracks (id, title, album_id, artist_id, path) VALUES
+                         (5, 'Archangel', 5, 5, '/a.flac'), (6, 'Near Dark', 5, 5, '/b.flac');
+                     PRAGMA user_version = 6;",
+                )
+                .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO tracks (title, album_id, artist_id, path) VALUES ('Ghost Hardware', 5, 5, '/c.flac')",
+                [],
+            )
+            .unwrap();
+        let uids: Vec<String> = db
+            .conn
+            .prepare(
+                "SELECT uid FROM artists UNION ALL SELECT uid FROM albums
+                 UNION ALL SELECT uid FROM tracks",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(uids.len(), 5);
+        for uid in &uids {
+            let parsed = uuid::Uuid::parse_str(uid).unwrap();
+            assert_eq!(parsed.get_version_num(), 7, "{uid}");
+            assert_eq!(parsed.to_string(), *uid, "stored hyphenated and lower case");
+        }
+        let distinct: std::collections::HashSet<_> = uids.iter().collect();
+        assert_eq!(distinct.len(), uids.len());
+
+        // Backfilled in row order.
+        let tracks: Vec<String> = db
+            .conn
+            .prepare("SELECT uid FROM tracks WHERE id IN (5, 6) ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let mut sorted = tracks.clone();
+        sorted.sort();
+        assert_eq!(tracks, sorted);
+    }
+
+    #[test]
     fn foreign_keys_are_enforced() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("koan.db");
@@ -1297,5 +1501,77 @@ mod tests {
         let err = create_tables(&conn).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("newer than this build"), "unexpected: {msg}");
+    }
+
+    /// A database from before favourites, playlists, history and shares were
+    /// per user: every row goes to the first admin, and nothing is lost.
+    #[test]
+    fn shared_data_from_before_accounts_had_their_own_goes_to_the_first_admin() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TRIGGER users_personal_data;
+             DROP INDEX idx_play_history_user;
+             DROP INDEX idx_playlists_user;
+             ALTER TABLE play_history DROP COLUMN user_id;
+             ALTER TABLE playlists DROP COLUMN user_id;
+             ALTER TABLE shares DROP COLUMN user_id;
+             DROP TABLE favourites;
+             DROP TABLE favourite_albums;
+             DROP TABLE favourite_artists;
+             CREATE TABLE favourites (
+                 track_path TEXT PRIMARY KEY,
+                 created_at TEXT DEFAULT (datetime('now'))
+             );
+             CREATE TABLE favourite_albums (
+                 artist_name TEXT NOT NULL,
+                 album_title TEXT NOT NULL,
+                 created_at  TEXT DEFAULT (datetime('now')),
+                 PRIMARY KEY (artist_name, album_title)
+             );
+             CREATE TABLE favourite_artists (
+                 artist_name TEXT PRIMARY KEY,
+                 created_at  TEXT DEFAULT (datetime('now'))
+             );
+             INSERT INTO users (id, username, password_hash, role) VALUES
+                 (3, 'mate', 'h', 'user'), (5, 'owner', 'h', 'admin'), (7, 'late', 'h', 'admin');
+             INSERT INTO artists (id, name) VALUES (1, 'A');
+             INSERT INTO tracks (id, artist_id, title, source) VALUES (1, 1, 'T', 'local');
+             INSERT INTO favourites (track_path) VALUES ('/a.flac'), ('/b.flac');
+             INSERT INTO favourite_albums (artist_name, album_title) VALUES ('A', 'B');
+             INSERT INTO favourite_artists (artist_name) VALUES ('A');
+             INSERT INTO play_history (track_id, played_at) VALUES (1, 100);
+             INSERT INTO playlists (name) VALUES ('Mix');
+             INSERT INTO shares (id, created_at) VALUES ('s', 0);
+             PRAGMA user_version = 6;",
+        )
+        .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        for (table, rows) in [
+            ("favourites", 2),
+            ("favourite_albums", 1),
+            ("favourite_artists", 1),
+            ("play_history", 1),
+            ("playlists", 1),
+            ("shares", 1),
+        ] {
+            let owned: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE user_id = 5"),
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(owned, rows, "{table} did not go to the first admin");
+        }
+        // Keyed by user now: the same favourite for someone else is its own row.
+        conn.execute(
+            "INSERT INTO favourites (user_id, track_path) VALUES (3, '/a.flac')",
+            [],
+        )
+        .unwrap();
     }
 }

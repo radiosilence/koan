@@ -20,7 +20,10 @@
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
-use crate::types::{NowPlaying, QueueItem, QueueLock, SyncProgress, Transfer, TransferFigure};
+use crate::types::{
+    ConnectionInfo, DeviceInfo, NowPlaying, QueueItem, QueueLock, SyncProgress, Transfer,
+    TransferFigure,
+};
 
 /// One slice of engine state, whole.
 // Boxing is what clippy wants for the size spread and is not on offer across
@@ -89,11 +92,23 @@ pub enum StateSlice {
     /// hundred times in a first sync of a large library — and a reader that
     /// only draws whether a task is running should not wake for each.
     Sync { progress: Option<SyncProgress> },
+    /// The other devices koan can play on, and which one this app is
+    /// controlling: `None` for this one. While it is another, `Playback`,
+    /// `Playhead` and `Queue` describe that device rather than this one, so
+    /// every page that shows what is playing shows it without knowing.
+    Devices {
+        devices: Vec<DeviceInfo>,
+        target: Option<String>,
+    },
+    /// The server and the network, as far as devices are concerned.
+    Connection { connection: ConnectionInfo },
 }
 
 /// Which slot a slice occupies. One per variant, in apply order.
 #[derive(Clone, Copy)]
 enum Slot {
+    // First, so a client applying a batch knows whose playback follows.
+    Devices,
     Playback,
     Playhead,
     Queue,
@@ -103,9 +118,10 @@ enum Slot {
     Library,
     Tasks,
     Sync,
+    Connection,
 }
 
-const SLOTS: usize = 9;
+const SLOTS: usize = 11;
 
 impl StateSlice {
     fn slot(&self) -> Slot {
@@ -119,6 +135,8 @@ impl StateSlice {
             Self::Library { .. } => Slot::Library,
             Self::Tasks { .. } => Slot::Tasks,
             Self::Sync { .. } => Slot::Sync,
+            Self::Devices { .. } => Slot::Devices,
+            Self::Connection { .. } => Slot::Connection,
         }
     }
 }

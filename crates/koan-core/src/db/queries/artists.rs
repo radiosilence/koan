@@ -32,12 +32,14 @@ pub fn get_or_create_artist(
         .ok();
 
     if let Some(id) = existing {
-        // Update remote_id if we have one and the existing doesn't.
+        // The server's current id wins: one that renumbers its library would
+        // otherwise leave the artist under an id it no longer answers to.
         if let Some(rid) = remote_id {
             conn.execute(
-                "UPDATE artists SET remote_id = ?1 WHERE id = ?2 AND remote_id IS NULL",
+                "UPDATE artists SET remote_id = ?1 WHERE id = ?2 AND remote_id IS NOT ?1",
                 params![rid, id],
             )?;
+            super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
         }
         return Ok(id);
     }
@@ -46,7 +48,11 @@ pub fn get_or_create_artist(
         "INSERT INTO artists (name, remote_id) VALUES (?1, ?2)",
         params![name, remote_id],
     )?;
-    Ok(conn.last_insert_rowid())
+    let id = conn.last_insert_rowid();
+    if let Some(rid) = remote_id {
+        super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
+    }
+    Ok(id)
 }
 
 /// How to order the artist listing.
@@ -80,8 +86,8 @@ impl ArtistOrder {
 pub struct ArtistQuery<'a> {
     /// Case-insensitive substring over the name.
     pub search: Option<&'a str>,
-    /// Favourited artists only.
-    pub favourites_only: bool,
+    /// Only artists this user has favourited.
+    pub favourites_of: Option<i64>,
     /// Albums that count; an artist with none left is not listed, and the
     /// counts are of what is left.
     pub filter: super::albums::AlbumFilter<'a>,
@@ -101,11 +107,11 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
          INNER JOIN albums al ON al.artist_id = a.id
          LEFT JOIN tracks t ON t.album_id = al.id",
     );
-    if q.favourites_only {
-        sql.push_str(" JOIN favourite_artists f ON f.artist_name = a.name");
-    }
-
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(user) = q.favourites_of {
+        params.push(Box::new(super::auth::resolve_user(conn, user)?));
+        sql.push_str(" JOIN favourite_artists f ON f.artist_name = a.name AND f.user_id = ?");
+    }
     let mut wheres: Vec<String> = Vec::new();
     if let Some(query) = q.search {
         params.push(Box::new(format!("%{}%", escape_like(query))));
@@ -252,11 +258,11 @@ mod tests {
     fn favourites_only_lists_what_was_hearted() {
         use crate::db::queries::toggle_favourite_artist;
         let db = stocked_db();
-        toggle_favourite_artist(&db.conn, "Coil").unwrap();
+        toggle_favourite_artist(&db.conn, crate::db::queries::LOCAL_USER, "Coil").unwrap();
         let rows = list_artists(
             &db.conn,
             &ArtistQuery {
-                favourites_only: true,
+                favourites_of: Some(crate::db::queries::LOCAL_USER),
                 ..Default::default()
             },
         )

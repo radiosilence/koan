@@ -502,6 +502,8 @@ ios-bundle: macos-ffi ios-ffi
         <!-- Without this the process is suspended when the screen locks, and
              the audio thread with it. -->
         <key>UIBackgroundModes</key><array><string>audio</string></array>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string></array>
+        <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps on your network to play music on.</string>
     </dict>
     </plist>
     PLIST

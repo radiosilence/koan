@@ -706,16 +706,18 @@ pub fn cmd_serve_daemon(
 
 /// Execute a GraphQL query in-process (no HTTP round-trip).
 ///
-/// There is no credential to check, so the caller states the role it wants the
-/// query executed at — see `mcp::mcp_role`.
+/// There is no credential to check, so the caller states who the query runs as
+/// and at what role — see `mcp::mcp_role`.
 pub async fn execute_in_process(
     schema: &KoanSchema,
     query: &str,
     variables: Option<serde_json::Value>,
+    user_id: i64,
     role: koan_core::auth::Role,
 ) -> serde_json::Value {
     let mut request = async_graphql::Request::new(query);
     request = request.data(AuthUser {
+        user_id,
         role,
         ..AuthUser::anonymous_admin()
     });

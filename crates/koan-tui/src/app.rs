@@ -399,7 +399,10 @@ impl App {
     /// Load favourites from the database.
     pub fn load_favourites(&mut self) {
         if let Ok(db) = koan_core::db::pool::shared().get()
-            && let Ok(favs) = koan_core::db::queries::load_favourites(&db.conn)
+            && let Ok(favs) = koan_core::db::queries::load_favourites(
+                &db.conn,
+                koan_core::db::queries::LOCAL_USER,
+            )
         {
             self.favourites = favs;
         }
@@ -413,7 +416,11 @@ impl App {
     pub fn toggle_favourite(&mut self, path: &std::path::Path) -> bool {
         let path = &koan_core::remote::download::strip_part_suffix(path);
         if let Ok(db) = koan_core::db::pool::shared().get()
-            && let Ok(is_fav) = koan_core::db::queries::toggle_favourite(&db.conn, path)
+            && let Ok(is_fav) = koan_core::db::queries::toggle_favourite(
+                &db.conn,
+                koan_core::db::queries::LOCAL_USER,
+                path,
+            )
         {
             if is_fav {
                 self.favourites.insert(path.to_path_buf());
@@ -1402,6 +1409,7 @@ impl App {
         std::thread::spawn(move || {
             let result = koan_core::helpers::create_share(
                 &db,
+                koan_core::db::queries::LOCAL_USER,
                 &cfg,
                 &koan_core::helpers::ShareTarget::Tracks(track_ids),
                 None,

@@ -222,7 +222,7 @@ impl GraphQLClient {
                     return None;
                 }
                 Some(NowPlayingTrack {
-                    track_id: t["trackId"].as_i64(),
+                    track_id: t["trackId"].as_str().map(String::from),
                     title: t["title"].as_str().unwrap_or("").to_string(),
                     artist: t["artist"].as_str().unwrap_or("").to_string(),
                     album: t["album"].as_str().unwrap_or("").to_string(),
@@ -248,7 +248,7 @@ impl GraphQLClient {
                 arr.iter()
                     .map(|e| QueueEntry {
                         queue_item_id: e["queueItemId"].as_str().unwrap_or("").to_string(),
-                        track_id: e["trackId"].as_i64(),
+                        track_id: e["trackId"].as_str().map(String::from),
                         title: e["title"].as_str().unwrap_or("").to_string(),
                         artist: e["artist"].as_str().unwrap_or("").to_string(),
                         album: e["album"].as_str().unwrap_or("").to_string(),
@@ -281,7 +281,7 @@ impl GraphQLClient {
                     .map(|e| {
                         let n = &e["node"];
                         ArtistResult {
-                            id: n["id"].as_i64().unwrap_or(0),
+                            id: n["id"].as_str().unwrap_or("").to_string(),
                             name: n["name"].as_str().unwrap_or("").to_string(),
                         }
                     })
@@ -290,17 +290,17 @@ impl GraphQLClient {
             .unwrap_or_default())
     }
 
-    pub fn albums_for_artist(&self, artist_id: i64) -> Result<Vec<AlbumResult>, GraphQLError> {
+    pub fn albums_for_artist(&self, artist_id: &str) -> Result<Vec<AlbumResult>, GraphQLError> {
         let data = self.execute(
-            "query($artistId: Int!) { albums(artistId: $artistId) { edges { node { id title artistName date codec } } } }",
+            "query($artistId: ID!) { albums(artistId: $artistId) { edges { node { id title artistName date codec } } } }",
             Some(serde_json::json!({ "artistId": artist_id })),
         )?;
         parse_album_edges(&data["albums"])
     }
 
-    pub fn tracks_for_album(&self, album_id: i64) -> Result<Vec<TrackResult>, GraphQLError> {
+    pub fn tracks_for_album(&self, album_id: &str) -> Result<Vec<TrackResult>, GraphQLError> {
         let data = self.execute(
-            "query($albumId: Int!) { tracks(albumId: $albumId) { edges { node { id title artist album albumId artistId disc trackNumber durationMs codec genre source } } } }",
+            "query($albumId: ID!) { tracks(albumId: $albumId) { edges { node { id title artist album albumId artistId disc trackNumber durationMs codec genre source } } } }",
             Some(serde_json::json!({ "albumId": album_id })),
         )?;
         parse_track_edges(&data["tracks"])
@@ -321,7 +321,7 @@ impl GraphQLClient {
             .map(|arr| {
                 arr.iter()
                     .map(|e| FuzzyMatch {
-                        id: e["id"].as_i64().unwrap_or(0),
+                        id: e["id"].as_str().unwrap_or("").to_string(),
                         name: e["name"].as_str().unwrap_or("").to_string(),
                         rank: e["rank"].as_i64().unwrap_or(0) as i32,
                     })
@@ -373,9 +373,9 @@ impl GraphQLClient {
         Ok(())
     }
 
-    pub fn add_to_queue(&self, track_ids: &[i64]) -> Result<Vec<String>, GraphQLError> {
+    pub fn add_to_queue(&self, track_ids: &[String]) -> Result<Vec<String>, GraphQLError> {
         let data = self.execute(
-            "mutation($trackIds: [Int!]!) { addToQueue(trackIds: $trackIds) { ok addedCount queueItemIds } }",
+            "mutation($trackIds: [ID!]!) { addToQueue(trackIds: $trackIds) { ok addedCount queueItemIds } }",
             Some(serde_json::json!({ "trackIds": track_ids })),
         )?;
         Ok(data["addToQueue"]["queueItemIds"]
@@ -388,9 +388,9 @@ impl GraphQLClient {
             .unwrap_or_default())
     }
 
-    pub fn replace_queue(&self, track_ids: &[i64]) -> Result<Vec<String>, GraphQLError> {
+    pub fn replace_queue(&self, track_ids: &[String]) -> Result<Vec<String>, GraphQLError> {
         let data = self.execute(
-            "mutation($trackIds: [Int!]!) { replaceQueue(trackIds: $trackIds) { ok addedCount queueItemIds } }",
+            "mutation($trackIds: [ID!]!) { replaceQueue(trackIds: $trackIds) { ok addedCount queueItemIds } }",
             Some(serde_json::json!({ "trackIds": track_ids })),
         )?;
         Ok(data["replaceQueue"]["queueItemIds"]
@@ -408,17 +408,17 @@ impl GraphQLClient {
         Ok(())
     }
 
-    pub fn favourite(&self, track_id: i64) -> Result<(), GraphQLError> {
+    pub fn favourite(&self, track_id: &str) -> Result<(), GraphQLError> {
         self.execute(
-            "mutation($trackId: Int!) { favourite(trackId: $trackId) { id } }",
+            "mutation($trackId: ID!) { favourite(trackId: $trackId) { id } }",
             Some(serde_json::json!({ "trackId": track_id })),
         )?;
         Ok(())
     }
 
-    pub fn unfavourite(&self, track_id: i64) -> Result<(), GraphQLError> {
+    pub fn unfavourite(&self, track_id: &str) -> Result<(), GraphQLError> {
         self.execute(
-            "mutation($trackId: Int!) { unfavourite(trackId: $trackId) { id } }",
+            "mutation($trackId: ID!) { unfavourite(trackId: $trackId) { id } }",
             Some(serde_json::json!({ "trackId": track_id })),
         )?;
         Ok(())
@@ -432,9 +432,9 @@ impl GraphQLClient {
         Ok(())
     }
 
-    pub fn play_playlist(&self, id: i64, shuffled: bool) -> Result<(), GraphQLError> {
+    pub fn play_playlist(&self, id: &str, shuffled: bool) -> Result<(), GraphQLError> {
         self.execute(
-            "mutation($id: Int!, $shuffled: Boolean!)              { playPlaylist(id: $id, shuffled: $shuffled) { ok } }",
+            "mutation($id: ID!, $shuffled: Boolean!)              { playPlaylist(id: $id, shuffled: $shuffled) { ok } }",
             Some(serde_json::json!({ "id": id, "shuffled": shuffled })),
         )?;
         Ok(())
@@ -504,9 +504,9 @@ pub struct NowPlaying {
 
 #[derive(Debug, Clone)]
 pub struct NowPlayingTrack {
-    /// Library row id on the server. `None` for a queue entry the server built
+    /// The track's id on the server. `None` for a queue entry the server built
     /// from a file with no database row, which cannot be streamed.
-    pub track_id: Option<i64>,
+    pub track_id: Option<String>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -521,7 +521,7 @@ pub struct NowPlayingTrack {
 #[derive(Debug, Clone)]
 pub struct QueueEntry {
     pub queue_item_id: String,
-    pub track_id: Option<i64>,
+    pub track_id: Option<String>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -534,12 +534,12 @@ pub struct QueueEntry {
 
 #[derive(Debug, Clone)]
 pub struct TrackResult {
-    pub id: i64,
+    pub id: String,
     pub title: String,
     pub artist: String,
     pub album: String,
-    pub album_id: Option<i64>,
-    pub artist_id: Option<i64>,
+    pub album_id: Option<String>,
+    pub artist_id: Option<String>,
     pub disc: Option<i32>,
     pub track_number: Option<i32>,
     pub duration_ms: Option<i64>,
@@ -550,13 +550,13 @@ pub struct TrackResult {
 
 #[derive(Debug, Clone)]
 pub struct ArtistResult {
-    pub id: i64,
+    pub id: String,
     pub name: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct AlbumResult {
-    pub id: i64,
+    pub id: String,
     pub title: String,
     pub artist_name: String,
     pub date: Option<String>,
@@ -565,7 +565,7 @@ pub struct AlbumResult {
 
 #[derive(Debug, Clone)]
 pub struct FuzzyMatch {
-    pub id: i64,
+    pub id: String,
     pub name: String,
     pub rank: i32,
 }
@@ -582,12 +582,12 @@ fn parse_track_edges(connection: &Value) -> Result<Vec<TrackResult>, GraphQLErro
                 .map(|e| {
                     let n = &e["node"];
                     TrackResult {
-                        id: n["id"].as_i64().unwrap_or(0),
+                        id: n["id"].as_str().unwrap_or("").to_string(),
                         title: n["title"].as_str().unwrap_or("").to_string(),
                         artist: n["artist"].as_str().unwrap_or("").to_string(),
                         album: n["album"].as_str().unwrap_or("").to_string(),
-                        album_id: n["albumId"].as_i64(),
-                        artist_id: n["artistId"].as_i64(),
+                        album_id: n["albumId"].as_str().map(String::from),
+                        artist_id: n["artistId"].as_str().map(String::from),
                         disc: n["disc"].as_i64().map(|v| v as i32),
                         track_number: n["trackNumber"].as_i64().map(|v| v as i32),
                         duration_ms: n["durationMs"].as_i64(),
@@ -609,7 +609,7 @@ fn parse_album_edges(connection: &Value) -> Result<Vec<AlbumResult>, GraphQLErro
                 .map(|e| {
                     let n = &e["node"];
                     AlbumResult {
-                        id: n["id"].as_i64().unwrap_or(0),
+                        id: n["id"].as_str().unwrap_or("").to_string(),
                         title: n["title"].as_str().unwrap_or("").to_string(),
                         artist_name: n["artistName"].as_str().unwrap_or("").to_string(),
                         date: n["date"].as_str().map(String::from),

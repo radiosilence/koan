@@ -240,6 +240,7 @@ struct KoanApp: App {
                     // it is a trap the first time the window opens.
                     .environment(state.activity)
                     .environment(state.art)
+                    .environment(state.mirror)
             }
         }
     }

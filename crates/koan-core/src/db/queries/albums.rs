@@ -62,6 +62,9 @@ pub fn get_or_create_album(
              WHERE id = ?6",
             params![codec, date, label, remote_id, added_at, id],
         )?;
+        if let Some(rid) = remote_id {
+            super::adopt_uid(conn, super::UidKind::Album, id, rid)?;
+        }
         return Ok(id);
     }
 
@@ -70,7 +73,11 @@ pub fn get_or_create_album(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at],
     )?;
-    Ok(conn.last_insert_rowid())
+    let id = conn.last_insert_rowid();
+    if let Some(rid) = remote_id {
+        super::adopt_uid(conn, super::UidKind::Album, id, rid)?;
+    }
+    Ok(id)
 }
 
 /// How a listing of albums is ordered.
@@ -187,8 +194,8 @@ pub struct AlbumQuery<'a> {
     /// Case-insensitive substring over the album title and the artist name.
     pub search: Option<&'a str>,
     pub order: AlbumOrder,
-    /// Favourited records only.
-    pub favourites_only: bool,
+    /// Only records this user has favourited.
+    pub favourites_of: Option<i64>,
     pub filter: AlbumFilter<'a>,
     /// `None` for the whole listing. A client that scrolls should page.
     pub limit: Option<u32>,
@@ -211,14 +218,14 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
          FROM albums al
          LEFT JOIN artists a ON al.artist_id = a.id",
     );
-    if q.favourites_only {
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(user) = q.favourites_of {
+        params.push(Box::new(super::auth::resolve_user(conn, user)?));
         sql.push_str(
             " JOIN favourite_albums f
-                ON f.artist_name = a.name AND f.album_title = al.title",
+                ON f.artist_name = a.name AND f.album_title = al.title AND f.user_id = ?",
         );
     }
-
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     let mut wheres: Vec<String> = Vec::new();
     if let Some(id) = q.artist_id {
         params.push(Box::new(id));
@@ -736,11 +743,17 @@ mod tests {
     fn favourites_only_lists_what_was_hearted() {
         use crate::db::queries::toggle_favourite_album;
         let db = stocked_db();
-        toggle_favourite_album(&db.conn, "Coil", "Horse Rotorvator").unwrap();
+        toggle_favourite_album(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            "Coil",
+            "Horse Rotorvator",
+        )
+        .unwrap();
         let rows = list_albums(
             &db.conn,
             &AlbumQuery {
-                favourites_only: true,
+                favourites_of: Some(crate::db::queries::LOCAL_USER),
                 ..Default::default()
             },
         )

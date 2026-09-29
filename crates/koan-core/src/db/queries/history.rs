@@ -5,6 +5,7 @@ use rusqlite::{Connection, params};
 use crate::db::connection::DbError;
 
 use super::TrackRow;
+use super::auth::resolve_user;
 
 /// Where a play came from. `local` is koan playing the track itself; `subsonic`
 /// is another client scrobbling to koan's own Subsonic endpoint.
@@ -18,15 +19,22 @@ pub const SOURCE_SUBSONIC: &str = "subsonic";
 /// yet, and fills it in later via [`set_listened_ms`].
 pub fn record_play_at(
     conn: &Connection,
+    user: i64,
     track_id: i64,
     played_at: i64,
     listened_ms: Option<i64>,
     source: &str,
 ) -> Result<i64, DbError> {
     conn.execute(
-        "INSERT INTO play_history (track_id, played_at, duration_ms, source)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![track_id, played_at, listened_ms, source],
+        "INSERT INTO play_history (user_id, track_id, played_at, duration_ms, source)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            resolve_user(conn, user)?,
+            track_id,
+            played_at,
+            listened_ms,
+            source
+        ],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -34,10 +42,11 @@ pub fn record_play_at(
 /// Record a play that started just now.
 pub fn record_play(
     conn: &Connection,
+    user: i64,
     track_id: i64,
     listened_ms: Option<i64>,
 ) -> Result<i64, DbError> {
-    record_play_at(conn, track_id, now_secs(), listened_ms, SOURCE_LOCAL)
+    record_play_at(conn, user, track_id, now_secs(), listened_ms, SOURCE_LOCAL)
 }
 
 /// Fill in how long an entry was listened to, once that is known.
@@ -57,14 +66,15 @@ pub fn set_listened_ms(
     Ok(())
 }
 
-/// Forget specific plays.
-pub fn delete_plays(conn: &Connection, ids: &[i64]) -> Result<usize, DbError> {
+/// Forget specific plays of `user`'s.
+pub fn delete_plays(conn: &Connection, user: i64, ids: &[i64]) -> Result<usize, DbError> {
+    let user = resolve_user(conn, user)?;
     let tx = conn.unchecked_transaction()?;
     let mut removed = 0;
     {
-        let mut stmt = tx.prepare("DELETE FROM play_history WHERE id = ?1")?;
+        let mut stmt = tx.prepare("DELETE FROM play_history WHERE id = ?1 AND user_id = ?2")?;
         for id in ids {
-            removed += stmt.execute(params![id])?;
+            removed += stmt.execute(params![id, user])?;
         }
     }
     tx.commit()?;
@@ -72,33 +82,36 @@ pub fn delete_plays(conn: &Connection, ids: &[i64]) -> Result<usize, DbError> {
 }
 
 /// Get the last play timestamp for a track, or None if never played.
-pub fn last_played_at(conn: &Connection, track_id: i64) -> Result<Option<i64>, DbError> {
+pub fn last_played_at(conn: &Connection, user: i64, track_id: i64) -> Result<Option<i64>, DbError> {
     let result = conn.query_row(
-        "SELECT MAX(played_at) FROM play_history WHERE track_id = ?1",
-        params![track_id],
+        "SELECT MAX(played_at) FROM play_history WHERE track_id = ?1 AND user_id = ?2",
+        params![track_id, resolve_user(conn, user)?],
         |row| row.get::<_, Option<i64>>(0),
     )?;
     Ok(result)
 }
 
 /// Get track IDs from recent play history (most recent first), up to `limit`.
-pub fn recent_track_ids(conn: &Connection, limit: usize) -> Result<Vec<i64>, DbError> {
+pub fn recent_track_ids(conn: &Connection, user: i64, limit: usize) -> Result<Vec<i64>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT track_id FROM play_history
+         WHERE user_id = ?2
          ORDER BY played_at DESC
          LIMIT ?1",
     )?;
     let rows = stmt
-        .query_map(params![limit as i64], |row| row.get(0))?
+        .query_map(params![limit as i64, resolve_user(conn, user)?], |row| {
+            row.get(0)
+        })?
         .collect::<Result<Vec<i64>, _>>()?;
     Ok(rows)
 }
 
 /// Get play count for a track.
-pub fn play_count(conn: &Connection, track_id: i64) -> Result<i64, DbError> {
+pub fn play_count(conn: &Connection, user: i64, track_id: i64) -> Result<i64, DbError> {
     let count = conn.query_row(
-        "SELECT COUNT(*) FROM play_history WHERE track_id = ?1",
-        params![track_id],
+        "SELECT COUNT(*) FROM play_history WHERE track_id = ?1 AND user_id = ?2",
+        params![track_id, resolve_user(conn, user)?],
         |row| row.get(0),
     )?;
     Ok(count)
@@ -115,16 +128,19 @@ pub struct PlayHistoryEntry {
 /// Get recent play history entries (most recent first).
 pub fn get_play_history(
     conn: &Connection,
+    user: i64,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<PlayHistoryEntry>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT track_id, played_at, duration_ms FROM play_history
+         WHERE user_id = ?3
          ORDER BY played_at DESC
          LIMIT ?1 OFFSET ?2",
     )?;
+    let user = resolve_user(conn, user)?;
     let rows = stmt
-        .query_map(params![limit as i64, offset as i64], |row| {
+        .query_map(params![limit as i64, offset as i64, user], |row| {
             Ok(PlayHistoryEntry {
                 track_id: row.get(0)?,
                 played_at: row.get(1)?,
@@ -157,6 +173,7 @@ pub struct PlayHistoryRow {
 /// always does; the history columns follow.
 pub fn play_history_with_tracks(
     conn: &Connection,
+    user: i64,
     search: Option<&str>,
     // `None` for every play ever recorded.
     limit: Option<u32>,
@@ -172,18 +189,19 @@ pub fn play_history_with_tracks(
          JOIN tracks t ON t.id = h.track_id
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
-         LEFT JOIN artists aa ON al.artist_id = aa.id",
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         WHERE h.user_id = ?",
     );
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(resolve_user(conn, user)?)];
     if let Some(query) = search {
         let pattern = format!("%{}%", super::artists::escape_like(query));
         for _ in 0..3 {
             params.push(Box::new(pattern.clone()));
         }
         sql.push_str(
-            " WHERE t.title LIKE ? COLLATE NOCASE ESCAPE '\\'
+            " AND (t.title LIKE ? COLLATE NOCASE ESCAPE '\\'
                  OR a.name LIKE ? COLLATE NOCASE ESCAPE '\\'
-                 OR al.title LIKE ? COLLATE NOCASE ESCAPE '\\'",
+                 OR al.title LIKE ? COLLATE NOCASE ESCAPE '\\')",
         );
     }
     sql.push_str(" ORDER BY h.played_at DESC, h.id DESC");
@@ -208,9 +226,12 @@ pub fn play_history_with_tracks(
     Ok(rows)
 }
 
-/// Delete every play history entry. Returns how many were removed.
-pub fn clear_play_history(conn: &Connection) -> Result<usize, DbError> {
-    Ok(conn.execute("DELETE FROM play_history", [])?)
+/// Delete every one of `user`'s plays. Returns how many were removed.
+pub fn clear_play_history(conn: &Connection, user: i64) -> Result<usize, DbError> {
+    Ok(conn.execute(
+        "DELETE FROM play_history WHERE user_id = ?1",
+        [resolve_user(conn, user)?],
+    )?)
 }
 
 fn now_secs() -> i64 {
@@ -252,24 +273,62 @@ mod tests {
         let track_id = seed_track(&db, "Track1");
 
         // No plays yet.
-        assert_eq!(play_count(&db.conn, track_id).unwrap(), 0);
-        assert!(last_played_at(&db.conn, track_id).unwrap().is_none());
-        assert!(recent_track_ids(&db.conn, 10).unwrap().is_empty());
+        assert_eq!(
+            play_count(&db.conn, crate::db::queries::LOCAL_USER, track_id).unwrap(),
+            0
+        );
+        assert!(
+            last_played_at(&db.conn, crate::db::queries::LOCAL_USER, track_id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            recent_track_ids(&db.conn, crate::db::queries::LOCAL_USER, 10)
+                .unwrap()
+                .is_empty()
+        );
 
         // Record a play.
-        record_play(&db.conn, track_id, Some(240_000)).unwrap();
-        assert_eq!(play_count(&db.conn, track_id).unwrap(), 1);
-        assert!(last_played_at(&db.conn, track_id).unwrap().is_some());
+        record_play(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            track_id,
+            Some(240_000),
+        )
+        .unwrap();
+        assert_eq!(
+            play_count(&db.conn, crate::db::queries::LOCAL_USER, track_id).unwrap(),
+            1
+        );
+        assert!(
+            last_played_at(&db.conn, crate::db::queries::LOCAL_USER, track_id)
+                .unwrap()
+                .is_some()
+        );
 
-        let recent = recent_track_ids(&db.conn, 10).unwrap();
+        let recent = recent_track_ids(&db.conn, crate::db::queries::LOCAL_USER, 10).unwrap();
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0], track_id);
 
         // Record another play.
-        record_play(&db.conn, track_id, Some(240_000)).unwrap();
-        assert_eq!(play_count(&db.conn, track_id).unwrap(), 2);
+        record_play(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            track_id,
+            Some(240_000),
+        )
+        .unwrap();
+        assert_eq!(
+            play_count(&db.conn, crate::db::queries::LOCAL_USER, track_id).unwrap(),
+            2
+        );
         // Still only 1 distinct track.
-        assert_eq!(recent_track_ids(&db.conn, 10).unwrap().len(), 1);
+        assert_eq!(
+            recent_track_ids(&db.conn, crate::db::queries::LOCAL_USER, 10)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -278,11 +337,37 @@ mod tests {
         let a = seed_track(&db, "A");
         let b = seed_track(&db, "B");
 
-        record_play_at(&db.conn, a, 100, Some(1000), SOURCE_LOCAL).unwrap();
-        record_play_at(&db.conn, b, 200, None, SOURCE_SUBSONIC).unwrap();
-        record_play_at(&db.conn, a, 300, Some(2000), SOURCE_LOCAL).unwrap();
+        record_play_at(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            a,
+            100,
+            Some(1000),
+            SOURCE_LOCAL,
+        )
+        .unwrap();
+        record_play_at(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            b,
+            200,
+            None,
+            SOURCE_SUBSONIC,
+        )
+        .unwrap();
+        record_play_at(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            a,
+            300,
+            Some(2000),
+            SOURCE_LOCAL,
+        )
+        .unwrap();
 
-        let rows = play_history_with_tracks(&db.conn, None, Some(10), 0).unwrap();
+        let rows =
+            play_history_with_tracks(&db.conn, crate::db::queries::LOCAL_USER, None, Some(10), 0)
+                .unwrap();
         assert_eq!(
             rows.iter()
                 .map(|r| r.track.title.as_str())
@@ -302,11 +387,27 @@ mod tests {
         let db = test_db();
         let a = seed_track(&db, "Autumn");
         let b = seed_track(&db, "Winter");
-        record_play_at(&db.conn, a, 100, None, SOURCE_LOCAL).unwrap();
-        record_play_at(&db.conn, b, 200, None, SOURCE_LOCAL).unwrap();
+        record_play_at(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            a,
+            100,
+            None,
+            SOURCE_LOCAL,
+        )
+        .unwrap();
+        record_play_at(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            b,
+            200,
+            None,
+            SOURCE_LOCAL,
+        )
+        .unwrap();
 
         let titles = |q| {
-            play_history_with_tracks(&db.conn, Some(q), None, 0)
+            play_history_with_tracks(&db.conn, crate::db::queries::LOCAL_USER, Some(q), None, 0)
                 .unwrap()
                 .into_iter()
                 .map(|r| r.track.title)
@@ -314,7 +415,7 @@ mod tests {
         };
         assert_eq!(titles("autumn"), ["Autumn"]);
         assert_eq!(
-            play_history_with_tracks(&db.conn, None, None, 0)
+            play_history_with_tracks(&db.conn, crate::db::queries::LOCAL_USER, None, None, 0)
                 .unwrap()
                 .len(),
             2,
@@ -329,22 +430,30 @@ mod tests {
         let db = test_db();
         let id = seed_track(&db, "A");
         for at in 0..5 {
-            record_play_at(&db.conn, id, at, None, SOURCE_LOCAL).unwrap();
+            record_play_at(
+                &db.conn,
+                crate::db::queries::LOCAL_USER,
+                id,
+                at,
+                None,
+                SOURCE_LOCAL,
+            )
+            .unwrap();
         }
         assert_eq!(
-            play_history_with_tracks(&db.conn, None, Some(2), 0)
+            play_history_with_tracks(&db.conn, crate::db::queries::LOCAL_USER, None, Some(2), 0)
                 .unwrap()
                 .len(),
             2
         );
         assert_eq!(
-            play_history_with_tracks(&db.conn, None, Some(2), 4)
+            play_history_with_tracks(&db.conn, crate::db::queries::LOCAL_USER, None, Some(2), 4)
                 .unwrap()
                 .len(),
             1
         );
         assert_eq!(
-            play_history_with_tracks(&db.conn, None, Some(10), 5)
+            play_history_with_tracks(&db.conn, crate::db::queries::LOCAL_USER, None, Some(10), 5)
                 .unwrap()
                 .len(),
             0
@@ -358,10 +467,28 @@ mod tests {
         let b = seed_track(&db, "B");
         // played_at has one-second resolution, so a short track and its
         // successor can share a timestamp. Insertion order breaks the tie.
-        record_play_at(&db.conn, a, 42, None, SOURCE_LOCAL).unwrap();
-        record_play_at(&db.conn, b, 42, None, SOURCE_LOCAL).unwrap();
+        record_play_at(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            a,
+            42,
+            None,
+            SOURCE_LOCAL,
+        )
+        .unwrap();
+        record_play_at(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            b,
+            42,
+            None,
+            SOURCE_LOCAL,
+        )
+        .unwrap();
 
-        let rows = play_history_with_tracks(&db.conn, None, Some(10), 0).unwrap();
+        let rows =
+            play_history_with_tracks(&db.conn, crate::db::queries::LOCAL_USER, None, Some(10), 0)
+                .unwrap();
         assert_eq!(
             rows.iter()
                 .map(|r| r.track.title.as_str())
@@ -374,15 +501,18 @@ mod tests {
     fn deleting_a_track_takes_its_history_with_it() {
         let db = test_db();
         let id = seed_track(&db, "A");
-        record_play(&db.conn, id, None).unwrap();
+        record_play(&db.conn, crate::db::queries::LOCAL_USER, id, None).unwrap();
 
         db.conn
             .execute("DELETE FROM tracks WHERE id = ?1", params![id])
             .expect("a track with play history must still be deletable");
 
-        assert_eq!(play_count(&db.conn, id).unwrap(), 0);
+        assert_eq!(
+            play_count(&db.conn, crate::db::queries::LOCAL_USER, id).unwrap(),
+            0
+        );
         assert!(
-            play_history_with_tracks(&db.conn, None, Some(10), 0)
+            play_history_with_tracks(&db.conn, crate::db::queries::LOCAL_USER, None, Some(10), 0)
                 .unwrap()
                 .is_empty()
         );
@@ -394,15 +524,17 @@ mod tests {
         let a = seed_track(&db, "A");
         let b = seed_track(&db, "B");
 
-        let first = record_play(&db.conn, a, None).unwrap();
-        let second = record_play(&db.conn, b, None).unwrap();
+        let first = record_play(&db.conn, crate::db::queries::LOCAL_USER, a, None).unwrap();
+        let second = record_play(&db.conn, crate::db::queries::LOCAL_USER, b, None).unwrap();
 
         set_listened_ms(&db.conn, second, b, 4_200).unwrap();
         // A start event that never landed must not push its track's time onto
         // whatever entry happens to be open.
         set_listened_ms(&db.conn, first, b, 9_999).unwrap();
 
-        let rows = play_history_with_tracks(&db.conn, None, Some(10), 0).unwrap();
+        let rows =
+            play_history_with_tracks(&db.conn, crate::db::queries::LOCAL_USER, None, Some(10), 0)
+                .unwrap();
         let by_id: Vec<_> = rows.iter().map(|r| (r.id, r.listened_ms)).collect();
         assert!(by_id.contains(&(second, Some(4_200))));
         assert!(
@@ -415,17 +547,22 @@ mod tests {
     fn plays_can_be_forgotten_individually() {
         let db = test_db();
         let id = seed_track(&db, "A");
-        let first = record_play(&db.conn, id, None).unwrap();
-        let second = record_play(&db.conn, id, None).unwrap();
-        let third = record_play(&db.conn, id, None).unwrap();
+        let first = record_play(&db.conn, crate::db::queries::LOCAL_USER, id, None).unwrap();
+        let second = record_play(&db.conn, crate::db::queries::LOCAL_USER, id, None).unwrap();
+        let third = record_play(&db.conn, crate::db::queries::LOCAL_USER, id, None).unwrap();
 
-        assert_eq!(delete_plays(&db.conn, &[first, third]).unwrap(), 2);
+        assert_eq!(
+            delete_plays(&db.conn, crate::db::queries::LOCAL_USER, &[first, third]).unwrap(),
+            2
+        );
 
-        let left = play_history_with_tracks(&db.conn, None, Some(10), 0).unwrap();
+        let left =
+            play_history_with_tracks(&db.conn, crate::db::queries::LOCAL_USER, None, Some(10), 0)
+                .unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].id, second);
         assert_eq!(
-            play_count(&db.conn, id).unwrap(),
+            play_count(&db.conn, crate::db::queries::LOCAL_USER, id).unwrap(),
             1,
             "and the play count follows"
         );
@@ -434,18 +571,30 @@ mod tests {
     #[test]
     fn forgetting_an_entry_that_is_already_gone_is_not_an_error() {
         let db = test_db();
-        assert_eq!(delete_plays(&db.conn, &[404]).unwrap(), 0);
-        assert_eq!(delete_plays(&db.conn, &[]).unwrap(), 0);
+        assert_eq!(
+            delete_plays(&db.conn, crate::db::queries::LOCAL_USER, &[404]).unwrap(),
+            0
+        );
+        assert_eq!(
+            delete_plays(&db.conn, crate::db::queries::LOCAL_USER, &[]).unwrap(),
+            0
+        );
     }
 
     #[test]
     fn clearing_removes_everything() {
         let db = test_db();
         let id = seed_track(&db, "A");
-        record_play(&db.conn, id, None).unwrap();
-        record_play(&db.conn, id, None).unwrap();
+        record_play(&db.conn, crate::db::queries::LOCAL_USER, id, None).unwrap();
+        record_play(&db.conn, crate::db::queries::LOCAL_USER, id, None).unwrap();
 
-        assert_eq!(clear_play_history(&db.conn).unwrap(), 2);
-        assert_eq!(play_count(&db.conn, id).unwrap(), 0);
+        assert_eq!(
+            clear_play_history(&db.conn, crate::db::queries::LOCAL_USER).unwrap(),
+            2
+        );
+        assert_eq!(
+            play_count(&db.conn, crate::db::queries::LOCAL_USER, id).unwrap(),
+            0
+        );
     }
 }

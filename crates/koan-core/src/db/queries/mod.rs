@@ -14,6 +14,7 @@ mod search;
 pub mod shares;
 mod stats;
 pub mod tracks;
+pub mod uids;
 pub mod vectors;
 
 use std::path::PathBuf;
@@ -21,6 +22,7 @@ use std::path::PathBuf;
 // Re-export all public items so `use queries::*` still works.
 pub use albums::*;
 pub use artists::*;
+pub use auth::LOCAL_USER;
 pub use batch::*;
 pub use favourites::*;
 pub use history::*;
@@ -32,6 +34,7 @@ pub use scan_cache::*;
 pub use search::*;
 pub use stats::*;
 pub use tracks::*;
+pub use uids::*;
 pub use vectors::*;
 
 /// The half-open range of paths under a folder, for `path >= .0 AND path < .1`.

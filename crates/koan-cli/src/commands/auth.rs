@@ -715,19 +715,6 @@ fn prompt_password(message: &str) -> String {
     rpassword::prompt_password(message).unwrap_or_default()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_generate_password() {
-        let a = generate_password();
-        assert_eq!(a.len(), 32);
-        assert!(a.bytes().all(|b| b.is_ascii_graphic()));
-        assert_ne!(a, generate_password());
-    }
-}
-
 /// `koan auth invite` — the invite link and email for an account.
 pub fn cmd_auth_invite(username: &str, server: Option<&str>, reset: bool) {
     let configured = Config::load().ok().and_then(|c| c.sharing.public_url);
@@ -757,4 +744,17 @@ pub fn cmd_auth_invite(username: &str, server: Option<&str>, reset: bool) {
     println!("{}\n", invite.link());
     println!("{} {}\n", "Subject:".dimmed(), invite.email_subject());
     print!("{}", invite.email_text());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_password() {
+        let a = generate_password();
+        assert_eq!(a.len(), 32);
+        assert!(a.bytes().all(|b| b.is_ascii_graphic()));
+        assert_ne!(a, generate_password());
+    }
 }

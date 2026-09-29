@@ -1,10 +1,14 @@
 pub mod client;
+pub mod devices;
 pub mod download;
 pub mod downloads;
 pub mod link;
 pub mod listenbrainz;
 pub mod lrclib;
 pub mod musicbrainz;
+pub mod nearby;
+pub mod profile;
 pub mod queue;
 pub mod sync;
 pub mod wikimedia;
+pub mod wire;
