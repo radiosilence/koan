@@ -256,7 +256,8 @@ refresh_token = "..."              # exchanged for short-lived access tokens
 ```
 
 Written by `koan auth login` and cleared by `koan auth logout`, which also
-revokes the token at the server. Unlike a password this is revocable, so losing
+revokes the token at the server. `koan play --server` reads it, and rewrites
+`refresh_token` each time it refreshes, since the server revokes the old one. Unlike a password this is revocable, so losing
 it costs you one session rather than the account.
 
 See [Authentication](../guide/authentication.md).
