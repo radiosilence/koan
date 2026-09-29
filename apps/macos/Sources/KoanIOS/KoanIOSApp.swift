@@ -59,7 +59,10 @@ struct KoanIOSApp: App {
             .onChange(of: scenePhase) { _, phase in
                 keepalive.setBackground(phase == .background)
                 state?.player.engine.logNote(message: "scene \(phase)")
-                if phase == .active { session.recoverIfInterrupted() }
+                if phase == .active {
+                    session.recoverIfInterrupted()
+                    session.becomePrimary()
+                }
                 // Suspended in the background, the link to the server went
                 // with the rest of the app; link again now rather than when
                 // its retry comes round.
@@ -74,6 +77,10 @@ struct KoanIOSApp: App {
                     let built = try await AppState()
                     await built.start()
                     PushDelegate.engine = built.player.engine
+                    PushDelegate.beforeWake = { session.activateForBackgroundStart() }
+                    PushDelegate.afterWake = { [weak built] in
+                        if built?.player.engine.isPlaying() == true { session.becomePrimary() }
+                    }
                     PushDelegate.requestAlertsIfSignedIn()
                     // The session goes up before anything can be asked to play:
                     // a RemoteIO unit on an inactive session produces silence

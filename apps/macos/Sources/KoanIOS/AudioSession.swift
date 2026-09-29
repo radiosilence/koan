@@ -69,6 +69,35 @@ final class AudioSession {
         }
     }
 
+    /// Woken by a push to play. iOS refuses a background app the ordinary,
+    /// non-mixing session, and allows one that mixes with other audio: take
+    /// that, so what the server asked for can start.
+    func activateForBackgroundStart() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
+            note?("session: mixable, for a start from the background")
+        } catch {
+            note?("session: a start from the background was refused: \(error)")
+        }
+    }
+
+    /// Back to the ordinary session: the one the lock screen's controls belong
+    /// to and a call pauses. iOS may refuse it while in the background; it is
+    /// asked again on returning to the front.
+    func becomePrimary() {
+        let session = AVAudioSession.sharedInstance()
+        guard session.categoryOptions.contains(.mixWithOthers) else { return }
+        do {
+            try session.setCategory(.playback, mode: .default, options: [])
+            try session.setActive(true)
+            note?("session: primary again")
+        } catch {
+            note?("session: could not become primary yet: \(error)")
+        }
+    }
+
     /// What the session actually settled on, as against what was asked for.
     var sampleRate: Double { AVAudioSession.sharedInstance().sampleRate }
 

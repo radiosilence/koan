@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Music starts on a sleeping phone without a tap.** Any command to an iOS device that is not linked (play, queue, skip, radio) goes into its outbox and the server wakes it with a background push; koan links and runs it as if it had been open. Woken, the app takes a mixable audio session, which iOS lets a background app start, and returns to the ordinary one once playing. For music, the server checks the device is playing within 25 seconds and otherwise sends the "Play on …" notification instead, taking the command back out of the outbox so the tap does not play it twice. That covers the one case iOS will not wake: an app the user force-quit.
+
 ### Changed
 
 - **macOS release binaries are signed with a Developer ID and notarised.** Downloaded through a browser, the ad-hoc signed binaries were quarantined and Gatekeeper refused to run them until the quarantine attribute was cleared.

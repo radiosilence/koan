@@ -52,14 +52,24 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         NSLog("koan: push registration failed: \(error)")
     }
 
-    /// A background push. The link does the work; this keeps the app awake
-    /// long enough for it to connect and take what waits.
+    /// Set by the app: readies the audio session for music started from the
+    /// background, and puts it back once the wake is over.
+    static var beforeWake: (() -> Void)?
+    static var afterWake: (() -> Void)?
+
+    /// A background push. The link does the work: what waits in the outbox,
+    /// music included, comes down it once connected. This readies the audio
+    /// session first, since the music has to be allowed to start, and keeps
+    /// the app awake long enough for the link to connect and take it.
     func application(
         _: UIApplication,
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
+        Self.beforeWake?()
+        Self.engine?.logNote(message: "push: woken")
         Self.engine?.linkNudge()
         try? await Task.sleep(for: .seconds(20))
+        Self.afterWake?()
         return .newData
     }
 

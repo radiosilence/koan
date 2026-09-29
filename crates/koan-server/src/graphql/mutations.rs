@@ -166,7 +166,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let track_ids = track_ids.into_iter().map(|id| id.0).collect();
         let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Remove { track_ids })?;
-        Ok(GqlStatus::success(format!("sent to {}", sent.name)))
+        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
     /// Have a linked koan app pull what this server has added since it last
@@ -178,7 +178,7 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Sync { full: false })?;
-        Ok(GqlStatus::success(format!("syncing {}", sent.name)))
+        Ok(GqlStatus::success(format!("syncing {}", reached(&sent))))
     }
 
     /// Have every device of this account pull what the server has changed,
@@ -230,7 +230,7 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Clear)?;
-        Ok(GqlStatus::success(format!("cleared {}", sent.name)))
+        Ok(GqlStatus::success(format!("cleared {}", reached(&sent))))
     }
 
     /// Turn radio (the queue topping itself up with similar tracks) on or off
@@ -243,7 +243,7 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Radio { enabled })?;
-        Ok(GqlStatus::success(format!("sent to {}", sent.name)))
+        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
     /// Queue an album on a linked koan app once it is in the library: for
@@ -339,7 +339,7 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Seek { position_ms })?;
-        Ok(GqlStatus::success(format!("sent to {}", sent.name)))
+        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
     /// Pause, resume or skip on a linked koan app; see `playOnClient`.
@@ -357,7 +357,7 @@ impl MutationRoot {
             GqlClientAction::Previous => LinkCommand::Previous,
         };
         let sent = send_to_client(ctx, client.as_deref(), cmd)?;
-        Ok(GqlStatus::success(format!("sent to {}", sent.name)))
+        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
     /// This process's own player. On a server nobody hears it: for the
@@ -1276,11 +1276,14 @@ fn send_to_client(
         .map_err(async_graphql::Error::new)
 }
 
-/// Who a command reached, and how: a phone iOS has suspended is asked by a
-/// notification, and nothing plays until someone taps it.
+/// Who a command reached, and how: a phone iOS has suspended is woken to take
+/// it, and music iOS will not start there comes up as a notification to tap.
 fn reached(c: &crate::clients::ClientInfo) -> String {
     if c.notified {
-        format!("{} as a notification; it plays when tapped", c.name)
+        format!(
+            "{}, which was asleep: woken to take it (if iOS will not start the music there, it gets a notification to tap)",
+            c.name
+        )
     } else {
         c.name.clone()
     }
