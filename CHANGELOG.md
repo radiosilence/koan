@@ -11,6 +11,7 @@
 ### Changed
 
 - **Music for a sleeping phone is a notification at once.** iOS does not let an app it woke start audio, which the phone's log showed plainly: the woken app took the command and the output unit refused to start. So a request to play on a phone iOS has suspended is sent straight away as the "Play on …" notification, time-sensitive so it reaches through Focus, rather than after a wake and a wait that could not succeed. Every other command still goes to the outbox and wakes the phone to take it. The app no longer switches to a mixable audio session when woken.
+- **Release notes no longer carry the quarantine workaround.** Every release since 0.40.0 is notarised, so the `xattr` instructions only applied to builds nobody downloads.
 
 ### Fixed
 
