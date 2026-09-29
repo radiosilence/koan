@@ -159,14 +159,6 @@ impl Registry {
         outbox::save_push(username, device, token, sandbox);
     }
 
-    /// Whether this device is linked and says it is playing.
-    pub fn playing_on(&self, username: &str, device: &str) -> bool {
-        self.entries
-            .lock()
-            .iter()
-            .any(|e| e.device == device && e.info.username == username && e.info.state.playing)
-    }
-
     pub fn unregister(&self, id: &str) {
         self.entries.lock().retain(|e| e.info.id != id);
     }
@@ -451,14 +443,13 @@ fn wake(devices: &[outbox::Absent]) {
     });
 }
 
-/// Reach a device that is not linked: queue `cmd` in its outbox and wake it
-/// with a background push, so it links and runs it like any other command.
+/// Reach a device that is not linked.
 ///
-/// Starting audio is the one thing iOS may refuse an app it woke, and a
-/// background push can be held back or, for an app force-quit, never
-/// delivered. So for a command that starts music, a notification to tap
-/// follows when the device is not playing shortly after. `None` without a push
-/// key, or with no device in scope that has given a push token.
+/// Music is sent as a notification to tap, at once: iOS does not let an app it
+/// woke start audio, so waking it for that only delays the notification. Every
+/// other command goes into the device's outbox with a background push to wake
+/// it, and runs as if it had been linked. `None` without a push key, or with no
+/// device in scope that has given a push token.
 fn reach_absent(
     username: Option<&str>,
     id: Option<&str>,
@@ -474,7 +465,7 @@ fn reach_absent(
         [only] => only.clone(),
         several => {
             return Some(Err(format!(
-                "no koan app is linked, and several can be woken: {}. Ask which, then pass `client`",
+                "no koan app is linked, and several can be reached: {}. Ask which, then pass `client`",
                 several
                     .iter()
                     .map(|t| t.name.as_str())
@@ -483,7 +474,6 @@ fn reach_absent(
             )));
         }
     };
-    outbox::queue_for(&target.device, &target.username, cmd);
     let info = ClientInfo {
         id: target.device.clone(),
         name: target.name.clone(),
@@ -500,42 +490,20 @@ fn reach_absent(
         LinkCommand::Play { .. } | LinkCommand::JumpTo { .. } | LinkCommand::Resume => Some("Play"),
         _ => None,
     };
-    let cmd = cmd.clone();
-    std::thread::spawn(move || {
-        deliver_push(pusher, &target, &crate::push::Push::Wake);
-        let Some(verb) = verb else { return };
-        let deadline = std::time::Instant::now() + WOKEN_PLAYING;
-        while std::time::Instant::now() < deadline {
-            if registry().playing_on(&target.username, &target.device) {
-                log::info!("push: {} woke and is playing", target.name);
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
-        // Held back, or the audio refused: ask the person. Out of the outbox
-        // first, or the tap and the next link would both play it.
-        outbox::unqueue(&target.device, &target.username, &cmd);
-        let Ok(command) = serde_json::to_value(&cmd) else {
-            return;
-        };
-        log::info!(
-            "push: {} is not playing; sending a notification",
-            target.name
-        );
-        let push = crate::push::Push::Notify {
+    let push = match verb {
+        Some(verb) => crate::push::Push::Notify {
             title: format!("{verb} on {}", target.name),
-            body: outbox::describe(&cmd).unwrap_or_else(|| "From your koan server".into()),
-            command,
-        };
-        deliver_push(pusher, &target, &push);
-    });
+            body: outbox::describe(cmd).unwrap_or_else(|| "From your koan server".into()),
+            command: serde_json::to_value(cmd).ok()?,
+        },
+        None => {
+            outbox::queue_for(&target.device, &target.username, cmd);
+            crate::push::Push::Wake
+        }
+    };
+    std::thread::spawn(move || deliver_push(pusher, &target, &push));
     Some(Ok(info))
 }
-
-/// How long a woken device has to link and start playing before a
-/// notification is sent instead: a track that has to download first takes
-/// some of it.
-const WOKEN_PLAYING: std::time::Duration = std::time::Duration::from_secs(25);
 
 /// Send one push, forgetting a token Apple says is no longer good.
 fn deliver_push(
@@ -751,17 +719,6 @@ mod outbox {
         let _ = db.conn.execute(
             "INSERT INTO link_outbox (device, username, command, created_at) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![device, username, text, chrono::Utc::now().timestamp()],
-        );
-    }
-
-    /// Take `cmd` back out of a device's outbox, if it is still waiting.
-    pub fn unqueue(device: &str, username: &str, cmd: &LinkCommand) {
-        let (Some(db), Ok(text)) = (db(), serde_json::to_string(cmd)) else {
-            return;
-        };
-        let _ = db.conn.execute(
-            "DELETE FROM link_outbox WHERE device = ?1 AND username = ?2 AND command = ?3",
-            [device, username, text.as_str()],
         );
     }
 

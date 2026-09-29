@@ -1281,7 +1281,7 @@ fn send_to_client(
 fn reached(c: &crate::clients::ClientInfo) -> String {
     if c.notified {
         format!(
-            "{}, which was asleep: woken to take it (if iOS will not start the music there, it gets a notification to tap)",
+            "{}, which was asleep: music comes up as a notification to tap, since iOS will not start it there; anything else is applied as it wakes",
             c.name
         )
     } else {
