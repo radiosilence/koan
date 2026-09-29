@@ -60,8 +60,12 @@ extension AppState {
 
 /// The one question an invite asks: whether to leave the account already
 /// signed in. Tracks synced from it stay, as they do on signing out.
+///
+/// Handed the state rather than reading it from the environment: it is applied
+/// at the scene root, outside the `.environment(state)` it would read from, and
+/// a missing environment object is a crash on launch rather than a build error.
 struct InviteConfirmation: ViewModifier {
-    @Environment(AppState.self) private var state
+    let state: AppState
 
     func body(content: Content) -> some View {
         content.alert(
