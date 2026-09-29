@@ -191,8 +191,7 @@ macos-bundle: macos-build
     # It does nothing for Gatekeeper. A downloaded app is refused unless it is
     # signed with a Developer ID certificate *and* notarised by Apple, which
     # needs a paid developer account — a self-signed certificate is no more
-    # trusted than ad-hoc. Direct downloads clear the quarantine flag by hand;
-    # the Homebrew cask does it in a postflight.
+    # trusted than ad-hoc.
     # A Developer ID signature is for distribution: notarisation requires the
     # hardened runtime and a secure timestamp, and only an Apple-issued
     # identity can get the timestamp, so a self-signed dev certificate keeps
