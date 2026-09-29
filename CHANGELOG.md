@@ -6,27 +6,19 @@
 
 - **The apps open invites** ([#572](https://github.com/radiosilence/koan/issues/572)). 0.44.0 made the links but no app claimed them: the join page's button failed with "address is invalid" and an invite pasted into Settings did nothing. The iOS app now claims `koan.rocks/join/` as a universal link, and both apps register `koan://join`. Opening an invite signs in, runs a full sync and shows the albums. If a different account is already signed in, the app asks before switching. An invite pasted into Server URL, or through the Paste button beside Sign In, fills in the account; so does a server address carrying `user:password@`.
 - **People in Settings**, for an admin signed in to a koan server: the server's accounts, each one's access level, and Add, Invite and Delete, over the same Subsonic endpoints the web UI's Users page uses. An invite opens as a sheet to share, mail or copy as rich text, with the plain details for other Subsonic apps. On any other server, or for an account that is not an admin, the section does not appear.
-
-### Fixed
-
-- **"What the server offers" fills in as soon as you sign in.** Signed out, the link thread rests for a minute between checks, and signing in did not wake it, so Settings said "Not reached yet" and the link stayed down for up to a minute while the library synced.
-
-### Added
-
 - **The lock-screen remote shows the record's sleeve.** The server puts a small cover in each Live Activity push, so it is there with the app suspended.
-
-### Fixed
-
-- **A phone stays controlling the Mac across backgrounding and relaunches**, and the Live Activity stays with it. The device being controlled is kept on disk and is never let go of because it dropped out of a list, which happened whenever the link reconnected before the Mac's did (a server restart, the Mac asleep); it shows as out of reach until it is back.
-- **Other devices appear the moment the app opens.** The last device list is kept on disk and drawn at once. Coming to the front, every connection is pinged and one that does not answer within two seconds is replaced, rather than waiting up to 45 seconds on a socket iOS closed while the app was suspended; the server's profile is no longer asked again before each reconnect.
-- **Devices on the same network are found reliably.** Each device's last address is dialled at launch before Bonjour answers, and Bonjour browsing, the listener and the announcement are restarted when iOS has closed them. A device that is announced but cannot be reached is listed with the reason, and the picker says when iOS is keeping kōan off the local network, with a button to Settings, instead of showing nothing.
-
-## Unreleased
 
 ### Changed
 
 - **The DMG opens to an install window**: the app beside an Applications link to drag it onto, over a background in koan.rocks' colours. Finder draws icon labels in black whenever a window has a background image, so each label sits on a light plate. The layout is written by dmgbuild rather than by scripting Finder, so it builds on CI runners with no logged-in session.
 - **koan.rocks links the DMG directly.** "Download for Mac" points at the latest release's `Koan.dmg`, which GitHub redirects to whichever release is newest, so the site never needs updating for a release.
+
+### Fixed
+
+- **"What the server offers" fills in as soon as you sign in.** Signed out, the link thread rests for a minute between checks, and signing in did not wake it, so Settings said "Not reached yet" and the link stayed down for up to a minute while the library synced.
+- **A phone stays controlling the Mac across backgrounding and relaunches**, and the Live Activity stays with it. The device being controlled is kept on disk and is never let go of because it dropped out of a list, which happened whenever the link reconnected before the Mac's did (a server restart, the Mac asleep); it shows as out of reach until it is back.
+- **Other devices appear the moment the app opens.** The last device list is kept on disk and drawn at once. Coming to the front, every connection is pinged and one that does not answer within two seconds is replaced, rather than waiting up to 45 seconds on a socket iOS closed while the app was suspended; the server's profile is no longer asked again before each reconnect.
+- **Devices on the same network are found reliably.** Each device's last address is dialled at launch before Bonjour answers, and Bonjour browsing, the listener and the announcement are restarted when iOS has closed them. A device that is announced but cannot be reached is listed with the reason, and the picker says when iOS is keeping kōan off the local network, with a button to Settings, instead of showing nothing.
 
 ## 0.44.1
 
