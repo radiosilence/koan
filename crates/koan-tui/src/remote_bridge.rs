@@ -31,10 +31,13 @@ const STREAM_CACHE_BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 ///
 /// Returns the same types as `Player::spawn()` — the TUI works unchanged.
 ///
+/// `client` is shared by every thread the bridge starts, so they share one
+/// session with the server.
+///
 /// `jukebox`: if true, the server plays audio. No local Player is spawned.
 /// The client is purely a remote control.
 pub fn spawn_remote_bridge(
-    server_url: &str,
+    client: GraphQLClient,
     jukebox: bool,
 ) -> (
     Arc<SharedPlayerState>,
@@ -56,8 +59,7 @@ pub fn spawn_remote_bridge(
     // Channel for TUI → bridge commands.
     let (cmd_tx, cmd_rx) = bounded::<PlayerCommand>(16);
 
-    let client = GraphQLClient::new(server_url);
-    let streamer = stream_client(server_url).map(Arc::new);
+    let streamer = stream_client(client.server_url()).map(Arc::new);
 
     // Poller thread: syncs remote state → local SharedPlayerState.
     // In client mode also triggers downloads. In jukebox mode, display only.
