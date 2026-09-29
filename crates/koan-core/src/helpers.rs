@@ -29,38 +29,62 @@ pub fn get_remote_password(cfg: &Config) -> Option<String> {
 ///
 /// One incremental scan shortly after startup — the walk is a fraction of a
 /// second even across fifty thousand files, and everything unchanged is skipped
-/// on its mtime and size — then a rescan whenever the folders change.
+/// on its mtime and size — then a scan of whatever the folders say changed.
+///
+/// Only the directories events name are scanned: walking the whole library for
+/// one new album costs a spinning disk minutes. Events that cannot change the
+/// index — access, metadata, Syncthing's bookkeeping, partial downloads — are
+/// dropped before they count (see `index::watch`). The whole library is scanned
+/// only when the watcher reports it lost events, or when so many directories
+/// changed at once that walking them one by one would cost more.
 ///
 /// Changes are debounced: copying an album in produces a burst of events, and
-/// scanning once per file would be both slow and pointless. The scan is
-/// incremental in every case, so the cost is proportional to what actually
-/// changed rather than to the size of the library.
+/// scanning once per file would be both slow and pointless. A scan that lands
+/// halfway through a move is corrected by the scan the rest of the move's
+/// events bring, since a directory scan removes what is no longer under it.
+///
+/// The folder list is re-read and each folder's identity checked every half
+/// minute, so a folder added in settings is watched without a restart, and a
+/// volume unmounted and mounted again is watched afresh and rescanned.
 ///
 /// `on_state` reports whether a scan is running, so a UI can show it.
 pub fn spawn_library_watch(
     db_path: std::path::PathBuf,
     on_state: impl Fn(bool) + Send + Sync + 'static,
 ) -> Option<std::thread::JoinHandle<()>> {
+    use std::collections::BTreeSet;
+    use std::time::{Duration, Instant};
+
     use notify::{RecursiveMode, Watcher};
+
+    use crate::index::scanner::{self, ScanOptions};
+    use crate::index::watch::{WatchedRoot, scan_target};
+
+    // Copying an album in is a burst of events. Wait for it to stop before
+    // scanning, rather than scanning per file.
+    const SETTLE: Duration = Duration::from_secs(5);
+    // How often the folder list and each folder's identity are checked.
+    const CHECK: Duration = Duration::from_secs(30);
+    // Past this many directories one walk of the library is cheaper than many.
+    const MAX_DIRS: usize = 200;
 
     std::thread::Builder::new()
         .name("koan-library-watch".into())
         .spawn(move || {
-            let scan_now = |reason: &str| {
-                let cfg = Config::load().unwrap_or_default();
-                if cfg.library.folders.is_empty() {
+            let scan = |reason: &str, folders: &[PathBuf], dirs: Option<&[PathBuf]>| {
+                if folders.is_empty() {
                     return;
                 }
                 let Ok(db) = Database::open(&db_path) else {
                     return;
                 };
                 on_state(true);
-                let result = crate::index::scanner::full_scan(
-                    &db,
-                    &cfg.library.folders,
-                    crate::index::scanner::ScanOptions::default(),
-                    None,
-                );
+                let result = match dirs {
+                    Some(dirs) => {
+                        scanner::scan_dirs(&db, folders, dirs, ScanOptions::default(), None)
+                    }
+                    None => scanner::full_scan(&db, folders, ScanOptions::default(), None),
+                };
                 on_state(false);
                 log::info!(
                     "{reason} scan: {} added, {} updated, {} removed, {} unchanged",
@@ -70,10 +94,7 @@ pub fn spawn_library_watch(
                     result.skipped
                 );
             };
-
-            // After the first frame and the first track, not competing with them.
-            std::thread::sleep(std::time::Duration::from_secs(3));
-            scan_now("startup");
+            let folders = || Config::cached().library.folders.clone();
 
             let (tx, rx) = std::sync::mpsc::channel();
             let Ok(mut watcher) = notify::recommended_watcher(move |event| {
@@ -83,31 +104,92 @@ pub fn spawn_library_watch(
                 return;
             };
 
-            let cfg = Config::load().unwrap_or_default();
-            for folder in &cfg.library.folders {
-                if let Err(e) = watcher.watch(folder, RecursiveMode::Recursive) {
-                    log::warn!("could not watch {}: {e}", folder.display());
-                }
-            }
-
-            // Copying an album in is a burst of events. Wait for it to stop
-            // before scanning, rather than scanning per file.
-            const SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
-            // Events alone are not enough: a scan that runs while a folder is
-            // half moved sees the new files and the old ones both, and when no
-            // later event arrives the old paths stay in the library, unplayable,
-            // until the next restart. A scan skips unchanged files on their
-            // mtime and size, so an idle one is a second's work.
-            const RESCAN: std::time::Duration = std::time::Duration::from_secs(15 * 60);
-            loop {
-                match rx.recv_timeout(RESCAN) {
-                    Ok(Err(_)) => continue,
-                    Ok(Ok(_)) => {
-                        while rx.recv_timeout(SETTLE).is_ok() {}
-                        scan_now("watched change");
+            // Brings the watches in line with the configured folders as they
+            // are now, returning the ones newly watched — added in settings, or
+            // back from being unmounted — whose changes nobody heard.
+            let mut roots: Vec<WatchedRoot> = Vec::new();
+            let mut rewatch = |roots: &mut Vec<WatchedRoot>| {
+                let wanted: Vec<WatchedRoot> = folders()
+                    .iter()
+                    .filter_map(|f| WatchedRoot::resolve(f))
+                    .collect();
+                roots.retain(|root| {
+                    let keep = wanted.contains(root);
+                    if !keep {
+                        let _ = watcher.unwatch(&root.path);
                     }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => scan_now("periodic"),
+                    keep
+                });
+                let mut fresh = Vec::new();
+                for root in wanted {
+                    if roots.contains(&root) {
+                        continue;
+                    }
+                    match watcher.watch(&root.path, RecursiveMode::Recursive) {
+                        Ok(()) => {
+                            fresh.push(root.path.clone());
+                            roots.push(root);
+                        }
+                        Err(e) => log::warn!("could not watch {}: {e}", root.path.display()),
+                    }
+                }
+                fresh
+            };
+
+            // After the first frame and the first track, not competing with them.
+            std::thread::sleep(Duration::from_secs(3));
+            rewatch(&mut roots);
+            scan("startup", &folders(), None);
+
+            let mut dirs = BTreeSet::new();
+            let mut everything = false;
+            let mut settle_at: Option<Instant> = None;
+            let mut check_at = Instant::now() + CHECK;
+            loop {
+                let now = Instant::now();
+                let wake = settle_at.map_or(check_at, |at| at.min(check_at));
+                match rx.recv_timeout(wake.saturating_duration_since(now)) {
+                    Ok(Ok(event)) if event.need_rescan() => {
+                        everything = true;
+                        settle_at = Some(Instant::now() + SETTLE);
+                    }
+                    Ok(Ok(event)) => {
+                        let mut heard = false;
+                        for dir in event
+                            .paths
+                            .iter()
+                            .filter_map(|p| scan_target(&event.kind, p, &roots))
+                        {
+                            dirs.insert(dir);
+                            heard = true;
+                        }
+                        if heard {
+                            settle_at = Some(Instant::now() + SETTLE);
+                        }
+                    }
+                    Ok(Err(e)) => log::debug!("library watch: {e}"),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+
+                let now = Instant::now();
+                if settle_at.is_some_and(|at| now >= at) {
+                    let changed =
+                        scanner::minimal_dirs(std::mem::take(&mut dirs).into_iter().collect());
+                    if everything || changed.len() > MAX_DIRS {
+                        scan("watched change", &folders(), None);
+                    } else {
+                        scan("watched change", &folders(), Some(&changed));
+                    }
+                    everything = false;
+                    settle_at = None;
+                }
+                if now >= check_at {
+                    let fresh = rewatch(&mut roots);
+                    if !fresh.is_empty() {
+                        scan("newly watched", &fresh, None);
+                    }
+                    check_at = Instant::now() + CHECK;
                 }
             }
         })
