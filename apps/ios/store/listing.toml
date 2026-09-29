@@ -84,5 +84,9 @@ music:
 4. Browse from the Library tab; tap an album to play it. The queue is on the Queue tab.
 
 The app declares the audio background mode so that music continues playing when the app is in the background or the \
-screen is locked.\
+screen is locked.
+
+After signing in, the app asks to send notifications. They are used only with a kōan server (the Navidrome demo sends \
+none): when the user asks their own server to play music on this phone, for instance through an assistant, the server \
+wakes the app to start it, or shows a notification to tap if iOS will not start it in the background.\
 """
