@@ -8,6 +8,8 @@ struct SearchResultsView: View {
     @Environment(SearchModel.self) private var search
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
+    @Environment(UIState.self) private var ui
+    @Environment(\.onStage) private var onStage
 
     private let columns = [GridItem(.adaptive(minimum: 140, maximum: 190), spacing: 16)]
 
@@ -30,9 +32,20 @@ struct SearchResultsView: View {
                     if !search.tracks.isEmpty { trackSection }
                 }
                 .padding(22)
+                .modifier(SelectionDrag(selection: search.selection))
             }
         }
         .navigationTitle(search.hasQuery ? "Results for “\(search.query)”" : "Search")
+        // The album browser's pick, over every kind of result. It survives a
+        // new query, so a pick can gather from several searches; it ends with
+        // the page.
+        .onChange(of: ui.selectAllToken) { _, _ in
+            guard onStage else { return }
+            search.selection.selectAll()
+        }
+        .onChange(of: ui.clearSelectionToken) { _, _ in search.selection.end() }
+        .onChange(of: onStage) { _, now in if !now { search.selection.end() } }
+        .onDisappear { search.selection.end() }
     }
 
     private var artistSection: some View {
@@ -40,7 +53,7 @@ struct SearchResultsView: View {
             SectionHeading("Artists", count: search.artists.count)
             FlowLayout(spacing: 8) {
                 ForEach(search.artists, id: \.id) { artist in
-                    ArtistPill(name: artist.name, artistId: artist.id)
+                    ArtistPill(name: artist.name, artistId: artist.id, selection: search.selection)
                 }
             }
         }
@@ -51,7 +64,7 @@ struct SearchResultsView: View {
             SectionHeading("Albums", count: search.albums.count)
             LazyVGrid(columns: columns, spacing: 18) {
                 ForEach(search.albums, id: \.id) { album in
-                    AlbumGridCell(album: album)
+                    AlbumGridCell(album: album, selection: search.selection)
                         .contentShape(Rectangle())
                         .onTapGesture { nav.open(album: album.id) }
                 }
@@ -64,7 +77,7 @@ struct SearchResultsView: View {
             SectionHeading("Tracks", count: search.tracks.count)
             VStack(spacing: 0) {
                 ForEach(search.tracks, id: \.id) { track in
-                    SearchTrackRow(track: track)
+                    SearchTrackRow(track: track, selection: search.selection)
                 }
             }
         }
@@ -100,6 +113,7 @@ private struct SectionHeading: View {
 /// drag nor right-click.
 private struct SearchTrackRow: View {
     let track: Track
+    let selection: PlayableSelection
 
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
@@ -109,6 +123,10 @@ private struct SearchTrackRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            if selection.isActive {
+                SelectionTick(key: Playable.track(track).key, selection: selection)
+            }
+
             // The cover is what you recognise a track by, and a results
             // list is exactly where you are trying to recognise something.
             Group {
@@ -133,7 +151,7 @@ private struct SearchTrackRow: View {
 
             Spacer(minLength: 8)
 
-            if track.albumId != nil && hovering {
+            if track.albumId != nil && hovering && !selection.isActive {
                 Text("Go to album")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
@@ -149,8 +167,10 @@ private struct SearchTrackRow: View {
             RoundedRectangle(cornerRadius: 6)
                 .fill(hovering ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear))
         }
-        .rowBehaviour(playable: .track(track))
+        .rowBehaviour()
+        .modifier(SelectableDrag(playable: .track(track), inContainer: true))
         .onTapGesture {
+            if selection.take(.track(track)) { return }
             guard let albumId = track.albumId else { return }
             nav.open(album: albumId, highlighting: track.id)
         }

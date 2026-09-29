@@ -8,15 +8,24 @@ struct ArtistPill: View {
     let artistId: Int64
     /// Similar-artist chips carry a score; search results don't.
     var detail: String?
+    /// The page's pick, where the pill takes part in one — see
+    /// `PlayableSelection`.
+    var selection: PlayableSelection?
 
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: "music.mic")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            Group {
+                if let selection, selection.isActive {
+                    SelectionTick(key: playable.key, selection: selection)
+                } else {
+                    Image(systemName: "music.mic")
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .font(.caption2)
             // A classical release credits the soloist, the orchestra and the
             // conductor in one artist string, which as a pill is a paragraph
             // laid on its side. The full name is in the tooltip and on the
@@ -45,9 +54,14 @@ struct ArtistPill: View {
         // it without arguing with it.
         .background(.quaternary, in: .capsule)
         .contentShape(Capsule())
-        .onTapGesture { nav.open(artist: artistId) }
+        .onTapGesture {
+            if selection?.take(playable) == true { return }
+            nav.open(artist: artistId)
+        }
         .help("Go to \(name)")
-        .contextMenu { PlayableMenu(playable: .artist(id: artistId, name: name)) }
-        .draggablePlayable(.artist(id: artistId, name: name))
+        .contextMenu { PlayableMenu(playable: playable) }
+        .modifier(SelectableDrag(playable: playable, inContainer: selection != nil))
     }
+
+    private var playable: Playable { .artist(id: artistId, name: name) }
 }

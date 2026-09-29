@@ -109,26 +109,23 @@ struct EmptyState: View {
     }
 }
 
-/// The grid as a drag container, so that dragging a ticked tile carries every
+/// The page as a drag container, so that dragging a ticked item carries every
 /// tick in the order they were made, and an unticked one carries itself.
 ///
 /// Worked out at drag time rather than handed to the container as its
 /// selection: that was a read of the ticks in the grid's body, and every tick
 /// re-diffed the grid. What it costs is the preview — a stack of ticks drags as
-/// the one tile under the pointer.
+/// the one item under the pointer.
 struct SelectionDrag: ViewModifier {
-    let selection: AlbumSelection
+    let selection: PlayableSelection
 
     func body(content: Content) -> some View {
         #if os(macOS)
-        content.dragContainer(for: PlayableTransfer.self, itemID: \.id) { grabbed in
-            let ids = grabbed.contains(where: selection.contains)
-                ? selection.ids
-                : Array(grabbed)
-            return ids.map { id in
-                let name = selection.grid().first { $0.id == id }?.title ?? ""
-                return PlayableTransfer(kind: .album, id: id, name: name)
-            }
+        content.dragContainer(for: PlayableTransfer.self, itemID: \.key) { grabbed in
+            let items = grabbed.contains(where: selection.contains)
+                ? selection.picked
+                : selection.grid().filter { grabbed.contains($0.key) }
+            return items.map(PlayableTransfer.init)
         }
         #else
         content
