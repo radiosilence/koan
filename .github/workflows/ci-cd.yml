@@ -657,6 +657,11 @@ jobs:
             exit 0
           fi
           cargo publish --workspace
+      # `cargo publish` unpacks each crate under target/package, and the cache
+      # step's clean-up of target trips over what it left there. The compiled
+      # dependencies it caches live elsewhere in target.
+      - if: always()
+        run: rm -rf target/package
 
   update-homebrew:
     name: Update Homebrew Tap
