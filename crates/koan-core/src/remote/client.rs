@@ -696,11 +696,19 @@ impl SubsonicClient {
     // -- Accounts: koan servers only, and only for an admin --
 
     pub fn koan_users(&self) -> Result<Vec<KoanUser>, SubsonicError> {
-        Ok(self.get("koanUsers")?.users.map(|u| u.user).unwrap_or_default())
+        Ok(self
+            .get("koanUsers")?
+            .users
+            .map(|u| u.user)
+            .unwrap_or_default())
     }
 
     /// `role` is `admin`, `user` or `readonly`.
-    pub fn koan_create_user(&self, username: &str, role: &str) -> Result<KoanInvite, SubsonicError> {
+    pub fn koan_create_user(
+        &self,
+        username: &str,
+        role: &str,
+    ) -> Result<KoanInvite, SubsonicError> {
         self.get_with_params("koanCreateUser", &[("username", username), ("role", role)])?
             .invite
             .ok_or(SubsonicError::BadResponse)

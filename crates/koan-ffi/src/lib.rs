@@ -2051,7 +2051,10 @@ impl KoanEngine {
             let made = client
                 .koan_create_user(&username, role.as_str())
                 .map_err(remote_error)?;
-            Ok(koan_core::invite::Invite::new(client.base_url(), &made.username, &made.password).into())
+            Ok(
+                koan_core::invite::Invite::new(client.base_url(), &made.username, &made.password)
+                    .into(),
+            )
         })
         .await
     }
@@ -2066,7 +2069,10 @@ impl KoanEngine {
         offload::offload(move || {
             let client = account_client()?;
             let made = client.koan_invite(&username, reset).map_err(remote_error)?;
-            Ok(koan_core::invite::Invite::new(client.base_url(), &made.username, &made.password).into())
+            Ok(
+                koan_core::invite::Invite::new(client.base_url(), &made.username, &made.password)
+                    .into(),
+            )
         })
         .await
     }
