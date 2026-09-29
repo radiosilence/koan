@@ -13,6 +13,8 @@ struct KoanIOSApp: App {
     @UIApplicationDelegateAdaptor(PushDelegate.self) private var push
     @State private var state: AppState?
     @State private var startupError: String?
+    /// A link opened before the engine was up, handled once it is.
+    @State private var pendingURL: URL?
     @State private var session = AudioSession()
     @State private var keepalive = Keepalive()
     @Environment(\.scenePhase) private var scenePhase
@@ -36,6 +38,7 @@ struct KoanIOSApp: App {
                         .environment(state.ui)
                         .environment(state.mirror)
                         .environment(\.powerSaving, powerSaving)
+                        .modifier(InviteConfirmation())
                         .tint(.koanAccent)
                 } else if let startupError {
                     ContentUnavailableView(
@@ -46,6 +49,14 @@ struct KoanIOSApp: App {
                 } else {
                     Splash()
                 }
+            }
+            // An invite, as a universal link or through `koan://join`.
+            .onOpenURL { url in
+                if let state { state.open(url: url) } else { pendingURL = url }
+            }
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                guard let url = activity.webpageURL else { return }
+                if let state { state.open(url: url) } else { pendingURL = url }
             }
             // Posted from whichever thread noticed; read again rather than
             // trusting the notification to say which way it went.
@@ -104,6 +115,10 @@ struct KoanIOSApp: App {
                         }
                     }
                     state = built
+                    if let pendingURL {
+                        built.open(url: pendingURL)
+                        self.pendingURL = nil
+                    }
                 } catch {
                     startupError = String(describing: error)
                 }

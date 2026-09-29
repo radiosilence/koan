@@ -261,6 +261,7 @@ private struct LibrarySettings: View {
 private struct RemoteSettings: View {
     @Bindable var model: SettingsModel
     @Environment(ActivityModel.self) private var activity
+    @Environment(AppState.self) private var state
     @State private var url = ""
     @State private var username = ""
     @State private var confirmingSignOut = false
@@ -268,6 +269,15 @@ private struct RemoteSettings: View {
     /// not a limit anyone set.
     @State private var cacheLimit: String?
     @FocusState private var cacheLimitFocused: Bool
+
+    private func join(_ text: String) {
+        guard let invite = state.engine.parseInvite(link: text) else {
+            model.report("That isn't a kōan invite.")
+            return
+        }
+        url = ""
+        Task { await state.offer(invite) }
+    }
 
     var body: some View {
         Form {
@@ -295,6 +305,7 @@ private struct RemoteSettings: View {
                     }
                     .rowButtons()
                 }
+                PeopleSettings(signedInAs: model.settings.remoteUsername)
             } else {
                 Section {
                     // The prompt names the field: an iOS form shows only the
@@ -309,14 +320,27 @@ private struct RemoteSettings: View {
                         prompt: Text("Password")
                     )
                     .verbatimEntry()
-                    Button("Sign In") { model.signIn(url: url, username: username) }
-                        .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
+                    HStack {
+                        Button("Sign In") { model.signIn(url: url, username: username) }
+                            .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
+                        Spacer()
+                        PasteButton(payloadType: String.self) { strings in
+                            Task { @MainActor in join(strings.first ?? "") }
+                        }
+                        .labelStyle(.titleAndIcon)
+                    }
+                    .rowButtons()
                 } header: {
                     Text("Subsonic or Navidrome")
                 } footer: {
-                    Text("Checked against the server, then saved to config.local.toml, readable only by you.")
+                    Text("Got an invite? Paste it here, or into Server URL, and kōan fills in the rest. Checked against the server, then saved to config.local.toml, readable only by you.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
+                }
+                // An invite, or an address with the account in it, pasted
+                // where the address goes.
+                .onChange(of: url) { _, typed in
+                    if state.engine.parseInvite(link: typed) != nil { join(typed) }
                 }
             }
 

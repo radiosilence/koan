@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import KoanFFI
 import Observation
 import SwiftUI
 
@@ -15,6 +16,9 @@ final class UIState {
     var showingPicker = false
     var showingArtwork = false
     var showingShortcuts = false
+    /// An invite that would replace the account already signed in, waiting
+    /// for a yes.
+    var pendingInvite: Invite?
 
     /// The main window's content size, measured by `RootView`.
     ///

@@ -597,6 +597,37 @@ impl SubsonicClient {
         Ok(())
     }
 
+    // -- Accounts: koan servers only, and only for an admin --
+
+    pub fn koan_users(&self) -> Result<Vec<KoanUser>, SubsonicError> {
+        Ok(self.get("koanUsers")?.users.map(|u| u.user).unwrap_or_default())
+    }
+
+    /// `role` is `admin`, `user` or `readonly`.
+    pub fn koan_create_user(&self, username: &str, role: &str) -> Result<KoanInvite, SubsonicError> {
+        self.get_with_params("koanCreateUser", &[("username", username), ("role", role)])?
+            .invite
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// With `reset`, the account gets a new password and its devices sign out.
+    pub fn koan_invite(&self, username: &str, reset: bool) -> Result<KoanInvite, SubsonicError> {
+        let reset = if reset { "true" } else { "false" };
+        self.get_with_params("koanInvite", &[("username", username), ("reset", reset)])?
+            .invite
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    pub fn koan_set_user_role(&self, username: &str, role: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("koanSetUserRole", &[("username", username), ("role", role)])?;
+        Ok(())
+    }
+
+    pub fn koan_delete_user(&self, username: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("koanDeleteUser", &[("username", username)])?;
+        Ok(())
+    }
+
     /// The configured server base URL (for constructing share links etc).
     pub fn base_url(&self) -> &str {
         &self.auth.base_url
@@ -631,6 +662,29 @@ struct SubsonicResponse {
     playlists: Option<SubsonicPlaylists>,
     playlist: Option<SubsonicPlaylistFull>,
     scan_status: Option<SubsonicScanStatus>,
+    users: Option<KoanUsers>,
+    invite: Option<KoanInvite>,
+}
+
+#[derive(Debug, Deserialize)]
+struct KoanUsers {
+    #[serde(default)]
+    user: Vec<KoanUser>,
+}
+
+/// An account on a koan server, as its admins see it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanUser {
+    pub username: String,
+    pub role: String,
+}
+
+/// What a koan server hands back for an invite: the account's credentials.
+/// The link is built from the address the client already reaches it at.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanInvite {
+    pub username: String,
+    pub password: String,
 }
 
 #[derive(Debug, Deserialize)]
