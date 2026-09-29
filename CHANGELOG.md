@@ -11,6 +11,10 @@
 
 - **App Store builds cannot stay reachable by playing silence.** The iOS keepalive plays silent audio so a paused, backgrounded phone keeps its link to the server; App Review rejects background audio that plays nothing (guideline 2.5.4). Builds archived for TestFlight and the App Store are compiled with `KOAN_STORE`, which turns it off and hides its setting. Development builds keep it; push notifications (#520) are what replaces it.
 
+### Fixed
+
+- **iOS builds carry koan's version.** The generated `Info.plist` had XcodeGen's defaults, 1.0 (1), whatever the build settings said, so every TestFlight upload claimed version 1.0 and could not be attached to the App Store version it was built for. It now reads `MARKETING_VERSION` (the workspace version) and `CURRENT_PROJECT_VERSION` (the build number).
+
 ## 0.39.4
 
 ### Fixed
