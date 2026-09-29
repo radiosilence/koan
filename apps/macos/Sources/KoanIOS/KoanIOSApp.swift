@@ -118,5 +118,13 @@ private struct Splash: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color("LaunchBackground"))
             .ignoresSafeArea()
+            // After the launch screen, which is drawn before any code runs and
+            // so cannot say it: the ensō stays put, and this arrives under it.
+            .overlay(alignment: .bottom) {
+                Text(AppVersion.text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 24)
+            }
     }
 }
