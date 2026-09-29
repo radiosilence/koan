@@ -758,34 +758,3 @@ mod tests {
         assert_ne!(a, generate_password());
     }
 }
-
-/// `koan auth invite` — the invite link and email for an account.
-pub fn cmd_auth_invite(username: &str, server: Option<&str>, reset: bool) {
-    let configured = Config::load().ok().and_then(|c| c.sharing.public_url);
-    let Some(server) = server
-        .map(str::to_owned)
-        .or(configured)
-        .filter(|s| !s.trim().is_empty())
-    else {
-        eprintln!(
-            "{} Pass --server, or set sharing.public_url, to the address clients reach this server at.",
-            "✗".red().bold()
-        );
-        std::process::exit(1);
-    };
-    let db = open_db();
-    let password = auth::subsonic_key()
-        .map_err(|e| e.to_string())
-        .and_then(|key| {
-            koan_core::invite::account_password(&db.conn, &key, username, reset)
-                .map_err(|e| e.to_string())
-        })
-        .unwrap_or_else(|e| {
-            eprintln!("{} {e}", "✗".red().bold());
-            std::process::exit(1);
-        });
-    let invite = koan_core::invite::Invite::new(&server, username, &password);
-    println!("{}\n", invite.link());
-    println!("{} {}\n", "Subject:".dimmed(), invite.email_subject());
-    print!("{}", invite.email_text());
-}

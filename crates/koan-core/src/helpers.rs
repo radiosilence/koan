@@ -897,6 +897,9 @@ pub fn set_remote_credentials(
         cfg.remote.username = username.to_string();
         cfg.remote.password = password.to_string();
     })?;
+    // The link rests for up to a minute while signed out; the profile Settings
+    // shows is probed when it wakes.
+    crate::remote::link::nudge();
     Ok(())
 }
 
