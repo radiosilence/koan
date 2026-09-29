@@ -16,10 +16,6 @@ publish = false
 name = "koan_ffi"
 crate-type = ["staticlib", "cdylib", "lib"]
 
-[[bin]]
-name = "uniffi-bindgen"
-path = "src/bin/uniffi-bindgen.rs"
-
 [dependencies]
 # Config is written back from the settings window.
 toml = "1.1"
@@ -32,7 +28,7 @@ parking_lot = "0.12"
 rusqlite = { workspace = true }
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync"] }
-uniffi = { version = "0.32", features = ["cli"] }
+uniffi = "0.32"
 uuid = { version = "1", features = ["v7"] }
 chrono = "0.4"
 

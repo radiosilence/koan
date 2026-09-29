@@ -1,0 +1,11 @@
+[package]
+name = "uniffi-bindgen"
+version = "0.0.0"
+edition.workspace = true
+# uniffi's bindgen pulls cargo-platform, which requires 1.91.
+rust-version = "1.91"
+publish = false
+description = "Generates koan-ffi's Swift bindings from a built library."
+
+[dependencies]
+uniffi = { version = "0.32", features = ["cli"] }
