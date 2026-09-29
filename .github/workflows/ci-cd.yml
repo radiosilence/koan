@@ -675,9 +675,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           set -euo pipefail
+          # A release that leaves Homebrew on the old version has failed, so a
+          # missing token fails the job rather than passing it green.
           if [ -z "$GITHUB_TOKEN" ]; then
-            echo "RELEASE_TOKEN not set, skipping"
-            exit 0
+            echo "::error::RELEASE_TOKEN is not set; the Homebrew tap cannot be updated"
+            exit 1
           fi
           VERSION="${{ needs.check-version.outputs.version }}"
           # Locate rather than assume, and stop if anything is missing.
