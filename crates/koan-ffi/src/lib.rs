@@ -4171,6 +4171,25 @@ fn link_queue(state: &SharedPlayerState) -> Vec<koan_core::remote::link::LinkQue
         .collect()
 }
 
+fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    koan_core::helpers::subsonic_client(&Config::load().unwrap_or_default()).ok_or_else(|| {
+        KoanError::BadArgument {
+            message: "no remote server configured".into(),
+        }
+    })
+}
+
+/// A server that answered and refused is a bad request; one that did not
+/// answer is worth retrying.
+fn remote_error(e: SubsonicError) -> KoanError {
+    match e {
+        SubsonicError::Api { message, .. } => KoanError::BadArgument { message },
+        e => KoanError::Remote {
+            message: e.to_string(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod fuzzy_tests {
     use super::fuzzy_rank;
@@ -4191,24 +4210,5 @@ mod fuzzy_tests {
         texts.push("SPFDJ".into());
         let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
         assert_eq!(fuzzy_rank(&texts, "spfdj", 5), vec![20_000]);
-    }
-}
-
-fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
-    koan_core::helpers::subsonic_client(&Config::load().unwrap_or_default()).ok_or_else(|| {
-        KoanError::BadArgument {
-            message: "no remote server configured".into(),
-        }
-    })
-}
-
-/// A server that answered and refused is a bad request; one that did not
-/// answer is worth retrying.
-fn remote_error(e: SubsonicError) -> KoanError {
-    match e {
-        SubsonicError::Api { message, .. } => KoanError::BadArgument { message },
-        e => KoanError::Remote {
-            message: e.to_string(),
-        },
     }
 }
