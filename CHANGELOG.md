@@ -4,6 +4,8 @@
 
 ### Added
 
+- **A koan server reaches a phone iOS has suspended** ([#520](https://github.com/radiosilence/koan/issues/520)). The iOS app registers for push and sends its token up the link; the server keeps it per device. When something waits for a device that is away (a sync, an eviction), the server sends a background push that wakes the app to link and take it. A request to play on a device that is not linked becomes a notification, "Play on …", that plays when tapped: iOS does not let a suspended app start audio itself. `playOnClient` and the MCP say when a notification was sent rather than music started. Needs the team's APNs key in `[push]`, which the Pulumi package takes as a Secret (`push.existingSecret`).
+- **Interruptions are logged.** Each audio interruption on iOS, and each move between foreground and background, goes to koan's log, to find why playback sometimes does not resume after one.
 - **The iOS app shows its version**, at the foot of Settings and under the ensō while it starts: which build is running, for a bug report or to see a TestFlight update arrived.
 
 ### Changed
