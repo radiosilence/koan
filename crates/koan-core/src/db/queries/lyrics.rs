@@ -25,6 +25,19 @@ pub fn get_cached_lyrics(
 }
 
 /// Cache lyrics for a track. Replaces any existing cached lyrics.
+/// When the cached copy was fetched, in seconds since the epoch.
+pub fn lyrics_fetched_at(conn: &Connection, track_id: i64) -> Result<Option<i64>, DbError> {
+    match conn.query_row(
+        "SELECT fetched_at FROM lyrics_cache WHERE track_id = ?1",
+        params![track_id],
+        |row| row.get(0),
+    ) {
+        Ok(at) => Ok(Some(at)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
 pub fn cache_lyrics(
     conn: &Connection,
     track_id: i64,
