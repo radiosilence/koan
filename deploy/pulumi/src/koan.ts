@@ -175,6 +175,18 @@ export function createKoan(
                   { name: "KOAN_GRAPHQL__COOKIE_SECURE", value: "true" },
                   // Share links are built on the address strangers reach.
                   { name: "KOAN_SHARING__PUBLIC_URL", value: `https://${conf.hostname}` },
+                  ...(conf.push.existingSecret
+                    ? [
+                        {
+                          name: "KOAN_PUSH__KEY",
+                          valueFrom: {
+                            secretKeyRef: { name: conf.push.existingSecret, key: "apns-key" },
+                          },
+                        },
+                        { name: "KOAN_PUSH__KEY_ID", value: conf.push.keyId },
+                        { name: "KOAN_PUSH__TEAM_ID", value: conf.push.teamId },
+                      ]
+                    : []),
                 ],
                 ports: [
                   { name: "api", containerPort: conf.api.port },

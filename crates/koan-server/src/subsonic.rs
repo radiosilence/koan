@@ -3188,11 +3188,15 @@ async fn link_session(
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(msg)) => {
                     last_heard = tokio::time::Instant::now();
-                    if let Message::Text(text) = msg
-                        && let Ok(koan_core::remote::link::LinkReport::State(state)) =
-                            serde_json::from_str(&text)
-                    {
-                        registry.report(&id, state);
+                    use koan_core::remote::link::LinkReport;
+                    if let Message::Text(text) = msg {
+                        match serde_json::from_str(&text) {
+                            Ok(LinkReport::State(state)) => registry.report(&id, state),
+                            Ok(LinkReport::Push { token, sandbox }) => {
+                                registry.set_push(&username, &device, &token, sandbox);
+                            }
+                            Err(_) => {}
+                        }
                     }
                 }
             },

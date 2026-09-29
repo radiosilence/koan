@@ -134,6 +134,29 @@ impl LinkState {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum LinkReport {
     State(LinkState),
+    /// Where Apple's push service reaches this device, so the server can wake
+    /// it once iOS has suspended it and the socket is gone. `sandbox` for a
+    /// development build, whose tokens only the sandbox gateway accepts.
+    Push {
+        token: String,
+        sandbox: bool,
+    },
+}
+
+/// This device's push token, once the OS has issued one. Set by the app; sent
+/// up each link as it opens, and again if it changes.
+static PUSH_TOKEN: Mutex<Option<(String, bool)>> = Mutex::new(None);
+
+/// A command as a push notification carries it: the same JSON as over the
+/// link.
+pub fn parse_command(json: &str) -> Result<LinkCommand, String> {
+    serde_json::from_str(json).map_err(|e| e.to_string())
+}
+
+/// Record the push token the OS issued this app, and link now to send it.
+pub fn set_push_token(token: String, sandbox: bool) {
+    *PUSH_TOKEN.lock() = Some((token, sandbox));
+    nudge();
 }
 
 /// How a client describes itself when it links.
@@ -310,7 +333,18 @@ fn serve(
     let mut heard = Instant::now();
     let mut pinged = false;
     let mut sent: Option<(LinkState, Instant)> = None;
+    let mut sent_push: Option<(String, bool)> = None;
     loop {
+        let push = PUSH_TOKEN.lock().clone();
+        if push.is_some() && push != sent_push {
+            let (token, sandbox) = push.clone().unwrap_or_default();
+            let text = serde_json::to_string(&LinkReport::Push { token, sandbox })
+                .map_err(|e| e.to_string())?;
+            socket
+                .send(tungstenite::Message::Text(text.into()))
+                .map_err(|e| e.to_string())?;
+            sent_push = push;
+        }
         let now = state();
         if sent
             .as_ref()
@@ -448,6 +482,17 @@ fn percent_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_push_token_is_a_tagged_report() {
+        let report = LinkReport::Push {
+            token: "ab12".into(),
+            sandbox: true,
+        };
+        let text = serde_json::to_string(&report).unwrap();
+        assert_eq!(text, r#"{"type":"push","token":"ab12","sandbox":true}"#);
+        assert_eq!(serde_json::from_str::<LinkReport>(&text).unwrap(), report);
+    }
 
     #[test]
     fn commands_are_tagged_json() {

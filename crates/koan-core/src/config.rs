@@ -35,6 +35,7 @@ pub struct Config {
     pub subsonic: SubsonicConfig,
     pub auth: AuthConfig,
     pub sharing: SharingConfig,
+    pub push: PushConfig,
 }
 
 /// Share links this koan serves itself.
@@ -46,6 +47,42 @@ pub struct SharingConfig {
     /// it cannot know which of its addresses a stranger can reach.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+}
+
+/// Push notifications to koan's iOS app, which reach a phone iOS has
+/// suspended. Apple accepts them only signed with the key of the team that
+/// ships the app, so only a server holding that key can send them; without one
+/// a server reaches phones only while they are linked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PushConfig {
+    /// The APNs auth key (`AuthKey_XXXXXXXXXX.p8`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<PathBuf>,
+    /// The key itself, PEM, for a deployment that hands secrets over as
+    /// environment (`KOAN_PUSH__KEY`) rather than files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// The key's ten-character id.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub key_id: String,
+    /// The Apple developer team the key belongs to.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub team_id: String,
+    /// The app's bundle id, which every push names.
+    pub topic: String,
+}
+
+impl Default for PushConfig {
+    fn default() -> Self {
+        Self {
+            key_path: None,
+            key: None,
+            key_id: String::new(),
+            team_id: String::new(),
+            topic: "cc.blit.koan".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -439,6 +476,10 @@ pub fn layer_of(path: &str) -> Layer {
         "remote.password"
         | "subsonic.password"
         | "auth.refresh_token"
+        | "push.key"
+        | "push.key_path"
+        | "push.key_id"
+        | "push.team_id"
         // This machine's paths, disk and account.
         | "library.folders"
         | "remote.enabled"

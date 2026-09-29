@@ -22,6 +22,7 @@ koan-core = { workspace = true }
 log = "0.4"
 lru = "0.18"
 nucleo = "0.5"
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 parking_lot = "0.12"
 md5 = "0.8"
 reqwest = { workspace = true, features = ["stream"] }

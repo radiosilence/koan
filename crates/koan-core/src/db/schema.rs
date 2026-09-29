@@ -183,6 +183,17 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             PRIMARY KEY (device, username)
         );
 
+        -- Where Apple's push service reaches each linked iOS app, kept after
+        -- its socket closes: reaching a suspended app is what it is for.
+        CREATE TABLE IF NOT EXISTS link_push (
+            device      TEXT NOT NULL,
+            username    TEXT NOT NULL,
+            token       TEXT NOT NULL,
+            sandbox     INTEGER NOT NULL,
+            updated_at  INTEGER NOT NULL,
+            PRIMARY KEY (device, username)
+        );
+
         CREATE TABLE IF NOT EXISTS link_orders (
             id          TEXT PRIMARY KEY,
             body        TEXT NOT NULL,

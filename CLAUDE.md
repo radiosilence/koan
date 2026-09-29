@@ -192,6 +192,7 @@ follows the top of the stack in front — see `TabShell`.
 | Module | What |
 |--------|------|
 | `KoanApp.swift` | `@main`, `AppState`, menu commands, keyboard shortcuts |
+| `KoanIOS/PushDelegate.swift` | Push: registers for a token and sends it up the link; wakes to link on a background push; runs the command a tapped notification carries |
 | `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Each task declares what it holds — files on disk, local rows, remote rows, downloads — and a new one is disabled only where those overlap |
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
 | `Support/EngineMirror.swift` | The engine's state as SwiftUI sees it. `Observable` by hand: one property per slice, invalidated only where a slice actually moved |
@@ -232,6 +233,7 @@ follows the top of the stack in front — see `TabShell`.
 | `subsonic.rs` | Subsonic-compatible REST API (XML/JSON, auth, streaming, cover art), plus koan's `/rest/koanLink` WebSocket |
 | `clients.rs` | Linked koan apps by account, and sending them `LinkCommand`s — what `clients`, `playOnClient` and `controlClient` use |
 | `mcp.rs` | MCP server for Claude Desktop (schema_sdl + graphql tools) |
+| `push.rs` | Apple push notifications to the iOS app: ES256 token auth, HTTP/2 to APNs. A background push wakes a suspended app to link; a play request becomes a notification to tap |
 | `share.rs` | Public share pages and their audio, answering for a share's own tracks only |
 | `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use |
 
