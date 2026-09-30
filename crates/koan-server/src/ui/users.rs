@@ -313,6 +313,9 @@ pub(super) async fn delete(
         let db = open(&s.pool)?;
         let row = users::get_user_by_id(&db.conn, id).ok()??;
         let done = invite::delete_account(&db.conn, &row.username);
+        if done.is_ok() {
+            crate::clients::registry().disconnect(&row.username);
+        }
         Some((done, list(&s)))
     })
     .await;

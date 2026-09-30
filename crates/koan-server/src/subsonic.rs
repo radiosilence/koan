@@ -3469,6 +3469,7 @@ async fn koan_delete_user(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
                 ));
             }
             koan_core::invite::delete_account(&db.conn, username).map_err(account_error)?;
+            crate::clients::registry().disconnect(username);
             Ok(b)
         })
     })

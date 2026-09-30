@@ -1325,6 +1325,7 @@ impl MutationRoot {
         }
         with_db(ctx, move |db| {
             koan_core::invite::delete_account(&db.conn, &username)?;
+            crate::clients::registry().disconnect(&username);
             Ok(GqlStatus::success(format!("{username} deleted")))
         })
         .await

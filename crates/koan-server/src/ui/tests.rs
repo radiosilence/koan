@@ -718,8 +718,10 @@ async fn admins_create_invite_and_remove_accounts() {
     // An account made before passwords were sealed needs a reset.
     let r = send(&f.app, post("/users/1/invite", "{}", &admin)).await;
     assert!(r.body.contains("not recoverable"), "{}", r.body);
+    let alice_link = open_link("alice");
     let r = send(&f.app, post("/users/1/invite?reset=true", "{}", &admin)).await;
     assert!(r.body.contains("id=invite-link"), "{}", r.body);
+    assert_closed(alice_link);
 
     let r = send(
         &f.app,
@@ -743,6 +745,7 @@ async fn admins_create_invite_and_remove_accounts() {
 
     let r = send(&f.app, post(&format!("/users/{boss}/delete"), "{}", &admin)).await;
     assert!(r.body.contains("own account"), "{}", r.body);
+    let sarita_link = open_link("sarita");
     send(
         &f.app,
         post(&format!("/users/{}/delete", row.id), "{}", &admin),
@@ -753,4 +756,25 @@ async fn admins_create_invite_and_remove_accounts() {
             .unwrap()
             .is_none()
     );
+    assert_closed(sarita_link);
+}
+
+/// An open koanLink for `username`, as the link route registers one.
+fn open_link(
+    username: &str,
+) -> tokio::sync::mpsc::UnboundedReceiver<koan_core::remote::link::LinkCommand> {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    crate::clients::registry().register(username, "phone", "ios", "ui-tests", tx, false);
+    rx
+}
+
+/// The link's session would see its channel close, which is what ends it.
+fn assert_closed(
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<koan_core::remote::link::LinkCommand>,
+) {
+    while rx.try_recv().is_ok() {}
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+    ));
 }
