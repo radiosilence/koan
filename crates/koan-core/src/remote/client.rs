@@ -14,7 +14,7 @@ const PLAYBACK_REPORT_EXTENSION: &str = "playbackReport";
 #[derive(Debug, Error)]
 pub enum SubsonicError {
     #[error("http error: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(reqwest::Error),
     #[error("api error: {code} — {message}")]
     Api { code: i32, message: String },
     #[error("unexpected response format")]
@@ -25,6 +25,15 @@ pub enum SubsonicError {
     Download(#[from] DownloadError),
     #[error("entropy source unavailable: {0}")]
     Entropy(#[from] getrandom::Error),
+}
+
+/// Without the URL: every request is signed with the account's credentials in
+/// its query, and the error's message would carry them to wherever it is shown
+/// or logged.
+impl From<reqwest::Error> for SubsonicError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::Http(e.without_url())
+    }
 }
 
 /// A Subsonic server and the credentials that sign requests to it.
@@ -1053,6 +1062,19 @@ mod tests {
         serde_json::from_str::<SubsonicResponseWrapper>(json)
             .unwrap()
             .subsonic_response
+    }
+
+    #[test]
+    fn http_errors_leave_the_signed_url_out() {
+        // Nothing listens on port 1, so this fails to connect.
+        let e = reqwest::blocking::get("http://127.0.0.1:1/rest/stream?u=owner&p=enc:736563726574")
+            .unwrap_err();
+        assert!(e.to_string().contains("enc:736563726574"));
+        let shown = SubsonicError::from(e).to_string();
+        assert!(!shown.contains("enc:"), "{shown}");
+        let e = reqwest::blocking::get("http://127.0.0.1:1/rest/stream?p=enc:736563726574")
+            .unwrap_err();
+        assert!(!DownloadError::from(e).to_string().contains("enc:"));
     }
 
     #[test]

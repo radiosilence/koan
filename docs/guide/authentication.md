@@ -128,7 +128,7 @@ koan auth create-user --username alice --role user
 #   user     — playback, queue, search, favourites, lyrics
 #   readonly — browse library, view queue. No mutations.
 
-# Reset a user's password (revokes all their tokens)
+# Reset a user's password (revokes their refresh tokens and API keys)
 koan auth reset-password alice
 
 # Change a user's role
@@ -181,7 +181,7 @@ Ed25519 keypair is auto-generated on first `koan auth setup` and stored at:
 **Reset a password:**
 ```bash
 koan auth reset-password admin
-# Prompts for new password. Revokes all existing tokens for that user.
+# Prompts for new password. Revokes that user's refresh tokens and API keys.
 ```
 
 **Regenerate keypair:**
@@ -241,7 +241,7 @@ Refresh tokens are stored in the database as `sha256(token)`, so a database read
 `/rest/*` is kōan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`). Clients sign in one of three ways:
 
 - **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
-- **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. The protocol sends the password with every request, so use it only over HTTPS.
+- **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. argon2 is expensive by design, so at most one check per core (2 to 8) runs at once and a request arriving when all are busy gets error 0, "server busy", rather than waiting. The protocol sends the password with every request, so use it only over HTTPS.
 - **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret, for clients that only speak token auth. Token auth needs the plaintext on the server, which kōan does not keep for accounts, so a token for any other username gets error 41 and a client falls back to a password or a key.
 
 ```bash

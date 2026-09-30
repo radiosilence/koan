@@ -1296,6 +1296,9 @@ impl MutationRoot {
             let key = koan_core::auth::subsonic_key()?;
             let password =
                 koan_core::invite::account_password(&db.conn, &key, &username, reset_password)?;
+            if reset_password {
+                crate::clients::registry().disconnect(&username);
+            }
             Ok(koan_core::invite::Invite::new(&server, &username, &password).into())
         })
         .await
@@ -1327,6 +1330,7 @@ impl MutationRoot {
         }
         with_db(ctx, move |db| {
             koan_core::invite::delete_account(&db.conn, &username)?;
+            crate::clients::registry().disconnect(&username);
             Ok(GqlStatus::success(format!("{username} deleted")))
         })
         .await

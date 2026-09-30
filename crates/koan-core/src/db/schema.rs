@@ -320,7 +320,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 
         -- Auth tables
         CREATE TABLE IF NOT EXISTS users (
-            id            INTEGER PRIMARY KEY,
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
             username      TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user', 'readonly')),
@@ -514,6 +514,7 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         [],
     )?;
 
+    autoincrement_user_ids(conn)?;
     merge_case_duplicate_artists(conn)?;
     // A client more than this far behind purges its whole cache instead.
     conn.execute(
@@ -833,6 +834,51 @@ fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
          CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
          COMMIT;",
     );
+    conn.pragma_update(None, "foreign_keys", "on")?;
+    rebuild
+}
+
+/// Give `users.id` `AUTOINCREMENT`, keeping every row and id.
+///
+/// Without it SQLite hands the highest id out again once that account is
+/// deleted, and whatever still names the old account by id — a live access
+/// token, a link — would then name the new one. SQLite cannot add the keyword
+/// in place, so the table is rebuilt. Ids deleted before this ran may still be
+/// reused once; none after.
+fn autoincrement_user_ids(conn: &Connection) -> rusqlite::Result<()> {
+    let sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'",
+        [],
+        |r| r.get(0),
+    )?;
+    if sql.to_ascii_uppercase().contains("AUTOINCREMENT") {
+        return Ok(());
+    }
+
+    // Off, or dropping `users` would cascade into every table that names it.
+    // Pragma changes are no-ops inside a transaction, so this must bracket it.
+    conn.pragma_update(None, "foreign_keys", "off")?;
+    // Recreated by `apply_migrations`; see `per_user_favourites`.
+    let rebuild = conn.execute_batch(
+        "DROP TRIGGER IF EXISTS users_personal_data;
+         BEGIN;
+         CREATE TABLE users_new (
+             id              INTEGER PRIMARY KEY AUTOINCREMENT,
+             username        TEXT NOT NULL UNIQUE,
+             password_hash   TEXT NOT NULL,
+             role            TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user', 'readonly')),
+             created_at      TEXT DEFAULT (datetime('now')),
+             sealed_password BLOB
+         );
+         INSERT INTO users_new (id, username, password_hash, role, created_at, sealed_password)
+             SELECT id, username, password_hash, role, created_at, sealed_password FROM users;
+         DROP TABLE users;
+         ALTER TABLE users_new RENAME TO users;
+         COMMIT;",
+    );
+    if rebuild.is_err() {
+        let _ = conn.execute_batch("ROLLBACK");
+    }
     conn.pragma_update(None, "foreign_keys", "on")?;
     rebuild
 }
@@ -1333,6 +1379,74 @@ mod tests {
         let mut sorted = tracks.clone();
         sorted.sort();
         assert_eq!(tracks, sorted);
+    }
+
+    /// A users table from before `AUTOINCREMENT`: rebuilt with its rows, ids
+    /// and the tables that refer to it intact, and a deleted id not reissued.
+    #[test]
+    fn user_ids_are_never_reused_after_the_rebuild() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TRIGGER users_personal_data;
+             DROP TABLE users;
+             CREATE TABLE users (
+                 id            INTEGER PRIMARY KEY,
+                 username      TEXT NOT NULL UNIQUE,
+                 password_hash TEXT NOT NULL,
+                 role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user', 'readonly')),
+                 created_at    TEXT DEFAULT (datetime('now')),
+                 sealed_password BLOB
+             );
+             INSERT INTO users (id, username, password_hash, role, sealed_password) VALUES
+                 (3, 'mate', 'h', 'user', x'01'), (5, 'owner', 'h', 'admin', NULL);
+             INSERT INTO api_keys (user_id, name, key_hash, created_at) VALUES (3, 'k', 'kh', 0);
+             INSERT INTO refresh_tokens (id, user_id, expires_at) VALUES ('t', 5, 9999);",
+        )
+        .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name = 'users'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(sql.contains("AUTOINCREMENT"), "{sql}");
+        let sealed: Vec<u8> = conn
+            .query_row("SELECT sealed_password FROM users WHERE id = 3", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(sealed, [1]);
+        let fk: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fk, 1);
+
+        // References still resolve, and still cascade.
+        conn.execute("DELETE FROM users WHERE id = 3", []).unwrap();
+        let keys: i64 = conn
+            .query_row("SELECT COUNT(*) FROM api_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(keys, 0);
+        conn.execute("DELETE FROM users WHERE id = 5", []).unwrap();
+        let tokens: i64 = conn
+            .query_row("SELECT COUNT(*) FROM refresh_tokens", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tokens, 0);
+
+        // The highest id, deleted, is not handed out again.
+        conn.execute(
+            "INSERT INTO users (username, password_hash) VALUES ('new', 'h')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(conn.last_insert_rowid(), 6);
+        assert!(conn.execute_batch("PRAGMA foreign_key_check").is_ok());
     }
 
     #[test]

@@ -68,13 +68,14 @@ impl LoginRateLimiter {
 /// or loopback address — a proxy in the cluster or on the host — the last
 /// `X-Forwarded-For` entry is the one that proxy appended, and is the client.
 /// Earlier entries are whatever the client sent, and are ignored. A public
-/// peer is the client, and its header is not believed.
+/// peer is the client, and its header is not believed. Nor is it when the
+/// peer is unknown: a listener served without its connection info would
+/// otherwise let every client pick its own address.
 pub(crate) fn client_ip(request: &axum::extract::Request) -> IpAddr {
-    let peer = request
-        .extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|ConnectInfo(addr)| addr.ip())
-        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let Some(ConnectInfo(peer)) = request.extensions().get::<ConnectInfo<SocketAddr>>() else {
+        return IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+    };
+    let peer = peer.ip();
     if !is_internal(peer) {
         return peer;
     }
@@ -91,10 +92,8 @@ pub(crate) fn client_ip(request: &axum::extract::Request) -> IpAddr {
 
 fn is_internal(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_unspecified(),
-        IpAddr::V6(v6) => {
-            v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xfe00) == 0xfc00
-        }
+        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback(),
+        IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
     }
 }
 
@@ -287,7 +286,7 @@ pub struct MessageResponse {
 // ---------------------------------------------------------------------------
 
 pub fn auth_router(state: AuthRouteState) -> axum::Router {
-    axum::Router::new()
+    let router = axum::Router::new()
         .route(
             "/auth/login",
             post(login).layer(axum::middleware::from_fn_with_state(
@@ -296,12 +295,35 @@ pub fn auth_router(state: AuthRouteState) -> axum::Router {
             )),
         )
         .route("/auth/refresh", post(refresh))
-        .route("/auth/logout", post(logout))
-        // These routes are unauthenticated by definition and the work behind
-        // them is deliberately expensive, so they get their own ceiling rather
-        // than sharing the GraphQL one.
-        .layer(tower::limit::ConcurrencyLimitLayer::new(2))
-        .with_state(state)
+        .route("/auth/logout", post(logout));
+    auth_perimeter(router, AUTH_TIMEOUT).with_state(state)
+}
+
+/// How long a sign-in, refresh or sign-out may take, reading its body included.
+const AUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// These routes are unauthenticated by definition and the work behind them is
+/// deliberately expensive, so they get their own ceiling rather than sharing
+/// the GraphQL one. It sheds rather than queues, and each request has a
+/// deadline: the permit is held while the body is read, so two clients that
+/// never finish sending one would otherwise hold a route shut.
+fn auth_perimeter<S>(router: axum::Router<S>, timeout: std::time::Duration) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    router
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            timeout,
+        ))
+        .layer(
+            tower::ServiceBuilder::new()
+                .layer(axum::error_handling::HandleErrorLayer::new(
+                    |_: tower::BoxError| async { (StatusCode::SERVICE_UNAVAILABLE, "busy") },
+                ))
+                .load_shed()
+                .concurrency_limit(2),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -665,6 +687,49 @@ mod tests {
         // An internal peer with no header is itself.
         let r = request_from("10.42.0.7", None);
         assert_eq!(client_ip(&r), "10.42.0.7".parse::<IpAddr>().unwrap());
+        // No peer known: the header is the client's own claim.
+        let mut r = axum::http::Request::new(axum::body::Body::empty());
+        r.headers_mut()
+            .insert("x-forwarded-for", "203.0.113.9".parse().unwrap());
+        assert_eq!(client_ip(&r), IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    }
+
+    #[tokio::test]
+    async fn stalled_bodies_are_shed_then_timed_out() {
+        use tower::ServiceExt as _;
+        async fn read(_: axum::body::Bytes) -> StatusCode {
+            StatusCode::OK
+        }
+        // With its state, as `auth_router` does: that is what builds each
+        // route's layers once, rather than per request.
+        let app = auth_perimeter(
+            axum::Router::new().route("/auth/login", post(read)),
+            std::time::Duration::from_millis(200),
+        )
+        .with_state(());
+        let stalled = || {
+            axum::http::Request::post("/auth/login")
+                .body(axum::body::Body::from_stream(tokio_stream::pending::<
+                    Result<axum::body::Bytes, std::io::Error>,
+                >()))
+                .unwrap()
+        };
+        let held: Vec<_> = (0..2)
+            .map(|_| tokio::spawn(app.clone().oneshot(stalled())))
+            .collect();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let shed = app.clone().oneshot(stalled()).await.unwrap();
+        assert_eq!(shed.status(), StatusCode::SERVICE_UNAVAILABLE);
+        for h in held {
+            assert_eq!(
+                h.await.unwrap().unwrap().status(),
+                StatusCode::REQUEST_TIMEOUT
+            );
+        }
+        let ok = axum::http::Request::post("/auth/login")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(app.oneshot(ok).await.unwrap().status(), StatusCode::OK);
     }
 
     #[test]

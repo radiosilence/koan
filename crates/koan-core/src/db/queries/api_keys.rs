@@ -84,6 +84,11 @@ pub fn revoke_api_key(
     Ok(n > 0)
 }
 
+/// Revoke every key a user has. Returns how many went.
+pub fn revoke_user_api_keys(conn: &Connection, user_id: i64) -> Result<usize, rusqlite::Error> {
+    conn.execute("DELETE FROM api_keys WHERE user_id = ?1", params![user_id])
+}
+
 /// The user a key belongs to, if it is a live key.
 ///
 /// Every stored hash is compared, in constant time, rather than looking the
