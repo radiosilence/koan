@@ -669,6 +669,9 @@ async fn admins_create_invite_and_remove_accounts() {
     )
     .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
+    // A token minted while alice was an admin: the account's role now governs.
+    let r = send(&f.app, page(&token(1, "alice", Role::Admin))).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
 
     let r = send(&f.app, page(&admin)).await;
     assert_eq!(r.status, StatusCode::OK);

@@ -207,6 +207,8 @@ pub enum AccountError {
     BadUsername,
     #[error("there is already an account called {0}")]
     Taken(String),
+    #[error("{0} is reserved")]
+    Reserved(String),
     #[error("there is no account called {0}")]
     NoSuchUser(String),
     #[error("{0}'s password is not recoverable; invite with a new password instead")]
@@ -247,6 +249,9 @@ pub fn create_account(
     {
         return Err(AccountError::BadUsername);
     }
+    if username.eq_ignore_ascii_case(auth::ANONYMOUS) {
+        return Err(AccountError::Reserved(username.to_owned()));
+    }
     if users::get_user_by_username(conn, username)
         .map_err(other)?
         .is_some()
@@ -263,7 +268,8 @@ pub fn create_account(
 ///
 /// Recovered from the sealed copy, so the account's other devices keep
 /// working. With `reset`, a new password replaces it instead, which signs
-/// every existing device out.
+/// every existing device out (see `update_password`); open links are the
+/// server's to drop.
 pub fn account_password(
     conn: &Connection,
     key: &[u8; 32],
@@ -409,6 +415,10 @@ mod tests {
             Err(AccountError::BadUsername)
         ));
         assert!(matches!(
+            create_account(conn, key, "anonymous", Role::User),
+            Err(AccountError::Reserved(_))
+        ));
+        assert!(matches!(
             set_role(conn, "owner", Role::User),
             Err(AccountError::LastAdmin)
         ));
@@ -418,9 +428,28 @@ mod tests {
         ));
 
         let first = create_account(conn, key, "sarita", Role::Readonly).unwrap();
+        let sarita = users::get_user_by_username(conn, "sarita")
+            .unwrap()
+            .unwrap()
+            .id;
+        let (_, api_key) =
+            crate::db::queries::api_keys::create_api_key(conn, sarita, "phone").unwrap();
+        // Recovering the password for an invite leaves the keys alone.
+        account_password(conn, key, "sarita", false).unwrap();
+        assert!(
+            crate::db::queries::api_keys::authenticate_api_key(conn, &api_key)
+                .unwrap()
+                .is_some()
+        );
         let reset = account_password(conn, key, "sarita", true).unwrap();
         assert_ne!(first, reset);
         assert_eq!(account_password(conn, key, "sarita", false).unwrap(), reset);
+        // A reset takes the keys with the old password.
+        assert!(
+            crate::db::queries::api_keys::authenticate_api_key(conn, &api_key)
+                .unwrap()
+                .is_none()
+        );
         delete_account(conn, "sarita").unwrap();
         assert!(matches!(
             account_password(conn, key, "sarita", false),

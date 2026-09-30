@@ -233,7 +233,9 @@ pub fn delete_user(conn: &Connection, user_id: i64) -> Result<bool, rusqlite::Er
     Ok(count > 0)
 }
 
-/// Update a user's password. Revokes all their refresh tokens.
+/// Update a user's password. Revokes all their refresh tokens and API keys: a
+/// reset is how an admin shuts out whoever else had the password, and a key
+/// made with it would otherwise outlast it.
 pub fn update_password(
     conn: &Connection,
     username: &str,
@@ -248,6 +250,7 @@ pub fn update_password(
         // Revoke all existing tokens for this user.
         if let Some(user) = get_user_by_username(conn, username)? {
             revoke_all_user_tokens(conn, user.id)?;
+            super::api_keys::revoke_user_api_keys(conn, user.id)?;
         }
     }
     Ok(updated > 0)

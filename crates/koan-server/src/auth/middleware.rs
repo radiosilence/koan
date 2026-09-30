@@ -11,7 +11,8 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use subtle::ConstantTimeEq;
 
-use koan_core::auth::{self, Role};
+use koan_core::auth;
+use koan_core::db::pool::Pool;
 
 use super::AuthUser;
 
@@ -25,6 +26,8 @@ pub struct AuthState {
     /// Process-scoped introspection key. Bypasses auth when matched.
     /// Generated randomly on server start, dies with the process.
     pub introspection_key: Option<Arc<String>>,
+    /// Where a token's account is looked up; see `super::current_user`.
+    pub pool: Arc<Pool>,
 }
 
 /// Axum middleware: validate JWT and inject `AuthUser`.
@@ -66,18 +69,16 @@ pub async fn auth_middleware(
             .into_response();
     };
 
-    match auth::validate_access_token(&state.public_pem, &token) {
-        Ok(claims) => {
-            let role = claims.role.parse().unwrap_or(Role::Readonly);
-            let user = AuthUser {
-                user_id: claims.sub,
-                username: claims.username,
-                role,
-            };
+    let user = match auth::validate_access_token(&state.public_pem, &token) {
+        Ok(claims) => super::current_user(&state.pool, claims).await,
+        Err(_) => None,
+    };
+    match user {
+        Some(user) => {
             request.extensions_mut().insert(user);
             next.run(request).await
         }
-        Err(_) => (
+        None => (
             StatusCode::UNAUTHORIZED,
             [("WWW-Authenticate", "Bearer")],
             "invalid or expired token",
@@ -130,6 +131,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request as HttpRequest;
     use axum::routing::get;
+    use koan_core::auth::Role;
     use tower::ServiceExt as _;
 
     /// Echoes the `AuthUser` the middleware injected, so tests can assert on it.
@@ -150,19 +152,40 @@ mod tests {
         (status, String::from_utf8_lossy(&bytes).into_owned())
     }
 
-    /// A live keypair plus a matching token for `role`.
+    /// A live keypair plus a matching token for `alice` at `role`.
     fn keys_and_token(role: Role) -> (Vec<u8>, String) {
         let (private_pem, public_pem) = auth::generate_keypair_pem().unwrap();
-        let token = auth::mint_access_token(private_pem.as_bytes(), 7, "alice", role, 900).unwrap();
+        let token = auth::mint_access_token(private_pem.as_bytes(), 1, "alice", role, 900).unwrap();
         (public_pem.into_bytes(), token)
     }
 
-    fn enforcing(public_pem: Vec<u8>, key: Option<&str>) -> AuthState {
-        AuthState {
+    /// Enforcing auth over a database whose first account is `username` at
+    /// `role`: id 1, which the tokens above name.
+    fn enforcing_with(
+        public_pem: Vec<u8>,
+        key: Option<&str>,
+        username: &str,
+        role: Role,
+    ) -> (AuthState, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        let db = koan_core::db::connection::Database::open(&path).unwrap();
+        koan_core::db::queries::auth::create_user(&db.conn, username, "pw", role).unwrap();
+        let state = AuthState {
             public_pem: Arc::new(public_pem),
             auth_enabled: true,
             introspection_key: key.map(|k| Arc::new(k.to_string())),
-        }
+            pool: Arc::new(Pool::new(path)),
+        };
+        (state, dir)
+    }
+
+    fn enforcing(
+        public_pem: Vec<u8>,
+        key: Option<&str>,
+        role: Role,
+    ) -> (AuthState, tempfile::TempDir) {
+        enforcing_with(public_pem, key, "alice", role)
     }
 
     #[tokio::test]
@@ -171,6 +194,7 @@ mod tests {
             public_pem: Arc::new(Vec::new()),
             auth_enabled: false,
             introspection_key: None,
+            pool: Arc::new(Pool::new("/nonexistent/koan.db".into())),
         };
         let req = HttpRequest::get("/graphql").body(Body::empty()).unwrap();
         let (status, body) = call(state, req).await;
@@ -182,7 +206,8 @@ mod tests {
     async fn missing_token_is_unauthorized() {
         let (public_pem, _) = keys_and_token(Role::Admin);
         let req = HttpRequest::get("/graphql").body(Body::empty()).unwrap();
-        let (status, _) = call(enforcing(public_pem, None), req).await;
+        let (state, _dir) = enforcing(public_pem, None, Role::Admin);
+        let (status, _) = call(state, req).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
@@ -193,7 +218,8 @@ mod tests {
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
-        let (status, body) = call(enforcing(public_pem, None), req).await;
+        let (state, _dir) = enforcing(public_pem, None, Role::User);
+        let (status, body) = call(state, req).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "alice:user");
     }
@@ -209,7 +235,8 @@ mod tests {
             .header(header::AUTHORIZATION, "Bearer garbage")
             .body(Body::empty())
             .unwrap();
-        let (status, body) = call(enforcing(public_pem, None), req).await;
+        let (state, _dir) = enforcing(public_pem, None, Role::Readonly);
+        let (status, body) = call(state, req).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "alice:readonly");
     }
@@ -221,13 +248,14 @@ mod tests {
         let req = HttpRequest::get(format!("/graphql?token={token}"))
             .body(Body::empty())
             .unwrap();
-        let (status, _) = call(enforcing(public_pem.clone(), None), req).await;
+        let (state, _dir) = enforcing(public_pem, None, Role::Admin);
+        let (status, _) = call(state.clone(), req).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
 
         let req = HttpRequest::get(format!("/graphql/ws?token={token}"))
             .body(Body::empty())
             .unwrap();
-        let (status, body) = call(enforcing(public_pem, None), req).await;
+        let (status, body) = call(state, req).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "alice:admin");
     }
@@ -240,7 +268,8 @@ mod tests {
             .header("X-Introspection-Key", "sekrit")
             .body(Body::empty())
             .unwrap();
-        let (status, body) = call(enforcing(public_pem.clone(), Some("sekrit")), req).await;
+        let (state, _dir) = enforcing(public_pem, Some("sekrit"), Role::Admin);
+        let (status, body) = call(state.clone(), req).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "anonymous:admin");
 
@@ -248,7 +277,7 @@ mod tests {
             .header("X-Introspection-Key", "sekrjt")
             .body(Body::empty())
             .unwrap();
-        let (status, _) = call(enforcing(public_pem, Some("sekrit")), req).await;
+        let (status, _) = call(state, req).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
@@ -259,7 +288,8 @@ mod tests {
             .header(header::AUTHORIZATION, format!("Bearer {token}x"))
             .body(Body::empty())
             .unwrap();
-        let (status, _) = call(enforcing(public_pem, None), req).await;
+        let (state, _dir) = enforcing(public_pem, None, Role::Admin);
+        let (status, _) = call(state, req).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
@@ -271,27 +301,35 @@ mod tests {
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
-        let (status, _) = call(enforcing(other_public, None), req).await;
+        let (state, _dir) = enforcing(other_public, None, Role::Admin);
+        let (status, _) = call(state, req).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
-    async fn unparseable_role_claim_falls_back_to_readonly() {
-        let (private_pem, public_pem) = auth::generate_keypair_pem().unwrap();
-        let token = auth::mint_access_token_with_role_str(
-            private_pem.as_bytes(),
-            7,
-            "alice",
-            "wizard",
-            900,
-        )
-        .unwrap();
-        let req = HttpRequest::get("/graphql")
-            .header(header::AUTHORIZATION, format!("Bearer {token}"))
-            .body(Body::empty())
-            .unwrap();
-        let (status, body) = call(enforcing(public_pem.into_bytes(), None), req).await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, "alice:readonly");
+    async fn the_role_is_the_accounts_now_not_the_tokens() {
+        let (public_pem, token) = keys_and_token(Role::Admin);
+        let req = || {
+            HttpRequest::get("/graphql")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        // Demoted since the token was minted.
+        let (state, _dir) = enforcing(public_pem.clone(), None, Role::Readonly);
+        assert_eq!(
+            call(state, req()).await,
+            (StatusCode::OK, "alice:readonly".into())
+        );
+
+        // Deleted since.
+        let (state, dir) = enforcing(public_pem.clone(), None, Role::Admin);
+        let db = koan_core::db::connection::Database::open(&dir.path().join("koan.db")).unwrap();
+        koan_core::db::queries::auth::delete_user(&db.conn, 1).unwrap();
+        assert_eq!(call(state, req()).await.0, StatusCode::UNAUTHORIZED);
+
+        // Its id now belongs to someone else.
+        let (state, _dir) = enforcing_with(public_pem, None, "bob", Role::Admin);
+        assert_eq!(call(state, req()).await.0, StatusCode::UNAUTHORIZED);
     }
 }

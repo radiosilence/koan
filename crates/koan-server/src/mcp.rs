@@ -5,6 +5,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::auth::AuthUser;
+use crate::auth::password::Refused;
 use crossbeam_channel::Sender;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
@@ -73,14 +75,15 @@ impl KoanMcpServer {
         }
     }
 
-    /// The user id and role a request acts with: the account in its headers,
-    /// or the local user at `mcp_role()` when it names none. With
-    /// `KOAN_MCP_REQUIRE_LOGIN=1`, a request naming no account is refused.
-    fn role(
-        &self,
-        extensions: &rmcp::model::Extensions,
-    ) -> Result<(i64, koan_core::auth::Role), String> {
-        let local = (koan_core::db::queries::LOCAL_USER, mcp_role());
+    /// Who a request acts as: the account in its headers, or the local user at
+    /// `mcp_role()` when it names none. With `KOAN_MCP_REQUIRE_LOGIN=1`, a
+    /// request naming no account is refused.
+    fn caller(&self, extensions: &rmcp::model::Extensions) -> Result<AuthUser, String> {
+        let local = AuthUser {
+            user_id: koan_core::db::queries::LOCAL_USER,
+            role: mcp_role(),
+            ..AuthUser::anonymous_admin()
+        };
         let Some(users) = &self.users else {
             return Ok(local);
         };
@@ -93,9 +96,16 @@ impl KoanMcpServer {
                 .filter(|v| !v.is_empty())
         };
         match (get(USERNAME_HEADER), get(PASSWORD_HEADER)) {
-            (Some(u), Some(p)) => users
-                .verify(u, p)
-                .ok_or_else(|| "kōan rejected that username and password".to_string()),
+            (Some(u), Some(p)) => match users.verify(u, p) {
+                // The account's own name: linked devices are scoped by it.
+                Ok((user_id, role)) => Ok(AuthUser {
+                    user_id,
+                    username: u.to_owned(),
+                    role,
+                }),
+                Err(Refused::Wrong) => Err("kōan rejected that username and password".into()),
+                Err(Refused::Busy) => Err("kōan is busy checking passwords; try again".into()),
+            },
             _ if std::env::var("KOAN_MCP_REQUIRE_LOGIN").is_ok_and(|v| v == "1") => Err(format!(
                 "this kōan needs an account: send {USERNAME_HEADER} and {PASSWORD_HEADER}"
             )),
@@ -164,9 +174,9 @@ impl KoanMcpServer {
             tokio::runtime::Handle::try_current().map_err(|_| "no tokio runtime".to_string())?;
         // Inside block_in_place too: a first sign-in runs argon2.
         let result = tokio::task::block_in_place(|| {
-            let (user_id, role) = self.role(&extensions)?;
+            let caller = self.caller(&extensions)?;
             Ok::<_, String>(rt.block_on(crate::graphql::execute_in_process(
-                &schema, &query, variables, user_id, role,
+                &schema, &query, variables, caller,
             )))
         })?;
         Ok(Json(GraphqlResponse { result }))
@@ -403,15 +413,22 @@ mod tests {
         )));
 
         let as_ = |u: &str, p: &str| {
-            server.role(&with_headers(&[(USERNAME_HEADER, u), (PASSWORD_HEADER, p)]))
+            server
+                .caller(&with_headers(&[(USERNAME_HEADER, u), (PASSWORD_HEADER, p)]))
+                .map(|c| (c.user_id, c.username, c.role))
         };
-        assert_eq!(as_("owner", "sesame"), Ok((1, Role::Admin)));
-        assert_eq!(as_("mate", "hunter22"), Ok((2, Role::Readonly)));
+        // The account's own name, which its linked devices are scoped by.
+        assert_eq!(as_("owner", "sesame"), Ok((1, "owner".into(), Role::Admin)));
+        assert_eq!(
+            as_("mate", "hunter22"),
+            Ok((2, "mate".into(), Role::Readonly))
+        );
         assert!(as_("owner", "wrong").is_err());
         // No account named: the local user, at the transport's default role.
+        let local = server.caller(&with_headers(&[])).unwrap();
         assert_eq!(
-            server.role(&with_headers(&[])),
-            Ok((queries::LOCAL_USER, mcp_role()))
+            (local.user_id, local.role),
+            (queries::LOCAL_USER, mcp_role())
         );
     }
 

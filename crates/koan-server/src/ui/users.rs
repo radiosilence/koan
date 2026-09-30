@@ -241,6 +241,9 @@ pub(super) async fn invite(
             .map_err(|e| AccountError::Other(Box::new(e)))
             .and_then(|key| invite::account_password(&db.conn, &key, &row.username, q.reset))
             .map(|password| Invite::new(&server, &row.username, &password));
+        if q.reset && made.is_ok() {
+            crate::clients::registry().disconnect(&row.username);
+        }
         Some((row, made))
     })
     .await;

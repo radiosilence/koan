@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Subsonic password checks are bounded.** argon2 costs about 19 MiB and a core per check, and any client could ask for one, known username or not; a few hundred concurrent requests with made-up usernames exhausted memory and stalled every other route. At most one check per core (2 to 8) now runs at once, and a request that finds them all busy is answered "server busy" instead of queued. Requests carrying the same credentials share one check, so a client's burst of requests on first contact still signs in.
+- **Failed sign-ins on `/rest` are also counted per address**, 30 a minute whatever the username, alongside the 10 a minute per address and account. Changing the username on each guess no longer resets the allowance. The shared username's tokens are exempt only when a shared secret is configured; without one the name is an ordinary account's.
+- **A password reset signs the account out everywhere**, as the Users page says it does: its API keys are deleted and its open links to the server are closed, as well as its refresh tokens. A key made by whoever else had the password would otherwise have outlived the reset.
+- **Roles and accounts are read from the database on each GraphQL request and web UI page**, not taken from the access token. A demoted or deleted admin kept admin until the token expired, long enough to restore it. Account ids are no longer reused after a deletion (`users.id` is `AUTOINCREMENT`; existing databases are rebuilt once, keeping every id).
+- **`/auth/login`, `/auth/refresh` and `/auth/logout` shed load and time out after 10 seconds.** Each allowed two requests at a time and queued the rest with no deadline, so two connections that never finished sending a body blocked every sign-in or refresh from the CLI and TUI.
+- **GraphQL request bodies are limited to 2 MiB.** async-graphql reads the whole body before parsing it, with no limit of its own.
+
+### Fixed
+
+- **The upstream server's password no longer appears in error messages.** A failed stream proxy or share returned reqwest's error, which names the request URL and with it the upstream account's credentials, to any signed-in caller, readonly included. Errors from the Subsonic client and downloads drop the URL, so logs are clean too.
+- **The dedicated Subsonic port (`[subsonic] port`) knows its clients' addresses.** It was served without connection info, so the sign-in throttle believed any `X-Forwarded-For` a client sent and a new one per request bypassed it. A request whose peer is unknown is no longer taken as coming from a trusted proxy.
+- **MCP requests act under the signed-in account's name.** Every request ran as "anonymous", so a non-admin account saw none of its own devices, and an account named "anonymous" would have been visible to all of them. The name is now reserved.
+
 ## 0.45.1
 
 ### Fixed

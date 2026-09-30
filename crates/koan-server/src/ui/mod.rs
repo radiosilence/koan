@@ -29,7 +29,7 @@ use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use koan_core::auth::{self, Role};
+use koan_core::auth;
 use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries;
 
@@ -150,13 +150,12 @@ fn is_navigation(req: &Request) -> bool {
 /// refuse anything else.
 async fn gate(State(s): State<UiState>, mut req: Request, next: Next) -> Response {
     let user = if s.auth_enabled {
-        cookie(req.headers(), "koan_access")
+        match cookie(req.headers(), "koan_access")
             .and_then(|t| auth::validate_access_token(&s.auth.public_pem, t).ok())
-            .map(|c| AuthUser {
-                user_id: c.sub,
-                role: c.role.parse().unwrap_or(Role::Readonly),
-                username: c.username,
-            })
+        {
+            Some(claims) => crate::auth::current_user(&s.pool, claims).await,
+            None => None,
+        }
     } else {
         Some(AuthUser::anonymous_admin())
     };

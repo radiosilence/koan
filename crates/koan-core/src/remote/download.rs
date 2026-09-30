@@ -58,7 +58,7 @@ const CANCEL_POLL: Duration = Duration::from_secs(1);
 #[derive(Debug, Error)]
 pub enum DownloadError {
     #[error("http error: {0}")]
-    Http(#[from] reqwest::Error),
+    Http(reqwest::Error),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("incomplete download: got {got} of {expected} bytes")]
@@ -73,6 +73,14 @@ pub enum DownloadError {
     Request(String),
     #[error("no longer wanted")]
     Cancelled,
+}
+
+/// Without the URL, which carries the account's credentials; see
+/// `SubsonicError`'s conversion.
+impl From<reqwest::Error> for DownloadError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::Http(e.without_url())
+    }
 }
 
 impl DownloadError {

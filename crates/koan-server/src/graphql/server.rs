@@ -86,7 +86,12 @@ const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// runtime's workers from it.
 const MAX_INFLIGHT_QUERIES: usize = 64;
 
-/// Timeout, panic catch and load shed for the query route.
+/// Largest query body accepted. async-graphql reads the whole body before
+/// parsing it, with no limit of its own. A query is text; even a playlist of
+/// thousands of ids is a fraction of this.
+const MAX_QUERY_BODY: usize = 2 << 20;
+
+/// Timeout, panic catch, body limit and load shed for the query route.
 ///
 /// Not applied to `/graphql/ws`: a subscription is meant to outlive any request
 /// timeout.
@@ -98,6 +103,9 @@ where
         // Innermost so it is inside the timeout: a panicking resolver becomes a
         // 500 rather than a silently dropped connection.
         .layer(tower_http::catch_panic::CatchPanicLayer::new())
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            MAX_QUERY_BODY,
+        ))
         .layer(tower_http::timeout::TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             REQUEST_TIMEOUT,
@@ -210,6 +218,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         public_pem: Arc::new(public_pem.clone()),
         auth_enabled,
         introspection_key: introspection_key.clone(),
+        pool: pool.clone(),
     };
 
     let auth_route_state = AuthRouteState {
@@ -397,8 +406,13 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
                         bind,
                         sub_port,
                     );
-                    let sub_server = axum::serve(sub_listener, sub_app)
-                        .with_graceful_shutdown(shutdown_signal());
+                    // With connection info, as the main listener: the sign-in
+                    // throttle keys on the client's address.
+                    let sub_server = axum::serve(
+                        sub_listener,
+                        sub_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                    )
+                    .with_graceful_shutdown(shutdown_signal());
 
                     tokio::select! {
                         r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
@@ -712,15 +726,9 @@ pub async fn execute_in_process(
     schema: &KoanSchema,
     query: &str,
     variables: Option<serde_json::Value>,
-    user_id: i64,
-    role: koan_core::auth::Role,
+    caller: AuthUser,
 ) -> serde_json::Value {
-    let mut request = async_graphql::Request::new(query);
-    request = request.data(AuthUser {
-        user_id,
-        role,
-        ..AuthUser::anonymous_admin()
-    });
+    let mut request = async_graphql::Request::new(query).data(caller);
     if let Some(serde_json::Value::Object(map)) = variables {
         let mut gql_vars = async_graphql::Variables::default();
         for (k, v) in map {
@@ -884,6 +892,31 @@ mod tests {
     }
 
     // -- Load perimeter --
+
+    #[tokio::test]
+    async fn load_perimeter_refuses_an_oversized_query_body() {
+        async fn parse(_: async_graphql_axum::GraphQLRequest) -> StatusCode {
+            StatusCode::OK
+        }
+        let app = load_perimeter(axum::Router::new().route("/graphql", post(parse)));
+        // A valid query padded with whitespace, streamed so no Content-Length
+        // warns the limit ahead of the bytes.
+        let body = |padding: usize| {
+            let chunks = [
+                axum::body::Bytes::from_static(br#"{"query":"{__typename}""#),
+                axum::body::Bytes::from(vec![b' '; padding]),
+                axum::body::Bytes::from_static(b"}"),
+            ];
+            Body::from_stream(tokio_stream::iter(chunks.map(Ok::<_, std::io::Error>)))
+        };
+        let req = json_post("/graphql").body(body(1 << 10)).unwrap();
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            StatusCode::OK
+        );
+        let req = json_post("/graphql").body(body(3 << 20)).unwrap();
+        assert_ne!(app.oneshot(req).await.unwrap().status(), StatusCode::OK);
+    }
 
     #[tokio::test]
     async fn load_perimeter_passes_requests_and_turns_panics_into_500s() {
