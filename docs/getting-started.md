@@ -1,6 +1,5 @@
 # Getting Started
 
-This guide walks you through installing kōan, setting up your music library, and playing your first track.
 
 ## Install
 
@@ -81,9 +80,9 @@ Then scan your library:
 koan scan
 ```
 
-Scanning runs in parallel -- fast even for large collections (tens of thousands of tracks). kōan reads metadata from FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF, CAF, Ogg, MKV/WebM, and MP4 files.
+kōan reads metadata from FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF, CAF, Ogg, MKV/WebM, and MP4 files.
 
-A scan also removes tracks whose files have gone, taking their play history with them -- so it refuses to do that when the pattern looks like a mount failure rather than a deletion: a folder that yields no audio files at all, a path it cannot stat, or more than 20% of a folder disappearing at once. If you really did delete that much, `koan scan --force-remove` lifts the last of those (only the last -- an empty or unreadable folder is still left alone).
+A scan also removes tracks whose files have gone, taking their play history with them -- so it refuses to do that when the pattern looks like a mount failure rather than a deletion: a folder that yields no audio files at all, a path it cannot stat, or more than 20% of a folder of at least 100 tracks disappearing at once. If you really did delete that much, `koan scan --force-remove` lifts the last of those (only the last -- an empty or unreadable folder is still left alone).
 
 ### Option B: Remote server (Navidrome/Subsonic)
 
@@ -100,7 +99,7 @@ See [Remote Servers](guide/remote-servers.md) for the full setup guide.
 
 ### Option C: Both
 
-Use both together. Local and remote tracks merge seamlessly -- if the same track exists in both sources (matched by artist + album + title + track number), it becomes a single entry. Local files always take playback priority; remote tracks stream on demand and cache locally.
+Local and remote tracks merge: if the same track exists in both sources (matched on artist, album, disc, track number and title, or on MusicBrainz recording and release ids), it becomes a single entry. Local files always take playback priority; remote tracks stream on demand and cache locally.
 
 Run `koan remote sync` periodically (or after adding music to your server) to pull new tracks.
 

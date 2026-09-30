@@ -54,8 +54,8 @@ RADIO
 Turn on radio from Now Playing, and when the queue runs out kōan carries on with related music from your own library.
 
 PRIVATE
-kōan has no account of its own, no analytics and no advertising. It talks to your server and to public music \
-databases for artist information, and to nothing else.
+kōan has no account of its own, no analytics and no advertising. It talks to your server, and to public music \
+databases for artist information, lyrics and radio suggestions.
 
 kōan is open source under the MIT licence. You need a Subsonic-compatible music server with your own music on it; \
 kōan does not provide music.\

@@ -8,6 +8,11 @@ struct AlbumBrowser: View {
     @Environment(\.onStage) private var onStage
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
+    #if os(macOS)
+    private static let emptyDetail = "Add a music folder in Settings → Library, or sign in to a server in Settings → Server."
+    #else
+    private static let emptyDetail = "Sign in to your music server in Settings → Server."
+    #endif
 
     var body: some View {
         ScrollView {
@@ -16,7 +21,7 @@ struct AlbumBrowser: View {
                         icon: "square.stack",
                         title: library.filter.isEmpty ? "No albums yet" : "Nothing matches",
                         detail: library.filter.isEmpty
-                            ? "Run a scan to index your music folders."
+                            ? Self.emptyDetail
                             : "Try a different filter."
                     )
                     .frame(maxWidth: .infinity, minHeight: 340)

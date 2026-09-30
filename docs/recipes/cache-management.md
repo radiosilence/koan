@@ -1,6 +1,6 @@
 # Cache Management
 
-When you play remote tracks, kōan downloads them to a local cache so subsequent plays are instant. This guide covers monitoring and managing that cache.
+When you play remote tracks, kōan downloads them to a local cache so later plays read from disk.
 
 ## Check cache status
 

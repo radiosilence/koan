@@ -71,7 +71,7 @@ struct DevicePicker: View {
         if mirror.connection?.devices == true {
             return "No other devices. Open kōan on another device signed in to this server, or on this network."
         }
-        return "No other devices on this network. Signed in to a kōan server, your devices find each other anywhere."
+        return "No other devices on this network. Devices signed in to one kōan server reach each other through it, on any network."
     }
 
     static var platform: String {
