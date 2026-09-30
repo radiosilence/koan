@@ -13,8 +13,7 @@ import SwiftUI
 /// A `CABasicAnimation` on a layer's `transform` is committed once and then
 /// belongs to Core Animation, which runs it in the render server — a different
 /// process. The main thread does not see another frame of it, however long it
-/// runs. This is the distinction React Native draws with `useNativeDriver`, and
-/// it is the only way to have motion that costs nothing.
+/// runs, which is the only way to have motion that costs nothing.
 ///
 /// The blur is baked into the texture *once*, not left on the layer. A live
 /// `CALayer.filters` looks free — it is the compositor's work, not ours — but
@@ -27,9 +26,6 @@ import SwiftUI
 /// and ten points of GPU, continuously, for the wash on its own. Baked, the
 /// drift reads as idle on both. So the filter is not free, and what it charges
 /// for is the animation rather than its own presence.
-///
-/// This is not what made a tap slow — that survives at plain graphics, where no
-/// wash is rendered at all (koan#380). Baking is simply the cheaper of the two.
 struct DriftingWash: PlatformViewRepresentable {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
@@ -98,18 +94,13 @@ final class WashView: LayerView {
 
     /// The layers fill the window, with room to move.
     ///
-    /// Sized here rather than magnified by a transform, which is the whole
-    /// point: the magnification used to *be* one of the drift's animations, so
-    /// anything that skipped installing them — the graphics setting turned
-    /// down and back up, motion reduced, nothing playing — left the layer at
-    /// its natural size and drew a small blurred square in the middle of the
-    /// window. A wash that fills its view by construction cannot be made to
-    /// stop filling it by an animation that did not run.
-    ///
-    /// `near` is the overscan the drift travels inside: at full reach the
-    /// offset carries the texture 12% of the window sideways and the rotation
-    /// eats about another 3.5%, so the layer has to be wide enough that its own
-    /// edge stays out of frame throughout.
+    /// Sized here rather than magnified by a transform. Were the magnification
+    /// one of the drift's animations, anything that skipped installing them —
+    /// the graphics setting turned down and back up, motion reduced, nothing
+    /// playing — would leave the layer at its natural size, a small blurred
+    /// square in the middle of the window. A wash that fills its view by
+    /// construction cannot be made to stop filling it by an animation that did
+    /// not run. The overscan it travels inside is `near`.
     override func layoutLayers() {
         let box = bounds.insetBy(
             dx: -bounds.width * (Self.near - 1) / 2,
@@ -130,12 +121,8 @@ final class WashView: LayerView {
 
     private var laidOut: CGSize?
 
-    /// Swap in a new cover, dissolving from the old one over long enough that
-    /// you notice the room has changed colour without catching it changing.
-    ///
-    /// The *new* layer fades in, on top of the old one holding station
-    /// underneath. Fading the old one out instead does nothing visible: the new
-    /// one is above it and already opaque, so the change lands as a cut.
+    /// Bake a new cover off the main thread, then dissolve to it — see
+    /// `install(_:)`.
     func show(_ image: PlatformImage?) {
         guard image !== shown else { return }
         shown = image
@@ -198,7 +185,7 @@ final class WashView: LayerView {
     }
 
     /// One context for the app. Building one per blur is where the expense of
-    /// Core Image actually is.
+    /// Core Image is.
     nonisolated private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     /// Which cover is wanted, so a blur that finishes after the record moved on
@@ -207,10 +194,10 @@ final class WashView: LayerView {
 
     /// The keys the drift is installed under.
     ///
-    /// Named, and removed by name. `removeAllAnimations` also took the dissolve
-    /// between two records with it — and `start()` runs from `layoutLayers()`, which a
-    /// page switch triggers, so the fade was wiped a frame or two after it began
-    /// and the room changed colour in a cut.
+    /// Named, and removed by name. `removeAllAnimations` would also take the
+    /// dissolve between two records with it — and `start()` runs from
+    /// `layoutLayers()`, which a page switch triggers, so the fade would be
+    /// wiped a frame or two after it began and the room change colour in a cut.
     nonisolated fileprivate static let driftKeys = ["scale", "rotation", "position"]
 
     func drift(_ on: Bool) {
@@ -269,7 +256,7 @@ final class WashView: LayerView {
     /// back from there.
     private func settle() {
         for texture in [current, previous] {
-            // Where the drift had actually reached, rather than where the model
+            // Where the drift had reached, rather than where the model
             // says it is — otherwise removing the animation snaps the layer back
             // and the room stops dead instead of coming to rest.
             let held = texture.presentation()

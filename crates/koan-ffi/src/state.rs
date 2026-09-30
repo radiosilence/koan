@@ -2,15 +2,13 @@
 //!
 //! The engine publishes whole slices, never deltas. A slice says everything
 //! about its corner of the state, so applying one cannot go wrong: there is no
-//! merge to get right and no earlier message it depends on. A delta can be
-//! applied wrongly, and was — three times in one afternoon, each a Swift-side
-//! copy patched by a rule someone had to remember to write.
+//! merge to get right and no earlier message it depends on.
 //!
 //! Slices are cut by **rate of change, not by subject**. Playback position and
 //! transfer figures move ten times a second; the queue and the set of transfers
 //! move when someone does something. A client subscribes per slice, so putting
 //! a fast thing next to a slow one makes every reader of the slow one wake at
-//! the fast one's rate — which is how a byte counter came to rebuild the queue.
+//! the fast one's rate.
 //!
 //! Nothing is dropped. Each slice carries a sequence number and each client
 //! keeps its own cursor, so falling behind costs you the intermediate values of
@@ -213,9 +211,7 @@ impl EngineState {
 /// One client's place in the state stream.
 ///
 /// A cursor, not a subscription queue. A broadcast channel loses whatever was
-/// published while the client was away — which is a real bug and was one: a
-/// receiver taken per message dropped everything that arrived between two
-/// calls, and it went unnoticed for as long as position was the only traffic.
+/// published while the client was away.
 /// A cursor cannot lose a change. It can only arrive later, holding a newer
 /// value, which is what every slice being a whole snapshot makes safe.
 #[derive(uniffi::Object)]
@@ -470,8 +466,7 @@ mod tests {
     /// A library-sized queue, published and read the way the watcher does it:
     /// one equality check against the last one and one clone out to a client.
     /// The ceiling is loose on purpose — it is here to catch an order of
-    /// magnitude, not to police a millisecond on a busy CI box. Measured at
-    /// well under 10ms for 5,000 rows on an M-series laptop.
+    /// magnitude, not to police a millisecond on a busy CI box.
     #[test]
     fn a_queue_snapshot_is_cheap_enough_to_send_whole() {
         let state = EngineState::new();

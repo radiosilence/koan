@@ -18,10 +18,10 @@ import Observation
 ///
 /// Nothing here is observed either. A frame goes straight to the bars drawing
 /// it, as layer geometry inside one transaction, and SwiftUI never hears of
-/// it. Published through `@Observable`, every frame was a body, a canvas
+/// it. Published through `@Observable`, every frame would be a body, a canvas
 /// rasterised and a commit — at the display's rate, for as long as music
-/// played, for nine points of bar. The rate is still the display's; the cost
-/// per frame is now three layer bounds.
+/// plays, for nine points of bar. As layer geometry, a frame costs three layer
+/// bounds.
 ///
 /// The stream is read only while a bar is attached. With none on screen it is
 /// not read at all, and the analyser — which parks when nothing reads it —

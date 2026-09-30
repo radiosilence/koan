@@ -24,7 +24,6 @@ pub fn get_cached_lyrics(
     }
 }
 
-/// Cache lyrics for a track. Replaces any existing cached lyrics.
 /// When the cached copy was fetched, in seconds since the epoch.
 pub fn lyrics_fetched_at(conn: &Connection, track_id: i64) -> Result<Option<i64>, DbError> {
     match conn.query_row(
@@ -38,6 +37,7 @@ pub fn lyrics_fetched_at(conn: &Connection, track_id: i64) -> Result<Option<i64>
     }
 }
 
+/// Cache lyrics for a track. Replaces any existing cached lyrics.
 pub fn cache_lyrics(
     conn: &Connection,
     track_id: i64,

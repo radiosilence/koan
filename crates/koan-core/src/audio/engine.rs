@@ -74,7 +74,7 @@ pub struct AudioEngine {
 // The engine is created on one thread, moved to the player thread, then only used for
 // start/stop/drop — all of which are sequentially called from one thread at a time.
 // The AudioUnit and callback_data are accessed by the CoreAudio RT thread only through
-// the installed render callback, which is removed before drop. AudioEngine is not Clone
+// the installed render callback, which Drop drains and uninitializes before freeing. AudioEngine is not Clone
 // and not shared — it has a single owner at all times.
 unsafe impl Send for AudioEngine {}
 
@@ -299,8 +299,8 @@ impl Drop for AudioEngine {
 
         // SAFETY: AudioUnit was successfully created in new(). Uninitialize and
         // Dispose are the documented teardown sequence. callback_data was created
-        // via Box::into_raw in new() and is not aliased — the render callback
-        // has been removed and the spin-wait above ensures it's not in flight.
+        // via Box::into_raw in new() and is not aliased — `stop()` has cleared
+        // `running` and the spin-wait above ensures no callback is in flight.
         unsafe {
             AudioUnitUninitialize(self.audio_unit);
             AudioComponentInstanceDispose(self.audio_unit);
@@ -323,8 +323,8 @@ unsafe extern "C" fn render_callback(
 ) -> OSStatus {
     // SAFETY: `in_ref_con` points to a heap-allocated CallbackData created via
     // Box::into_raw in AudioEngine::new. It remains valid for the lifetime of the
-    // engine — the callback is removed and the pointer freed only in Drop, after
-    // the spin-wait on in_callback ensures no callbacks are in flight.
+    // engine — the pointer is freed only in Drop, after the unit is uninitialized
+    // and the spin-wait on in_callback ensures no callbacks are in flight.
     let data = unsafe { &mut *(in_ref_con as *mut CallbackData) };
     data.in_callback.store(true, Ordering::Release);
 

@@ -152,8 +152,8 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
 ///
 /// One transfer finding it down makes the rest wait with it, and while it is
 /// down only one of them at a time asks again. Without this each download
-/// learnt of the outage for itself, gave up, and the player moved on to the
-/// next track to do the same.
+/// would learn of the outage for itself and give up, and the player would
+/// move on to the next track to do the same.
 #[derive(Default)]
 pub struct Outage {
     state: Mutex<OutageState>,

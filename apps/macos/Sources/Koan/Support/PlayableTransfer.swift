@@ -112,9 +112,7 @@ extension View {
     ///
     /// `.draggable`, not `.onDrag`: the drag recogniser behind it has a movement
     /// threshold, so a press that never moves is still a click. `.onDrag` claims
-    /// the press outright and any tap underneath it never fires. The
-    /// `Transferable` conformance puts the same two representations on the wire
-    /// that the item provider used to register by hand.
+    /// the press outright and any tap underneath it never fires.
     func draggableTransfer(_ transfer: PlayableTransfer) -> some View {
         draggable(transfer)
     }

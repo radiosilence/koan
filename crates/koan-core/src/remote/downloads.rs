@@ -5,8 +5,8 @@
 //! it, and it forgets a download the instant it lands — which is exactly when
 //! somebody wants to see that it did.
 //!
-//! Progress and structure are deliberately separate. The byte counter is an
-//! `Arc<AtomicU64>` the downloader writes without taking any lock, because it
+//! Progress and structure are deliberately separate. The byte counter is a
+//! [`ByteFeed`] the downloader writes without taking any lock, because it
 //! moves hundreds of times a second; `version` moves only when an entry is
 //! added, finishes or fails. A client polls the counter and watches the
 //! version, and neither costs the download anything.
@@ -100,12 +100,9 @@ impl Phase {
 
 /// A byte count that can be waited on.
 ///
-/// The downloader publishes it as chunks land, and a decode thread reading a
-/// file that is still arriving used to look at it every ten milliseconds to
-/// find out whether there was more. Same atomic — every read is unchanged and
-/// costs nothing — with somewhere to wait beside it, so the reader sleeps
-/// until there is something to read and the last poll in the audio path goes
-/// with it.
+/// The downloader publishes it as chunks land. A read is a plain atomic load;
+/// beside the atomic is somewhere to wait, so a decode thread reading a file
+/// that is still arriving sleeps until there is more instead of polling.
 #[derive(Debug, Default)]
 pub struct ByteFeed {
     written: AtomicU64,

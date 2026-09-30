@@ -437,12 +437,12 @@ fn send_cmd_via(tx: &Sender<PlayerCommand>, cmd: PlayerCommand) -> async_graphql
         .map_err(|_| async_graphql::Error::new("player busy — command not accepted"))
 }
 
-/// Extract the authenticated user from GraphQL context.
-/// Returns anonymous admin if no user is present (auth disabled or in-process).
 /// The address the request came in on, for links that point back at it.
 #[derive(Clone)]
 pub(crate) struct RequestOrigin(pub String);
 
+/// The authenticated user, or an anonymous admin when there is none (auth
+/// disabled, or an in-process caller).
 fn get_auth_user(ctx: &Context<'_>) -> AuthUser {
     ctx.data::<AuthUser>()
         .cloned()
@@ -1074,7 +1074,7 @@ mod tests {
         assert_eq!(data["saveQueueAsPlaylist"]["trackCount"], 1);
     }
 
-    // ---- Phase 1 tests: queue snapshot, viz, config, playlist version, subscriptions ----
+    // ---- Queue snapshot, viz, config, playlist version, subscriptions ----
 
     #[tokio::test]
     async fn queue_snapshot_has_version_and_status() {

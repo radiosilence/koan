@@ -12,8 +12,7 @@ import SwiftUI
 /// AppKit needs it there: list selection, focus rings and control tints come
 /// from the app's declared accent colour, and nothing in SwiftUI can override
 /// them. `.tint` reaches SwiftUI's own drawing and stops at the edge of every
-/// AppKit-backed control, which is why the sidebar stayed blue however the app
-/// was tinted.
+/// AppKit-backed control, so a tint alone leaves the sidebar blue.
 ///
 /// `NSAccentColorName` in the bundle's Info.plist points at this colour set;
 /// see the `macos-bundle` recipe.
@@ -39,9 +38,8 @@ extension Color {
     /// The colour a record reads as, for tinting the app while it plays.
     ///
     /// Takes the encoded bytes rather than an `NSImage`, which is a class and
-    /// not `Sendable` — so working from one meant working where the image
-    /// already was, and that was the main actor. `Data` travels, so this runs
-    /// wherever it is sent.
+    /// not `Sendable`, so work on one stays wherever the image already is.
+    /// `Data` travels, so this runs wherever it is sent.
     static func dominant(ofEncoded data: Data) -> Color? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let thumbnail = CGImageSourceCreateThumbnailAtIndex(

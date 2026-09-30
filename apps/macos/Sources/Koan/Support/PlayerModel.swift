@@ -7,7 +7,7 @@ import KoanFFI
 /// Not a copy of engine state — that is `EngineMirror`, and everything read
 /// here reads through it. What lives here is the other direction: commands, the
 /// spinner and the error banner they need, and the handful of things that are
-/// genuinely local because the engine has no opinion about them — which rows
+/// local because the engine has no opinion about them — which rows
 /// are selected, where a thumb is being dragged to.
 @MainActor
 @Observable
@@ -176,7 +176,7 @@ final class PlayerModel {
     /// than per frame: this is a database read.
     private(set) var currentAlbumId: Int64?
     private(set) var currentArtistId: Int64?
-    /// The track `currentAlbumId` has actually been resolved for, as opposed to
+    /// The track `currentAlbumId` has been resolved for, as opposed to
     /// one still being looked up. Only `currentArtwork` cares, and it cares a
     /// lot — see there.
     private var placeResolvedFor: Int64?
@@ -315,9 +315,8 @@ final class PlayerModel {
 
     // MARK: - Queue
 
-    /// Replace the queue and start playing — double-clicking an album.
-    /// Queue the whole list, starting at `index` — so clicking track nine of an
-    /// album still leaves the rest queued behind it.
+    /// Replace the queue with the whole list and start playing at `index` — so
+    /// clicking track nine of an album still leaves the rest queued behind it.
     ///
     /// The index goes with the command rather than following it as a separate
     /// `play`. Two commands meant the first track started before the cursor
@@ -536,7 +535,7 @@ final class PlayerModel {
     /// Persist often enough that a crash costs a second, not the session.
     ///
     /// Position goes every second and is four columns; the queue is a JSON blob
-    /// and only rewritten when it actually changes, because re-serialising a
+    /// and only rewritten when it changes, because re-serialising a
     /// library-sized queue once a second would be megabytes of writing to
     /// remember one number.
     ///
@@ -613,7 +612,7 @@ final class PlayerModel {
     /// them wants.
     ///
     /// Nothing waits for the result — the engine publishes the queue when it
-    /// actually changes — but these are ordered against each other on the
+    /// changes — but these are ordered against each other on the
     /// engine's side, so dropping in an album and then pressing undo cannot
     /// land the wrong way round.
     private func mutate(_ body: @escaping (KoanEngine) async throws -> Void) {

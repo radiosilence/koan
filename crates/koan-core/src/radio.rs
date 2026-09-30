@@ -1,11 +1,10 @@
-//! Radio mode: multi-signal discovery from local library + metadata APIs.
-//!
-//! Uses multiple similarity axes to pick tracks that feel like a coherent journey:
-//! - ListenBrainz similar artists (ML-based, no API key)
+//! Radio mode: picks tracks from the local library by several similarity axes:
+//! - ListenBrainz similar artists (no API key)
 //! - MusicBrainz relationships (collaborators, band members, associated acts)
 //! - Subsonic getSimilarSongs2 (when remote is configured)
 //! - Genre/era matching from local metadata
-//! - Play history for recency scoring (surface buried gems)
+//! - Acoustic similarity from stored feature vectors
+//! - Play history, which favours tracks not played recently
 //!
 //! The seed *drifts* — recent plays are weighted more heavily than the initial track,
 //! so the radio evolves through your library instead of orbiting one point.
@@ -118,7 +117,7 @@ impl RadioContext {
             }
         }
 
-        // If no play history, fall back to queue artist weights (old behavior).
+        // With no play history, weight the artists in the queue instead.
         if ctx.seed_artists.is_empty() {
             for (artist_id, _path) in queue_items {
                 if let Some(aid) = artist_id {
@@ -171,7 +170,7 @@ impl RadioContext {
         ctx
     }
 
-    /// Legacy builder for backward compat — used by TUI when play history is empty.
+    /// Context from the queue alone, weighting each artist by how often it appears.
     pub fn from_queue(items: &[(Option<i64>, Option<String>)]) -> Self {
         let mut ctx = Self::default();
         for (artist_id, path) in items {
@@ -201,7 +200,8 @@ impl RadioContext {
 /// 3. Subsonic getSimilarSongs2 (if remote configured)
 /// 4. Genre + era match -> local tracks with matching tags from similar decade
 /// 5. Same-artist fallback
-/// 6. Random from library (nuclear fallback)
+/// 6. Acoustic similarity (vector KNN)
+/// 7. Random from library, the last resort
 pub fn pick_tracks(
     conn: &Connection,
     ctx: &RadioContext,
@@ -221,12 +221,9 @@ pub fn pick_tracks(
         ctx.current_artist_name.as_deref().unwrap_or("none"),
     );
 
-    // Signals 1-3 go to the network, and ListenBrainz and MusicBrainz each
-    // rate-limit themselves to one request a second per seed artist. That is
-    // fine while there is queue left to play and useless when there is not: the
-    // caller that needs a track *now* gets the local signals, which are a
-    // database read, and the enrichment happens on a later pass while there is
-    // time for it.
+    // Signals 1-3 go to the network, and MusicBrainz is held to one request a
+    // second per seed artist, so they run only for a caller that can wait for
+    // them. The local signals are a database read.
     if ctx.allow_network {
         // --- Signal 1: ListenBrainz similar artists ---
         gather_listenbrainz_candidates(conn, ctx, &mut candidates);
@@ -350,7 +347,7 @@ fn compute_recency_bonus(conn: &Connection, track_id: i64, discovery_weight: f64
                 .as_secs() as i64;
             let days_ago = (now - ts) / 86400;
             if days_ago > 180 {
-                1.0 + discovery_weight * 1.5 // "oh fuck, I forgot I owned this"
+                1.0 + discovery_weight * 1.5 // Not heard in six months.
             } else if days_ago > 30 {
                 1.0 + discovery_weight * 0.8
             } else if days_ago > 7 {
@@ -832,7 +829,7 @@ fn gather_random_candidates(
                     year: None,
                     duration_ms: track.duration_ms,
                     axes: [SimilarityAxis::Random].into_iter().collect(),
-                    base_score: 0.05, // Nuclear fallback — still better than silence.
+                    base_score: 0.05, // Last resort: any track beats silence.
                 });
             }
         }
@@ -940,7 +937,6 @@ fn cache_subsonic_artist_relationships(
 }
 
 /// Populate the similar artists cache for a given artist using Subsonic.
-/// Kept for backward compat with the TUI trigger.
 pub fn fetch_and_cache_similar_artists(
     conn: &Connection,
     client: &SubsonicClient,
@@ -1003,11 +999,9 @@ pub fn fetch_and_cache_similar_artists(
 
 /// Keep the queue topped up while radio mode is on.
 ///
-/// Radio mode is a flag on `SharedPlayerState`, and for a long time only the
-/// TUI acted on it — so any other client could switch it on and nothing would
-/// happen. Owning the loop here means every front end gets the same behaviour
-/// instead of reimplementing it, and there is one place to fix when it is
-/// wrong.
+/// Radio mode is a flag on `SharedPlayerState`. Owning the loop here means
+/// every front end that sets it gets the same behaviour instead of
+/// reimplementing it.
 ///
 /// Runs on its own thread and exits when the player goes away.
 pub fn spawn_autoqueue(
@@ -1107,16 +1101,13 @@ pub fn spawn_autoqueue(
                 // Genre/era, same-artist, acoustic similarity and plain random
                 // are all database reads and answer immediately, which is worth
                 // more than a better-chosen track that arrives too late.
-                //
-                // The network signals stay in `pick_tracks` for whenever they
-                // can be moved off this path and into a background pass that
-                // fills the similar-artists cache.
+
                 ctx.allow_network = false;
 
                 // No client, and no similar-artist prefetch: both are HTTP
                 // round trips in front of a pick that is needed now. Cached
                 // similar artists are still read from the database by the local
-                // signals; only the fetching is gone.
+                // signals; nothing is fetched.
                 let picks = pick_tracks(&db.conn, &ctx, None, &cfg.radio);
                 if picks.is_empty() {
                     log::warn!("radio: the picker returned nothing for this seed");

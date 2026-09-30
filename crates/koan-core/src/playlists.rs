@@ -24,12 +24,11 @@ use crate::remote::client::SubsonicClient;
 /// A record cannot be edited, so locking to one buys no following — only the
 /// ability to say what you are listening to, which is worth saying.
 ///
-/// Derived rather than tracked, which is the whole reason it is simple. There
-/// is no flag to keep in sync, nothing to persist and nothing to migrate — and
-/// it cannot get stuck, because a queue that stops matching stops being locked
-/// and one that happens to match again is locked again. Playing a playlist
-/// shuffled scrambles the order on purpose, so that queue is not locked, which
-/// is the right answer rather than a special case.
+/// Derived rather than tracked: there is no flag to keep in sync, nothing to
+/// persist and nothing to migrate, and it cannot get stuck, because a queue
+/// that stops matching stops being locked and one that happens to match again
+/// is locked again. Playing a playlist shuffled scrambles the order on purpose,
+/// so that queue is not locked.
 pub fn queue_lock(db: &Database, state: &SharedPlayerState) -> Option<QueueLock> {
     let (items, _) = state.snapshot_playlist();
     if items.is_empty() {
@@ -235,7 +234,7 @@ fn account_key(url: &str, username: &str) -> String {
 
 /// One lock per playlist, held for the length of a push.
 ///
-/// Pushes are fired from every edit, and two in flight at once raced: both
+/// Pushes are fired from every edit, and two in flight at once would race: both
 /// could see no server id and create two playlists there, or land out of
 /// order and leave the server holding the older contents. Held, each push
 /// reads the row only once the one before it has written its answer back.
@@ -278,10 +277,9 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
 
     // The name has to travel on its own. Navidrome's `createPlaylist` with a
     // `playlistId` replaces the songs and ignores the `name` it is handed, so a
-    // rename pushed that way reached the server and changed nothing — which is
-    // exactly what it looked like from the outside. `updatePlaylist` is the
-    // call that carries metadata; `createPlaylist` is the one that carries
-    // order. A push needs both.
+    // rename pushed that way changes nothing. `updatePlaylist` is the call that
+    // carries metadata; `createPlaylist` is the one that carries order. A push
+    // needs both.
     if let Some(remote_id) = remote_id
         && let Err(e) = client.update_playlist(
             remote_id,

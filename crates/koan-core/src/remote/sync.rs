@@ -156,8 +156,8 @@ const PAGED_ABOVE: usize = 200;
 ///
 /// A first or full sync then pages through every song with an empty `search3`
 /// query — about a hundred requests for fifty thousand tracks — and joins them
-/// to the album list. Fetching each album on its own took one round trip per
-/// album, which on a phone was minutes. A server that does not answer an empty
+/// to the album list. Fetching each album on its own costs one round trip per
+/// album, which on a phone is minutes. A server that does not answer an empty
 /// query gets the per-album walk instead, as does an incremental sync, which
 /// only fetches albums created after `last_sync` and so has few to fetch.
 ///
@@ -165,9 +165,8 @@ const PAGED_ABOVE: usize = 200;
 /// albums or pages to network errors leaves the timestamp alone so the next
 /// sync fetches them again, rather than writing a permanent hole in the library.
 ///
-/// Deduplication happens in `upsert_track` — if a local track already exists
-/// with the same artist + album + title + track#, the remote_id and remote_url
-/// are merged onto the existing row instead of creating a duplicate.
+/// Deduplication happens in `upsert_track`, which merges a server's copy of a
+/// track onto the local row for it instead of creating a duplicate.
 pub fn sync_library(
     db: &Database,
     client: &SubsonicClient,
@@ -251,9 +250,9 @@ pub fn sync_library(
         )?;
     }
 
-    // Artists only ever existed as a side effect of a track upsert, which is
-    // why not one of them had a MusicBrainz id or a sort name. Applied last,
-    // because the rows do not exist until their tracks have been written.
+    // Artist rows are created by track upserts, which carry no MusicBrainz id
+    // or sort name. Applied last, because the rows do not exist until their
+    // tracks have been written.
     let artists = client.get_artists()?;
     result.artists_synced = artists.len();
     progress(SyncProgress {
@@ -383,7 +382,6 @@ fn differs(listed: &SubsonicAlbum, held: Option<&HeldAlbum>) -> bool {
             .is_some_and(|d| (d - held.seconds).abs() > 2)
 }
 
-/// Every album on the server, once each.
 /// Ask the server about each album this library holds that the listing left
 /// out, keeping any it still answers for. The listing is an offset walk: an
 /// album deleted from an earlier page mid-walk shifts the next page by one, and
@@ -417,6 +415,7 @@ fn confirm_missing_albums(db: &Database, client: &SubsonicClient, live: &mut Has
     }
 }
 
+/// Every album on the server, once each.
 fn list_albums(
     client: &SubsonicClient,
     progress: &(dyn Fn(SyncProgress) + Sync),
@@ -734,8 +733,7 @@ fn write_albums(
                 duration_ms: song.duration.map(|d| d * 1000),
                 codec: song.suffix.clone(),
                 // OpenSubsonic servers report these; a plain Subsonic one
-                // leaves them out and the track keeps no quality figures,
-                // which is what every remote track used to get.
+                // leaves them out and the track keeps no quality figures.
                 //
                 // Zero means "not applicable", not "zero" — Navidrome reports
                 // bitDepth 0 for every lossy file. Storing it would render an

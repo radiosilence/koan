@@ -116,9 +116,9 @@ final class PlayingBarsView: LayerView {
         CGSize(width: Self.width, height: Self.maxHeight)
     }
 
-    /// A frame. Clamped because a bar is a drawn rectangle: the level keeps
-    /// itself inside 0...1 today, but one that ever stepped outside it would
-    /// become a capsule with a negative height rather than a wrong one.
+    /// A frame. Clamped because a bar is a drawn rectangle: a level outside
+    /// 0...1 would become a capsule with a negative height rather than a wrong
+    /// one.
     func apply(_ bands: [Double]) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)

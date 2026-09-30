@@ -244,9 +244,9 @@ jobs:
           name: build-koan-app
           path: koan-app-build.tar.gz
           retention-days: 1
-      # The shared sources are meant to build for iOS too, and there is no iOS
-      # app yet to notice when they stop. Rides in this job because it needs the
-      # same bindings and nothing else -- no Rust iOS build, no simulator.
+      # The shared sources also build for iOS, and the iOS app itself is not
+      # built on every push. Rides in this job because it needs the same
+      # bindings and nothing else -- no Rust iOS build, no simulator.
       - run: just ios-typecheck
 
   msrv:
@@ -284,9 +284,8 @@ jobs:
     #
     # The action reports through a GitHub check run, which is an API write, and
     # this repository hands workflows a read-only token by default. Without this
-    # the job failed with "Resource not accessible by integration" *after* a
-    # clean audit — a green audit reported as a red build, on every push to
-    # main. `contents: read` is spelled out because naming any permission drops
+    # the job fails with "Resource not accessible by integration" *after* a
+    # clean audit. `contents: read` is spelled out because naming any permission drops
     # the rest to none.
     permissions:
       contents: read
@@ -501,7 +500,7 @@ jobs:
     needs: [check-version, macos-app]
     if: needs.check-version.outputs.should_release == 'true'
     # Signing is present only in this repository; without it (a fork) the app
-    # is built ad-hoc signed as before rather than the release failing.
+    # is built ad-hoc signed rather than the release failing.
     env:
       MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -583,9 +582,9 @@ jobs:
           pattern: koan-*
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         # The action creates the tag through the API, on the commit that was
-        # built. It was pushed with git before, which GitHub refuses from the
-        # workflow token for any commit that changes a workflow ("refusing to
-        # allow a GitHub App to create or update workflow"). A re-run finds
+        # built: GitHub refuses a git push of it from the workflow token for any
+        # commit that changes a workflow ("refusing to allow a GitHub App to
+        # create or update workflow"). A re-run finds
         # the release and tag and fills in what is missing.
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
@@ -638,8 +637,7 @@ jobs:
         #
         # Publishing is not idempotent — it errors on a version that already
         # exists — and this job gates the GitHub release. So a re-run after a
-        # *downstream* failure would fail here and take the release with it,
-        # which is exactly what happened when the universal DMG failed to link.
+        # *downstream* failure would fail here and take the release with it.
         # koan-cli publishes last, so its presence means the whole set went out.
         run: |
           VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
@@ -681,14 +679,9 @@ jobs:
           VERSION="${{ needs.check-version.outputs.version }}"
           # Locate rather than assume, and stop if anything is missing.
           #
-          # These were bare `sha256sum <path>` calls whose failure went nowhere:
-          # the DMG landed at a path this did not expect, sha256sum wrote its
-          # error to stderr, and the cask was published with `sha256 ""` — which
-          # Homebrew cannot install and nothing in the run flagged.
-          # Absolute, because this script later cds into the cloned tap. The
-          # tarball shas were taken before that cd and the DMG's after it, so
-          # only the DMG resolved to nothing — which is exactly the checksum
-          # that went out empty.
+          # A bare `sha256sum <path>` on a missing file only writes to stderr, and a
+          # cask published with `sha256 ""` cannot be installed.
+          # Absolute, because this script later cds into the cloned tap.
           ARTIFACTS="$PWD/artifacts"
           shasum_of() {
             local file

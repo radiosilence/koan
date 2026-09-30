@@ -1035,9 +1035,9 @@ pub struct SubsonicShare {
 /// An empty string as absent. OpenSubsonic servers send every field they
 /// support, empty where there is no value — koan's own sends
 /// `musicBrainzId: ""` for an untagged track. Kept as `Some("")`, that id
-/// matches every other untagged track: the MusicBrainz dedup paired unrelated
-/// tracks on it and scanned the whole table per insert doing so, and the album
-/// enrichment wrote `""` over the missing id.
+/// would match every other untagged track: the MusicBrainz dedup would pair
+/// unrelated tracks on it, scanning the whole table per insert to do so, and
+/// album enrichment would write `""` over a missing id.
 fn non_empty<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     Ok(Option::<String>::deserialize(d)?.filter(|s| !s.is_empty()))
 }

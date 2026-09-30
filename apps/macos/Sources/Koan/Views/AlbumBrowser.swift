@@ -113,8 +113,8 @@ struct EmptyState: View {
 /// tick in the order they were made, and an unticked one carries itself.
 ///
 /// Worked out at drag time rather than handed to the container as its
-/// selection: that was a read of the ticks in the grid's body, and every tick
-/// re-diffed the grid. What it costs is the preview — a stack of ticks drags as
+/// selection: that would be a read of the ticks in the grid's body, and every
+/// tick would re-diff the grid. What it costs is the preview — a stack of ticks drags as
 /// the one item under the pointer.
 struct SelectionDrag: ViewModifier {
     let selection: PlayableSelection

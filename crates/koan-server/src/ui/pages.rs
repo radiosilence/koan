@@ -234,8 +234,6 @@ fn filter_options(s: &UiState) -> Option<Options> {
     Some(options)
 }
 
-/// A track row. `album` is set where the row stands alone (search) and names
-/// the record it comes from.
 const ICON_SHARE: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=true>\
      <path d=\"M12 3l4.5 4.5h-3.5v7h-2v-7H7.5zM5 12h2v7h10v-7h2v9H5z\"/></svg>";
 
@@ -253,6 +251,8 @@ title=\"Share this track\">{ICON_SHARE}</button>",
     }
 }
 
+/// A track row. `album` is set where the row stands alone (search) and names
+/// the record it comes from.
 fn track_row(
     t: &TrackRow,
     n: usize,

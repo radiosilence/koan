@@ -1,7 +1,7 @@
 //! Authentication primitives: Ed25519 JWT signing, Argon2id password hashing.
 //!
 //! Ed25519 keypair is generated once and stored in the config directory.
-//! JWTs use EdDSA (Ed25519) for signing — 128-bit security, tiny keys, fast.
+//! JWTs are signed with EdDSA (Ed25519).
 
 use std::fs;
 use std::path::PathBuf;

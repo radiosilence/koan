@@ -15,17 +15,15 @@ use super::types::Conn;
 
 /// Page size when the client asks for no `first`.
 ///
-/// The old behaviour was "everything": one `{ tracks { edges { node { ... } } } }`
-/// materialised the whole library as rows, as GraphQL values and as serialised
-/// JSON at the same time.
+/// Unbounded, one `{ tracks { edges { node { ... } } } }` would materialise the
+/// whole library as rows, as GraphQL values and as serialised JSON at once.
 pub(super) const DEFAULT_PAGE: usize = 50;
 
 /// Ceiling on `first`, so a client cannot ask for the library in one response.
 pub(super) const MAX_PAGE: usize = 500;
 
 /// Clamp a client-supplied `first` into the servable range. Negative values are
-/// floored at zero — as a raw `as usize` they wrapped to a request for the
-/// entire library.
+/// floored at zero rather than wrapping to a request for the entire library.
 pub(super) fn page_size(first: Option<i32>) -> usize {
     match first {
         Some(f) => (f.max(0) as usize).min(MAX_PAGE),
@@ -91,8 +89,7 @@ pub(super) fn album_year(album: &queries::AlbumRow) -> Option<i32> {
 // Favourite sync
 // ---------------------------------------------------------------------------
 
-/// Push a favourite to the remote server. One implementation, in koan-core —
-/// the TUI, the app and this each had their own.
+/// Push a favourite to the remote server.
 pub(super) fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
     koan_core::helpers::sync_favourite_to_remote(db, std::path::Path::new(path), star);
 }

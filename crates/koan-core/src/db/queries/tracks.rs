@@ -660,7 +660,7 @@ fn merge_track_rows(conn: &Connection, loser: i64, winner: i64) -> rusqlite::Res
     Ok(())
 }
 
-/// Clear the disc numbers stored as 0, which `upsert_track` now reads as none.
+/// Clear the disc numbers stored as 0, which `upsert_track` reads as none.
 /// Run before the cross-source fold, which then finds the pairs a zero on one
 /// side kept apart.
 pub(crate) fn clear_zero_discs(conn: &Connection) -> rusqlite::Result<()> {
@@ -736,15 +736,6 @@ fn absorb_remote_row(conn: &Connection, loser: i64, winner: i64) -> rusqlite::Re
     prune_if_empty(conn, None, stranded)
 }
 
-/// Unlink the files whose server id the server no longer has, then fold each
-/// into its counterpart under the current id.
-///
-/// A server that rescans or reorganises its library can give every track a new
-/// id. The file keeps the old one, so the sync finds nothing by id and inserts
-/// the recording again, and the content match refuses the pair because both
-/// rows carry a remote id. The library shows every track twice, and the file's
-/// link points at nothing. Only a complete full sync has seen every id the
-/// server knows, so only one may call this.
 /// Delete the remote-only tracks the server no longer lists, and the albums
 /// and artists that leaves empty. `gone` picks them: tracks whose
 /// `remote_id` is not in `live_tracks`, or whose album's `remote_id` is not in
@@ -822,6 +813,15 @@ pub fn remove_vanished_remote(
     }
 }
 
+/// Unlink the files whose server id the server no longer has, then fold each
+/// into its counterpart under the current id.
+///
+/// A server that rescans or reorganises its library can give every track a new
+/// id. The file keeps the old one, so the sync finds nothing by id and inserts
+/// the recording again, and the content match refuses the pair because both
+/// rows carry a remote id. The library shows every track twice, and the file's
+/// link points at nothing. Only a complete full sync has seen every id the
+/// server knows, so only one may call this.
 pub fn relink_vanished_remote_ids(
     conn: &Connection,
     live: &HashSet<String>,
@@ -1405,10 +1405,8 @@ pub fn all_tracks_paged(
     Ok(rows)
 }
 
-/// Fetch many tracks in one query, in the order the ids were given.
-///
-/// Building a queue used to call `get_track_row` per id. That is one round trip
-/// per track, and a thousand-track add felt like it.
+/// Fetch many tracks in one query, in the order the ids were given, rather
+/// than one round trip per track.
 pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<TrackRow>, DbError> {
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -1436,11 +1434,9 @@ pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<TrackRow>, Db
     // SQL returns them in whatever order it likes; callers care about the order
     // they asked for, because that is the order they will be queued in.
     //
-    // Looked up rather than taken: an id asked for twice must come back twice.
-    // Removing each row as it was matched meant the second copy found nothing
-    // and was quietly dropped — so queueing a track you already had in the
-    // queue added nothing, and a playlist holding the same song twice played it
-    // once.
+    // Looked up rather than taken: an id asked for twice must come back twice,
+    // or a track queued again, or a playlist holding the same song twice, loses
+    // its second copy.
     let by_id: HashMap<i64, TrackRow> = rows.into_iter().map(|r| (r.id, r)).collect();
     Ok(ids.iter().filter_map(|id| by_id.get(id).cloned()).collect())
 }
@@ -1565,7 +1561,7 @@ pub struct CachedAlbumInfo {
 /// Returns albums with their total cache size and file paths for eviction.
 ///
 /// A download counts as a use: an album fetched for offline listening has
-/// never been played, and ranking it by plays alone made it the first to go.
+/// never been played, and ranking it by plays alone would make it the first to go.
 pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbError> {
     // Get all cached tracks with their last played timestamp.
     // A track is "protected" if it appears in the favourites table.
@@ -1615,7 +1611,7 @@ pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbEr
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Group by album_id. Use -1 for tracks without an album.
+    // Group by album_id; a track without an album is keyed by its negated id.
     let mut albums: std::collections::BTreeMap<i64, CachedAlbumInfo> =
         std::collections::BTreeMap::new();
     // Track max last_play per album, and whether album has any favourites.

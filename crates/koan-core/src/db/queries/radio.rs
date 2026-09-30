@@ -178,7 +178,6 @@ pub fn random_tracks_excluding(
         )
     };
 
-    // We'll use a two-step approach: first get a random pool, then score and sort.
     let base_offset = exclude_paths.len();
 
     // Build artist ID match expression.

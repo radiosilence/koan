@@ -156,8 +156,8 @@ struct ShortcutButton: View {
 /// Stands a menu item down while someone is typing — see `TextFocus`.
 ///
 /// Read here, in the item, and never in the Scene body. The Scene body is
-/// everything: reading focus there rebuilt the window on the first keystroke
-/// into any field, and the toolbar's filter field was rebuilt with it — taking
+/// everything: reading focus there would rebuild the window on the first
+/// keystroke into any field, and the toolbar's filter field with it — taking
 /// the focus the keystroke had just been typed into.
 private struct DisabledWhileTyping: ViewModifier {
     let focus: TextFocus?

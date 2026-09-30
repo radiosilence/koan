@@ -7,7 +7,7 @@ import SwiftUI
 /// The same engine, the same models and the same pages as the Mac app — what
 /// differs is the shell around them. A phone has no menu bar, no sidebar and no
 /// second window, so the navigator is driven by a tab bar and the transport
-/// sits above it rather than across the top.
+/// sits above it.
 @main
 struct KoanIOSApp: App {
     @UIApplicationDelegateAdaptor(PushDelegate.self) private var push

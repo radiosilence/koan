@@ -23,8 +23,8 @@ const selectorLabels = () => ({
  * koan: a headless music server — GraphQL and Subsonic over a media library,
  * plus MCP over HTTP for a gateway.
  *
- * No Ingress: jaritanet routes to the API Service with Traefik, so this
- * creates only the Deployment, its Services and its NetworkPolicy.
+ * No Ingress: the deployer routes to the API Service, so this creates only
+ * the Deployment, its Services and its NetworkPolicy.
  */
 export function createKoan(
   provider: k8s.Provider,

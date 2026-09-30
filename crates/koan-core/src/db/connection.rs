@@ -195,7 +195,8 @@ fn splitmix64(x: u64) -> u64 {
 /// `Track 10`. Ties fall back to the raw bytes, so two names that differ only
 /// in case or accent still have a stable order rather than being treated as
 /// equal.
-/// Registered by `create_tables`, so every connection has it — a query using
+///
+/// Registered by `configure`, so every connection has it — a query using
 /// `COLLATE LIBRARY` on a connection that skipped this fails outright rather
 /// than quietly sorting some other way.
 pub(crate) fn register_library_collation(conn: &Connection) -> rusqlite::Result<()> {

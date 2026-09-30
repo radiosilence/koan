@@ -4,7 +4,7 @@ import Observation
 /// Whether someone is typing, observably.
 ///
 /// This exists so menu commands can be *disabled* while a field has focus,
-/// which is the only thing that actually hands the key back to macOS. A
+/// which is the only thing that hands the key back to macOS. A
 /// disabled menu item does not claim its key equivalent, so the event carries
 /// on down the responder chain and the field does what every other app would
 /// do with it — ⌥← moves a word, ⌘← goes to the start of the line, ⌘Z undoes

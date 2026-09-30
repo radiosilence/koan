@@ -4,8 +4,8 @@ import KoanFFI
 /// State for the organize sheet: which pattern, which library folder, and the
 /// plan those two produce.
 ///
-/// The plan is the product here, not a step on the way to one. Music files are
-/// irreplaceable, so nothing moves until the user has seen every destination —
+/// Music files are irreplaceable, so nothing moves until the user has seen
+/// every destination —
 /// including the ones that are blocked, which is the half a preview usually
 /// leaves out.
 @MainActor

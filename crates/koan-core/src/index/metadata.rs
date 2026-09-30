@@ -24,8 +24,8 @@ pub enum MetadataError {
 /// Only what koan can actually decode. WavPack and Monkey's Audio are absent
 /// on purpose: symphonia has no reader for either — there is no `wavpack`
 /// feature to turn on, and its `ape` feature is APE *tags*, not the codec — so
-/// indexing them produced library rows that scanned, listed, and refused to
-/// play. Better not to claim them.
+/// indexing them would produce library rows that scan, list, and refuse to
+/// play.
 const AUDIO_EXTENSIONS: &[&str] = &[
     "flac", "mp3", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "alac",
 ];
@@ -397,8 +397,6 @@ fn symphonia_codec_name(codec: symphonia::core::codecs::audio::AudioCodecId) -> 
     }
 }
 
-/// Try to extract basic tags (title, artist, album) via Symphonia's metadata reader.
-/// Symphonia is more lenient with corrupted ID3 frames than lofty.
 /// Tags Symphonia can give us when lofty cannot parse the file at all.
 #[derive(Default)]
 struct SymphoniaTags {
@@ -412,6 +410,8 @@ struct SymphoniaTags {
     genre: Option<String>,
 }
 
+/// Read what tags Symphonia can find. It is more lenient with corrupted ID3
+/// frames than lofty.
 fn probe_symphonia_tags(path: &Path) -> SymphoniaTags {
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::formats::probe::Hint;

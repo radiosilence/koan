@@ -151,7 +151,7 @@ struct PlayableMenu: View {
         }
     }
 
-    /// Fetching and throwing away, offered according to what is actually here.
+    /// Fetching and throwing away, offered according to what is here.
     ///
     /// A single track knows whether its bytes are on the machine, so it is
     /// offered one verb rather than two with one of them inert. A record or an
@@ -230,8 +230,7 @@ struct PlayableMenu: View {
 /// Play / Play Next / Add to Queue for tracks already resolved.
 ///
 /// A multi-selection has no single `Playable` behind it, but it offers the same
-/// three verbs — written out per list, they were the items that lost their
-/// icons.
+/// three verbs.
 struct QueueActions: View {
     let trackIds: [Int64]
 
@@ -313,17 +312,16 @@ enum Share {
         var errorDescription: String? { "these tracks aren't in the library" }
     }
 
-    /// The engine says why it failed, so report that rather than assuming. The
-    /// old blanket "local-only tracks can't be shared" sent people looking at
-    /// their library when the server had actually refused, or hadn't been
-    /// configured at all.
+    /// The engine says why it failed, so report that rather than assuming: a
+    /// server that refused, or none configured, is not a problem with the
+    /// library.
     @MainActor
     private static func deliver(_ result: Result<KoanFFI.Share, Error>, to player: PlayerModel) {
         switch result {
         case .success(let share):
             Pasteboard.write(text: share.url)
             // Done, so a notice rather than an error: reported as one, iOS
-            // titled the link "Something went wrong".
+            // would title the link "Something went wrong".
             if share.skipped > 0 {
                 player.lastNotice =
                     "Share link copied — \(share.shared) of \(share.shared + share.skipped) tracks; "
@@ -441,8 +439,7 @@ struct PlayableHeaderButton: View {
 /// "Play Next" and "Queue", side by side under a page title.
 ///
 /// One component rather than a pair written out per page: the album page and
-/// the artist page offer the same two verbs, and hand-rolling them twice is how
-/// the artist page ended up without them.
+/// the artist page offer the same two verbs.
 struct QueueButtons: View {
     let playable: Playable?
 
@@ -486,12 +483,12 @@ struct QueueButtons: View {
 /// Its own view rather than lines inside each menu: the same submenu belongs on
 /// a library row, a queue row and a playlist row, and the three would otherwise
 /// drift. `resolve` defers working out the tracks until something is chosen —
-/// an artist is thousands of them, and resolving to *draw* a menu is what froze
-/// the window when the queue's context menus did it.
+/// an artist is thousands of them, and resolving them to *draw* a menu freezes
+/// the window.
 ///
 /// "New Playlist…" only records the request; the dialog belongs to the window.
 /// A context menu is gone the moment you pick from it, and an alert attached to
-/// its contents goes with it — which is why this used to do nothing at all.
+/// its contents goes with it.
 struct AddToPlaylistMenu: View {
     /// Hands the chosen action the track ids, off the main actor.
     let resolve: (@escaping @MainActor ([Int64]) -> Void) -> Void
