@@ -539,7 +539,7 @@ mod tests {
             Reply::Complete(body) => {
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
                     body.len()
                 );
                 let _ = stream.write_all(&body);
@@ -547,7 +547,7 @@ mod tests {
             Reply::Truncated { claimed, body } => {
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
                     claimed
                 );
                 let _ = stream.write_all(&body);
@@ -555,7 +555,7 @@ mod tests {
             Reply::ChunkedTruncated(body) => {
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n"
                 );
                 let _ = write!(stream, "{:x}\r\n", body.len());
                 let _ = stream.write_all(&body);
@@ -563,7 +563,10 @@ mod tests {
                 // No terminating zero-length chunk — the stream just stops.
             }
             Reply::ServerError => {
-                let _ = write!(stream, "HTTP/1.1 500 Internal Server Error\r\n\r\n");
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n"
+                );
             }
             Reply::Unavailable(retry_after) => {
                 let header = retry_after
@@ -571,10 +574,13 @@ mod tests {
                     .unwrap_or_default();
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 503 Service Unavailable\r\n{header}Content-Length: 0\r\n\r\n"
+                    "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n{header}Content-Length: 0\r\n\r\n"
                 );
             }
         }
+        // Every reply says `Connection: close` because of this. Left to assume
+        // keep-alive, the client can send its next request down this socket
+        // before the close reaches it, and that fails as a broken connection.
         let _ = stream.flush();
         let _ = stream.shutdown(std::net::Shutdown::Both);
     }
