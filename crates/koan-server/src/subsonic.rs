@@ -6,8 +6,6 @@
 //! `[subsonic]` secret — see `validate_auth`.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::Cursor;
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,9 +20,7 @@ use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries;
-use koan_core::index::metadata::extract_cover_art;
 use koan_core::remote::client::SubsonicAuth;
-use lru::LruCache;
 use serde::Deserialize;
 use tokio::io::AsyncReadExt as _;
 
@@ -52,14 +48,6 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::LINK, &[1]),
     (koan_core::remote::profile::DEVICES, &[1]),
 ];
-const MIN_COVER_SIZE: u32 = 16;
-const MAX_COVER_SIZE: u32 = 2048;
-
-/// Rendered cover images held in memory. Each entry is one encoded JPEG/PNG at
-/// one requested size; a client painting an album grid asks for a few hundred
-/// in a burst, and re-decoding the source media file for each one dominated the
-/// request.
-const COVER_CACHE_ENTRIES: usize = 256;
 
 /// Articles clients strip when sorting the artist index. Every real server
 /// sends this; DSub sorts wrongly without it.
@@ -84,15 +72,8 @@ struct AppState {
     /// Async client for proxying those streams. `reqwest::Client` owns a
     /// connection pool, so it is built once and cloned.
     http: reqwest::Client,
-    cover_cache: Mutex<LruCache<CoverKey, Arc<CachedCover>>>,
-}
-
-/// A cover image keyed by the entity it belongs to and the size asked for.
-type CoverKey = (String, Option<u32>);
-
-struct CachedCover {
-    content_type: &'static str,
-    bytes: Vec<u8>,
+    /// The web UI's cover cache, so every front end reads one set of renders.
+    covers: Arc<crate::covers::Covers>,
 }
 
 impl AppState {
@@ -1409,22 +1390,9 @@ fn album_child_node(album: &queries::AlbumRow, uids: &Uids) -> XmlNode {
         .attr_bool("isDir", true)
 }
 
-fn album_counts_by_artist(db: &Database) -> Result<BTreeMap<i64, i64>, SubsonicError> {
-    let albums =
-        queries::all_albums(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
-    let mut map: BTreeMap<i64, i64> = BTreeMap::new();
-    for album in albums {
-        *map.entry(album.artist_id).or_insert(0) += 1;
-    }
-    Ok(map)
-}
-
-/// Artists bucketed by first letter, plus each artist's album count — the shape
-/// `getArtists` (ID3) and `getIndexes` (file-browse) both hang off.
-type ArtistIndex = (
-    BTreeMap<String, Vec<queries::ArtistRow>>,
-    BTreeMap<i64, i64>,
-);
+/// Artists bucketed by first letter — the shape `getArtists` (ID3) and
+/// `getIndexes` (file-browse) both hang off.
+type ArtistIndex = BTreeMap<String, Vec<queries::ArtistRow>>;
 
 fn artist_index(db: &Database) -> Result<ArtistIndex, SubsonicError> {
     let artists =
@@ -1454,7 +1422,7 @@ fn artist_index(db: &Database) -> Result<ArtistIndex, SubsonicError> {
         index_map.entry(letter).or_default().push(artist);
     }
 
-    Ok((index_map, album_counts_by_artist(db)?))
+    Ok(index_map)
 }
 
 fn codec_to_mime(codec: &str) -> (&str, &str) {
@@ -1508,6 +1476,9 @@ struct AlbumListParams {
     list_type: Option<String>,
     size: Option<i64>,
     offset: Option<i64>,
+    genre: Option<String>,
+    from_year: Option<i32>,
+    to_year: Option<i32>,
     #[serde(flatten)]
     auth: SubsonicParams,
 }
@@ -1536,21 +1507,13 @@ struct CoverArtParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ScrobbleParams {
-    #[serde(flatten)]
-    auth: SubsonicParams,
-    id: Option<String>,
-    time: Option<i64>,
-    submission: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct RandomSongsParams {
     #[serde(flatten)]
     auth: SubsonicParams,
     size: Option<u32>,
     genre: Option<String>,
+    from_year: Option<i32>,
+    to_year: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1595,7 +1558,7 @@ async fn get_artists(
 ) -> Response {
     offload_response(move || {
         respond_db(&state, &params, |db, b| {
-            let (index_map, album_counts) = artist_index(db)?;
+            let index_map = artist_index(db)?;
             let extras = artist_extras(db, index_map.values().flatten().map(|a| a.id))?;
 
             let mut artists_node = XmlNode::new("artists")
@@ -1606,10 +1569,9 @@ async fn get_artists(
                     .attr("name", letter)
                     .array_of("artist");
                 for artist in group {
-                    let count = album_counts.get(&artist.id).copied().unwrap_or(0);
                     index_node = index_node.child(
                         artist_id3_node(artist.id, &artist.name, &extras)
-                            .attr_int("albumCount", count),
+                            .attr_int("albumCount", artist.album_count),
                     );
                 }
                 artists_node = artists_node.child(index_node);
@@ -1630,7 +1592,7 @@ async fn get_indexes(
 ) -> Response {
     offload_response(move || {
         respond_db(&state, &params, |db, b| {
-            let (index_map, _) = artist_index(db)?;
+            let index_map = artist_index(db)?;
             let uids = Uids::load(db, index_map.values().flatten().map(|a| a.id), [], [])?;
             let last_modified: i64 = db
                 .conn
@@ -1679,9 +1641,10 @@ async fn get_music_directory(
             // so try the artist table first and fall through. Clients that arrived
             // via `getIndexes` send a uid and never hit this.
             if kind != Some(EntityKind::Album) {
-                let artists = queries::all_artists(&db.conn)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                if let Some(artist) = artists.into_iter().find(|a| a.id == id) {
+                let artist = queries::get_artist(&db.conn, id)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?
+                    .filter(|a| a.album_count > 0);
+                if let Some(artist) = artist {
                     let albums = queries::albums_for_artist(&db.conn, id)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
                     let uids = Uids::load(db, [artist.id], albums.iter().map(|a| a.id), [])?;
@@ -1723,11 +1686,8 @@ async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdP
         respond_db(&state, &params.auth, |db, b| {
             let artist_id = require_id(db, params.id.as_deref(), EntityKind::Artist)?;
 
-            let all = queries::all_artists(&db.conn)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            let artist = all
-                .into_iter()
-                .find(|a| a.id == artist_id)
+            let artist = queries::get_artist(&db.conn, artist_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Artist"))?;
 
             let albums = queries::albums_for_artist(&db.conn, artist_id)
@@ -1770,47 +1730,35 @@ async fn get_album(State(state): State<Arc<AppState>>, Query(params): Query<IdPa
     .await
 }
 
-/// Albums ordered by `type`, paged. Shared by `getAlbumList` and
+/// Albums ordered by `type`, paged in SQL. Shared by `getAlbumList` and
 /// `getAlbumList2`, which differ only in the element they hang the list off.
 fn album_list(
     db: &Database,
+    user: i64,
     params: &AlbumListParams,
     tag: &str,
 ) -> Result<XmlNode, SubsonicError> {
-    let list_type = params.list_type.as_deref().unwrap_or("alphabeticalByName");
-    let size = params.size.unwrap_or(20).clamp(0, 500) as usize;
-    let offset = params.offset.unwrap_or(0).max(0) as usize;
-
-    let mut albums =
-        queries::all_albums(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
-
-    match list_type {
-        "alphabeticalByName" => albums.sort_by(|a, b| a.title.cmp(&b.title)),
-        "alphabeticalByArtist" => albums.sort_by(|a, b| {
-            a.artist_name
-                .cmp(&b.artist_name)
-                .then(a.title.cmp(&b.title))
-        }),
-        "newest" => albums.sort_by(|a, b| b.date.cmp(&a.date)),
-        "random" => {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let seed = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            albums.sort_by(|a, b| {
-                let mut ha = DefaultHasher::new();
-                (a.id, seed).hash(&mut ha);
-                let mut hb = DefaultHasher::new();
-                (b.id, seed).hash(&mut hb);
-                ha.finish().cmp(&hb.finish())
-            });
+    let limit = params.size.unwrap_or(20).clamp(0, 500) as u32;
+    let offset = params.offset.unwrap_or(0).clamp(0, u32::MAX as i64) as u32;
+    let played = |order| {
+        queries::played_albums(&db.conn, user, order, limit, offset)
+            .map_err(|e| SubsonicError::internal(e.to_string()))
+    };
+    let page = match params.list_type.as_deref().unwrap_or("alphabeticalByName") {
+        "recent" => played(queries::PlayedOrder::Recent)?,
+        "frequent" => played(queries::PlayedOrder::Frequent)?,
+        // koan keeps no ratings, so nothing is rated highest.
+        "highest" => Vec::new(),
+        list_type => {
+            let q = queries::AlbumQuery {
+                limit: Some(limit),
+                offset,
+                ..album_query(list_type, user, params)?
+            };
+            queries::list_albums(&db.conn, &q)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
         }
-        _ => {}
-    }
-
-    let page: Vec<_> = albums.into_iter().skip(offset).take(size).collect();
+    };
     let extras = album_extras(db, &page)?;
     Ok(XmlNode::new(tag).list(
         "album",
@@ -1818,13 +1766,76 @@ fn album_list(
     ))
 }
 
+/// The library listing a `getAlbumList` type asks for, unpaged.
+fn album_query<'a>(
+    list_type: &str,
+    user: i64,
+    params: &'a AlbumListParams,
+) -> Result<queries::AlbumQuery<'a>, SubsonicError> {
+    use queries::{AlbumFilter, AlbumOrder, AlbumQuery};
+    let order = |order| AlbumQuery {
+        order,
+        ..Default::default()
+    };
+    Ok(match list_type {
+        "alphabeticalByName" => order(AlbumOrder::Title),
+        "alphabeticalByArtist" => order(AlbumOrder::ArtistThenDate),
+        // Recently added, as Subsonic means it — not release date.
+        "newest" => order(AlbumOrder::RecentlyAdded),
+        "random" => order(AlbumOrder::Random(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos() as i64,
+        )),
+        "starred" => AlbumQuery {
+            favourites_of: Some(user),
+            ..Default::default()
+        },
+        "byGenre" => AlbumQuery {
+            filter: AlbumFilter {
+                genre: Some(
+                    params
+                        .genre
+                        .as_deref()
+                        .ok_or_else(|| SubsonicError::missing_param("genre"))?,
+                ),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        "byYear" => {
+            let from = params
+                .from_year
+                .ok_or_else(|| SubsonicError::missing_param("fromYear"))?;
+            let to = params
+                .to_year
+                .ok_or_else(|| SubsonicError::missing_param("toYear"))?;
+            AlbumQuery {
+                filter: AlbumFilter {
+                    year_from: Some(from.min(to)),
+                    year_to: Some(from.max(to)),
+                    ..Default::default()
+                },
+                // fromYear after toYear asks for the range newest first.
+                ..order(if from > to {
+                    AlbumOrder::YearDesc
+                } else {
+                    AlbumOrder::Date
+                })
+            }
+        }
+        _ => return Err(SubsonicError::bad_param("type")),
+    })
+}
+
 async fn get_album_list(
     State(state): State<Arc<AppState>>,
     Query(params): Query<AlbumListParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params.auth, |db, b| {
-            Ok(b.child(album_list(db, &params, "albumList")?))
+        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
+            Ok(b.child(album_list(db, user, &params, "albumList")?))
         })
     })
     .await
@@ -1835,8 +1846,8 @@ async fn get_album_list2(
     Query(params): Query<AlbumListParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params.auth, |db, b| {
-            Ok(b.child(album_list(db, &params, "albumList2")?))
+        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
+            Ok(b.child(album_list(db, user, &params, "albumList2")?))
         })
     })
     .await
@@ -2122,6 +2133,11 @@ async fn stream_inner(
     })
 }
 
+/// How much of a file each read takes. `tokio::fs` runs every read on the
+/// blocking pool, and the 4 KiB default made a 500 MB album download some
+/// 128,000 of them.
+const STREAM_CHUNK: usize = 256 * 1024;
+
 /// A file from disk, honouring a Range header so players can seek. Shared by
 /// Subsonic's `stream` and the public share pages.
 pub(crate) async fn serve_local_file(
@@ -2142,7 +2158,8 @@ pub(crate) async fn serve_local_file(
                 let length = end - start + 1;
                 let mut file = tokio::fs::File::open(path).await?;
                 tokio::io::AsyncSeekExt::seek(&mut file, std::io::SeekFrom::Start(start)).await?;
-                let stream = tokio_util::io::ReaderStream::new(file.take(length));
+                let stream =
+                    tokio_util::io::ReaderStream::with_capacity(file.take(length), STREAM_CHUNK);
                 return built(
                     Response::builder()
                         .status(StatusCode::PARTIAL_CONTENT)
@@ -2178,7 +2195,7 @@ pub(crate) async fn serve_local_file(
             .header(header::CONTENT_LENGTH, total_size)
             .header(header::ACCEPT_RANGES, "bytes")
             .body(axum::body::Body::from_stream(
-                tokio_util::io::ReaderStream::new(file),
+                tokio_util::io::ReaderStream::with_capacity(file, STREAM_CHUNK),
             )),
     )
 }
@@ -2312,117 +2329,61 @@ async fn get_cover_art(
 fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response, SubsonicError> {
     let db = authed_db(state, &params.auth)?;
     let (kind, id) = require_entity(&db, params.id.as_deref())?;
-    let size = params.size.map(|s| s.clamp(MIN_COVER_SIZE, MAX_COVER_SIZE));
-
-    let key = (
-        match kind {
-            Some(EntityKind::Artist) => format!("{}{}", ARTIST_PREFIX, id),
-            Some(EntityKind::Album) => format!("{}{}", ALBUM_PREFIX, id),
-            Some(EntityKind::Song) | None => format!("{}{}", SONG_PREFIX, id),
-        },
-        size,
-    );
-
-    if let Some(hit) = state.cover_cache.lock().unwrap().get(&key).cloned() {
-        return Ok(cover_response(&hit));
-    }
-
-    let path = cover_source_path(&db, kind, id)?;
-    let art_bytes = extract_cover_art(&path)
+    // Snapped to the sizes `Covers` keeps; no size asks for the largest.
+    let size = crate::covers::snap(Some(params.size.unwrap_or(u32::MAX)));
+    let groups = cover_tracks(&db, kind, id)?;
+    drop(db);
+    let bytes = groups
+        .iter()
+        .find_map(|tracks| state.covers.cover(tracks, size))
         .ok_or_else(|| SubsonicError::not_found("No cover art embedded"))?;
-
-    let (content_type, is_png) = if art_bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-        ("image/png", true)
-    } else {
-        ("image/jpeg", false)
-    };
-
-    let bytes = match size {
-        Some(size) => resize_image(&art_bytes, size, is_png)?,
-        None => art_bytes,
-    };
-
-    let entry = Arc::new(CachedCover {
-        content_type,
-        bytes,
-    });
-    state
-        .cover_cache
-        .lock()
-        .unwrap()
-        .put(key, Arc::clone(&entry));
-    Ok(cover_response(&entry))
-}
-
-fn cover_response(cover: &CachedCover) -> Response {
-    (
+    Ok((
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, cover.content_type),
+            (header::CONTENT_TYPE, "image/jpeg"),
             (header::CACHE_CONTROL, "max-age=86400"),
         ],
-        cover.bytes.clone(),
+        bytes,
     )
-        .into_response()
+        .into_response())
 }
 
-/// The media file whose embedded art answers a `getCoverArt` id. Album and
-/// artist ids resolve through their first track — koan stores no standalone
-/// cover images.
-fn cover_source_path(
+/// The tracks whose embedded art answers a `getCoverArt` id, as groups tried
+/// in turn: an album's tracks, a song alone, or an artist's albums one by one.
+/// koan stores no standalone cover images.
+fn cover_tracks(
     db: &Database,
     kind: Option<EntityKind>,
     id: i64,
-) -> Result<PathBuf, SubsonicError> {
-    let track = match kind {
-        Some(EntityKind::Album) => queries::tracks_for_album(&db.conn, id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .into_iter()
-            .next()
-            .ok_or_else(|| SubsonicError::not_found("Album"))?,
-        Some(EntityKind::Artist) => {
-            let albums = queries::albums_for_artist(&db.conn, id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            albums
-                .iter()
-                .find_map(|album| {
-                    queries::tracks_for_album(&db.conn, album.id)
-                        .ok()
-                        .and_then(|tracks| tracks.into_iter().next())
-                })
-                .ok_or_else(|| SubsonicError::not_found("Artist"))?
+) -> Result<Vec<Vec<queries::TrackRow>>, SubsonicError> {
+    let internal = |e: koan_core::db::connection::DbError| SubsonicError::internal(e.to_string());
+    let groups = match kind {
+        Some(EntityKind::Album) => {
+            let tracks = queries::tracks_for_album(&db.conn, id).map_err(internal)?;
+            if tracks.is_empty() {
+                return Err(SubsonicError::not_found("Album"));
+            }
+            vec![tracks]
         }
-        Some(EntityKind::Song) | None => queries::get_track_row(&db.conn, id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Track"))?,
+        Some(EntityKind::Artist) => {
+            let groups: Vec<_> = queries::albums_for_artist(&db.conn, id)
+                .map_err(internal)?
+                .iter()
+                .filter_map(|album| queries::tracks_for_album(&db.conn, album.id).ok())
+                .filter(|tracks| !tracks.is_empty())
+                .collect();
+            if groups.is_empty() {
+                return Err(SubsonicError::not_found("Artist"));
+            }
+            groups
+        }
+        Some(EntityKind::Song) | None => vec![vec![
+            queries::get_track_row(&db.conn, id)
+                .map_err(internal)?
+                .ok_or_else(|| SubsonicError::not_found("Track"))?,
+        ]],
     };
-
-    track_file_path(&track)
-        .map(PathBuf::from)
-        .ok_or_else(|| SubsonicError::not_found("Track has no local file"))
-}
-
-/// `image`'s `resize` upscales, and the allocation for the result is not fallible
-/// — an oversized `size=` would abort the process rather than return an error.
-/// Clamped, and never larger than the source.
-fn resize_image(data: &[u8], size: u32, output_png: bool) -> Result<Vec<u8>, SubsonicError> {
-    use image::GenericImageView as _;
-
-    let img = image::load_from_memory(data)
-        .map_err(|e| SubsonicError::internal(format!("image decode error: {}", e)))?;
-    let (w, h) = img.dimensions();
-    let size = size.clamp(MIN_COVER_SIZE, MAX_COVER_SIZE).min(w.max(h));
-    let resized = img.resize(size, size, image::imageops::FilterType::Lanczos3);
-    let format = if output_png {
-        image::ImageFormat::Png
-    } else {
-        image::ImageFormat::Jpeg
-    };
-    let mut buf = Cursor::new(Vec::new());
-    resized
-        .write_to(&mut buf, format)
-        .map_err(|e| SubsonicError::internal(format!("image encode error: {}", e)))?;
-    Ok(buf.into_inner())
+    Ok(groups)
 }
 
 // ===========================================================================
@@ -2525,40 +2486,31 @@ async fn get_starred2(
 ) -> Response {
     offload_response(move || {
         respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
-            let favourites = queries::load_favourites(&db.conn, user)
+            // A query per kind, not per favourite: clients read this on every sync.
+            let tracks = queries::favourite_tracks(&db.conn, user, None)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
-
-            let tracks: Vec<queries::TrackRow> = favourites
-                .iter()
-                .filter_map(|fav_path| {
-                    let track_id =
-                        queries::track_id_by_path(&db.conn, &fav_path.to_string_lossy()).ok()??;
-                    queries::get_track_row(&db.conn, track_id).ok()?
-                })
-                .collect();
             let extras = song_extras(db, &tracks)?;
 
-            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
-            let mut album_ids: Vec<i64> = queries::favourite_album_id_set(&db.conn, user)
-                .map_err(internal)?
-                .into_iter()
-                .collect();
-            album_ids.sort_unstable();
-            let albums: Vec<queries::AlbumRow> = album_ids
-                .into_iter()
-                .filter_map(|id| queries::get_album(&db.conn, id).ok().flatten())
-                .collect();
-            let mut artist_ids: Vec<i64> = queries::favourite_artist_id_set(&db.conn, user)
-                .map_err(internal)?
-                .into_iter()
-                .collect();
-            artist_ids.sort_unstable();
-            let artists: Vec<queries::ArtistRow> = artist_ids
-                .into_iter()
-                .filter_map(|id| queries::get_artist(&db.conn, id).ok().flatten())
-                .collect();
+            let albums = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    favourites_of: Some(user),
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            // By id rather than `list_artists`, which lists only artists who
+            // own an album: a favourited guest artist would drop out.
+            let artist_ids = queries::favourite_artist_id_set(&db.conn, user)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            let artists = by_id(
+                db,
+                "SELECT id, name FROM artists WHERE id IN (SELECT value FROM json_each(?1)) ORDER BY id",
+                &json_ids(artist_ids),
+                |r| Ok((r.get(0)?, r.get::<_, String>(1)?)),
+            )?;
             let album_extras = album_extras(db, &albums)?;
-            let artist_extras = artist_extras(db, artists.iter().map(|a| a.id))?;
+            let artist_extras = artist_extras(db, artists.iter().map(|(id, _)| *id))?;
 
             Ok(b.child(
                 XmlNode::new("starred2")
@@ -2566,7 +2518,7 @@ async fn get_starred2(
                         "artist",
                         artists
                             .iter()
-                            .map(|a| artist_id3_node(a.id, &a.name, &artist_extras)),
+                            .map(|(id, name)| artist_id3_node(*id, name, &artist_extras)),
                     )
                     .list(
                         "album",
@@ -2579,44 +2531,54 @@ async fn get_starred2(
     .await
 }
 
-async fn scrobble(
-    State(state): State<Arc<AppState>>,
-    Query(params): Query<ScrobbleParams>,
-) -> Response {
+/// `id` may repeat, each with its own `time`, since 1.8.0: a client flushing
+/// an offline session sends every play at once.
+async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     offload_response(move || {
-        respond_db_user(&state, &params.auth, Role::User, |db, user, b| {
-            let track_id = require_id(db, params.id.as_deref(), EntityKind::Song)?;
-
-            queries::get_track_row(&db.conn, track_id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?
-                .ok_or_else(|| SubsonicError::not_found("Track"))?;
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let track_ids: Vec<i64> = params
+                .all("id")
+                .map(|raw| resolve_as(db, raw, EntityKind::Song, "id"))
+                .collect::<Result<_, _>>()?;
+            if track_ids.is_empty() {
+                return Err(SubsonicError::missing_param("id"));
+            }
+            for &track_id in &track_ids {
+                queries::get_track_row(&db.conn, track_id)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?
+                    .ok_or_else(|| SubsonicError::not_found("Track"))?;
+            }
 
             // `submission=false` is a now-playing notice, not a play.
-            if params.submission == Some(false) {
+            if params.get("submission") == Some("false") {
                 return Ok(b);
             }
 
             // `time` is when the client played it, which can be well in the past
             // after an offline session.
-            let played_at = params.time.map_or_else(
-                || {
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64
-                },
-                |time_ms| time_ms / 1000,
-            );
-
-            queries::record_play_at(
-                &db.conn,
-                user,
-                track_id,
-                played_at,
-                None,
-                queries::SOURCE_SUBSONIC,
-            )
-            .map_err(|e| SubsonicError::from(format!("Database error: {}", e)))?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let times: Vec<Option<i64>> = params.all("time").map(|t| t.parse().ok()).collect();
+            for (i, &track_id) in track_ids.iter().enumerate() {
+                let played_at = times
+                    .get(i)
+                    .copied()
+                    .flatten()
+                    .map_or(now, |time_ms| time_ms / 1000);
+                queries::record_play_at(
+                    &db.conn,
+                    user,
+                    track_id,
+                    played_at,
+                    None,
+                    queries::SOURCE_SUBSONIC,
+                )
+                .map_err(|e| SubsonicError::from(format!("Database error: {}", e)))?;
+            }
             Ok(b)
         })
     })
@@ -2629,22 +2591,20 @@ async fn get_random_songs(
 ) -> Response {
     offload_response(move || {
         respond_db(&state, &params.auth, |db, b| {
-            let size = params.size.unwrap_or(10);
-            let genre = params.genre.as_deref();
-            let fetch_count = if genre.is_some() { size * 5 } else { size };
-
-            let tracks = queries::random_tracks(&db.conn, fetch_count, None)
+            // Capped as getAlbumList is: every song is built in memory.
+            let size = params.size.unwrap_or(10).min(500);
+            let filter = queries::RandomFilter {
+                genre: params.genre.as_deref(),
+                year_from: params.from_year,
+                year_to: params.to_year,
+                ..Default::default()
+            };
+            let tracks = queries::random_tracks_where(&db.conn, size, &filter)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
-
-            let picked: Vec<&queries::TrackRow> = tracks
-                .iter()
-                .filter(|t| genre.is_none_or(|g| t.genre.as_deref() == Some(g)))
-                .take(size as usize)
-                .collect();
-            let extras = song_extras(db, picked.iter().copied())?;
+            let extras = song_extras(db, &tracks)?;
             Ok(b.child(
                 XmlNode::new("randomSongs")
-                    .list("song", picked.iter().map(|t| track_to_xml_node(t, &extras))),
+                    .list("song", tracks.iter().map(|t| track_to_xml_node(t, &extras))),
             ))
         })
     })
@@ -2925,6 +2885,14 @@ fn playlist_for(
     Ok(list)
 }
 
+/// After a playlist write: push it to the upstream, if there is one, and have
+/// the account's devices pull it, as the GraphQL mutations do. A koan app's
+/// own edits arrive through these endpoints.
+fn playlist_changed(id: i64) {
+    koan_core::playlists::push_to_remote(id);
+    crate::clients::changed();
+}
+
 /// Parse a playlist id. Subsonic ids are opaque strings; koan's are its row ids.
 /// A playlist by its uid, or by the row id clients from before uids hold.
 fn playlist_id(db: &Database, raw: Option<&str>) -> Result<i64, SubsonicError> {
@@ -2983,6 +2951,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                 }
             };
 
+            playlist_changed(id);
             // Since 1.14.0 the response carries the playlist that was created;
             // clients read the id back off it rather than guessing.
             Ok(b.child(playlist_node(db, id, &state.username)?))
@@ -3033,6 +3002,7 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                     .map_err(|e| SubsonicError::internal(e.to_string()))?;
             }
 
+            playlist_changed(id);
             Ok(b)
         })
     })
@@ -3046,9 +3016,17 @@ async fn delete_playlist(
     offload_response(move || {
         respond_db_user(&state, &params.auth, Role::User, |db, user, b| {
             let id = playlist_id(db, params.id.as_deref())?;
-            playlist_for(db, user, id, true)?;
+            // Read before deleting: the delete has to reach the upstream too,
+            // or its next sync brings the playlist back.
+            let remote_id = playlist_for(db, user, id, true)?.remote_id;
             match queries::delete_playlist(&db.conn, id) {
-                Ok(true) => Ok(b),
+                Ok(true) => {
+                    if let Some(remote_id) = remote_id {
+                        koan_core::playlists::delete_on_remote(remote_id);
+                    }
+                    crate::clients::changed();
+                    Ok(b)
+                }
                 Ok(false) => Err(SubsonicError::not_found("Playlist")),
                 Err(e) => Err(SubsonicError::internal(e.to_string())),
             }
@@ -3560,7 +3538,25 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
     } = peer;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let registry = crate::clients::registry();
-    let id = registry.register(&username, &name, &platform, &device, tx, wants_devices);
+    // Registry calls read and write the outbox tables, so they run off the
+    // async workers. Each is awaited in turn: a device's reports must land in
+    // the order it sent them.
+    let id = {
+        let (username, name, platform, device) = (
+            username.clone(),
+            name.clone(),
+            platform.clone(),
+            device.clone(),
+        );
+        let registered = tokio::task::spawn_blocking(move || {
+            registry.register(&username, &name, &platform, &device, tx, wants_devices)
+        })
+        .await;
+        match registered {
+            Ok(id) => id,
+            Err(_) => return,
+        }
+    };
     log::info!("link: {name} ({platform}) linked for {username}");
     // A client pings when it has heard nothing for a while. A phone the OS
     // has suspended never closes its socket, so one that goes quiet is gone.
@@ -3588,9 +3584,19 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
                     use koan_core::remote::link::LinkReport;
                     if let Message::Text(text) = msg {
                         match serde_json::from_str(&text) {
-                            Ok(LinkReport::State(state)) => registry.report(&id, state),
+                            Ok(LinkReport::State(state)) => {
+                                let id = id.clone();
+                                let _ = tokio::task::spawn_blocking(move || {
+                                    registry.report(&id, state);
+                                })
+                                .await;
+                            }
                             Ok(LinkReport::Push { token, sandbox }) => {
-                                registry.set_push(&username, &device, &token, sandbox);
+                                let (username, device) = (username.clone(), device.clone());
+                                let _ = tokio::task::spawn_blocking(move || {
+                                    registry.set_push(&username, &device, &token, sandbox);
+                                })
+                                .await;
                             }
                             Ok(LinkReport::Command { to, command }) => {
                                 // Relaying may push to a phone, which blocks.
@@ -3615,7 +3621,7 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
             },
         }
     }
-    registry.unregister(&id);
+    let _ = tokio::task::spawn_blocking(move || registry.unregister(&id)).await;
     log::info!("link: {name} ({platform}) unlinked for {username}");
 }
 
@@ -3848,7 +3854,10 @@ fn subsonic_app(state: Arc<AppState>) -> axum::Router {
 /// Returns `None` unless `[subsonic]` is enabled and has its own credentials.
 /// `/rest/*` carries no JWT layer, so these credentials alone guard every byte
 /// of the library — they must never be the upstream `[remote]` password.
-pub fn subsonic_router(pool: Arc<Pool>) -> Option<axum::Router> {
+pub fn subsonic_router(
+    pool: Arc<Pool>,
+    covers: Arc<crate::covers::Covers>,
+) -> Option<axum::Router> {
     let cfg = Config::load().unwrap_or_default();
 
     if !cfg.subsonic.enabled {
@@ -3873,9 +3882,7 @@ pub fn subsonic_router(pool: Arc<Pool>) -> Option<axum::Router> {
             .read_timeout(Duration::from_secs(30))
             .build()
             .unwrap_or_default(),
-        cover_cache: Mutex::new(LruCache::new(
-            NonZeroUsize::new(COVER_CACHE_ENTRIES).unwrap(),
-        )),
+        covers,
     });
 
     Some(subsonic_app(state))
@@ -3894,6 +3901,8 @@ mod tests {
     use tower::ServiceExt;
 
     fn test_state() -> (Arc<AppState>, tempfile::TempDir) {
+        // Playlist writes read config to push upstream.
+        koan_core::config::isolate_config_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
         let db = Database::open(&db_path).unwrap();
@@ -3912,9 +3921,7 @@ mod tests {
             password: Some("testpass".into()),
             upstream: None,
             http: reqwest::Client::new(),
-            cover_cache: Mutex::new(LruCache::new(
-                NonZeroUsize::new(COVER_CACHE_ENTRIES).unwrap(),
-            )),
+            covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
         });
         (state, dir)
     }
@@ -4320,10 +4327,6 @@ mod tests {
 
     #[tokio::test]
     async fn admins_manage_accounts_through_the_koan_endpoints() {
-        static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-        koan_core::config::set_config_dir(
-            CONFIG.get_or_init(|| tempfile::tempdir().unwrap()).path(),
-        );
         let (state, _dir) = test_state();
         let call = |path: String| {
             let state = state.clone();
@@ -4372,22 +4375,6 @@ mod tests {
         call(format!("/rest/koanDeleteUser?username=sarita&{owner}")).await;
         let body = call(format!("/rest/koanUsers?{owner}")).await;
         assert!(!body.contains("sarita"), "{body}");
-    }
-
-    #[tokio::test]
-    async fn test_cover_art_size_is_clamped() {
-        // A 1x1 PNG upscaled to 65535x65535 would ask for ~17GB and abort the
-        // process; the clamp keeps the request bounded.
-        let png = image::RgbImage::from_pixel(1, 1, image::Rgb([1, 2, 3]));
-        let mut src = Cursor::new(Vec::new());
-        image::DynamicImage::ImageRgb8(png)
-            .write_to(&mut src, image::ImageFormat::Png)
-            .unwrap();
-
-        let out = resize_image(&src.into_inner(), u32::MAX, true).unwrap();
-        let decoded = image::load_from_memory(&out).unwrap();
-        use image::GenericImageView as _;
-        assert_eq!(decoded.dimensions(), (1, 1));
     }
 
     #[tokio::test]
@@ -4719,6 +4706,142 @@ mod tests {
         .await;
         assert!(body.contains("<albumList"));
         assert!(body.contains("Test Album"));
+    }
+
+    /// Three records by one artist, each with its own genre and year.
+    fn seed_shelves(state: &AppState) -> Vec<i64> {
+        let db = Database::open(state.pool.path()).unwrap();
+        [
+            ("Alpha", "Jazz", "1971"),
+            ("Beta", "Rock", "1995"),
+            ("Gamma", "jazz", "2001"),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, (album, genre, date))| {
+            let mut meta = track_meta(&format!("/music/s{i}.flac"), album, album, 1);
+            meta.genre = Some(genre.into());
+            meta.date = Some(date.into());
+            queries::upsert_track(&db.conn, &meta).unwrap()
+        })
+        .collect()
+    }
+
+    fn names(list: &serde_json::Value) -> Vec<String> {
+        list.as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|x| x["title"].as_str().unwrap().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    async fn album_list2(state: &Arc<AppState>, params: &str) -> Vec<String> {
+        let v = json_of(
+            build_test_router(state.clone()),
+            &format!("/rest/getAlbumList2?{}&{params}", auth_query("f=json")),
+        )
+        .await;
+        names(&v["albumList2"]["album"])
+    }
+
+    #[tokio::test]
+    async fn album_lists_answer_every_type_from_sql() {
+        let (state, _dir) = test_state();
+        let [alpha, beta, gamma] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+
+        assert_eq!(
+            album_list2(&state, "type=byGenre&genre=JAZZ").await,
+            ["Alpha", "Gamma"]
+        );
+        assert_eq!(
+            album_list2(&state, "type=byYear&fromYear=1990&toYear=2010").await,
+            ["Beta", "Gamma"]
+        );
+        assert_eq!(
+            album_list2(&state, "type=byYear&fromYear=2010&toYear=1990").await,
+            ["Gamma", "Beta"],
+            "a reversed range lists newest first"
+        );
+        assert_eq!(
+            album_list2(&state, "type=alphabeticalByName&size=2&offset=1").await,
+            ["Beta", "Gamma"]
+        );
+        assert_eq!(album_list2(&state, "type=random").await.len(), 3);
+
+        assert!(album_list2(&state, "type=starred").await.is_empty());
+        let beta_album = uid_of(
+            &state,
+            queries::UidKind::Album,
+            queries::get_track_row(&Database::open(state.pool.path()).unwrap().conn, beta)
+                .unwrap()
+                .unwrap()
+                .album_id
+                .unwrap(),
+        );
+        get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/star?{}&albumId={beta_album}", auth_query("")),
+        )
+        .await;
+        assert_eq!(album_list2(&state, "type=starred").await, ["Beta"]);
+
+        // Two plays of Alpha, the later of Gamma's one in between, sent as one
+        // batched scrobble.
+        let (_, body) = get_response(
+            build_test_router(state.clone()),
+            &format!(
+                "/rest/scrobble?{}&id={alpha}&time=1000000&id={gamma}&time=3000000&id={alpha}&time=2000000",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        assert_eq!(album_list2(&state, "type=recent").await, ["Gamma", "Alpha"]);
+        assert_eq!(
+            album_list2(&state, "type=frequent").await,
+            ["Alpha", "Gamma"]
+        );
+        assert!(album_list2(&state, "type=highest").await.is_empty());
+
+        let v = json_of(
+            build_test_router(state.clone()),
+            &format!("/rest/getAlbumList2?{}&type=byGenre", auth_query("f=json")),
+        )
+        .await;
+        assert_eq!(v["error"]["code"], 10, "byGenre needs a genre");
+        let v = json_of(
+            build_test_router(state),
+            &format!("/rest/getAlbumList2?{}&type=nonsense", auth_query("f=json")),
+        )
+        .await;
+        assert_eq!(v["error"]["code"], 10, "an unknown type is refused");
+    }
+
+    #[tokio::test]
+    async fn random_songs_filter_in_sql() {
+        let (state, _dir) = test_state();
+        seed_shelves(&state);
+        let random = |params: &'static str| {
+            let state = state.clone();
+            async move {
+                let v = json_of(
+                    build_test_router(state),
+                    &format!("/rest/getRandomSongs?{}&{params}", auth_query("f=json")),
+                )
+                .await;
+                let mut got = names(&v["randomSongs"]["song"]);
+                got.sort();
+                got
+            }
+        };
+        // A genre that is a small share of the library still fills the draw.
+        assert_eq!(random("genre=jazz&size=10").await, ["Alpha", "Gamma"]);
+        assert_eq!(random("fromYear=1990&toYear=1999").await, ["Beta"]);
+        assert_eq!(random("size=4000000000").await.len(), 3);
     }
 
     #[tokio::test]
@@ -5519,26 +5642,28 @@ mod tests {
             .unwrap();
         assert_eq!(album_two, track2, "test needs the id spaces to overlap");
 
+        let first = |kind, id| {
+            let groups = cover_tracks(&db, kind, id).unwrap();
+            PathBuf::from(groups[0][0].path.clone().unwrap())
+        };
         // `al-2` is Album Two — track 3's file, not track 2's.
         assert_eq!(
-            cover_source_path(&db, Some(EntityKind::Album), album_two).unwrap(),
+            first(Some(EntityKind::Album), album_two),
             dir.path().join("t3.flac")
         );
         // `mf-2` and a bare `2` are both track 2.
         assert_eq!(
-            cover_source_path(&db, Some(EntityKind::Song), track2).unwrap(),
+            first(Some(EntityKind::Song), track2),
             dir.path().join("t2.flac")
         );
-        assert_eq!(
-            cover_source_path(&db, None, track2).unwrap(),
-            dir.path().join("t2.flac")
-        );
-        // An artist resolves through their first album's first track.
+        assert_eq!(first(None, track2), dir.path().join("t2.flac"));
+        // An artist resolves through their albums, one group each.
         let artist_id = queries::all_artists(&db.conn).unwrap()[0].id;
-        assert!(
-            cover_source_path(&db, Some(EntityKind::Artist), artist_id)
+        assert_eq!(
+            cover_tracks(&db, Some(EntityKind::Artist), artist_id)
                 .unwrap()
-                .starts_with(dir.path())
+                .len(),
+            2
         );
     }
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Subsonic `getCoverArt` serves from the same cover cache as the web UI.** Covers are kept on disk at a few fixed sizes, keyed by the source file so a re-tag is picked up, and an album with no art is remembered rather than reopened on every request. An album whose first track has no art now shows the art of the next. Responses are always JPEG; a request without `size` gets the largest kept size (1200 px) rather than the original.
+- **Server shares are always made on the server.** The web UI and GraphQL `createShare` made the link on an upstream Navidrome when `[remote]` was configured, where it belonged to the upstream account and could be neither listed nor revoked here, and failed outright for local-only tracks. They now make the same native link Subsonic `createShare` does.
+
+### Fixed
+
+- **Linked devices no longer stall the server.** Every state report from a linked app opened the database afresh, running the schema migrations and a checkpoint on an async worker, and could wait up to 30 seconds behind a scan's write lock; a few devices could stall every request. The link's bookkeeping now uses the shared connection pool and runs off the async workers, and the device list is only read when a linked app has asked for it.
+- **`getAlbumList` and `getAlbumList2` honour every list type.** `starred`, `byGenre`, `byYear`, `recent` and `frequent` returned the whole library in storage order; they now return the starred albums, the genre or years asked for, and albums by play history. `newest` means recently added, as clients expect, rather than latest release date. `highest` is empty, since koan keeps no ratings, and an unknown type is an error. Each page is ordered and cut in SQL instead of loading and sorting every album.
+- **`getRandomSongs` filters by genre and year before drawing.** A genre that is a small share of the library came back almost empty, because the filter ran after a draw from the whole library. `fromYear` and `toYear` are now honoured, `size` is capped at 500 like the other list endpoints, and the draw no longer joins every track to pick a few.
+- **`scrobble` accepts several plays at once.** A repeated `id` (with its `time`) was rejected with a bare HTTP 400, so a client flushing an offline session lost every play.
+- **Playlist edits made through Subsonic reach the account's other devices** and the upstream server, as GraphQL edits already did. The koan apps edit playlists on a koan server through these endpoints, so a playlist changed on the phone did not appear on the Mac until it next synced on its own, and one deleted there came back with the next upstream sync.
+- **"Play on" notifications show the album cover.** The command's track uid was parsed as a row id, which never matched.
+- **Server reads that scaled with the library now scale with the answer**: `getArtist` and `getMusicDirectory` look up one artist rather than aggregating all of them, `getStarred2` reads each kind of favourite in one query rather than one per item, GraphQL `fuzzySearch` matches on the request's thread after returning its connection instead of building a thread pool per call, and local files stream in 256 KiB reads rather than 4 KiB ones.
+
 ## 0.45.1
 
 ### Fixed
