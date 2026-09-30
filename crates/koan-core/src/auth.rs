@@ -14,6 +14,11 @@ use thiserror::Error;
 
 use crate::config;
 
+/// The name a server acts under when nobody signed in: auth switched off, or
+/// the local MCP. No account may take it, or it would inherit what is scoped
+/// to that name.
+pub const ANONYMOUS: &str = "anonymous";
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------

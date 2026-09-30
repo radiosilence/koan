@@ -190,6 +190,12 @@ impl Registry {
         outbox::save_push(username, device, token, sandbox);
     }
 
+    /// Close every link `username` has open. Dropping an entry's sender ends
+    /// its session, and the client must then sign in again to reconnect.
+    pub fn disconnect(&self, username: &str) {
+        self.entries.lock().retain(|e| e.info.username != username);
+    }
+
     pub fn unregister(&self, id: &str) {
         let mut entries = self.entries.lock();
         let username = entries
@@ -1252,6 +1258,28 @@ mod tests {
 
         reg.unregister(&id);
         assert!(reg.send(Some("j"), None, LinkCommand::Pause).is_err());
+    }
+
+    #[test]
+    fn disconnecting_an_account_closes_only_its_links() {
+        let reg = Registry::default();
+        let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
+        let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("j", "phone", "ios", "dev-1", tx1, false);
+        reg.register("someone", "laptop", "macos", "dev-2", tx2, false);
+
+        reg.disconnect("j");
+        assert!(reg.list(Some("j")).is_empty());
+        // The session sees its channel close, which is what ends it.
+        assert!(matches!(
+            rx1.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        ));
+        assert_eq!(reg.list(Some("someone")).len(), 1);
+        assert!(matches!(
+            rx2.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
     }
 
     #[test]

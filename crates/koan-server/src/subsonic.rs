@@ -127,6 +127,14 @@ impl SubsonicError {
         Self::new(SubsonicErrorCode::WrongAuth, "Wrong username or password")
     }
 
+    /// Every password check slot was taken; see `auth::password`.
+    fn busy() -> Self {
+        Self::new(
+            SubsonicErrorCode::Generic,
+            "Server busy checking passwords; try again shortly",
+        )
+    }
+
     fn token_auth_unsupported() -> Self {
         Self::auth(
             SubsonicErrorCode::TokenAuthUnsupported,
@@ -307,29 +315,32 @@ struct AuthFailed;
 
 /// Failed sign-ins allowed per client and username in a minute.
 const AUTH_FAILURES_PER_MINUTE: u32 = 10;
+/// Failed sign-ins allowed per client, whatever the username, in a minute.
+const AUTH_FAILURES_PER_ADDRESS_PER_MINUTE: u32 = 30;
 const AUTH_WINDOW: Duration = Duration::from_secs(60);
 
-/// Failed sign-ins by client address and username.
-///
-/// Keyed on both because the address alone may not be the client's: behind a
-/// relay that does not pass addresses on, every outside client arrives from
-/// the relay's, and a limit on that alone would let anyone lock everyone out.
-/// With the username in the key, guessing one account's password throttles
-/// that account's password sign-ins and nothing else.
-#[derive(Default)]
-struct FailureLimiter {
-    windows: Mutex<HashMap<(std::net::IpAddr, String), (std::time::Instant, u32)>>,
+/// Failed sign-ins by key, in fixed one-minute windows.
+struct FailureLimiter<K> {
+    limit: u32,
+    windows: Mutex<HashMap<K, (std::time::Instant, u32)>>,
 }
 
-impl FailureLimiter {
-    fn exhausted(&self, key: &(std::net::IpAddr, String)) -> bool {
-        let windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        windows.get(key).is_some_and(|(start, count)| {
-            start.elapsed() < AUTH_WINDOW && *count >= AUTH_FAILURES_PER_MINUTE
-        })
+impl<K: std::hash::Hash + Eq> FailureLimiter<K> {
+    fn new(limit: u32) -> Self {
+        Self {
+            limit,
+            windows: Mutex::default(),
+        }
     }
 
-    fn record(&self, key: (std::net::IpAddr, String)) {
+    fn exhausted(&self, key: &K) -> bool {
+        let windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        windows
+            .get(key)
+            .is_some_and(|(start, count)| start.elapsed() < AUTH_WINDOW && *count >= self.limit)
+    }
+
+    fn record(&self, key: K) {
         let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
         if windows.len() > 4096 {
             windows.retain(|_, (start, _)| start.elapsed() < AUTH_WINDOW);
@@ -342,15 +353,37 @@ impl FailureLimiter {
     }
 }
 
+/// Failed sign-ins counted two ways.
+///
+/// By client address and username: behind a relay that does not pass
+/// addresses on, every outside client arrives from the relay's, and a tight
+/// limit on that alone would let anyone lock everyone out. With the username
+/// in the key, guessing one account's password throttles that account's
+/// password sign-ins and nothing else.
+///
+/// By address alone, with a looser limit: otherwise a new username per request
+/// gets a fresh allowance every time.
 struct AuthThrottle {
-    failures: FailureLimiter,
+    per_account: FailureLimiter<(std::net::IpAddr, String)>,
+    per_address: FailureLimiter<std::net::IpAddr>,
     /// The `[subsonic]` user, whose token is checked against a random 256-bit
-    /// secret rather than a password.
-    shared_username: String,
+    /// secret rather than a password. `None` without a secret: the name is then
+    /// an ordinary account's, and its tokens are checked against its password.
+    shared_username: Option<String>,
 }
 
-/// Refuse password sign-ins for an account that has failed too often from
-/// this client, and count failures.
+impl AuthThrottle {
+    fn new(shared_username: Option<String>) -> Self {
+        Self {
+            per_account: FailureLimiter::new(AUTH_FAILURES_PER_MINUTE),
+            per_address: FailureLimiter::new(AUTH_FAILURES_PER_ADDRESS_PER_MINUTE),
+            shared_username,
+        }
+    }
+}
+
+/// Refuse password sign-ins from a client that has failed too often, and
+/// count failures.
 ///
 /// Every request carries its credential, so each is a sign-in: a password
 /// through argon2, or a token against an account's sealed password, which is
@@ -366,25 +399,32 @@ async fn throttle_auth(
     let params = RawParams::parse(request.uri().query());
     let username = params.get("u").unwrap_or_default().to_owned();
     let unguessable = params.get("apiKey").is_some()
-        || (params.get("t").is_some() && username == throttle.shared_username);
+        || (params.get("t").is_some()
+            && throttle.shared_username.as_deref() == Some(username.as_str()));
     if unguessable {
         return next.run(request).await;
     }
 
-    let key = (crate::auth::routes::client_ip(&request), username);
-    if throttle.failures.exhausted(&key) {
+    let ip = crate::auth::routes::client_ip(&request);
+    let key = (ip, username);
+    let refusal = if throttle.per_account.exhausted(&key) {
+        Some("Too many failed sign-ins for this account from this address; try again in a minute")
+    } else if throttle.per_address.exhausted(&ip) {
+        Some("Too many failed sign-ins from this address; try again in a minute")
+    } else {
+        None
+    };
+    if let Some(message) = refusal {
         let json = params.get("f") == Some("json");
         return SubsonicResponse::error(
             json,
-            &SubsonicError::new(
-                SubsonicErrorCode::Generic,
-                "Too many failed sign-ins for this account from this address; try again in a minute",
-            ),
+            &SubsonicError::new(SubsonicErrorCode::Generic, message),
         );
     }
     let response = next.run(request).await;
     if response.extensions().get::<AuthFailed>().is_some() {
-        throttle.failures.record(key);
+        throttle.per_account.record(key);
+        throttle.per_address.record(ip);
     }
     response
 }
@@ -683,6 +723,7 @@ impl Caller {
 ///   fall back to a password or a key. The secret acts as `User`, and is also
 ///   accepted as `p=`.
 fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, SubsonicError> {
+    use crate::auth::password::Refused;
     use subtle::ConstantTimeEq;
 
     if let Some(key) = params.api_key.as_deref() {
@@ -736,9 +777,12 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         // signed in by password since this existed) token auth can't be
         // checked, which 41 tells the client so it can fall back.
         return match state.users.verify_token(username, token, salt) {
-            Some(account) => caller(account),
-            None if state.users.has_sealed(username) => Err(SubsonicError::wrong_auth()),
-            None => Err(SubsonicError::token_auth_unsupported()),
+            Ok(account) => caller(account),
+            Err(Refused::Busy) => Err(SubsonicError::busy()),
+            Err(Refused::Wrong) if state.users.has_sealed(username) => {
+                Err(SubsonicError::wrong_auth())
+            }
+            Err(Refused::Wrong) => Err(SubsonicError::token_auth_unsupported()),
         };
     }
 
@@ -752,11 +796,11 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
     if shared(&password) {
         return caller((queries::LOCAL_USER, Role::User));
     }
-    let account = state
-        .users
-        .verify(username, &password)
-        .ok_or_else(SubsonicError::wrong_auth)?;
-    caller(account)
+    match state.users.verify(username, &password) {
+        Ok(account) => caller(account),
+        Err(Refused::Busy) => Err(SubsonicError::busy()),
+        Err(Refused::Wrong) => Err(SubsonicError::wrong_auth()),
+    }
 }
 
 fn decode_hex(hex: &str) -> Option<String> {
@@ -2224,10 +2268,12 @@ async fn proxy_stream_from_upstream(
         req = req.header("Range", range_str);
     }
 
-    let upstream_resp = req
-        .send()
-        .await
-        .map_err(|e| SubsonicError::internal(format!("upstream error: {}", e)))?;
+    // reqwest's error names the URL, and the URL carries the upstream
+    // account's credentials: never let it reach the client or the log.
+    let upstream_resp = req.send().await.map_err(|e| {
+        log::warn!("stream proxy: upstream request failed: {}", e.without_url());
+        SubsonicError::internal("Upstream server unavailable")
+    })?;
 
     let status = upstream_resp.status();
     let content_type = track
@@ -3365,6 +3411,9 @@ async fn koan_invite(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
             let password =
                 koan_core::invite::account_password(&db.conn, &sealing_key()?, username, reset)
                     .map_err(account_error)?;
+            if reset {
+                crate::clients::registry().disconnect(username);
+            }
             Ok(b.child(invite_node(username, &password)))
         })
     })
@@ -3398,6 +3447,7 @@ async fn koan_delete_user(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
                 ));
             }
             koan_core::invite::delete_account(&db.conn, username).map_err(account_error)?;
+            crate::clients::registry().disconnect(username);
             Ok(b)
         })
     })
@@ -3836,10 +3886,9 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
 /// `form_post` is outermost, so the sign-in throttle sees credentials sent in
 /// a form body as well as in the query.
 fn subsonic_app(state: Arc<AppState>) -> axum::Router {
-    let throttle = Arc::new(AuthThrottle {
-        failures: FailureLimiter::default(),
-        shared_username: state.username.clone(),
-    });
+    let throttle = Arc::new(AuthThrottle::new(
+        state.password.is_some().then(|| state.username.clone()),
+    ));
     register_subsonic_routes(axum::Router::new())
         .with_state(state)
         .layer(axum::middleware::from_fn_with_state(
@@ -3963,6 +4012,51 @@ mod tests {
         // Nor is another account.
         let (_, body) = get_response(app, "/rest/ping?u=someone&p=wrong&v=1.16.1&c=test").await;
         assert!(body.contains("code=\"40\""), "{}", body);
+    }
+
+    /// A route that refuses every credential, behind the throttle.
+    fn refusing_app(shared_username: Option<&str>) -> axum::Router {
+        async fn refuse() -> Response {
+            SubsonicResponse::error(false, &SubsonicError::wrong_auth())
+        }
+        axum::Router::new().route("/rest/ping", get(refuse)).layer(
+            axum::middleware::from_fn_with_state(
+                Arc::new(AuthThrottle::new(shared_username.map(str::to_owned))),
+                throttle_auth,
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn failures_are_also_counted_per_address_whatever_the_username() {
+        let app = refusing_app(None);
+        for n in 0..AUTH_FAILURES_PER_ADDRESS_PER_MINUTE {
+            let (_, body) = get_response(app.clone(), &format!("/rest/ping?u=user{n}&p=x")).await;
+            assert!(body.contains("code=\"40\""), "{}", body);
+        }
+        let (_, body) = get_response(app, "/rest/ping?u=fresh&p=x").await;
+        assert!(
+            body.contains("Too many failed sign-ins from this address"),
+            "{}",
+            body
+        );
+    }
+
+    #[tokio::test]
+    async fn the_shared_username_is_exempt_only_with_a_secret() {
+        let guess = "/rest/ping?u=koan&t=0123&s=salt";
+        let app = refusing_app(None);
+        for _ in 0..AUTH_FAILURES_PER_MINUTE {
+            get_response(app.clone(), guess).await;
+        }
+        let (_, body) = get_response(app, guess).await;
+        assert!(body.contains("Too many failed sign-ins"), "{}", body);
+
+        let app = refusing_app(Some("koan"));
+        for _ in 0..AUTH_FAILURES_PER_ADDRESS_PER_MINUTE + 1 {
+            let (_, body) = get_response(app.clone(), guess).await;
+            assert!(body.contains("code=\"40\""), "{}", body);
+        }
     }
 
     fn auth_query(extra: &str) -> String {
