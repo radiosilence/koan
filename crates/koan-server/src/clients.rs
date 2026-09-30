@@ -213,6 +213,10 @@ impl Registry {
     /// other devices: those linked, with what each is doing, and those a push
     /// can wake.
     fn announce(&self, username: &str) {
+        let listening = |e: &Entry| e.info.username == username && e.wants_devices;
+        if !self.entries.lock().iter().any(listening) {
+            return;
+        }
         let asleep = outbox::push_targets(Some(username));
         let entries = self.entries.lock();
         let ours: Vec<&Entry> = entries
@@ -689,7 +693,9 @@ fn reach_absent(
             title: format!("{verb} on {}", target.name),
             body: outbox::describe(cmd).unwrap_or_else(|| "From your koan server".into()),
             command: serde_json::to_value(cmd).ok()?,
-            image: cover_track(cmd).and_then(|t| pusher.cover_link(t)),
+            image: cover_track(cmd)
+                .and_then(outbox::track_row)
+                .and_then(|t| pusher.cover_link(t)),
         },
         None => {
             outbox::queue_for(&target.device, &target.username, cmd);
@@ -700,8 +706,9 @@ fn reach_absent(
     Some(Ok(info))
 }
 
-/// The track whose album cover a notification for `cmd` shows.
-fn cover_track(cmd: &LinkCommand) -> Option<i64> {
+/// The track whose album cover a notification for `cmd` shows. Commands carry
+/// uids, so this is the id as sent; see `outbox::track_row`.
+fn cover_track(cmd: &LinkCommand) -> Option<&str> {
     match cmd {
         LinkCommand::Play {
             track_ids,
@@ -709,10 +716,9 @@ fn cover_track(cmd: &LinkCommand) -> Option<i64> {
             ..
         } => track_ids
             .get(*start_at as usize)
-            .or(track_ids.first())?
-            .parse()
-            .ok(),
-        LinkCommand::JumpTo { track_id } => track_id.parse().ok(),
+            .or(track_ids.first())
+            .map(String::as_str),
+        LinkCommand::JumpTo { track_id } => Some(track_id),
         _ => None,
     }
 }
@@ -867,11 +873,14 @@ mod outbox {
     const KEEP_SECS: i64 = 30 * 24 * 60 * 60;
 
     /// Tests keep to memory: the configured database is whoever ran them.
-    fn db() -> Option<koan_core::db::connection::Database> {
+    ///
+    /// The shared pool, because a state report from every linked device lands
+    /// here: `Database::open` would run the schema and a checkpoint each time.
+    fn db() -> Option<koan_core::db::pool::Handle<'static>> {
         if cfg!(test) {
             return None;
         }
-        koan_core::db::connection::Database::open(&koan_core::config::db_path()).ok()
+        koan_core::db::pool::shared().get().ok()
     }
 
     pub fn load_orders() -> Vec<super::Order> {
@@ -1069,6 +1078,14 @@ mod outbox {
             .unwrap_or_default()
     }
 
+    /// The row id of a track a command names by uid or row id.
+    pub fn track_row(id: &str) -> Option<i64> {
+        let db = db()?;
+        queries::resolve_id(&db.conn, queries::UidKind::Track, id)
+            .ok()
+            .flatten()
+    }
+
     /// What a playback command would play, for a notification to say:
     /// "Golden Standard — Tony Petersen", or a track and how many follow.
     pub fn describe(cmd: &LinkCommand) -> Option<String> {
@@ -1203,6 +1220,18 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_notification_cover_is_named_by_the_uid_the_command_carries() {
+        // Commands carry uids; parsing them as row ids found no cover.
+        let uid = "0190a5b2-7c3d-7e4f-8a1b-2c3d4e5f6a7b".to_string();
+        let play = LinkCommand::Play {
+            track_ids: vec!["x".into(), uid.clone()],
+            start_at: 1,
+            position_ms: 0,
+        };
+        assert_eq!(cover_track(&play), Some(uid.as_str()));
+    }
 
     #[test]
     fn a_reconnect_replaces_the_device_and_commands_reach_it() {

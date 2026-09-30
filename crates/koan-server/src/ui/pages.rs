@@ -478,7 +478,7 @@ async fn share(s: UiState, user: AuthUser, target: ShareTarget) -> Response {
             let db = open(&s.pool)?;
             let cfg = koan_core::config::Config::load().unwrap_or_default();
             Some(
-                koan_core::helpers::create_share(&db, user.user_id, &cfg, &target, None)
+                koan_core::helpers::create_native_share(&db, user.user_id, &cfg, &target, None)
                     .map(|o| o.url)
                     .map_err(|e| e.to_string()),
             )

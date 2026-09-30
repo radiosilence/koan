@@ -224,12 +224,12 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         let scope = super::client_scope(ctx);
-        let (sent, queued) = crate::clients::registry().deliver(
-            scope.as_deref(),
-            LinkCommand::Sync {
-                full: full.unwrap_or(false),
-            },
-        );
+        let cmd = LinkCommand::Sync {
+            full: full.unwrap_or(false),
+        };
+        let (sent, queued) =
+            super::blocking(move || Ok(crate::clients::registry().deliver(scope.as_deref(), cmd)))
+                .await?;
         Ok(GqlStatus::success(reach(&sent, &queued)))
     }
 
@@ -246,7 +246,9 @@ impl MutationRoot {
         let track_ids = track_ids.into_iter().map(|id| id.0).collect();
         let cmd = published(ctx, LinkCommand::Evict { track_ids }).await?;
         let scope = super::client_scope(ctx);
-        let (reached, queued) = crate::clients::registry().deliver(scope.as_deref(), cmd);
+        let (reached, queued) =
+            super::blocking(move || Ok(crate::clients::registry().deliver(scope.as_deref(), cmd)))
+                .await?;
         if reached.is_empty() && queued.is_empty() {
             return Err(async_graphql::Error::new(
                 "no koan app has ever linked to this server",
@@ -1232,13 +1234,16 @@ impl MutationRoot {
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
             let cfg = Config::load().unwrap_or_default();
-            // One query for the remote ids rather than one per track, a link
-            // built from the share id when the server returns no URL, and a
-            // distinct error for each way this can fail — all shared with the
-            // FFI and the TUI so the three cannot drift.
-            let outcome =
-                koan_core::helpers::create_share(db, user, &cfg, &target, description.as_deref())
-                    .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+            // Native, as Subsonic createShare and the web UI make it: a link
+            // made on an upstream would be neither listed nor revocable here.
+            let outcome = koan_core::helpers::create_native_share(
+                db,
+                user,
+                &cfg,
+                &target,
+                description.as_deref(),
+            )
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
             Ok(GqlShare {
                 url: Some(outcome.url),
@@ -1443,9 +1448,14 @@ async fn send_to_client(
 ) -> async_graphql::Result<crate::clients::ClientInfo> {
     let cmd = published(ctx, cmd).await?;
     let scope = super::client_scope(ctx);
-    crate::clients::registry()
-        .send(scope.as_deref(), client, cmd)
-        .map_err(async_graphql::Error::new)
+    let client = client.map(str::to_owned);
+    // Reaching a device that is not linked reads the outbox and may push.
+    super::blocking(move || {
+        crate::clients::registry()
+            .send(scope.as_deref(), client.as_deref(), cmd)
+            .map_err(async_graphql::Error::new)
+    })
+    .await
 }
 
 /// `cmd` with each track named by its uid, however the caller named it: the

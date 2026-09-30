@@ -35,7 +35,10 @@ impl QueryRoot {
         #[graphql(default_with = "ArtistSortField::Name")] sort_by: ArtistSortField,
         #[graphql(default_with = "SortDirection::Asc")] sort_dir: SortDirection,
     ) -> async_graphql::Result<Conn<GqlArtist>> {
-        let ids = super::opt_row_ids(ctx, UidKind::Artist, ids.as_deref()).await?;
+        let ids: Option<std::collections::HashSet<i64>> =
+            super::opt_row_ids(ctx, UidKind::Artist, ids.as_deref())
+                .await?
+                .map(|ids| ids.into_iter().collect());
         let user = super::user_id(ctx);
         let rows = with_db(ctx, move |db| {
             let mut artists = if let Some(ref query) = search {
@@ -119,7 +122,10 @@ impl QueryRoot {
         #[graphql(default_with = "AlbumSortField::ArtistThenDate")] sort_by: AlbumSortField,
         #[graphql(default_with = "SortDirection::Asc")] sort_dir: SortDirection,
     ) -> async_graphql::Result<Conn<GqlAlbum>> {
-        let ids = super::opt_row_ids(ctx, UidKind::Album, ids.as_deref()).await?;
+        let ids: Option<std::collections::HashSet<i64>> =
+            super::opt_row_ids(ctx, UidKind::Album, ids.as_deref())
+                .await?
+                .map(|ids| ids.into_iter().collect());
         let artist_id = super::opt_row_id(ctx, UidKind::Artist, artist_id.as_ref()).await?;
         let artist_ids = super::opt_row_ids(ctx, UidKind::Artist, artist_ids.as_deref()).await?;
         let user = super::user_id(ctx);
@@ -612,75 +618,65 @@ impl QueryRoot {
         #[graphql(default = 50)] limit: i32,
     ) -> async_graphql::Result<Vec<GqlFuzzyMatch>> {
         let limit = limit.clamp(0, MAX_PAGE as i32) as usize;
-        with_db(ctx, move |db| {
-            use nucleo::pattern::{CaseMatching, Normalization};
-            use nucleo::{Config, Nucleo};
+        // Read, then hand the connection back before matching: the match
+        // runs over the whole library and needs no database.
+        let items: Vec<(i64, String)> = with_db(ctx, move |db| {
+            Ok(match kind {
+                FuzzySearchKind::Track => queries::all_tracks(&db.conn)
+                    .map_err(|e| super::internal_error("db", e))?
+                    .into_iter()
+                    .map(|t| {
+                        (
+                            t.id,
+                            format!("{} — {} — {}", t.artist_name, t.album_title, t.title),
+                        )
+                    })
+                    .collect(),
+                FuzzySearchKind::Album => queries::all_albums(&db.conn)
+                    .map_err(|e| super::internal_error("db", e))?
+                    .into_iter()
+                    .map(|a| (a.id, format!("{} — {}", a.artist_name, a.title)))
+                    .collect(),
+                FuzzySearchKind::Artist => queries::all_artists(&db.conn)
+                    .map_err(|e| super::internal_error("db", e))?
+                    .into_iter()
+                    .map(|a| (a.id, a.name))
+                    .collect(),
+            })
+        })
+        .await?;
+        super::blocking(move || {
+            use nucleo::pattern::{CaseMatching, Normalization, Pattern};
+            use nucleo::{Config, Matcher, Utf32Str};
 
-            // Build (id, match_text) pairs based on kind.
-            let items: Vec<(i64, String)> = match kind {
-                FuzzySearchKind::Track => {
-                    let tracks = queries::all_tracks(&db.conn)
-                        .map_err(|e| super::internal_error("db", e))?;
-                    tracks
-                        .into_iter()
-                        .map(|t| {
-                            (
-                                t.id,
-                                format!("{} — {} — {}", t.artist_name, t.album_title, t.title),
-                            )
-                        })
-                        .collect()
-                }
-                FuzzySearchKind::Album => {
-                    let albums = queries::all_albums(&db.conn)
-                        .map_err(|e| super::internal_error("db", e))?;
-                    albums
-                        .into_iter()
-                        .map(|a| (a.id, format!("{} — {}", a.artist_name, a.title)))
-                        .collect()
-                }
-                FuzzySearchKind::Artist => {
-                    let artists = queries::all_artists(&db.conn)
-                        .map_err(|e| super::internal_error("db", e))?;
-                    artists.into_iter().map(|a| (a.id, a.name)).collect()
-                }
-            };
-
-            // Run nucleo fuzzy matching.
-            let mut nucleo: Nucleo<u32> =
-                Nucleo::new(Config::DEFAULT, std::sync::Arc::new(|| {}), None, 1);
-            let injector = nucleo.injector();
-            for (i, (_id, text)) in items.iter().enumerate() {
-                let text = text.clone();
-                injector.push(i as u32, |_val, cols| {
-                    cols[0] = text.into();
-                });
-            }
-
-            // Case-insensitive, and ticked until every item has been seen: a
-            // fixed tick count could snapshot a partial match on a large library.
-            nucleo
-                .pattern
-                .reparse(0, &query, CaseMatching::Ignore, Normalization::Smart, false);
-            while nucleo.tick(10).running {}
-
-            let snap = nucleo.snapshot();
-            let count = (snap.matched_item_count() as usize).min(limit);
-            let mut results = Vec::with_capacity(count);
-            for i in 0..count as u32 {
-                if let Some(item) = snap.get_matched_item(i) {
-                    let idx = *item.data as usize;
-                    if idx < items.len() {
-                        results.push(GqlFuzzyMatch {
-                            id: items[idx].0,
-                            name: items[idx].1.clone(),
-                            rank: i as i32,
-                            kind,
-                        });
-                    }
-                }
-            }
-            Ok(results)
+            // The matcher alone, on this thread: `Nucleo` would build a
+            // thread pool per request to do the same.
+            let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
+            let mut matcher = Matcher::new(Config::DEFAULT);
+            let mut buf = Vec::new();
+            let mut scored: Vec<(u32, usize)> = items
+                .iter()
+                .enumerate()
+                .filter_map(|(i, (_, text))| {
+                    pattern
+                        .score(Utf32Str::new(text, &mut buf), &mut matcher)
+                        .map(|score| (score, i))
+                })
+                .collect();
+            // Best first; ties to the shorter text, then library order, as
+            // nucleo ranks them.
+            scored.sort_by_key(|&(score, i)| (std::cmp::Reverse(score), items[i].1.len(), i));
+            Ok(scored
+                .into_iter()
+                .take(limit)
+                .enumerate()
+                .map(|(rank, (_, i))| GqlFuzzyMatch {
+                    id: items[i].0,
+                    name: items[i].1.clone(),
+                    rank: rank as i32,
+                    kind,
+                })
+                .collect())
         })
         .await
     }

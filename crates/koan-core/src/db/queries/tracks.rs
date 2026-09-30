@@ -1293,48 +1293,82 @@ pub fn random_tracks(
     count: u32,
     artist_id: Option<i64>,
 ) -> Result<Vec<TrackRow>, DbError> {
-    let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
-        if let Some(aid) = artist_id {
-            (
-                "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
-                    t.disc, t.track_number, t.title, t.duration_ms, t.path,
-                    t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                    t.genre, t.source, t.remote_id, t.cached_path
-             FROM tracks t
-             LEFT JOIN artists a ON t.artist_id = a.id
-             LEFT JOIN albums al ON t.album_id = al.id
-             LEFT JOIN artists aa ON al.artist_id = aa.id
-             WHERE t.artist_id = ?1
-                OR t.album_id IN (SELECT id FROM albums WHERE artist_id = ?1)
-             ORDER BY RANDOM()
-             LIMIT ?2"
-                    .into(),
-                vec![
-                    Box::new(aid) as Box<dyn rusqlite::types::ToSql>,
-                    Box::new(count),
-                ],
-            )
-        } else {
-            (
-                "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
-                    t.disc, t.track_number, t.title, t.duration_ms, t.path,
-                    t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                    t.genre, t.source, t.remote_id, t.cached_path
-             FROM tracks t
-             LEFT JOIN artists a ON t.artist_id = a.id
-             LEFT JOIN albums al ON t.album_id = al.id
-             LEFT JOIN artists aa ON al.artist_id = aa.id
-             ORDER BY RANDOM()
-             LIMIT ?1"
-                    .into(),
-                vec![Box::new(count) as Box<dyn rusqlite::types::ToSql>],
-            )
-        };
+    random_tracks_where(
+        conn,
+        count,
+        &RandomFilter {
+            artist_id,
+            ..Default::default()
+        },
+    )
+}
+
+/// What `random_tracks_where` draws from.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RandomFilter<'a> {
+    /// Tracks credited to this artist or on their albums.
+    pub artist_id: Option<i64>,
+    /// Matched case-insensitively against the track's own tag.
+    pub genre: Option<&'a str>,
+    /// Release year bounds of the track's album, inclusive. Tracks without a
+    /// dated album are left out when either is set.
+    pub year_from: Option<i32>,
+    pub year_to: Option<i32>,
+}
+
+/// `count` random tracks matching `filter`.
+///
+/// The draw orders bare ids and the joins run for the picked rows only, so a
+/// handful from a large library does not join every track to sort it.
+pub fn random_tracks_where(
+    conn: &Connection,
+    count: u32,
+    filter: &RandomFilter,
+) -> Result<Vec<TrackRow>, DbError> {
+    let mut wheres: Vec<String> = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(aid) = filter.artist_id {
+        wheres.push(
+            "(r.artist_id = ? OR r.album_id IN (SELECT id FROM albums WHERE artist_id = ?))".into(),
+        );
+        params.push(Box::new(aid));
+        params.push(Box::new(aid));
+    }
+    if let Some(genre) = filter.genre {
+        wheres.push("r.genre = ? COLLATE NOCASE".into());
+        params.push(Box::new(genre.to_owned()));
+    }
+    let year =
+        "(SELECT CAST(substr(ra.date, 1, 4) AS INTEGER) FROM albums ra WHERE ra.id = r.album_id)";
+    if let Some(from) = filter.year_from {
+        wheres.push(format!("{year} >= ?"));
+        params.push(Box::new(from));
+    }
+    if let Some(to) = filter.year_to {
+        wheres.push(format!("{year} <= ?"));
+        params.push(Box::new(to));
+    }
+    params.push(Box::new(count));
+    let draw = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", wheres.join(" AND "))
+    };
+    let sql = format!(
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         WHERE t.id IN (SELECT r.id FROM tracks r {draw} ORDER BY RANDOM() LIMIT ?)
+         ORDER BY RANDOM()"
+    );
     let mut stmt = conn.prepare(&sql)?;
-    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-        params_vec.iter().map(|p| p.as_ref()).collect();
     let rows = stmt
-        .query_map(params_refs.as_slice(), row_to_track_row)?
+        .query_map(rusqlite::params_from_iter(params.iter()), row_to_track_row)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
