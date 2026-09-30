@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A server can no longer make koan write outside its cache.** A remote track's file extension came straight from the server's `suffix`, so a value containing `/` and `..` placed the download anywhere the user could write. Extensions are now ASCII letters and digits only, an artist, album or title of `.` or `..` becomes `_`, and a download whose path would leave the cache directory is refused.
+- **Cancelling a large library scan no longer hangs.** The tag readers blocked on a full channel that nothing was reading any more, which left the scan unfinished and every rayon worker parked for the rest of the process. The readers now stop on cancel and the channel is closed before the scan waits for them.
+- **Signing in to a different server or account keeps your playlists.** Each playlist's server id is now recorded against the account it came from. Playlists from another account become local ones and are pushed to the new server as new, where before the first sync read every one of them as deleted and removed it.
+- **Playlist sync keeps local files and stops rewriting every playlist.** A sync compared the server's timestamp with a copy of itself, so every sync fetched every playlist and replaced its contents with only the tracks the server knows, dropping local files and renumbering every entry (which also ended a queue's lock to its playlist). Each side is now judged against its own record of the last sync: an unchanged playlist is not fetched, a pull keeps local-only entries and the ids of entries that did not change, and conflicting edits still go to the later writer.
+- **Quick successive playlist edits reach the server in order.** Each edit pushed on its own thread, so two in flight could create the playlist on the server twice or land out of order. Pushes of one playlist now run one at a time, each reading the playlist when its turn comes.
+- **Merging duplicate tracks keeps them in playlists and shares.** Entries for the row being merged away were deleted with it; they now move to the surviving row.
+- **Downloads follow sign-in changes.** The download queue built its server client once per process, so after signing out, changing password or signing in elsewhere it kept using the old credentials until relaunch. The client is now looked up per download.
+- **Downloading albums for offline listening no longer evicts them first.** Cache eviction ranked albums by last play, so ones fetched but not yet played were the first to go. A download now counts as a use.
+- **A track id koan cannot find no longer stalls playback controls.** A pushed command naming a track the library lacked ran a sync on the same lane as pause, skip and seek, and repeated it for every command naming a track the server had deleted. The sync now runs off that lane, an id a sync failed to find does not start another for five minutes, and commands from devices on the local network, which need no account, never start a sync.
+- **An album is removed only when the server says it is gone.** The album list is walked by offset, so a deletion during the walk could push a different album off a page boundary and have its tracks and play history deleted. An album missing from the list is now checked with `getAlbum` first.
+
+### Changed
+
+- **Syncs no longer re-star every favourite.** Each sync sent one request per local favourite; it now reads the server's stars first and sends only those the server lacks.
+- **Rescanning from the app walks each folder once.** The file count for the progress bar came from a separate walk of every folder, and files were checked against the scan cache one at a time; the count now comes from the scan's own walk and the checks run in parallel.
+
 ## 0.45.1
 
 ### Fixed

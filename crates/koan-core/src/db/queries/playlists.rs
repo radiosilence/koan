@@ -40,12 +40,18 @@ pub struct PlaylistRow {
     pub grouped: Option<bool>,
     pub track_count: i64,
     pub duration_ms: i64,
+    /// Bumped by every local edit.
+    pub revision: i64,
+    /// The `revision` the last push or pull covered.
+    pub synced_revision: Option<i64>,
+    /// The server's `changed` as of the last push or pull.
+    pub remote_changed: Option<String>,
 }
 
 const SELECT: &str = "SELECT p.id, p.name, p.comment, p.public, COALESCE(p.owner, u.username),
             p.remote_id, p.created_at, p.changed_at, p.sort_order, p.grouped,
             COUNT(pt.track_id), COALESCE(SUM(t.duration_ms), 0), p.user_id,
-            COALESCE(p.uid, CAST(p.id AS TEXT))
+            COALESCE(p.uid, CAST(p.id AS TEXT)), p.revision, p.synced_revision, p.remote_changed
      FROM playlists p
      LEFT JOIN users u ON u.id = p.user_id
      LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
@@ -67,6 +73,9 @@ fn row_to_playlist(row: &rusqlite::Row) -> rusqlite::Result<PlaylistRow> {
         duration_ms: row.get(11)?,
         user_id: row.get(12)?,
         uid: row.get(13)?,
+        revision: row.get(14)?,
+        synced_revision: row.get(15)?,
+        remote_changed: row.get(16)?,
     })
 }
 
@@ -79,6 +88,11 @@ impl PlaylistRow {
     /// Whether `user` (resolved) may change it: their own only.
     pub fn editable_by(&self, user: i64) -> bool {
         self.user_id == user
+    }
+
+    /// Whether it has local edits the server has not had.
+    pub fn unsynced(&self) -> bool {
+        self.synced_revision != Some(self.revision)
     }
 }
 
@@ -153,7 +167,8 @@ pub fn delete_playlist(conn: &Connection, id: i64) -> Result<bool, DbError> {
 
 pub fn rename_playlist(conn: &Connection, id: i64, name: &str) -> Result<bool, DbError> {
     Ok(conn.execute(
-        "UPDATE playlists SET name = ?2, changed_at = datetime('now') WHERE id = ?1",
+        "UPDATE playlists SET name = ?2, changed_at = datetime('now'), revision = revision + 1
+         WHERE id = ?1",
         params![id, name],
     )? > 0)
 }
@@ -182,29 +197,64 @@ pub fn set_playlist_grouped(
     Ok(())
 }
 
-/// Attach a server id, and record the server's own timestamps with it.
+/// Attach a server id, and the account on that server it belongs to.
 pub fn set_playlist_remote(
     conn: &Connection,
     id: i64,
     remote_id: &str,
     owner: Option<&str>,
     public: bool,
-    changed_at: Option<&str>,
+    account: &str,
 ) -> Result<(), DbError> {
     conn.execute(
-        "UPDATE playlists SET remote_id = ?2, owner = ?3, public = ?4,
-                changed_at = COALESCE(NULLIF(?5, ''), changed_at)
+        "UPDATE playlists SET remote_id = ?2, owner = ?3, public = ?4, remote_account = ?5
          WHERE id = ?1",
-        params![
-            id,
-            remote_id,
-            owner,
-            public as i64,
-            changed_at.unwrap_or("")
-        ],
+        params![id, remote_id, owner, public as i64, account],
     )?;
     super::adopt_uid(conn, super::UidKind::Playlist, id, remote_id)?;
     Ok(())
+}
+
+/// Record that the server and this copy agree: the server's `changed` stamp
+/// as it now stands, and the local revision that was sent or received —
+/// `None` for the current one. A push passes the revision it read before
+/// sending, so an edit made while it was in flight still counts as unsynced.
+pub fn mark_playlist_synced(
+    conn: &Connection,
+    id: i64,
+    remote_changed: Option<&str>,
+    revision: Option<i64>,
+) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE playlists SET remote_changed = ?2, synced_revision = COALESCE(?3, revision)
+         WHERE id = ?1",
+        params![id, remote_changed, revision],
+    )?;
+    Ok(())
+}
+
+/// Turn every playlist tied to a server account other than `account` back
+/// into a local one, which the next sync pushes as new. A playlist with a
+/// server id but no recorded account is taken to be `account`'s.
+///
+/// Without this, signing in somewhere else reads every playlist the old
+/// server had as deleted on the new one.
+pub fn detach_playlists_from_other_accounts(
+    conn: &Connection,
+    account: &str,
+) -> Result<usize, DbError> {
+    let detached = conn.execute(
+        "UPDATE playlists SET remote_id = NULL, owner = NULL, remote_changed = NULL,
+                synced_revision = NULL, remote_account = NULL
+         WHERE remote_id IS NOT NULL AND remote_account IS NOT NULL AND remote_account != ?1",
+        params![account],
+    )?;
+    conn.execute(
+        "UPDATE playlists SET remote_account = ?1
+         WHERE remote_id IS NOT NULL AND remote_account IS NULL",
+        params![account],
+    )?;
+    Ok(detached)
 }
 
 /// One entry: a place in a playlist, and the track sitting in it.
@@ -426,6 +476,71 @@ pub fn set_playlist_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Res
     touch(conn, id)
 }
 
+/// Take the server's copy of the contents, keeping what only this copy can hold.
+///
+/// Entries whose track has no server id never went to the server, so its copy
+/// cannot mention them; they stay, at their old positions as near as the new
+/// length allows. Entries for tracks still present keep their ids, so a queue
+/// following the playlist stays locked to it. Does not mark the playlist
+/// changed: this is the server's copy, not an edit.
+pub fn merge_server_tracks(
+    conn: &Connection,
+    id: i64,
+    server_track_ids: &[i64],
+) -> Result<(), DbError> {
+    let existing: Vec<(i64, i64, bool)> = {
+        let mut stmt = conn.prepare(
+            "SELECT pt.id, pt.track_id, t.remote_id IS NULL FROM playlist_tracks pt
+             JOIN tracks t ON t.id = pt.track_id
+             WHERE pt.playlist_id = ?1 ORDER BY pt.position",
+        )?;
+        stmt.query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    let mut merged: Vec<(Option<i64>, i64)> = server_track_ids.iter().map(|&t| (None, t)).collect();
+    for (index, &(entry, track, local_only)) in existing.iter().enumerate() {
+        if local_only {
+            merged.insert(index.min(merged.len()), (Some(entry), track));
+        }
+    }
+    let mut spare: Vec<(i64, i64)> = existing
+        .iter()
+        .filter(|(_, _, local_only)| !local_only)
+        .map(|&(entry, track, _)| (entry, track))
+        .collect();
+    for (entry, track) in merged.iter_mut().filter(|(e, _)| e.is_none()) {
+        if let Some(i) = spare.iter().position(|&(_, t)| t == *track) {
+            *entry = Some(spare.remove(i).0);
+        }
+    }
+    for (entry, _) in spare {
+        conn.execute("DELETE FROM playlist_tracks WHERE id = ?1", params![entry])?;
+    }
+
+    // Negative positions first, out of the way of the unique index.
+    for (position, (entry, track)) in merged.iter().enumerate() {
+        let position = -(position as i64) - 1;
+        match entry {
+            Some(entry) => conn.execute(
+                "UPDATE playlist_tracks SET position = ?2 WHERE id = ?1",
+                params![entry, position],
+            )?,
+            None => conn.execute(
+                "INSERT INTO playlist_tracks (playlist_id, position, track_id)
+                 SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM tracks WHERE id = ?3)",
+                params![id, position, track],
+            )?,
+        };
+    }
+    conn.execute(
+        "UPDATE playlist_tracks SET position = -position - 1
+         WHERE playlist_id = ?1 AND position < 0",
+        params![id],
+    )?;
+    renumber(conn, id)
+}
+
 /// Up to four covers for the playlist's tile, one per album.
 ///
 /// Album ids, because art is stored and cached per record: naming a track here
@@ -500,7 +615,7 @@ pub fn remote_ids_for_playlist(conn: &Connection, id: i64) -> Result<Vec<String>
 /// through this so the reconciler can tell whose copy is newer.
 fn touch(conn: &Connection, id: i64) -> Result<(), DbError> {
     conn.execute(
-        "UPDATE playlists SET changed_at = datetime('now') WHERE id = ?1",
+        "UPDATE playlists SET changed_at = datetime('now'), revision = revision + 1 WHERE id = ?1",
         params![id],
     )?;
     Ok(())

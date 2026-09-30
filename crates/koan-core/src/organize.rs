@@ -304,15 +304,16 @@ impl MetadataProvider for TrackMetadata {
 fn sanitize_relative_path(rel: &str) -> Result<PathBuf, String> {
     let mut result = PathBuf::new();
     for part in rel.split(['/', std::path::MAIN_SEPARATOR]) {
+        // Checked before sanitising, which would turn these into `_`.
+        if matches!(part.trim(), "." | "..") {
+            return Err(format!(
+                "format string produced a relative path component: {rel:?}"
+            ));
+        }
         let sanitized = sanitise_filename(part);
         if sanitized.is_empty() {
             return Err(format!(
                 "format string produced an empty path component: {rel:?}"
-            ));
-        }
-        if sanitized == "." || sanitized == ".." {
-            return Err(format!(
-                "format string produced a relative path component: {rel:?}"
             ));
         }
         result.push(sanitized);

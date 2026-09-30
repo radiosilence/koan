@@ -283,6 +283,9 @@ impl KoanEngine {
     /// Run a command a push notification carried (the JSON under `koan`): what
     /// the server would have sent over the link had iOS not suspended the app.
     /// Also links now, so anything else waiting follows.
+    ///
+    /// Tracks the library lacks are synced for on the pool first. The lane
+    /// every transport call waits on only resolves what is already here.
     pub async fn run_pushed_command(self: Arc<Self>, command: String) -> Result<(), KoanError> {
         koan_core::remote::link::nudge();
         let cmd = match koan_core::remote::link::parse_command(&command) {
@@ -292,8 +295,28 @@ impl KoanEngine {
                 return Ok(());
             }
         };
+        let ids = cmd.track_ids().to_vec();
+        if !ids.is_empty() {
+            let engine = self.clone();
+            offload::offload(move || {
+                let db = engine.db()?;
+                if koan_core::remote::link::resolve_tracks(&db, &ids, true).1 {
+                    engine.library_changed();
+                }
+                Ok::<_, KoanError>(())
+            })
+            .await?;
+        }
+        // A sync touches no player state, so it has no place in the lane's order.
+        if matches!(cmd, koan_core::remote::link::LinkCommand::Sync { .. }) {
+            return offload::offload(move || {
+                self.handle_link(cmd, false);
+                Ok(())
+            })
+            .await;
+        }
         offload::sequenced(move || {
-            self.handle_link(cmd);
+            self.handle_link(cmd, false);
             Ok(())
         })
         .await
@@ -3206,37 +3229,40 @@ impl KoanEngine {
         self.cancel_library_task
             .store(false, std::sync::atomic::Ordering::Relaxed);
 
-        if let Some(reporter) = &reporter {
-            reporter.started(koan_core::index::scanner::count_audio_files(
-                &cfg.library.folders,
-            ));
-        }
-
         let done = std::sync::atomic::AtomicU64::new(0);
-        for folder in &cfg.library.folders {
-            let callback = |event: koan_core::index::scanner::ScanEvent| {
-                let Some(reporter) = &reporter else { return };
-                let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                // Reporting every file would be tens of thousands of trips over
-                // the FFI and a redraw for each. Every 64 still looks live.
-                if n.is_multiple_of(64) {
-                    reporter.advanced(n, format!("{} — {}", event.artist, event.title));
-                }
-            };
-            let hook: Option<&dyn Fn(koan_core::index::scanner::ScanEvent)> =
-                reporter.as_ref().map(|_| &callback as _);
+        let started = |total: u64| {
+            if let Some(reporter) = &reporter {
+                reporter.started(total);
+            }
+        };
+        let callback = |event: koan_core::index::scanner::ScanEvent| {
+            let Some(reporter) = &reporter else { return };
+            let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            // Reporting every file would be tens of thousands of trips over
+            // the FFI and a redraw for each. Every 64 still looks live.
+            if n.is_multiple_of(64) {
+                reporter.advanced(n, format!("{} — {}", event.artist, event.title));
+            }
+        };
+        let hook: Option<&dyn Fn(koan_core::index::scanner::ScanEvent)> =
+            reporter.as_ref().map(|_| &callback as _);
 
-            let r = koan_core::index::scanner::scan_folder(&db, folder, opts.clone(), hook);
-            summary.added += r.added as u32;
-            summary.updated += r.updated as u32;
-            summary.removed += r.removed as u32;
-            summary.skipped += r.skipped as u32;
-            summary.errors.extend(
-                r.errors
-                    .into_iter()
-                    .map(|(p, e)| format!("{}: {e}", p.display())),
-            );
-        }
+        let r = koan_core::index::scanner::scan_folders(
+            &db,
+            &cfg.library.folders,
+            opts,
+            Some(&started),
+            hook,
+        );
+        summary.added += r.added as u32;
+        summary.updated += r.updated as u32;
+        summary.removed += r.removed as u32;
+        summary.skipped += r.skipped as u32;
+        summary.errors.extend(
+            r.errors
+                .into_iter()
+                .map(|(p, e)| format!("{}: {e}", p.display())),
+        );
         self.bump_library();
         Ok(summary)
     }
@@ -3328,9 +3354,14 @@ impl KoanEngine {
             std::sync::Mutex::new(None::<(u64, Vec<koan_core::remote::link::LinkQueueEntry>)>);
         koan_core::remote::devices::start(koan_core::remote::link::Local {
             identity: koan_core::remote::link::LinkIdentity::this_device(None),
-            on_command: Arc::new(move |cmd| {
+            // Only the account may cost a sync: anyone on the network can send
+            // a track id this library has never heard of.
+            on_command: Arc::new(move |cmd, source| {
                 if let Some(engine) = weak.upgrade() {
-                    engine.handle_link(cmd);
+                    engine.handle_link(
+                        cmd,
+                        source == koan_core::remote::link::CommandSource::Account,
+                    );
                 }
             }),
             // The queue is read again only when it has changed: this runs on
@@ -3664,13 +3695,14 @@ impl KoanEngine {
     }
 
     /// What the server asked of this app over the link. Runs on the link's
-    /// thread, which may block: resolving an id the library lacks syncs first.
-    fn handle_link(&self, cmd: koan_core::remote::link::LinkCommand) {
+    /// thread, which may block: resolving an id the library lacks syncs first,
+    /// when `may_sync`.
+    fn handle_link(&self, cmd: koan_core::remote::link::LinkCommand, may_sync: bool) {
         use koan_core::remote::link::LinkCommand;
         // Resolving a track the library lacks syncs first; what that brought
         // in has to reach the pages too.
         let resolve_tracks = |db: &Database, ids: &[String]| {
-            let (found, synced) = koan_core::remote::link::resolve_tracks(db, ids);
+            let (found, synced) = koan_core::remote::link::resolve_tracks(db, ids, may_sync);
             if synced {
                 self.library_changed();
             }

@@ -7,10 +7,11 @@
 //! server. Track ids are the server's, which a synced client holds as each
 //! track's `remote_id`.
 
+use std::collections::HashMap;
 use std::net::TcpStream;
 use std::os::fd::RawFd;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
 use parking_lot::{Condvar, Mutex};
@@ -132,6 +133,29 @@ impl LinkCommand {
             Self::Sync { .. } | Self::Evict { .. } | Self::Devices { .. }
         )
     }
+
+    /// The server's ids for the tracks this command names, if any.
+    pub fn track_ids(&self) -> &[String] {
+        match self {
+            Self::Play { track_ids, .. }
+            | Self::Enqueue { track_ids }
+            | Self::PlayNext { track_ids }
+            | Self::Remove { track_ids }
+            | Self::Evict { track_ids }
+            | Self::Insert { track_ids, .. } => track_ids,
+            Self::JumpTo { track_id } => std::slice::from_ref(track_id),
+            _ => &[],
+        }
+    }
+}
+
+/// Where a command came from, which decides what it may cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandSource {
+    /// The signed-in server, or this person's own devices through it.
+    Account,
+    /// A device on the same network, which may belong to anyone.
+    Nearby,
 }
 
 /// Another device on the same account, as the server sends it.
@@ -365,7 +389,7 @@ impl LinkIdentity {
 pub struct Local {
     pub identity: LinkIdentity,
     pub state: Arc<dyn Fn() -> LinkState + Send + Sync>,
-    pub on_command: Arc<dyn Fn(LinkCommand) + Send + Sync>,
+    pub on_command: Arc<dyn Fn(LinkCommand, CommandSource) + Send + Sync>,
 }
 
 /// Keep a link open to the configured server for as long as the process runs,
@@ -585,7 +609,7 @@ impl wire::Session for LinkSession<'_> {
             Ok(LinkCommand::Devices { devices }) => {
                 crate::remote::devices::set_account(devices);
             }
-            Ok(cmd) => (self.local.on_command)(cmd),
+            Ok(cmd) => (self.local.on_command)(cmd, CommandSource::Account),
             Err(e) => log::warn!("link: not a command ({e}): {text}"),
         }
     }
@@ -596,11 +620,15 @@ impl wire::Session for LinkSession<'_> {
 ///
 /// A koan server names a track by its uid, which this library adopted when it
 /// synced the track; another server by the id it issued. A server can name a
-/// track added since the last sync; if any are missing, an incremental sync
-/// runs first, and whatever is still missing after it is left out.
+/// track added since the last sync; if any are missing and `may_sync`, an
+/// incremental sync runs first, and whatever is still missing after it is left
+/// out. An id a sync already failed to find does not start another for a
+/// while: a command naming a track deleted on the server would otherwise sync
+/// every time it arrived.
 pub fn resolve_tracks(
     db: &crate::db::connection::Database,
     remote_ids: &[String],
+    may_sync: bool,
 ) -> (Vec<i64>, bool) {
     let lookup = |db: &crate::db::connection::Database| {
         let mut stmt = db
@@ -619,11 +647,35 @@ pub fn resolve_tracks(
             .collect::<Vec<_>>()
     };
     let found = lookup(db);
-    if found.iter().all(Option::is_some) {
+    let missing: Vec<&String> = remote_ids
+        .iter()
+        .zip(&found)
+        .filter(|(_, f)| f.is_none())
+        .map(|(id, _)| id)
+        .collect();
+    if missing.is_empty() || !may_sync || missing.iter().all(|id| recently_missed(id)) {
         return (found.into_iter().flatten().collect(), false);
     }
     sync(db, false);
-    (lookup(db).into_iter().flatten().collect(), true)
+    let found = lookup(db);
+    let mut missed = MISSED.lock();
+    let now = Instant::now();
+    missed.retain(|_, at| now.duration_since(*at) < MISS_TTL);
+    for (id, _) in remote_ids.iter().zip(&found).filter(|(_, f)| f.is_none()) {
+        missed.insert(id.clone(), now);
+    }
+    (found.into_iter().flatten().collect(), true)
+}
+
+/// Ids a sync looked for and did not find, and when.
+static MISSED: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(Default::default);
+const MISS_TTL: Duration = Duration::from_secs(300);
+
+fn recently_missed(id: &str) -> bool {
+    MISSED
+        .lock()
+        .get(id)
+        .is_some_and(|at| at.elapsed() < MISS_TTL)
 }
 
 /// A sync from the configured server, as the app runs its own: the library,
@@ -688,6 +740,37 @@ fn percent_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Neither case may reach `sync`: a test has no business reading the
+    // machine's config and syncing against the server it names.
+    #[test]
+    fn unknown_ids_sync_only_when_allowed_and_not_recently_missed() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::connection::Database::open(&dir.path().join("koan.db")).unwrap();
+
+        let (found, synced) = resolve_tracks(&db, &["from-a-stranger".into()], false);
+        assert!(found.is_empty());
+        assert!(!synced, "a nearby peer's unknown id must not start a sync");
+
+        MISSED
+            .lock()
+            .insert("deleted-on-server".into(), Instant::now());
+        let (_, synced) = resolve_tracks(&db, &["deleted-on-server".into()], true);
+        assert!(
+            !synced,
+            "an id a sync just failed to find does not start another"
+        );
+    }
+
+    #[test]
+    fn commands_name_their_tracks() {
+        let play: LinkCommand =
+            serde_json::from_str(r#"{"type":"play","trackIds":["a","b"]}"#).unwrap();
+        assert_eq!(play.track_ids(), ["a", "b"]);
+        let jump: LinkCommand = serde_json::from_str(r#"{"type":"jumpTo","trackId":"c"}"#).unwrap();
+        assert_eq!(jump.track_ids(), ["c"]);
+        assert!(LinkCommand::Pause.track_ids().is_empty());
+    }
 
     #[test]
     fn a_push_token_is_a_tagged_report() {

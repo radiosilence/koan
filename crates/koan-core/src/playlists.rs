@@ -84,17 +84,25 @@ pub struct PlaylistSync {
 
 /// Reconcile playlists with the server, both directions.
 ///
-/// Unlike favourites, a playlist has an order and a server that records when it
-/// last changed — so this is last-writer-wins on `changed`, not a union. Local
-/// edits push the moment they happen, so a local copy ahead of the server's
-/// means a push that never got out (koan was offline, the server was down), and
-/// that is exactly the case where ours should win.
+/// Unlike favourites, a playlist has an order, so this is not a union. Each
+/// side's change is judged against its own record: the server's `changed`
+/// against the stamp it had at the last sync, the local `changed_at` against
+/// the one that sync covered. Only one side moved: that side wins. Both moved:
+/// last writer wins on `changed`. Neither: nothing is fetched at all.
 ///
 /// Playlists that have never been to the server are created there. Ones the
 /// server no longer has are dropped locally: deleting a playlist on Navidrome
 /// and having it reappear on the next sync would make deletion impossible.
-pub fn reconcile_playlists(db: &Database, client: &SubsonicClient, username: &str) -> PlaylistSync {
+/// Playlists tied to another server or account are first made local again, so
+/// signing in somewhere else never reads them as deleted.
+pub fn reconcile_playlists(
+    db: &Database,
+    client: &SubsonicClient,
+    url: &str,
+    username: &str,
+) -> PlaylistSync {
     let mut out = PlaylistSync::default();
+    let account = account_key(url, username);
 
     let remote = match client.get_playlists() {
         Ok(lists) => lists,
@@ -103,6 +111,15 @@ pub fn reconcile_playlists(db: &Database, client: &SubsonicClient, username: &st
             return out;
         }
     };
+
+    match queries::detach_playlists_from_other_accounts(&db.conn, &account) {
+        Ok(0) => {}
+        Ok(n) => log::info!("{n} playlists belonged to another server; keeping them as local"),
+        Err(e) => {
+            log::warn!("could not check which server playlists belong to: {e}");
+            return out;
+        }
+    }
 
     // Only playlists this user owns are ours to write back. A public playlist
     // belonging to someone else is still worth having locally, but pushing our
@@ -119,14 +136,20 @@ pub fn reconcile_playlists(db: &Database, client: &SubsonicClient, username: &st
             .as_deref()
             .is_none_or(|owner| owner == username);
 
-        if let Some(local) = &local
-            && ours
-            && newer(&local.changed_at, summary.changed.as_deref())
-        {
-            if push(db, client, local.id, Some(&summary.id)).is_ok() {
-                out.pushed += 1;
+        if let Some(local) = &local {
+            let server_moved = summary.changed.as_deref() != local.remote_changed.as_deref();
+            let local_moved = ours && local.unsynced();
+            if local_moved
+                && (!server_moved || newer(&local.changed_at, summary.changed.as_deref()))
+            {
+                if push(db, client, &account, local.id).is_ok() {
+                    out.pushed += 1;
+                }
+                continue;
             }
-            continue;
+            if !server_moved && !local_moved {
+                continue;
+            }
         }
 
         let full = match client.get_playlist(&summary.id) {
@@ -162,7 +185,7 @@ pub fn reconcile_playlists(db: &Database, client: &SubsonicClient, username: &st
             &summary.id,
             summary.owner.as_deref(),
             summary.public,
-            summary.changed.as_deref(),
+            &account,
         );
 
         let remote_song_ids: Vec<String> = full.entry.iter().map(|s| s.id.clone()).collect();
@@ -171,24 +194,16 @@ pub fn reconcile_playlists(db: &Database, client: &SubsonicClient, username: &st
             .into_iter()
             .flatten()
             .collect();
-        if let Err(e) = queries::set_playlist_tracks(&db.conn, id, &track_ids) {
+        if let Err(e) = queries::merge_server_tracks(&db.conn, id, &track_ids) {
             log::warn!(
                 "could not store playlist contents for {}: {e}",
                 summary.name
             );
             continue;
         }
-        // `set_playlist_tracks` stamps the local copy as changed, which would
-        // make the next sync think we were ahead of the server. We are not:
-        // this *is* the server's copy.
-        let _ = queries::set_playlist_remote(
-            &db.conn,
-            id,
-            &summary.id,
-            summary.owner.as_deref(),
-            summary.public,
-            summary.changed.as_deref(),
-        );
+        // The rename stamped the local copy as changed; this is the server's
+        // copy, so what is here now is what the server has.
+        let _ = queries::mark_playlist_synced(&db.conn, id, summary.changed.as_deref(), None);
         out.pulled += 1;
     }
 
@@ -205,7 +220,7 @@ pub fn reconcile_playlists(db: &Database, client: &SubsonicClient, username: &st
     for local in
         queries::playlists_without_remote(&db.conn, queries::LOCAL_USER).unwrap_or_default()
     {
-        if push(db, client, local.id, None).is_ok() {
+        if push(db, client, &account, local.id).is_ok() {
             out.pushed += 1;
         }
     }
@@ -213,20 +228,46 @@ pub fn reconcile_playlists(db: &Database, client: &SubsonicClient, username: &st
     out
 }
 
+/// What a playlist's `remote_id` is relative to: one account on one server.
+fn account_key(url: &str, username: &str) -> String {
+    format!("{username}@{}", url.trim_end_matches('/'))
+}
+
+/// One lock per playlist, held for the length of a push.
+///
+/// Pushes are fired from every edit, and two in flight at once raced: both
+/// could see no server id and create two playlists there, or land out of
+/// order and leave the server holding the older contents. Held, each push
+/// reads the row only once the one before it has written its answer back.
+fn push_lock(id: i64) -> std::sync::Arc<parking_lot::Mutex<()>> {
+    static LOCKS: std::sync::OnceLock<
+        parking_lot::Mutex<std::collections::HashMap<i64, std::sync::Arc<parking_lot::Mutex<()>>>>,
+    > = std::sync::OnceLock::new();
+    LOCKS
+        .get_or_init(Default::default)
+        .lock()
+        .entry(id)
+        .or_default()
+        .clone()
+}
+
 /// Send a playlist's name and contents to the server, in order.
 ///
 /// `createPlaylist` with a `playlistId` replaces the contents wholesale, which
 /// is the only Subsonic call that can express a reorder — so a push is always
 /// the whole list rather than a diff.
-fn push(
-    db: &Database,
-    client: &SubsonicClient,
-    id: i64,
-    remote_id: Option<&str>,
-) -> Result<(), ()> {
+fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Result<(), ()> {
+    let lock = push_lock(id);
+    let _held = lock.lock();
+    // A server id from another account names someone else's playlist here.
+    if queries::detach_playlists_from_other_accounts(&db.conn, account).is_err() {
+        return Err(());
+    }
+
     let Ok(Some(local)) = queries::get_playlist(&db.conn, id) else {
         return Err(());
     };
+    let remote_id = local.remote_id.as_deref();
     let song_ids = queries::remote_ids_for_playlist(&db.conn, id).unwrap_or_default();
 
     // A playlist made entirely of local files has nothing the server could
@@ -270,7 +311,13 @@ fn push(
                     &new_id,
                     owner.as_deref(),
                     local.public,
+                    account,
+                );
+                let _ = queries::mark_playlist_synced(
+                    &db.conn,
+                    id,
                     changed.as_deref(),
+                    Some(local.revision),
                 );
             }
             Ok(())
@@ -287,9 +334,10 @@ fn push(
 
 /// Whether `local` was changed after the server's copy was.
 ///
-/// Both are ISO 8601 in UTC — SQLite's `datetime('now')` on our side, the
-/// server's own stamp on theirs — near enough that comparing the digits works,
-/// once SQLite's space is made a `T`. A server that sends no timestamp at all
+/// Only consulted when both sides changed since the last sync. Both are
+/// ISO 8601 in UTC — SQLite's `datetime('now')` on our side, the server's own
+/// stamp on theirs — near enough that comparing the digits works, once
+/// SQLite's space is made a `T`. A server that sends no timestamp at all
 /// cannot be shown to be newer, so ours wins and the push settles it.
 fn newer(local: &str, remote: Option<&str>) -> bool {
     let Some(remote) = remote else { return true };
@@ -301,8 +349,8 @@ fn newer(local: &str, remote: Option<&str>) -> bool {
 ///
 /// Fire and forget on its own thread, the way favourites are: the local copy is
 /// already written, and a slow server should not hold up the edit that caused
-/// this. A failure leaves the local copy newer than the server's, which is
-/// exactly what [`reconcile_playlists`] resolves on the next sync.
+/// this. A failure leaves the local copy unsynced, which is exactly what
+/// [`reconcile_playlists`] resolves on the next sync.
 ///
 /// The thread takes its own connection rather than borrowing the caller's:
 /// a `rusqlite::Connection` is not `Sync`, and the answer has to be written
@@ -315,6 +363,7 @@ pub fn push_to_remote(id: i64) {
     let Some(client) = subsonic_client(&cfg) else {
         return;
     };
+    let account = account_key(&cfg.remote.url, &cfg.remote.username);
     std::thread::Builder::new()
         .name("koan-playlist-sync".into())
         .spawn(move || {
@@ -331,7 +380,7 @@ pub fn push_to_remote(id: i64) {
             ) {
                 return;
             }
-            let _ = push(&db, &client, id, list.remote_id.as_deref());
+            let _ = push(&db, &client, &account, id);
         })
         .ok();
 }
@@ -624,5 +673,243 @@ mod tests {
         assert!(written.contains("#EXTINF:185,Artist - Here"));
         assert!(written.contains(&present.display().to_string()));
         assert!(!written.contains("gone.flac"));
+    }
+
+    /// A Subsonic server holding playlists and nothing else, one request per
+    /// connection. Each `changed` is a counter, so every write moves it.
+    #[derive(Default)]
+    struct Server {
+        lists: Vec<(String, Vec<String>, u32)>,
+        fetches: usize,
+        creates_without_id: usize,
+    }
+
+    fn serve(server: std::sync::Arc<parking_lot::Mutex<Server>>) -> String {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let server = server.clone();
+                std::thread::spawn(move || {
+                    let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                    let mut request = String::new();
+                    reader.read_line(&mut request).unwrap();
+                    let mut line = String::new();
+                    while reader.read_line(&mut line).unwrap_or(0) > 2 {
+                        line.clear();
+                    }
+                    let target = request.split_whitespace().nth(1).unwrap_or("");
+                    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+                    let params: Vec<(&str, &str)> = query
+                        .split('&')
+                        .filter_map(|kv| kv.split_once('='))
+                        .collect();
+                    let param = |k: &str| params.iter().find(|(n, _)| *n == k).map(|(_, v)| *v);
+                    let body = respond(&server, path.rsplit('/').next().unwrap(), &params, param);
+                    let mut stream = stream;
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    );
+                });
+            }
+        });
+        url
+    }
+
+    fn respond<'a>(
+        server: &parking_lot::Mutex<Server>,
+        endpoint: &str,
+        params: &[(&str, &'a str)],
+        param: impl Fn(&str) -> Option<&'a str>,
+    ) -> String {
+        let summary = |(id, songs, changed): &(String, Vec<String>, u32)| {
+            format!(
+                r#""id":"{id}","name":"{id}","owner":"u","songCount":{},"changed":"{changed}""#,
+                songs.len()
+            )
+        };
+        let full = |list: &(String, Vec<String>, u32)| {
+            let entries: Vec<String> = list
+                .1
+                .iter()
+                .map(|s| format!(r#"{{"id":"{s}","title":"{s}"}}"#))
+                .collect();
+            format!(r#"{{{},"entry":[{}]}}"#, summary(list), entries.join(","))
+        };
+        let ok = |inner: String| format!(r#"{{"subsonic-response":{{"status":"ok"{inner}}}}}"#);
+        match endpoint {
+            "getPlaylists" => {
+                let lists: Vec<String> = server
+                    .lock()
+                    .lists
+                    .iter()
+                    .map(|l| format!("{{{}}}", summary(l)))
+                    .collect();
+                ok(format!(
+                    r#","playlists":{{"playlist":[{}]}}"#,
+                    lists.join(",")
+                ))
+            }
+            "getPlaylist" => {
+                let mut server = server.lock();
+                server.fetches += 1;
+                let list = server
+                    .lists
+                    .iter()
+                    .find(|l| Some(l.0.as_str()) == param("id"));
+                ok(format!(r#","playlist":{}"#, full(list.unwrap())))
+            }
+            "createPlaylist" => {
+                let songs: Vec<String> = params
+                    .iter()
+                    .filter(|(k, _)| *k == "songId")
+                    .map(|(_, v)| v.to_string())
+                    .collect();
+                // Wide enough for two pushes to overlap if nothing stops them.
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let mut server = server.lock();
+                let id = match param("playlistId") {
+                    Some(id) => id.to_string(),
+                    None => {
+                        server.creates_without_id += 1;
+                        format!("p{}", server.lists.len() + 1)
+                    }
+                };
+                server.lists.retain(|l| l.0 != id);
+                let changed = server.lists.iter().map(|l| l.2).max().unwrap_or(0) + 100;
+                server.lists.push((id, songs, changed));
+                ok(format!(
+                    r#","playlist":{}"#,
+                    full(server.lists.last().unwrap())
+                ))
+            }
+            _ => ok(String::new()),
+        }
+    }
+
+    fn remote_meta(title: &str, remote_id: &str) -> TrackMeta {
+        TrackMeta {
+            path: None,
+            source: "remote".into(),
+            remote_id: Some(remote_id.into()),
+            album: title.into(),
+            ..meta(title, Path::new(""))
+        }
+    }
+
+    fn entries(db: &Database, id: i64) -> Vec<(i64, i64)> {
+        queries::playlist_entries(&db.conn, id)
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.id, e.track.id))
+            .collect()
+    }
+
+    #[test]
+    fn a_sync_keeps_local_only_entries_and_fetches_nothing_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let r1 = upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+        let r2 = upsert_track(&db.conn, &remote_meta("Two", "s2")).unwrap();
+        let local = upsert_track(&db.conn, &meta("Here", &dir.path().join("l.flac"))).unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), vec!["s1".into(), "s2".into()], 1)],
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+
+        let first = reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!(first.pulled, 1);
+        let id = queries::playlist_by_remote_id(&db.conn, "p1")
+            .unwrap()
+            .unwrap()
+            .id;
+        assert_eq!(
+            entries(&db, id).iter().map(|e| e.1).collect::<Vec<_>>(),
+            [r1, r2]
+        );
+
+        // A local file joins; the push carries only what the server can name.
+        queries::add_tracks(&db.conn, id, &[local]).unwrap();
+        let second = reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!((second.pushed, second.pulled), (1, 0));
+        assert_eq!(server.lock().lists[0].1, ["s1", "s2"]);
+
+        let before = entries(&db, id);
+        assert_eq!(before.len(), 3);
+        let fetches = server.lock().fetches;
+        let third = reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!((third.pushed, third.pulled), (0, 0));
+        assert_eq!(
+            server.lock().fetches,
+            fetches,
+            "nothing moved, nothing fetched"
+        );
+        assert_eq!(entries(&db, id), before);
+
+        // An edit on the server comes down without the local file or the
+        // surviving entry's id.
+        {
+            let mut server = server.lock();
+            server.lists[0].1 = vec!["s2".into()];
+            server.lists[0].2 += 1;
+        }
+        let fourth = reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!(fourth.pulled, 1);
+        assert_eq!(entries(&db, id), [before[1], before[2]]);
+    }
+
+    #[test]
+    fn another_account_keeps_the_playlists_and_pushes_them_as_new() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let r1 = upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+        let id = queries::create_playlist(&db.conn, queries::LOCAL_USER, "Road", None).unwrap();
+        queries::add_tracks(&db.conn, id, &[r1]).unwrap();
+        queries::set_playlist_remote(&db.conn, id, "old-1", Some("u"), false, "u@http://old")
+            .unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server::default()));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        let sync = reconcile_playlists(&db, &client, &url, "u");
+
+        let list = queries::get_playlist(&db.conn, id).unwrap().expect("kept");
+        assert_eq!(list.track_count, 1);
+        assert_eq!(sync.pushed, 1);
+        assert_eq!(list.remote_id.as_deref(), Some("p1"));
+    }
+
+    #[test]
+    fn concurrent_pushes_create_one_server_playlist() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        let db = Database::open(&path).unwrap();
+        let r1 = upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+        let id = queries::create_playlist(&db.conn, queries::LOCAL_USER, "Road", None).unwrap();
+        queries::add_tracks(&db.conn, id, &[r1]).unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server::default()));
+        let url = serve(server.clone());
+        let pushes: Vec<_> = (0..2)
+            .map(|_| {
+                let (path, url) = (path.clone(), url.clone());
+                std::thread::spawn(move || {
+                    let db = Database::open(&path).unwrap();
+                    let client = SubsonicClient::new(&url, "u", "pw");
+                    push(&db, &client, &account_key(&url, "u"), id)
+                })
+            })
+            .collect();
+        for p in pushes {
+            p.join().unwrap().unwrap();
+        }
+        assert_eq!(server.lock().creates_without_id, 1);
+        assert_eq!(server.lock().lists.len(), 1);
     }
 }

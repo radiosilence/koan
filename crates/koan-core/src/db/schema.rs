@@ -444,6 +444,16 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("albums", "uid", "TEXT"),
     ("tracks", "uid", "TEXT"),
     ("playlists", "uid", "TEXT"),
+    // Two-way playlist sync. `revision` counts local edits, `synced_revision`
+    // is the one the last push or pull covered, `remote_changed` the server's
+    // `changed` as of then, and `remote_account` whose server `remote_id`
+    // names a playlist on. Each side is judged against its own record, which
+    // is what lets a sync tell "the server moved" from "we moved" without
+    // comparing two machines' clocks.
+    ("playlists", "revision", "INTEGER NOT NULL DEFAULT 0"),
+    ("playlists", "synced_revision", "INTEGER"),
+    ("playlists", "remote_changed", "TEXT"),
+    ("playlists", "remote_account", "TEXT"),
 ];
 
 /// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a
@@ -455,10 +465,24 @@ const SQL_UUID7: &str = "(SELECT substr(t, 1, 8) || '-' || substr(t, 9, 4) || '-
                  lower(hex(randomblob(9))) AS r))";
 
 fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
+    let had_remote_account = column_exists(conn, "playlists", "remote_account")?;
     for (table, column, ty) in ADDED_COLUMNS {
         if !column_exists(conn, table, column)? {
             conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"), [])?;
         }
+    }
+
+    // Playlists synced before `remote_account` existed belong to the server
+    // last synced with. Recorded now, before a sync against a different one
+    // can take their ids for its own.
+    if !had_remote_account {
+        conn.execute(
+            "UPDATE playlists SET remote_account =
+               (SELECT username || '@' || rtrim(url, '/') FROM remote_servers
+                ORDER BY last_sync DESC LIMIT 1)
+             WHERE remote_id IS NOT NULL",
+            [],
+        )?;
     }
 
     // Cross-source dedup looks tracks up by recording id.
@@ -1227,6 +1251,35 @@ mod tests {
         Database::open(&path).unwrap();
         Database::open(&path).unwrap();
         Database::open(&path).unwrap();
+    }
+
+    #[test]
+    fn synced_playlists_are_tied_to_the_server_last_synced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        {
+            let db = Database::open(&path).unwrap();
+            db.conn
+                .execute_batch(
+                    "INSERT INTO remote_servers (url, username, last_sync)
+                       VALUES ('https://old/', 'ann', 1), ('https://new', 'bob', 2);
+                     INSERT INTO playlists (name, remote_id) VALUES ('Synced', 'p1');
+                     INSERT INTO playlists (name) VALUES ('Local');
+                     ALTER TABLE playlists DROP COLUMN remote_account;",
+                )
+                .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        let accounts: Vec<Option<String>> = db
+            .conn
+            .prepare("SELECT remote_account FROM playlists ORDER BY name DESC")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(accounts, [Some("bob@https://new".into()), None]);
     }
 
     #[test]

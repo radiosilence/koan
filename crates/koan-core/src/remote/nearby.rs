@@ -435,7 +435,9 @@ impl wire::Session for Serving<'_> {
 
     fn incoming(&mut self, text: &str) {
         match serde_json::from_str::<LinkCommand>(text) {
-            Ok(cmd) if cmd.allowed_nearby() => (self.local.on_command)(cmd),
+            Ok(cmd) if cmd.allowed_nearby() => {
+                (self.local.on_command)(cmd, crate::remote::link::CommandSource::Nearby)
+            }
             Ok(cmd) => log::warn!("nearby: refused {cmd:?}"),
             Err(e) => log::warn!("nearby: not a command ({e}): {text}"),
         }

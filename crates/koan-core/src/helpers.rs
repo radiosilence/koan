@@ -741,7 +741,7 @@ pub fn sync_remote(
     Ok(FullSync {
         library,
         favourites: reconcile_favourites(db, client),
-        playlists: crate::playlists::reconcile_playlists(db, client, username),
+        playlists: crate::playlists::reconcile_playlists(db, client, url, username),
     })
 }
 
@@ -754,38 +754,17 @@ pub struct FavouriteSync {
 
 /// Reconcile favourites with the server, both directions.
 ///
-/// Pushes every local favourite that the server knows about, then imports
-/// everything the server has starred. Union rather than mirror: neither side
-/// records an unstar, so treating one as authoritative would silently delete
-/// favourites made on the other.
+/// Stars every local favourite the server knows about but has not starred,
+/// then imports everything the server has starred. Union rather than mirror:
+/// neither side records an unstar, so treating one as authoritative would
+/// silently delete favourites made on the other. Reading the server's stars
+/// first keeps a sync from re-sending every favourite, one request each.
 ///
 /// Covers albums and artists as well as tracks — `getStarred2` returns all
 /// three from one request, and reading only songs left a starred album
 /// invisible to koan.
 pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> FavouriteSync {
     let mut out = FavouriteSync::default();
-
-    let tracks =
-        queries::favourites_with_remote_id(&db.conn, queries::LOCAL_USER).unwrap_or_default();
-    for (_path, remote_id) in &tracks {
-        if client.star(remote_id).is_ok() {
-            out.pushed += 1;
-        }
-    }
-    for (_id, remote_id) in
-        queries::favourite_albums_with_remote_id(&db.conn, queries::LOCAL_USER).unwrap_or_default()
-    {
-        if client.star_album(&remote_id).is_ok() {
-            out.pushed += 1;
-        }
-    }
-    for (_id, remote_id) in
-        queries::favourite_artists_with_remote_id(&db.conn, queries::LOCAL_USER).unwrap_or_default()
-    {
-        if client.star_artist(&remote_id).is_ok() {
-            out.pushed += 1;
-        }
-    }
 
     let starred = match client.get_starred_all() {
         Ok(s) => s,
@@ -794,10 +773,47 @@ pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> Favourite
             return out;
         }
     };
-
     let songs: Vec<String> = starred.song.into_iter().map(|s| s.id).collect();
     let albums: Vec<String> = starred.album.into_iter().map(|a| a.id).collect();
     let artists: Vec<String> = starred.artist.into_iter().map(|a| a.id).collect();
+
+    let unstarred = |ids: Vec<String>, starred: &[String]| {
+        let starred: std::collections::HashSet<&String> = starred.iter().collect();
+        ids.into_iter()
+            .filter(|id| !starred.contains(id))
+            .collect::<Vec<_>>()
+    };
+    let tracks = queries::favourites_with_remote_id(&db.conn, queries::LOCAL_USER)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, id)| id)
+        .collect();
+    for remote_id in unstarred(tracks, &songs) {
+        if client.star(&remote_id).is_ok() {
+            out.pushed += 1;
+        }
+    }
+    let local_albums = queries::favourite_albums_with_remote_id(&db.conn, queries::LOCAL_USER)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, id)| id)
+        .collect();
+    for remote_id in unstarred(local_albums, &albums) {
+        if client.star_album(&remote_id).is_ok() {
+            out.pushed += 1;
+        }
+    }
+    let local_artists = queries::favourite_artists_with_remote_id(&db.conn, queries::LOCAL_USER)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, id)| id)
+        .collect();
+    for remote_id in unstarred(local_artists, &artists) {
+        if client.star_artist(&remote_id).is_ok() {
+            out.pushed += 1;
+        }
+    }
+
     out.imported +=
         queries::import_remote_favourites(&db.conn, queries::LOCAL_USER, &songs).unwrap_or(0);
     out.imported += queries::import_remote_favourite_albums(&db.conn, queries::LOCAL_USER, &albums)
@@ -1261,6 +1277,8 @@ pub fn truncate_bytes(s: &str, max: usize) -> &str {
 
 /// Sanitise and truncate a string for use as a path component.
 /// Strips illegal chars and caps at 240 bytes (macOS 255-byte filename limit minus room for ext).
+/// `.` and `..` become `_`: tags and server metadata are untrusted, and either
+/// would move the path out of the directory it is joined onto.
 pub fn sanitise_filename(s: &str) -> String {
     let cleaned: String = s
         .chars()
@@ -1272,7 +1290,33 @@ pub fn sanitise_filename(s: &str) -> String {
         .trim()
         .to_string();
 
-    truncate_bytes(&cleaned, 240).trim_end().to_string()
+    let cleaned = truncate_bytes(&cleaned, 240).trim_end().to_string();
+    match cleaned.as_str() {
+        "." | ".." => "_".into(),
+        _ => cleaned,
+    }
+}
+
+/// A file extension from a codec name, which for remote tracks is whatever
+/// the server sent as `suffix`. ASCII alphanumerics only, so it can never
+/// carry a separator or a `..`; `None` when nothing usable is left.
+pub fn sanitise_extension(codec: &str) -> Option<String> {
+    let ext: String = codec
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(16)
+        .collect::<String>()
+        .to_lowercase();
+    (!ext.is_empty()).then_some(ext)
+}
+
+/// Whether `path` lies inside `dir` without leaving it on the way — every
+/// component after the prefix is a plain name.
+pub fn path_within(dir: &Path, path: &Path) -> bool {
+    path.strip_prefix(dir).is_ok_and(|rest| {
+        rest.components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+    })
 }
 
 /// The year a tag date starts with. `get`, not a slice: a date is free text,
@@ -1313,7 +1357,7 @@ pub fn cache_path_for_track(
     let ext = track
         .codec
         .as_deref()
-        .map(|c| c.to_lowercase())
+        .and_then(sanitise_extension)
         .unwrap_or_else(|| "flac".into());
 
     let filename = sanitise_filename(&format!(
@@ -1557,7 +1601,17 @@ pub fn download_track(
         .album_id
         .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten());
 
-    let dest = cache_path_for_track(&cfg.cache_dir(), &track, album_date.as_deref());
+    let cache_dir = cfg.cache_dir();
+    let dest = cache_path_for_track(&cache_dir, &track, album_date.as_deref());
+    if !path_within(&cache_dir, &dest) {
+        fail_track(
+            state,
+            tx,
+            queue_id,
+            format!("cache path escapes the cache: {}", dest.display()),
+        );
+        return;
+    }
 
     // 2. Already cached.
     //
@@ -2146,5 +2200,150 @@ mod album_share_id_tests {
         assert_eq!(album_share_id_for(true, "al-7".into()), "al-7");
         assert_eq!(album_share_id_for(false, "46215".into()), "46215");
         assert_eq!(album_share_id_for(false, "3xJ9kQ2pZ".into()), "3xJ9kQ2pZ");
+    }
+}
+
+#[cfg(test)]
+mod cache_path_tests {
+    use super::*;
+
+    fn track(artist: &str, album: &str, codec: &str) -> queries::TrackRow {
+        queries::TrackRow {
+            id: 1,
+            album_id: None,
+            artist_id: None,
+            artist_name: artist.into(),
+            album_artist_name: artist.into(),
+            album_title: album.into(),
+            disc: None,
+            track_number: Some(1),
+            title: "Song".into(),
+            duration_ms: None,
+            path: None,
+            codec: Some(codec.into()),
+            sample_rate: None,
+            bit_depth: None,
+            channels: None,
+            bitrate: None,
+            genre: None,
+            source: "remote".into(),
+            remote_id: Some("r1".into()),
+            cached_path: None,
+        }
+    }
+
+    #[test]
+    fn a_server_suffix_cannot_leave_the_cache() {
+        let cache = Path::new("/cache");
+        for codec in [
+            "flac/../../../../x",
+            "..",
+            "../..",
+            "/etc/passwd",
+            "\\..\\..",
+        ] {
+            let path = cache_path_for_track(cache, &track("A", "B", codec), None);
+            assert!(path_within(cache, &path), "{codec}: {}", path.display());
+        }
+        let path = cache_path_for_track(cache, &track("A", "B", "flac/../../../../x"), None);
+        assert_eq!(path.extension().unwrap(), "flacx");
+    }
+
+    #[test]
+    fn dot_names_cannot_climb_out() {
+        let cache = Path::new("/cache");
+        let path = cache_path_for_track(cache, &track("..", ".", ".."), None);
+        assert!(path_within(cache, &path), "{}", path.display());
+        assert_eq!(sanitise_filename(".."), "_");
+        assert_eq!(sanitise_filename(" . "), "_");
+        assert_eq!(sanitise_filename("..."), "...");
+    }
+
+    #[test]
+    fn an_empty_suffix_falls_back_to_flac() {
+        assert_eq!(sanitise_extension("../"), None);
+        assert_eq!(sanitise_extension("FLAC"), Some("flac".into()));
+        let path = cache_path_for_track(Path::new("/c"), &track("A", "B", "./"), None);
+        assert_eq!(path.extension().unwrap(), "flac");
+    }
+
+    #[test]
+    fn path_within_rejects_parent_components() {
+        let dir = Path::new("/cache");
+        assert!(path_within(dir, Path::new("/cache/a/b.flac")));
+        assert!(!path_within(dir, Path::new("/cache/a/../../x")));
+        assert!(!path_within(dir, Path::new("/elsewhere/x")));
+    }
+}
+
+#[cfg(test)]
+mod favourite_sync_tests {
+    use super::*;
+    use crate::db::queries::sample_meta;
+
+    /// A server with song `s1` starred, recording every id it is asked to star.
+    fn serve(stars: Arc<Mutex<Vec<String>>>) -> String {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut reader = std::io::BufReader::new(stream.try_clone().unwrap());
+                let mut request = String::new();
+                reader.read_line(&mut request).unwrap();
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 2 {
+                    line.clear();
+                }
+                let target = request.split_whitespace().nth(1).unwrap_or("");
+                let (path, query) = target.split_once('?').unwrap_or((target, ""));
+                let body = match path.rsplit('/').next().unwrap() {
+                    "getStarred2" => {
+                        r#"{"subsonic-response":{"status":"ok","starred2":{"song":[{"id":"s1","title":"One"}]}}}"#
+                    }
+                    "star" => {
+                        if let Some((_, id)) = query
+                            .split('&')
+                            .filter_map(|kv| kv.split_once('='))
+                            .find(|(k, _)| *k == "id")
+                        {
+                            stars.lock().unwrap().push(id.to_string());
+                        }
+                        r#"{"subsonic-response":{"status":"ok"}}"#
+                    }
+                    _ => r#"{"subsonic-response":{"status":"ok"}}"#,
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn only_favourites_the_server_lacks_are_starred() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        for (title, remote_id) in [("One", "s1"), ("Two", "s2")] {
+            let mut meta = sample_meta(title, "Artist", "Album");
+            meta.path = Some(format!("/music/{title}.flac"));
+            meta.remote_id = Some(remote_id.into());
+            queries::upsert_track(&db.conn, &meta).unwrap();
+            queries::add_favourite(
+                &db.conn,
+                queries::LOCAL_USER,
+                Path::new(&format!("/music/{title}.flac")),
+            )
+            .unwrap();
+        }
+
+        let stars = Arc::new(Mutex::new(Vec::new()));
+        let url = serve(stars.clone());
+        let sync = reconcile_favourites(&db, &SubsonicClient::new(&url, "u", "pw"));
+        assert_eq!(sync.pushed, 1);
+        assert_eq!(*stars.lock().unwrap(), ["s2"]);
     }
 }
