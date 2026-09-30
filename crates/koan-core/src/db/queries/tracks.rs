@@ -625,7 +625,15 @@ fn musicbrainz_twin(
 /// inherits only what it is missing. Favourites need no move at all — they are
 /// keyed by path, and the path survives on the winner.
 fn merge_track_rows(conn: &Connection, loser: i64, winner: i64) -> rusqlite::Result<()> {
-    for table in ["play_history", "scan_cache", "organize_log"] {
+    // Playlist and share entries cascade on the loser's delete; the song is
+    // still in them, under the winner's id.
+    for table in [
+        "play_history",
+        "scan_cache",
+        "organize_log",
+        "playlist_tracks",
+        "share_tracks",
+    ] {
         conn.execute(
             &format!("UPDATE {table} SET track_id = ?1 WHERE track_id = ?2"),
             params![winner, loser],
@@ -1553,8 +1561,11 @@ pub struct CachedAlbumInfo {
     pub cached_paths: Vec<String>,
 }
 
-/// Get cached albums ordered by LRU (oldest last-played first), excluding favourited tracks.
+/// Get cached albums ordered by LRU (least recently used first), excluding favourited tracks.
 /// Returns albums with their total cache size and file paths for eviction.
+///
+/// A download counts as a use: an album fetched for offline listening has
+/// never been played, and ranking it by plays alone made it the first to go.
 pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbError> {
     // Get all cached tracks with their last played timestamp.
     // A track is "protected" if it appears in the favourites table.
@@ -1563,7 +1574,7 @@ pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbEr
     let mut stmt = conn.prepare(
         "SELECT t.id, t.album_id, COALESCE(al.title, 'Unknown'), COALESCE(a.name, 'Unknown'),
                 t.cached_path, COALESCE(t.cache_size_bytes, 0),
-                ph_max.last_play,
+                NULLIF(MAX(COALESCE(ph_max.last_play, 0), COALESCE(t.cache_download_date, 0)), 0),
                 EXISTS(SELECT 1 FROM favourites f
                        WHERE f.track_path = t.cached_path
                           OR f.track_path = t.path
@@ -1637,8 +1648,8 @@ pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbEr
         };
     }
 
-    // Filter out albums with any favourited tracks, then sort by last_play ascending (oldest first).
-    // Never-played albums sort before everything (None < Some).
+    // Filter out albums with any favourited tracks, then sort by last use ascending (oldest first).
+    // Albums with no recorded use sort before everything (None < Some).
     let mut result: Vec<CachedAlbumInfo> = albums
         .into_values()
         .filter(|a| !album_has_fav.contains(&a.album_id))
@@ -2423,6 +2434,39 @@ mod tests {
             )
             .unwrap();
         assert_eq!(orphans, 0);
+    }
+
+    #[test]
+    fn test_remerge_keeps_playlist_entries() {
+        let db = test_db();
+
+        let mut bad = sample_meta("Untitled", "Boards of Canada", "Geogaddi");
+        bad.path = Some("/music/boc/05.flac".into());
+        let local_id = upsert_track(&db.conn, &bad).unwrap();
+        let remote = remote_meta("Sunshine Recorder", "Boards of Canada", "Geogaddi", "sub-7");
+        let remote_id = upsert_track(&db.conn, &remote).unwrap();
+
+        let list = crate::db::queries::create_playlist(
+            &db.conn,
+            crate::db::queries::LOCAL_USER,
+            "Road trip",
+            None,
+        )
+        .unwrap();
+        let entry = crate::db::queries::add_tracks(&db.conn, list, &[remote_id]).unwrap()[0];
+
+        let mut fixed = bad.clone();
+        fixed.title = "Sunshine Recorder".into();
+        let merged = upsert_track(&db.conn, &fixed).unwrap();
+        assert_eq!(merged, local_id);
+
+        let entries = crate::db::queries::playlist_entries(&db.conn, list).unwrap();
+        assert_eq!(
+            entries.len(),
+            1,
+            "the merge left the playlist entry in place"
+        );
+        assert_eq!((entries[0].id, entries[0].track.id), (entry, merged));
     }
 
     #[test]
@@ -3732,6 +3776,40 @@ mod tests {
         // OldAlbum (played_at=1000) should come first (evicted first).
         assert_eq!(albums[0].album_title, "OldAlbum");
         assert_eq!(albums[1].album_title, "NewAlbum");
+    }
+
+    #[test]
+    fn test_cached_albums_lru_counts_a_fresh_download_as_used() {
+        let db = test_db();
+        // Played long ago, and downloaded just now for offline listening.
+        for (album, played_at, downloaded) in
+            [("Played", Some(5000), 1000), ("Fetched", None, 9000)]
+        {
+            let mut meta = sample_meta("Track", "Artist", album);
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(format!("r-{album}"));
+            let id = upsert_track(&db.conn, &meta).unwrap();
+            db.conn
+                .execute(
+                    "UPDATE tracks SET cached_path = ?1, cache_size_bytes = 1, cache_download_date = ?2
+                     WHERE id = ?3",
+                    params![format!("/cache/{album}.flac"), downloaded, id],
+                )
+                .unwrap();
+            if let Some(played_at) = played_at {
+                db.conn
+                    .execute(
+                        "INSERT INTO play_history (track_id, played_at) VALUES (?1, ?2)",
+                        params![id, played_at],
+                    )
+                    .unwrap();
+            }
+        }
+
+        let albums = cached_albums_lru(&db.conn).unwrap();
+        let order: Vec<&str> = albums.iter().map(|a| a.album_title.as_str()).collect();
+        assert_eq!(order, ["Played", "Fetched"]);
     }
 
     #[test]

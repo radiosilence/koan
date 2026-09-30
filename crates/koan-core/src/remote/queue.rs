@@ -7,7 +7,6 @@ use parking_lot::{Condvar, Mutex};
 use crate::config;
 use crate::player::commands::PlayerCommand;
 use crate::player::state::{LoadState, QueueItemId, SharedPlayerState};
-use crate::remote::client::SubsonicClient;
 
 use crate::helpers::download_track;
 
@@ -34,9 +33,6 @@ struct Inner {
     state: Arc<SharedPlayerState>,
     cmd_tx: crossbeam_channel::Sender<PlayerCommand>,
     log_buf: Arc<StdMutex<Vec<String>>>,
-    cfg: config::Config,
-    /// `None` when remote is not configured — nothing is downloadable.
-    client: Option<Arc<SubsonicClient>>,
     /// When the cache was last trimmed to its limit.
     last_evicted: Mutex<Option<std::time::Instant>>,
 }
@@ -121,12 +117,8 @@ impl DownloadQueue {
         state: Arc<SharedPlayerState>,
         log_buf: Arc<StdMutex<Vec<String>>>,
     ) -> Self {
-        let cfg = config::Config::load().unwrap_or_default();
+        let cfg = config::Config::cached();
         let num_workers = cfg.remote.download_workers.max(1);
-        let client = crate::helpers::subsonic_client(&cfg);
-        if client.is_none() {
-            log::info!("remote not configured — download queue will idle");
-        }
 
         let inner = Arc::new(Inner {
             queue: Mutex::new(Queue::default()),
@@ -134,8 +126,6 @@ impl DownloadQueue {
             state,
             cmd_tx,
             log_buf,
-            cfg,
-            client,
             last_evicted: Mutex::new(None),
         });
 
@@ -259,15 +249,20 @@ fn settle_waiters(inner: &Arc<Inner>, db_id: i64, downloaded: QueueItemId) {
 }
 
 /// Run one download, containing any panic so the worker pool never shrinks.
+///
+/// The client is looked up per download, not once for the queue's lifetime:
+/// the queue lives as long as the process, and signing in, out or elsewhere
+/// has to reach it.
 fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
-    let Some(client) = inner.client.as_ref() else {
+    let cfg = config::Config::cached();
+    let Some(client) = crate::helpers::subsonic_client(&cfg) else {
         // Failed, not left Pending: the player waits for Ready, so a queue of
         // tracks that can never arrive would otherwise sit saying nothing.
         crate::helpers::fail_track(
             &inner.state,
             &inner.cmd_tx,
             queue_id,
-            crate::helpers::remote_unavailable(&inner.cfg),
+            crate::helpers::remote_unavailable(&cfg),
         );
         return;
     };
@@ -279,8 +274,8 @@ fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
             &inner.cmd_tx,
             &inner.log_buf,
             &inner.state,
-            &inner.cfg,
-            client,
+            &cfg,
+            &client,
         );
     }));
 
@@ -316,7 +311,7 @@ fn trim_cache(inner: &Inner) {
         }
         *last = Some(std::time::Instant::now());
     }
-    let cfg = config::Config::load().unwrap_or_else(|_| inner.cfg.clone());
+    let cfg = config::Config::cached();
     if cfg.cache_limit_bytes().is_none() {
         return;
     }
@@ -343,7 +338,7 @@ fn trim_cache(inner: &Inner) {
 fn worker_loop(inner: Arc<Inner>) {
     loop {
         let item = loop {
-            if let Some(client) = &inner.client {
+            if let Some(client) = crate::helpers::subsonic_client(&config::Config::cached()) {
                 client.outage().hold();
             }
             let mut q = inner.queue.lock();

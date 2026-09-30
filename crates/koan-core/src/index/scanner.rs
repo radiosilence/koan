@@ -73,24 +73,73 @@ pub fn scan_folder(
     opts: ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
-    let mut result = ScanResult::default();
-    // The files under it are stored as the directory spells them; the root has
-    // to agree, or nothing under it matches a path an earlier scan stored.
-    let path = &super::spelling::on_disk(path);
+    scan_folders(
+        db,
+        std::slice::from_ref(&path.to_path_buf()),
+        opts,
+        None,
+        on_track,
+    )
+}
 
-    let audio_files = walk_audio(path, &mut result);
+/// [`scan_folder`] over several folders, telling `on_started` how many audio
+/// files there are once every folder has been walked. The count comes from the
+/// same walk the scan uses: a separate counting walk doubled the directory
+/// traversal, which on a network mount is most of the cost of a rescan.
+pub fn scan_folders(
+    db: &Database,
+    folders: &[PathBuf],
+    opts: ScanOptions,
+    on_started: Option<&dyn Fn(u64)>,
+    on_track: Option<&dyn Fn(ScanEvent)>,
+) -> ScanResult {
+    let walked: Vec<(PathBuf, Vec<PathBuf>, ScanResult)> = folders
+        .iter()
+        .map(|folder| {
+            // The files under it are stored as the directory spells them; the
+            // root has to agree, or nothing under it matches a path an earlier
+            // scan stored.
+            let path = super::spelling::on_disk(folder);
+            let mut result = ScanResult::default();
+            let files = walk_audio(&path, &mut result);
+            (path, files, result)
+        })
+        .collect();
+    if let Some(started) = on_started {
+        started(walked.iter().map(|(_, files, _)| files.len() as u64).sum());
+    }
+
+    let mut total = ScanResult::default();
+    for (path, files, mut result) in walked {
+        if total.cancelled {
+            break;
+        }
+        index_folder(db, &path, files, &opts, on_track, &mut result);
+        merge(&mut total, result);
+    }
+    total
+}
+
+fn index_folder(
+    db: &Database,
+    path: &Path,
+    audio_files: Vec<PathBuf>,
+    opts: &ScanOptions,
+    on_track: Option<&dyn Fn(ScanEvent)>,
+    result: &mut ScanResult,
+) {
     let total_files = audio_files.len();
     log::info!("found {} audio files in {}", total_files, path.display());
 
-    if !index_files(db, audio_files, &opts, on_track, &mut result, path) {
-        return result;
+    if !index_files(db, audio_files, opts, on_track, result, path) {
+        return;
     }
 
     if result.cancelled {
         // Stale removal decides what is missing by what the scan did *not* see.
         // After a cancellation that is most of the folder, so it would delete a
         // library rather than tidy one.
-        return result;
+        return;
     }
 
     // Remove tracks for files that no longer exist. A folder that yielded nothing
@@ -102,11 +151,10 @@ pub fn scan_folder(
              If this folder should have music in it, it is probably not mounted or not readable.",
             path.display()
         );
-        return result;
+        return;
     }
 
-    remove_stale(db, path, opts.force_remove, &mut result);
-    result
+    remove_stale(db, path, opts.force_remove, result);
 }
 
 /// Rescan directories inside the library folders, and nothing else.
@@ -251,8 +299,9 @@ fn index_files(
         std::mem::take(&mut audio_files)
     } else {
         let scan_cache = queries::load_scan_cache(&db.conn).unwrap_or_default();
+        // One stat per file; in parallel, since on a network mount each is a round trip.
         audio_files
-            .iter()
+            .par_iter()
             .filter(|file_path| {
                 let Ok(file_meta) = std::fs::metadata(file_path) else {
                     return true;
@@ -292,15 +341,23 @@ fn index_files(
     let (send, recv) = crossbeam_channel::bounded::<(PathBuf, Result<TrackMeta, String>)>(
         CHUNK_SIZE.saturating_mul(2),
     );
+    let cancel = opts.cancel.clone();
     let reader = std::thread::Builder::new()
         .name("koan-scan-read".into())
         .spawn(move || {
-            files_to_scan.par_iter().for_each(|file_path| {
-                // A send error means the consumer is gone; nothing left to do.
-                let _ = send.send((
+            // Stops at the first failed send (the consumer is gone) or cancel.
+            let _ = files_to_scan.par_iter().try_for_each(|file_path| {
+                if cancel
+                    .as_ref()
+                    .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                {
+                    return Err(());
+                }
+                send.send((
                     file_path.clone(),
                     isolate_read(file_path, metadata::read_metadata),
-                ));
+                ))
+                .map_err(|_| ())
             });
         });
     if let Err(e) = &reader {
@@ -393,6 +450,9 @@ fn index_files(
         }
     }
 
+    // Dropped before the join: readers parked on a full channel only wake
+    // when their send fails.
+    drop(recv);
     if let Ok(handle) = reader
         && handle.join().is_err()
     {
@@ -553,23 +613,6 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
     result
 }
 
-/// How many audio files these folders hold.
-///
-/// A directory walk with no tag reads — cheap next to the scan it precedes, and
-/// the only way to report a fraction rather than a spinner.
-pub fn count_audio_files(folders: &[PathBuf]) -> u64 {
-    folders
-        .iter()
-        .flat_map(|folder| {
-            walkdir::WalkDir::new(folder)
-                .follow_links(true)
-                .into_iter()
-                .filter_map(Result::ok)
-        })
-        .filter(|e| e.file_type().is_file() && metadata::is_audio_file(e.path()))
-        .count() as u64
-}
-
 /// Scan all configured library folders.
 pub fn full_scan(
     db: &Database,
@@ -577,17 +620,18 @@ pub fn full_scan(
     opts: ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
-    let mut total = ScanResult::default();
-    for folder in folders {
-        if total.cancelled {
-            break;
-        }
-        if !folder.exists() {
-            log::warn!("library folder does not exist: {}", folder.display());
-            continue;
-        }
-        merge(&mut total, scan_folder(db, folder, opts.clone(), on_track));
-    }
+    let existing: Vec<PathBuf> = folders
+        .iter()
+        .filter(|folder| {
+            let exists = folder.exists();
+            if !exists {
+                log::warn!("library folder does not exist: {}", folder.display());
+            }
+            exists
+        })
+        .cloned()
+        .collect();
+    let total = scan_folders(db, &existing, opts, None, on_track);
     db.optimize();
     total
 }
@@ -691,6 +735,38 @@ mod tests {
     fn test_db(dir: &Path) -> Database {
         let db_path = dir.join("test.db");
         Database::open(&db_path).unwrap()
+    }
+
+    #[test]
+    fn cancelling_a_scan_returns_with_readers_still_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let music_dir = dir.path().join("music");
+        std::fs::create_dir_all(&music_dir).unwrap();
+        // Far more than the channel holds (2 * CHUNK_SIZE), so readers are
+        // parked on a full channel when the consumer stops.
+        for i in 0..CHUNK_SIZE * 12 {
+            test_utils::generate_wav(&music_dir.join(format!("{i:03}.wav")), 8000, 1, 0.01, 16);
+        }
+
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        let root = dir.path().to_path_buf();
+        std::thread::spawn(move || {
+            let db = test_db(&root);
+            let cancel = Arc::new(AtomicBool::new(false));
+            let opts = ScanOptions {
+                cancel: Some(cancel.clone()),
+                ..Default::default()
+            };
+            let on_track = |_: ScanEvent| cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+            let result = scan_folder(&db, &music_dir, opts, Some(&on_track));
+            done_tx.send(result).unwrap();
+        });
+
+        let result = done_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("cancelled scan never returned");
+        assert!(result.cancelled);
+        assert!(result.added < CHUNK_SIZE * 12);
     }
 
     #[test]

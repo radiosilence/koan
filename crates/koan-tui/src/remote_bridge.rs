@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 use koan_core::graphql_client::GraphQLClient;
-use koan_core::helpers::sanitise_filename;
+use koan_core::helpers::{sanitise_extension, sanitise_filename};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     ItemState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState, TrackInfo,
@@ -126,11 +126,7 @@ fn stream_cache_path(
     cache_dir: &Path,
     track: &koan_core::graphql_client::NowPlayingTrack,
 ) -> PathBuf {
-    let ext = if track.codec.is_empty() {
-        "audio".to_string()
-    } else {
-        track.codec.to_lowercase()
-    };
+    let ext = sanitise_extension(&track.codec).unwrap_or_else(|| "audio".into());
     cache_dir
         .join(sanitise_filename(&track.artist))
         .join(sanitise_filename(&track.album))

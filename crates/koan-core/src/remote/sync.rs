@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use crate::db::connection::Database;
 use crate::db::queries::{self, TrackMeta};
 use crate::remote::client::{
-    SubsonicAlbum, SubsonicAlbumFull, SubsonicArtist, SubsonicClient, SubsonicSong,
+    SubsonicAlbum, SubsonicAlbumFull, SubsonicArtist, SubsonicClient, SubsonicError, SubsonicSong,
 };
 
 use rayon::prelude::*;
@@ -287,8 +287,11 @@ pub fn sync_library(
     // from an album only shows on a full one, which lists every track. Both
     // are held to the same guards as above: an empty or short listing is a
     // fault, not a deletion.
-    let live_albums: std::collections::HashSet<String> =
+    let mut live_albums: std::collections::HashSet<String> =
         albums.iter().map(|a| a.id.clone()).collect();
+    if result.is_complete() && !live_albums.is_empty() {
+        confirm_missing_albums(db, client, &mut live_albums);
+    }
     let live_tracks = (full && result.is_complete() && !song_ids.is_empty() && listed_everything)
         .then_some(&song_ids);
     if result.is_complete() && !live_albums.is_empty() {
@@ -381,6 +384,39 @@ fn differs(listed: &SubsonicAlbum, held: Option<&HeldAlbum>) -> bool {
 }
 
 /// Every album on the server, once each.
+/// Ask the server about each album this library holds that the listing left
+/// out, keeping any it still answers for. The listing is an offset walk: an
+/// album deleted from an earlier page mid-walk shifts the next page by one, and
+/// the album pushed off the boundary is missing from the list without being
+/// gone. Only "not found" confirms a deletion; any other failure keeps it.
+fn confirm_missing_albums(db: &Database, client: &SubsonicClient, live: &mut HashSet<String>) {
+    let held: Vec<String> = db
+        .conn
+        .prepare(
+            "SELECT DISTINCT al.remote_id FROM albums al JOIN tracks t ON t.album_id = al.id
+              WHERE al.remote_id IS NOT NULL AND t.path IS NULL AND t.remote_id IS NOT NULL",
+        )
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| r.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()
+        })
+        .unwrap_or_default();
+    let missing: Vec<String> = held.into_iter().filter(|id| !live.contains(id)).collect();
+    for id in missing {
+        match client.get_album(&id) {
+            Err(SubsonicError::Api { code: 70, .. }) => {}
+            Ok(_) => {
+                log::info!("album {id} was missing from the listing but still exists");
+                live.insert(id);
+            }
+            Err(e) => {
+                log::warn!("could not confirm album {id} was deleted ({e}); keeping it");
+                live.insert(id);
+            }
+        }
+    }
+}
+
 fn list_albums(
     client: &SubsonicClient,
     progress: &(dyn Fn(SyncProgress) + Sync),
@@ -1093,6 +1129,9 @@ mod tests {
         albums: Mutex<Vec<(String, String, String)>>,
         /// Album ids whose getAlbum call fails with a 500.
         failing: Mutex<HashSet<String>>,
+        /// Album ids left out of the album list while still existing, as an
+        /// offset walk does when a deletion shifts a page.
+        unlisted: Mutex<HashSet<String>>,
         /// Prepended to the album list once the first list page has been served,
         /// modelling a server-side insert landing mid-pagination.
         insert_after_first_page: Mutex<Option<(String, String, String)>>,
@@ -1213,8 +1252,10 @@ mod tests {
                 let size: usize = params.get("size").and_then(|s| s.parse().ok()).unwrap_or(500);
 
                 let albums = state.albums.lock().unwrap();
+                let unlisted = state.unlisted.lock().unwrap();
                 let slice: Vec<String> = albums
                     .iter()
+                    .filter(|(id, _, _)| !unlisted.contains(id))
                     .skip(offset)
                     .take(size)
                     .map(|(id, name, created)| {
@@ -1225,6 +1266,7 @@ mod tests {
                     })
                     .collect();
                 drop(albums);
+                drop(unlisted);
 
                 if state.list_pages_served.fetch_add(1, Ordering::SeqCst) == 0
                     && let Some(new_album) = state.insert_after_first_page.lock().unwrap().take()
@@ -1277,6 +1319,12 @@ mod tests {
                 state.album_calls.lock().unwrap().push(id.to_string());
                 if state.failing.lock().unwrap().contains(id) {
                     (500, r#"{"error":"boom"}"#.to_string())
+                } else if !state.albums.lock().unwrap().iter().any(|(a, _, _)| a == id) {
+                    (
+                        200,
+                        r#"{"subsonic-response":{"status":"failed","error":{"code":70,"message":"not found"}}}"#
+                            .to_string(),
+                    )
                 } else {
                     (
                         200,
@@ -1585,6 +1633,32 @@ mod tests {
             *state.album_calls.lock().unwrap(),
             vec!["a0099".to_string()]
         );
+    }
+
+    /// An album missing from the listing is removed only once the server says
+    /// it is gone.
+    #[test]
+    fn an_album_left_out_of_the_listing_is_removed_only_when_gone() {
+        let (db, _dir) = test_db();
+        let state = Arc::new(StubState {
+            albums: Mutex::new(stub_albums(3)),
+            ..Default::default()
+        });
+        let server = StubServer::start(state.clone());
+        let client = SubsonicClient::new(&server.url(), "u", "p");
+        sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
+
+        state.unlisted.lock().unwrap().insert("a0001".into());
+        let shifted = sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
+        assert_eq!(shifted.tracks_removed, 0, "still there, only unlisted");
+
+        state
+            .albums
+            .lock()
+            .unwrap()
+            .retain(|(id, _, _)| id != "a0001");
+        let deleted = sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
+        assert_eq!(deleted.tracks_removed, 1);
     }
 
     #[test]
