@@ -71,7 +71,10 @@ demo_required = true
 demo_user = "demo"
 demo_password = "demo"
 notes = """
-kōan is a player for a music library on the user's own Subsonic-compatible server. It provides no music itself.
+kōan is a music player for people who keep their own collection on a Subsonic-compatible server they run, such as \
+Navidrome or a kōan server. It is the iOS version of the open-source kōan Mac app \
+(https://github.com/radiosilence/koan). It provides no music itself, has no in-app purchases and no user-generated \
+content, and works the same in every region. It operates in no regulated industry.
 
 To review it with a library, sign in to Navidrome's public demonstration server, which holds only Creative Commons \
 music:
@@ -82,6 +85,18 @@ music:
    Password: demo
 3. Tap Sign In. The library syncs in under a minute.
 4. Browse from the Library tab; tap an album to play it. The queue is on the Queue tab.
+
+Accounts: kōan has no registration and no account of its own. The user signs in with an account their server issued. \
+An administrator signed in to a kōan server sees that server's accounts in Settings, with Add, Invite and Delete; the \
+Navidrome demo does not show this section.
+
+Third-party material: kōan plays only what the user has on their own server. The Navidrome demonstration server is \
+operated by the Navidrome project and holds only Creative Commons-licensed music.
+
+External services: the user's own music server (library, streams, artwork, favourites, playlists); MusicBrainz, \
+Wikidata, Wikipedia and Wikimedia Commons (artist biographies and photos); ListenBrainz (similar artists for radio); \
+LRCLIB (lyrics); Apple Push Notification service (kōan servers only); Bonjour on the local network (finding other kōan \
+devices). No analytics, advertising, payments or AI services.
 
 The app declares the audio background mode so that music continues playing when the app is in the background or the \
 screen is locked.
