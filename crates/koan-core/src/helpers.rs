@@ -1171,7 +1171,11 @@ pub fn create_share(
 }
 
 /// A share this koan serves at `{sharing.public_url}/share/{id}`.
-fn create_native_share(
+///
+/// What a server's own surfaces make whatever `[remote]` says: a link made
+/// upstream would belong to the upstream's account, not the koan user who
+/// asked, and could not be listed or revoked here.
+pub fn create_native_share(
     db: &Database,
     user: i64,
     cfg: &Config,
@@ -2121,6 +2125,36 @@ mod native_share_tests {
             ),
             Err(ShareError::NothingToShare)
         ));
+    }
+
+    #[test]
+    fn a_server_with_an_upstream_still_shares_natively() {
+        // Local-only tracks, which the upstream path refuses as NothingRemote.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let db = Database { conn };
+        let a = upsert_track(&db.conn, &sample_meta("A", "X", "Y")).unwrap();
+        let mut cfg = Config::default();
+        cfg.remote.enabled = true;
+        cfg.remote.url = "https://upstream.invalid".into();
+        cfg.remote.username = "someone".into();
+        cfg.remote.password = "secret".into();
+        cfg.sharing.public_url = Some("https://koan.example".into());
+        let out = create_native_share(
+            &db,
+            queries::LOCAL_USER,
+            &cfg,
+            &ShareTarget::Tracks(vec![a]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(out.url, format!("https://koan.example/share/{}", out.id));
+        assert!(
+            queries::shares::get_share(&db.conn, &out.id)
+                .unwrap()
+                .is_some()
+        );
     }
 
     fn album_track(db: &Database, title: &str, album: &str, n: i32, date: &str) -> i64 {

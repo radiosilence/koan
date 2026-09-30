@@ -2,8 +2,22 @@
 
 ## Unreleased
 
+### Changed
+
+- **Subsonic `getCoverArt` serves from the same cover cache as the web UI.** Covers are kept on disk at a few fixed sizes, keyed by the source file so a re-tag is picked up, and an album with no art is remembered rather than reopened on every request. An album whose first track has no art now shows the art of the next. Responses are always JPEG; a request without `size` gets the largest kept size (1200 px) rather than the original.
+- **Server shares are always made on the server.** The web UI and GraphQL `createShare` made the link on an upstream Navidrome when `[remote]` was configured, where it belonged to the upstream account and could be neither listed nor revoked here, and failed outright for local-only tracks. They now make the same native link Subsonic `createShare` does.
+- **Syncs no longer re-star every favourite.** Each sync sent one request per local favourite; it now reads the server's stars first and sends only those the server lacks.
+- **Rescanning from the app walks each folder once.** The file count for the progress bar came from a separate walk of every folder, and files were checked against the scan cache one at a time; the count now comes from the scan's own walk and the checks run in parallel.
+
 ### Fixed
 
+- **Linked devices no longer stall the server.** Every state report from a linked app opened the database afresh, running the schema migrations and a checkpoint on an async worker, and could wait up to 30 seconds behind a scan's write lock; a few devices could stall every request. The link's bookkeeping now uses the shared connection pool and runs off the async workers, and the device list is only read when a linked app has asked for it.
+- **`getAlbumList` and `getAlbumList2` honour every list type.** `starred`, `byGenre`, `byYear`, `recent` and `frequent` returned the whole library in storage order; they now return the starred albums, the genre or years asked for, and albums by play history. `newest` means recently added, as clients expect, rather than latest release date. `highest` is empty, since koan keeps no ratings, and an unknown type is an error. Each page is ordered and cut in SQL instead of loading and sorting every album.
+- **`getRandomSongs` filters by genre and year before drawing.** A genre that is a small share of the library came back almost empty, because the filter ran after a draw from the whole library. `fromYear` and `toYear` are now honoured, `size` is capped at 500 like the other list endpoints, and the draw no longer joins every track to pick a few.
+- **`scrobble` accepts several plays at once.** A repeated `id` (with its `time`) was rejected with a bare HTTP 400, so a client flushing an offline session lost every play.
+- **Playlist edits made through Subsonic reach the account's other devices** and the upstream server, as GraphQL edits already did. The koan apps edit playlists on a koan server through these endpoints, so a playlist changed on the phone did not appear on the Mac until it next synced on its own, and one deleted there came back with the next upstream sync.
+- **"Play on" notifications show the album cover.** The command's track uid was parsed as a row id, which never matched.
+- **Server reads that scaled with the library now scale with the answer**: `getArtist` and `getMusicDirectory` look up one artist rather than aggregating all of them, `getStarred2` reads each kind of favourite in one query rather than one per item, GraphQL `fuzzySearch` matches on the request's thread after returning its connection instead of building a thread pool per call, and local files stream in 256 KiB reads rather than 4 KiB ones.
 - **A server can no longer make koan write outside its cache.** A remote track's file extension came straight from the server's `suffix`, so a value containing `/` and `..` placed the download anywhere the user could write. Extensions are now ASCII letters and digits only, an artist, album or title of `.` or `..` becomes `_`, and a download whose path would leave the cache directory is refused.
 - **Cancelling a large library scan no longer hangs.** The tag readers blocked on a full channel that nothing was reading any more, which left the scan unfinished and every rayon worker parked for the rest of the process. The readers now stop on cancel and the channel is closed before the scan waits for them.
 - **Signing in to a different server or account keeps your playlists.** Each playlist's server id is now recorded against the account it came from. Playlists from another account become local ones and are pushed to the new server as new, where before the first sync read every one of them as deleted and removed it.
@@ -14,11 +28,6 @@
 - **Downloading albums for offline listening no longer evicts them first.** Cache eviction ranked albums by last play, so ones fetched but not yet played were the first to go. A download now counts as a use.
 - **A track id koan cannot find no longer stalls playback controls.** A pushed command naming a track the library lacked ran a sync on the same lane as pause, skip and seek, and repeated it for every command naming a track the server had deleted. The sync now runs off that lane, an id a sync failed to find does not start another for five minutes, and commands from devices on the local network, which need no account, never start a sync.
 - **An album is removed only when the server says it is gone.** The album list is walked by offset, so a deletion during the walk could push a different album off a page boundary and have its tracks and play history deleted. An album missing from the list is now checked with `getAlbum` first.
-
-### Changed
-
-- **Syncs no longer re-star every favourite.** Each sync sent one request per local favourite; it now reads the server's stars first and sends only those the server lacks.
-- **Rescanning from the app walks each folder once.** The file count for the progress bar came from a separate walk of every folder, and files were checked against the scan cache one at a time; the count now comes from the scan's own walk and the checks run in parallel.
 
 ## 0.45.1
 
