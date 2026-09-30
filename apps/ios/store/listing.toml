@@ -74,7 +74,7 @@ notes = """
 kōan is a music player for people who keep their own collection on a Subsonic-compatible server they run, such as \
 Navidrome or a kōan server. It is the iOS version of the open-source kōan Mac app \
 (https://github.com/radiosilence/koan). It provides no music itself, has no in-app purchases and no user-generated \
-content, and works the same in every region.
+content, and works the same in every region. It operates in no regulated industry.
 
 To review it with a library, sign in to Navidrome's public demonstration server, which holds only Creative Commons \
 music:
@@ -89,6 +89,9 @@ music:
 Accounts: kōan has no registration and no account of its own. The user signs in with an account their server issued. \
 An administrator signed in to a kōan server sees that server's accounts in Settings, with Add, Invite and Delete; the \
 Navidrome demo does not show this section.
+
+Third-party material: kōan plays only what the user has on their own server. The Navidrome demonstration server is \
+operated by the Navidrome project and holds only Creative Commons-licensed music.
 
 External services: the user's own music server (library, streams, artwork, favourites, playlists); MusicBrainz, \
 Wikidata, Wikipedia and Wikimedia Commons (artist biographies and photos); ListenBrainz (similar artists for radio); \
