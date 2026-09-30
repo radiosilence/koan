@@ -318,8 +318,8 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             cfg.sharing.public_url.clone(),
             covers.clone(),
         )
-        .merge(crate::push::router(pool.clone(), covers));
-        let subsonic_merged = crate::subsonic::subsonic_router(pool);
+        .merge(crate::push::router(pool.clone(), covers.clone()));
+        let subsonic_merged = crate::subsonic::subsonic_router(pool, covers);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
 

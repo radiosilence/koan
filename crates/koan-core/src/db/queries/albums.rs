@@ -268,6 +268,51 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
     Ok(rows)
 }
 
+/// How `played_albums` orders a user's listening.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayedOrder {
+    /// Most recently played first.
+    Recent,
+    /// Most plays first, ties by most recent.
+    Frequent,
+}
+
+/// Albums `user` has played, from play history, paged by the database.
+/// Albums never played are not listed.
+pub fn played_albums(
+    conn: &Connection,
+    user: i64,
+    order: PlayedOrder,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<AlbumRow>, DbError> {
+    let order = match order {
+        PlayedOrder::Recent => "p.last DESC",
+        PlayedOrder::Frequent => "p.plays DESC, p.last DESC",
+    };
+    let sql = format!(
+        "SELECT al.id, al.title, al.artist_id, a.name, al.date,
+                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
+                al.added_at
+         FROM (SELECT t.album_id, MAX(h.played_at) AS last, COUNT(*) AS plays
+                 FROM play_history h JOIN tracks t ON t.id = h.track_id
+                WHERE h.user_id = ?1 AND t.album_id IS NOT NULL
+                GROUP BY t.album_id) p
+         JOIN albums al ON al.id = p.album_id
+         LEFT JOIN artists a ON al.artist_id = a.id
+         ORDER BY {order}, al.id
+         LIMIT ?2 OFFSET ?3"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(
+            params![super::auth::resolve_user(conn, user)?, limit, offset],
+            album_row,
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Genres by how many records carry them, most first: what a genre filter
 /// offers. Blank tags are left out.
 pub fn genres(conn: &Connection, limit: u32) -> Result<Vec<String>, DbError> {
@@ -461,6 +506,60 @@ mod tests {
             "techno counted once"
         );
         assert_eq!(album_codecs(&db.conn).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn played_albums_follow_one_users_history() {
+        use crate::db::queries::{LOCAL_USER, SOURCE_LOCAL, record_play_at};
+        let db = filter_library();
+        let track = |title: &str| -> i64 {
+            db.conn
+                .query_row("SELECT id FROM tracks WHERE title = ?1", [title], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+        for (title, at) in [("A", 10), ("C", 30), ("A", 20)] {
+            record_play_at(&db.conn, LOCAL_USER, track(title), at, None, SOURCE_LOCAL).unwrap();
+        }
+        let played = |order, limit, offset| {
+            played_albums(&db.conn, LOCAL_USER, order, limit, offset)
+                .unwrap()
+                .into_iter()
+                .map(|a| a.title)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(played(PlayedOrder::Recent, 10, 0), ["Late", "Early"]);
+        assert_eq!(played(PlayedOrder::Frequent, 10, 0), ["Early", "Late"]);
+        assert_eq!(played(PlayedOrder::Frequent, 1, 1), ["Late"]);
+    }
+
+    #[test]
+    fn random_draws_narrow_in_sql() {
+        use crate::db::queries::{RandomFilter, random_tracks_where};
+        let db = filter_library();
+        let draw = |filter: RandomFilter, count| {
+            let mut titles: Vec<String> = random_tracks_where(&db.conn, count, &filter)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.title)
+                .collect();
+            titles.sort();
+            titles
+        };
+        assert_eq!(draw(RandomFilter::default(), 10), ["A", "B", "C"]);
+        assert_eq!(draw(RandomFilter::default(), 2).len(), 2);
+        let techno = RandomFilter {
+            genre: Some("TECHNO"),
+            ..Default::default()
+        };
+        assert_eq!(draw(techno, 10), ["A", "C"]);
+        let nineties = RandomFilter {
+            year_from: Some(1990),
+            year_to: Some(1999),
+            ..Default::default()
+        };
+        assert_eq!(draw(nineties, 10), ["A"]);
     }
 
     #[test]
