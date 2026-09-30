@@ -69,7 +69,7 @@ impl Invite {
             if password.is_empty() {
                 return None;
             }
-            let mut server = url.clone();
+            let mut server = url;
             server.set_username("").ok()?;
             server.set_password(None).ok()?;
             return Some(Self::new(server.as_str(), &username, &password));

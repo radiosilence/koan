@@ -82,7 +82,7 @@ struct HistoryView: View {
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
             Button("Clear…") { confirmingClear = true }
-                .disabled(library.visiblePlayHistory.isEmpty)
+                .disabled(entries.isEmpty)
         }
     }
 
@@ -170,16 +170,8 @@ private struct HistoryRow: View {
 
             // The cover is what you recognise a record by, and scanning back
             // through a week of listening is exactly that job.
-            Group {
-                if let albumId = track.albumId {
-                    AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: 3)
-                } else {
-                    Image(systemName: "music.note")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .frame(width: 34, height: 34)
+            TrackSleeve(albumId: track.albumId)
+                .frame(width: 34, height: 34)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.title)

@@ -47,31 +47,7 @@ pub fn search_tracks_paged(
     )?;
 
     let rows = stmt
-        .query_map(params![fts_query, limit, offset], |row| {
-            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
-            Ok(TrackRow {
-                id: row.get(0)?,
-                album_id: row.get(1)?,
-                artist_id: row.get(2)?,
-                artist_name: artist_name.clone(),
-                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
-                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                disc: row.get(6)?,
-                track_number: row.get(7)?,
-                title: row.get(8)?,
-                duration_ms: row.get(9)?,
-                path: row.get(10)?,
-                codec: row.get(11)?,
-                sample_rate: row.get(12)?,
-                bit_depth: row.get(13)?,
-                channels: row.get(14)?,
-                bitrate: row.get(15)?,
-                genre: row.get(16)?,
-                source: row.get(17)?,
-                remote_id: row.get(18)?,
-                cached_path: row.get(19)?,
-            })
-        })?
+        .query_map(params![fts_query, limit, offset], super::row_to_track_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)

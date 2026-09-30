@@ -20,7 +20,6 @@ struct LinkText: View {
     /// an artist in the artists list, not the artist credited on a track.
     var prominent = false
 
-    @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
     @State private var hovering = false
 
@@ -58,7 +57,7 @@ struct LinkText: View {
                 // necessarily what the surrounding row or tile stands for: the
                 // artist link on an album tile queues the whole artist, while
                 // the artwork beside it queues just that record.
-                .draggableTransfer(transfer(for: target))
+                .draggable(transfer(for: target))
                 .help("Go to \(text)")
         } else {
             Text(text)

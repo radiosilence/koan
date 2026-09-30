@@ -35,7 +35,7 @@ final class OrganizeModel {
     var draft = "" { didSet { schedulePreview() } }
     private(set) var editing = false
     /// Which library folder the pattern's relative paths hang off.
-    var baseDir: String = "" { didSet { schedulePreview() } }
+    var baseDir = "" { didSet { schedulePreview() } }
 
     /// Whether cover art, cue sheets and logs travel with the music.
     /// Persists the moment it is flipped — it is a preference, not a per-run
@@ -278,17 +278,6 @@ final class OrganizeModel {
                 self.plan = nil
                 error = String(describing: failure)
             }
-        }
-    }
-
-    private func apply(_ result: Result<OrganizePlan, Error>) {
-        switch result {
-        case .success(let plan):
-            self.plan = plan
-            error = nil
-        case .failure(let failure):
-            plan = nil
-            error = String(describing: failure)
         }
     }
 

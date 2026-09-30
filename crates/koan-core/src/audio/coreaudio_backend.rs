@@ -86,50 +86,6 @@ impl AudioBackend for CoreAudioBackend {
         let id = device.platform_id as u32;
         let engine = engine::AudioEngine::new(id, sample_rate, channels, consumer, samples_played)
             .map_err(|e| BackendError::StreamCreation(e.to_string()))?;
-        Ok(Box::new(CoreAudioEngineHandle { engine }))
-    }
-}
-
-/// Wraps `engine::AudioEngine` behind the `AudioEngineHandle` trait.
-struct CoreAudioEngineHandle {
-    engine: engine::AudioEngine,
-}
-
-// SAFETY: engine::AudioEngine is already Send (unsafe impl Send in engine.rs).
-// CoreAudioEngineHandle is a thin wrapper with single ownership — never shared.
-unsafe impl Send for CoreAudioEngineHandle {}
-
-impl AudioEngineHandle for CoreAudioEngineHandle {
-    fn start(&self) -> Result<(), BackendError> {
-        self.engine
-            .start()
-            .map_err(|e| BackendError::Platform(e.to_string()))
-    }
-
-    fn stop(&self) -> Result<(), BackendError> {
-        self.engine
-            .stop()
-            .map_err(|e| BackendError::Platform(e.to_string()))
-    }
-
-    fn is_running(&self) -> bool {
-        self.engine.is_running()
-    }
-
-    fn fade_out(&self) {
-        self.engine.fade().fade_out();
-    }
-
-    fn fade_in(&self) -> Result<(), BackendError> {
-        if self.engine.is_running() {
-            self.engine.fade().fade_in(false);
-            return Ok(());
-        }
-        self.engine.fade().fade_in(true);
-        self.start()
-    }
-
-    fn is_silent(&self) -> bool {
-        self.engine.fade().is_silent()
+        Ok(Box::new(engine))
     }
 }

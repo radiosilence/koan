@@ -505,12 +505,6 @@ impl SubsonicClient {
         Ok(())
     }
 
-    /// Get all starred (favourite) songs from the server.
-    pub fn get_starred(&self) -> Result<Vec<SubsonicSong>, SubsonicError> {
-        let resp = self.get("getStarred2")?;
-        Ok(resp.starred2.map(|s| s.song).unwrap_or_default())
-    }
-
     /// Everything the server has starred: songs, albums and artists.
     ///
     /// Subsonic returns all three from one call, so asking for songs alone
@@ -593,20 +587,6 @@ impl SubsonicClient {
             &[("id", song_id), ("count", &count_str)],
         )?;
         Ok(resp.similar_songs2.and_then(|s| s.song).unwrap_or_default())
-    }
-
-    /// Get top songs for an artist by name.
-    pub fn get_top_songs(
-        &self,
-        artist_name: &str,
-        count: usize,
-    ) -> Result<Vec<SubsonicSong>, SubsonicError> {
-        let count_str = count.to_string();
-        let resp = self.get_with_params(
-            "getTopSongs",
-            &[("artist", artist_name), ("count", &count_str)],
-        )?;
-        Ok(resp.top_songs.and_then(|t| t.song).unwrap_or_default())
     }
 
     // --- Playlists ---------------------------------------------------------
@@ -786,7 +766,6 @@ struct SubsonicResponse {
     starred2: Option<SubsonicStarred>,
     shares: Option<SubsonicShares>,
     similar_songs2: Option<SubsonicSimilarSongs>,
-    top_songs: Option<SubsonicTopSongs>,
     playlists: Option<SubsonicPlaylists>,
     playlist: Option<SubsonicPlaylistFull>,
     scan_status: Option<SubsonicScanStatus>,
@@ -975,11 +954,6 @@ pub struct SubsonicStarred {
 
 #[derive(Debug, Deserialize)]
 pub struct SubsonicSimilarSongs {
-    pub song: Option<Vec<SubsonicSong>>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct SubsonicTopSongs {
     pub song: Option<Vec<SubsonicSong>>,
 }
 

@@ -477,17 +477,22 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
         let rows = stmt.query_map([&lower, &upper], |r| r.get(0))?;
         rows.filter_map(Result::ok).collect()
     };
-    for id in &ids {
-        tx.execute("DELETE FROM track_vectors WHERE track_id = ?1", [id])?;
-        tx.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", [id])?;
-        tx.execute("DELETE FROM play_history WHERE track_id = ?1", [id])?;
-        tx.execute("DELETE FROM scan_cache WHERE track_id = ?1", [id])?;
-        tx.execute("DELETE FROM tracks_fts WHERE rowid = ?1", [id])?;
-        tx.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
-    }
+    delete_track_rows(&tx, &ids)?;
     prune_empty_albums_and_artists(&tx)?;
     tx.commit()?;
     Ok(ids.len() as u64)
+}
+
+fn delete_track_rows(conn: &rusqlite::Connection, ids: &[i64]) -> rusqlite::Result<()> {
+    for id in ids {
+        conn.execute("DELETE FROM track_vectors WHERE track_id = ?1", [id])?;
+        conn.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", [id])?;
+        conn.execute("DELETE FROM play_history WHERE track_id = ?1", [id])?;
+        conn.execute("DELETE FROM scan_cache WHERE track_id = ?1", [id])?;
+        conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", [id])?;
+        conn.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+    }
+    Ok(())
 }
 
 /// Forget everything that only existed on the server.
@@ -504,14 +509,7 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
         let rows = stmt.query_map([], |r| r.get(0))?;
         rows.filter_map(Result::ok).collect()
     };
-    for id in &ids {
-        tx.execute("DELETE FROM track_vectors WHERE track_id = ?1", [id])?;
-        tx.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", [id])?;
-        tx.execute("DELETE FROM play_history WHERE track_id = ?1", [id])?;
-        tx.execute("DELETE FROM scan_cache WHERE track_id = ?1", [id])?;
-        tx.execute("DELETE FROM tracks_fts WHERE rowid = ?1", [id])?;
-        tx.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
-    }
+    delete_track_rows(&tx, &ids)?;
     // Local copies stay, minus the server they were also on.
     tx.execute(
         "UPDATE tracks SET remote_id = NULL, remote_url = NULL, source = 'local'
@@ -985,8 +983,6 @@ static SUBSONIC_CLIENT: std::sync::LazyLock<parking_lot::Mutex<CachedClient>> =
 /// place.
 #[derive(Debug, thiserror::Error)]
 pub enum ShareError {
-    #[error("no remote server is configured")]
-    NoRemote,
     #[error("sharing.public_url is not set, so there is no address to give out")]
     NoPublicUrl,
     #[error("none of these tracks are in the library")]
@@ -1482,24 +1478,7 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
     let cfg = Config::load().unwrap_or_default();
     let (path, state) = resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
 
-    let year = album_date.as_deref().and_then(year_of).map(str::to_string);
-
-    PlaylistItem {
-        playlist_entry_id: None,
-        id: QueueItemId::new(),
-        db_id: Some(track.id),
-        path,
-        title: track.title.clone(),
-        artist: track.artist_name.clone(),
-        album_artist: track.album_artist_name.clone(),
-        album: track.album_title.clone(),
-        year,
-        codec: track.codec.clone(),
-        track_number: track.track_number.map(|n| n as i64),
-        disc: track.disc.map(|n| n as i64),
-        duration_ms: track.duration_ms.map(|d| d as u64),
-        state,
-    }
+    playlist_item_from_track(track, album_date.as_deref(), path, state)
 }
 
 // ---------------------------------------------------------------------------
@@ -1663,8 +1642,7 @@ pub fn download_track(
     let progress_qid = queue_id;
     let bytes_written_progress = bytes_written.clone();
     let progress_tx = tx.clone();
-    let stream_ready_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let stream_ready_flag = stream_ready_sent.clone();
+    let stream_ready_flag = std::sync::atomic::AtomicBool::new(false);
     // A retry restarts the byte count from zero, so a changed total re-announces.
     let announced_total = AtomicU64::new(u64::MAX);
     // Taken out of the queue, cleared or removed, while waiting out an outage.

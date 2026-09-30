@@ -48,7 +48,6 @@ struct AlbumDetailView: View {
     let albumId: Int64
 
     @Environment(LibraryModel.self) private var library
-    @Environment(PlayerModel.self) private var player
 
     /// Whatever the navigator loaded before it brought us here, so the first
     /// body evaluation already has the whole page. Guarded on the id because

@@ -117,13 +117,6 @@ final class PlayerModel {
     /// of the same song, which is a different row.
     var currentPlaylistEntryId: Int64? { currentEntry?.playlistEntryId }
 
-    var upNext: [QueueItem] {
-        guard let cursor = currentItemId,
-              let index = queue.firstIndex(where: { $0.queueItemId == cursor })
-        else { return queue }
-        return Array(queue.dropFirst(index + 1))
-    }
-
     /// Where the playhead was last said to be, and whether it is still
     /// moving. What draws a position derives it from this rather than being
     /// handed a number ten times a second — see `Playhead`.
@@ -204,7 +197,7 @@ final class PlayerModel {
         }
         placeResolvedFor = nil
         let engine = self.engine
-        Task { @MainActor in
+        Task {
             let track = (try? await engine.track(trackId: trackId)) ?? nil
             // The track moved on while we were asking, so whatever came back
             // belongs to something that is no longer playing.
@@ -306,7 +299,7 @@ final class PlayerModel {
         }
         attempt { try await self.engine.seek(positionMs: ms) }
         // The playhead may never move again to settle a rejected seek.
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             try? await Task.sleep(until: deadline, clock: .continuous)
             guard let self, self.pendingSeekDeadline == deadline else { return }
             self.settlePendingSeek(position: self.mirror.playhead.at())
@@ -442,11 +435,6 @@ final class PlayerModel {
     func removeSelected() {
         remove(itemIds: Array(queueSelection))
         queueSelection = []
-    }
-
-    /// Track IDs behind the current selection, in queue order.
-    var selectedTrackIds: [Int64] {
-        queue.filter { queueSelection.contains($0.queueItemId) }.compactMap(\.trackId)
     }
 
     /// Copies as both a koan payload and plain text: the first lets it be

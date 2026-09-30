@@ -405,29 +405,12 @@ pub fn mint_access_token(
     role: Role,
     ttl_secs: u64,
 ) -> Result<String, AuthError> {
-    mint_access_token_with_role_str(private_pem, user_id, username, role.as_str(), ttl_secs)
-}
-
-/// Mint an access token carrying an arbitrary `role` claim.
-///
-/// The claim is a free-text string on the wire; this is the seam that lets the
-/// consumers of a token be tested against role values they cannot parse.
-pub fn mint_access_token_with_role_str(
-    private_pem: &[u8],
-    user_id: i64,
-    username: &str,
-    role: &str,
-    ttl_secs: u64,
-) -> Result<String, AuthError> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let now = now_unix();
 
     let claims = Claims {
         sub: user_id,
         username: username.to_string(),
-        role: role.to_string(),
+        role: role.as_str().to_string(),
         iat: now,
         exp: now + ttl_secs,
     };

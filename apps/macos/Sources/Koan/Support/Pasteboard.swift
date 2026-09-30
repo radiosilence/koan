@@ -65,8 +65,6 @@ enum Pasteboard {
         return ids
     }
 
-    static var hasTracks: Bool { trackData() != nil }
-
     private static func trackData() -> Data? {
         #if canImport(AppKit)
         NSPasteboard.general.data(forType: .init(trackType))

@@ -28,8 +28,6 @@ enum Icon {
     static let remove = "minus.circle"
     static let deselect = "xmark.circle"
     static let clear = "trash"
-    static let rename = "pencil"
-    static let export = "square.and.arrow.up"
 
     static let album = "square.stack"
     static let artist = "music.mic"

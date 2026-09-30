@@ -106,10 +106,6 @@ impl UndoStack {
     pub fn undo_len(&self) -> usize {
         self.undo.len()
     }
-
-    pub fn redo_len(&self) -> usize {
-        self.redo.len()
-    }
 }
 
 #[cfg(test)]

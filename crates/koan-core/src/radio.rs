@@ -37,14 +37,8 @@ pub enum SimilarityAxis {
 #[derive(Debug)]
 struct Candidate {
     track_id: i64,
-    #[allow(dead_code)]
-    artist_id: Option<i64>,
     path: Option<String>,
-    #[allow(dead_code)]
-    genre: Option<String>,
     year: Option<i32>,
-    #[allow(dead_code)]
-    duration_ms: Option<i64>,
     /// Similarity axes that contributed to this candidate.
     axes: HashSet<SimilarityAxis>,
     /// Base similarity score (0.0..1.0).
@@ -103,6 +97,7 @@ impl RadioContext {
         let recent =
             queries::recent_track_ids(conn, queries::LOCAL_USER, seed_window).unwrap_or_default();
         let seed_count = recent.len().max(1) as f64;
+        let mut years: Vec<i32> = Vec::new();
 
         for (i, track_id) in recent.iter().enumerate() {
             if let Ok(Some(track)) = queries::get_track_row(conn, *track_id) {
@@ -114,6 +109,13 @@ impl RadioContext {
                 }
                 if let Some(ref genre) = track.genre {
                     ctx.seed_genres.insert(genre.clone());
+                }
+                if let Some(album_id) = track.album_id
+                    && let Ok(Some(album)) = queries::get_album(conn, album_id)
+                    && let Some(ref date) = album.date
+                    && let Some(Ok(year)) = crate::helpers::year_of(date).map(str::parse::<i32>)
+                {
+                    years.push(year);
                 }
             }
         }
@@ -150,20 +152,7 @@ impl RadioContext {
             .unwrap_or_default();
         ctx.excluded_track_ids = excluded.into_iter().collect();
 
-        // Compute average year from seed tracks.
-        let mut years: Vec<i32> = Vec::new();
-        let seed_ids =
-            queries::recent_track_ids(conn, queries::LOCAL_USER, seed_window).unwrap_or_default();
-        for tid in &seed_ids {
-            if let Ok(Some(track)) = queries::get_track_row(conn, *tid)
-                && let Some(album_id) = track.album_id
-                && let Ok(Some(album)) = queries::get_album(conn, album_id)
-                && let Some(ref date) = album.date
-                && let Some(Ok(year)) = crate::helpers::year_of(date).map(str::parse::<i32>)
-            {
-                years.push(year);
-            }
-        }
+        // Average year of the seed tracks.
         if !years.is_empty() {
             ctx.seed_avg_year = Some(years.iter().sum::<i32>() / years.len() as i32);
         }
@@ -171,7 +160,8 @@ impl RadioContext {
         ctx
     }
 
-    /// Legacy builder for backward compat — used by TUI when play history is empty.
+    /// Context from queue items alone, with no database behind it.
+    #[cfg(test)]
     pub fn from_queue(items: &[(Option<i64>, Option<String>)]) -> Self {
         let mut ctx = Self::default();
         for (artist_id, path) in items {
@@ -247,7 +237,7 @@ pub fn pick_tracks(
     gather_same_artist_candidates(conn, ctx, &mut candidates);
 
     // --- Signal 6: Acoustic similarity (vector KNN) ---
-    gather_acoustic_candidates(conn, ctx, config.seed_window, &mut candidates);
+    gather_acoustic_candidates(conn, config.seed_window, &mut candidates);
 
     // --- Signal 7: Random library tracks ---
     gather_random_candidates(conn, ctx, &mut candidates);
@@ -257,13 +247,10 @@ pub fn pick_tracks(
     // Deduplicate by track_id, merging axes.
     let mut deduped: HashMap<i64, Candidate> = HashMap::new();
     for c in candidates {
-        let entry = deduped.entry(c.track_id).or_insert(Candidate {
+        let entry = deduped.entry(c.track_id).or_insert_with(|| Candidate {
             track_id: c.track_id,
-            artist_id: c.artist_id,
             path: c.path.clone(),
-            genre: c.genre.clone(),
             year: c.year,
-            duration_ms: c.duration_ms,
             axes: HashSet::new(),
             base_score: 0.0,
         });
@@ -639,11 +626,8 @@ fn gather_subsonic_candidates(
                         let track = queries::get_track_row(conn, track_id).ok().flatten();
                         candidates.push(Candidate {
                             track_id,
-                            artist_id: track.as_ref().and_then(|t| t.artist_id),
                             path: track.as_ref().and_then(|t| t.path.clone()),
-                            genre: track.as_ref().and_then(|t| t.genre.clone()),
                             year: None,
-                            duration_ms: track.as_ref().and_then(|t| t.duration_ms),
                             axes: [SimilarityAxis::Subsonic].into_iter().collect(),
                             base_score: score * 0.9,
                         });
@@ -703,11 +687,8 @@ fn gather_genre_era_candidates(
 
                 candidates.push(Candidate {
                     track_id: track.id,
-                    artist_id: track.artist_id,
                     path: track.path.clone(),
-                    genre: track.genre.clone(),
                     year,
-                    duration_ms: track.duration_ms,
                     axes: [SimilarityAxis::GenreEra].into_iter().collect(),
                     base_score,
                 });
@@ -741,11 +722,8 @@ fn gather_same_artist_candidates(
 
                 candidates.push(Candidate {
                     track_id: track.id,
-                    artist_id: track.artist_id,
                     path: track.path.clone(),
-                    genre: track.genre.clone(),
                     year: None,
-                    duration_ms: track.duration_ms,
                     axes: [SimilarityAxis::SameArtist].into_iter().collect(),
                     base_score: weight * 0.4, // Lower base — same-artist is the fallback.
                 });
@@ -759,7 +737,6 @@ fn gather_same_artist_candidates(
 
 fn gather_acoustic_candidates(
     conn: &Connection,
-    _ctx: &RadioContext,
     seed_window: usize,
     candidates: &mut Vec<Candidate>,
 ) {
@@ -793,11 +770,8 @@ fn gather_acoustic_candidates(
                 let track = queries::get_track_row(conn, track_id).ok().flatten();
                 candidates.push(Candidate {
                     track_id,
-                    artist_id: track.as_ref().and_then(|t| t.artist_id),
                     path: track.as_ref().and_then(|t| t.path.clone()),
-                    genre: track.as_ref().and_then(|t| t.genre.clone()),
                     year: None,
-                    duration_ms: track.as_ref().and_then(|t| t.duration_ms),
                     axes: [SimilarityAxis::Acoustic].into_iter().collect(),
                     base_score: score,
                 });
@@ -826,11 +800,8 @@ fn gather_random_candidates(
             for track in tracks {
                 candidates.push(Candidate {
                     track_id: track.id,
-                    artist_id: track.artist_id,
                     path: track.path.clone(),
-                    genre: track.genre.clone(),
                     year: None,
-                    duration_ms: track.duration_ms,
                     axes: [SimilarityAxis::Random].into_iter().collect(),
                     base_score: 0.05, // Nuclear fallback — still better than silence.
                 });
@@ -868,19 +839,16 @@ fn add_local_artist_candidates(
     axis: SimilarityAxis,
     candidates: &mut Vec<Candidate>,
 ) {
+    let exclude: Vec<String> = ctx.queued_paths.iter().cloned().collect();
     for &(similar_artist_id, sim_score) in pairs.iter().take(10) {
-        let exclude: Vec<String> = ctx.queued_paths.iter().cloned().collect();
         if let Ok(tracks) =
             queries::random_tracks_excluding(conn, &exclude, &[similar_artist_id], &[], 3)
         {
             for track in tracks {
                 candidates.push(Candidate {
                     track_id: track.id,
-                    artist_id: track.artist_id,
                     path: track.path.clone(),
-                    genre: track.genre.clone(),
                     year: None,
-                    duration_ms: track.duration_ms,
                     axes: [axis].into_iter().collect(),
                     base_score: sim_score * seed_weight * 0.8,
                 });
@@ -937,64 +905,6 @@ fn cache_subsonic_artist_relationships(
             let _ = queries::save_similar_artists(conn, artist_id, &pairs, "subsonic");
         }
     }
-}
-
-/// Populate the similar artists cache for a given artist using Subsonic.
-/// Kept for backward compat with the TUI trigger.
-pub fn fetch_and_cache_similar_artists(
-    conn: &Connection,
-    client: &SubsonicClient,
-    artist_id: i64,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if queries::has_fresh_similar_artists_for_source(conn, artist_id, Some("subsonic"))
-        .unwrap_or(false)
-    {
-        return Ok(());
-    }
-
-    let track_remote_id: Option<String> = conn
-        .query_row(
-            "SELECT remote_id FROM tracks WHERE artist_id = ?1 AND remote_id IS NOT NULL LIMIT 1",
-            rusqlite::params![artist_id],
-            |row| row.get(0),
-        )
-        .ok()
-        .flatten();
-
-    let Some(track_remote_id) = track_remote_id else {
-        return Ok(());
-    };
-
-    let songs = client.get_similar_songs(&track_remote_id, 50)?;
-    let mut similar_artists: HashMap<i64, f64> = HashMap::new();
-    let total = songs.len() as f64;
-
-    for (i, song) in songs.iter().enumerate() {
-        if let Some(ref song_artist_id) = song.artist_id {
-            let local_artist_id: Option<i64> = conn
-                .query_row(
-                    "SELECT id FROM artists WHERE remote_id = ?1",
-                    rusqlite::params![song_artist_id],
-                    |row| row.get(0),
-                )
-                .ok();
-
-            if let Some(local_id) = local_artist_id
-                && local_id != artist_id
-            {
-                let score = (total - i as f64) / total;
-                let entry = similar_artists.entry(local_id).or_insert(0.0);
-                *entry = entry.max(score);
-            }
-        }
-    }
-
-    if !similar_artists.is_empty() {
-        let pairs: Vec<(i64, f64)> = similar_artists.into_iter().collect();
-        queries::save_similar_artists(conn, artist_id, &pairs, "subsonic")?;
-    }
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1253,11 +1163,8 @@ mod tests {
         // Candidate with 1 axis.
         let c1 = Candidate {
             track_id: 1,
-            artist_id: None,
             path: None,
-            genre: None,
             year: None,
-            duration_ms: None,
             axes: [SimilarityAxis::ListenBrainz].into_iter().collect(),
             base_score: 0.5,
         };
@@ -1265,11 +1172,8 @@ mod tests {
         // Candidate with 3 axes.
         let c3 = Candidate {
             track_id: 2,
-            artist_id: None,
             path: None,
-            genre: None,
             year: None,
-            duration_ms: None,
             axes: [
                 SimilarityAxis::ListenBrainz,
                 SimilarityAxis::MusicBrainz,

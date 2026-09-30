@@ -755,13 +755,7 @@ impl App {
             KeyCode::Char('q') => {
                 self.quit = true;
             }
-            KeyCode::Char(' ') => {
-                if self.state.playback_state() == PlaybackState::Playing {
-                    self.tx.send(PlayerCommand::Pause).ok();
-                } else {
-                    self.tx.send(PlayerCommand::Resume).ok();
-                }
-            }
+            KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('>') | KeyCode::Char('n') => {
                 self.tx.send(PlayerCommand::NextTrack).ok();
             }
@@ -1846,11 +1840,7 @@ impl App {
                         self.seek_to(pos);
                     } else if click_x < self.layout.seek_bar_start {
                         // Clicked on the play/pause status icon — toggle.
-                        if self.state.playback_state() == PlaybackState::Playing {
-                            self.tx.send(PlayerCommand::Pause).ok();
-                        } else {
-                            self.tx.send(PlayerCommand::Resume).ok();
-                        }
+                        self.toggle_pause();
                     }
                     return;
                 }
@@ -2531,6 +2521,15 @@ impl App {
         };
     }
 
+    fn toggle_pause(&self) {
+        let cmd = if self.state.playback_state() == PlaybackState::Playing {
+            PlayerCommand::Pause
+        } else {
+            PlayerCommand::Resume
+        };
+        self.tx.send(cmd).ok();
+    }
+
     /// Send a move command for a visible queue index pair.
     fn send_move(&self, from_visible: usize, to_visible: usize) {
         let visible = self.visible_queue();
@@ -2579,13 +2578,7 @@ impl App {
                     LibraryFocus::Queue => LibraryFocus::Library,
                 };
             }
-            KeyCode::Char(' ') => {
-                if self.state.playback_state() == PlaybackState::Playing {
-                    self.tx.send(PlayerCommand::Pause).ok();
-                } else {
-                    self.tx.send(PlayerCommand::Resume).ok();
-                }
-            }
+            KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('>') | KeyCode::Char('n') => {
                 self.tx.send(PlayerCommand::NextTrack).ok();
             }

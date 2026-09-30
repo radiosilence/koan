@@ -199,8 +199,8 @@ pub fn cmd_play(
     let callbacks = TuiCallbacks {
         sigint_received: crate::sigint_received,
         install_panic_hook: install_terminal_panic_hook,
-        parse_dropped_paths: |text| parse_dropped_paths(text),
-        playlist_items_from_paths: |paths, progress| playlist_items_from_paths(paths, progress),
+        parse_dropped_paths,
+        playlist_items_from_paths,
     };
 
     if let Err(e) = koan_tui::play::run_tui(
@@ -282,8 +282,8 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
     let callbacks = TuiCallbacks {
         sigint_received: crate::sigint_received,
         install_panic_hook: install_terminal_panic_hook,
-        parse_dropped_paths: |text| parse_dropped_paths(text),
-        playlist_items_from_paths: |paths, progress| playlist_items_from_paths(paths, progress),
+        parse_dropped_paths,
+        playlist_items_from_paths,
     };
 
     if let Err(e) = koan_tui::play::run_tui(

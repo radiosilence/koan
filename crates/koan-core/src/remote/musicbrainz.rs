@@ -117,14 +117,6 @@ struct MbRelatedArtist {
     name: String,
 }
 
-/// Build an HTTP client with the required MusicBrainz User-Agent.
-fn mb_client() -> reqwest::blocking::Client {
-    reqwest::blocking::Client::builder()
-        .user_agent(USER_AGENT)
-        .build()
-        .unwrap_or_else(|_| reqwest::blocking::Client::new())
-}
-
 /// Search for an artist by name. Returns up to `limit` results sorted by match score.
 pub fn search_artist(
     http: &reqwest::blocking::Client,
@@ -273,9 +265,12 @@ fn categorize_relation(rel_type: &str) -> RelationCategory {
     }
 }
 
-/// Create a default HTTP client suitable for MusicBrainz API calls.
+/// An HTTP client carrying the User-Agent MusicBrainz requires.
 pub fn default_client() -> reqwest::blocking::Client {
-    mb_client()
+    reqwest::blocking::Client::builder()
+        .user_agent(USER_AGENT)
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new())
 }
 
 #[cfg(test)]

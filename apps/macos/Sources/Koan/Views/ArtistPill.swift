@@ -12,7 +12,6 @@ struct ArtistPill: View {
     /// `PlayableSelection`.
     var selection: PlayableSelection?
 
-    @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
 
     var body: some View {

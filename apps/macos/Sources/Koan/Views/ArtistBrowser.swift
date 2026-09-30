@@ -280,21 +280,6 @@ private struct ArtistBio: View {
 }
 
 /// Wrapping row of chips. SwiftUI still has no built-in flow layout.
-struct FlowRow<Item: Identifiable, Content: View>: View {
-    let items: [Item]
-    @ViewBuilder let content: (Item) -> Content
-
-    var body: some View {
-        FlowLayout(spacing: 8) {
-            ForEach(items) { content($0) }
-        }
-    }
-}
-
-extension SimilarArtist: Identifiable {
-    public var id: Int64 { artistId }
-}
-
 struct FlowLayout: Layout {
     var spacing: CGFloat = 8
 

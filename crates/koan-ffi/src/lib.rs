@@ -208,7 +208,7 @@ pub struct KoanEngine {
     state: Arc<SharedPlayerState>,
     tx: Sender<PlayerCommand>,
     /// The analyser's latest frame. Only the three-band summary crosses the
-    /// boundary — see `viz_levels`.
+    /// boundary — see `VizStream`.
     viz: Arc<VizSnapshot>,
     /// What the engine publishes and clients read. See `state`.
     out: Arc<state::EngineState>,
@@ -380,17 +380,11 @@ impl KoanEngine {
         koan_core::remote::downloads::store().clear_settled();
     }
 
-    /// Cheap enough to poll every frame — use it to decide whether to call
-    /// `queue()`, which allocates the whole list.
     /// Whether the player is playing, read from the engine now. For code that
     /// runs with the app in the background, where the mirror, refreshed for
     /// what is on screen, can still say what it said before.
     pub fn is_playing(&self) -> bool {
         self.state.playback_state() == koan_core::player::state::PlaybackState::Playing
-    }
-
-    pub fn playlist_version(&self) -> u64 {
-        self.state.playlist_version()
     }
 
     /// Follow the spectrum, one message per analysed frame.
@@ -402,16 +396,6 @@ impl KoanEngine {
     /// that would have produced them is parked rather than looping.
     pub fn viz_stream(&self) -> Arc<VizStream> {
         VizStream::new(&self.viz)
-    }
-
-    /// What is coming out of the speakers right now, as three band energies.
-    ///
-    /// Sync, like `playlist_version`: an uncontended read lock and a reduce
-    /// over 48 floats, with nothing to allocate and nothing that can block. A
-    /// caller polling this at 30 Hz would spend more on the async hop than on
-    /// the read.
-    pub fn viz_levels(&self) -> VizLevels {
-        self.viz.levels().into()
     }
 
     /// Run the analyser at the refresh rate of the display it is drawn on.
@@ -1046,15 +1030,6 @@ impl KoanEngine {
         .await
     }
 
-    /// How many times a track has been played.
-    pub async fn play_count(self: Arc<Self>, track_id: i64) -> Result<i64, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            queries::play_count(&db.conn, queries::LOCAL_USER, track_id).map_err(db_err)
-        })
-        .await
-    }
-
     /// Forget specific plays. Returns how many entries were removed.
     pub async fn delete_plays(self: Arc<Self>, ids: Vec<i64>) -> Result<u32, KoanError> {
         offload::offload(move || {
@@ -1263,19 +1238,6 @@ impl KoanEngine {
         .await
     }
 
-    pub async fn playlist(
-        self: Arc<Self>,
-        playlist_id: i64,
-    ) -> Result<Option<Playlist>, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            Ok(queries::get_playlist(&db.conn, playlist_id)
-                .map_err(db_err)?
-                .map(Playlist::from))
-        })
-        .await
-    }
-
     /// The playlist's tracks, in playlist order. Duplicates are kept — the same
     /// song twice in a row is a thing people do on purpose.
     pub async fn playlist_tracks(
@@ -1331,23 +1293,6 @@ impl KoanEngine {
                 })
         })
         .await
-    }
-
-    /// The current queue, kept. Items with no library row behind them — a file
-    /// played before it was indexed — cannot come across, because a playlist
-    /// points at library rows.
-    pub async fn save_queue_as_playlist(
-        self: Arc<Self>,
-        name: String,
-    ) -> Result<Playlist, KoanError> {
-        let track_ids: Vec<i64> = self
-            .state
-            .snapshot_playlist()
-            .0
-            .iter()
-            .filter_map(|item| item.db_id)
-            .collect();
-        self.create_playlist(name, track_ids).await
     }
 
     pub async fn rename_playlist(
@@ -1883,13 +1828,6 @@ impl KoanEngine {
         koan_core::remote::link::set_activity(token.zip(device).map(|(t, d)| (t, d, sandbox)));
     }
 
-    /// Apply `devices.*` from the config: start or stop listening on the
-    /// local network, and dial the addresses listed. After Settings writes
-    /// them.
-    pub fn devices_changed(&self) {
-        koan_core::remote::nearby::reconfigure();
-    }
-
     // --- Library maintenance ----------------------------------------------
 
     // --- Settings ----------------------------------------------------------
@@ -2001,11 +1939,6 @@ impl KoanEngine {
         .await
     }
 
-    /// Whether the automatic library sync is running right now.
-    pub fn is_auto_syncing(&self) -> bool {
-        self.auto_syncing.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
     /// Ask the running library task to stop.
     ///
     /// It stops between transactions and keeps what it had already committed —
@@ -2013,12 +1946,6 @@ impl KoanEngine {
     pub fn cancel_library_task(&self) {
         self.cancel_library_task
             .store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-
-    /// Whether the startup or watched-folder scan is running right now.
-    pub fn is_auto_scanning(&self) -> bool {
-        self.auto_scanning
-            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Sign in to a Subsonic/Navidrome server.
@@ -2246,25 +2173,8 @@ impl KoanEngine {
         .await
     }
 
-    /// Which of these tracks have a downloaded copy. What a menu asks before
-    /// deciding whether it is offering to fetch or to throw away.
-    pub async fn downloaded_track_ids(
-        self: Arc<Self>,
-        track_ids: Vec<i64>,
-    ) -> Result<Vec<i64>, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            queries::downloaded_of(&db.conn, &track_ids).map_err(db_err)
-        })
-        .await
-    }
-
-    /// Rescans every configured library folder. Minutes, on a large library.
-    pub async fn scan(self: Arc<Self>, force: bool) -> Result<ScanSummary, KoanError> {
-        offload::offload(move || self.scan_blocking(force, None)).await
-    }
-
-    /// `scan`, saying how far it has got.
+    /// Rescans every configured library folder, saying how far it has got.
+    /// Minutes, on a large library.
     pub async fn scan_reporting(
         self: Arc<Self>,
         force: bool,
@@ -2276,17 +2186,6 @@ impl KoanEngine {
     /// Pull the remote library into the local database. Long and network-bound.
     /// `full` ignores the incremental cursor and re-walks every album.
     pub async fn sync_remote(self: Arc<Self>, full: bool) -> Result<SyncSummary, KoanError> {
-        self.sync_remote_reporting(full, None).await
-    }
-
-    /// `sync_remote`, also pushing progress to `reporter`: `started` with the
-    /// phase's total once it is known, `advanced` with a count and a label per
-    /// page. The engine's own sync progress slice updates either way.
-    pub async fn sync_remote_reporting(
-        self: Arc<Self>,
-        full: bool,
-        reporter: Option<Arc<dyn ProgressReporter>>,
-    ) -> Result<SyncSummary, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
             let cfg = Config::load().unwrap_or_default();
@@ -2303,26 +2202,7 @@ impl KoanEngine {
                 full,
                 &cfg.remote.url,
                 &cfg.remote.username,
-                &|p| {
-                    meter.set(p);
-                    if let Some(reporter) = &reporter {
-                        use koan_core::remote::sync::SyncPhase;
-                        let what = match p.phase {
-                            SyncPhase::Albums => "albums",
-                            SyncPhase::Tracks => "tracks",
-                            SyncPhase::Artists => "artists",
-                            SyncPhase::Finishing => "finishing",
-                        };
-                        if p.done == 0 {
-                            reporter.started(p.total.unwrap_or(0));
-                        }
-                        let label = match p.total {
-                            Some(total) => format!("{} of {total} {what}", p.done),
-                            None => format!("{} {what}", p.done),
-                        };
-                        reporter.advanced(p.done, label);
-                    }
-                },
+                &|p| meter.set(p),
             );
             meter.clear();
             let synced = synced.map_err(|e| KoanError::Database {
@@ -2489,39 +2369,6 @@ impl KoanEngine {
                     message: e.to_string(),
                 }
             })
-        })
-        .await
-    }
-
-    /// What `pattern` would do to these tracks. Touches nothing.
-    ///
-    /// `track_ids` of `None` means the whole library. `base_dir` picks which
-    /// library folder the pattern's relative paths hang off; `None` uses the
-    /// first configured one, matching the CLI. Resolves a destination per file.
-    pub async fn organize_preview(
-        self: Arc<Self>,
-        pattern: String,
-        track_ids: Option<Vec<i64>>,
-        base_dir: Option<String>,
-    ) -> Result<OrganizePlan, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            let base = base_dir.map(PathBuf::from);
-            let result = match &track_ids {
-                Some(ids) => koan_core::organize::preview_for_tracks(
-                    &db,
-                    ids,
-                    &pattern,
-                    base.as_deref(),
-                    true,
-                ),
-                None => koan_core::organize::preview(&db, &pattern, base.as_deref(), true),
-            }
-            .map_err(organize_err)?;
-            Ok(OrganizePlan::build(
-                result,
-                track_ids.as_ref().map(Vec::len),
-            ))
         })
         .await
     }
@@ -2911,56 +2758,52 @@ impl KoanEngine {
         row: Option<queries::TrackRow>,
         size: Option<u32>,
     ) -> Result<Option<CoverArt>, KoanError> {
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let track_id = row.id;
+
+        if let Some(path) = row.path.as_ref().or(row.cached_path.as_ref())
+            && let Some(data) = koan_core::index::metadata::extract_cover_art(Path::new(path))
         {
-            let Some(row) = row else {
-                return Ok(None);
-            };
-            let track_id = row.id;
+            let mime = sniff_mime(&data).to_string();
+            return Ok(Some(CoverArt { data, mime }));
+        }
 
-            if let Some(path) = row.path.as_ref().or(row.cached_path.as_ref())
-                && let Some(data) = koan_core::index::metadata::extract_cover_art(Path::new(path))
-            {
+        let Some(remote_id) = row.remote_id else {
+            return Ok(None);
+        };
+        let cfg = Config::cached();
+        // No server configured: this record simply has no art.
+        if !cfg.remote.enabled {
+            return Ok(None);
+        }
+        // Configured but unusable — signed out, or the password cannot be
+        // read. Reported rather than shrugged off: answering "no art" for
+        // every record makes a signed-out client look like a library that
+        // has no covers, which is a long way from where the problem is.
+        let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
+            return Err(KoanError::Remote {
+                message: koan_core::helpers::remote_unavailable(&cfg),
+            });
+        };
+        match client.get_cover_art(&remote_id, size) {
+            Ok(data) if !data.is_empty() => {
                 let mime = sniff_mime(&data).to_string();
-                return Ok(Some(CoverArt { data, mime }));
+                Ok(Some(CoverArt { data, mime }))
             }
-
-            let Some(remote_id) = row.remote_id else {
-                return Ok(None);
-            };
-            let cfg = Config::cached();
-            // No server configured: this record simply has no art.
-            if !cfg.remote.enabled {
-                return Ok(None);
-            }
-            // Configured but unusable — signed out, or the password cannot be
-            // read. Reported rather than shrugged off: answering "no art" for
-            // every record makes a signed-out client look like a library that
-            // has no covers, which is a long way from where the problem is.
-            let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-                return Err(KoanError::Remote {
-                    message: koan_core::helpers::remote_unavailable(&cfg),
-                });
-            };
-            match client.get_cover_art(&remote_id, size) {
-                Ok(data) if !data.is_empty() => {
-                    let mime = sniff_mime(&data).to_string();
-                    Ok(Some(CoverArt { data, mime }))
-                }
-                // The server answered and it has nothing. Normal, and worth
-                // remembering: this record has no art and never will.
-                Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => {
-                    Ok(None)
-                }
-                // A timeout or a dropped connection says nothing about whether
-                // art exists. Reported rather than swallowed, so the caller can
-                // ask again instead of recording "this album has none" for the
-                // rest of the session — and so it appears in the log at all.
-                Err(e) => {
-                    log::warn!("cover art for track {track_id} failed: {e}");
-                    Err(KoanError::Remote {
-                        message: e.to_string(),
-                    })
-                }
+            // The server answered and it has nothing. Normal, and worth
+            // remembering: this record has no art and never will.
+            Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => Ok(None),
+            // A timeout or a dropped connection says nothing about whether
+            // art exists. Reported rather than swallowed, so the caller can
+            // ask again instead of recording "this album has none" for the
+            // rest of the session — and so it appears in the log at all.
+            Err(e) => {
+                log::warn!("cover art for track {track_id} failed: {e}");
+                Err(KoanError::Remote {
+                    message: e.to_string(),
+                })
             }
         }
     }

@@ -108,13 +108,6 @@ final class Hotkeys {
         return responder
     }
 
-    /// The monitor outlives this object only if the app is tearing down anyway,
-    /// so there is nothing to unwind from a nonisolated deinit.
-    func stop() {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
-    }
-
     /// Returns true when the event has been consumed.
     private func handle(_ event: NSEvent) -> Bool {
         // Shift is part of the key here — `>` is one. Anything else means the

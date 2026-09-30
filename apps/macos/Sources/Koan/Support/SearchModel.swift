@@ -20,7 +20,7 @@ final class SearchModel {
     /// Searching follows from the query changing, here rather than in an
     /// `onChange` on a view: a view that watches the query is a view that is
     /// rebuilt on every keystroke.
-    var query: String = "" {
+    var query = "" {
         didSet {
             guard query != oldValue else { return }
             let has = !query.trimmingCharacters(in: .whitespaces).isEmpty

@@ -7,12 +7,11 @@ import SwiftUI
 struct AlbumGridCell: View {
     let album: Album
     /// An artist's own page already says whose records these are.
-    var showArtist: Bool = true
+    var showArtist = true
     /// The grid's pick, when it takes part in picking several records at once
     /// — see `PlayableSelection`.
     var selection: PlayableSelection?
 
-    @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
 
     @State private var titleHovering = false

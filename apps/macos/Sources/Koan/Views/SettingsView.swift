@@ -9,7 +9,6 @@ import UniformTypeIdentifiers
 /// commit when you finish editing, and the window re-reads on focus so a change
 /// made elsewhere is not silently overwritten.
 struct SettingsView: View {
-    @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(ActivityModel.self) private var activity
 
@@ -129,6 +128,16 @@ private struct StatusLine: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+}
+
+extension SettingsModel {
+    /// A binding to one field, committed through `edit` on every change.
+    func binding<Value>(_ field: WritableKeyPath<KoanFFI.Settings, Value> & Sendable) -> Binding<Value> {
+        Binding(
+            get: { self.settings[keyPath: field] },
+            set: { value in self.edit { $0[keyPath: field] = value } }
+        )
     }
 }
 
@@ -320,7 +329,7 @@ private struct RemoteSettings: View {
                         .verbatimEntry()
                     SecureField(
                         "Password",
-                        text: Binding(get: { model.password }, set: { model.password = $0 }),
+                        text: $model.password,
                         prompt: Text("Password")
                     )
                     .verbatimEntry()
@@ -349,15 +358,9 @@ private struct RemoteSettings: View {
             }
 
             Section {
-                Toggle("Keep the library in sync", isOn: Binding(
-                    get: { model.settings.autoSync },
-                    set: { on in model.edit { $0.autoSync = on } }
-                ))
+                Toggle("Keep the library in sync", isOn: model.binding(\.autoSync))
                 if model.settings.autoSync {
-                    Picker("Every", selection: Binding(
-                        get: { model.settings.autoSyncIntervalMins },
-                        set: { v in model.edit { $0.autoSyncIntervalMins = v } }
-                    )) {
+                    Picker("Every", selection: model.binding(\.autoSyncIntervalMins)) {
                         Text("Startup only").tag(UInt64(0))
                         Text("15 minutes").tag(UInt64(15))
                         Text("Hour").tag(UInt64(60))
@@ -458,10 +461,7 @@ private struct PlaybackSettings: View {
             }
 
             Section {
-                Toggle("Fade on pause", isOn: Binding(
-                    get: { model.settings.fadeOnPause },
-                    set: { v in model.edit { $0.fadeOnPause = v } }
-                ))
+                Toggle("Fade on pause", isOn: model.binding(\.fadeOnPause))
             } header: {
                 Text("Transport")
             } footer: {
@@ -475,10 +475,7 @@ private struct PlaybackSettings: View {
             #endif
 
             Section {
-                Picker("ReplayGain", selection: Binding(
-                    get: { model.settings.replaygain },
-                    set: { v in model.edit { $0.replaygain = v } }
-                )) {
+                Picker("ReplayGain", selection: model.binding(\.replaygain)) {
                     Text("Off").tag("off")
                     Text("Per track").tag("track")
                     Text("Per album").tag("album")
@@ -486,10 +483,7 @@ private struct PlaybackSettings: View {
                 if model.settings.replaygain != "off" {
                     Stepper(
                         "Pre-amp: \(model.settings.preAmpDb, specifier: "%.1f") dB",
-                        value: Binding(
-                            get: { model.settings.preAmpDb },
-                            set: { v in model.edit { $0.preAmpDb = v } }
-                        ),
+                        value: model.binding(\.preAmpDb),
                         in: -15...15,
                         step: 0.5
                     )
@@ -598,10 +592,7 @@ private struct DevicesSettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Discoverable on this network", isOn: Binding(
-                    get: { model.settings.devicesDiscoverable },
-                    set: { on in model.edit { $0.devicesDiscoverable = on } }
-                ))
+                Toggle("Discoverable on this network", isOn: model.binding(\.devicesDiscoverable))
                 if let port = mirror.connection?.listeningPort {
                     LabeledContent("Listening on port", value: String(port))
                 }

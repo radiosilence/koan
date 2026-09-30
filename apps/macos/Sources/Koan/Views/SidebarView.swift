@@ -48,11 +48,7 @@ struct SidebarView: View {
                     } isTargeted: { targeted in
                         queueDropTargeted = targeted
                     }
-                    .listRowBackground(
-                        queueDropTargeted
-                            ? RoundedRectangle(cornerRadius: 5).fill(.tint.opacity(0.25))
-                            : nil
-                    )
+                    .dropHighlight(queueDropTargeted)
                 if search.hasQuery {
                     Label("Results", systemImage: Icon.search)
                         .tag(Navigator.Section.searchResults)
@@ -142,8 +138,6 @@ struct SidebarView: View {
                     covers: playlists.covers[playlist.id] ?? []
                 )
                     .tag(Navigator.Section.playlist(playlist.id))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
                     // Dragging a playlist somewhere else means its tracks —
                     // onto the queue, onto another playlist. Dropping it back
                     // into this list means where it sits.
@@ -159,11 +153,7 @@ struct SidebarView: View {
                             ? playlist.id
                             : (playlistDropTarget == playlist.id ? nil : playlistDropTarget)
                     }
-                    .listRowBackground(
-                        playlistDropTarget == playlist.id
-                            ? RoundedRectangle(cornerRadius: 5).fill(.tint.opacity(0.25))
-                            : nil
-                    )
+                    .dropHighlight(playlistDropTarget == playlist.id)
             }
 
             newPlaylistRow
@@ -202,11 +192,7 @@ struct SidebarView: View {
                 playlists.beginNaming(dropped: dropped)
                 return true
             } isTargeted: { newPlaylistDropTargeted = $0 }
-            .listRowBackground(
-                newPlaylistDropTargeted
-                    ? RoundedRectangle(cornerRadius: 5).fill(.tint.opacity(0.25))
-                    : nil
-            )
+            .dropHighlight(newPlaylistDropTargeted)
     }
 
     @ViewBuilder
@@ -351,6 +337,11 @@ private struct DownloadsRowLabel: View {
 }
 
 private extension View {
+    /// Lights a row while a drop is held over it.
+    func dropHighlight(_ lit: Bool) -> some View {
+        listRowBackground(lit ? RoundedRectangle(cornerRadius: 5).fill(.tint.opacity(0.25)) : nil)
+    }
+
     /// A row that is a place: selecting it goes there, and clicking it while
     /// already there goes back to the top.
     ///
