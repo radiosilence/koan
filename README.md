@@ -66,7 +66,7 @@ sudo dnf install alsa-lib-devel dbus-devel
 sudo pacman -S alsa-lib dbus
 ```
 
-## 30-second quickstart (for CLI - for GUI just open settings and mess about)
+## Quickstart (CLI)
 
 ```bash
 koan config init                            # create config dir + commented template
@@ -77,7 +77,7 @@ koan scan                                   # index your library
 koan                                        # launch the TUI
 ```
 
-`space` to pause, `<`/`>` to skip, `p` to pick tracks, `a` for albums, `q` to quit. That's it.
+`space` to pause, `<`/`>` to skip, `p` to pick tracks, `a` for albums, `q` to quit.
 
 **Rather not touch a terminal?** Install the app instead and do all of the above
 inside it: **Settings → Library** points kōan at your music and scans it,
@@ -101,7 +101,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Bit-perfect playback** -- CoreAudio AUHAL / ALSA via cpal, the device switched to the source rate rather than resampled to reach it. When a device refuses the switch, the format badge says the output is resampled instead of claiming otherwise
 - **Gapless transitions** -- decode thread keeps the ring buffer alive across track boundaries
 - **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV/AIFF/CAF, Ogg, MKV/WebM, MP4. Opus is decoded by `opus-decoder` rather than symphonia, which ships no Opus codec — mono and stereo, in Ogg, Matroska or WebM
-- **Native macOS app** -- SwiftUI, built out of Liquid Glass. Album-grouped queue with drag reorder, playlists, library and artist browsing, ⌘K search, synced lyrics, play history, file organization, and first-run setup — no terminal required
+- **Native macOS app** -- SwiftUI, built out of Liquid Glass. Album-grouped queue with drag reorder, playlists, library and artist browsing, ⌘K search, synced lyrics, play history, file organization, and first-run setup
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, two-way sync of favourites and playlists
@@ -111,7 +111,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
 - **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` — 59 of them — for display and file organization
 - **File organization** -- rename/reorganize your library from the macOS app or the TUI using format string patterns
-- **GraphQL API** -- full programmatic control alongside the app and TUI, or headless. Relay pagination, rich filters, mutations for everything
+- **GraphQL API** -- alongside the app and TUI, or headless. Relay pagination, filters, and mutations for playback, the queue, favourites, playlists, radio and the library
 - **MCP server** -- `koan mcp` exposes the player to Claude Desktop via Model Context Protocol, and a server serves it over HTTP behind an authenticating gateway, acting as the signed-in account
 - **Queue management** -- undo/redo (100-deep), multi-select, drag-reorder, Finder drag & drop, session persistence
 - **SQLite FTS5 search** -- full-text search across your entire library
@@ -150,11 +150,11 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Favourites** | **Yes (syncs)** | Via MPD | No | Yes | No | Via MPD | **Yes** |
 | **Streaming playback** | **Yes (256KB)** | Via MPD | No | No | No | Via MPD | **Yes** |
 | **API / MCP** | **GraphQL + MCP** | MPD protocol | No | No | No | MPD protocol | No |
-| **Tag editing** | Soon | Via MPD | No | Yes | Yes | Via MPD | No |
+| **Tag editing** | No | Via MPD | No | Yes | Yes | Via MPD | No |
 | **DSP / EQ** | No | Via MPD | Yes | Yes | No | Via MPD | No |
 | **Auth** | **JWT + roles** | No | No | No | No | No | No |
 | **Platforms** | macOS, Linux | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
-| **Maintained** | Yes | Yes | Yes (2.12.0) | Slowing | Yes | Very active | Stale |
+
 
 ### Desktop players (GUI)
 
@@ -170,7 +170,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Queue undo/redo** | **100-deep** | Partial | No | Yes |
 | **Lyrics** | **Synced + plain** | Plugin | No | Plugin |
 | **Visualizer** | **22 modes** | Plugin | No | Plugin |
-| **Tag editing** | Soon | **Yes** | Yes | **Yes** |
+| **Tag editing** | No | **Yes** | Yes | **Yes** |
 | **DSP / EQ** | No | **Yes (VST)** | Yes | Yes |
 | **Platforms** | macOS (app + TUI), Linux (TUI) | Windows/macOS | All | All |
 
@@ -184,7 +184,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **[Authentication](docs/guide/authentication.md)** | JWT auth, user management, 1Password integration, recovery |
 | **[Radio Mode](docs/guide/radio-mode.md)** | Infinite play, what it scores on and what it doesn't, tuning discovery |
 | **[Remote Servers](docs/guide/remote-servers.md)** | Navidrome/Subsonic setup, sync, streaming, cache management |
-| **[File Organization](docs/guide/file-organization.md)** | Rename and reorganize your library from the TUI |
+| **[File Organization](docs/guide/file-organization.md)** | Rename and reorganize your library from the macOS app or the TUI |
 | **[GraphQL API](docs/guide/graphql-api.md)** | Headless operation, queries, mutations, daemon mode |
 | **[MCP Integration](docs/guide/mcp-integration.md)** | Claude Desktop setup, example prompts |
 | **[Headless Server](docs/guide/headless-server.md)** | Running kōan as a background music server |
@@ -205,8 +205,7 @@ Five crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (
 
 ## macOS app
 
-A native SwiftUI app lives in [`apps/macos`](apps/macos), and it is a way to use
-kōan rather than a viewer bolted onto the side of one. Browse and search the
+A native SwiftUI app lives in [`apps/macos`](apps/macos). Browse and search the
 library, build and reorder the queue, keep playlists, favourite tracks, albums
 and artists, read synced lyrics, look through play history, and
 reorganize files on disk — and set the whole thing up on first run, library
@@ -222,7 +221,7 @@ in the others, and a scan run in either is a scan for both.
 
 Two things it deliberately leaves alone: visualizers, which are what the TUI is
 for, and running the server, which is a `koan serve` job. GraphQL remains the
-surface for clients that genuinely *can't* link the core — the web UI and
+surface for clients that *can't* link the core — the web UI and
 jukebox-style remotes.
 
 Dropping a folder from Finder onto the queue indexes it into the library and
@@ -268,10 +267,10 @@ playing. Your devices find each other through a kōan server from anywhere;
 anyone's find each other on the local network over Bonjour, and a tailnet by
 address. See [Playing on another device](docs/guide/devices.md).
 
-## Coming soon
+## Planned
 
 - **Tag editing** -- inline editing, bulk operations, vimv-style external editor ([plan](/.claude/plans/04-tagging.md))
-- **Artist metadata** -- bios, images, similar artists from MusicBrainz/Last.fm ([plan](/.claude/plans/09-artist-metadata.md))
+- **Similar artists** -- from MusicBrainz/Last.fm ([plan](/.claude/plans/09-artist-metadata.md))
 
 ## Dev
 

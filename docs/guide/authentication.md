@@ -26,7 +26,7 @@ curl -s http://localhost:4000/graphql \
   -d '{"query": "{ libraryStats { totalTracks totalArtists totalAlbums } }"}' | jq
 ```
 
-### Full curl workflow (copy-pasteable)
+### Full curl workflow
 
 ```bash
 # Login and capture tokens
@@ -204,7 +204,7 @@ auth_enabled = false
 > the network still gets in. Only disable auth on a host you control, bound to `127.0.0.1`, and never
 > with the port forwarded.
 
-**Nuclear option (start fresh):**
+**Start fresh:**
 ```bash
 koan auth reset
 # Deletes all keys, users, and tokens. Prompts for confirmation.

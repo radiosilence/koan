@@ -1,6 +1,5 @@
 # Troubleshooting
 
-Common issues and how to fix them.
 
 ## Audio
 
@@ -48,7 +47,7 @@ Another kōan instance (or another process) is using port 4000. Either:
 
 ### Duplicate tracks after remote sync
 
-kōan deduplicates using artist + album + title + track number, so a local file and the server's copy of it only merge when they agree. If you see duplicates:
+kōan merges a local file with the server's copy when their artist, album, disc, track number and title agree, or when both carry the same MusicBrainz recording and release ids. If you see duplicates:
 - Tags might differ between local files and the remote server (e.g. different artist spelling)
 - Fix the tags, then `koan scan --force` — a plain scan skips files whose mtime and size have not changed, and it is the re-read that spots the merge
 
@@ -128,7 +127,7 @@ Environment variables (`KOAN_*`) override file config. If a value isn't what you
 
 ### Secrets appearing in config.toml
 
-If sensitive values from `config.local.toml` or environment variables appear in `config.toml`, something called `save()` on a merged config instead of using `Config::update_base()`. This is a bug -- please report it.
+Every setting kōan writes goes through `Config::persist()`, which sends secrets and machine paths to `config.local.toml` and removes the key from `config.toml` when it does. A secret in `config.toml` was put there by hand or by an older kōan; move it to `config.local.toml`. If kōan writes one there itself, report it as a bug.
 
 ## Logs
 

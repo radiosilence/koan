@@ -1,6 +1,6 @@
 # Contributing to koan
 
-PRs welcome. Here's how to keep things smooth.
+PRs welcome.
 
 ## Before you start
 
@@ -79,7 +79,7 @@ a body prints what made it run.
 1. Fork the repo and create a feature branch.
 2. Run `cargo fmt --all` and `cargo clippy --workspace -- -D warnings` before pushing. Zero warnings policy — fix them all.
 3. Write tests for new features where practical.
-4. Keep commits focused. We squash-merge PRs, so don't stress about perfect history.
+4. Keep commits focused. PRs are squash-merged, so branch history does not need tidying.
 5. Describe what your PR does and why in the PR description.
 
 The build, test and lint jobs only run when a PR touches something that feeds
@@ -91,11 +91,11 @@ the PR out.
 
 ## Architecture
 
-Four crates: `koan-core` (library -- audio engine, player, database, indexer), `koan-tui` (TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), and `koan-cli` (binary -- CLI entry point). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
+Five crates: `koan-core` (library -- audio engine, player, database, indexer), `koan-tui` (TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for the macOS and iOS apps), and `koan-cli` (binary -- CLI entry point). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
 If you're touching the audio path: the render callback must never allocate or lock. Read the threading model docs before changing anything in `audio/`.
 
-If you're modifying config programmatically (e.g. a new CLI command that writes settings): use `Config::update_base()`, not `save()`. `update_base()` reads only `config.toml`, applies your change, and writes back — safe. Calling `save()` on a `Config::load()` result would leak secrets from `config.local.toml` and env vars into `config.toml`. Use `save_local()` for sensitive values like passwords.
+If you're modifying config programmatically (e.g. a new CLI command that writes settings): use `Config::persist()`. It applies your mutation, diffs it against the two files, and writes each changed key to the file `config::layer_of` assigns it, so secrets and machine paths land in `config.local.toml` and comments survive. A new machine-scoped key needs adding to `layer_of`.
 
 ## License
 

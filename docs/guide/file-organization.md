@@ -1,6 +1,6 @@
 # File Organization
 
-kōan can rename and reorganize your music library using fb2k-compatible format strings, from the TUI or the macOS app. No external tools needed.
+kōan can rename and reorganize your music library using fb2k-compatible format strings, from the TUI or the macOS app.
 
 ## In the macOS app
 
@@ -74,7 +74,7 @@ flat = "%artist% - %title%"
 Aphex Twin/(1999) Windowlicker EP/01. Windowlicker.flac
 ```
 
-**`va-aware`** -- handles compilations intelligently:
+**`va-aware`** -- handles compilations:
 - Normal album: `Aphex Twin/(1999) Windowlicker EP [FLAC]/01. Windowlicker.flac`
 - VA compilation: `Various Artists/Ministry of Sound [FLAC]/01. DJ Shadow - Building Steam.flac`
 
@@ -94,7 +94,7 @@ Patterns use fb2k-compatible syntax:
 - `$function()` -- transform functions ($if, $stricmp, $left, $num, etc.)
 - `/` -- directory separator
 
-See [Format Strings](../format-strings.md) for the complete syntax reference and all 55+ functions.
+See [Format Strings](../format-strings.md) for the complete syntax reference and all 59 functions.
 
 ## Safety
 

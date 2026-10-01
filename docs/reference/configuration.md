@@ -12,7 +12,7 @@ Defaults -> config.toml -> config.local.toml -> KOAN_* env vars
 | Defaults | (built-in) | Hardcoded sane defaults for every field |
 | `config.toml` | `~/.config/koan/config.toml` | Shared settings -- safe to commit to dotfiles |
 | `config.local.toml` | `~/.config/koan/config.local.toml` | This machine only, gitignored, `0600` |
-| Environment | `KOAN_*` vars | 12-factor overrides -- highest priority, ideal for CI/headless |
+| Environment | `KOAN_*` vars | Overrides for CI and headless deployments -- highest priority |
 
 Run `koan config` to see all layers and the fully resolved result (including which `KOAN_*` env vars are active).
 
@@ -33,9 +33,9 @@ Three kinds of setting are machine-scoped and always land in
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
 
-Writing a setting also clears any copy of it from the other file. That is not
-tidiness: `config.local.toml` wins the merge, so a shared write left shadowed by
-a local copy would silently do nothing. In the other direction it drains
+Writing a setting also clears any copy of it from the other file, because
+`config.local.toml` wins the merge: a shared write left shadowed by a local copy
+would silently do nothing. In the other direction it drains
 machine-scoped keys out of the file you commit, which is how a `config.toml`
 polluted by an older kōan cleans itself up as you use the app.
 
@@ -155,7 +155,7 @@ output_device = "My DAC"    # audio output device name (default: system default)
 
 ### ReplayGain
 
-ReplayGain normalizes volume levels across tracks so you don't reach for the volume knob between a whisper-quiet jazz track and a wall-of-sound metal album. kōan reads standard ReplayGain tags (embedded by tools like `loudgain`, `r128gain`, foobar2000) at decode time and applies gain with peak limiting to prevent clipping.
+ReplayGain normalizes loudness across tracks. kōan reads standard ReplayGain tags (embedded by tools like `loudgain`, `r128gain`, foobar2000) at decode time and applies gain with peak limiting to prevent clipping.
 
 | Mode | Description |
 |------|-------------|
@@ -171,7 +171,7 @@ With `fade_on_pause`, pause ramps the output down over 150ms before the audio un
 
 ### Render FPS
 
-`target_fps` controls how often the TUI redraws. 30, 60, or 120 are typical values. Higher values give smoother visualizer and seek bar updates but use more CPU. Most terminals cap at 60 anyway.
+`target_fps` controls how often the TUI redraws. 30, 60, or 120 are typical values. Higher values give smoother visualizer and seek bar updates but use more CPU.
 
 ### Album art size
 
@@ -287,7 +287,7 @@ matrix_overlay = false        # replace characters with matrix glyphs (default: 
 Also accepts `[visualiser]` spelling.
 
 `enabled`, `mode`, `bass_shake` and `matrix_overlay` have keybinds (`V`, `v`/`M`,
-`S`, `M`) and are written back the moment you press one, so they live in
+`S`, `X`) and are written back the moment you press one, so they live in
 `config.local.toml`. The rest are hand-edited taste and travel with `config.toml`.
 
 22 modes available: bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, terrain, moire, kaleidoscope, julia, spiral, interference, wormhole, matrix. Press `v` in the TUI to open the picker with live preview.
@@ -334,7 +334,7 @@ Named patterns used by the TUI organize modal. Format strings use fb2k syntax --
 
 The `va-aware` pattern handles compilations: if the album artist is "Various Artists", it includes the per-track artist in the filename and omits the redundant year prefix.
 
-Files are organized into the **first configured library folder** (from `[library] folders`). The format pattern generates the relative path within that folder.
+Files are organized into a configured library folder (from `[library] folders`): the first one from the TUI, and the one you pick in the macOS app when there are several. The format pattern generates the relative path within that folder.
 
 See [File Organization](../guide/file-organization.md) for a walkthrough.
 
@@ -424,7 +424,7 @@ notification extension can fetch it without a login.
 
 Apple accepts pushes only signed with the key of the team that ships the app,
 so only a server holding that key can send them. Without one, phones are
-reached only while linked, as before. Development builds of the app use
+reached only while linked. Development builds of the app use
 Apple's sandbox gateway and release builds the production one; the app says
 which with its token, and the key works for both.
 

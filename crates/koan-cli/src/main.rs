@@ -103,7 +103,7 @@ struct Cli {
     command: Option<Commands>,
 
     // --- Server flags (unified process) ---
-    /// Run headless (no TUI) — GraphQL API only
+    /// Run the server without the TUI
     #[arg(long)]
     headless: bool,
 
@@ -119,9 +119,9 @@ struct Cli {
     #[arg(long)]
     bind: Option<std::net::IpAddr>,
 
-    /// Also expose Subsonic REST on a dedicated port (e.g. --subsonic 4040).
-    /// Subsonic is always mounted on the GraphQL port when remote creds are configured;
-    /// this flag adds an additional listener for clients that expect a separate port.
+    /// Also serve the Subsonic API on a dedicated port (e.g. --subsonic 4040), for
+    /// clients that expect one. Once enabled (`koan subsonic setup`) it is always
+    /// on the API port as well.
     #[arg(long)]
     subsonic: Option<u16>,
 
@@ -356,7 +356,7 @@ enum AuthCommands {
     ApiKey(ApiKeyCommands),
     /// Regenerate Ed25519 keypair (invalidates all existing tokens)
     RegenerateKeys,
-    /// Delete all auth state (keys, users, tokens) — nuclear option
+    /// Delete all auth state: keys, users and tokens
     Reset,
 }
 
