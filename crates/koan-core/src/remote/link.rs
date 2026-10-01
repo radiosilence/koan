@@ -435,6 +435,11 @@ fn run(local: Local) {
         match connect(&auth, &local.identity) {
             Ok((mut socket, fd)) => {
                 log::info!("link: connected to {}", auth.base_url);
+                // The server is answering: downloads waiting out an outage
+                // against it need not wait for their backoff to find out.
+                if let Some(client) = crate::helpers::subsonic_client(&cfg) {
+                    client.outage().retry_now();
+                }
                 wait = RETRY_MIN;
                 if let Err(e) = serve(&mut socket, fd, &local) {
                     log::info!("link: closed: {e}");

@@ -93,6 +93,16 @@ fn next_item(q: &mut Queue, cursor: Option<(i64, QueueItemId)>) -> Option<(i64, 
     }
 }
 
+/// Someone asked for music: try the server now rather than when the outage
+/// backoff next says to. The backoff is for retries nobody is waiting on; a
+/// minute of it, earned while the phone was in a pocket with no signal, is not
+/// how long a tap on play should take.
+fn retry_server_now() {
+    if let Some(client) = crate::helpers::subsonic_client(&config::Config::cached()) {
+        client.outage().retry_now();
+    }
+}
+
 /// The track under the cursor, when it still has to be fetched.
 fn cursor_download(state: &SharedPlayerState) -> Option<(i64, QueueItemId)> {
     let id = state.cursor()?;
@@ -219,13 +229,18 @@ impl DownloadQueue {
             return;
         }
         ensure_workers(&self.inner);
+        retry_server_now();
         self.inner.queue.lock().pending.extend(items);
         self.inner.has_work.notify_all();
+        if let Some(cursor) = self.inner.state.cursor() {
+            promote_cursor(&self.inner, cursor);
+        }
     }
 
     /// Submit a single item for priority download (e.g. user clicked a Pending
     /// track). Also bumps same-album pending tracks for gapless playback.
     pub fn prioritize(&self, db_id: i64, queue_id: QueueItemId) {
+        retry_server_now();
         dispatch_priority(&self.inner, (db_id, queue_id));
 
         let album_mates = self.inner.state.same_album_item_ids(queue_id);
@@ -443,6 +458,10 @@ fn worker_loop(inner: Arc<Inner>, index: usize) {
 
 /// Cursor watcher: when the cursor moves to a pending track, hand it and the
 /// next track to the priority lane and bump same-album tracks to the front.
+///
+/// Also wakes the workers, which hold back while the cursor's track is being
+/// fetched: one that looked before the cursor moved is waiting on a track
+/// nobody wants any more.
 fn cursor_watcher(inner: Arc<Inner>) {
     let changed = crate::signal::engine_changed();
     let mut seen = changed.generation();
@@ -455,45 +474,56 @@ fn cursor_watcher(inner: Arc<Inner>) {
             continue;
         }
         last_cursor = current;
+        inner.has_work.notify_all();
 
-        let Some(cursor_id) = current else {
-            continue;
-        };
-
-        let is_pending = inner
-            .state
-            .item_load_state(cursor_id)
-            .is_some_and(|s| matches!(s, LoadState::Pending));
-        if !is_pending {
-            continue;
+        if let Some(cursor_id) = current {
+            promote_cursor(&inner, cursor_id);
         }
+    }
+}
 
-        let album_mate_ids: HashSet<QueueItemId> = inner
-            .state
-            .same_album_item_ids(cursor_id)
-            .into_iter()
-            .collect();
+/// Send the cursor's track, and the one after it, down the priority lane, if
+/// the cursor's track is waiting in the queue.
+///
+/// Called when the cursor moves and when tracks are queued, because either can
+/// happen first: playing an album sends the new queue to the player and queues
+/// its downloads at once, and the player may set the cursor before or after.
+/// Waiting for the cursor alone missed the first play after launch, when the
+/// queue (and this watcher) did not exist until those downloads made it.
+fn promote_cursor(inner: &Arc<Inner>, cursor_id: QueueItemId) {
+    let is_pending = inner
+        .state
+        .item_load_state(cursor_id)
+        .is_some_and(|s| matches!(s, LoadState::Pending));
+    if !is_pending {
+        return;
+    }
 
-        let mut priority_items = Vec::new();
-        {
-            let mut q = inner.queue.lock();
-            if let Some(pos) = q.pending.iter().position(|(_, qid)| *qid == cursor_id) {
-                priority_items.push(q.pending.remove(pos).expect("position just found"));
+    let album_mate_ids: HashSet<QueueItemId> = inner
+        .state
+        .same_album_item_ids(cursor_id)
+        .into_iter()
+        .collect();
 
-                if !album_mate_ids.is_empty() {
-                    bump_to_front(&mut q.pending, &album_mate_ids);
-                }
+    let mut priority_items = Vec::new();
+    {
+        let mut q = inner.queue.lock();
+        if let Some(pos) = q.pending.iter().position(|(_, qid)| *qid == cursor_id) {
+            priority_items.push(q.pending.remove(pos).expect("position just found"));
 
-                // Grab the next track too, for gapless lookahead.
-                if let Some(next) = q.pending.pop_front() {
-                    priority_items.push(next);
-                }
+            if !album_mate_ids.is_empty() {
+                bump_to_front(&mut q.pending, &album_mate_ids);
+            }
+
+            // Grab the next track too, for gapless lookahead.
+            if let Some(next) = q.pending.pop_front() {
+                priority_items.push(next);
             }
         }
+    }
 
-        for item in priority_items {
-            dispatch_priority(&inner, item);
-        }
+    for item in priority_items {
+        dispatch_priority(inner, item);
     }
 }
 
@@ -698,5 +728,54 @@ mod tests {
         let mut q = Queue::default();
         q.pending.push_back((1, a));
         assert_eq!(next_item(&mut q, Some((9, elsewhere))), Some((1, a)));
+    }
+
+    #[test]
+    fn a_cursor_set_before_its_tracks_were_queued_still_goes_first() {
+        crate::config::isolate_config_for_tests();
+        let item = |title: &str, db_id: i64| crate::player::state::PlaylistItem {
+            playlist_entry_id: None,
+            id: qid(),
+            db_id: Some(db_id),
+            path: std::path::PathBuf::from(format!("/cache/{title}.flac")),
+            title: title.into(),
+            artist: "Artist".into(),
+            album_artist: "Artist".into(),
+            album: "Album".into(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            state: crate::player::state::ItemState::Pending,
+        };
+        let items = vec![item("one", 1), item("two", 2), item("three", 3)];
+        let ids: Vec<_> = items.iter().map(|i| (i.db_id.unwrap(), i.id)).collect();
+
+        // The player has the new queue and its cursor before the download
+        // queue hears of any of it — the first play after launch.
+        let state = SharedPlayerState::new();
+        state.add_items(items);
+        state.set_cursor(Some(ids[0].1));
+
+        let (cmd_tx, _cmd_rx) = crossbeam_channel::unbounded();
+        let inner = Arc::new(Inner {
+            queue: Mutex::new(Queue::default()),
+            has_work: Condvar::new(),
+            state,
+            cmd_tx,
+            log_buf: Arc::new(StdMutex::new(Vec::new())),
+            last_evicted: Mutex::new(None),
+            spawned: std::sync::atomic::AtomicUsize::new(0),
+        });
+        inner.queue.lock().pending.extend(ids.iter().copied());
+        promote_cursor(&inner, ids[0].1);
+
+        let left: Vec<_> = inner.queue.lock().pending.iter().copied().collect();
+        assert_eq!(
+            left,
+            vec![ids[2]],
+            "the cursor's track and the next went to the priority lane"
+        );
     }
 }
