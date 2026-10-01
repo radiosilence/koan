@@ -1,9 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.47.0
 
 ### Changed
 
+- **Fuzzy search reads the library once per change, not once per keystroke.** The command palette, the GraphQL `fuzzySearch` and the TUI pickers read every track, sorted on a collation implemented in Rust, on each search; the sort was discarded by the matcher. The match text is now read unsorted and kept until the library changes. The TUI picker loads off the render thread.
+- **Queueing tracks reads them in one query.** Each track added to the queue cost three queries, and through GraphQL a configuration file read and parse as well; a batch now costs one query and one configuration read whatever its size.
+- **Radio tops up with a fraction of the queries.** The queue's rows are read in one query, configuration is reread once a minute rather than every two seconds, and a top-up that found nothing waits for the queue to change, or a minute, before trying again.
+- **A server process has one connection pool.** GraphQL and MCP kept their own pools beside the one Subsonic and the web UI use, each connection with its own page cache. GraphQL still holds at most one connection per core at a time.
+- **GraphQL `lyrics`, `coverArt` and `similarTracks` hold no connection during network, file or ranking work**, so a slow LRCLIB answer cannot keep connections from other requests. `artists(ids:)` and `albums(ids:)` read only those rows.
+- **Fewer queries on common Subsonic requests.** `search3` reads its albums in one query, `getSimilarSongs2` in one bounded query, `getAlbum` derives genres and totals from the tracks it already read, `getPlaylist` reads the playlist once, `getScanStatus` counts only tracks, `getArtists` and `getIndexes` no longer count every track, `getIndexes` rereads `lastModified` only when the library changes or every five minutes, and an artist's cover art reads its albums' tracks in one query. `getSimilarSongs2` lists a track shared by two similar artists once.
 - **Opening the database no longer takes the write lock.** Every open ran the schema DDL and a dozen repair sweeps, each an `UPDATE` or `DELETE` that waits for the lock whether or not it changes a row, so the folder watcher, auto-sync, cache eviction, radio and the server's post-scan work could each stall up to 30 seconds behind a scan or sync. The DDL and sweeps now run only when the schema version moves; `PRAGMA optimize` on open is skipped while another connection is writing. The schema version is now 9: existing databases run the sweeps once more on upgrade, and builds before this one refuse the upgraded database.
 - **A resync of an unchanged library writes nothing.** Every synced track rewrote its row, its ten index entries, its search-index entry and its album, about 220 MB of WAL for a 51,000-track library; an unchanged track is now compared and left alone, which also makes the resync about seven times faster. A track new from a koan server is inserted with the server's uid instead of being given one and then having it replaced.
 - **The playing position is saved without rewriting the queue.** It shared a row with the saved queue, which SQLite rewrites whenever the row changes size, as it does on every track change and when the position passes 32.8 seconds. It now has a table of its own. The queue itself is rewritten only when its contents change, not on every track change or finished download.
@@ -11,6 +17,15 @@
 - **Multi-row edits are single transactions**: playlist edits (including Subsonic `createPlaylist` and `updatePlaylist`), favourite imports, the offline queue for linked devices, and `scrobble` batches. Readers no longer see a half-applied edit, and a scrobble batch naming a track that does not exist records none of its plays, so a retry does not duplicate them.
 - **Clearing all downloads rewrites only the tracks that had one**, rather than every row in the library.
 - **Indexes for the genre list and filter, and for deleting or merging artists and tracks** (similar artists, organize history, shares, favourites by path, a track's last play).
+
+### Fixed
+
+- **Favourites streamed and never downloaded count in every listing.** A track that has never been downloaded is favourited by its stream URL, and the favourite album and artist filters, and the GraphQL `favourites` and `tracks(favouritesOnly)` listings, compared only file and download paths. On a library synced from a server most favourites were missing from them.
+- **Radio's same-artist and genre picks are by that artist and in that genre.** Both were drawn from a random sample of the whole library and only ranked by the preference, so on a large library they were almost always neither. They are now drawn from the artist's or the genre's tracks, and with no play history the seed's genres are those of the artists in the queue rather than of random tracks.
+- **Radio no longer queues a track already in the queue that has not been downloaded.** Queued tracks were excluded by file path, which a streamed track does not have; they are now excluded by id.
+- **Subsonic's `played` dates are the caller's own.** Songs and albums reported the last play by any account, so one account could see when another last listened to something.
+- **Recently played tracks are ordered by their latest play.** Radio's seed took a track's position from an arbitrary one of its plays.
+- **Lists longer than 32,766 ids work.** A queue, playlist or selection past SQLite's parameter limit came back empty, published without album ids, or gave radio nothing to pick from. Id lists are now bound as a single JSON array.
 
 ## 0.46.3
 

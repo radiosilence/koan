@@ -66,6 +66,14 @@ pub fn atomically<T, E: From<rusqlite::Error>>(
     result
 }
 
+/// A list as one JSON array, for `IN (SELECT value FROM json_each(?))`.
+///
+/// One placeholder per item stops at SQLite's limit of 32,766 parameters, and
+/// a queue or a playlist may be longer than that. One parameter is not limited.
+pub fn json_list<T: serde::Serialize>(items: &[T]) -> String {
+    serde_json::to_string(items).unwrap_or_else(|_| "[]".into())
+}
+
 /// The half-open range of paths under a folder, for `path >= .0 AND path < .1`.
 ///
 /// A prefix match on an indexed column, rather than `LIKE 'folder/%'` — which

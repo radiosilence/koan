@@ -65,30 +65,46 @@ pub fn find_similar_to_vector(
     k: usize,
     exclude_track_id: Option<i64>,
 ) -> Result<Vec<(i64, f32)>, DbError> {
-    let mut stmt = conn.prepare("SELECT track_id, embedding FROM track_vectors")?;
-    let rows = stmt.query_map([], |row| {
-        let tid: i64 = row.get(0)?;
-        let bytes: Vec<u8> = row.get(1)?;
-        Ok((tid, bytes))
-    })?;
+    let mut stmt = conn.prepare_cached("SELECT track_id, embedding FROM track_vectors")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(nearest(target, &rows, k, exclude_track_id))
+}
 
-    let mut distances: Vec<(i64, f32)> = Vec::new();
-    for row in rows {
-        let (tid, bytes) = row?;
-        if exclude_track_id == Some(tid) {
-            continue;
-        }
-        if let Some(emb) = bytes_to_embedding(&bytes)
-            && emb.len() == target.len()
-        {
-            let dist = euclidean_distance(target, &emb);
-            distances.push((tid, dist));
-        }
-    }
+/// Every stored embedding as it is stored, for [`nearest`].
+///
+/// For a caller holding its connection from a bounded pool, which reads these,
+/// gives the connection back, and ranks them without it.
+pub fn vector_rows(conn: &Connection) -> Result<Vec<(i64, Vec<u8>)>, DbError> {
+    let mut stmt = conn.prepare_cached("SELECT track_id, embedding FROM track_vectors")?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
 
+/// The `k` of `rows` nearest `target`, nearest first, leaving out
+/// `exclude_track_id`.
+pub fn nearest(
+    target: &[f32],
+    rows: &[(i64, Vec<u8>)],
+    k: usize,
+    exclude_track_id: Option<i64>,
+) -> Vec<(i64, f32)> {
+    let mut distances: Vec<(i64, f32)> = rows
+        .iter()
+        .filter(|(tid, _)| exclude_track_id != Some(*tid))
+        .filter_map(|(tid, bytes)| {
+            let emb = bytes_to_embedding(bytes)?;
+            (emb.len() == target.len()).then(|| (*tid, euclidean_distance(target, &emb)))
+        })
+        .collect();
     distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     distances.truncate(k);
-    Ok(distances)
+    distances
 }
 
 /// Get all track IDs that are missing acoustic embeddings.

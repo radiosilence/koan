@@ -14,6 +14,33 @@ use super::jobs::JobRegistry;
 use super::types::*;
 use super::{blocking, with_db};
 
+/// What `fuzzySearch` matches against, kept between requests.
+///
+/// The server's library is written by scans, syncs and other processes, none
+/// of which it can count, so a corpus is kept for as long as the library's
+/// fingerprint holds and five minutes at most: a row added or removed is seen
+/// at once, one edited in place within five minutes.
+#[derive(Default)]
+pub(super) struct Fuzzy(queries::CorpusCache);
+
+impl Fuzzy {
+    const MAX_AGE_SECS: u64 = 300;
+
+    fn corpus(
+        &self,
+        conn: &rusqlite::Connection,
+        kind: queries::CorpusKind,
+    ) -> Result<queries::Corpus, koan_core::db::connection::DbError> {
+        let window = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            / Self::MAX_AGE_SECS;
+        let version = queries::library_fingerprint(conn)? ^ window;
+        self.0.get(conn, kind, version)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Query root
 // ---------------------------------------------------------------------------
@@ -35,22 +62,19 @@ impl QueryRoot {
         #[graphql(default_with = "ArtistSortField::Name")] sort_by: ArtistSortField,
         #[graphql(default_with = "SortDirection::Asc")] sort_dir: SortDirection,
     ) -> async_graphql::Result<Conn<GqlArtist>> {
-        let ids: Option<std::collections::HashSet<i64>> =
-            super::opt_row_ids(ctx, UidKind::Artist, ids.as_deref())
-                .await?
-                .map(|ids| ids.into_iter().collect());
+        let ids = super::opt_row_ids(ctx, UidKind::Artist, ids.as_deref()).await?;
         let user = super::user_id(ctx);
         let rows = with_db(ctx, move |db| {
-            let mut artists = if let Some(ref query) = search {
-                queries::find_artists(&db.conn, query)
-                    .map_err(|e| super::internal_error("db", e))?
-            } else {
-                queries::all_artists(&db.conn).map_err(|e| super::internal_error("db", e))?
-            };
-
-            if let Some(ref id_list) = ids {
-                artists.retain(|a| id_list.contains(&a.id));
-            }
+            // Only the named artists are read, when they are named.
+            let mut artists = queries::list_artists(
+                &db.conn,
+                &queries::ArtistQuery {
+                    ids: ids.as_deref(),
+                    search: search.as_deref(),
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| super::internal_error("db", e))?;
 
             if let Some(ref g) = genre {
                 let g_lower = g.to_lowercase();
@@ -122,15 +146,24 @@ impl QueryRoot {
         #[graphql(default_with = "AlbumSortField::ArtistThenDate")] sort_by: AlbumSortField,
         #[graphql(default_with = "SortDirection::Asc")] sort_dir: SortDirection,
     ) -> async_graphql::Result<Conn<GqlAlbum>> {
-        let ids: Option<std::collections::HashSet<i64>> =
-            super::opt_row_ids(ctx, UidKind::Album, ids.as_deref())
-                .await?
-                .map(|ids| ids.into_iter().collect());
+        let ids = super::opt_row_ids(ctx, UidKind::Album, ids.as_deref()).await?;
         let artist_id = super::opt_row_id(ctx, UidKind::Artist, artist_id.as_ref()).await?;
         let artist_ids = super::opt_row_ids(ctx, UidKind::Artist, artist_ids.as_deref()).await?;
         let user = super::user_id(ctx);
         let rows = with_db(ctx, move |db| {
-            let mut albums = if let Some(aid) = artist_id {
+            let mut albums = if ids.is_some() && artist_ids.is_none() {
+                // Only the named albums are read, when they are named.
+                queries::list_albums(
+                    &db.conn,
+                    &queries::AlbumQuery {
+                        ids: ids.as_deref(),
+                        artist_id,
+                        search: search.as_deref(),
+                        ..Default::default()
+                    },
+                )
+                .map_err(|e| super::internal_error("db", e))?
+            } else if let Some(aid) = artist_id {
                 queries::albums_for_artist(&db.conn, aid)
                     .map_err(|e| super::internal_error("db", e))?
             } else if let Some(ref aids) = artist_ids {
@@ -618,31 +651,18 @@ impl QueryRoot {
         #[graphql(default = 50)] limit: i32,
     ) -> async_graphql::Result<Vec<GqlFuzzyMatch>> {
         let limit = limit.clamp(0, MAX_PAGE as i32) as usize;
+        let fuzzy = ctx.data::<Arc<Fuzzy>>()?.clone();
         // Read, then hand the connection back before matching: the match
         // runs over the whole library and needs no database.
-        let items: Vec<(i64, String)> = with_db(ctx, move |db| {
-            Ok(match kind {
-                FuzzySearchKind::Track => queries::all_tracks(&db.conn)
-                    .map_err(|e| super::internal_error("db", e))?
-                    .into_iter()
-                    .map(|t| {
-                        (
-                            t.id,
-                            format!("{} — {} — {}", t.artist_name, t.album_title, t.title),
-                        )
-                    })
-                    .collect(),
-                FuzzySearchKind::Album => queries::all_albums(&db.conn)
-                    .map_err(|e| super::internal_error("db", e))?
-                    .into_iter()
-                    .map(|a| (a.id, format!("{} — {}", a.artist_name, a.title)))
-                    .collect(),
-                FuzzySearchKind::Artist => queries::all_artists(&db.conn)
-                    .map_err(|e| super::internal_error("db", e))?
-                    .into_iter()
-                    .map(|a| (a.id, a.name))
-                    .collect(),
-            })
+        let items = with_db(ctx, move |db| {
+            let kind = match kind {
+                FuzzySearchKind::Track => queries::CorpusKind::Track,
+                FuzzySearchKind::Album => queries::CorpusKind::Album,
+                FuzzySearchKind::Artist => queries::CorpusKind::Artist,
+            };
+            fuzzy
+                .corpus(&db.conn, kind)
+                .map_err(|e| super::internal_error("db", e))
         })
         .await?;
         super::blocking(move || {
@@ -663,7 +683,7 @@ impl QueryRoot {
                         .map(|score| (score, i))
                 })
                 .collect();
-            // Best first; ties to the shorter text, then library order, as
+            // Best first; ties to the shorter text, then corpus order, as
             // nucleo ranks them.
             scored.sort_by_key(|&(score, i)| (std::cmp::Reverse(score), items[i].1.len(), i));
             Ok(scored
@@ -686,30 +706,46 @@ impl QueryRoot {
         ctx: &Context<'_>,
         track_id: async_graphql::ID,
     ) -> async_graphql::Result<Option<GqlLyrics>> {
+        use koan_core::lyrics::{self, CacheLookup};
+
         let track_id = super::row_id(ctx, UidKind::Track, &track_id).await?;
-        with_db(ctx, move |db| {
+        let (track, lookup) = with_db(ctx, move |db| {
             let track = queries::get_track_row(&db.conn, track_id)
                 .map_err(|e| super::internal_error("db", e))?
                 .ok_or_else(|| {
                     async_graphql::Error::new(format!("track {} not found", track_id))
                 })?;
+            Ok((track, lyrics::look_up_cached(&db.conn, track_id)))
+        })
+        .await?;
+        let found = |lyrics: lyrics::Lyrics| {
+            Some(GqlLyrics {
+                content: lyrics.content,
+                synced: lyrics.synced,
+                source: format!("{:?}", lyrics.source),
+            })
+        };
+        let cached = match lookup {
+            Ok(CacheLookup::Fresh(lyrics)) => return Ok(found(lyrics)),
+            Ok(CacheLookup::Stale(cached)) => cached,
+            Err(_) => return Ok(None),
+        };
+        // LRCLIB without a connection held: a slow answer would otherwise keep
+        // one from every other resolver for as long as it took.
+        let fetched = blocking(move || {
             let duration_secs = track.duration_ms.map(|d| d as u64 / 1000).unwrap_or(0);
-            // Falls through to a blocking LRCLIB fetch when nothing is cached.
-            match koan_core::lyrics::fetch_lyrics(
-                &db.conn,
-                track_id,
+            Ok(lyrics::fetch_from_lrclib(
                 &track.artist_name,
                 &track.title,
                 &track.album_title,
                 duration_secs,
-            ) {
-                Ok(lyrics) => Ok(Some(GqlLyrics {
-                    content: lyrics.content,
-                    synced: lyrics.synced,
-                    source: format!("{:?}", lyrics.source),
-                })),
-                Err(_) => Ok(None),
-            }
+            ))
+        })
+        .await?;
+        with_db(ctx, move |db| {
+            Ok(lyrics::settle(&db.conn, track_id, fetched, cached)
+                .ok()
+                .and_then(found))
         })
         .await
     }
@@ -722,9 +758,25 @@ impl QueryRoot {
     ) -> async_graphql::Result<Vec<GqlSimilarTrack>> {
         let track_id = super::row_id(ctx, UidKind::Track, &track_id).await?;
         let limit = limit.clamp(0, MAX_PAGE as i32) as usize;
-        with_db(ctx, move |db| {
-            let results = queries::find_similar(&db.conn, track_id, limit)
+        let (target, rows) = with_db(ctx, move |db| {
+            let target = queries::get_vector(&db.conn, track_id)
                 .map_err(|e| super::internal_error("db", e))?;
+            let rows = match target {
+                Some(_) => {
+                    queries::vector_rows(&db.conn).map_err(|e| super::internal_error("db", e))?
+                }
+                None => Vec::new(),
+            };
+            Ok((target, rows))
+        })
+        .await?;
+        let Some(target) = target else {
+            return Ok(Vec::new());
+        };
+        // Ranked with the connection given back.
+        let results =
+            blocking(move || Ok(queries::nearest(&target, &rows, limit, Some(track_id)))).await?;
+        with_db(ctx, move |db| {
             let by_id = tracks_by_id(db, results.iter().map(|(tid, _)| *tid).collect())?;
 
             Ok(results
@@ -746,24 +798,23 @@ impl QueryRoot {
         track_id: async_graphql::ID,
     ) -> async_graphql::Result<Option<GqlCoverArt>> {
         let track_id = super::row_id(ctx, UidKind::Track, &track_id).await?;
-        with_db(ctx, move |db| {
-            use base64::Engine;
-
+        let path = with_db(ctx, move |db| {
             let track = queries::get_track_row(&db.conn, track_id)
                 .map_err(|e| super::internal_error("db", e))?
                 .ok_or_else(|| {
                     async_graphql::Error::new(format!("track {} not found", track_id))
                 })?;
-            let path = track
+            track
                 .path
-                .as_ref()
-                .or(track.cached_path.as_ref())
-                .ok_or_else(|| {
-                    async_graphql::Error::new(format!("track {} has no path", track_id))
-                })?;
+                .or(track.cached_path)
+                .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))
+        })
+        .await?;
+        // Reads and parses the whole media file, so not with a connection held.
+        blocking(move || {
+            use base64::Engine;
 
-            // Reads and parses the whole media file.
-            match koan_core::index::metadata::extract_cover_art(std::path::Path::new(path)) {
+            match koan_core::index::metadata::extract_cover_art(std::path::Path::new(&path)) {
                 Some(data) => {
                     let mime = if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
                         "image/png"

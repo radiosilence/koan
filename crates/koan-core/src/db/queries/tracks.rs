@@ -1290,6 +1290,51 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
     Ok(rows)
 }
 
+/// Up to `limit` tracks by the given artists, theirs or on their albums: the
+/// first artist's discography, then the next one's. A track two of them share
+/// comes once, with the earlier.
+///
+/// One query, cut at `limit`, rather than every discography in full for the
+/// sake of the first few.
+pub fn tracks_for_artists_in_order(
+    conn: &Connection,
+    artist_ids: &[i64],
+    limit: usize,
+) -> Result<Vec<TrackRow>, DbError> {
+    if artist_ids.is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare_cached(
+        "WITH s AS (SELECT key AS rank, value AS artist_id FROM json_each(?1)),
+              hits AS (
+                  SELECT t.id, s.rank FROM s JOIN tracks t ON t.artist_id = s.artist_id
+                  UNION ALL
+                  SELECT t.id, s.rank FROM s
+                  JOIN albums x ON x.artist_id = s.artist_id
+                  JOIN tracks t ON t.album_id = x.id
+              ),
+              best AS (SELECT id, MIN(rank) AS rank FROM hits GROUP BY id)
+         SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM best b
+         JOIN tracks t ON t.id = b.id
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         ORDER BY b.rank, al.date, al.title COLLATE LIBRARY, t.disc, t.track_number
+         LIMIT ?2",
+    )?;
+    let rows = stmt
+        .query_map(
+            params![super::json_list(artist_ids), limit as i64],
+            row_to_track_row,
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Load all tracks that have a local path into a HashMap keyed by path.
 /// Used by the playlist builder to skip expensive lofty reads for known files.
 ///
@@ -1425,6 +1470,8 @@ pub struct RandomFilter<'a> {
     /// dated album are left out when either is set.
     pub year_from: Option<i32>,
     pub year_to: Option<i32>,
+    /// Track ids never drawn.
+    pub exclude: &'a [i64],
 }
 
 /// `count` random tracks matching `filter`.
@@ -1458,6 +1505,10 @@ pub fn random_tracks_where(
     if let Some(to) = filter.year_to {
         wheres.push(format!("{year} <= ?"));
         params.push(Box::new(to));
+    }
+    if !filter.exclude.is_empty() {
+        wheres.push("r.id NOT IN (SELECT value FROM json_each(?))".into());
+        params.push(Box::new(super::json_list(filter.exclude)));
     }
     params.push(Box::new(count));
     let draw = if wheres.is_empty() {
@@ -1514,10 +1565,7 @@ pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<TrackRow>, Db
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders = std::iter::repeat_n("?", ids.len())
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
+    let mut stmt = conn.prepare_cached(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
@@ -1526,12 +1574,10 @@ pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<TrackRow>, Db
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
-         WHERE t.id IN ({placeholders})"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let params = rusqlite::params_from_iter(ids.iter());
+         WHERE t.id IN (SELECT value FROM json_each(?1))",
+    )?;
     let rows = stmt
-        .query_map(params, row_to_track_row)?
+        .query_map([super::json_list(ids)], row_to_track_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
     // SQL returns them in whatever order it likes; callers care about the order
@@ -1598,12 +1644,11 @@ pub fn cached_paths_for(conn: &Connection, track_ids: &[i64]) -> Result<Vec<Stri
     if track_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders = vec!["?"; track_ids.len()].join(",");
-    let sql = format!(
-        "SELECT cached_path FROM tracks WHERE id IN ({placeholders}) AND cached_path IS NOT NULL"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(track_ids), |row| row.get(0))?;
+    let mut stmt = conn.prepare_cached(
+        "SELECT cached_path FROM tracks
+         WHERE id IN (SELECT value FROM json_each(?1)) AND cached_path IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([super::json_list(track_ids)], |row| row.get(0))?;
     Ok(rows.filter_map(Result::ok).collect())
 }
 
@@ -1613,13 +1658,10 @@ pub fn clear_cached_paths_for(conn: &Connection, track_ids: &[i64]) -> Result<()
     if track_ids.is_empty() {
         return Ok(());
     }
-    let placeholders = vec!["?"; track_ids.len()].join(",");
     conn.execute(
-        &format!(
-            "UPDATE tracks SET cached_path = NULL, cache_size_bytes = NULL, \
-             cache_download_date = NULL WHERE id IN ({placeholders})"
-        ),
-        rusqlite::params_from_iter(track_ids),
+        "UPDATE tracks SET cached_path = NULL, cache_size_bytes = NULL, cache_download_date = NULL
+         WHERE id IN (SELECT value FROM json_each(?1))",
+        [super::json_list(track_ids)],
     )?;
     Ok(())
 }
@@ -1765,41 +1807,71 @@ pub fn resolve_playback_path(
     track_id: i64,
 ) -> Result<Option<PlaybackSource>, DbError> {
     let row = conn
-        .prepare_cached("SELECT path, cached_path, remote_url, source FROM tracks WHERE id = ?1")?
+        .prepare_cached("SELECT path, cached_path, remote_url FROM tracks WHERE id = ?1")?
         .query_row(params![track_id], |row| {
             Ok((
                 row.get::<_, Option<String>>(0)?,
                 row.get::<_, Option<String>>(1)?,
                 row.get::<_, Option<String>>(2)?,
-                row.get::<_, String>(3)?,
             ))
-        });
+        })
+        .optional()?;
+    Ok(row.and_then(|(path, cached_path, remote_url)| {
+        choose_playback_source(
+            path.as_deref(),
+            cached_path.as_deref(),
+            remote_url.as_deref(),
+        )
+    }))
+}
 
-    match row {
-        Ok((path, cached_path, remote_url, _source)) => {
-            // Local file always wins.
-            if let Some(p) = path {
-                let pb = PathBuf::from(&p);
-                if pb.exists() {
-                    return Ok(Some(PlaybackSource::Local(pb)));
-                }
-            }
-            // Cached download.
-            if let Some(cp) = cached_path {
-                let pb = PathBuf::from(&cp);
-                if pb.exists() {
-                    return Ok(Some(PlaybackSource::Cached(pb)));
-                }
-            }
-            // Remote stream.
-            if let Some(url) = remote_url {
-                return Ok(Some(PlaybackSource::Remote(url)));
-            }
-            Ok(None)
-        }
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
+/// The first of a track's copies that is there: its file, then its download,
+/// then its stream.
+pub fn choose_playback_source(
+    path: Option<&str>,
+    cached_path: Option<&str>,
+    remote_url: Option<&str>,
+) -> Option<PlaybackSource> {
+    if let Some(p) = path.map(PathBuf::from).filter(|p| p.exists()) {
+        return Some(PlaybackSource::Local(p));
     }
+    if let Some(p) = cached_path.map(PathBuf::from).filter(|p| p.exists()) {
+        return Some(PlaybackSource::Cached(p));
+    }
+    remote_url.map(|url| PlaybackSource::Remote(url.to_owned()))
+}
+
+/// What a queue item needs that a `TrackRow` does not carry.
+#[derive(Debug, Clone, Default)]
+pub struct QueueItemExtras {
+    pub remote_url: Option<String>,
+    pub album_date: Option<String>,
+}
+
+/// [`QueueItemExtras`] for many tracks, in one query, keyed by track id.
+pub fn queue_item_extras(
+    conn: &Connection,
+    track_ids: &[i64],
+) -> Result<HashMap<i64, QueueItemExtras>, DbError> {
+    if track_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut stmt = conn.prepare_cached(
+        "SELECT t.id, t.remote_url, al.date FROM tracks t
+         LEFT JOIN albums al ON al.id = t.album_id
+         WHERE t.id IN (SELECT value FROM json_each(?1))",
+    )?;
+    let rows = stmt.query_map([super::json_list(track_ids)], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            QueueItemExtras {
+                remote_url: row.get(1)?,
+                album_date: row.get(2)?,
+            },
+        ))
+    })?;
+    rows.collect::<Result<HashMap<_, _>, _>>()
+        .map_err(Into::into)
 }
 
 /// One page of every track, in id order.
@@ -1880,20 +1952,6 @@ pub fn cover_track_for_album(
     rows.next().transpose().map_err(Into::into)
 }
 
-/// Build a SQL `IN (?, ?, ...)` clause with the given number of placeholders.
-fn in_clause(n: usize) -> String {
-    let mut s = String::with_capacity(2 + n * 2);
-    s.push('(');
-    for i in 0..n {
-        if i > 0 {
-            s.push(',');
-        }
-        s.push('?');
-    }
-    s.push(')');
-    s
-}
-
 /// Get distinct genres for a batch of artist IDs in a single query.
 /// Returns a map from artist_id → set of lowercased genre strings.
 pub fn genres_by_artist_ids(
@@ -1903,24 +1961,15 @@ pub fn genres_by_artist_ids(
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let sql = format!(
+    let mut stmt = conn.prepare_cached(
         "SELECT t.artist_id, t.genre FROM tracks t
-         WHERE t.artist_id IN {} AND t.genre IS NOT NULL
+         WHERE t.artist_id IN (SELECT value FROM json_each(?1)) AND t.genre IS NOT NULL
          UNION
          SELECT al.artist_id, t.genre FROM tracks t
          JOIN albums al ON t.album_id = al.id
-         WHERE al.artist_id IN {} AND t.genre IS NOT NULL",
-        in_clause(ids.len()),
-        in_clause(ids.len()),
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<Box<dyn rusqlite::types::ToSql>> = ids
-        .iter()
-        .chain(ids.iter())
-        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
-        .collect();
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt.query_map(param_refs.as_slice(), |row| {
+         WHERE al.artist_id IN (SELECT value FROM json_each(?1)) AND t.genre IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([super::json_list(ids)], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
     })?;
     let mut map: HashMap<i64, HashSet<String>> = HashMap::new();
@@ -1942,18 +1991,11 @@ pub fn genres_by_album_ids(
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let sql = format!(
+    let mut stmt = conn.prepare_cached(
         "SELECT t.album_id, t.genre FROM tracks t
-         WHERE t.album_id IN {} AND t.genre IS NOT NULL",
-        in_clause(ids.len()),
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<Box<dyn rusqlite::types::ToSql>> = ids
-        .iter()
-        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
-        .collect();
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt.query_map(param_refs.as_slice(), |row| {
+         WHERE t.album_id IN (SELECT value FROM json_each(?1)) AND t.genre IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([super::json_list(ids)], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
     })?;
     let mut map: HashMap<i64, HashSet<String>> = HashMap::new();
@@ -1966,13 +2008,31 @@ pub fn genres_by_album_ids(
     Ok(map)
 }
 
+/// The ids of a user's favourited tracks, as a subquery binding the user as
+/// `user`.
+///
+/// Favourites are keyed by path, and a track is reached by any of three: its
+/// file, its download, or its stream URL. Three indexed lookups rather than one
+/// join with an `OR` across the three columns: SQLite cannot use an index for
+/// that `OR`, so it read every track in the library and probed favourites for
+/// each — fifty milliseconds to find a hundred rows.
+pub(crate) fn favourite_track_ids_sql(user: &str) -> String {
+    format!(
+        "SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites WHERE user_id = {user})
+         UNION
+         SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites WHERE user_id = {user})
+         UNION
+         SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites WHERE user_id = {user})"
+    )
+}
+
 /// Get all artist IDs that have at least one favourited track, in a single query.
 pub fn favourite_artist_ids_batch(conn: &Connection, user: i64) -> Result<HashSet<i64>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT t.artist_id FROM tracks t
-         JOIN favourites f ON (t.path = f.track_path OR t.cached_path = f.track_path)
-         WHERE t.artist_id IS NOT NULL AND f.user_id = ?1",
-    )?;
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT DISTINCT artist_id FROM tracks
+         WHERE artist_id IS NOT NULL AND id IN ({})",
+        favourite_track_ids_sql("?1")
+    ))?;
     let rows = stmt.query_map([super::auth::resolve_user(conn, user)?], |row| {
         row.get::<_, i64>(0)
     })?;
@@ -2008,18 +2068,7 @@ pub fn track_favourite_key(conn: &Connection, track_id: i64) -> Result<Option<St
 /// included — a remote track that has never been cached is favourited by its
 /// remote URL, and comparing only local paths misses every one of them.
 pub fn favourite_track_ids_batch(conn: &Connection, user: i64) -> Result<HashSet<i64>, DbError> {
-    // Three indexed lookups rather than one join with an OR across three
-    // columns. SQLite cannot use an index for that OR, so it read every track
-    // in the library and probed favourites for each — fifty milliseconds to
-    // find a hundred rows, paid by every listing that shows a star. As a union
-    // each branch searches its own index instead.
-    let mut stmt = conn.prepare(
-        "SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites WHERE user_id = ?1)
-         UNION
-         SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites WHERE user_id = ?1)
-         UNION
-         SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites WHERE user_id = ?1)",
-    )?;
+    let mut stmt = conn.prepare_cached(&favourite_track_ids_sql("?1"))?;
     let rows = stmt.query_map([super::auth::resolve_user(conn, user)?], |row| {
         row.get::<_, i64>(0)
     })?;
@@ -2036,16 +2085,13 @@ pub fn favourite_track_ids_batch(conn: &Connection, user: i64) -> Result<HashSet
 /// One query rather than a favourite id list the caller resolves row by row —
 /// which is what the id set is for, and it is not for this.
 ///
-/// Matched through the same union of three indexed lookups as
-/// [`favourite_track_ids_batch`], for the same reason: joining `favourites` on
-/// an `OR` across the three path columns cannot use an index, and read the
-/// whole library to find a hundred rows.
+/// Matched through [`favourite_track_ids_sql`].
 pub fn favourite_tracks(
     conn: &Connection,
     user: i64,
     search: Option<&str>,
 ) -> Result<Vec<TrackRow>, DbError> {
-    let mut sql = String::from(
+    let mut sql = format!(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
@@ -2054,12 +2100,8 @@ pub fn favourite_tracks(
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
-         WHERE t.id IN (
-             SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites WHERE user_id = ?1)
-             UNION
-             SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites WHERE user_id = ?1)
-             UNION
-             SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites WHERE user_id = ?1))",
+         WHERE t.id IN ({})",
+        favourite_track_ids_sql("?1")
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> =
         vec![Box::new(super::auth::resolve_user(conn, user)?)];
@@ -2087,11 +2129,11 @@ pub fn favourite_tracks(
 
 /// Get all album IDs that have at least one favourited track, in a single query.
 pub fn favourite_album_ids_batch(conn: &Connection, user: i64) -> Result<HashSet<i64>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT t.album_id FROM tracks t
-         JOIN favourites f ON (t.path = f.track_path OR t.cached_path = f.track_path)
-         WHERE t.album_id IS NOT NULL AND f.user_id = ?1",
-    )?;
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT DISTINCT album_id FROM tracks
+         WHERE album_id IS NOT NULL AND id IN ({})",
+        favourite_track_ids_sql("?1")
+    ))?;
     let rows = stmt.query_map([super::auth::resolve_user(conn, user)?], |row| {
         row.get::<_, i64>(0)
     })?;

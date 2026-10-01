@@ -147,23 +147,64 @@ pub fn fetch_lyrics(
     album: &str,
     duration_secs: u64,
 ) -> Result<Lyrics, LyricsError> {
-    // 1. Check DB cache first.
+    match look_up_cached(conn, track_id)? {
+        CacheLookup::Fresh(lyrics) => Ok(lyrics),
+        CacheLookup::Stale(cached) => {
+            let fetched = fetch_from_lrclib(artist, title, album, duration_secs);
+            settle(conn, track_id, fetched, cached)
+        }
+    }
+}
+
+/// What the cache answers for a track.
+///
+/// [`fetch_lyrics`] in the halves either side of the network, for a caller
+/// that holds its connection from a bounded pool and should give it back while
+/// LRCLIB answers: [`look_up_cached`], then [`fetch_from_lrclib`] with no
+/// connection, then [`settle`].
+pub enum CacheLookup {
+    /// Served as it is.
+    Fresh(Lyrics),
+    /// Ask LRCLIB, and fall back to this — content and whether it is synced —
+    /// if it has nothing better.
+    Stale(Option<(String, bool)>),
+}
+
+pub fn look_up_cached(conn: &Connection, track_id: i64) -> Result<CacheLookup, LyricsError> {
     let cached = get_cached_lyrics(conn, track_id)?;
     if let Some((content, synced)) = &cached {
         let stale = !synced
             && lyrics_fetched_at(conn, track_id)?
                 .is_none_or(|at| now_secs() - at >= PLAIN_RECHECK_SECS);
         if !stale {
-            return Ok(Lyrics {
+            return Ok(CacheLookup::Fresh(Lyrics {
                 content: content.clone(),
                 synced: *synced,
                 source: LyricsSource::Cache,
-            });
+            }));
         }
     }
-    let fetched = fetch_from_lrclib(conn, track_id, artist, title, album, duration_secs);
+    Ok(CacheLookup::Stale(cached))
+}
+
+/// Cache what LRCLIB said, or keep the stale copy when it said nothing.
+pub fn settle(
+    conn: &Connection,
+    track_id: i64,
+    fetched: Result<Lyrics, LyricsError>,
+    cached: Option<(String, bool)>,
+) -> Result<Lyrics, LyricsError> {
     match (fetched, cached) {
-        (Ok(lyrics), _) => Ok(lyrics),
+        (Ok(lyrics), _) => {
+            cache_lyrics(
+                conn,
+                track_id,
+                LyricsSource::Lrclib.as_str(),
+                lyrics.synced,
+                &lyrics.content,
+            )?;
+            Ok(lyrics)
+        }
         // No synced copy upstream, or LRCLIB unreachable: keep the plain one,
         // and restart its clock so the next play does not ask again.
         (Err(_), Some((content, synced))) => {
@@ -190,9 +231,8 @@ fn now_secs() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-fn fetch_from_lrclib(
-    conn: &Connection,
-    track_id: i64,
+/// Ask LRCLIB. Synced lyrics are preferred, plain ones taken otherwise.
+pub fn fetch_from_lrclib(
     artist: &str,
     title: &str,
     album: &str,
@@ -204,7 +244,6 @@ fn fetch_from_lrclib(
             other => LyricsError::Lrclib(other),
         })?;
 
-    // Prefer synced lyrics; fall back to plain.
     let (content, synced) = if let Some(synced_lyrics) = response.synced_lyrics {
         (synced_lyrics, true)
     } else if let Some(plain_lyrics) = response.plain_lyrics {
@@ -212,15 +251,6 @@ fn fetch_from_lrclib(
     } else {
         return Err(LyricsError::NotFound);
     };
-
-    // Cache the result.
-    cache_lyrics(
-        conn,
-        track_id,
-        LyricsSource::Lrclib.as_str(),
-        synced,
-        &content,
-    )?;
 
     Ok(Lyrics {
         content,

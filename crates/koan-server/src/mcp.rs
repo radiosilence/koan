@@ -2,7 +2,6 @@
 //!
 //! Exposes the GraphQL schema as MCP tools for Claude Desktop / MCP clients.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::auth::AuthUser;
@@ -64,9 +63,9 @@ impl KoanMcpServer {
     pub fn new(
         state: Arc<SharedPlayerState>,
         cmd_tx: Sender<PlayerCommand>,
-        db_path: PathBuf,
+        pool: Arc<koan_core::db::pool::Pool>,
     ) -> Self {
-        let graphql_schema = crate::graphql::build_schema(state, cmd_tx, db_path, None);
+        let graphql_schema = crate::graphql::build_schema(state, cmd_tx, pool, None);
         Self {
             tool_router: Self::tool_router(),
             graphql_schema,
@@ -305,7 +304,7 @@ pub fn spawn_http(
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
-    let mut template = KoanMcpServer::new(state, cmd_tx, pool.path().to_path_buf());
+    let mut template = KoanMcpServer::new(state, cmd_tx, pool.clone());
     template.users = Some(Arc::new(crate::auth::password::PasswordVerifier::new(pool)));
     // Bound here rather than on the thread, so a taken port fails the start.
     let listener = std::net::TcpListener::bind(addr)?;
@@ -348,7 +347,8 @@ pub fn cmd_mcp() {
     // Spawn the player engine (headless — no TUI).
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
-    let server = KoanMcpServer::new(state, cmd_tx, db_path);
+    let pool = Arc::new(koan_core::db::pool::Pool::new(db_path));
+    let server = KoanMcpServer::new(state, cmd_tx, pool);
 
     // Run the MCP server on the tokio runtime (blocking the main thread).
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
@@ -384,7 +384,8 @@ mod tests {
         let ch = CommandChannel::new();
         let tx = ch.tx.clone();
 
-        let server = KoanMcpServer::new(state, tx, db_path);
+        let server =
+            KoanMcpServer::new(state, tx, Arc::new(koan_core::db::pool::Pool::new(db_path)));
         (server, ch, tmp)
     }
 

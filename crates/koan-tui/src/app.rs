@@ -1374,9 +1374,11 @@ impl App {
             .iter()
             .filter(|e| selected.contains(&e.id))
             .filter_map(|e| {
-                koan_core::db::queries::track_id_by_path(&db.conn, &e.path.to_string_lossy())
-                    .ok()
-                    .flatten()
+                e.db_id.or_else(|| {
+                    koan_core::db::queries::track_id_by_path(&db.conn, &e.path.to_string_lossy())
+                        .ok()
+                        .flatten()
+                })
             })
             .collect();
 

@@ -233,7 +233,7 @@ follows the top of the stack in front — see `TabShell`.
 
 | Module | What |
 |--------|------|
-| `graphql/mod.rs` | GraphQL schema builder, `KoanSchema` type, SQLite connection pool, `with_db`/`blocking` offload helpers |
+| `graphql/mod.rs` | GraphQL schema builder, `KoanSchema` type, a bound on how many of the server's pooled connections resolvers hold at once, `with_db`/`blocking` offload helpers |
 | `graphql/loaders.rs` | Dataloaders for artist→albums, album→tracks, counts, favourites |
 | `graphql/jobs.rs` | Job registry for `triggerScan`/`triggerRemoteSync` — detached threads, polled via `job(id:)` |
 | `graphql/queries.rs` | GraphQL query resolvers (artists, albums, tracks, nowPlaying, etc.) |

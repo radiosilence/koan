@@ -227,6 +227,8 @@ impl AlbumFilter<'_> {
 /// search field, an artist's discography and the favourites page.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AlbumQuery<'a> {
+    /// Only these albums.
+    pub ids: Option<&'a [i64]>,
     pub artist_id: Option<i64>,
     /// Case-insensitive substring over the album title and the artist name.
     pub search: Option<&'a str>,
@@ -264,6 +266,10 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
         );
     }
     let mut wheres: Vec<String> = Vec::new();
+    if let Some(ids) = q.ids {
+        params.push(Box::new(super::json_list(ids)));
+        wheres.push("al.id IN (SELECT value FROM json_each(?))".into());
+    }
     if let Some(id) = q.artist_id {
         params.push(Box::new(id));
         wheres.push("al.artist_id = ?".into());
