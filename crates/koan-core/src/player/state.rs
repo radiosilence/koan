@@ -1128,7 +1128,9 @@ impl SharedPlayerState {
                 match &load_state {
                     LoadState::Ready => QueueEntryStatus::Queued,
                     LoadState::Downloading { .. } => QueueEntryStatus::Downloading,
-                    LoadState::Pending => QueueEntryStatus::Downloading,
+                    // Waiting its turn, not arriving: a spinner on every one
+                    // of these read as the whole album downloading at once.
+                    LoadState::Pending => QueueEntryStatus::Queued,
                     LoadState::Failed(_) => QueueEntryStatus::Failed,
                 }
             };

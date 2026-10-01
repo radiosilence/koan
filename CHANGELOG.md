@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.46.3
+
+### Fixed
+
+- **The first album played after launch downloads and plays.** The download queue is created by the first download, and its watcher, which sends the track under the cursor to the priority lane, started listening after the cursor had already moved: the first play's track never got there. Queuing downloads now promotes the cursor's track as well as moving the cursor does.
+- **Downloads no longer wait on a track nobody is playing.** Since 0.46.2 workers hold back while the cursor's track downloads, but one that looked before a new queue reached the player waited on the old cursor's download. A cursor move now wakes them.
+- **Pressing play tries the server at once.** After a failed request every download waited out a backoff of up to a minute, which a flaky connection or a phone in a pocket keeps extending. Queuing music, and the app's link to the server reconnecting, now makes the next try due immediately; a further failure carries the backoff on.
+- **Only tracks being fetched show a download spinner.** Every track waiting its turn showed one, which read as the whole album downloading at once.
+
 ## 0.46.2
 
 ### Fixed

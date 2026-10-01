@@ -173,6 +173,18 @@ impl Outage {
         self.state.lock().retry_at.is_some()
     }
 
+    /// Make the next try due now, keeping the count of failures: if this one
+    /// fails too, the backoff carries on from where it was.
+    pub fn retry_now(&self) {
+        let mut s = self.state.lock();
+        if s.retry_at.is_none() {
+            return;
+        }
+        s.retry_at = Some(Instant::now());
+        drop(s);
+        self.changed.notify_all();
+    }
+
     /// Block while the server is down and nobody is due to try it. Returns
     /// immediately when it is up, or once a try is due.
     pub fn hold(&self) {
@@ -792,6 +804,29 @@ mod tests {
             .map_err(DownloadError::from)
             .expect_err("nothing is listening");
         assert!(err.is_unavailable(), "unexpected: {err}");
+    }
+
+    #[test]
+    fn asking_for_music_cuts_an_outage_wait_short() {
+        let outage = Outage::default();
+        outage.down(Some(Duration::from_secs(600)));
+        outage.retry_now();
+        let started = Instant::now();
+        outage.hold();
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a try is due at once"
+        );
+        assert!(outage.is_down(), "still down until a try succeeds");
+
+        // Failing again carries the backoff on from the count it had.
+        let wait = outage.down(None);
+        assert_eq!(wait, outage_backoff(2, None));
+
+        // Nothing to cut short while the server is up.
+        let up = Outage::default();
+        up.retry_now();
+        assert!(!up.is_down());
     }
 
     #[test]
