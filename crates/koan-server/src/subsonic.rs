@@ -64,10 +64,10 @@ struct AppState {
     password: Option<String>,
     users: crate::auth::password::PasswordVerifier,
     /// Upstream Navidrome/Subsonic, used to build signed stream URLs for tracks
-    /// with no local file. Resolved once at startup — resolving it per request
-    /// re-read two TOML files. Credentials
-    /// rather than a `SubsonicClient`: that builds blocking `reqwest` clients,
-    /// which panics when constructed inside the tokio runtime.
+    /// with no local file. Resolved once at startup rather than per request,
+    /// which would re-read two TOML files. Credentials rather than a
+    /// `SubsonicClient`: that builds blocking `reqwest` clients, which panics
+    /// when constructed inside the tokio runtime.
     upstream: Option<SubsonicAuth>,
     /// Async client for proxying those streams. `reqwest::Client` owns a
     /// connection pool, so it is built once and cloned.
@@ -227,9 +227,8 @@ impl SubsonicParams {
 /// Query parameters kept as an ordered list of pairs.
 ///
 /// `serde_urlencoded`, which axum's `Query` uses, cannot deserialise a repeated
-/// key into a `Vec`. `createPlaylist` repeats `songId` once per track, so under
-/// `Query` the extractor rejected the request with a bare HTTP 400 and the
-/// handler never ran.
+/// key into a `Vec`. `createPlaylist` repeats `songId` once per track, which
+/// `Query` would reject with a bare HTTP 400 before the handler ran.
 struct RawParams(Vec<(String, String)>);
 
 impl RawParams {
@@ -709,8 +708,7 @@ impl Caller {
 ///   conflict (43), as is any other credential.
 /// - `p=` (plain or `enc:` hex) with a koan account's password, checked
 ///   against its argon2 hash. The protocol sends it with every request, so it
-///   is only as private as the transport; koan.blit.cc is HTTPS-only, and this
-///   is what the web login form sends too.
+///   is only as private as the transport. The web login form sends it too.
 /// - `t=md5(secret + s)` with the `[subsonic]` shared secret, for clients that
 ///   only speak token auth. Token auth cannot work against a hash, so for any
 ///   other username it is refused with 41, the code that tells a client to
@@ -2255,7 +2253,6 @@ async fn proxy_stream_from_upstream(
 
     let mut req = state.http.get(&upstream_url);
 
-    // Forward Range header if present.
     if let Some(range) = client_headers.get(header::RANGE)
         && let Ok(range_str) = range.to_str()
     {
@@ -2933,7 +2930,6 @@ fn playlist_changed(id: i64) {
     crate::clients::changed();
 }
 
-/// Parse a playlist id. Subsonic ids are opaque strings; koan's are its row ids.
 /// A playlist by its uid, or by the row id clients from before uids hold.
 fn playlist_id(db: &Database, raw: Option<&str>) -> Result<i64, SubsonicError> {
     let raw = raw.ok_or_else(|| SubsonicError::missing_param("id"))?;
@@ -3093,10 +3089,6 @@ async fn unsupported_endpoint(UrlPath(path): UrlPath<String>, RawQuery(raw): Raw
         &SubsonicError::unsupported(endpoint),
     )
 }
-
-// ===========================================================================
-// Public router
-// ===========================================================================
 
 // ---------------------------------------------------------------------------
 // Sharing: links this server serves itself at /share/{id}
@@ -3894,9 +3886,10 @@ fn subsonic_app(state: Arc<AppState>) -> axum::Router {
 
 /// Build a Subsonic-compatible REST API router.
 ///
-/// Returns `None` unless `[subsonic]` is enabled and has its own credentials.
-/// `/rest/*` carries no JWT layer, so these credentials alone guard every byte
-/// of the library — they must never be the upstream `[remote]` password.
+/// Returns `None` unless `[subsonic]` is enabled. Without a shared secret only
+/// koan accounts sign in. `/rest/*` carries no JWT layer, so these credentials
+/// alone guard every byte of the library — the secret must never be the
+/// upstream `[remote]` password.
 pub fn subsonic_router(
     pool: Arc<Pool>,
     covers: Arc<crate::covers::Covers>,
@@ -4645,8 +4638,8 @@ mod tests {
         assert!(body.contains("Test Artist"));
     }
 
-    /// The typed-attribute rewrite must not change the XML wire format: every
-    /// attribute is still a quoted string, spelled exactly as before.
+    /// Typed attributes must not change the XML wire format: every attribute is
+    /// still a quoted string.
     #[tokio::test]
     async fn test_song_xml_is_unchanged_by_typed_attributes() {
         let (state, _dir) = test_state();
@@ -4690,8 +4683,8 @@ mod tests {
         );
     }
 
-    /// The failure that stopped Symfonium, Substreamer and Feishin dead: a
-    /// strictly-typed deserialiser rejects `"duration": "240"`.
+    /// Strictly-typed clients (Symfonium, Substreamer, Feishin) reject
+    /// `"duration": "240"`, so numeric and boolean fields go out unquoted in JSON.
     #[tokio::test]
     async fn test_song_json_field_types() {
         #[derive(Deserialize)]
@@ -4942,8 +4935,8 @@ mod tests {
         assert!(body.contains("code=\"70\""));
     }
 
-    /// A malformed id used to reach axum's `Query` extractor and come back as a
-    /// bare HTTP 400 with a plain-text body — unparseable by any client.
+    /// A malformed id comes back as a Subsonic error, not as axum's bare HTTP 400
+    /// with a plain-text body that no client can parse.
     #[tokio::test]
     async fn test_bad_id_is_a_subsonic_error() {
         let (state, _dir) = test_state();
@@ -5012,8 +5005,6 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["subsonic-response"]["error"]["code"], 70);
     }
-
-    // --- New endpoint tests ---
 
     #[tokio::test]
     async fn test_get_music_folders() {
@@ -5699,9 +5690,9 @@ mod tests {
 
     // --- Cover art ---
 
-    /// `getCoverArt` resolved every id as a track id, so `id=5` meaning
-    /// "album 5" served track 5's art. Seeded so the two number spaces cross:
-    /// album 2 holds track 3, so `al-2` and `mf-2` must land on different files.
+    /// `getCoverArt` resolves an id by its kind: `id=5` meaning "album 5" must not
+    /// serve track 5's art. Seeded so the two number spaces cross: album 2 holds
+    /// track 3, so `al-2` and `mf-2` must land on different files.
     #[test]
     fn test_cover_art_id_namespacing() {
         let (state, dir) = test_state();

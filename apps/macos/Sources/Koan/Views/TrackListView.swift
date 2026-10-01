@@ -42,7 +42,7 @@ struct TrackListView: View {
                     // Built once per pass rather than once per row. Every row
                     // carries the list it belongs to so playing it keeps the
                     // rest behind it, and mapping inside the `ForEach` body
-                    // allocated a fresh copy of the whole thing for each one.
+                    // would allocate a fresh copy of the whole thing for each one.
                     let allTrackIds = tracks.map(\.id)
                     List(selection: $selection) {
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
@@ -125,7 +125,7 @@ struct TrackListView: View {
     ///
     /// The sleeve is 132pt and the title is set at 26pt; on a phone that leaves
     /// the text column about 230pt, which is not enough for a title and four
-    /// labelled buttons. They wrapped a character at a time.
+    /// labelled buttons.
     @ViewBuilder private var header: some View {
         if width == .compact {
             VStack(alignment: .leading, spacing: 14) {
@@ -215,7 +215,7 @@ struct TrackRow: View {
     var body: some View {
         // Read here, in the row, rather than handed down by the list: what is
         // playing moves on every pause and every queue edit, and a list that
-        // read it re-diffed every row for each. Only the rows on screen exist,
+        // read it would re-diff every row for each. Only the rows on screen exist,
         // so this is thirty small bodies rather than one large one.
         let isCurrent = player.currentTrackId == track.id
         let isSelected = prominence == .increased

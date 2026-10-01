@@ -287,7 +287,7 @@ async fn stream(State(s): State<UiState>, Path(id): Path<i64>, headers: HeaderMa
     }
 }
 
-/// An album's cover, from the art embedded in the first of its tracks that has any.
+/// Query parameters for `cover`.
 #[derive(serde::Deserialize, Default)]
 #[serde(default)]
 struct CoverQuery {

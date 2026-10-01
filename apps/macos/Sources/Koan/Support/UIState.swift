@@ -49,8 +49,7 @@ final class UIState {
     /// which of them the keystroke belonged to.
     private(set) var clearSelectionToken = 0
     /// ⌘A, likewise: it belongs to whatever list is on screen, and only that
-    /// list knows what "everything" is. It lived on the player, so it only ever
-    /// reached the queue.
+    /// list knows what "everything" is.
     private(set) var selectAllToken = 0
 
     func focusSearch() { searchFocusToken += 1 }
@@ -71,20 +70,20 @@ final class UIState {
     /// Observable state that writes through to defaults, rather than
     /// `@AppStorage` on each view that reads it. A `UserDefaults` write
     /// publishes on its own, after the transaction that caused it has gone —
-    /// so the inspector had no animation to expand with and arrived at full
-    /// width in a single frame while everything around it was still sliding.
-    /// An observed property changes *inside* the transaction, which is what
-    /// hands the pane AppKit's own slide.
+    /// so the inspector would have no animation to expand with and arrive at
+    /// full width in a single frame while everything around it was still
+    /// sliding. An observed property changes *inside* the transaction, which is
+    /// what hands the pane AppKit's own slide.
     ///
-    /// Still one copy, and still where you left it across a launch.
+    /// One copy, and where you left it across a launch.
     var showLyrics: Bool = UserDefaults.standard.bool(forKey: UIState.lyricsKey) {
         didSet { UserDefaults.standard.set(showLyrics, forKey: UIState.lyricsKey) }
     }
 
     private static let lyricsKey = "showLyrics"
 
-    /// Explicitly animated, because that is now possible: the transaction this
-    /// opens reaches the inspector's split view, so the pane slides and the
+    /// Explicitly animated: the transaction this opens reaches the inspector's
+    /// split view, so the pane slides and the
     /// stage and transport resize with it instead of after it.
     func toggleLyrics() {
         withAnimation(.smooth(duration: 0.28)) { showLyrics.toggle() }

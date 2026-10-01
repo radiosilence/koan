@@ -43,7 +43,7 @@ struct FilterField: NSViewRepresentable {
         if context.coordinator.claim(focusToken) {
             field.window?.makeFirstResponder(field)
         }
-        // Only when it actually differs, or every keystroke resets the cursor
+        // Only when it differs, or every keystroke resets the cursor
         // to the end of the field.
         if field.stringValue != text {
             field.stringValue = text

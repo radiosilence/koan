@@ -69,7 +69,7 @@ pub fn cmd_cache_clear(skip_confirm: bool) {
         return;
     }
 
-    // Count what we're about to nuke.
+    // Count what is about to be deleted.
     let mut total_bytes: u64 = 0;
     let mut file_count: u64 = 0;
     for entry in walkdir::WalkDir::new(&cache_dir)

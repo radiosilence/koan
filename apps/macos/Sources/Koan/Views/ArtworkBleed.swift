@@ -16,9 +16,8 @@ import SwiftUI
 /// Fills whatever it is given — a `.background` on a header takes the header's
 /// height; anywhere else, say how far down the page the wash should reach.
 ///
-/// There is one of these in the app, on the window. A second copy on the page
-/// bought nothing — it sat on the page's own opaque ground, hiding the window's
-/// and animating alongside it.
+/// The Mac has one of these, on the window; a phone paints one behind each
+/// page — see `WashLayer`.
 struct ArtworkBleed: View {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
@@ -36,15 +35,15 @@ struct ArtworkBleed: View {
 
     /// What this record's sleeve is — read straight through the cache on every
     /// pass, the way `AlbumArtwork` reads its bitmap. Held in `@State` and
-    /// written by a task, the wash was a second commit after every navigation,
+    /// written by a task, the wash would be a second commit after every navigation,
     /// and a commit that dirties a drawn layer is a synchronous round trip to
     /// the render server whatever it is carrying.
     ///
     /// Doubly optional on purpose. The outer `nil` means *nobody has answered
     /// yet*, which is not the same as a record having no cover: the first keeps
     /// the room as it is until the sleeve arrives, the second empties it. Told
-    /// apart, a record whose art is still being fetched no longer wipes the
-    /// wash grey and then fades the new one in over two seconds.
+    /// apart, a record whose art is still being fetched does not wipe the wash
+    /// grey and then fade the new one in over two seconds.
     private var answered: PlatformImage?? {
         guard let source else { return .some(nil) }
         if let held = cache.cached(source, size: .tile) { return .some(held) }
@@ -52,9 +51,9 @@ struct ArtworkBleed: View {
         return .some(fetched.image)
     }
 
-    /// Whether the wash is actually moving: something to breathe to, a setting
-    /// that allows it, and a system that has not asked for less motion.
     @Environment(\.powerSaving) private var powerSaving
+    /// Whether the wash is moving: something to breathe to, a setting that
+    /// allows it, and a system that has not asked for less motion.
     private var breathes: Bool { drifts && graphics.drifts && !reduceMotion && !powerSaving }
 
     var body: some View {
@@ -67,9 +66,9 @@ struct ArtworkBleed: View {
 
     /// Everything that moves is in `DriftingWash`, and everything left here is
     /// static — a mask, an opacity and a mirror, committed once. Nothing in
-    /// this view is animated, which is the whole point: the drift, the blur and
-    /// the dissolve between records all belong to the compositor now, and this
-    /// view's body runs when a record changes and at no other time.
+    /// this view is animated: the drift, the blur and the dissolve between
+    /// records belong to the compositor, and this view's body runs when a
+    /// record changes and at no other time.
     private var bleed: some View {
         DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes)
             .opacity(0.5)
@@ -86,7 +85,7 @@ struct ArtworkBleed: View {
     }
 
     /// Only for a cover the cache could not already answer for. The usual path
-    /// is read through in `cover`, in the same pass as the page that changed it.
+    /// is read through in `answered`, in the same pass as the page that changed it.
     private func load() async {
         guard let source, cache.cached(source, size: .tile) == nil else { return }
         let loaded = await cache.image(for: source, size: .tile)

@@ -3,9 +3,8 @@ import SwiftUI
 
 /// The iOS layout: a tab bar, and the transport above it.
 ///
-/// Not a burger menu. A drawer hides the thing koan is mostly about behind a
-/// tap, and Apple's own guidance has argued against them for a decade — the
-/// answer to "the sidebar does not fit" is a tab bar.
+/// A tab bar rather than a drawer, which would hide the thing koan is mostly
+/// about behind a tap.
 ///
 /// Every iPhone and iPad. `sidebarAdaptable` makes the tab bar the platform's
 /// own iPad layout, a bar across the top that opens into a sidebar, and it is

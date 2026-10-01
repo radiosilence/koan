@@ -169,8 +169,8 @@ impl SubscriptionRoot {
 
 #[cfg(test)]
 mod tests {
-    /// The arguments stay in the schema even though the streams no longer run
-    /// on them: a query that named one still has to parse.
+    /// The arguments stay in the schema, unused, so a query that names one
+    /// still parses.
     #[test]
     fn the_interval_arguments_are_still_in_the_schema() {
         let (state, _timeline, _viz, cmd_tx) = koan_core::player::Player::spawn();

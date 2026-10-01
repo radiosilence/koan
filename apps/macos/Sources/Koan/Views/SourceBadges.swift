@@ -22,7 +22,7 @@ struct SourceBadges: View {
     ///
     /// An id rather than a figure, deliberately. Reading the figure is what
     /// subscribes a view to a number that moves ten times a second while
-    /// anything is downloading — so only the handful of rows actually drawing a
+    /// anything is downloading — so only the handful of rows drawing a
     /// ring do it, and the rest of the list sits still.
     var transferring: String?
 
@@ -33,9 +33,7 @@ struct SourceBadges: View {
             if let transferring {
                 ring(mirror.progress(for: transferring))
             } else if onServer {
-                // Visible enough to be read at a glance down a list. At
-                // `.quaternary` this was there and effectively invisible, which
-                // is the same as not drawing it.
+                // Visible enough to be read at a glance down a list.
                 Image(systemName: onDisk ? "cloud.fill" : "cloud")
                     .foregroundStyle(onDisk ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
                     .help(onDisk ? "On your server, downloaded" : "On your server — downloads on play")

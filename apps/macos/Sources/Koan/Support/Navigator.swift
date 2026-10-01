@@ -10,10 +10,8 @@ import SwiftUI
 /// This deliberately does not use a `NavigationStack`. A stack navigates by
 /// owning a root and a path below it, discards that path whenever the root
 /// changes, and writes the empty path back through its binding — which, with a
-/// root that switched per section, silently undid any move that changed both at
-/// once. Back and forward were already this class's job, and the stack's own
-/// back button was already hidden, so it was navigating nothing and charging a
-/// hierarchy for it.
+/// root that switches per section, silently undoes any move that changes both
+/// at once.
 ///
 /// The library follows the location rather than the other way round: what is
 /// loaded is a consequence of where you are.
@@ -76,7 +74,7 @@ final class Navigator {
     /// the view once it has scrolled to it.
     var highlightedTrackId: Int64?
 
-    /// Every page actually reached, in the order reached, with a cursor.
+    /// Every page reached, in the order reached, with a cursor.
     /// Wandering `queue → album → artist → album` is four entries, not four
     /// levels of anything.
     private var history: [Page] = [.section(.queue)]
@@ -177,12 +175,11 @@ final class Navigator {
     /// than landing on top of the newer one.
     ///
     /// `arriving` is where the history moves, and it runs beside the page
-    /// rather than before it. Back used to step the cursor on the click and
-    /// leave the move to catch up, so a Back pressed while a record was still
-    /// being read cancelled that record — which then never applied and never
-    /// recorded — and stepped off a page nobody had arrived at. The screen did
-    /// not move, and it took a second press to go anywhere. Nothing about where
-    /// you are changes until there is a page to be there.
+    /// rather than before it. A Back that stepped the cursor on the click would
+    /// cancel a record still being read — which then never applies and never
+    /// records — and step off a page nobody had arrived at, leaving the screen
+    /// where it was. Nothing about where you are changes until there is a page
+    /// to be there.
     private func move(to next: Page, arriving: @escaping @MainActor () -> Void) {
         moving?.cancel()
         moving = Task {
@@ -259,7 +256,7 @@ final class Navigator {
     /// What the sidebar highlights, and what clicking it means.
     ///
     /// A row is lit when the page *is* that row, so a record or an artist lights
-    /// nothing. Nothing is derived from a path any more, so there is no write to
+    /// nothing. Nothing is derived from a path, so there is no write to
     /// guard against: a `List` rebuilding and writing its selection back is
     /// either the page it already shows, which `go(to:)` discards, or a click.
     var sidebarSelection: Binding<Section?> {

@@ -12,8 +12,7 @@ import QuartzCore
 /// record evaluates in single-figure milliseconds and takes a third of a second
 /// to appear, and everything in between — layout, the CoreAnimation commit, the
 /// render server — is after the last line any view gets to run. Nothing
-/// declared in a view can observe it, which is why four rounds of hypothesis
-/// about that gap were argued from measurements that stopped before it.
+/// declared in a view can observe it.
 ///
 /// A display link can observe it. It ticks on the main run loop at the top of
 /// each frame, so the first tick after the body ran belongs to the first frame

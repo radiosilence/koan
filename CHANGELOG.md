@@ -1865,7 +1865,7 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 
 ### Added
 
-- **22 visualizer modes** — massively expanded from 5 to 22 modes, cycle with `M` key or use the new picker (`v`). Press `F` for fullscreen. All modes use the palette system, beat-reactive color/hue shifts, and dreamy drift.
+- **22 visualizer modes**, up from 5 — cycle with `M` or use the new picker (`v`). Press `F` for fullscreen. All modes use the palette system, beat-reactive color/hue shifts, and drift.
 
   **Analytical:** `spectrogram` (time×frequency heatmap with blue→yellow→red→white heat map, sqrt amplitude scaling), `stereo` (L/R waveforms stacked top/bottom), `vu` (dual analog needle meters with ballistic physics), `flame` (filled spectrum curve with 8 stacked decay trails).
 
@@ -2449,7 +2449,7 @@ Full codebase audit of v0.5.2 covering security, performance, architecture, depe
 ### Added
 
 - **Spectrum analyser** — 80s hi-fi LED-segment style spectrum visualiser renders above the transport bar when album art is present. 48-band FFT with configurable frequency scale (Bark/Mel/Log/Linear), eighth-block sub-cell resolution, green/yellow/red gradient, peak hold markers, and time-based exponential decay
-- **Dedicated analysis thread** — FFT runs on a background thread (`VizAnalyzer`) decoupled from both the decode and UI threads. The UI reads a pre-computed `VizSnapshot` every frame with sub-microsecond lock hold times, ensuring buttery-smooth 60fps rendering
+- **Dedicated analysis thread** — FFT runs on a background thread (`VizAnalyzer`) decoupled from both the decode and UI threads. The UI reads a pre-computed `VizSnapshot` every frame with sub-microsecond lock hold times, keeping FFT work off the render thread
 - **VizBuffer audio tap** — circular sample buffer shared between decode thread and analysis thread via `parking_lot::Mutex`
 - **FFT pipeline** — 2048-point real FFT via `realfft` crate. Hann window, dB magnitude scaling, Bark/Mel/Log/Linear frequency scales
 - **A-weighted amplitude scaling** — bars reflect perceived loudness using IEC 61672 A-weighting, matching human hearing sensitivity (Fletcher-Munson curves). Configurable via `amplitude_scale`: `aweight` (default), `perceptual` (A-weight + gamma), `sqrt`, `linear`

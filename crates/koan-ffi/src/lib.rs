@@ -4,8 +4,8 @@
 //! Every method is "read `SharedPlayerState` / hit the DB / send a
 //! `PlayerCommand`" — the mapping koan-core's helpers already own. A local app
 //! sits on top of the audio engine, so it has no business round-tripping HTTP
-//! to reach it; GraphQL stays the surface for clients that genuinely can't
-//! link the core (web, iOS, jukebox remotes).
+//! to reach it; GraphQL stays the surface for clients that cannot link the
+//! core (the web UI, jukebox remotes).
 //!
 //! Threading: anything that can block is `async` and runs on a worker thread,
 //! so no caller ever holds a thread while koan-core reads a file or waits on a
@@ -13,8 +13,8 @@
 //! else. See `offload` for where the work goes, and why ordering has a lane of
 //! its own.
 //!
-//! DB connections are opened per call, matching what the GraphQL resolvers do —
-//! WAL makes that cheap and it sidesteps holding a lock across a scan.
+//! DB connections are borrowed from `koan_core::db::pool`, not opened per call:
+//! opening one runs the schema DDL and a WAL checkpoint.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -95,7 +95,6 @@ pub trait ProgressReporter: Send + Sync {
     fn advanced(&self, done: u64, detail: String);
 }
 
-/// The player, the library, and the bridge between them.
 /// Send `log` output to `~/.config/koan/koan.log`, the same file the CLI
 /// writes.
 ///
@@ -439,7 +438,6 @@ impl KoanEngine {
         .await
     }
 
-    /// Clear the queue and play `track_ids` from the top.
     /// Replace the queue, starting at `start_at` (default: the first track).
     ///
     /// The index is part of the command rather than a follow-up `play` because
@@ -617,11 +615,9 @@ impl KoanEngine {
 
     /// Everything a record's page shows, in one call.
     ///
-    /// The two halves were two exported calls made in parallel, which is two
-    /// round trips and two connections out of the pool for one click. Most of
-    /// the time that cost nothing — and about one click in six it cost three
-    /// hundred milliseconds, because the pool had to open a connection, and
-    /// opening one runs the schema and a WAL checkpoint.
+    /// One round trip and one pooled connection per click. As two parallel
+    /// calls it would take two connections, and whenever the pool has to open
+    /// one (schema DDL and a WAL checkpoint) a click costs about 300ms.
     pub async fn album_page(self: Arc<Self>, album_id: i64) -> Result<AlbumPage, KoanError> {
         offload::offload(move || {
             let waited = std::time::Instant::now();
@@ -841,13 +837,9 @@ impl KoanEngine {
 
     /// The record's artwork, asked for by the record.
     ///
-    /// Every track on an album shares its cover, so a client only needs one of
-    /// them — and it used to *fetch the album's tracks* to find one, which is a
-    /// listing built, carried across the boundary and thrown away for a single
-    /// id. A grid of tiles did that once per tile: twenty-two calls, twenty-two
-    /// queries, and the two the page actually wanted queued behind them.
-    ///
-    /// Resolved in SQL here instead, in the same call that returns the bytes.
+    /// Every track on an album shares its cover, so the track whose art stands
+    /// for the album is resolved in SQL, in the same call that returns the
+    /// bytes. A client never lists the album's tracks just to find one id.
     pub async fn album_cover_art(
         self: Arc<Self>,
         album_id: i64,
@@ -1828,8 +1820,6 @@ impl KoanEngine {
         koan_core::remote::link::set_activity(token.zip(device).map(|(t, d)| (t, d, sandbox)));
     }
 
-    // --- Library maintenance ----------------------------------------------
-
     // --- Settings ----------------------------------------------------------
 
     /// The whole configuration, as the settings window shows it.
@@ -1950,8 +1940,8 @@ impl KoanEngine {
 
     /// Sign in to a Subsonic/Navidrome server.
     ///
-    /// Checked against the server before anything is written, and the password
-    /// goes to the platform credential store rather than to a file.
+    /// Checked against the server before anything is written; the credentials
+    /// then go to `config.local.toml`.
     pub async fn sign_in_remote(
         self: Arc<Self>,
         url: String,
@@ -2506,13 +2496,10 @@ impl OrganizeSelection {
 impl KoanEngine {
     /// Watch shared state and publish what changed.
     ///
-    /// Woken rather than timed. It used to look at every version and atomic in
-    /// the engine ten times a second for as long as koan was open, which is a
-    /// scheduled thread and a rebuilt `NowPlaying` per tick to find, nearly
-    /// always, that nothing had moved. The writers say so now — every setter on
-    /// `SharedPlayerState`, the download store, the library version — and this
-    /// waits in between. A koan with nothing happening does not run this thread
-    /// at all.
+    /// Woken rather than timed: every setter on `SharedPlayerState`, the
+    /// download store and the library version signal a change, and this waits
+    /// in between. A koan with nothing happening does not run this thread at
+    /// all.
     ///
     /// What the wake does *not* say is which of them moved: that is still read
     /// off the versions here, on waking, because they are cheap and because a
@@ -2550,12 +2537,7 @@ impl KoanEngine {
                 let mut landed = false;
                 let mut last_landing = Instant::now();
 
-                // Where this thread spends the whole of a quiet koan. Every
-                // slice below is derived from a version or an atomic, all of
-                // them cheap to read and none of them able to say when they
-                // moved — so this used to look at the lot of them ten times a
-                // second for as long as the app was open. The writers say so
-                // now, and this is not scheduled at all in between.
+                // Where this thread spends the whole of a quiet koan.
                 let wake = koan_core::signal::engine_changed();
                 // Read before the first pass, not after it: anything that moves
                 // while a pass is publishing leaves the generation past this,
@@ -2602,7 +2584,7 @@ impl KoanEngine {
                     // the download lands, and the seekable extent grows for as
                     // long as the bytes are arriving — none of them moving the
                     // state or the cursor. A signature has to be remembered to
-                    // be widened, and had already been widened twice.
+                    // be widened.
                     let snapshot = engine.now_playing_blocking();
                     if target.is_none() {
                         out.publish(StateSlice::Playback {
@@ -2650,10 +2632,6 @@ impl KoanEngine {
                         }
                     }
 
-                    // Taken as the bytes land rather than here — see
-                    // `DownloadStore::progressed`. This asks whether a reading
-                    // has been taken since the last one it published, which for
-                    // a koan with nothing downloading is never.
                     // Readings are taken as the bytes land rather than here —
                     // see `DownloadStore::progressed` — so this asks whether
                     // one has been taken since the last it published, which for
@@ -2808,13 +2786,6 @@ impl KoanEngine {
         }
     }
 
-    /// The queue as a client sees it: derived, then joined against the library
-    /// in two statements rather than one per row.
-    ///
-    /// A client draws one sleeve per album, and without an ID to group by it
-    /// asks for artwork per track — the same image fetched once for every track
-    /// on the record. A queue with no database behind it simply has no album
-    /// IDs; the art falls back to the per-track lookup.
     /// The devices as the app shows them, each joined to this library's row
     /// for what it is playing.
     fn device_infos(&self, list: &[koan_core::remote::devices::Device]) -> Vec<DeviceInfo> {
@@ -2944,6 +2915,13 @@ impl KoanEngine {
             .collect()
     }
 
+    /// The queue as a client sees it: derived, then joined against the library
+    /// in two statements rather than one per row.
+    ///
+    /// A client draws one sleeve per album, and without an ID to group by it
+    /// asks for artwork per track — the same image fetched once for every track
+    /// on the record. A queue with no database behind it has no album IDs; the
+    /// art falls back to the per-track lookup.
     fn queue_blocking(&self) -> Vec<QueueItem> {
         let entries = self.state.derive_visible_queue().entries;
         let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
@@ -3035,7 +3013,7 @@ impl KoanEngine {
     }
 
     /// Say that the library's rows changed. The watcher turns this into a
-    /// `Library` slice on its next tick.
+    /// `Library` slice when it wakes.
     ///
     /// Playlists count. They are rows in the same database and a page showing
     /// one has the same problem a page showing a record has — a second signal
@@ -3262,10 +3240,8 @@ impl KoanEngine {
 
     /// A connection for one piece of work, borrowed from the pool.
     ///
-    /// This used to open one: a connection, a permissions syscall, the whole
-    /// schema DDL and a WAL checkpoint, every time, before a row came back.
-    /// Clicking an album paid all of it, and while downloads were writing the
-    /// checkpoint contended with them and it took seconds.
+    /// Opening one runs the schema DDL and a WAL checkpoint, which contends
+    /// with downloads writing and can take seconds.
     fn db(&self) -> Result<koan_core::db::pool::Handle<'static>, KoanError> {
         koan_core::db::pool::shared().get().map_err(db_err)
     }
@@ -3873,8 +3849,6 @@ fn sort_rows(mut rows: Vec<queries::TrackRow>, sort: TrackSort) -> Vec<queries::
     rows
 }
 
-/// Mirrors the GraphQL layer's behaviour: star/unstar on the remote server in a
-/// detached thread so the UI never waits on the network.
 fn sniff_mime(data: &[u8]) -> &'static str {
     if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         "image/png"
@@ -3897,7 +3871,7 @@ fn parse_qids(ids: &[String]) -> Result<Vec<QueueItemId>, KoanError> {
     ids.iter().map(|s| parse_qid(s)).collect()
 }
 
-/// A search term the user actually typed, or nothing. Whitespace is not a
+/// A search term the user typed, or nothing. Whitespace is not a
 /// filter, and neither is an empty box.
 fn trimmed(search: &Option<String>) -> Option<&str> {
     search.as_deref().map(str::trim).filter(|s| !s.is_empty())

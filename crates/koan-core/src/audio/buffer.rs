@@ -113,7 +113,7 @@ pub struct PlaybackTimeline {
     /// Total interleaved samples written to the ring buffer across all tracks.
     samples_written: AtomicU64,
     /// Total interleaved samples consumed (played) by the audio engine.
-    /// Written by CoreAudio render callback, read by UI.
+    /// Written by the audio render callback, read by UI.
     pub samples_played: Arc<AtomicU64>,
     /// Incremented by every `reset()`. A decode thread writes only while the
     /// generation it started in is still the current one.
@@ -344,7 +344,7 @@ pub fn probe_file(path: &Path) -> Result<StreamInfo, DecodeError> {
     Ok(info)
 }
 
-/// Internal: probe a `MediaSourceStream` with a hint.
+/// Probe a `MediaSourceStream` with a hint.
 fn probe_mss(mss: MediaSourceStream<'_>, hint: &Hint) -> Result<StreamInfo, DecodeError> {
     let reader = symphonia::default::get_probe()
         .probe(
@@ -936,8 +936,8 @@ fn decode_single(
                 // A full ring is the steady state, so this is the wait playback
                 // spends nearly all its time in. The ring holds a second or more
                 // of audio at any rate koan plays, and 10ms is still fine enough
-                // for the viz delay line; half a millisecond was two thousand
-                // wakes a second for the length of every track.
+                // for the viz delay line; half a millisecond would be two
+                // thousand wakes a second for the length of every track.
                 thread::sleep(FULL_RING_WAIT);
                 continue;
             }

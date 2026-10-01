@@ -4,8 +4,7 @@ import SwiftUI
 struct ArtistBrowser: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
-    /// Without a selection binding a List row has nothing to do with a click —
-    /// which is why this list felt completely dead.
+    /// Without a selection binding a List row has nothing to do with a click.
     @State private var selection: Set<Int64> = []
 
     var body: some View {
@@ -35,7 +34,7 @@ struct ArtistBrowser: View {
 /// One artist.
 ///
 /// Its own view so that hovering it invalidates one row. With the hover state
-/// on the browser, every pointer move across the list rebuilt all of it —
+/// on the browser, every pointer move across the list would rebuild all of it —
 /// thousands of rows diffed to light up a play button.
 private struct ArtistRow: View {
     let artist: Artist

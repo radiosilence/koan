@@ -40,7 +40,7 @@ struct FavouriteButton: View {
 }
 
 // The hearts below read the favourite sets themselves. Read in the row that
-// carries them, one heart flipping re-ran every visible row on screen: the set
+// carries them, one heart flipping would re-run every visible row: the set
 // is one property, and a row reading it is a row subscribed to all of it. In
 // the leaf, a flip re-runs the hearts and nothing else.
 

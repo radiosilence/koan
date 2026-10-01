@@ -3,9 +3,8 @@ import SwiftUI
 
 /// Everything you have favourited, in one page.
 ///
-/// koan favourites artists and records as well as tracks, and this page only
-/// ever showed the tracks — the other two were invisible from inside the app.
-/// Sections rather than a type picker, for the same reason search results are
+/// koan favourites artists and records as well as tracks. Sections rather than
+/// a type picker, for the same reason search results are
 /// sections: they are all answers to one question, and a mode you have to
 /// remember you are in is a worse way to find out you favourited a record.
 ///
@@ -82,8 +81,8 @@ struct FavouritesView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Only the kinds you actually have, so a tracks-only library reads exactly
-    /// as it did before there were three of them.
+    /// Only the kinds you have, so a tracks-only library reads as a count of
+    /// tracks.
     private var summary: String {
         var parts: [String] = []
         if !artists.isEmpty { parts.append(Format.count(Int64(artists.count), "artist")) }
@@ -109,10 +108,10 @@ struct FavouritesView: View {
     /// The records, a row of tiles per List row.
     ///
     /// Not a `LazyVGrid`. A grid inside a List row is one cell, and a cell is
-    /// laid out whole, so every record you have ever favourited was built and
-    /// asked for its sleeve the moment the page opened — hundreds of fetches
-    /// at once, and none of them cancelled by scrolling away, because nothing
-    /// ever scrolled off. Rows of the List are what the List recycles, so the
+    /// laid out whole, so every record you have ever favourited would be built
+    /// and asked for its sleeve the moment the page opened — hundreds of
+    /// fetches at once, and none of them cancelled by scrolling away, because
+    /// nothing would ever scroll off. Rows of the List are what the List recycles, so the
     /// grid is cut into them.
     private var albumSection: some View {
         Section("Albums") {

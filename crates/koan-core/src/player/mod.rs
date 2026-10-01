@@ -101,7 +101,7 @@ pub struct Player {
     batch_buffer: Option<Vec<UndoEntry>>,
     /// Configured output device name. None = system default.
     output_device_name: Option<String>,
-    /// Platform audio backend (CoreAudio on macOS, cpal on Linux).
+    /// Platform audio backend (CoreAudio on macOS and iOS, cpal on Linux).
     backend: Box<dyn AudioBackend>,
     /// Debounce: timestamp of last NextTrack/PrevTrack to suppress key repeat.
     last_skip: std::time::Instant,
@@ -260,7 +260,7 @@ impl Player {
         }
 
         // The front ends compare this against the source rate to say whether
-        // anything had to resample. A log line was the only place it went.
+        // anything had to resample.
         self.shared_state
             .set_output_sample_rate(settled.round() as u32);
 
@@ -394,7 +394,7 @@ impl Player {
         }
     }
 
-    /// Internal: start playback of a file.
+    /// Start playback of a file.
     ///
     /// A failure leaves the player cleanly stopped. Displaying a track that no
     /// engine is playing freezes the position and makes the transport lie.
@@ -458,7 +458,6 @@ impl Player {
 
         let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
 
-        // Reset timeline for new playback session and start decode.
         self.timeline.reset();
 
         let next_track = self.decode_cursor(id);
@@ -697,7 +696,7 @@ impl Player {
         })
     }
 
-    /// Internal: start streaming playback from a partially-downloaded file.
+    /// Start streaming playback from a partially-downloaded file.
     ///
     /// The decoder reads the `.part` file straight off disk through a
     /// `PartialFileSource`, which blocks when it reaches the write head. The
@@ -1083,7 +1082,7 @@ impl Player {
     }
 
     /// A download finished — if cursor is waiting on this item, start playback.
-    /// If already streaming this item, trigger progressive metadata enhancement.
+    /// If already streaming this item, re-read its metadata from the complete file.
     pub fn track_ready(&mut self, id: QueueItemId) {
         // Mark as Ready (download thread already did this, but be safe).
         self.shared_state.update_item_state(id, ItemState::Ready);
@@ -1097,7 +1096,7 @@ impl Player {
 
         if is_playing && current_track_id == Some(id) {
             // Already streaming this track — download just finished.
-            // Trigger progressive enhancement: re-read full lofty metadata and update state.
+            // Re-read the full tags now that the whole file is here.
             log::info!(
                 "track_ready: download complete while streaming {:?}, refreshing metadata",
                 id
@@ -1213,8 +1212,6 @@ impl Player {
         }
     }
 
-    /// Poll the timeline and update shared state with current track/position.
-    /// Called from the command loop on each tick.
     /// The needle has moved to `id`. Close out the outgoing track and write
     /// the new one to history straight away, so history reads in play order
     /// even for a track that is skipped a moment later.
@@ -1267,6 +1264,8 @@ impl Player {
         Some(event)
     }
 
+    /// Poll the timeline and update shared state with current track/position.
+    /// Called from the command loop on each tick.
     pub fn update_playback_state(&mut self) {
         let Some(playback) = self.active_playback.as_ref() else {
             return;

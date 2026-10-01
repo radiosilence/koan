@@ -1,10 +1,10 @@
 use rusqlite::Connection;
 
-/// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
 pub const SCHEMA_VERSION: i64 = 8;
 
+/// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
     // connection without it fails them rather than sorting differently.
@@ -420,11 +420,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ),
     // MusicBrainz ids are the join key for anything that wants to look a
     // release or a recording up elsewhere. The server hands them over on every
-    // album and every song and koan was discarding all of them.
+    // album and every song.
     ("albums", "mbid", "TEXT"),
     ("tracks", "mbid", "TEXT"),
-    // The server's own sort key, which is what it orders by. Artists already
-    // had this column and nothing ever filled it.
+    // The server's own sort key, which is what it orders by.
     ("albums", "sort_name", "TEXT"),
     // What a share is a slice of, so its page shows an album or an artist as
     // one. The track list stays authoritative; shares made before are loose
@@ -437,8 +436,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("playlists", "user_id", "INTEGER NOT NULL DEFAULT 0"),
     ("shares", "user_id", "INTEGER NOT NULL DEFAULT 0"),
     // The id every surface publishes; see `queries::uids`. Row ids are
-    // numbered per table and per database, so album 5 and song 5 were the same
-    // id to an endpoint that takes either, and neither meant anything on
+    // numbered per table and per database, so album 5 and song 5 are the same
+    // id to an endpoint that takes either, and neither means anything on
     // another device.
     ("artists", "uid", "TEXT"),
     ("albums", "uid", "TEXT"),
@@ -745,13 +744,6 @@ fn table_exists(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
     Ok(found > 0)
 }
 
-/// Give `play_history.track_id` its `ON DELETE CASCADE`.
-///
-/// The column shipped as a bare `REFERENCES`, which under `foreign_keys = ON`
-/// makes a track with history undeletable unless the caller remembers to clear
-/// the history first. One caller does; the constraint should not depend on the
-/// next one remembering. SQLite cannot alter a constraint in place, so the
-/// table is rebuilt.
 /// Fold artists whose names differ only in letter case into one: the row that
 /// owns the most albums, then the most tracks. Tags spell one act differently
 /// from record to record, and the split left an artist's page without the
@@ -828,6 +820,13 @@ fn merge_case_duplicate_artists(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Give `play_history.track_id` its `ON DELETE CASCADE`.
+///
+/// The column shipped as a bare `REFERENCES`, which under `foreign_keys = ON`
+/// makes a track with history undeletable unless the caller remembers to clear
+/// the history first. One caller does; the constraint should not depend on the
+/// next one remembering. SQLite cannot alter a constraint in place, so the
+/// table is rebuilt.
 fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
     if fk_cascades(conn, "play_history")? {
         return Ok(());

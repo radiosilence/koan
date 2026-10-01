@@ -67,7 +67,7 @@ pub fn cmd_scan(path: Option<&Path>, force: bool, force_remove: bool) {
                 format!("{} — {}", ev.artist, ev.title).white(),
                 ev.album.dimmed(),
             );
-            // Truncate to terminal width to avoid wrapping.
+            // Erase what a longer previous line left behind.
             eprint!("\x1b[K");
             std::io::stderr().flush().ok();
         }

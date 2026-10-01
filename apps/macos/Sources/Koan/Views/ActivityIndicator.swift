@@ -2,10 +2,9 @@ import SwiftUI
 
 /// What the app is busy with, stacked at the foot of the sidebar.
 ///
-/// Scans, syncs and large queue edits take anywhere up to a minute. This was a
-/// pill in the toolbar, which had room for one task and truncated its label; the
-/// sidebar has the width for a real label and grows downwards when more than one
-/// thing is running, which is normal — a sync while a queue add lands.
+/// Scans, syncs and large queue edits take anywhere up to a minute. The
+/// sidebar has the width for a whole label and grows downwards when more than
+/// one thing is running, which is normal — a sync while a queue add lands.
 ///
 /// Shows nothing at all when idle. A permanent empty state is furniture.
 struct ActivityList: View {

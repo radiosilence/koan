@@ -13,8 +13,8 @@ import SwiftUI
 /// The two layers are keyed differently on purpose.
 ///
 /// Bytes are fetched and stored once per record. On a remote-backed library
-/// every miss is an HTTP round trip, and keying them per track fetched the same
-/// sleeve once for every track on the record — a dozen requests and a dozen
+/// every miss is an HTTP round trip, and keyed per track the same
+/// sleeve would be fetched once for every track on the record — a dozen requests and a dozen
 /// identical files for one image. Files live under `~/Library/Caches`, which is
 /// the right place for data the system may reclaim and we can always fetch
 /// again.
@@ -28,15 +28,13 @@ import SwiftUI
 /// decoding it from a warm disk cache is quick enough that holding a 1000px
 /// bitmap for every record you happened to click on is not worth the resident
 /// memory.
-/// **Not on the main actor**, which is the load-bearing part.
 ///
-/// It used to be, and the fetch path has eight awaits in it — so every tile
-/// hopped onto the main actor eight times to fetch one cover. A grid of twenty
-/// queued a hundred and sixty jobs there, and anything else waiting for an
-/// answer went to the back of that queue: the engine handed back an album's
-/// tracks in 300µs and the app saw them two hundred milliseconds later. None of
-/// this work needs the main actor. The bookkeeping is behind a lock and
-/// `NSCache` is thread-safe on its own.
+/// **Not on the main actor**, which is the load-bearing part. The fetch path
+/// has eight awaits in it, so on the main actor every tile would hop there
+/// eight times to fetch one cover, and a grid of twenty would queue a hundred
+/// and sixty jobs ahead of anything else waiting for an answer. None of this
+/// work needs the main actor. The bookkeeping is behind a lock and `NSCache`
+/// is thread-safe on its own.
 ///
 /// `Observable` is conformed to by hand rather than synthesised, so views can
 /// still reach it through `@Environment`. Nothing on it is observed — a cache
@@ -87,11 +85,11 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// unrelated albums.
     ///
     /// Only *album* lookups teach this, and it takes three albums to conclude
-    /// it. Learning from track lookups was wrong in a way that destroyed real
-    /// art: a track's cover is by definition the same image as its album's, so
-    /// playing an album made its own artwork look like a repeat and wiped it
-    /// from the grid. Two albums sharing art is also legitimate — a single and
-    /// the record it came from — so two sightings is too eager.
+    /// it. A track's cover is by definition the same image as its album's, so
+    /// learning from track lookups would make playing an album look like a
+    /// repeat and wipe its real artwork from the grid. Two albums sharing art is
+    /// also legitimate — a single and the record it came from — so two
+    /// sightings is too eager.
     private var hashOwners: [String: Set<String>] = [:]
     private var placeholderHashes: Set<String> = []
 
@@ -108,7 +106,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// What's already decoded, without starting anything.
     ///
     /// Views call this first so a cover that has been seen appears in the same
-    /// frame rather than after an await, which is what made a scrolled-back grid
+    /// frame rather than after an await, and a scrolled-back grid does not
     /// flash grey.
     func cached(_ source: AlbumArtwork.Source, size: AlbumArtwork.Size) -> PlatformImage? {
         guard !locked({ absent.contains(Self.key(source)) }) else { return nil }
@@ -124,10 +122,10 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// Fetch the art at a given size, awaiting the disk cache or the network as
     /// needed.
     ///
-    /// Deliberately `async` and not observable: an earlier version returned
-    /// what it had and started a load as a side effect of being read, so every
-    /// artwork on screen depended on every entry in the cache and one arriving
-    /// invalidated all of them.
+    /// Deliberately `async` and not observable: a read that returned what it
+    /// had and started a load as a side effect would make every artwork on
+    /// screen depend on every entry in the cache, and one arriving would
+    /// invalidate all of them.
     ///
     /// Concurrent callers share work at both layers — a grid and a transport
     /// bar showing the same record at different sizes is one round trip and two
@@ -171,7 +169,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     ///
     /// Shares the byte fetch with the artwork itself, so the wash costs no
     /// extra round trip, and does its pixel work on `ImageWork` rather than
-    /// wherever it was asked from — which was the main actor.
+    /// wherever it was asked from.
     func dominantColour(for source: AlbumArtwork.Source) async -> Color? {
         let key = Self.key(source)
         if let known = locked({ colours[key] }) { return known }
@@ -262,8 +260,8 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// What an attempt learned.
     ///
     /// A server that answers and says it has no art is worth remembering. One
-    /// that could not be reached is not: recording that as "no art" is why a
-    /// scroll during a blip left permanent holes in the grid until relaunch.
+    /// that could not be reached is not: recorded as "no art", a scroll during
+    /// a blip would leave permanent holes in the grid until relaunch.
     private enum Fetched {
         case art(Data, hash: String)
         case none
@@ -276,7 +274,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     ) async -> Fetched {
         do {
             // One call either way. Asking for the record's tracks to find an id
-            // to ask for art with meant a listing built and carried across the
+            // to ask for art with would build a listing and carry it across the
             // boundary to be thrown away — once per tile, on a grid of them.
             let data: Data?
             switch source {

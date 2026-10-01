@@ -1,4 +1,4 @@
-//! Lightweight GraphQL client for connecting to a `koan serve` instance.
+//! GraphQL client for connecting to a `koan serve` instance.
 //!
 //! Uses blocking reqwest — call from a background thread when used from the TUI.
 

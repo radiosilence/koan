@@ -6,8 +6,7 @@ import SwiftUI
 /// Attached to the window rather than to whatever asked, because most of the
 /// things that ask are gone by the time the answer is needed: a context menu
 /// closes the instant you pick from it, and an alert attached to its contents
-/// closes with it — silently, which is exactly how **Add to Playlist → New
-/// Playlist…** came to do nothing at all. Everything asks by setting
+/// closes with it, silently. Everything asks by setting
 /// `PlaylistsModel.naming`; this presents it, wherever it came from.
 struct NewPlaylistAlert: ViewModifier {
     @Environment(PlaylistsModel.self) private var playlists

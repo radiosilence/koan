@@ -10,18 +10,16 @@ import SwiftUI
 /// you build a queue in, and the TUI opens the same way. The library is
 /// somewhere you go to feed it.
 ///
-/// The wide layout: sidebar, stage, transport across the top.
-///
-/// The Mac's. iOS, iPad included, uses `TabShell`, whose sidebar-adaptable tab
+/// The Mac's layout. iOS, iPad included, uses `TabShell`, whose sidebar-adaptable tab
 /// bar is the platform's own iPad layout; this one was built for a pointer.
 ///
 /// `NavigationSplitView` is the root and stays the root. Wrapping it in a stack
 /// or putting an `HSplitView` in its detail column breaks width propagation:
 /// `HSplitView` sizes children to their minimum, so the stage would sit at
 /// whatever `minWidth` it declared no matter how large the window got, and an
-/// adaptive grid inside it would be stuck at two columns. The transport is a
-/// `safeAreaInset` and the lyrics panel an `inspector` for the same reason —
-/// both add chrome without taking the detail column's width away.
+/// adaptive grid inside it would be stuck at two columns. The lyrics panel is
+/// an `inspector` and the transport an overlay on the window for the same
+/// reason — both add chrome without taking the detail column's width away.
 ///
 /// The detail column shows one page, chosen by `Navigator`. There is no
 /// `NavigationStack`: koan navigates like a browser — any page from any page,
@@ -48,13 +46,12 @@ struct RootView: View {
     @Environment(PlayerModel.self) private var player
 
     /// Read for the window's own glass — the toolbar and the transport's soft
-    /// edge, which are the platform's rather than koan's and which no step of
-    /// this setting used to reach.
+    /// edge, which are the platform's rather than koan's.
     @AppStorage("graphics") private var graphics = Graphics.full
     @State private var transportHeight: CGFloat = 0
     /// Watched rather than inferred from the measured width: a collapsed
-    /// sidebar still reports its last width, so the transport kept a gap where
-    /// it used to be.
+    /// sidebar still reports its last width, and the transport would keep a
+    /// gap where it had been.
     @State private var columns: NavigationSplitViewVisibility = .automatic
 
     var body: some View {
@@ -81,8 +78,9 @@ struct RootView: View {
                 .transition(.move(edge: .trailing))
                 // The toggle belongs to the inspector rather than the window, so
                 // it sits at the pane's leading edge and moves with it. In the
-                // window's trailing group the pane opened out from underneath
-                // it, and it shared a capsule with the filter field.
+                // window's trailing group the pane would open out from
+                // underneath it, and it would share a capsule with the filter
+                // field.
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
@@ -109,11 +107,10 @@ struct RootView: View {
             library.libraryChanged()
             playlists.load()
         }
-        // The toolbar paints its own ground over whatever is behind it, which
-        // put a hard grey strip across the top of a queue washed in the colour
-        // of the record. Hidden, the glass controls sit in that colour — which
-        // is the whole point of them being glass — and the scroll edge effect
-        // keeps rows legible as they pass under.
+        // The toolbar paints its own ground over whatever is behind it, a hard
+        // grey strip across the top of a queue washed in the colour of the
+        // record. Hidden, the glass controls sit in that colour and the scroll
+        // edge effect keeps rows legible as they pass under.
         // Restored at `bare`: the ground it paints is opaque, so nothing behind
         // it is sampled and a page switch does not redraw it.
         #if os(macOS)
@@ -127,8 +124,8 @@ struct RootView: View {
         #endif
         .onSubmit(of: .search) { search.submit() }
         // Backgrounding is the last dependable moment before termination. A
-        // notification rather than `scenePhase`: reading that re-ran whatever
-        // read it — it was the whole Scene — each time the app lost focus.
+        // notification rather than `scenePhase`: reading that re-runs whatever
+        // reads it — here the whole Scene — each time the app loses focus.
         .onReceive(
             NotificationCenter.default.publisher(for: .appResignsActive)
         ) { _ in
@@ -144,7 +141,7 @@ struct RootView: View {
         .onPreferenceChange(TransportHeightKey.self) { transportHeight = $0 }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { ui.windowSize = $0 }
         .toolbar {
-            // Back and forward walk the pages you actually visited, in order,
+            // Back and forward walk the pages you visited, in order,
             // wherever they were.
             ToolbarItemGroup(placement: .navigation) {
                 Button { nav.goBack() } label: {
@@ -162,7 +159,7 @@ struct RootView: View {
 
             // Separate items with `ToolbarSpacer` between them, not one
             // `ToolbarItemGroup`: a group shares a single pane of glass, which
-            // put the filter field and the lyrics toggle in the same capsule.
+            // would put the filter field and the lyrics toggle in the same capsule.
             ToolbarSpacer(.flexible, placement: .primaryAction)
 
             // Filtering what is on screen belongs with it, not in the sidebar
@@ -280,8 +277,8 @@ struct RootView: View {
 ///
 /// Its own view because the field reads the filter back on every update, and
 /// SwiftUI charges that read to whichever body the field sits in. Placed in
-/// `RootView` directly, that was the root: every keystroke re-ran the window
-/// and rebuilt the toolbar, field and focus with it.
+/// `RootView` directly, that would be the root: every keystroke would re-run
+/// the window and rebuild the toolbar, field and focus with it.
 private struct LibraryFilter: View {
     let placeholder: String
     @Environment(LibraryModel.self) private var library
@@ -303,7 +300,7 @@ extension EnvironmentValues {
 }
 
 /// The room around the page: the wash on the window and the tint on the
-/// controls, which are the same answer and were once two.
+/// controls, which are the same answer.
 ///
 /// A modifier rather than lines in `RootView.body`, because what it reads
 /// moves per track — the record playing, the page you are on — and a read in
@@ -340,14 +337,13 @@ struct RecordRoom: ViewModifier {
     /// control reads rather than a property of a layer, so the compositor
     /// cannot take this one — easing it over two seconds is a hundred and
     /// twenty renders of the whole window, each one a commit, and each commit a
-    /// synchronous round trip to the render server. That was half of what
-    /// opening a record cost.
+    /// synchronous round trip to the render server.
     private static let tintEase = Animation.easeInOut(duration: 2)
 
     /// Read straight through the cache on every pass, the way `AlbumArtwork`
     /// reads its bitmap: a colour the app already holds lands in the same commit
     /// as the page that wanted it. Held in `@State` and written by a task, it
-    /// was a second commit every time — the page, and then the room around it.
+    /// would be a second commit every time — the page, and then the room around it.
     private var recordTint: Color? {
         guard let colourSource else { return nil }
         if let held = art.cachedColour(for: colourSource) { return held }
@@ -423,7 +419,7 @@ struct RecordRoom: ViewModifier {
 ///
 /// Its own view because the widths it reads move while the sidebar is being
 /// dragged and on every frame the lyrics panel slides — read in the root, each
-/// of those frames re-ran the window.
+/// of those frames would re-run the window.
 private struct TransportOverlay: View {
     let columns: NavigationSplitViewVisibility
 
@@ -490,7 +486,7 @@ private struct SelectionControls: View {
 /// play and pause change how it breathes and nothing else about the window.
 ///
 /// Handed the model rather than a value taken from it: taken in `RootView`, the
-/// read was the root's, and every pause re-ran the whole window.
+/// read would be the root's, and every pause would re-run the whole window.
 private struct WindowWash: View {
     let source: AlbumArtwork.Source?
     let player: PlayerModel
@@ -516,7 +512,6 @@ private struct Toasts: View {
 }
 
 /// The page. One `switch`, no stack.
-///
 private struct StageView: View {
     @Environment(Navigator.self) private var nav
 
@@ -535,7 +530,7 @@ private struct StageView: View {
     ///
     /// Off stage a page is invisible, untouchable, unfocusable and told so,
     /// which is what stops the row that is playing animating behind a page you
-    /// are actually looking at.
+    /// are looking at.
     var body: some View {
         ZStack {
             QueueView()

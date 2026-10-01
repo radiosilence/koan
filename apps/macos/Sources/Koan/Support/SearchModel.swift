@@ -29,9 +29,9 @@ final class SearchModel {
         }
     }
 
-    /// Stored, and only written when it flips. Computed from `query`, it made
-    /// everything that asked — the sidebar, for its Results row — a reader of
-    /// every keystroke.
+    /// Stored, and only written when it flips. Computed from `query`, it would
+    /// make everything that asked — the sidebar, for its Results row — a reader
+    /// of every keystroke.
     private(set) var hasQuery = false
 
     private(set) var artists: [Artist] = []
@@ -125,8 +125,8 @@ final class SearchModel {
             locationBeforeSearch = nav.current
         }
 
-        // Only on the edge: written per keystroke, the results page re-ran per
-        // keystroke for a flag that had not moved.
+        // Only on the edge: written per keystroke, the results page would re-run
+        // per keystroke for a flag that had not moved.
         if !isSearching { isSearching = true }
         let engine = self.engine
         task = Task {
@@ -146,10 +146,9 @@ final class SearchModel {
             albums = found.1
             artists = found.2
             isSearching = false
-            // Moved once there is something to show. Navigating on the first
-            // keystroke put an empty results page up and filled it in a query
-            // later — the page you were on is a better thing to look at while
-            // the answer is being read than a page with nothing on it.
+            // Moved once there is something to show: the page you were on is a
+            // better thing to look at while the answer is being read than an
+            // empty results page.
             nav.show(.searchResults)
         }
     }
@@ -181,9 +180,9 @@ final class SearchModel {
     /// is: a shell that offers a search field should not also have to know what
     /// submitting one means.
     func submit() {
-        // Emptying the field submits it again. Acting on that sent you to the
-        // results page for a search you had not asked for — and since clearing
-        // the query then forgets that page, you landed on whatever list was
+        // Emptying the field submits it again. Acting on that would open the
+        // results page for a search nobody asked for — and since clearing the
+        // query then forgets that page, you would land on whatever list was
         // behind it, one keystroke after picking an album.
         let text = query.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else { return }

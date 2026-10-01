@@ -205,8 +205,8 @@ pub struct AlbumQuery<'a> {
 /// Albums, narrowed, ordered and paged by the database.
 ///
 /// The narrowing belongs here rather than in each client: every front end wants
-/// the same answer, and the ones that filtered a fully-loaded list in their own
-/// language paid for reading the whole table to throw most of it away. Matching
+/// the same answer, and one filtering a fully-loaded list in its own language
+/// pays for reading the whole table to throw most of it away. Matching
 /// is ASCII case-insensitive, like `find_artists` — SQLite's `NOCASE` does not
 /// fold accented letters, so `MOTLEY` finds `Motley` but `MÖTLEY` does not find
 /// `Mötley`.

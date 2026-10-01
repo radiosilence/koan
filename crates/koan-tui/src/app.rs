@@ -167,7 +167,6 @@ pub struct App {
     /// Queue cursor, selection, scroll, and cached snapshot.
     pub queue: QueueState,
 
-    // Picker state (when in Picker mode).
     pub picker: Option<PickerState>,
 
     // Spinner tick for download animation.
@@ -186,7 +185,6 @@ pub struct App {
     /// State has changed and should be persisted at next autosave interval.
     pub state_dirty: bool,
 
-    // Theme.
     pub theme: Theme,
 
     /// Cached layout rects from last render for mouse hit-testing.
@@ -205,11 +203,9 @@ pub struct App {
     // Auto-scroll: track by path so index shifts from finished_paths don't trigger.
     pub last_playing_path: Option<PathBuf>,
 
-    // Library browser.
     pub library: Option<LibraryState>,
     pub library_focus: LibraryFocus,
 
-    /// Cover art caches.
     pub art: ArtState,
 
     /// Context menu state (when in ContextMenu mode).
@@ -246,7 +242,6 @@ pub struct App {
     /// Visualizer state (spectrum bars, peaks, VU levels).
     pub visualizer: VisualizerState,
 
-    /// Lyrics panel state.
     pub lyrics: LyricsState,
 
     /// Whether the lyrics side panel is visible (toggled with `L`).
@@ -255,8 +250,8 @@ pub struct App {
     /// Receiver for background lyrics fetch results.
     pub lyrics_rx: Option<crossbeam_channel::Receiver<Option<koan_core::lyrics::Lyrics>>>,
 
-    /// Transport bar resize drag state — Some(start_y) when dragging.
-    pub transport_drag: Option<(u16, u16)>, // (start_row, original_art_size)
+    /// Transport bar resize drag: (start_row, original_art_size) while dragging.
+    pub transport_drag: Option<(u16, u16)>,
 
     /// Mouse hover state — updated on MouseEventKind::Moved.
     pub hover: HoverState,
@@ -302,7 +297,6 @@ pub struct App {
     /// Last computed display FPS value.
     pub display_fps: u16,
 
-    /// Radio config.
     pub radio_config: koan_core::config::RadioConfig,
     /// Album art width in terminal columns. Height = width/2 (square via halfblocks).
     pub art_size: u16,
@@ -396,7 +390,6 @@ impl App {
         self.mode = self.mode_stack.pop().unwrap_or(Mode::Normal);
     }
 
-    /// Load favourites from the database.
     pub fn load_favourites(&mut self) {
         if let Ok(db) = koan_core::db::pool::shared().get()
             && let Ok(favs) = koan_core::db::queries::load_favourites(
@@ -466,8 +459,8 @@ impl App {
             self.spinner_tick = self.spinner_tick.wrapping_add(1);
         }
 
-        // Ticker animation: advance one character every 3 ticks (~150ms).
-        // Reset when the playing track changes so new titles start from the beginning.
+        // Ticker: advance about `TICKER_FPS` characters a second, restarting
+        // when the playing track changes.
         {
             let current_playing = self
                 .queue
@@ -522,7 +515,6 @@ impl App {
             self.loading_message = None;
         }
 
-        // Tick picker if active.
         if let Some(ref mut picker) = self.picker {
             picker.tick();
         }
@@ -560,9 +552,8 @@ impl App {
             self.art.now_playing_art.clear();
         }
 
-        // Update visualizer spectrum at configured FPS.
-        // Update visualizer every frame — analysis thread runs at its own rate,
-        // decay/smoothing runs unconditionally at TUI fps for buttery-smooth animation.
+        // Updated every frame: the analysis thread runs at its own rate, and
+        // decay and smoothing run at the TUI frame rate.
         if self.viz_config.enabled {
             if self.state.playback_state() == PlaybackState::Playing {
                 self.visualizer.update_from_snapshot(&self.viz_snapshot);
@@ -607,7 +598,6 @@ impl App {
                 self.lyrics.result = None;
                 self.lyrics.lrc_lines.clear();
 
-                // Spawn background fetch.
                 if let Some(entry) = self
                     .queue
                     .vq_cache
@@ -1599,7 +1589,6 @@ impl App {
                 return;
             }
             MouseEventKind::Up(MouseButton::Left) if self.transport_drag.is_some() => {
-                // Persist the new size.
                 let size = self.art_size;
                 let _ = koan_core::config::Config::persist(|cfg| {
                     cfg.playback.art_size = size;
@@ -2139,7 +2128,7 @@ impl App {
                         }
                         self.queue.cursor = idx;
 
-                        // Build context menu with relevant actions.
+
                         let is_fav = visible
                             .get(idx)
                             .is_some_and(|e| self.favourites.contains(&e.path));
@@ -2328,7 +2317,7 @@ impl App {
         let anchor = self.anchor_index().unwrap_or(self.queue.cursor);
         let lo = anchor.min(idx);
         let hi = anchor.max(idx);
-        // Don't clear — shift extends. But we replace the range from anchor.
+        // Shift replaces the selection with the range from the anchor.
         self.queue.selected_ids.clear();
         let visible = &self.queue.vq_cache.entries;
         for i in lo..=hi {
@@ -2877,15 +2866,15 @@ impl App {
         if mutated {
             self.queue.vq_version = v;
             self.state_dirty = true; // Queue mutated — persist.
-            // Clamp cursor after every external playlist change.
+
             self.clamp_queue_cursor();
             self.close_stale_track_info();
             self.note_new_failures();
         }
     }
 
-    /// Say why a track cannot play. The reason used to reach only the log file,
-    /// so a queue nothing could fetch looked exactly like a queue still loading.
+    /// Say why a track cannot play. Without it, a queue nothing could fetch
+    /// looks exactly like a queue still loading.
     fn note_new_failures(&mut self) {
         let mut reasons = self
             .queue

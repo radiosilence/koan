@@ -54,11 +54,11 @@ enum Graphics: Int, CaseIterable, Identifiable {
         case .bare:
             "Everything Plain stands down, and the window's own glass with it: an opaque toolbar and no soft edge where content passes under the transport. Those are the platform's, not kōan's, and they are redrawn whenever anything behind them moves."
         case .plain:
-            "No colour behind the window, indicators held still, flat chrome instead of glass. For a machine that would rather spend nothing on this."
+            "No colour behind the window, indicators held still, flat chrome instead of glass."
         case .reduced:
             "The record's colour behind the window, held still — which measures the same as no colour at all. Only the drift is expensive."
         case .full:
-            "The colour drifts while something is playing. Around a tenth of a core more than the other two, for as long as the music runs."
+            "The colour drifts while something is playing. Around a tenth of a core more than Reduced, for as long as the music runs."
         }
     }
 
@@ -79,9 +79,8 @@ enum Graphics: Int, CaseIterable, Identifiable {
     /// content, and the soft edge that fades a row out as it passes under the
     /// transport.
     ///
-    /// Separate from `usesGlass`, which is koan's own chrome and the only thing
-    /// the setting used to reach. These two are the platform's, they are on at
-    /// every other step whatever the setting said, and they are re-rendered
+    /// Separate from `usesGlass`, which is koan's own chrome. These two are the
+    /// platform's, kept at every step but `bare`, and they are re-rendered
     /// whenever the content behind them changes — which a page switch does
     /// wholesale.
     var usesWindowGlass: Bool { self != .bare }

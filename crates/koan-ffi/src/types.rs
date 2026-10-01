@@ -342,7 +342,7 @@ impl From<&koan_core::remote::downloads::Download> for TransferFigure {
 
 impl QueueItem {
     /// Build directly from a playlist item, skipping `derive_visible_queue()`.
-    /// The transport bar polls several times a second and only ever wants the
+    /// The state watcher builds this on every wake and only ever wants the
     /// item under the cursor — deriving the whole queue for that is waste.
     pub(crate) fn from_cursor_item(item: &PlaylistItem, state: PlaybackState) -> Self {
         // The item's own state and any transfer against it, as one answer.
@@ -423,19 +423,18 @@ impl QueueItem {
 /// A record and its tracks, as one answer.
 ///
 /// The page wants both and wants them together, so they are one call: one hop
-/// across the boundary, one connection out of the pool, one lock taken. As two
-/// they were two of each, racing on the same click.
+/// across the boundary, one connection out of the pool, one lock taken.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct AlbumPage {
     pub album: Option<Album>,
     pub tracks: Vec<Track>,
 }
 
-/// A created share link, and how much of the request it actually covers.
+/// A created share link, and how much of the request it covers.
 ///
 /// `skipped` is the point of this being a record rather than a bare string: a
 /// selection mixing local-only files with server-backed ones produces a link
-/// that is genuinely partial, and the UI has to be able to say so.
+/// that is partial, and the UI has to be able to say so.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct Share {
     pub url: String,
@@ -473,7 +472,7 @@ pub struct Device {
 }
 
 /// Cover art as raw bytes. The GraphQL surface base64s this because JSON has to;
-/// across FFI it stays binary and lands straight in an `NSImage`.
+/// across FFI it stays binary.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct CoverArt {
     pub data: Vec<u8>,
@@ -854,8 +853,8 @@ pub(crate) fn year_of(date: &str) -> Option<i32> {
 ///
 /// One record rather than a getter per field: the window shows the whole
 /// configuration at once, and a single read keeps it consistent with itself.
-/// The remote password is deliberately absent — it lives in the platform
-/// credential store and is written through `sign_in_remote`, never read back.
+/// The remote password is deliberately absent — it lives in config.local.toml
+/// and is written through `sign_in_remote`, never read back.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct Settings {
     /// Folders and how many tracks each accounts for — a folder is easier to

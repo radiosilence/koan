@@ -140,7 +140,8 @@ pub struct RemoteConfig {
     /// Parallel download workers for remote tracks (default: 5).
     pub download_workers: usize,
     /// Maximum cache size on disk. Human-readable: "50GB", "500MB", etc.
-    /// None or empty = unlimited. LRU eviction runs on startup when exceeded.
+    /// None or empty = unlimited. Past it, whole albums are evicted, least
+    /// recently used first, at startup and as downloads land.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_limit: Option<String>,
     /// Sync the library from the server on startup and on a timer.
@@ -186,7 +187,8 @@ impl Default for PlaybackConfig {
 pub struct VisualizerConfig {
     pub enabled: bool,
     pub fps: u8,
-    /// Visualizer mode: "bars" (default), "oscilloscope", "radial", "particles", "lissajous".
+    /// Visualizer mode by name: "bars" (default), or any name
+    /// `VisualizerMode::parse` in koan-tui accepts.
     pub mode: String,
     /// Frequency scale: "bark" (default), "mel", "log", "linear".
     pub scale: String,
@@ -983,8 +985,7 @@ pub fn open_log() -> Option<fs::File> {
 ///
 /// Runs once per process. It reads both config files and, when a password is
 /// present, forks `git ls-files` — and `load()` is reached from UI paths that
-/// run per frame. The name says what it is: a gate on starting, not a check
-/// that belongs on every read.
+/// run per frame.
 fn check_secrets_in_git() {
     static ONCE: Once = Once::new();
     ONCE.call_once(scan_for_tracked_secrets);

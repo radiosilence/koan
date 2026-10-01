@@ -33,16 +33,16 @@ final class PlaylistsModel {
     private(set) var covers: [Int64: [AlbumArtwork.Source]] = [:]
 
     /// The `changedAt` each playlist's mosaic was built from. Adding tracks to
-    /// a playlist changes its face, and without this the tile kept whatever it
-    /// had the first time it was drawn — for a new playlist, nothing at all.
+    /// a playlist changes its face, and without this the tile would keep
+    /// whatever it had the first time it was drawn — for a new playlist,
+    /// nothing at all.
     private var coverStamp: [Int64: String] = [:]
 
     /// Tracks waiting for a name, and the new playlist they will become.
     ///
     /// A request rather than a dialog, because the dialog cannot live where it
     /// is asked for: a context menu is gone the instant you pick from it, and
-    /// takes any alert attached to it with it — which is why **Add to
-    /// Playlist → New Playlist…** did nothing at all. One host presents this,
+    /// takes any alert attached to it with it. One host presents this,
     /// somewhere that outlives the gesture. Empty is a real request: it means a
     /// new playlist with nothing in it yet.
     var naming: [Int64]?

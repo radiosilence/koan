@@ -1,9 +1,8 @@
 //! Database connections, opened once and kept.
 //!
-//! Every read used to open its own: a connection, a permissions syscall, the
-//! whole schema DDL and a WAL checkpoint, before a single row came back.
-//! Clicking an album paid all of it, and while downloads were writing, the
-//! checkpoint contended with them and it took seconds.
+//! Opening one costs a permissions syscall, the whole schema DDL and a WAL
+//! checkpoint before a single row comes back, and while downloads are writing
+//! the checkpoint contends with them.
 //!
 //! A pool rather than one shared connection, because rusqlite's `Connection` is
 //! `Send` but not `Sync`: sharing one means a mutex, and a mutex means every
@@ -116,8 +115,7 @@ impl Pool {
 
 /// A borrowed connection, returned to the pool when it goes out of scope.
 ///
-/// Derefs to `Database` so callers reach `.conn` exactly as they did when this
-/// was an owned connection they had opened themselves.
+/// Derefs to `Database`, so callers reach `.conn` as on an owned connection.
 pub struct Handle<'a> {
     db: Option<Database>,
     pool: &'a Pool,

@@ -93,7 +93,7 @@ koan search "radiohead"
 koan search "kind of blue"
 ```
 
-Uses SQLite FTS5 for fast prefix and stemming search. Results display as a tree: artist -> album -> track.
+Uses SQLite FTS5 with prefix matching. Results display as a tree: artist -> album -> track.
 
 ---
 
@@ -192,7 +192,7 @@ koan auth api-key create --username alice --name phone  # Subsonic API key, prin
 koan auth api-key list [--username alice]               # keys with created / last used
 koan auth api-key revoke 3            # revoke a key by id
 koan auth regenerate-keys             # regenerate Ed25519 keypair (invalidates all tokens)
-koan auth reset                       # nuclear: delete all keys, users, tokens
+koan auth reset                       # delete all keys, users, tokens
 ```
 
 Non-interactive setup for scripting:

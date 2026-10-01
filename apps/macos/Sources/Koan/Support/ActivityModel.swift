@@ -6,22 +6,20 @@ import os
 /// Everything slow that is happening right now.
 ///
 /// A scan, a remote sync, a large queue add and a library rebuild all take
-/// anywhere from a second to a minute, and each had its own flag — or none at
-/// all — so pressing the button looked like nothing happened. One registry, one
-/// place to show it, and adding a task later means calling `run` rather than
-/// inventing another boolean.
+/// anywhere from a second to a minute, and without a sign of them pressing the
+/// button looks like nothing happened. One registry, one place to show it, and
+/// a new kind of task calls `run` rather than inventing another boolean.
 @MainActor
 @Observable
 final class ActivityModel {
     /// What a task has hold of, so the next one can be told apart from the
-    /// ones it would actually collide with.
+    /// ones it would collide with.
     ///
-    /// This was a single flag: any library task running greyed out every other,
-    /// on the grounds that they all queue behind SQLite's one writer. Most of
-    /// them never meet, though — a sync writes the server's rows while a scan
-    /// writes your files' — and sitting out a twenty-minute sync before you can
-    /// rescan a folder buys nothing. So a task says what it touches and only
-    /// what would touch the same is disabled.
+    /// Every library task queues behind SQLite's one writer, but most of them
+    /// never meet — a sync writes the server's rows while a scan writes your
+    /// files' — and sitting out a twenty-minute sync before you can rescan a
+    /// folder buys nothing. So a task says what it touches and only what would
+    /// touch the same is disabled.
     struct Resources: OptionSet, Sendable {
         let rawValue: Int
 
@@ -178,10 +176,10 @@ final class ActivityModel {
     /// so nothing here can wrap them: the engine says whether each is running
     /// and this shows a row for as long as it is.
     ///
-    /// Called with each answer as it arrives rather than asking for it. It
-    /// asked once a second, for ever, so that a row would appear within a
-    /// second of a scan starting — which is a wake a second for the whole life
-    /// of the app to notice something that happens twice a day.
+    /// Called with each answer as it arrives rather than asking for it. Asking
+    /// once a second, so a row appears within a second of a scan starting, is a
+    /// wake a second for the whole life of the app to notice something that
+    /// happens twice a day.
     func mirror(
         _ label: String,
         uses: Resources = [],

@@ -228,7 +228,7 @@ struct OrganizeSheet: View {
         return "Move \(Format.count(Int64(plan.movedCount), "File"))"
     }
 
-    /// Armed only when pressing it will actually move something: a plan with
+    /// Armed only when pressing it will move something: a plan with
     /// moves in it, nothing already in flight, and nothing else reading the
     /// files this is about to move out from under it.
     private var canRun: Bool {
@@ -243,8 +243,8 @@ struct OrganizeSheet: View {
 ///
 /// The source is dimmed and the destination is not, because the destination is
 /// the thing being decided. A row that isn't moving says why on the line where
-/// the destination would have been — the whole point of showing it is that the
-/// user sees the collision before the button, not after it.
+/// the destination would have been, so the user sees the collision before the
+/// button, not after it.
 private struct OrganizeRow: View {
     let entry: OrganizeEntry
     let baseDir: String

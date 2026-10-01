@@ -71,8 +71,6 @@ pub fn cmd_play(
         koan_core::remote::queue::shared(&tx, &state, Some(log_buffer.clone())).clone();
 
     // Radio's top-up loop lives in koan-core so every client behaves the same.
-    // The TUI used to carry its own copy, which meant a second implementation
-    // to keep in step with this one.
     koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), config::db_path());
 
     // Spawn the API server on a background thread if requested.

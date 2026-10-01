@@ -37,8 +37,8 @@ struct Hotkey {
 /// These cannot be menu shortcuts. A modifier-less key equivalent is claimed by
 /// the menu before the responder chain sees it, so `f` would favourite a track
 /// instead of typing an f into the search field — which is why AppKit warns you
-/// off declaring them. A local monitor can ask what has focus first, and that is
-/// the whole point: the keys are live in the app and dead in any text field.
+/// off declaring them. A local monitor can ask what has focus first, so the
+/// keys are live in the app and dead in any text field.
 ///
 /// A focused List eats space for scrolling and letters for type-select, so the
 /// monitor also wins the keys a menu would have lost anyway. The cost is that
@@ -49,8 +49,7 @@ struct Hotkey {
 /// tile are SwiftUI gestures, not AppKit responders. Filter the albums, click
 /// one to play it, and every key you press afterwards is still going into the
 /// filter. A click anywhere outside the field ends the editing, the way it
-/// reads as doing. It used to happen by accident — the toolbar rebuilt itself
-/// on every track change and threw the field's focus away with it.
+/// reads as doing.
 @MainActor
 final class Hotkeys {
     private var monitor: Any?
@@ -179,8 +178,8 @@ extension Hotkeys {
                 player.seek(bySeconds: 10)
             },
             // Through the library, not the engine: the hearts read
-            // `favouriteTrackIds`, so toggling underneath it flipped the
-            // database and left every heart in the app showing the old answer.
+            // `favouriteTrackIds`, so toggling underneath it would flip the
+            // database and leave every heart in the app showing the old answer.
             Hotkey(keys: ["f"], label: "Favourite this track", group: .playback) {
                 guard let trackId = player.currentTrackId else { return }
                 library.toggleFavourite(track: trackId)

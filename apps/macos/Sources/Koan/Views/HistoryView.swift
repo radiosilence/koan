@@ -5,13 +5,13 @@ import SwiftUI
 /// What you have listened to, most recent first.
 ///
 /// A list of events, not of tracks: a record you played three times is three
-/// rows. That is the whole point of it, so nothing here deduplicates or
-/// regroups by album the way the queue does — the only grouping is the day,
-/// which is how people actually reach for this ("what was that thing on
-/// Tuesday").
+/// rows. Nothing here deduplicates or regroups by album the way the queue does
+/// — the only grouping is the day, which is how people reach for this ("what
+/// was that thing on Tuesday").
 ///
-/// Read-only. Rows link through to the album and the artist and offer the
-/// usual play/queue menu, but there is nothing here to reorder or remove.
+/// Rows link through to the album and the artist and offer the usual
+/// play/queue menu, and plays can be forgotten from it or with ⌫. Nothing
+/// reorders.
 struct HistoryView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player

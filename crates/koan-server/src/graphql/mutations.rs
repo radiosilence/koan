@@ -468,7 +468,6 @@ impl MutationRoot {
         if !resolved.items.is_empty() {
             send_cmd_via(tx, PlayerCommand::AddToPlaylist(resolved.items))?;
 
-            // Auto-play if stopped
             if state.playback_state() == PlaybackState::Stopped
                 && let Some(id) = first_id
             {
@@ -1088,11 +1087,11 @@ impl MutationRoot {
 
     // -- Library management --
 
-    /// Start a library scan and return immediately.
+    /// Start a library scan and return immediately; poll `job(id:)`.
     ///
-    /// A full scan walks the filesystem and writes for minutes. Run inline it
-    /// held a runtime worker for the whole time, which stalled every in-flight
-    /// audio stream on the same process.
+    /// A full scan walks the filesystem and writes for minutes, so it runs on a
+    /// detached thread rather than holding a runtime worker that in-flight audio
+    /// streams need.
     async fn trigger_scan(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlJob> {
         require_role(ctx, Role::Admin)?;
         spawn_job(ctx, "scan", |db, _| {
@@ -1379,9 +1378,6 @@ async fn set_favourite(
     .await
 }
 
-/// Run `work` on a detached thread with its own connection, returning a job
-/// handle. A job of the same kind already running is returned as-is rather than
-/// started twice.
 /// What a running sync job says it is doing.
 fn describe_sync(p: koan_core::remote::sync::SyncProgress) -> String {
     use koan_core::remote::sync::SyncPhase;
@@ -1394,6 +1390,9 @@ fn describe_sync(p: koan_core::remote::sync::SyncProgress) -> String {
     }
 }
 
+/// Run `work` on a detached thread with its own connection, returning a job
+/// handle. A job of the same kind already running is returned as-is rather than
+/// started twice.
 fn spawn_job<F>(ctx: &Context<'_>, kind: &'static str, work: F) -> async_graphql::Result<GqlJob>
 where
     F: FnOnce(koan_core::db::connection::Database, JobHandle) -> Result<String, String>

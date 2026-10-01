@@ -37,12 +37,11 @@ struct TransportBar: View {
         // sides that split what is left equally, so the transport stays centred
         // as the window grows.
         //
-        // The centre is *given* a width rather than allowed to claim one. It
-        // held `maxWidth: 560` at the highest layout priority, which meant it
-        // took 560 of any bar wide enough to offer it and left the sides to
-        // share the remainder — at the smallest window that was 30pt between
-        // them, and the format badge and the output device were squeezed to
-        // slivers rather than being dropped.
+        // The centre is *given* a width rather than allowed to claim one.
+        // Claiming `maxWidth: 560` at the highest layout priority would take
+        // 560 of any bar wide enough to offer it and leave the sides to share
+        // the remainder, squeezing the format badge and the output device to
+        // slivers rather than dropping them.
         HStack(spacing: Self.zoneGap) {
             nowPlaying
                 .frame(height: Self.zoneHeight)
@@ -131,8 +130,7 @@ struct TransportBar: View {
                         .lineLimit(1)
                     // Both names go where they say they go, rather than the
                     // line as a whole meaning one of them. `LinkText` is the
-                    // same one the rows and headers use — this was the last
-                    // place an artist name was not a link.
+                    // same one the rows and headers use.
                     HStack(spacing: 0) {
                         LinkText(
                             text: entry.artist,
@@ -259,8 +257,8 @@ struct TransportBar: View {
             }
         }
         // Natural size, always. What does not fit is dropped above rather than
-        // compressed — a badge and a menu squeezed to a few points wide is what
-        // the smallest window used to show.
+        // compressed — a badge and a menu squeezed to a few points wide say
+        // nothing.
         .fixedSize(horizontal: true, vertical: false)
     }
 }
@@ -288,13 +286,13 @@ struct SeekBar: View {
                 .frame(minWidth: 40, alignment: .trailing)
 
             GeometryReader { geo in
-                // Drawn rather than sized. Capsules whose `frame(width:)`
-                // followed the position invalidated layout ten times a second,
-                // and AppKit answered each one with a full window Auto Layout
-                // pass. Same bar, same marks; only the pixels change now.
+                // Drawn rather than sized. A capsule whose `frame(width:)`
+                // followed the position would invalidate layout ten times a
+                // second, and AppKit answers each one with a full window Auto
+                // Layout pass.
                 ZStack {
                     FetchedMark()
-                    // Not the tint. The tint is the colour of the record now,
+                    // Not the tint. The tint is the colour of the record,
                     // and a muted sleeve puts the played portion at the same
                     // value as the track behind it — this is a bar you read a
                     // position off, not a thing that needs to say whose it is.
@@ -374,8 +372,8 @@ struct SeekBar: View {
     /// The elapsed figure, drawn by the system from the same anchor.
     ///
     /// `Text(timerInterval:)` counts on its own without this view being
-    /// evaluated again, which is the whole point: a label that ticks once a
-    /// second is a second's worth of SwiftUI work in this window.
+    /// evaluated again; a label that ticks once a second is a second's worth
+    /// of SwiftUI work in this window.
     @ViewBuilder private var elapsed: some View {
         let playhead = player.playhead
         if let scrubbing = player.scrubbing {
@@ -399,7 +397,7 @@ struct SeekBar: View {
 ///
 /// Its own view because the arrived fraction is the fast slice — it moves ten
 /// times a second while anything at all is downloading. Read by `SeekBar`,
-/// every one of those ticks re-ran the bar and re-anchored the progress
+/// every one of those ticks would re-run the bar and re-anchor the progress
 /// animation, which is the animation the anchor exists to hand over once.
 private struct FetchedMark: View {
     @Environment(PlayerModel.self) private var player
@@ -415,9 +413,8 @@ private struct FetchedMark: View {
             // The dimming is on the tail rather than the head on purpose: a
             // track on disk is the ordinary case and should look like the
             // ordinary bar, so a download finishing changes nothing about what
-            // is drawn. Lighting the downloaded part instead meant the bar went
-            // *dark* the moment a transfer completed, which is exactly
-            // backwards.
+            // is drawn. Lighting the downloaded part instead would turn the bar
+            // *dark* the moment a transfer completed.
             context.opacity = 0.4
             context.fill(SeekBar.mark(in: size, fraction: 1), with: .style(.quaternary))
             // What can be played: the whole bar for anything already here, and

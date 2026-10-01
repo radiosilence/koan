@@ -132,9 +132,7 @@ final class LibraryModel {
     // Favourite state is read from here rather than from the copy baked into
     // each Track when it was fetched. A track appears in the album view, the
     // artist view, the queue, the picker and search results, and refetching
-    // every one of those after a heart click is neither cheap nor reliable —
-    // it left the album view showing an unfilled heart on a track that was
-    // already favourited.
+    // every one of those after a heart click is neither cheap nor reliable.
     private(set) var favouriteTrackIds: Set<Int64> = []
     private(set) var favouriteAlbumIds: Set<Int64> = []
     private(set) var favouriteArtistIds: Set<Int64> = []
@@ -278,10 +276,8 @@ final class LibraryModel {
     ///
     /// `.task` and every view callback are main-actor isolated, and isolation
     /// is inherited by every suspension point — so awaiting the engine from one
-    /// means the *answer* waits for a main-actor slot to be delivered. It queued
-    /// behind the state mirror's batch, which lands every hundred milliseconds:
-    /// the engine answered in 300µs and the page saw it a tenth of a second
-    /// later, every time, whatever the record. Detached, it comes back in one.
+    /// means the *answer* waits for a main-actor slot to be delivered, behind
+    /// whatever the state mirror is applying. Detached, it does not wait.
     func prepare(album id: Int64) async {
         let stamp = mirror?.libraryVersion ?? 0
         // Already in hand, and nothing has changed under it. The navigator loads
@@ -343,8 +339,7 @@ final class LibraryModel {
     }
 
     /// Read an artist and everything their page draws, at once and off the main
-    /// actor. Independent queries, so all at once: one after another each
-    /// waited on the one before for no reason.
+    /// actor. Independent queries, so all at once.
     func prepare(artist id: Int64) async {
         let stamp = mirror?.libraryVersion ?? 0
         if let held = detailArtist, held.artistId == id, held.stamp == stamp { return }
@@ -449,9 +444,7 @@ final class LibraryModel {
     func refreshFavourites() {
         let engine = self.engine
         Task {
-            // Three independent reads, so three at once. Written as a tuple of
-            // awaits they ran one after another, and the second waited on the
-            // first for no reason at all.
+            // Three independent reads, so three at once.
             async let tracks = engine.favouriteTrackIds()
             async let albums = engine.favouriteAlbumIds()
             async let artists = engine.favouriteArtistIds()

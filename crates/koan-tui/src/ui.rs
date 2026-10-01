@@ -143,7 +143,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(transport, text_area);
 
     // Visualizer — renders in the space above the transport text.
-    // Dispatches to the active mode (bars, oscilloscope, radial, particles, lissajous).
+
     let spectrum_height = transport_rect
         .height
         .saturating_sub(TRANSPORT_HEIGHT_DEFAULT);
@@ -559,8 +559,8 @@ mod tests {
         terminal.draw(|f| render(f, app)).unwrap();
     }
 
-    /// Transport geometry used to be derived from the requested height rather
-    /// than the height the layout solver granted, writing below the buffer.
+    /// Transport geometry must come from the height the layout solver granted,
+    /// not the height requested, or it writes below the buffer.
     #[test]
     fn renders_at_any_terminal_size() {
         let mut app = app_with_queue(40);
@@ -574,8 +574,8 @@ mod tests {
         }
     }
 
-    /// Dragging the transport divider large on a big screen used to poison
-    /// config.toml and panic on the first frame of every smaller terminal.
+    /// An art size dragged large on a big screen must not panic the first
+    /// frame of a smaller terminal.
     #[test]
     fn oversized_art_renders_on_a_short_terminal() {
         let mut app = app_with_queue(40);

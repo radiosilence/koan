@@ -81,12 +81,7 @@ final class AppState {
                 running: mirror.tasks.scanning)
         }
 
-        // Nothing wires an event to a model here any more. The engine
-        // publishes state, `EngineMirror` holds it and views read it; what is
-        // asked for on demand — a record's tracks, a playlist's rows, the
-        // library's counts — reloads off `mirror.libraryVersion` where it is
-        // drawn. Six closures deciding which model heard what is what let a
-        // page be forgotten, three times.
+
         let centre = NowPlayingCentre(player: player, mirror: mirror, art: art)
         self.nowPlaying = centre
 

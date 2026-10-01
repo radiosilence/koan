@@ -35,7 +35,7 @@ fn suppress_stderr<F: FnOnce() -> T, T>(f: F) -> T {
     result
 }
 
-// Thin wrappers around libc dup/dup2/close — avoids adding libc as a dep.
+// dup/dup2/close, declared directly.
 unsafe fn nix_dup(fd: i32) -> i32 {
     unsafe extern "C" {
         safe fn dup(fd: i32) -> i32;

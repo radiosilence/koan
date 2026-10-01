@@ -453,8 +453,7 @@ pub fn filter_tracks(
     }
 
     if filter.year_start.is_some() || filter.year_end.is_some() {
-        // A track with no parsable four-digit year is excluded, matching the
-        // behaviour of the year extraction it replaces.
+        // A track with no parsable four-digit year is excluded.
         clauses.push("substr(al.date, 1, 4) GLOB '[0-9][0-9][0-9][0-9]'".to_string());
         if let Some(start) = filter.year_start {
             clauses.push("CAST(substr(al.date, 1, 4) AS INTEGER) >= ?".to_string());

@@ -1,11 +1,12 @@
 //! Authentication layer for the koan server.
 //!
 //! When `auth_enabled = true`:
-//!   - All GraphQL/Subsonic requests must carry a valid JWT in `Authorization: Bearer <token>`
+//!   - GraphQL requests must carry a valid JWT (see `middleware` for where it is
+//!     read from); the web UI takes it only as the `koan_access` cookie
 //!   - Auth routes (/auth/login, /auth/refresh, /auth/logout) are always accessible
 //!
 //! When `auth_enabled = false` (opt-in, not the default):
-//!   - All requests are treated as admin — no auth required. Same behavior as before this feature.
+//!   - All requests are treated as admin — no auth required.
 
 pub mod middleware;
 pub mod password;

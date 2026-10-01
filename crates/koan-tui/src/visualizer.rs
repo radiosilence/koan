@@ -354,14 +354,14 @@ impl BrailleGrid {
         true
     }
 
-    /// Draw a line between two subpixel points using Bresenham's algorithm.
+    /// Draw a line between two subpixel points, one dot per step along the
+    /// longer axis.
     pub fn draw_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: Color) {
         let mut x = x0;
         let mut y = y0;
         let dx = (x1 - x0).abs();
         let dy = (y1 - y0).abs();
-        let sx = if x0 < x1 { 1.0 } else { -1.0 };
-        let sy = if y0 < y1 { 1.0 } else { -1.0 };
+
         let steps = dx.max(dy).ceil() as usize;
         if steps == 0 {
             self.set_dot(x0 as usize, y0 as usize, color);
@@ -376,9 +376,6 @@ impl BrailleGrid {
             x += step_x;
             y += step_y;
         }
-        // Ignore sx/sy warnings — they're used conceptually but the step-based
-        // approach handles direction via step_x/step_y.
-        let _ = (sx, sy);
     }
 
     /// Render the braille grid into a ratatui Buffer at the given area.
@@ -718,7 +715,7 @@ pub struct VisualizerState {
     /// Reactivity multiplier — scales all beat/spectrum-driven coefficients.
     /// 0.0 = static, 1.0 = normal, 2.0 = hypersensitive.
     pub reactivity: f32,
-    /// Matrix rain: per-column state [(head_y, speed, trail_len)].
+    /// Matrix rain: per-column state.
     pub matrix_cols: Vec<MatrixColumn>,
     /// Camera shake offset in subpixels [x, y]. Spikes on bass, decays fast.
     pub shake: [f32; 2],
@@ -1014,7 +1011,6 @@ impl<'a> VisualizerWidget<'a> {
 
         match self.state.mode {
             VisualizerMode::Bars => {
-                // Delegate to the existing spectrum bar renderer.
                 let widget = SpectrumWidget::new(self.state, self.theme);
                 Widget::render(widget, area, buf);
             }
@@ -1327,8 +1323,7 @@ fn render_spectrogram(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         return;
     }
 
-    // Each terminal row = one spectrum frame. Full block chars with intensity coloring.
-    // Heat map: black → dark blue → blue → cyan → white for maximum contrast.
+    // Each terminal row is one spectrum frame, drawn in full blocks.
     for (row_age, frame) in state.spectrum_history.iter_newest_first(h).enumerate() {
         let y = area.y + (h - 1 - row_age) as u16;
 
@@ -2324,7 +2319,7 @@ fn render_spiral(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     for arm in 0..num_arms {
         let arm_offset = arm as f32 * std::f32::consts::TAU / num_arms as f32;
 
-        // Archimedean spiral: r = a + b*θ. Draw ~500 points along it.
+        // Archimedean spiral: r = a + b*θ.
         let num_points = 600;
         let max_theta = std::f32::consts::TAU * 4.0; // 4 full turns.
 
@@ -2610,7 +2605,7 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 
 // ── Matrix Rain Renderer ──────────────────────────────────────────────────
 
-/// Half-width katakana + digits + symbols for that authentic matrix look.
+/// Half-width katakana, digits and symbols.
 const MATRIX_CHARS: &[char] = &[
     'ﾊ', 'ﾐ', 'ﾋ', 'ｰ', 'ｳ', 'ｼ', 'ﾅ', 'ﾓ', 'ﾆ', 'ｻ', 'ﾜ', 'ﾂ', 'ｵ', 'ﾘ', 'ｱ', 'ﾎ', 'ﾃ', 'ﾏ', 'ｹ',
     'ﾒ', 'ｴ', 'ｶ', 'ｷ', 'ﾑ', 'ﾕ', 'ﾗ', 'ｾ', 'ﾈ', 'ｽ', 'ﾀ', 'ﾇ', 'ﾍ', '0', '1', '2', '3', '4', '5',
@@ -2732,7 +2727,7 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
     }
 }
 
-// ── SpectrumWidget (original bars mode) ─────────────────────────────────────
+// ── SpectrumWidget (bars mode) ──────────────────────────────────────────────
 
 /// 80s hi-fi LED-segment spectrum analyzer widget.
 ///
@@ -2748,10 +2743,6 @@ impl<'a> SpectrumWidget<'a> {
         Self { state, theme }
     }
 
-    /// Compute the bar fill color for a given display bar.
-    ///
-    /// For `Mono` palette: height-based green/yellow/red (classic LED meter).
-    /// For all other palettes: frequency-mapped gradient with beat-reactive brightening.
     /// Warp the frequency position with dreamy drift + beat hue shift.
     /// Returns a new freq_t in 0.0..1.0 with both effects applied.
     fn warped_freq_t(&self, freq_t: f32) -> f32 {

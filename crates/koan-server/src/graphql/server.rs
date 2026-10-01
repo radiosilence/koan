@@ -77,12 +77,12 @@ pub fn cmd_serve(
 // Shared API server logic — used by both headless and TUI+API modes
 // ---------------------------------------------------------------------------
 
-/// Ceiling on a single GraphQL query. Anything genuinely longer than this —
+/// Ceiling on a single GraphQL query. Anything longer than this —
 /// a library scan, a remote sync — runs as a job instead.
 const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Queries executing at once. Resolvers now do their SQLite and HTTP work on
-/// the blocking pool, so this bounds concurrent work rather than protecting the
+/// Queries executing at once. Resolvers do their SQLite and HTTP work on the
+/// blocking pool, so this bounds concurrent work rather than protecting the
 /// runtime's workers from it.
 const MAX_INFLIGHT_QUERIES: usize = 64;
 
@@ -291,8 +291,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         let auth_app = auth_router(auth_route_state);
 
         // CORS. An empty origin list emits no `Access-Control-Allow-Origin` at
-        // all: the previous wildcard handed every web page on the internet the
-        // ability to read this library.
+        // all; a wildcard would let any web page read this library.
         let origins: Vec<axum::http::HeaderValue> = cfg
             .graphql
             .cors_origins
@@ -313,12 +312,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             ])
             .allow_credentials(true);
 
-        // Subsonic REST routes — always mounted on the GraphQL port when
-        // remote creds are configured. Previously only available on the
-        // dedicated `--subsonic <port>` listener, which broke `koan play
-        // --server <url>` because the remote TUI bridge builds its stream
-        // URL off the GraphQL base.
-        // Built once and cloned: each build re-read the config from disk.
+
         // Public by design, so outside the auth layers: each route answers for
         // one share's own tracks, or the one cover a notification's signed
         // link names, and nothing else. The Host guard still applies.
@@ -328,6 +322,10 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             covers.clone(),
         )
         .merge(crate::push::router(pool.clone(), covers.clone()));
+        // Subsonic on the GraphQL port whenever `[subsonic]` is enabled: the
+        // remote TUI bridge builds its stream URL off the GraphQL base. Built
+        // once and cloned for the dedicated listener, since each build reads
+        // the config from disk.
         let subsonic_merged = crate::subsonic::subsonic_router(pool, covers);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
@@ -391,9 +389,8 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         )
         .with_graceful_shutdown(shutdown_signal());
 
-        // If `--subsonic <port>` is set AND differs from the GraphQL port,
-        // run an additional dedicated listener. This preserves the old
-        // behavior for users who want Subsonic on its own port.
+        // `--subsonic <port>` set to something other than the GraphQL port adds
+        // a dedicated Subsonic listener.
         let extra_sub_port = subsonic_port.filter(|p| *p != port);
         if let Some(sub_port) = extra_sub_port
             && let Some(sub_app) = subsonic_dedicated
@@ -439,9 +436,6 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
 
 /// Start the API server on the current thread (blocks forever).
 /// Called from a background thread when TUI mode has API enabled.
-///
-/// Accepts positional args for backward compatibility with koan-cli.
-/// Prefer `ApiServerOpts` for new call sites.
 pub fn start_api_background(
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
@@ -679,7 +673,7 @@ pub fn cmd_serve_daemon(
 
     let exe = std::env::current_exe().expect("failed to get current exe path");
     let mut cmd = Command::new(exe);
-    // Use the new unified CLI: `koan --headless --port <port>`
+
     cmd.arg("--headless");
     cmd.arg("--port").arg(port_val.to_string());
     cmd.arg("--bind").arg(bind_val.to_string());

@@ -40,7 +40,6 @@ pub struct PickerItem {
 // --- "All tracks for artist" sentinel encoding ---
 // When an artist drill-down shows an album picker, the "all tracks" entry
 // encodes the artist_id as a negative value in the PickerItem.id field.
-// These helpers make the encoding/decoding explicit.
 
 /// Encode an artist_id into the sentinel value used for "all tracks" picker items.
 pub fn all_tracks_sentinel(artist_id: i64) -> i64 {
@@ -257,7 +256,6 @@ impl Widget for PickerOverlay<'_> {
         let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
         let popup_area = Rect::new(x, y, popup_width, popup_height);
 
-        // Clear the area behind the popup.
         Clear.render(popup_area, buf);
 
         let prompt = self.state.prompt();

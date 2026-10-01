@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Until the App Store Connect key and the team exist there is nothing to sign
+  # Without the App Store Connect key and the team there is nothing to sign
   # with. This answers that on a cheap runner, and the upload is skipped rather
   # than failing the release.
   signable:
@@ -71,9 +71,9 @@ jobs:
           printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$key"
           echo "APPLE_API_KEY_PATH=$key" >> "$GITHUB_ENV"
       # Automatic signing archives with an Apple Development identity, and a
-      # runner has none, so without this Xcode had Apple mint a new
-      # certificate on every run until the account hit its limit and the
-      # archive failed. One certificate, kept as a secret, is found in the
+      # runner has none, so without this Xcode has Apple mint a new
+      # certificate on every run until the account hits its limit and the
+      # archive fails. One certificate, kept as a secret, is found in the
       # keychain and reused. Kept in 1Password as "Apple Development certificate for CI".
       - name: Import the Apple Development certificate
         env:

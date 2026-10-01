@@ -1,7 +1,5 @@
-/// Lyrics fetch pipeline: embedded tags -> sidecar .lrc -> LRCLIB API -> DB cache.
-///
-/// Phase 1 implements LRCLIB + DB caching. Embedded and sidecar sources are
-/// stubbed and will be filled in Phase 2.
+//! Lyrics for a track: the database cache, then LRCLIB, cached back to the
+//! database. Embedded tags and sidecar `.lrc` files are not read.
 use rusqlite::Connection;
 
 use crate::db::connection::DbError;
@@ -135,13 +133,9 @@ pub fn current_line_index(lines: &[LrcLine], position_secs: f64) -> Option<usize
 /// copy held forever would never highlight.
 const PLAIN_RECHECK_SECS: i64 = 30 * 24 * 60 * 60;
 
-/// Fetch lyrics for a track using the priority chain:
-///
-/// 1. DB cache (instant, no network). A synced copy is final; a plain one is
-///    re-checked against LRCLIB once it is older than [`PLAIN_RECHECK_SECS`]
-/// 2. Embedded lyrics tag (stub — returns `None` in Phase 1)
-/// 3. Sidecar `.lrc` file (stub — returns `None` in Phase 1)
-/// 4. LRCLIB API
+/// Fetch lyrics for a track: from the DB cache (instant, no network), else from
+/// LRCLIB. A synced cached copy is final; a plain one is re-checked against
+/// LRCLIB once it is older than [`PLAIN_RECHECK_SECS`].
 ///
 /// On a successful LRCLIB fetch the result is written to the DB cache so the
 /// next call is instant.
@@ -204,10 +198,6 @@ fn fetch_from_lrclib(
     album: &str,
     duration_secs: u64,
 ) -> Result<Lyrics, LyricsError> {
-    // 2. Embedded lyrics (stub — Phase 2 will read via lofty ItemKey::Lyrics).
-    // 3. Sidecar .lrc (stub — Phase 2 will check `track_path.with_extension("lrc")`).
-
-    // 4. LRCLIB API.
     let response =
         lrclib::get_lyrics(artist, title, album, duration_secs).map_err(|e| match e {
             LrclibError::NotFound => LyricsError::NotFound,

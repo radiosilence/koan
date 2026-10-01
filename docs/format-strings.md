@@ -186,7 +186,7 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$le
 label = "$if2(%label%,%album artist%)/%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%"
 ```
 
-Organize runs from the TUI (`o` on a queue selection) and from the macOS
+Organize runs from the TUI (`space` on a queue selection, then **Organize**) and from the macOS
 Organize sheet. Both list the patterns above and preselect the one `default`
 names; there is no `koan organize` subcommand.
 
@@ -282,20 +282,13 @@ Tracks without a genre tag skip the genre directory.
 
 ## Safety
 
-- Default is always **preview** (dry-run) — shows what would be moved without touching anything
-- `--execute` previews first, then asks for **confirmation** before applying
-- `--undo` reverts the last batch of moves (tracked in the database)
-- `--yes` / `-y` skips the confirmation prompt (for scripts)
-- Illegal filename characters (`/ \ : * ? " < > |`) are replaced with `_`
-- Filenames are capped at 240 bytes (macOS limit)
-- Ancillary files (cover art, .cue, .log) are moved with the music automatically
-- Empty source directories are cleaned up after moves
+Illegal filename characters (`/ \ : * ? " < > |`) are replaced with `_`, and a file name is capped at 250 bytes, extension included. The rest of what organize guarantees is in [File Organization](guide/file-organization.md#safety).
 
 ## fb2k compatibility
 
-The format engine implements a subset of the [foobar2000 title formatting](https://wiki.hydrogenaudio.org/index.php?title=Foobar2000:Title_Formatting_Reference) spec. The core syntax (`%fields%`, `[conditionals]`, `$functions()`) is fully compatible. Not all functions are implemented yet — PRs welcome.
+The format engine implements a subset of the [foobar2000 title formatting](https://wiki.hydrogenaudio.org/index.php?title=Foobar2000:Title_Formatting_Reference) spec: the core syntax (`%fields%`, `[conditionals]`, `$functions()`) and the functions listed above.
 
-### Not yet implemented
+### Not implemented
 
 **Functions:** `$meta`, `$meta_sep`, `$meta_num`, `$meta_test`, `$info` (multi-value), `$channels`, `$get`, `$put`, `$puts`, `$progress`, `$progress2`, `$rand`, `$blend`, `$transition`, `$rgb`, `$hsl`, `$year`, `$month`, `$day_of_month`, `$date`, `$time`, `$crc32`, `$ansi`, `$ascii`
 

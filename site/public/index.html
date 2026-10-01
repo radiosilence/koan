@@ -91,7 +91,7 @@ music ──► │ library · web UI · shares · MCP   │
       <p>Requires macOS 26 or later.</p>
 
       <h3>iOS app</h3>
-      <p>Not on the App Store or TestFlight yet. Build it from source with Xcode and install it on a phone plugged into the Mac, signed with your own (free) Apple developer team:</p>
+      <p>Build it from source with Xcode and install it on a phone plugged into the Mac, signed with your own (free) Apple developer team:</p>
       <pre><code>git clone https://github.com/radiosilence/koan.git &amp;&amp; cd koan
 just ios-phone</code></pre>
       <p>Requires iOS 26 or later, and a kōan, Navidrome or other Subsonic server to play from.</p>
@@ -194,7 +194,7 @@ sift import ~/Downloads/some-album</code></pre>
         <li><strong>Gapless</strong>: the decoder runs ahead across track boundaries.</li>
         <li><strong>Formats</strong>: FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF and CAF, in Ogg, Matroska/WebM and MP4 containers.</li>
         <li><strong>ReplayGain</strong> in track and album modes, with peak limiting and a configurable pre-amp.</li>
-        <li><strong>Radio mode</strong>: endless play scored from your own library on acoustic similarity, genre, era and artist. It does not ask any outside service for recommendations.</li>
+        <li><strong>Radio mode</strong>: endless play from your own library, scored on acoustic similarity, genre, era and related artists. ListenBrainz and MusicBrainz supply the related artists; every pick is a track already in your library.</li>
         <li><strong>Media keys</strong> and now-playing through Control Center on macOS and MPRIS on Linux.</li>
       </ul>
 
@@ -223,7 +223,7 @@ sift import ~/Downloads/some-album</code></pre>
       <h2>The macOS app</h2>
       <p>A SwiftUI app built for macOS 26. Browse and search the library (<kbd>⌘K</kbd>), build and reorder the queue, keep playlists, favourite tracks, albums and artists, read synced lyrics, look through play history and reorganise files on disk. First-run setup covers library folders and remote sign-in.</p>
       <p>It links the Rust core in-process through FFI rather than talking to a server, so there is no daemon, port or auth surface between the interface and the audio engine, and CoreAudio output never leaves Rust. It shares one library and one config with the terminal UI: a queue saved in one shows up in the other.</p>
-      <p>Two things it leaves to the terminal: visualisers, and running the server (<code>koan serve</code>).</p>
+      <p>Two things it leaves to the terminal: visualisers, and running the server (<code>koan --headless</code>).</p>
     </section>
 
     <figure class="mx-auto my-8 max-w-5xl px-5">

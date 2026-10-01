@@ -8,9 +8,8 @@ import SwiftUI
 /// controller, so a tab that brings its own `NavigationStack` arrives with two
 /// back buttons stacked on top of each other.
 ///
-/// One Library tab holding all of them is both the fix and the better shape. It
-/// is what Music does, and it leaves the tab bar saying what koan is for: the
-/// queue, the library, finding something, and settings.
+/// One Library tab holds all of them, which leaves the tab bar saying what
+/// koan is for: the queue, the library, finding something, and settings.
 struct LibraryTab: View {
     var body: some View {
         List {

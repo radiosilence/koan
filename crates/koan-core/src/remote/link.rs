@@ -447,7 +447,7 @@ fn run(local: Local) {
                 // Asked again before the next attempt: the server may have
                 // been replaced by one that does not link. Not after a link
                 // that simply dropped, which is every time iOS suspends the
-                // app, and re-asking then put two round trips in front of
+                // app: re-asking then would put two round trips in front of
                 // every reconnect.
                 profile::forget();
             }

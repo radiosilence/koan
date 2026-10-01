@@ -1,7 +1,4 @@
-//! TUI event loop and run_tui() entry point.
-//!
-//! This module contains the core TUI event loop. The CLI (koan-cli) calls
-//! `run_tui()` after setting up the player and any initial playback.
+//! TUI event loop and `run_tui()` entry point.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -105,7 +102,7 @@ pub struct RestoredPosition {
     pub was_playing: bool,
 }
 
-/// Run the Ratatui TUI event loop. This is the main entry point for the TUI.
+/// Run the Ratatui TUI event loop.
 ///
 /// Called by koan-cli after spawning the player and setting up initial playback.
 #[allow(clippy::too_many_arguments)]

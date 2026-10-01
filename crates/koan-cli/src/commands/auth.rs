@@ -610,7 +610,6 @@ pub fn cmd_auth_login(server_url: &str, username: &str) {
     );
 }
 
-/// `koan auth logout --server <url>`
 /// `koan auth regenerate-keys` — delete and regenerate Ed25519 keypair.
 /// All existing tokens are invalidated (signed by old key).
 pub fn cmd_auth_regenerate_keys() {

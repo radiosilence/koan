@@ -29,10 +29,8 @@ struct SidebarView: View {
     var body: some View {
         @Bindable var search = search
 
-        // The lit row is the section you are in, whatever you have pushed on
-        // top of it — that is where Back returns you to. The navigator owns
-        // both halves of the binding; see `sidebarSelection` for why the
-        // highlight is not derived from the stack.
+        // A row is lit when the page on screen is that row. The navigator
+        // owns both halves of the binding — see `sidebarSelection`.
         List(selection: nav.sidebarSelection) {
             Section {
                 QueueRowLabel()
@@ -92,7 +90,7 @@ struct SidebarView: View {
         // divider; the soft edge fades a row out as it passes underneath.
         .scrollEdgeEffectStyle(.soft, for: .bottom)
         // The field belongs to the sidebar, not the window: in the toolbar it
-        // sat on top of the lyrics inspector.
+        // would sit on top of the lyrics inspector.
         .searchable(text: $search.query, placement: .sidebar, prompt: "Search")
         .searchSuggestions { SearchSuggestions() }
         .searchFocused($searchFocused)
@@ -122,10 +120,9 @@ struct SidebarView: View {
     /// The playlists, in the order they were arranged, and a standing row for
     /// making another.
     ///
-    /// Every row here is built like the Queue row above, because that is the
-    /// one drop target in this window that has ever worked. What broke the
-    /// others was structure, not payload: `ForEach.onMove` takes over dropping
-    /// for the rows it covers, a `Section` header is not a row a `List` will
+    /// Every row here is built like the Queue row above. What decides whether
+    /// a `List` row takes a drop is structure: `ForEach.onMove` takes over
+    /// dropping for the rows it covers, a `Section` header is not a row a `List` will
     /// deliver to, and a `Button` swallows the drag before it lands. So there
     /// is no `onMove` — reordering rides the same drop as everything else, on
     /// a payload that says which playlist it is — and no button.
@@ -247,8 +244,8 @@ struct SidebarView: View {
 }
 
 /// Library size and what koan is doing. Its own view because it reads the
-/// queue and the cursor, and read in `SidebarView` those re-ran the sidebar on
-/// every track.
+/// queue and the cursor, and read in `SidebarView` those would re-run the
+/// sidebar on every track.
 private struct SidebarFooter: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
@@ -267,11 +264,10 @@ private struct SidebarFooter: View {
     }
 
     /// Library size and scan state. The counts are the quickest way to tell
-    /// whether a scan actually picked anything up.
+    /// whether a scan picked anything up.
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Every long task, one row each. Replaces a "Scanning…" line that
-            // said the same thing whatever was actually running.
+            // Every long task, one row each.
             ActivityList()
 
             if let stats = library.stats {
@@ -302,7 +298,7 @@ private struct SidebarFooter: View {
 }
 
 // The two rows that show something live, each reading it for itself — read in
-// `SidebarView`, a transfer finishing re-ran the whole sidebar.
+// `SidebarView`, a transfer finishing would re-run the whole sidebar.
 
 private struct QueueRowLabel: View {
     @Environment(PlayerModel.self) private var player

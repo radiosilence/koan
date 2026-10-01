@@ -46,11 +46,10 @@ struct QueueView: View {
 
     /// Selection is local `@State`, and this body never reads it.
     ///
-    /// It lived on `PlayerModel` so the Edit menu could reach it, but reading an
-    /// observable in the body means every selection change invalidates the whole
-    /// view and rebuilds the List — under the very click that caused it, which
-    /// is what made clicking here so unreliable. A `@State` read here is the
-    /// same invalidation with a different owner, so nothing here reads it: the
+    /// Reading an observable in the body means every selection change
+    /// invalidates the whole view and rebuilds the List — under the very click
+    /// that caused it. A `@State` read here is the same invalidation with a
+    /// different owner, so nothing here reads it: the
     /// rows learn they are selected from the List's own `backgroundProminence`,
     /// and the header's count and the mirror to the model live in
     /// `QueueSelectionHeader`, which holds the binding and re-runs alone.
@@ -65,15 +64,14 @@ struct QueueView: View {
 
     /// Album headings are rows in their own right, not decoration attached to
     /// the first track. That is what lets an album be selected and dragged as a
-    /// unit — and stops selecting a track from lighting up the heading above it,
-    /// which is what happened while they shared a row.
+    /// unit — and stops selecting a track from lighting up the heading above it.
     private var rows: [Row] {
         grouped ? Row.build(from: player.queue) : player.queue.map(Row.track)
     }
 
     var body: some View {
         // Once per pass. Built again for the header's count and again for the
-        // rows, a large queue was grouped twice per evaluation.
+        // rows, a large queue would be grouped twice per evaluation.
         let rows = self.rows
 
         VStack(spacing: 0) {
@@ -295,8 +293,8 @@ struct QueueView: View {
                 item: QueueRowContent(item: item),
                 // The queue already says which row the cursor is on — and says
                 // it again when the cursor moves, since that redraws two rows
-                // either way. Asking the player as well subscribed the whole
-                // list to everything else about what is playing.
+                // either way. Asking the player as well would subscribe the
+                // whole list to everything else about what is playing.
                 isCurrent: item.status == .playing,
                 // Ungrouped there is no heading above to say what record this
                 // is, so the row says it itself.
@@ -344,8 +342,8 @@ struct QueueView: View {
     /// Find the album a queue item came from, then go there.
     ///
     /// Resolved when the button is pressed, not while the menu is built:
-    /// SwiftUI builds context menus as it builds rows, so a lookup here ran a
-    /// blocking query per row and froze the window on a large queue.
+    /// SwiftUI builds context menus as it builds rows, so a lookup there would
+    /// run a blocking query per row and freeze the window on a large queue.
     private func showInLibrary(trackId: Int64, highlight: Bool) {
         let engine = library.engine
         Task {
@@ -649,7 +647,7 @@ private struct QueueSelectionHeader: View {
     var body: some View {
         if !selection.isEmpty {
             // Each at its own width: squeezed by the rest of the header on a
-            // phone, they wrapped a few letters to a line.
+            // phone, they wrap a few letters to a line.
             Text("\(QueueView.Row.itemIds(in: selection, of: rows).count) selected")
                 .font(.caption)
                 .foregroundStyle(.secondary)

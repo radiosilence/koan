@@ -45,11 +45,11 @@ struct Queue {
     /// Tracks being fetched, and every queue entry waiting on each.
     ///
     /// Keyed by track, because the track decides which file the download
-    /// writes. Keyed by queue entry it did not dedupe anything that mattered:
-    /// playing something a second time before it had arrived made a new entry
-    /// with a new id, so nothing matched and a second transfer started over
-    /// the first — two threads truncating and writing one `.part`, and
-    /// whichever finished first renaming it out from under the other.
+    /// writes. Keyed by queue entry it would dedupe nothing that matters:
+    /// playing something a second time before it has arrived makes a new entry
+    /// with a new id, so nothing would match and a second transfer would start
+    /// over the first — two threads truncating and writing one `.part`, and
+    /// whichever finishes first renaming it out from under the other.
     in_flight: HashMap<i64, HashSet<QueueItemId>>,
     priority_active: usize,
 }
