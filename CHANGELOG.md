@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.46.1
+
+### Fixed
+
+- **The empty library points somewhere useful.** On iPhone and iPad it said to run a scan, which the app cannot do, and on the Mac it named a terminal command. It now points to Settings → Server on iOS, and to adding a folder or signing in on the Mac.
+- **Settings and CLI help describe what koan does.** The sample-rate note says the device is asked to match the source and that nothing is resampled unless it refuses; sync, devices and invite descriptions match their behaviour; `--headless` and `--subsonic` help match how the server mounts its APIs.
+- **The documentation and site match the code**: five crates, `Config::persist` for config writes, current GraphQL operation names and configuration keys, radio's use of ListenBrainz and MusicBrainz, and where the Mac app keeps its data.
+
+### Changed
+
+- **Unused code is removed**, including twelve koan-ffi exports the apps no longer call. No behaviour changes.
+
 ## 0.46.0
 
 ### Changed
