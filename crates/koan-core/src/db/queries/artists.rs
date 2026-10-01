@@ -84,6 +84,8 @@ impl ArtistOrder {
 /// featured guest) appears inline in the queue, not as a shelf of its own.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ArtistQuery<'a> {
+    /// Only these artists.
+    pub ids: Option<&'a [i64]>,
     /// Case-insensitive substring over the name.
     pub search: Option<&'a str>,
     /// Only artists this user has favourited.
@@ -92,6 +94,9 @@ pub struct ArtistQuery<'a> {
     /// counts are of what is left.
     pub filter: super::albums::AlbumFilter<'a>,
     pub order: ArtistOrder,
+    /// Leave `track_count` at zero rather than read every track in the library
+    /// to count them.
+    pub without_track_counts: bool,
     /// `None` for the whole listing. A client that scrolls should page.
     pub limit: Option<u32>,
     pub offset: u32,
@@ -100,19 +105,27 @@ pub struct ArtistQuery<'a> {
 /// Artists with their album and track counts, narrowed, ordered and paged by
 /// the database.
 pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>, DbError> {
-    let mut sql = String::from(
+    let mut sql = String::from(if q.without_track_counts {
+        "SELECT a.id, a.name, a.sort_name, a.remote_id, COUNT(al.id), 0
+         FROM artists a
+         INNER JOIN albums al ON al.artist_id = a.id"
+    } else {
         "SELECT a.id, a.name, a.sort_name, a.remote_id,
                 COUNT(DISTINCT al.id), COUNT(t.id)
          FROM artists a
          INNER JOIN albums al ON al.artist_id = a.id
-         LEFT JOIN tracks t ON t.album_id = al.id",
-    );
+         LEFT JOIN tracks t ON t.album_id = al.id"
+    });
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(user) = q.favourites_of {
         params.push(Box::new(super::auth::resolve_user(conn, user)?));
         sql.push_str(" JOIN favourite_artists f ON f.artist_name = a.name AND f.user_id = ?");
     }
     let mut wheres: Vec<String> = Vec::new();
+    if let Some(ids) = q.ids {
+        params.push(Box::new(super::json_list(ids)));
+        wheres.push("a.id IN (SELECT value FROM json_each(?))".into());
+    }
     if let Some(query) = q.search {
         params.push(Box::new(format!("%{}%", escape_like(query))));
         wheres.push("a.name LIKE ? COLLATE NOCASE ESCAPE '\\'".into());

@@ -231,7 +231,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         login_limiter: Arc::new(LoginRateLimiter::default()),
     };
 
-    let schema = build_schema(state, cmd_tx, pool.path().to_path_buf(), viz);
+    let schema = build_schema(state, cmd_tx, pool.clone(), viz);
 
     if auth_enabled {
         log::info!(

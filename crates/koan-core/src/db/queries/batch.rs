@@ -6,10 +6,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rusqlite::{Connection, ToSql, params_from_iter};
+use rusqlite::{Connection, ToSql, params, params_from_iter};
 
 use crate::db::connection::DbError;
 
+use super::json_list;
 use super::tracks::row_to_track_row;
 use super::{AlbumRow, TrackRow};
 
@@ -23,19 +24,8 @@ const TRACK_JOINS: &str = "FROM tracks t
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id";
 
-/// `(?,?,?)` for `n` bound values.
-fn placeholders(n: usize) -> String {
-    let mut s = String::with_capacity(2 + n * 2);
-    s.push('(');
-    for i in 0..n {
-        if i > 0 {
-            s.push(',');
-        }
-        s.push('?');
-    }
-    s.push(')');
-    s
-}
+/// A list bound as one parameter, the JSON array `json_list` makes.
+const IN_LIST: &str = "(SELECT value FROM json_each(?))";
 
 /// Wrap a user substring for `LIKE ... ESCAPE '\'`, neutralising `%` and `_`.
 fn like_contains(needle: &str) -> String {
@@ -69,12 +59,11 @@ pub fn albums_for_artists(
                 al.added_at
          FROM albums al
          LEFT JOIN artists a ON al.artist_id = a.id
-         WHERE al.artist_id IN {}
-         ORDER BY al.date, al.title COLLATE LIBRARY",
-        placeholders(artist_ids.len())
+         WHERE al.artist_id IN {IN_LIST}
+         ORDER BY al.date, al.title COLLATE LIBRARY"
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(artist_ids), |row| {
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map([json_list(artist_ids)], |row| {
         Ok(AlbumRow {
             id: row.get(0)?,
             title: row.get(1)?,
@@ -107,13 +96,11 @@ pub fn tracks_for_albums(
         return Ok(HashMap::new());
     }
     let sql = format!(
-        "SELECT {} {} WHERE t.album_id IN {} ORDER BY t.disc, t.track_number",
-        TRACK_COLUMNS,
-        TRACK_JOINS,
-        placeholders(album_ids.len())
+        "SELECT {TRACK_COLUMNS} {TRACK_JOINS} WHERE t.album_id IN {IN_LIST}
+         ORDER BY t.disc, t.track_number"
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(album_ids), row_to_track_row)?;
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map([json_list(album_ids)], row_to_track_row)?;
 
     let mut out: HashMap<i64, Vec<TrackRow>> = HashMap::new();
     for track in rows {
@@ -140,21 +127,15 @@ pub fn tracks_for_artists(
     if artist_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let ph = placeholders(artist_ids.len());
     let sql = format!(
-        "SELECT {}, al.artist_id {}
-          WHERE t.artist_id IN {}
-             OR t.album_id IN (SELECT id FROM albums WHERE artist_id IN {})
-          ORDER BY al.date, al.title, t.disc, t.track_number",
-        TRACK_COLUMNS, TRACK_JOINS, ph, ph
+        "SELECT {TRACK_COLUMNS}, al.artist_id {TRACK_JOINS}
+          WHERE t.artist_id IN {IN_LIST}
+             OR t.album_id IN (SELECT id FROM albums WHERE artist_id IN {IN_LIST})
+          ORDER BY al.date, al.title, t.disc, t.track_number"
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let bind: Vec<i64> = artist_ids
-        .iter()
-        .chain(artist_ids.iter())
-        .copied()
-        .collect();
-    let rows = stmt.query_map(params_from_iter(&bind), |row| {
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let ids = json_list(artist_ids);
+    let rows = stmt.query_map([&ids, &ids], |row| {
         Ok((row_to_track_row(row)?, row.get::<_, Option<i64>>(20)?))
     })?;
 
@@ -193,11 +174,10 @@ pub fn album_stats(
     }
     let sql = format!(
         "SELECT album_id, COUNT(*), COALESCE(SUM(duration_ms), 0)
-         FROM tracks WHERE album_id IN {} GROUP BY album_id",
-        placeholders(album_ids.len())
+         FROM tracks WHERE album_id IN {IN_LIST} GROUP BY album_id"
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(album_ids), |row| {
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map([json_list(album_ids)], |row| {
         Ok((
             row.get::<_, i64>(0)?,
             AlbumStats {
@@ -225,18 +205,17 @@ pub fn artist_stats(
     if artist_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let ph = placeholders(artist_ids.len());
+    let ids = json_list(artist_ids);
     let mut out: HashMap<i64, ArtistStats> = artist_ids
         .iter()
         .map(|&id| (id, ArtistStats::default()))
         .collect();
 
     let album_sql = format!(
-        "SELECT artist_id, COUNT(*) FROM albums WHERE artist_id IN {} GROUP BY artist_id",
-        ph
+        "SELECT artist_id, COUNT(*) FROM albums WHERE artist_id IN {IN_LIST} GROUP BY artist_id"
     );
-    let mut stmt = conn.prepare(&album_sql)?;
-    let rows = stmt.query_map(params_from_iter(artist_ids), |row| {
+    let mut stmt = conn.prepare_cached(&album_sql)?;
+    let rows = stmt.query_map([&ids], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
     })?;
     for row in rows {
@@ -251,12 +230,11 @@ pub fn artist_stats(
          JOIN tracks t ON t.artist_id = k.id OR t.album_id IN (
              SELECT al.id FROM albums al WHERE al.artist_id = k.id
          )
-         WHERE k.id IN {}
-         GROUP BY k.id",
-        ph
+         WHERE k.id IN {IN_LIST}
+         GROUP BY k.id"
     );
-    let mut stmt = conn.prepare(&track_sql)?;
-    let rows = stmt.query_map(params_from_iter(artist_ids), |row| {
+    let mut stmt = conn.prepare_cached(&track_sql)?;
+    let rows = stmt.query_map([&ids], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
     })?;
     for row in rows {
@@ -277,14 +255,13 @@ pub fn favourite_paths(
     if paths.is_empty() {
         return Ok(HashSet::new());
     }
-    let sql = format!(
-        "SELECT track_path FROM favourites WHERE user_id = ? AND track_path IN {}",
-        placeholders(paths.len())
-    );
-    let mut stmt = conn.prepare(&sql)?;
+    let sql =
+        format!("SELECT track_path FROM favourites WHERE user_id = ?1 AND track_path IN {IN_LIST}");
+    let mut stmt = conn.prepare_cached(&sql)?;
     let user = super::auth::resolve_user(conn, user)?;
-    let binds = std::iter::once(&user as &dyn ToSql).chain(paths.iter().map(|p| p as &dyn ToSql));
-    let rows = stmt.query_map(params_from_iter(binds), |row| row.get::<_, String>(0))?;
+    let rows = stmt.query_map(params![user, json_list(paths)], |row| {
+        row.get::<_, String>(0)
+    })?;
     rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }
 
@@ -299,12 +276,10 @@ pub fn album_ids_for_tracks(
     if track_ids.is_empty() {
         return Ok(HashMap::new());
     }
-    let sql = format!(
-        "SELECT id, album_id FROM tracks WHERE id IN {} AND album_id IS NOT NULL",
-        placeholders(track_ids.len())
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(track_ids), |row| {
+    let sql =
+        format!("SELECT id, album_id FROM tracks WHERE id IN {IN_LIST} AND album_id IS NOT NULL");
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map([json_list(track_ids)], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
     })?;
     rows.collect::<Result<HashMap<_, _>, _>>()
@@ -326,11 +301,10 @@ pub fn sources_for_tracks(
     }
     let sql = format!(
         "SELECT id, remote_id IS NOT NULL, COALESCE(cached_path, path) IS NOT NULL \
-         FROM tracks WHERE id IN {}",
-        placeholders(track_ids.len())
+         FROM tracks WHERE id IN {IN_LIST}"
     );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(track_ids), |row| {
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map([json_list(track_ids)], |row| {
         Ok((
             row.get::<_, i64>(0)?,
             (row.get::<_, bool>(1)?, row.get::<_, bool>(2)?),
@@ -396,8 +370,8 @@ pub fn filter_tracks(
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        clauses.push(format!("t.id IN {}", placeholders(ids.len())));
-        binds.extend(ids.iter().map(|&i| Box::new(i) as Box<dyn ToSql>));
+        clauses.push(format!("t.id IN {IN_LIST}"));
+        binds.push(Box::new(json_list(ids)));
     }
 
     if let Some(query) = &filter.search {
@@ -414,11 +388,15 @@ pub fn filter_tracks(
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let ph = placeholders(ids.len());
-        clauses.push(format!("(t.artist_id IN {ph} OR al.artist_id IN {ph})"));
-        for _ in 0..2 {
-            binds.extend(ids.iter().map(|&i| Box::new(i) as Box<dyn ToSql>));
-        }
+        // The album-artist half as a subquery on `albums`, as in
+        // `tracks_for_artists`: an `OR` across two tables cannot use an index.
+        clauses.push(format!(
+            "(t.artist_id IN {IN_LIST}
+              OR t.album_id IN (SELECT id FROM albums WHERE artist_id IN {IN_LIST}))"
+        ));
+        let ids = json_list(ids);
+        binds.push(Box::new(ids.clone()));
+        binds.push(Box::new(ids));
     }
 
     if let Some(title) = &filter.title {
@@ -487,13 +465,14 @@ pub fn filter_tracks(
     }
 
     if let Some(user) = filter.favourites_of {
-        clauses.push(
-            "EXISTS (SELECT 1 FROM favourites f
-                     WHERE f.user_id = ?
-                       AND (f.track_path = t.path OR f.track_path = t.cached_path))"
-                .to_string(),
-        );
-        binds.push(Box::new(super::auth::resolve_user(conn, user)?));
+        clauses.push(format!(
+            "t.id IN ({})",
+            super::tracks::favourite_track_ids_sql("?")
+        ));
+        let user = super::auth::resolve_user(conn, user)?;
+        for _ in 0..3 {
+            binds.push(Box::new(user));
+        }
     }
 
     let dir = if descending { "DESC" } else { "ASC" };
@@ -693,5 +672,84 @@ mod tests {
         assert_eq!(map.values().map(Vec::len).sum::<usize>(), 2);
         let map = tracks_for_artists(&db.conn, &artist_ids).unwrap();
         assert_eq!(map.values().map(Vec::len).sum::<usize>(), 3);
+    }
+
+    #[test]
+    fn favourites_match_a_stream_url() {
+        let db = test_db();
+        seed(&db);
+        let mut meta = sample_meta("Streamed", "Burial", "Untrue");
+        meta.path = None;
+        meta.source = "remote".into();
+        meta.remote_id = Some("tr-1".into());
+        meta.remote_url = Some("https://music.example/rest/stream?id=tr-1".into());
+        let id = upsert_track(&db.conn, &meta).unwrap();
+        let user = crate::db::queries::LOCAL_USER;
+        add_favourite(
+            &db.conn,
+            user,
+            std::path::Path::new("https://music.example/rest/stream?id=tr-1"),
+        )
+        .unwrap();
+        let track = &tracks_by_ids_for_test(&db, &[id])[0];
+
+        let albums = crate::db::queries::favourite_album_ids_batch(&db.conn, user).unwrap();
+        assert_eq!(albums, HashSet::from([track.album_id.unwrap()]));
+        let artists = crate::db::queries::favourite_artist_ids_batch(&db.conn, user).unwrap();
+        assert_eq!(artists, HashSet::from([track.artist_id.unwrap()]));
+        let filter = TrackFilter {
+            favourites_of: Some(user),
+            ..Default::default()
+        };
+        let rows = filter_tracks(&db.conn, &filter, TrackOrder::Title, false, 50, 0).unwrap();
+        assert_eq!(rows.iter().map(|t| t.id).collect::<Vec<_>>(), [id]);
+    }
+
+    fn tracks_by_ids_for_test(db: &Database, ids: &[i64]) -> Vec<TrackRow> {
+        crate::db::queries::tracks_by_ids(&db.conn, ids).unwrap()
+    }
+
+    #[test]
+    fn artist_filter_matches_the_album_artist() {
+        let db = test_db();
+        let mut meta = sample_meta("Guest Spot", "Guest", "Host Album");
+        meta.album_artist = Some("Host".into());
+        let id = upsert_track(&db.conn, &meta).unwrap();
+        upsert_track(&db.conn, &sample_meta("Elsewhere", "Other", "Other Album")).unwrap();
+        let host = crate::db::queries::get_or_create_artist(&db.conn, "Host", None).unwrap();
+
+        let filter = TrackFilter {
+            artist_ids: Some(vec![host]),
+            ..Default::default()
+        };
+        let rows = filter_tracks(&db.conn, &filter, TrackOrder::Title, false, 50, 0).unwrap();
+        assert_eq!(rows.iter().map(|t| t.id).collect::<Vec<_>>(), [id]);
+    }
+
+    /// More ids than SQLite allows parameters in one statement.
+    #[test]
+    fn id_lists_are_not_limited_by_the_parameter_count() {
+        let db = test_db();
+        seed(&db);
+        let ids: Vec<i64> = (1..=40_000).collect();
+        assert_eq!(tracks_by_ids_for_test(&db, &ids).len(), 3);
+        assert_eq!(album_ids_for_tracks(&db.conn, &ids).unwrap().len(), 3);
+        assert_eq!(sources_for_tracks(&db.conn, &ids).unwrap().len(), 3);
+        let paths: Vec<String> = (0..40_000).map(|i| format!("/music/{i}.flac")).collect();
+        assert!(
+            favourite_paths(&db.conn, crate::db::queries::LOCAL_USER, &paths)
+                .unwrap()
+                .is_empty()
+        );
+        let filter = TrackFilter {
+            ids: Some(ids),
+            ..Default::default()
+        };
+        assert_eq!(
+            filter_tracks(&db.conn, &filter, TrackOrder::Title, false, 50, 0)
+                .unwrap()
+                .len(),
+            3
+        );
     }
 }

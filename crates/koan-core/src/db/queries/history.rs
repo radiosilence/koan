@@ -92,11 +92,15 @@ pub fn last_played_at(conn: &Connection, user: i64, track_id: i64) -> Result<Opt
 }
 
 /// Get track IDs from recent play history (most recent first), up to `limit`.
+///
+/// Each track ordered by its latest play. `SELECT DISTINCT … ORDER BY
+/// played_at` orders by whichever of a track's plays SQLite happens to keep.
 pub fn recent_track_ids(conn: &Connection, user: i64, limit: usize) -> Result<Vec<i64>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT track_id FROM play_history
+    let mut stmt = conn.prepare_cached(
+        "SELECT track_id FROM play_history
          WHERE user_id = ?2
-         ORDER BY played_at DESC
+         GROUP BY track_id
+         ORDER BY MAX(played_at) DESC, MAX(id) DESC
          LIMIT ?1",
     )?;
     let rows = stmt
@@ -329,6 +333,19 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn recent_tracks_are_ordered_by_their_latest_play() {
+        let db = test_db();
+        let a = seed_track(&db, "A");
+        let b = seed_track(&db, "B");
+        let user = crate::db::queries::LOCAL_USER;
+        for (track, at) in [(a, 100), (b, 200), (a, 300)] {
+            record_play_at(&db.conn, user, track, at, None, SOURCE_LOCAL).unwrap();
+        }
+        assert_eq!(recent_track_ids(&db.conn, user, 10).unwrap(), [a, b]);
+        assert_eq!(recent_track_ids(&db.conn, user, 1).unwrap(), [a]);
     }
 
     #[test]

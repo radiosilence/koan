@@ -197,6 +197,9 @@ pub fn run_tui(
     let mut saved_playback_state = app.state.playback_state();
     const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
+    // A picker's items, being read on another thread.
+    let mut picker_load: Option<(PickerKind, crossbeam_channel::Receiver<Vec<PickerItem>>)> = None;
+
     loop {
         if (callbacks.sigint_received)() {
             app.quit = true;
@@ -356,12 +359,31 @@ pub fn run_tui(
             next_frame = now;
         }
 
-        if let app::Mode::Picker(kind) = &app.mode
+        if let app::Mode::Picker(kind) = app.mode
             && app.picker.is_none()
         {
-            let items = load_picker_items(*kind);
-            let multi = matches!(kind, PickerKind::Track);
-            app.picker = Some(PickerState::new(*kind, items, multi));
+            match picker_load.as_ref().filter(|(k, _)| *k == kind) {
+                Some((_, rx)) => match rx.try_recv() {
+                    Ok(items) => {
+                        let multi = matches!(kind, PickerKind::Track);
+                        app.picker = Some(PickerState::new(kind, items, multi));
+                        picker_load = None;
+                    }
+                    Err(crossbeam_channel::TryRecvError::Empty) => {}
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => picker_load = None,
+                },
+                None => {
+                    let (tx, rx) = crossbeam_channel::bounded(1);
+                    let spawned = std::thread::Builder::new()
+                        .name("koan-picker".into())
+                        .spawn(move || {
+                            let _ = tx.send(load_picker_items(kind));
+                        });
+                    if spawned.is_ok() {
+                        picker_load = Some((kind, rx));
+                    }
+                }
+            }
         }
 
         if let Some(artist_id) = app.artist_drill_down.take()
