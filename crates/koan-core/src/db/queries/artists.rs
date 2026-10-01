@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::connection::DbError;
 
@@ -21,33 +21,30 @@ pub fn get_or_create_artist(
     name: &str,
     remote_id: Option<&str>,
 ) -> Result<i64, DbError> {
-    // Try to find existing.
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM artists WHERE name = ?1 COLLATE NOCASE
+    let existing: Option<(i64, Option<String>)> = conn
+        .prepare_cached(
+            "SELECT id, remote_id FROM artists WHERE name = ?1 COLLATE NOCASE
              ORDER BY name = ?1 DESC, id LIMIT 1",
-            params![name],
-            |row| row.get(0),
-        )
-        .ok();
+        )?
+        .query_row(params![name], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional()?;
 
-    if let Some(id) = existing {
+    if let Some((id, stored)) = existing {
         // The server's current id wins: one that renumbers its library would
         // otherwise leave the artist under an id it no longer answers to.
         if let Some(rid) = remote_id {
-            conn.execute(
-                "UPDATE artists SET remote_id = ?1 WHERE id = ?2 AND remote_id IS NOT ?1",
-                params![rid, id],
-            )?;
+            if stored.as_deref() != Some(rid) {
+                conn.prepare_cached("UPDATE artists SET remote_id = ?1 WHERE id = ?2")?
+                    .execute(params![rid, id])?;
+            }
             super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
         }
         return Ok(id);
     }
 
-    conn.execute(
-        "INSERT INTO artists (name, remote_id) VALUES (?1, ?2)",
-        params![name, remote_id],
-    )?;
+    let uid = super::free_uid(conn, super::UidKind::Artist, remote_id)?;
+    conn.prepare_cached("INSERT INTO artists (name, remote_id, uid) VALUES (?1, ?2, ?3)")?
+        .execute(params![name, remote_id, uid])?;
     let id = conn.last_insert_rowid();
     if let Some(rid) = remote_id {
         super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
@@ -84,6 +81,8 @@ impl ArtistOrder {
 /// featured guest) appears inline in the queue, not as a shelf of its own.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ArtistQuery<'a> {
+    /// Only these artists.
+    pub ids: Option<&'a [i64]>,
     /// Case-insensitive substring over the name.
     pub search: Option<&'a str>,
     /// Only artists this user has favourited.
@@ -92,6 +91,9 @@ pub struct ArtistQuery<'a> {
     /// counts are of what is left.
     pub filter: super::albums::AlbumFilter<'a>,
     pub order: ArtistOrder,
+    /// Leave `track_count` at zero rather than read every track in the library
+    /// to count them.
+    pub without_track_counts: bool,
     /// `None` for the whole listing. A client that scrolls should page.
     pub limit: Option<u32>,
     pub offset: u32,
@@ -100,19 +102,27 @@ pub struct ArtistQuery<'a> {
 /// Artists with their album and track counts, narrowed, ordered and paged by
 /// the database.
 pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>, DbError> {
-    let mut sql = String::from(
+    let mut sql = String::from(if q.without_track_counts {
+        "SELECT a.id, a.name, a.sort_name, a.remote_id, COUNT(al.id), 0
+         FROM artists a
+         INNER JOIN albums al ON al.artist_id = a.id"
+    } else {
         "SELECT a.id, a.name, a.sort_name, a.remote_id,
                 COUNT(DISTINCT al.id), COUNT(t.id)
          FROM artists a
          INNER JOIN albums al ON al.artist_id = a.id
-         LEFT JOIN tracks t ON t.album_id = al.id",
-    );
+         LEFT JOIN tracks t ON t.album_id = al.id"
+    });
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(user) = q.favourites_of {
         params.push(Box::new(super::auth::resolve_user(conn, user)?));
         sql.push_str(" JOIN favourite_artists f ON f.artist_name = a.name AND f.user_id = ?");
     }
     let mut wheres: Vec<String> = Vec::new();
+    if let Some(ids) = q.ids {
+        params.push(Box::new(super::json_list(ids)));
+        wheres.push("a.id IN (SELECT value FROM json_each(?))".into());
+    }
     if let Some(query) = q.search {
         params.push(Box::new(format!("%{}%", escape_like(query))));
         wheres.push("a.name LIKE ? COLLATE NOCASE ESCAPE '\\'".into());

@@ -191,10 +191,18 @@ fn subject(db: &Database, share: &ShareRow, tracks: &[TrackRow]) -> Subject {
     };
     let mut ids: Vec<i64> = tracks.iter().filter_map(|t| t.album_id).collect();
     ids.dedup();
-    let albums = ids
-        .iter()
-        .filter_map(|id| queries::get_album(&db.conn, *id).ok().flatten())
-        .collect();
+    let rows: std::collections::HashMap<i64, AlbumRow> = queries::list_albums(
+        &db.conn,
+        &queries::AlbumQuery {
+            ids: Some(&ids),
+            ..Default::default()
+        },
+    )
+    .unwrap_or_default()
+    .into_iter()
+    .map(|a| (a.id, a))
+    .collect();
+    let albums = ids.iter().filter_map(|id| rows.get(id).cloned()).collect();
     Subject { artist, albums }
 }
 

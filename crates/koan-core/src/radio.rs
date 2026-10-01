@@ -54,13 +54,16 @@ pub struct RadioContext {
     pub seed_artists: HashMap<i64, f64>,
     /// Paths already in the queue (to avoid duplicates).
     pub queued_paths: HashSet<String>,
+    /// Track ids already in the queue. Left out of every draw, which a path
+    /// cannot do for a remote track: it has none until it is downloaded.
+    pub queued_ids: HashSet<i64>,
     /// Track IDs in the recent play history exclusion window.
     pub excluded_track_ids: HashSet<i64>,
     /// The currently playing track's remote_id (for Subsonic similar songs).
     pub current_remote_id: Option<String>,
     /// The currently playing track's artist name (for top songs fallback).
     pub current_artist_name: Option<String>,
-    /// Genres from the seed window.
+    /// Genres from the seed window, lowercased.
     pub seed_genres: HashSet<String>,
     /// Average year of seed tracks (for era matching).
     pub seed_avg_year: Option<i32>,
@@ -97,9 +100,15 @@ impl RadioContext {
             queries::recent_track_ids(conn, queries::LOCAL_USER, seed_window).unwrap_or_default();
         let seed_count = recent.len().max(1) as f64;
         let mut years: Vec<i32> = Vec::new();
+        let rows: HashMap<i64, queries::TrackRow> = queries::tracks_by_ids(conn, &recent)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| (t.id, t))
+            .collect();
+        let dates = album_years(conn, &recent);
 
         for (i, track_id) in recent.iter().enumerate() {
-            if let Ok(Some(track)) = queries::get_track_row(conn, *track_id) {
+            if let Some(track) = rows.get(track_id) {
                 // More recent = higher weight (linear decay).
                 let weight = (seed_count - i as f64) / seed_count;
                 if let Some(aid) = track.artist_id {
@@ -107,13 +116,9 @@ impl RadioContext {
                     *entry = entry.max(weight);
                 }
                 if let Some(ref genre) = track.genre {
-                    ctx.seed_genres.insert(genre.clone());
+                    ctx.seed_genres.insert(genre.to_lowercase());
                 }
-                if let Some(album_id) = track.album_id
-                    && let Ok(Some(album)) = queries::get_album(conn, album_id)
-                    && let Some(ref date) = album.date
-                    && let Some(Ok(year)) = crate::helpers::year_of(date).map(str::parse::<i32>)
-                {
+                if let Some(&year) = dates.get(track_id) {
                     years.push(year);
                 }
             }
@@ -132,18 +137,14 @@ impl RadioContext {
                 *v /= max;
             }
 
-            // Collect genres from queue.
-            for (artist_id, _path) in queue_items {
-                if let Some(aid) = artist_id
-                    && let Ok(tracks) = queries::random_tracks_excluding(conn, &[], &[*aid], &[], 1)
-                {
-                    for t in tracks {
-                        if let Some(ref g) = t.genre {
-                            ctx.seed_genres.insert(g.clone());
-                        }
-                    }
-                }
-            }
+            // The queued artists' genres.
+            let artist_ids: Vec<i64> = ctx.seed_artists.keys().copied().collect();
+            ctx.seed_genres.extend(
+                queries::genres_by_artist_ids(conn, &artist_ids)
+                    .unwrap_or_default()
+                    .into_values()
+                    .flatten(),
+            );
         }
 
         // Build exclusion window from play history.
@@ -157,6 +158,15 @@ impl RadioContext {
         }
 
         ctx
+    }
+
+    /// What no draw may return: the queue, and what was played recently.
+    fn drawn_out(&self) -> Vec<i64> {
+        self.queued_ids
+            .iter()
+            .chain(&self.excluded_track_ids)
+            .copied()
+            .collect()
     }
 
     /// Context from queue items alone, with no database behind it.
@@ -650,50 +660,51 @@ fn gather_genre_era_candidates(
         return;
     }
 
-    let genres: Vec<String> = ctx.seed_genres.iter().cloned().collect();
-    let exclude: Vec<String> = ctx.queued_paths.iter().cloned().collect();
-
-    match queries::random_tracks_excluding(conn, &exclude, &[], &genres, 30) {
-        Ok(tracks) => {
-            for track in tracks {
-                let year = track
-                    .album_id
-                    .and_then(|aid| queries::get_album(conn, aid).ok().flatten())
-                    .and_then(|a| {
-                        a.date
-                            .as_ref()
-                            .and_then(|d| crate::helpers::year_of(d)?.parse().ok())
-                    });
-
-                // Score higher if both genre AND era match.
-                let genre_match = track
-                    .genre
-                    .as_ref()
-                    .is_some_and(|g| ctx.seed_genres.contains(g));
-                let era_match = match (year, ctx.seed_avg_year) {
-                    (Some(y), Some(sy)) => (y as i64 - sy as i64).unsigned_abs() <= 10,
-                    _ => false,
-                };
-
-                let base_score = match (genre_match, era_match) {
-                    (true, true) => 0.6,
-                    (true, false) => 0.3,
-                    (false, true) => 0.2,
-                    (false, false) => 0.1,
-                };
-
-                candidates.push(Candidate {
-                    track_id: track.id,
-                    path: track.path.clone(),
-                    year,
-                    axes: [SimilarityAxis::GenreEra].into_iter().collect(),
-                    base_score,
-                });
-            }
+    // Drawn by genre, ten from each of three of them, so every candidate here
+    // has one of the seed's genres.
+    let exclude = ctx.drawn_out();
+    let mut tracks = Vec::new();
+    for genre in ctx.seed_genres.iter().take(3) {
+        let filter = queries::RandomFilter {
+            genre: Some(genre),
+            exclude: &exclude,
+            ..Default::default()
+        };
+        match queries::random_tracks_where(conn, 10, &filter) {
+            Ok(drawn) => tracks.extend(drawn),
+            Err(e) => log::debug!("radio: genre/era query failed: {}", e),
         }
-        Err(e) => {
-            log::debug!("radio: genre/era query failed: {}", e);
-        }
+    }
+    let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+    let years = album_years(conn, &ids);
+
+    for track in tracks {
+        let year = years.get(&track.id).copied();
+
+        // Score higher if both genre AND era match.
+        let genre_match = track
+            .genre
+            .as_ref()
+            .is_some_and(|g| ctx.seed_genres.contains(&g.to_lowercase()));
+        let era_match = match (year, ctx.seed_avg_year) {
+            (Some(y), Some(sy)) => (y as i64 - sy as i64).unsigned_abs() <= 10,
+            _ => false,
+        };
+
+        let base_score = match (genre_match, era_match) {
+            (true, true) => 0.6,
+            (true, false) => 0.3,
+            (false, true) => 0.2,
+            (false, false) => 0.1,
+        };
+
+        candidates.push(Candidate {
+            track_id: track.id,
+            path: track.path.clone(),
+            year,
+            axes: [SimilarityAxis::GenreEra].into_iter().collect(),
+            base_score,
+        });
     }
 }
 
@@ -702,32 +713,32 @@ fn gather_same_artist_candidates(
     ctx: &RadioContext,
     candidates: &mut Vec<Candidate>,
 ) {
-    let artist_ids: Vec<i64> = ctx.seed_artists.keys().copied().collect();
-    if artist_ids.is_empty() {
-        return;
-    }
-
-    let exclude: Vec<String> = ctx.queued_paths.iter().cloned().collect();
-    match queries::random_tracks_excluding(conn, &exclude, &artist_ids, &[], 15) {
-        Ok(tracks) => {
-            for track in tracks {
-                let weight = track
-                    .artist_id
-                    .and_then(|aid| ctx.seed_artists.get(&aid))
-                    .copied()
-                    .unwrap_or(0.3);
-
-                candidates.push(Candidate {
-                    track_id: track.id,
-                    path: track.path.clone(),
-                    year: None,
-                    axes: [SimilarityAxis::SameArtist].into_iter().collect(),
-                    base_score: weight * 0.4, // Lower base — same-artist is the fallback.
-                });
+    // The five most heavily weighted seed artists, three tracks each, drawn
+    // through the artist index.
+    let mut artists: Vec<(i64, f64)> = ctx.seed_artists.iter().map(|(&a, &w)| (a, w)).collect();
+    artists.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let exclude = ctx.drawn_out();
+    for (artist_id, weight) in artists.into_iter().take(5) {
+        let filter = queries::RandomFilter {
+            artist_id: Some(artist_id),
+            exclude: &exclude,
+            ..Default::default()
+        };
+        match queries::random_tracks_where(conn, 3, &filter) {
+            Ok(tracks) => {
+                for track in tracks {
+                    candidates.push(Candidate {
+                        track_id: track.id,
+                        path: track.path.clone(),
+                        year: None,
+                        axes: [SimilarityAxis::SameArtist].into_iter().collect(),
+                        base_score: weight * 0.4, // Lower base — same-artist is the fallback.
+                    });
+                }
             }
-        }
-        Err(e) => {
-            log::debug!("radio: same-artist query failed: {}", e);
+            Err(e) => {
+                log::debug!("radio: same-artist query failed: {}", e);
+            }
         }
     }
 }
@@ -791,8 +802,12 @@ fn gather_random_candidates(
     ctx: &RadioContext,
     candidates: &mut Vec<Candidate>,
 ) {
-    let exclude: Vec<String> = ctx.queued_paths.iter().cloned().collect();
-    match queries::random_tracks_excluding(conn, &exclude, &[], &[], 10) {
+    let exclude = ctx.drawn_out();
+    let filter = queries::RandomFilter {
+        exclude: &exclude,
+        ..Default::default()
+    };
+    match queries::random_tracks_where(conn, 10, &filter) {
         Ok(tracks) => {
             for track in tracks {
                 candidates.push(Candidate {
@@ -811,6 +826,18 @@ fn gather_random_candidates(
 }
 
 // --- Helpers ---
+
+/// The release year of each track's album, for the tracks that have one.
+fn album_years(conn: &Connection, track_ids: &[i64]) -> HashMap<i64, i32> {
+    queries::queue_item_extras(conn, track_ids)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(id, e)| {
+            let year = crate::helpers::year_of(e.album_date.as_deref()?)?;
+            Some((id, year.parse().ok()?))
+        })
+        .collect()
+}
 
 /// Add candidates from cached similar artist data.
 fn add_cached_similar_candidates(
@@ -836,11 +863,14 @@ fn add_local_artist_candidates(
     axis: SimilarityAxis,
     candidates: &mut Vec<Candidate>,
 ) {
-    let exclude: Vec<String> = ctx.queued_paths.iter().cloned().collect();
+    let exclude = ctx.drawn_out();
     for &(similar_artist_id, sim_score) in pairs.iter().take(10) {
-        if let Ok(tracks) =
-            queries::random_tracks_excluding(conn, &exclude, &[similar_artist_id], &[], 3)
-        {
+        let filter = queries::RandomFilter {
+            artist_id: Some(similar_artist_id),
+            exclude: &exclude,
+            ..Default::default()
+        };
+        if let Ok(tracks) = queries::random_tracks_where(conn, 3, &filter) {
             for track in tracks {
                 candidates.push(Candidate {
                     track_id: track.id,
@@ -918,7 +948,6 @@ fn cache_subsonic_artist_relationships(
 pub fn spawn_autoqueue(
     state: std::sync::Arc<crate::player::state::SharedPlayerState>,
     tx: crossbeam_channel::Sender<crate::player::commands::PlayerCommand>,
-    db_path: std::path::PathBuf,
 ) {
     use crate::player::commands::PlayerCommand;
     use crate::player::state::{QueueEntryStatus, QueueItemId};
@@ -926,16 +955,41 @@ pub fn spawn_autoqueue(
     std::thread::Builder::new()
         .name("koan-radio".into())
         .spawn(move || {
-            let pool = crate::db::pool::Pool::new(db_path);
+            use std::time::{Duration, Instant};
+
+            // Read when radio is switched on, and again a minute later if it
+            // is still on: settings changed while it plays still apply, and a
+            // two-second loop does not parse two files every pass.
+            let mut cfg: Option<(crate::config::Config, Instant)> = None;
+            // A top-up that found nothing, and the queue it found nothing for.
+            // Nothing is tried again until the queue moves or a minute passes,
+            // either of which may give the picker something new to go on.
+            let mut fruitless: Option<(u64, Instant)> = None;
             loop {
-                std::thread::sleep(std::time::Duration::from_secs(2));
+                std::thread::sleep(Duration::from_secs(2));
 
                 if !state.radio_mode() || state.cursor().is_none() {
+                    cfg = None;
                     continue;
                 }
                 log::debug!("radio: awake, cursor set");
 
-                let cfg = crate::config::Config::load().unwrap_or_default();
+                if fruitless.is_some_and(|(version, at)| {
+                    version == state.playlist_version() && at.elapsed() < Duration::from_secs(60)
+                }) {
+                    continue;
+                }
+
+                if cfg
+                    .as_ref()
+                    .is_none_or(|(_, read)| read.elapsed() > Duration::from_secs(60))
+                {
+                    cfg = Some((
+                        crate::config::Config::load().unwrap_or_default(),
+                        Instant::now(),
+                    ));
+                }
+                let Some((cfg, _)) = &cfg else { continue };
                 let snapshot = state.derive_visible_queue();
                 let Some(playing) = snapshot
                     .entries
@@ -960,26 +1014,42 @@ pub fn spawn_autoqueue(
                     cfg.radio.lookahead
                 );
 
-                let Ok(db) = pool.get() else {
+                let Ok(db) = crate::db::pool::shared().get() else {
                     continue;
                 };
+                let version = state.playlist_version();
                 let (items, cursor) = state.snapshot_playlist();
+
+                // Each item's row, read once for the whole queue. An item
+                // without a database id was played from a file, and is looked
+                // up by its path.
+                let item_ids: Vec<Option<i64>> = items
+                    .iter()
+                    .map(|item| {
+                        item.db_id.or_else(|| {
+                            let path = item.path.to_str()?;
+                            queries::track_id_by_path(&db.conn, path).ok().flatten()
+                        })
+                    })
+                    .collect();
+                let ids: Vec<i64> = item_ids.iter().flatten().copied().collect();
+                let queue_rows: HashMap<i64, queries::TrackRow> =
+                    queries::tracks_by_ids(&db.conn, &ids)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|t| (t.id, t))
+                        .collect();
+                let row_of = |i: usize| item_ids[i].and_then(|id| queue_rows.get(&id));
 
                 // The seed drifts: recent items weigh more than the first thing
                 // queued, so the radio moves through the library rather than
                 // orbiting one track.
                 let context: Vec<(Option<i64>, Option<String>)> = items
                     .iter()
-                    .map(|item| {
-                        let row = item
-                            .path
-                            .to_str()
-                            .and_then(|p| queries::track_id_by_path(&db.conn, p).ok())
-                            .flatten()
-                            .and_then(|id| queries::get_track_row(&db.conn, id).ok())
-                            .flatten();
+                    .enumerate()
+                    .map(|(i, item)| {
                         (
-                            row.as_ref().and_then(|t| t.artist_id),
+                            row_of(i).and_then(|t| t.artist_id),
                             Some(item.path.to_string_lossy().into_owned()),
                         )
                     })
@@ -991,14 +1061,9 @@ pub fn spawn_autoqueue(
                     cfg.radio.seed_window,
                     cfg.radio.history_window,
                 );
-                if let Some(current) = cursor.and_then(|cid| items.iter().find(|i| i.id == cid))
-                    && let Some(row) = current
-                        .path
-                        .to_str()
-                        .and_then(|p| queries::track_id_by_path(&db.conn, p).ok())
-                        .flatten()
-                        .and_then(|id| queries::get_track_row(&db.conn, id).ok())
-                        .flatten()
+                ctx.queued_ids = queue_rows.keys().copied().collect();
+                if let Some(current) = cursor.and_then(|cid| items.iter().position(|i| i.id == cid))
+                    && let Some(row) = row_of(current)
                 {
                     ctx.current_remote_id = row.remote_id.clone();
                     ctx.current_artist_name = Some(row.artist_name.clone());
@@ -1022,6 +1087,7 @@ pub fn spawn_autoqueue(
                 let picks = pick_tracks(&db.conn, &ctx, None, &cfg.radio);
                 if picks.is_empty() {
                     log::warn!("radio: the picker returned nothing for this seed");
+                    fruitless = Some((version, Instant::now()));
                     continue;
                 }
 
@@ -1044,8 +1110,10 @@ pub fn spawn_autoqueue(
                     .collect();
                 if rows.is_empty() {
                     log::warn!("radio: every pick was already in the queue");
+                    fruitless = Some((version, Instant::now()));
                     continue;
                 }
+                fruitless = None;
 
                 let new_items = crate::helpers::playlist_items_for_tracks(&db, &rows);
                 let pending: Vec<(i64, QueueItemId)> = new_items
@@ -1292,5 +1360,71 @@ mod tests {
         // Should fall back to queue weights since no play history.
         assert_eq!(ctx.seed_artists.len(), 2);
         assert_eq!(ctx.queued_paths.len(), 2);
+    }
+
+    /// Three tracks by one artist among three hundred by others.
+    fn library_with_seed_artist(db: &Database) -> i64 {
+        for i in 0..300 {
+            let mut meta = sample_meta(&format!("Other{i}"), &format!("Other{}", i % 30), "Mix");
+            meta.path = Some(format!("/music/other/{i}.flac"));
+            meta.genre = Some("Pop".into());
+            upsert_track(&db.conn, &meta).unwrap();
+        }
+        for i in 0..3 {
+            let mut meta = sample_meta(&format!("Seed{i}"), "Seed", "Seeds");
+            meta.path = Some(format!("/music/seed/{i}.flac"));
+            meta.genre = Some("IDM".into());
+            upsert_track(&db.conn, &meta).unwrap();
+        }
+        get_or_create_artist(&db.conn, "Seed", None).unwrap()
+    }
+
+    #[test]
+    fn same_artist_picks_are_by_that_artist() {
+        let db = test_db();
+        let seed = library_with_seed_artist(&db);
+        let ctx = RadioContext::from_queue(&[(Some(seed), None)]);
+
+        let mut candidates = Vec::new();
+        gather_same_artist_candidates(&db.conn, &ctx, &mut candidates);
+
+        let ids: Vec<i64> = candidates.iter().map(|c| c.track_id).collect();
+        let rows = queries::tracks_by_ids(&db.conn, &ids).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|t| t.artist_id == Some(seed)));
+    }
+
+    #[test]
+    fn genre_picks_have_the_seed_genre() {
+        let db = test_db();
+        let seed = library_with_seed_artist(&db);
+        let ctx = RadioContext::build(&db.conn, &[(Some(seed), None)], 5, 200);
+        assert_eq!(ctx.seed_genres, HashSet::from(["idm".to_string()]));
+
+        let mut candidates = Vec::new();
+        gather_genre_era_candidates(&db.conn, &ctx, &mut candidates);
+
+        let ids: Vec<i64> = candidates.iter().map(|c| c.track_id).collect();
+        let rows = queries::tracks_by_ids(&db.conn, &ids).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|t| t.genre.as_deref() == Some("IDM")));
+    }
+
+    #[test]
+    fn queued_tracks_are_never_picked() {
+        let db = test_db();
+        let seed = library_with_seed_artist(&db);
+        let mut ctx = RadioContext::from_queue(&[(Some(seed), None)]);
+        ctx.queued_ids = db
+            .conn
+            .prepare("SELECT id FROM tracks")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+
+        let picks = pick_tracks(&db.conn, &ctx, None, &RadioConfig::default());
+        assert!(picks.is_empty());
     }
 }

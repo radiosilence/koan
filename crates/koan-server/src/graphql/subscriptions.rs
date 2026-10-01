@@ -177,7 +177,9 @@ mod tests {
         let schema = crate::graphql::build_schema(
             state,
             cmd_tx,
-            std::path::PathBuf::from("/nonexistent/koan-test.db"),
+            std::sync::Arc::new(koan_core::db::pool::Pool::new(
+                "/nonexistent/koan-test.db".into(),
+            )),
             None,
         );
         let sdl = schema.sdl();

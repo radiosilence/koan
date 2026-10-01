@@ -73,10 +73,10 @@ fn save_playback_state_from_app(app: &app::App) {
 
 /// Persist the cursor and position alone, leaving the saved queue as it is.
 fn save_playback_position_from_app(app: &app::App) {
-    let (items, cursor) = app.state.snapshot_playlist();
-    let cursor_path = cursor
-        .and_then(|cid| items.iter().find(|i| i.id == cid))
-        .map(|i| i.path.to_string_lossy().into_owned());
+    let cursor_path = app
+        .state
+        .cursor_path()
+        .map(|p| p.to_string_lossy().into_owned());
     match koan_core::db::pool::shared().get() {
         Ok(db) => {
             if let Err(e) = koan_core::db::queries::save_playback_position(
@@ -195,7 +195,12 @@ pub fn run_tui(
     const AUTOSAVE_INTERVAL: Duration = Duration::from_millis(100);
     let mut last_position_save = std::time::Instant::now();
     let mut saved_playback_state = app.state.playback_state();
+    let mut saved_content = app.state.content_version();
+    let mut saved_cursor = app.state.cursor();
     const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(1);
+
+    // A picker's items, being read on another thread.
+    let mut picker_load: Option<(PickerKind, crossbeam_channel::Receiver<Vec<PickerItem>>)> = None;
 
     loop {
         if (callbacks.sigint_received)() {
@@ -356,12 +361,31 @@ pub fn run_tui(
             next_frame = now;
         }
 
-        if let app::Mode::Picker(kind) = &app.mode
+        if let app::Mode::Picker(kind) = app.mode
             && app.picker.is_none()
         {
-            let items = load_picker_items(*kind);
-            let multi = matches!(kind, PickerKind::Track);
-            app.picker = Some(PickerState::new(*kind, items, multi));
+            match picker_load.as_ref().filter(|(k, _)| *k == kind) {
+                Some((_, rx)) => match rx.try_recv() {
+                    Ok(items) => {
+                        let multi = matches!(kind, PickerKind::Track);
+                        app.picker = Some(PickerState::new(kind, items, multi));
+                        picker_load = None;
+                    }
+                    Err(crossbeam_channel::TryRecvError::Empty) => {}
+                    Err(crossbeam_channel::TryRecvError::Disconnected) => picker_load = None,
+                },
+                None => {
+                    let (tx, rx) = crossbeam_channel::bounded(1);
+                    let spawned = std::thread::Builder::new()
+                        .name("koan-picker".into())
+                        .spawn(move || {
+                            let _ = tx.send(load_picker_items(kind));
+                        });
+                    if spawned.is_ok() {
+                        picker_load = Some((kind, rx));
+                    }
+                }
+            }
         }
 
         if let Some(artist_id) = app.artist_drill_down.take()
@@ -431,21 +455,27 @@ pub fn run_tui(
                 .ok();
         }
 
-        // The whole queue is rewritten only when it changed; otherwise the
-        // position is saved about once a second, and on every play/pause/stop.
+        // The whole queue is rewritten only when what is saved of it changed;
+        // otherwise the position is saved about once a second, and on every
+        // play/pause/stop and track change.
         let playback_state = app.state.playback_state();
-        if app.state_dirty && last_autosave.elapsed() >= AUTOSAVE_INTERVAL {
+        let content = app.state.content_version();
+        let cursor = app.state.cursor();
+        if content != saved_content && last_autosave.elapsed() >= AUTOSAVE_INTERVAL {
             save_playback_state_from_app(&app);
-            app.state_dirty = false;
+            saved_content = content;
+            saved_cursor = cursor;
             last_autosave = std::time::Instant::now();
             last_position_save = last_autosave;
             saved_playback_state = playback_state;
         } else if app.has_played
             && (playback_state != saved_playback_state
+                || cursor != saved_cursor
                 || (playback_state == PlaybackState::Playing
                     && last_position_save.elapsed() >= POSITION_SAVE_INTERVAL))
         {
             save_playback_position_from_app(&app);
+            saved_cursor = cursor;
             last_position_save = std::time::Instant::now();
             saved_playback_state = playback_state;
         }

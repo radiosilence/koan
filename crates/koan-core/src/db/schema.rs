@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -19,6 +19,15 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
                  ({SCHEMA_VERSION}) — upgrade koan rather than downgrading the library"
             )),
         ));
+    }
+
+    // Every statement past here takes the write lock, whether or not it
+    // changes a row, and an open waits behind any scan or sync holding it. A
+    // database already at this version has nothing for them to do. The column
+    // checks are reads, and catch a column added without a version bump.
+    if found == SCHEMA_VERSION {
+        add_missing_columns(conn)?;
+        return crate::db::queries::auth::adopt_local_rows(conn);
     }
 
     conn.execute_batch(
@@ -101,6 +110,10 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             WHERE mbid IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_artists_name_nocase
             ON artists(name COLLATE NOCASE);
+        -- The genre list and the genre filter both match case-insensitively,
+        -- and both want the albums a genre spans.
+        CREATE INDEX IF NOT EXISTS idx_tracks_genre
+            ON tracks(genre COLLATE NOCASE, album_id);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5(
             title,
@@ -146,6 +159,8 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 
         -- Undo reads back one batch at a time.
         CREATE INDEX IF NOT EXISTS idx_organize_log_batch ON organize_log(batch_id);
+        -- Merging two track rows repoints the log from one to the other.
+        CREATE INDEX IF NOT EXISTS idx_organize_log_track ON organize_log(track_id);
 
         CREATE TABLE IF NOT EXISTS lyrics_cache (
             id          INTEGER PRIMARY KEY,
@@ -257,6 +272,19 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             updated_at  TEXT DEFAULT (datetime('now'))
         );
 
+        -- Where the saved queue is up to, written every second while music
+        -- plays. A row of its own because SQLite rewrites a record whenever
+        -- its size changes, and in `playback_state` that record carries the
+        -- whole queue.
+        CREATE TABLE IF NOT EXISTS playback_position (
+            id            INTEGER PRIMARY KEY CHECK (id = 1),
+            cursor_id     TEXT,
+            position_ms   INTEGER NOT NULL DEFAULT 0,
+            was_playing   INTEGER NOT NULL DEFAULT 0,
+            radio_enabled INTEGER NOT NULL DEFAULT 0,
+            updated_at    TEXT DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS similar_artists (
             artist_id       INTEGER NOT NULL REFERENCES artists(id),
             similar_id      INTEGER NOT NULL REFERENCES artists(id),
@@ -266,6 +294,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             updated_at      TEXT DEFAULT (datetime('now')),
             PRIMARY KEY (artist_id, similar_id, source)
         );
+        -- The primary key serves `artist_id`; deleting an artist also looks
+        -- for it as someone else's similar artist.
+        CREATE INDEX IF NOT EXISTS idx_similar_artists_similar ON similar_artists(similar_id);
 
         CREATE TABLE IF NOT EXISTS play_history (
             id          INTEGER PRIMARY KEY,
@@ -275,7 +306,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             source      TEXT DEFAULT 'local'
         );
 
-        CREATE INDEX IF NOT EXISTS idx_play_history_track ON play_history(track_id);
+        -- With `played_at`, a track's last play is read off the index.
+        CREATE INDEX IF NOT EXISTS idx_play_history_track_played
+            ON play_history(track_id, played_at);
         CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
 
         -- Playlists carry what Subsonic carries and nothing else, so a
@@ -369,6 +402,8 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
             PRIMARY KEY (share_id, position)
         );
+        -- Deleting or merging a track looks for the shares that name it.
+        CREATE INDEX IF NOT EXISTS idx_share_tracks_track ON share_tracks(track_id);
         -- Expiry was indexed and never used: the only query that reads it is the
         -- cleanup sweep, whose `revoked = 1 OR expires_at <= ?` spans two columns
         -- and reads the table either way. An index nothing reads is a cost paid
@@ -463,7 +498,9 @@ const SQL_UUID7: &str = "(SELECT substr(t, 1, 8) || '-' || substr(t, 9, 4) || '-
     FROM (SELECT printf('%012x', CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)) AS t,
                  lower(hex(randomblob(9))) AS r))";
 
-fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
+/// Add whichever of `ADDED_COLUMNS` the database lacks. Reads alone when none
+/// are missing.
+fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
     let had_remote_account = column_exists(conn, "playlists", "remote_account")?;
     for (table, column, ty) in ADDED_COLUMNS {
         if !column_exists(conn, table, column)? {
@@ -483,6 +520,11 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
             [],
         )?;
     }
+    Ok(())
+}
+
+fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
+    add_missing_columns(conn)?;
 
     // Cross-source dedup looks tracks up by recording id.
     conn.execute(
@@ -547,8 +589,15 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
     per_user_favourites(conn)?;
+    // After the rebuilds above, which drop a table's indexes with it.
+    // `idx_play_history_track` is a prefix of `idx_play_history_track_played`.
+    // The favourites key leads with the user, and merging two tracks repoints
+    // every user's favourite by path.
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_play_history_user ON play_history(user_id, played_at);
+         CREATE INDEX IF NOT EXISTS idx_play_history_track_played ON play_history(track_id, played_at);
+         DROP INDEX IF EXISTS idx_play_history_track;
+         CREATE INDEX IF NOT EXISTS idx_favourites_path ON favourites(track_path);
          CREATE INDEX IF NOT EXISTS idx_playlists_user ON playlists(user_id);
          CREATE TRIGGER IF NOT EXISTS users_personal_data AFTER DELETE ON users BEGIN
              DELETE FROM favourites WHERE user_id = OLD.id;
@@ -560,6 +609,17 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
          END;",
     )?;
     crate::db::queries::auth::adopt_local_rows(conn)?;
+
+    // The position moved out of the queue's row; the last one saved comes too.
+    if found < 9 {
+        conn.execute(
+            "INSERT OR IGNORE INTO playback_position
+                 (id, cursor_id, position_ms, was_playing, radio_enabled)
+             SELECT 1, cursor_id, position_ms, was_playing, radio_enabled
+               FROM playback_state WHERE id = 1",
+            [],
+        )?;
+    }
 
     for table in ["artists", "albums", "tracks", "playlists"] {
         conn.execute_batch(&format!(
@@ -853,7 +913,8 @@ fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
              WHERE track_id IS NULL OR track_id IN (SELECT id FROM tracks);
          DROP TABLE play_history;
          ALTER TABLE play_history_new RENAME TO play_history;
-         CREATE INDEX IF NOT EXISTS idx_play_history_track ON play_history(track_id);
+         CREATE INDEX IF NOT EXISTS idx_play_history_track_played
+             ON play_history(track_id, played_at);
          CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
          COMMIT;",
     );
@@ -949,7 +1010,8 @@ mod tests {
             conn.execute_batch(
                 "INSERT INTO artists (id, name) VALUES (1, 'The Squire of Gothos'), (2, 'The Squire Of Gothos');
                  INSERT INTO albums (id, title, artist_id) VALUES (1, 'We Do Scorpion Things', 1);
-                 INSERT INTO tracks (title, album_id, artist_id, path) VALUES ('Dark Ting', 1, 2, '/a.flac');",
+                 INSERT INTO tracks (title, album_id, artist_id, path) VALUES ('Dark Ting', 1, 2, '/a.flac');
+                 PRAGMA user_version = 8;",
             )
             .unwrap();
         }
@@ -975,7 +1037,8 @@ mod tests {
                 "INSERT INTO artists (id, name) VALUES (101, 'Tove Lo'), (102, 'TOVE LO');
                  INSERT INTO albums (id, title, artist_id) VALUES (101, 'Habits', 101), (102, 'Habits', 102), (103, 'Other', 102);
                  INSERT INTO tracks (title, album_id, artist_id, path) VALUES
-                   ('a', 101, 101, '/a.flac'), ('b', 102, 102, '/b.flac'), ('c', 103, 102, '/c.flac');",
+                   ('a', 101, 101, '/a.flac'), ('b', 102, 102, '/b.flac'), ('c', 103, 102, '/c.flac');
+                 PRAGMA user_version = 8;",
             )
             .unwrap();
         }
@@ -1030,6 +1093,7 @@ mod tests {
                 [],
             )
             .unwrap();
+            conn.pragma_update(None, "user_version", 8).unwrap();
         }
         let conn = rusqlite::Connection::open(&path).unwrap();
         super::create_tables(&conn).unwrap();
@@ -1117,6 +1181,30 @@ mod tests {
                 "one organize batch",
                 "SELECT id FROM organize_log WHERE batch_id = ?1",
             ),
+            (
+                "the albums a genre spans",
+                "SELECT DISTINCT album_id FROM tracks WHERE genre = ?1 COLLATE NOCASE",
+            ),
+            (
+                "an artist's similar-artist links, either way round",
+                "DELETE FROM similar_artists WHERE artist_id = ?1 OR similar_id = ?1",
+            ),
+            (
+                "organize history repointed to a merged track",
+                "UPDATE organize_log SET track_id = ?1 WHERE track_id = ?2",
+            ),
+            (
+                "shares repointed to a merged track",
+                "UPDATE share_tracks SET track_id = ?1 WHERE track_id = ?2",
+            ),
+            (
+                "favourites repointed to a merged track's path",
+                "UPDATE OR IGNORE favourites SET track_path = ?1 WHERE track_path = ?2",
+            ),
+            (
+                "a track's last play",
+                "SELECT MAX(played_at) FROM play_history WHERE track_id = ?1",
+            ),
         ];
 
         for (what, sql) in cases {
@@ -1140,11 +1228,11 @@ mod tests {
                       (2, 'Remote', 1, '2026-08-06T22:53:14.851697506Z'),
                       (3, 'Neither', 1, NULL);
              INSERT INTO tracks (title, album_id, artist_id, path)
-               VALUES ('a', 1, 1, '/a'), ('b', 2, 1, '/b'), ('c', 3, 1, '/c');",
+               VALUES ('a', 1, 1, '/a'), ('b', 2, 1, '/b'), ('c', 3, 1, '/c');
+             PRAGMA user_version = 8;",
         )
         .unwrap();
 
-        // Migrations live inside `create_tables` and are idempotent.
         create_tables(&conn).unwrap();
 
         let added = |id: i64| -> Option<String> {
@@ -1184,7 +1272,8 @@ mod tests {
              INSERT INTO queue_snapshots (name, queue_json, created_at) VALUES
                ('techno',
                 '[{\"path\":\"/music/golden.flac\"},{\"path\":\"/music/nowhere.flac\"},{\"path\":\"/music/atlantis.flac\"}]',
-                '2026-01-01 10:00:00');",
+                '2026-01-01 10:00:00');
+             PRAGMA user_version = 8;",
         )
         .unwrap();
 
@@ -1287,6 +1376,82 @@ mod tests {
             "SQLite error wording moved, create_tables no longer detects \
              already-applied migrations: {err}"
         );
+    }
+
+    /// Opening a database already at this version must not need the write
+    /// lock: every background task opens one, and each would otherwise wait
+    /// behind whatever scan or sync holds it.
+    #[test]
+    fn opening_a_current_database_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        Database::open(&path).unwrap();
+
+        let writer = Connection::open(&path).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+        let conn = Connection::open(&path).unwrap();
+        conn.busy_timeout(std::time::Duration::from_millis(50))
+            .unwrap();
+        create_tables(&conn).expect("opened while another connection holds the write lock");
+
+        // The whole open, pragmas and all, against its usual 30 s timeout.
+        let started = std::time::Instant::now();
+        Database::open(&path).unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        writer.execute_batch("ROLLBACK").unwrap();
+    }
+
+    #[test]
+    fn the_sweeps_wait_for_an_older_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        let conn = Connection::open(&path).unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute("INSERT INTO artists (name, mbid) VALUES ('Crass', '')", [])
+            .unwrap();
+        let mbid = |conn: &Connection| -> Option<String> {
+            conn.query_row("SELECT mbid FROM artists", [], |r| r.get(0))
+                .unwrap()
+        };
+
+        create_tables(&conn).unwrap();
+        assert_eq!(mbid(&conn).as_deref(), Some(""), "current: left alone");
+
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION - 1)
+            .unwrap();
+        create_tables(&conn).unwrap();
+        assert_eq!(mbid(&conn), None, "older: swept");
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn the_saved_position_moves_to_its_own_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE playback_position;
+             INSERT INTO playback_state
+                 (id, queue_json, cursor_id, position_ms, was_playing, radio_enabled)
+             VALUES (1, '[]', '/music/a.flac', 61000, 1, 1);
+             PRAGMA user_version = 8;",
+        )
+        .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        let moved: (String, i64, bool, bool) = conn
+            .query_row(
+                "SELECT cursor_id, position_ms, was_playing, radio_enabled
+                   FROM playback_position WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(moved, ("/music/a.flac".into(), 61000, true, true));
     }
 
     #[test]
@@ -1454,7 +1619,8 @@ mod tests {
              INSERT INTO users (id, username, password_hash, role, sealed_password) VALUES
                  (3, 'mate', 'h', 'user', x'01'), (5, 'owner', 'h', 'admin', NULL);
              INSERT INTO api_keys (user_id, name, key_hash, created_at) VALUES (3, 'k', 'kh', 0);
-             INSERT INTO refresh_tokens (id, user_id, expires_at) VALUES ('t', 5, 9999);",
+             INSERT INTO refresh_tokens (id, user_id, expires_at) VALUES ('t', 5, 9999);
+             PRAGMA user_version = 8;",
         )
         .unwrap();
 

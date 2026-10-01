@@ -228,10 +228,14 @@ pub fn update_share(
 }
 
 pub fn record_visit(conn: &Connection, id: &str, now: i64) -> Result<(), DbError> {
-    conn.execute(
-        "UPDATE shares SET visits = visits + 1, last_visited = ?2 WHERE id = ?1",
-        params![id, now],
-    )?;
+    // A public page, so it does not wait for the write lock: a visit that
+    // lands during a scan goes uncounted.
+    crate::db::connection::without_waiting(conn, |conn| {
+        conn.execute(
+            "UPDATE shares SET visits = visits + 1, last_visited = ?2 WHERE id = ?1",
+            params![id, now],
+        )
+    })?;
     Ok(())
 }
 

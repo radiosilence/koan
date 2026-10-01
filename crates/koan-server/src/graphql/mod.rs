@@ -8,16 +8,16 @@ mod subscriptions;
 mod types;
 
 use std::ops::Deref;
-use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use async_graphql::dataloader::DataLoader;
 use async_graphql::{Context, Schema};
-use crossbeam_channel::{Sender, TrySendError};
+use crossbeam_channel::Sender;
 use koan_core::audio::viz::VizSnapshot;
 use koan_core::db::connection::Database;
+use koan_core::db::pool::Pool;
 use koan_core::db::queries::{UidKind, is_uid};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueItemId, SharedPlayerState};
@@ -49,103 +49,59 @@ const BATCH_WINDOW: Duration = Duration::from_millis(10);
 /// as an error rather than a hung request.
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A fixed set of SQLite connections handed out per query, not per field.
+/// The process's connections, handed out per query rather than per field, and
+/// at most `max` at once.
 ///
-/// `Database::open` runs the DDL batch, the migrations and a WAL checkpoint, so
-/// opening one per resolver field costs tens of statements before the actual
-/// query runs. Connections are opened lazily up to `max` and returned on drop.
-/// Deliberately not a single `Mutex<Connection>`: WAL gives concurrent readers,
-/// and one slow query must not block every other client.
+/// The connections are the server's own pool, shared with Subsonic, the web UI
+/// and MCP: one set of page caches for the one database, rather than one per
+/// front end. What this adds is the bound. A resolver past it waits up to
+/// `ACQUIRE_TIMEOUT` for another to finish, so a query fanning out wide cannot
+/// take a connection per field, and a wedged writer surfaces as an error rather
+/// than a hung request.
 struct DbPool {
-    path: PathBuf,
-    /// Returned connections wait here. Bounded at `max`, so `try_send` on the
-    /// return path cannot block or fail for lack of room.
-    idle_tx: Sender<Database>,
-    idle_rx: crossbeam_channel::Receiver<Database>,
-    /// Connections in existence (idle plus checked out).
-    live: AtomicUsize,
-    /// Total connections ever opened. Instrumentation only — the fan-out tests
-    /// assert this stays bounded as a query's breadth grows.
-    opens: AtomicUsize,
+    pool: Arc<Pool>,
+    /// One token per connection that may be out at once. Taken to acquire,
+    /// returned on drop.
+    permits_tx: Sender<()>,
+    permits_rx: crossbeam_channel::Receiver<()>,
     /// Dataloader batches run. Instrumentation only — the N+1 tests assert one
     /// batch serves a whole selection set.
     batches: AtomicUsize,
-    /// Whether the schema and migrations have been applied to this path.
-    initialised: AtomicBool,
-    max: usize,
 }
 
 impl DbPool {
-    fn new(path: PathBuf) -> Arc<Self> {
+    fn new(pool: Arc<Pool>) -> Arc<Self> {
         // SQLite readers scale with cores; past that they only queue on the OS.
         let max = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4)
             .clamp(4, 16);
-        let (idle_tx, idle_rx) = crossbeam_channel::bounded(max);
+        let (permits_tx, permits_rx) = crossbeam_channel::bounded(max);
+        for _ in 0..max {
+            let _ = permits_tx.try_send(());
+        }
         Arc::new(Self {
-            path,
-            idle_tx,
-            idle_rx,
-            live: AtomicUsize::new(0),
-            opens: AtomicUsize::new(0),
+            pool,
+            permits_tx,
+            permits_rx,
             batches: AtomicUsize::new(0),
-            initialised: AtomicBool::new(false),
-            max,
         })
     }
 
-    /// The first connection applies the schema; every later one skips it.
-    fn open_new(&self) -> Result<Database, koan_core::db::connection::DbError> {
-        self.opens.fetch_add(1, Ordering::Relaxed);
-        if self.initialised.load(Ordering::Acquire) {
-            Database::open_existing(&self.path)
-        } else {
-            let db = Database::open(&self.path)?;
-            self.initialised.store(true, Ordering::Release);
-            Ok(db)
-        }
-    }
-
     fn acquire(self: &Arc<Self>) -> async_graphql::Result<PooledDb> {
-        if let Ok(db) = self.idle_rx.try_recv() {
-            return Ok(PooledDb {
+        self.permits_rx
+            .recv_timeout(ACQUIRE_TIMEOUT)
+            .map_err(|_| async_graphql::Error::new("database busy"))?;
+        match self.pool.take() {
+            Ok(db) => Ok(PooledDb {
                 db: Some(db),
                 pool: self.clone(),
-            });
-        }
-
-        let mut live = self.live.load(Ordering::Relaxed);
-        while live < self.max {
-            match self.live.compare_exchange_weak(
-                live,
-                live + 1,
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    return match self.open_new() {
-                        Ok(db) => Ok(PooledDb {
-                            db: Some(db),
-                            pool: self.clone(),
-                        }),
-                        Err(e) => {
-                            self.live.fetch_sub(1, Ordering::AcqRel);
-                            Err(internal_error("db open", e))
-                        }
-                    };
-                }
-                Err(actual) => live = actual,
+            }),
+            Err(e) => {
+                let _ = self.permits_tx.try_send(());
+                Err(internal_error("db open", e))
             }
         }
-
-        self.idle_rx
-            .recv_timeout(ACQUIRE_TIMEOUT)
-            .map(|db| PooledDb {
-                db: Some(db),
-                pool: self.clone(),
-            })
-            .map_err(|_| async_graphql::Error::new("database busy"))
     }
 }
 
@@ -165,12 +121,10 @@ impl Deref for PooledDb {
 
 impl Drop for PooledDb {
     fn drop(&mut self) {
-        if let Some(db) = self.db.take()
-            && let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
-                self.pool.idle_tx.try_send(db)
-        {
-            self.pool.live.fetch_sub(1, Ordering::AcqRel);
+        if let Some(db) = self.db.take() {
+            self.pool.pool.put_back(db);
         }
+        let _ = self.pool.permits_tx.try_send(());
     }
 }
 
@@ -184,9 +138,9 @@ struct DbHandle {
 }
 
 impl DbHandle {
-    fn new(path: PathBuf) -> Self {
+    fn new(pool: Arc<Pool>) -> Self {
         Self {
-            pool: DbPool::new(path),
+            pool: DbPool::new(pool),
         }
     }
 
@@ -194,20 +148,20 @@ impl DbHandle {
         self.pool.acquire()
     }
 
-    /// A connection outside the pool, for work that runs for minutes and must
+    /// A connection outside the bound, for work that runs for minutes and must
     /// not deny a connection to request-path resolvers.
     fn open_detached(&self) -> Result<Database, koan_core::db::connection::DbError> {
-        self.pool.open_new()
+        self.pool.pool.take()
     }
 
     fn note_batch(&self) {
         self.pool.batches.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Connections opened since the schema was built.
+    /// Connections the underlying pool has opened.
     #[cfg_attr(not(test), allow(dead_code))]
     fn open_count(&self) -> usize {
-        self.pool.opens.load(Ordering::Relaxed)
+        self.pool.pool.opened()
     }
 
     /// Dataloader batches run since the schema was built.
@@ -378,10 +332,10 @@ pub type KoanSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 pub fn build_schema(
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
-    db_path: PathBuf,
+    pool: Arc<Pool>,
     viz: Option<Arc<VizSnapshot>>,
 ) -> KoanSchema {
-    build_schema_with(DbHandle::new(db_path), state, cmd_tx, viz)
+    build_schema_with(DbHandle::new(pool), state, cmd_tx, viz)
 }
 
 fn build_schema_with(
@@ -399,6 +353,7 @@ fn build_schema_with(
         .data(handle)
         .data(loader)
         .data(jobs::JobRegistry::default())
+        .data(Arc::new(queries::Fuzzy::default()))
         .data(state)
         .data(cmd_tx);
     if let Some(viz) = viz {
@@ -523,6 +478,7 @@ fn require_role(ctx: &Context<'_>, required: Role) -> async_graphql::Result<()> 
 mod tests {
     use super::*;
     use koan_core::db::connection::Database;
+    use koan_core::db::pool::Pool;
     use koan_core::db::queries;
     use koan_core::player::commands::CommandChannel;
     use tempfile::TempDir;
@@ -554,7 +510,7 @@ mod tests {
         let tx = ch.tx.clone();
         let rx = ch.rx.clone();
 
-        let schema = build_schema(state, tx, db_path, None);
+        let schema = build_schema(state, tx, Arc::new(Pool::new(db_path.clone())), None);
         (schema, rx, tmp)
     }
 
@@ -572,7 +528,7 @@ mod tests {
 
         let state = SharedPlayerState::new();
         let ch = CommandChannel::new();
-        let handle = DbHandle::new(db_path);
+        let handle = DbHandle::new(Arc::new(Pool::new(db_path)));
         let schema = build_schema_with(handle.clone(), state, ch.tx.clone(), None);
         (schema, handle, ch.rx.clone(), tmp)
     }
@@ -1041,7 +997,12 @@ mod tests {
 
         let state = SharedPlayerState::new();
         let ch = CommandChannel::new();
-        let schema = build_schema(state.clone(), ch.tx.clone(), db_path, None);
+        let schema = build_schema(
+            state.clone(),
+            ch.tx.clone(),
+            Arc::new(Pool::new(db_path.clone())),
+            None,
+        );
 
         let item = |title: &str, path: &str, db_id: Option<i64>| PlaylistItem {
             playlist_entry_id: None,
@@ -1104,7 +1065,12 @@ mod tests {
 
         let state = SharedPlayerState::new();
         let ch = CommandChannel::new();
-        let schema = build_schema(state.clone(), ch.tx.clone(), db_path, None);
+        let schema = build_schema(
+            state.clone(),
+            ch.tx.clone(),
+            Arc::new(Pool::new(db_path.clone())),
+            None,
+        );
 
         // Directly add items to the playlist (simulating what the player thread does).
         let item = PlaylistItem {
@@ -1179,7 +1145,12 @@ mod tests {
             waveform: Vec::new(),
         });
 
-        let schema = build_schema(state, ch.tx.clone(), db_path, Some(viz));
+        let schema = build_schema(
+            state,
+            ch.tx.clone(),
+            Arc::new(Pool::new(db_path.clone())),
+            Some(viz),
+        );
 
         let resp = schema
             .execute("{ vizFrame { spectrum peaks vuLevels beatEnergy waveform } }")

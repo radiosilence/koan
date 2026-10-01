@@ -1,6 +1,17 @@
+use std::sync::Arc;
+
 use koan_core::db::queries;
 
 use crate::picker::{PickerItem, PickerKind, PickerPartKind};
+
+/// How long a kind's items are kept while the library holds the same rows. Its
+/// fingerprint sees rows added and removed, not rows edited in place.
+const MAX_AGE_SECS: u64 = 300;
+
+/// A kind's items, and the library they were read from.
+type Cached = (PickerKind, u64, Arc<Vec<PickerItem>>);
+
+static CACHE: parking_lot::Mutex<Vec<Cached>> = parking_lot::Mutex::new(Vec::new());
 
 fn format_time(ms: u64) -> String {
     let secs = ms / 1000;
@@ -9,22 +20,54 @@ fn format_time(ms: u64) -> String {
     format!("{}:{:02}", mins, secs)
 }
 
+/// The items a picker of `kind` lists, read once per library.
+///
+/// The whole library, in library order: the picker lists it before anything
+/// is typed. Too slow for the render thread, so the caller loads it off it.
 pub fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
-    let db = koan_core::db::pool::shared().get().unwrap_or_else(|e| {
-        log::error!("db error: {}", e);
-        std::process::exit(1);
-    });
+    let db = match koan_core::db::pool::shared().get() {
+        Ok(db) => db,
+        Err(e) => {
+            log::error!("db error: {}", e);
+            return Vec::new();
+        }
+    };
+    let window = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        / MAX_AGE_SECS;
+    let version = queries::library_fingerprint(&db.conn).unwrap_or_default() ^ window;
+    if let Some((_, _, items)) = CACHE
+        .lock()
+        .iter()
+        .find(|(k, v, _)| *k == kind && *v == version)
+    {
+        return items.as_ref().clone();
+    }
+    let items = Arc::new(read_picker_items(&db, kind));
+    let mut cache = CACHE.lock();
+    cache.retain(|(k, _, _)| *k != kind);
+    cache.push((kind, version, Arc::clone(&items)));
+    items.as_ref().clone()
+}
+
+fn read_picker_items(
+    db: &koan_core::db::connection::Database,
+    kind: PickerKind,
+) -> Vec<PickerItem> {
+    let conn = &db.conn;
     match kind {
         PickerKind::Track => {
-            let tracks = queries::all_tracks(&db.conn).unwrap_or_default();
+            let tracks = queries::all_tracks(conn).unwrap_or_default();
             make_track_picker_items(&tracks)
         }
         PickerKind::Album => {
-            let albums = queries::all_albums(&db.conn).unwrap_or_default();
+            let albums = queries::all_albums(conn).unwrap_or_default();
             make_album_picker_items(&albums)
         }
         PickerKind::Artist => {
-            let artists = queries::all_artists(&db.conn).unwrap_or_default();
+            let artists = queries::all_artists(conn).unwrap_or_default();
             make_artist_picker_items(&artists)
         }
         // QueueJump items are created eagerly in app.rs, never lazy-loaded.

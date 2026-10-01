@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use rusqlite::{Connection, params};
 
 use crate::db::connection::DbError;
@@ -51,6 +54,79 @@ pub fn search_tracks_paged(
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
+}
+
+/// What a fuzzy match runs over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CorpusKind {
+    Track,
+    Album,
+    Artist,
+}
+
+/// Each row's id, and the text a fuzzy match reads.
+pub type Corpus = Arc<Vec<(i64, String)>>;
+
+/// Every row of `kind` as its id and the text a fuzzy match reads: "artist —
+/// album — title" for a track, "artist — album" for an album, the name for an
+/// album artist.
+///
+/// Unordered, and only the matched columns: the matcher ranks what it finds,
+/// so sorting on the LIBRARY collation — a Rust callback per comparison, the
+/// most expensive part of reading the whole library — bought nothing.
+pub fn fuzzy_corpus(conn: &Connection, kind: CorpusKind) -> Result<Vec<(i64, String)>, DbError> {
+    let mut stmt = conn.prepare_cached(match kind {
+        CorpusKind::Track => {
+            "SELECT t.id, COALESCE(a.name, '') || ' — ' || COALESCE(al.title, '') || ' — ' || t.title
+             FROM tracks t
+             LEFT JOIN artists a ON t.artist_id = a.id
+             LEFT JOIN albums al ON t.album_id = al.id"
+        }
+        CorpusKind::Album => {
+            "SELECT al.id, COALESCE(a.name, '') || ' — ' || al.title
+             FROM albums al
+             LEFT JOIN artists a ON al.artist_id = a.id"
+        }
+        CorpusKind::Artist => {
+            "SELECT a.id, a.name FROM artists a
+             WHERE EXISTS (SELECT 1 FROM albums al WHERE al.artist_id = a.id)"
+        }
+    })?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+/// A corpus per kind, read again only when the library has moved.
+///
+/// A search field asks on every keystroke, and the library is the same between
+/// them.
+#[derive(Default)]
+pub struct CorpusCache {
+    slots: parking_lot::Mutex<HashMap<CorpusKind, (u64, Corpus)>>,
+}
+
+impl CorpusCache {
+    /// The corpus for `kind` as of `version`, a number the caller changes
+    /// whenever library rows may have.
+    pub fn get(
+        &self,
+        conn: &Connection,
+        kind: CorpusKind,
+        version: u64,
+    ) -> Result<Corpus, DbError> {
+        if let Some((at, corpus)) = self.slots.lock().get(&kind)
+            && *at == version
+        {
+            return Ok(Arc::clone(corpus));
+        }
+        // Read without the lock held: a slow read for one kind is no reason to
+        // hold up a cached answer for another.
+        let corpus: Corpus = Arc::new(fuzzy_corpus(conn, kind)?);
+        self.slots
+            .lock()
+            .insert(kind, (version, Arc::clone(&corpus)));
+        Ok(corpus)
+    }
 }
 
 #[cfg(test)]

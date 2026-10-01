@@ -32,8 +32,8 @@ impl Database {
     /// pending migrations.
     ///
     /// This is the once-per-process path: it creates the parent directory,
-    /// tightens file permissions, checkpoints the WAL and runs the ~30-statement
-    /// DDL batch. Anything opening a connection per request wants
+    /// tightens file permissions, checkpoints the WAL and brings the schema up
+    /// to date. Anything opening a connection per request wants
     /// [`Database::open_existing`] instead.
     pub fn open(path: &Path) -> Result<Self, DbError> {
         if let Some(parent) = path.parent() {
@@ -61,8 +61,10 @@ impl Database {
         // will yield, and with no statistics it guesses the same number for all
         // of them. That is how a partial index on the column a query filters by
         // loses to an index that merely happens to supply the ORDER BY. Cheap
-        // after the first run, and a no-op when nothing has moved.
-        let _ = conn.execute_batch("PRAGMA optimize");
+        // after the first run, but an empty table never has statistics, so it
+        // asks for the write lock on every open: skipped while a writer holds
+        // it, and `optimize` runs again after every scan and sync.
+        let _ = without_waiting(&conn, |conn| conn.execute_batch("PRAGMA optimize"));
 
         Ok(Self { conn })
     }
@@ -118,15 +120,32 @@ impl Database {
     }
 }
 
+/// Long enough to outlast a scan chunk: a writer that gives up mid-scan
+/// silently loses favourites, queue state and play counts.
+const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Run `write` without waiting for the write lock, which fails it with
+/// `SQLITE_BUSY` while a scan or sync holds the lock.
+///
+/// For bookkeeping a request should not wait on: a key's last use, a share's
+/// visit count. Skipping one costs a stale number; waiting costs the request.
+pub fn without_waiting<T>(
+    conn: &Connection,
+    write: impl FnOnce(&Connection) -> rusqlite::Result<T>,
+) -> rusqlite::Result<T> {
+    conn.busy_timeout(std::time::Duration::ZERO)?;
+    let result = write(conn);
+    conn.busy_timeout(BUSY_TIMEOUT)?;
+    result
+}
+
 /// Connection-scoped pragmas. Every connection needs these; none of them touch
 /// the file on disk, so they are cheap enough to repeat per connection.
 fn configure(conn: &Connection) -> Result<(), DbError> {
     // WAL mode for concurrent reads + single writer.
     conn.pragma_update(None, "journal_mode", "wal")?;
     conn.pragma_update(None, "foreign_keys", "on")?;
-    // Long enough to outlast a scan chunk: a writer that gives up mid-scan
-    // silently loses favourites, queue state and play counts.
-    conn.pragma_update(None, "busy_timeout", 30000)?;
+    conn.busy_timeout(BUSY_TIMEOUT)?;
     // Slightly faster at the cost of durability on power loss (acceptable for a media DB).
     conn.pragma_update(None, "synchronous", "normal")?;
     // Map the whole library. A library this size fits well inside this, so
@@ -144,6 +163,11 @@ fn configure(conn: &Connection) -> Result<(), DbError> {
     // statistics stays a fraction of a second on a library of any size; the
     // planner needs the shape of the distribution, not an exact count.
     conn.pragma_update(None, "analysis_limit", 400i64)?;
+    // Past rusqlite's default of 16, which the per-request reads alone exceed.
+    conn.set_prepared_statement_cache_capacity(128);
+    // The WAL keeps its high-water mark on disk after a checkpoint. A full sync
+    // grows it; this lets it shrink back.
+    conn.pragma_update(None, "journal_size_limit", 67_108_864i64)?;
     // Here rather than with the schema: `open_existing` skips the DDL, and a
     // connection without this collation fails every ORDER BY that uses it.
     register_library_collation(conn)?;

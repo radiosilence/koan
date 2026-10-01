@@ -16,7 +16,6 @@ use super::helpers::{spawn_downloads, sync_favourite_to_remote};
 use super::jobs::{JobHandle, JobRegistry, JobState};
 use super::types::*;
 use super::{DbHandle, parse_queue_item_id, require_role, send_cmd, send_cmd_via, with_db};
-use koan_core::helpers::track_to_playlist_item;
 
 /// The `organize*` mutations physically move files, so admin alone is not the
 /// bar — the deployment has to have opted in.
@@ -36,27 +35,31 @@ struct ResolvedQueue {
     pending_downloads: Vec<(i64, QueueItemId)>,
 }
 
+impl From<Vec<PlaylistItem>> for ResolvedQueue {
+    fn from(items: Vec<PlaylistItem>) -> Self {
+        let pending_downloads = items
+            .iter()
+            .filter(|i| matches!(i.state, koan_core::player::state::ItemState::Pending))
+            .filter_map(|i| Some((i.db_id?, i.id)))
+            .collect();
+        Self {
+            items,
+            pending_downloads,
+        }
+    }
+}
+
 /// Resolve track IDs into playlist items on the blocking pool.
 async fn resolve_tracks(
     ctx: &Context<'_>,
     track_ids: Vec<i64>,
 ) -> async_graphql::Result<ResolvedQueue> {
     with_db(ctx, move |db| {
-        let mut items = Vec::new();
-        let mut pending_downloads = Vec::new();
-        for tid in track_ids {
-            if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid) {
-                let item = track_to_playlist_item(&track, db);
-                if matches!(item.state, koan_core::player::state::ItemState::Pending) {
-                    pending_downloads.push((tid, item.id));
-                }
-                items.push(item);
-            }
-        }
-        Ok(ResolvedQueue {
-            items,
-            pending_downloads,
-        })
+        let rows = queries::tracks_by_ids(&db.conn, &track_ids)
+            .map_err(|e| super::internal_error("db", e))?;
+        Ok(ResolvedQueue::from(
+            koan_core::helpers::playlist_items_for_tracks(db, &rows),
+        ))
     })
     .await
 }
@@ -864,22 +867,13 @@ impl MutationRoot {
                 koan_core::helpers::shuffle(&mut entries);
             }
 
-            let mut items = Vec::new();
-            let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
-            for entry in &entries {
-                let track = &entry.track;
-                let mut item = track_to_playlist_item(track, db);
-                // Which playlist row is playing, and which of two copies of a song.
+            let tracks: Vec<_> = entries.iter().map(|e| e.track.clone()).collect();
+            let mut items = koan_core::helpers::playlist_items_for_tracks(db, &tracks);
+            // Which playlist row is playing, and which of two copies of a song.
+            for (item, entry) in items.iter_mut().zip(&entries) {
                 item.playlist_entry_id = Some(entry.id);
-                if matches!(item.state, koan_core::player::state::ItemState::Pending) {
-                    pending_downloads.push((track.id, item.id));
-                }
-                items.push(item);
             }
-            Ok(ResolvedQueue {
-                items,
-                pending_downloads,
-            })
+            Ok(ResolvedQueue::from(items))
         })
         .await?;
 

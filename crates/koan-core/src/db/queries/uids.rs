@@ -77,21 +77,35 @@ pub fn adopt_uid(
         return Ok(());
     }
     let table = kind.table();
-    let adopted = conn
-        .prepare_cached(&format!(
-            "UPDATE {table} SET uid = ?1
-             WHERE id = ?2 AND uid IS NOT ?1
-               AND NOT EXISTS (SELECT 1 FROM {table} WHERE uid = ?1)"
-        ))?
-        .execute(params![remote_id, id])?;
-    if adopted == 0
-        && let Some(other) = id_for_uid(conn, kind, remote_id)?.filter(|other| *other != id)
-    {
-        log::warn!(
+    // Read first: a sync passes every row through here, and nearly all of them
+    // hold their uid already.
+    match id_for_uid(conn, kind, remote_id)? {
+        Some(holder) if holder == id => {}
+        Some(other) => log::warn!(
             "{table} {id}: server id {remote_id} is already row {other}'s; kept its own uid"
-        );
+        ),
+        None => {
+            conn.prepare_cached(&format!(
+                "UPDATE {table} SET uid = ?1
+                 WHERE id = ?2 AND NOT EXISTS (SELECT 1 FROM {table} WHERE uid = ?1)"
+            ))?
+            .execute(params![remote_id, id])?;
+        }
     }
     Ok(())
+}
+
+/// `remote_id`, when it is a uid no row of `kind` holds: what a new row is
+/// inserted with, rather than minting one and replacing it with the server's.
+pub fn free_uid<'a>(
+    conn: &Connection,
+    kind: UidKind,
+    remote_id: Option<&'a str>,
+) -> rusqlite::Result<Option<&'a str>> {
+    let Some(rid) = remote_id.filter(|rid| is_uid(rid)) else {
+        return Ok(None);
+    };
+    Ok(id_for_uid(conn, kind, rid)?.is_none().then_some(rid))
 }
 
 /// The uids of these rows, by row id. One query however many are asked for.
@@ -106,6 +120,22 @@ pub fn uids_for(
         kind.table()
     ))?;
     stmt.query_map([ids], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect()
+}
+
+/// The rows of `kind` holding these uids, by uid. One query however many are
+/// asked for; a uid no row holds is absent.
+pub fn ids_for_uids<'a>(
+    conn: &Connection,
+    kind: UidKind,
+    uids: impl IntoIterator<Item = &'a str>,
+) -> rusqlite::Result<HashMap<String, i64>> {
+    let uids = serde_json::to_string(&uids.into_iter().collect::<Vec<_>>()).unwrap_or_default();
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT uid, id FROM {} WHERE uid IN (SELECT value FROM json_each(?1))",
+        kind.table()
+    ))?;
+    stmt.query_map([uids], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect()
 }
 

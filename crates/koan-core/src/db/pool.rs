@@ -1,6 +1,6 @@
 //! Database connections, opened once and kept.
 //!
-//! Opening one costs a permissions syscall, the whole schema DDL and a WAL
+//! Opening one costs a permissions syscall, a schema check and a WAL
 //! checkpoint before a single row comes back, and while downloads are writing
 //! the checkpoint contends with them.
 //!
@@ -19,7 +19,7 @@
 
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::connection::{Database, DbError};
 
@@ -31,6 +31,8 @@ pub struct Pool {
     schema: AtomicBool,
     /// Held while applying it, so two threads arriving at once do it once.
     applying: parking_lot::Mutex<()>,
+    /// Connections opened so far.
+    opened: AtomicUsize,
 }
 
 /// How many idle connections to hold on to.
@@ -59,6 +61,7 @@ impl Pool {
             keep: KEEP_IDLE,
             schema: AtomicBool::new(false),
             applying: parking_lot::Mutex::new(()),
+            opened: AtomicUsize::new(0),
         }
     }
 
@@ -88,23 +91,38 @@ impl Pool {
     /// `open_existing`, so this never re-runs the DDL or checkpoints: the
     /// schema is applied once at startup, before any pool exists.
     pub fn get(&self) -> Result<Handle<'_>, DbError> {
-        self.ensure_schema()?;
-        let pooled = self.idle.lock().pop();
-        let db = match pooled {
-            Some(db) => db,
-            None => Database::open_existing(&self.path)?,
-        };
         Ok(Handle {
-            db: Some(db),
+            db: Some(self.take()?),
             pool: self,
         })
+    }
+
+    /// A connection the caller holds by value and hands back with
+    /// [`Pool::put_back`], for one that has to outlive a borrow of the pool —
+    /// moved onto a blocking task, say. One never handed back is closed when
+    /// dropped.
+    pub fn take(&self) -> Result<Database, DbError> {
+        self.ensure_schema()?;
+        let pooled = self.idle.lock().pop();
+        match pooled {
+            Some(db) => Ok(db),
+            None => {
+                self.opened.fetch_add(1, Ordering::Relaxed);
+                Database::open_existing(&self.path)
+            }
+        }
     }
 
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    fn put_back(&self, db: Database) {
+    /// How many connections this pool has opened.
+    pub fn opened(&self) -> usize {
+        self.opened.load(Ordering::Relaxed)
+    }
+
+    pub fn put_back(&self, db: Database) {
         let mut idle = self.idle.lock();
         if idle.len() < self.keep {
             idle.push(db);

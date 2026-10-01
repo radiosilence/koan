@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::connection::DbError;
 
@@ -38,41 +38,78 @@ pub fn get_or_create_album(
     remote_id: Option<&str>,
     added_at: Option<&str>,
 ) -> Result<i64, DbError> {
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM albums WHERE title = ?1 AND artist_id = ?2",
-            params![title, artist_id],
-            |row| row.get(0),
-        )
-        .ok();
+    type Stored = (
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let existing: Option<Stored> = conn
+        .prepare_cached(
+            "SELECT id, codec, date, label, remote_id, added_at FROM albums
+             WHERE title = ?1 AND artist_id = ?2",
+        )?
+        .query_row(params![title, artist_id], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })
+        .optional()?;
 
-    if let Some(id) = existing {
+    if let Some((id, s_codec, s_date, s_label, s_remote_id, s_added_at)) = existing {
         // Update mutable fields so rescans pick up format upgrades (e.g. MP3→FLAC),
-        // corrected dates, or newly-added remote IDs.
-        conn.execute(
-            "UPDATE albums SET
-                codec      = COALESCE(?1, codec),
-                date       = COALESCE(?2, date),
-                label      = COALESCE(?3, label),
-                remote_id  = COALESCE(?4, remote_id),
-                -- Earliest wins. A record acquired over months should date
-                -- from its first file, not its last, and filling only would
-                -- freeze whichever file the first scan happened to reach.
-                added_at   = MIN(COALESCE(added_at, ?5), COALESCE(?5, added_at))
-             WHERE id = ?6",
-            params![codec, date, label, remote_id, added_at, id],
-        )?;
+        // corrected dates, or newly-added remote IDs. Every track of the album
+        // passes through here, so the row is only written when one of them
+        // brings something new.
+        // Earliest wins. A record acquired over months should date from its
+        // first file, not its last, and filling only would freeze whichever
+        // file the first scan happened to reach.
+        let earliest = match (added_at, s_added_at.as_deref()) {
+            (Some(new), Some(stored)) => Some(new.min(stored)),
+            (new, stored) => new.or(stored),
+        };
+        let merged = (
+            codec.or(s_codec.as_deref()),
+            date.or(s_date.as_deref()),
+            label.or(s_label.as_deref()),
+            remote_id.or(s_remote_id.as_deref()),
+            earliest,
+        );
+        let stored = (
+            s_codec.as_deref(),
+            s_date.as_deref(),
+            s_label.as_deref(),
+            s_remote_id.as_deref(),
+            s_added_at.as_deref(),
+        );
+        if merged != stored {
+            conn.prepare_cached(
+                "UPDATE albums SET codec = ?1, date = ?2, label = ?3, remote_id = ?4, added_at = ?5
+                 WHERE id = ?6",
+            )?
+            .execute(params![
+                merged.0, merged.1, merged.2, merged.3, merged.4, id
+            ])?;
+        }
         if let Some(rid) = remote_id {
             super::adopt_uid(conn, super::UidKind::Album, id, rid)?;
         }
         return Ok(id);
     }
 
-    conn.execute(
-        "INSERT INTO albums (title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        params![title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at],
-    )?;
+    let uid = super::free_uid(conn, super::UidKind::Album, remote_id)?;
+    conn.prepare_cached(
+        "INSERT INTO albums (title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at, uid)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )?
+    .execute(params![title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at, uid])?;
     let id = conn.last_insert_rowid();
     if let Some(rid) = remote_id {
         super::adopt_uid(conn, super::UidKind::Album, id, rid)?;
@@ -190,6 +227,8 @@ impl AlbumFilter<'_> {
 /// search field, an artist's discography and the favourites page.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AlbumQuery<'a> {
+    /// Only these albums.
+    pub ids: Option<&'a [i64]>,
     pub artist_id: Option<i64>,
     /// Case-insensitive substring over the album title and the artist name.
     pub search: Option<&'a str>,
@@ -227,6 +266,10 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
         );
     }
     let mut wheres: Vec<String> = Vec::new();
+    if let Some(ids) = q.ids {
+        params.push(Box::new(super::json_list(ids)));
+        wheres.push("al.id IN (SELECT value FROM json_each(?))".into());
+    }
     if let Some(id) = q.artist_id {
         params.push(Box::new(id));
         wheres.push("al.artist_id = ?".into());
@@ -352,16 +395,15 @@ pub fn albums_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<AlbumR
 /// Get a single album by ID.
 pub fn get_album(conn: &Connection, album_id: i64) -> Result<Option<AlbumRow>, DbError> {
     let result = conn
-        .query_row(
+        .prepare_cached(
             "SELECT al.id, al.title, al.artist_id, a.name, al.date,
                     al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
                 al.added_at
              FROM albums al
              LEFT JOIN artists a ON al.artist_id = a.id
              WHERE al.id = ?1",
-            params![album_id],
-            album_row,
         )
+        .and_then(|mut stmt| stmt.query_row(params![album_id], album_row))
         .ok();
     Ok(result)
 }

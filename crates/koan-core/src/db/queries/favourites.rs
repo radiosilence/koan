@@ -251,26 +251,27 @@ pub fn import_remote_favourite_albums(
     starred_remote_ids: &[String],
 ) -> rusqlite::Result<usize> {
     let user = resolve_user(conn, user)?;
-    let mut count = 0;
-    for rid in starred_remote_ids {
-        let names: Option<(String, String)> = conn
-            .query_row(
-                "SELECT ar.name, al.title FROM albums al
-                 JOIN artists ar ON al.artist_id = ar.id
-                 WHERE al.remote_id = ?1",
-                [rid],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        if let Some((artist, album)) = names {
-            count += conn.execute(
-                "INSERT OR IGNORE INTO favourite_albums (user_id, artist_name, album_title)
-                 VALUES (?1, ?2, ?3)",
-                params![user, artist, album],
-            )?;
+    super::atomically(conn, || {
+        let mut find = conn.prepare_cached(
+            "SELECT ar.name, al.title FROM albums al
+             JOIN artists ar ON al.artist_id = ar.id
+             WHERE al.remote_id = ?1",
+        )?;
+        let mut insert = conn.prepare_cached(
+            "INSERT OR IGNORE INTO favourite_albums (user_id, artist_name, album_title)
+             VALUES (?1, ?2, ?3)",
+        )?;
+        let mut count = 0;
+        for rid in starred_remote_ids {
+            let names: Option<(String, String)> = find
+                .query_row([rid], |row| Ok((row.get(0)?, row.get(1)?)))
+                .optional()?;
+            if let Some((artist, album)) = names {
+                count += insert.execute(params![user, artist, album])?;
+            }
         }
-    }
-    Ok(count)
+        Ok(count)
+    })
 }
 
 /// Import starred artists from the server, matched by remote id.
@@ -280,23 +281,20 @@ pub fn import_remote_favourite_artists(
     starred_remote_ids: &[String],
 ) -> rusqlite::Result<usize> {
     let user = resolve_user(conn, user)?;
-    let mut count = 0;
-    for rid in starred_remote_ids {
-        let name: Option<String> = conn
-            .query_row(
-                "SELECT name FROM artists WHERE remote_id = ?1",
-                [rid],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(name) = name {
-            count += conn.execute(
-                "INSERT OR IGNORE INTO favourite_artists (user_id, artist_name) VALUES (?1, ?2)",
-                params![user, name],
-            )?;
+    super::atomically(conn, || {
+        let mut find = conn.prepare_cached("SELECT name FROM artists WHERE remote_id = ?1")?;
+        let mut insert = conn.prepare_cached(
+            "INSERT OR IGNORE INTO favourite_artists (user_id, artist_name) VALUES (?1, ?2)",
+        )?;
+        let mut count = 0;
+        for rid in starred_remote_ids {
+            let name: Option<String> = find.query_row([rid], |row| row.get(0)).optional()?;
+            if let Some(name) = name {
+                count += insert.execute(params![user, name])?;
+            }
         }
-    }
-    Ok(count)
+        Ok(count)
+    })
 }
 
 /// Look up the remote_id for a track by its path. Returns None for local-only tracks.
@@ -356,25 +354,22 @@ pub fn import_remote_favourites(
     starred_remote_ids: &[String],
 ) -> rusqlite::Result<usize> {
     let user = resolve_user(conn, user)?;
-    let mut count = 0;
-    for rid in starred_remote_ids {
-        // Find the local path for this remote_id.
-        let path: Option<String> = conn
-            .query_row(
-                "SELECT COALESCE(cached_path, path, remote_url) FROM tracks WHERE remote_id = ?1",
-                [rid],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(p) = path {
-            let inserted: usize = conn.execute(
-                "INSERT OR IGNORE INTO favourites (user_id, track_path) VALUES (?1, ?2)",
-                params![user, p],
-            )?;
-            count += inserted;
+    super::atomically(conn, || {
+        let mut find = conn.prepare_cached(
+            "SELECT COALESCE(cached_path, path, remote_url) FROM tracks WHERE remote_id = ?1",
+        )?;
+        let mut insert = conn.prepare_cached(
+            "INSERT OR IGNORE INTO favourites (user_id, track_path) VALUES (?1, ?2)",
+        )?;
+        let mut count = 0;
+        for rid in starred_remote_ids {
+            let path: Option<String> = find.query_row([rid], |row| row.get(0)).optional()?;
+            if let Some(p) = path {
+                count += insert.execute(params![user, p])?;
+            }
         }
-    }
-    Ok(count)
+        Ok(count)
+    })
 }
 
 #[cfg(test)]

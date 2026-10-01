@@ -3,9 +3,7 @@
 //! Builds PlaylistItems from track IDs and enqueues them according to the
 //! requested action (append, append+play, replace queue).
 
-use koan_core::config;
 use koan_core::db::queries;
-use koan_core::helpers::{playlist_item_from_track, resolve_item_path};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{ItemState, QueueItemId};
 
@@ -31,27 +29,13 @@ pub fn enqueue_playlist(
             return;
         }
     };
-    let cfg = config::Config::load().unwrap_or_default();
-
-    let mut items: Vec<koan_core::player::state::PlaylistItem> = Vec::new();
-    let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
-
-    for &id in &ids {
-        let Some(track) = queries::get_track_row(&db.conn, id).ok().flatten() else {
-            continue;
-        };
-        let album_date: Option<String> = track
-            .album_id
-            .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten());
-
-        let (dest, load_state) = resolve_item_path(&db, &cfg, id, &track, album_date.as_deref());
-
-        let item = playlist_item_from_track(&track, album_date.as_deref(), dest, load_state);
-        if matches!(item.state, ItemState::Pending) {
-            pending_downloads.push((id, item.id));
-        }
-        items.push(item);
-    }
+    let rows = queries::tracks_by_ids(&db.conn, &ids).unwrap_or_default();
+    let items = koan_core::helpers::playlist_items_for_tracks(&db, &rows);
+    let pending_downloads: Vec<(i64, QueueItemId)> = items
+        .iter()
+        .filter(|i| matches!(i.state, ItemState::Pending))
+        .filter_map(|i| Some((i.db_id?, i.id)))
+        .collect();
 
     if items.is_empty() {
         return;

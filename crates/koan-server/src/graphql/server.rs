@@ -42,7 +42,7 @@ pub fn cmd_serve(
         // to have queued when it arrived.
         if !running {
             crate::clients::fulfil_from(&watched);
-            if let Ok(db) = koan_core::db::connection::Database::open(&watched) {
+            if let Ok(db) = koan_core::db::connection::Database::open_existing(&watched) {
                 crate::clients::changed_if_library_moved(&db.conn);
             }
         }
@@ -231,7 +231,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         login_limiter: Arc::new(LoginRateLimiter::default()),
     };
 
-    let schema = build_schema(state, cmd_tx, pool.path().to_path_buf(), viz);
+    let schema = build_schema(state, cmd_tx, pool.clone(), viz);
 
     if auth_enabled {
         log::info!(

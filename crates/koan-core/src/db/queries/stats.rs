@@ -39,6 +39,35 @@ pub fn library_stats(conn: &Connection) -> Result<LibraryStats, DbError> {
     })
 }
 
+/// A number that changes when tracks, albums or artists are added or removed.
+///
+/// For a process that has no say in the library's writes, which a scan, a sync
+/// or another process may make, and so cannot keep a version of its own. It
+/// does not see a row edited in place; a caller caching on it bounds how long
+/// that may go unnoticed.
+pub fn library_fingerprint(conn: &Connection) -> Result<u64, DbError> {
+    use std::hash::{Hash, Hasher};
+    let counts: [i64; 6] = conn
+        .prepare_cached(
+            "SELECT (SELECT COUNT(*) FROM tracks), (SELECT COALESCE(MAX(id), 0) FROM tracks),
+                    (SELECT COUNT(*) FROM albums), (SELECT COALESCE(MAX(id), 0) FROM albums),
+                    (SELECT COUNT(*) FROM artists), (SELECT COALESCE(MAX(id), 0) FROM artists)",
+        )?
+        .query_row([], |r| {
+            Ok([
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ])
+        })?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    counts.hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

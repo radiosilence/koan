@@ -121,7 +121,7 @@ impl PlayRecorder {
     /// Start the writer thread. `None` if the database cannot be opened, which
     /// costs history but must not stop playback.
     pub fn spawn() -> Option<Self> {
-        let db = match Database::open_default() {
+        let db = match crate::db::pool::shared().get() {
             Ok(db) => db,
             Err(e) => {
                 log::warn!("play history disabled — cannot open database: {e}");
@@ -173,7 +173,7 @@ impl PlayRecorder {
 /// Owns the connection, which row the track now playing was written to (so
 /// its listening time can land on it), and the playback reports held back.
 struct Writer {
-    db: Database,
+    db: crate::db::pool::Handle<'static>,
     open: Option<(i64, i64)>,
     /// The track now playing and when it started, in ms since the epoch: a
     /// scrobble is dated to when the listen began, not when it ended.
@@ -182,7 +182,7 @@ struct Writer {
 }
 
 impl Writer {
-    fn new(db: Database) -> Self {
+    fn new(db: crate::db::pool::Handle<'static>) -> Self {
         Self {
             db,
             open: None,

@@ -77,7 +77,7 @@ pub fn spawn_library_watch(
                 if folders.is_empty() {
                     return;
                 }
-                let Ok(db) = Database::open(&db_path) else {
+                let Ok(db) = Database::open_existing(&db_path) else {
                     return;
                 };
                 on_state(true);
@@ -238,7 +238,7 @@ pub fn spawn_auto_sync(
                 }
 
                 if let Some(client) = subsonic_client(&cfg)
-                    && let Ok(db) = Database::open(&db_path)
+                    && let Ok(db) = Database::open_existing(&db_path)
                 {
                     on_state(true);
                     match sync_remote(
@@ -373,7 +373,7 @@ pub fn evict_cache(
                 Err(e) => log::warn!("cache eviction: failed to delete {path}: {e}"),
             }
         }
-        if let Err(e) = queries::clear_cache_for_tracks(&db.conn, &album.track_ids) {
+        if let Err(e) = queries::clear_cached_paths_for(&db.conn, &album.track_ids) {
             log::warn!("cache eviction: failed to clear DB for album: {e}");
         }
         log::info!(
@@ -1427,20 +1427,23 @@ pub fn cache_path_for_track(
 /// Resolve a track to its path + load state (without downloading).
 /// Returns (path, `ItemState::Ready`) for local/cached, (cache path, `ItemState::Pending`)
 /// for remote — a track with no copy here yet has to be fetched before it plays.
-pub fn resolve_item_path(
-    db: &Database,
+fn resolve_item_path(
     cfg: &Config,
-    id: i64,
     track: &queries::TrackRow,
+    remote_url: Option<&str>,
     album_date: Option<&str>,
 ) -> (PathBuf, ItemState) {
-    match queries::resolve_playback_path(&db.conn, id) {
-        Ok(Some(queries::PlaybackSource::Local(p))) => (p, ItemState::Ready),
+    match queries::choose_playback_source(
+        track.path.as_deref(),
+        track.cached_path.as_deref(),
+        remote_url,
+    ) {
+        Some(queries::PlaybackSource::Local(p)) => (p, ItemState::Ready),
         // A cache entry is only as good as its contents. Older builds could
         // store a Subsonic error body here, which reports Ready and then fails
         // to decode forever; treating it as Pending sends it back through the
         // download path, which discards it and re-fetches.
-        Ok(Some(queries::PlaybackSource::Cached(p))) => {
+        Some(queries::PlaybackSource::Cached(p)) => {
             let state = if is_cached_audio(&p) {
                 ItemState::Ready
             } else {
@@ -1448,7 +1451,7 @@ pub fn resolve_item_path(
             };
             (p, state)
         }
-        Ok(Some(queries::PlaybackSource::Remote(_))) => {
+        Some(queries::PlaybackSource::Remote(_)) => {
             let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
             if dest.exists() && is_cached_audio(&dest) {
                 (dest, ItemState::Ready)
@@ -1492,42 +1495,25 @@ pub fn playlist_item_from_track(
 
 /// Build playlist items for many tracks at once.
 ///
-/// `track_to_playlist_item` loads the config on every call, which means
-/// reading and parsing `config.toml` and `config.local.toml` once per track.
-/// This loads it once and memoises album dates,
-/// so a thousand-track add costs one config read instead of a thousand.
+/// One config read and one query for the whole batch, whatever its size: the
+/// rows already say where each track's file and download are, and what they
+/// leave out — the stream URL and the album's date — is read for all of them
+/// together.
 pub fn playlist_items_for_tracks(db: &Database, tracks: &[queries::TrackRow]) -> Vec<PlaylistItem> {
-    use std::collections::HashMap;
-
     let cfg = Config::load().unwrap_or_default();
-    let mut album_dates: HashMap<i64, Option<String>> = HashMap::new();
+    let ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+    let extras = queries::queue_item_extras(&db.conn, &ids).unwrap_or_default();
 
     tracks
         .iter()
         .map(|track| {
-            let album_date = match track.album_id {
-                Some(aid) => album_dates
-                    .entry(aid)
-                    .or_insert_with(|| queries::album_date(&db.conn, aid).ok().flatten())
-                    .clone(),
-                None => None,
-            };
-            let (path, state) = resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
-            playlist_item_from_track(track, album_date.as_deref(), path, state)
+            let extra = extras.get(&track.id);
+            let remote_url = extra.and_then(|e| e.remote_url.as_deref());
+            let album_date = extra.and_then(|e| e.album_date.as_deref());
+            let (path, state) = resolve_item_path(&cfg, track, remote_url, album_date);
+            playlist_item_from_track(track, album_date, path, state)
         })
         .collect()
-}
-
-/// Build a PlaylistItem from a TrackRow, resolving its path automatically.
-pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> PlaylistItem {
-    let album_date = track
-        .album_id
-        .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten());
-
-    let cfg = Config::load().unwrap_or_default();
-    let (path, state) = resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
-
-    playlist_item_from_track(track, album_date.as_deref(), path, state)
 }
 
 // ---------------------------------------------------------------------------

@@ -227,6 +227,12 @@ pub struct KoanEngine {
     /// here into a `Library` slice, so a background scan finishing looks the
     /// same to a client as one it asked for itself.
     library_version: Arc<std::sync::atomic::AtomicU64>,
+    /// The queue's `content_version` as last saved, so a save rewrites the
+    /// queue only when its contents moved and otherwise saves the position.
+    saved_content: std::sync::atomic::AtomicU64,
+    /// What the fuzzy searches match against, kept until `library_version`
+    /// moves.
+    fuzzy: queries::CorpusCache,
 }
 
 /// How far a client's own reckoning of the playhead may drift before it is
@@ -691,30 +697,11 @@ impl KoanEngine {
         limit: u32,
     ) -> Result<Vec<FuzzyMatch>, KoanError> {
         offload::offload(move || {
-            let db = self.db()?;
-            let items: Vec<(i64, String)> = match kind {
-                SearchKind::Track => queries::all_tracks(&db.conn)
-                    .map_err(db_err)?
-                    .into_iter()
-                    .map(|t| {
-                        (
-                            t.id,
-                            format!("{} — {} — {}", t.artist_name, t.album_title, t.title),
-                        )
-                    })
-                    .collect(),
-                SearchKind::Album => queries::all_albums(&db.conn)
-                    .map_err(db_err)?
-                    .into_iter()
-                    .map(|a| (a.id, format!("{} — {}", a.artist_name, a.title)))
-                    .collect(),
-                SearchKind::Artist => queries::all_artists(&db.conn)
-                    .map_err(db_err)?
-                    .into_iter()
-                    .map(|a| (a.id, a.name))
-                    .collect(),
-            };
-
+            let items = self.corpus(match kind {
+                SearchKind::Track => queries::CorpusKind::Track,
+                SearchKind::Album => queries::CorpusKind::Album,
+                SearchKind::Artist => queries::CorpusKind::Artist,
+            })?;
             let texts: Vec<&str> = items.iter().map(|(_, t)| t.as_str()).collect();
             Ok(fuzzy_rank(&texts, &query, limit)
                 .into_iter()
@@ -730,25 +717,28 @@ impl KoanEngine {
 
     /// Fuzzy-matched albums, as rows.
     ///
-    /// Rows rather than ids: the match already read them to build its corpus,
-    /// and a caller handed ids can only resolve them against a catalogue of its
-    /// own — which is the copy this exists to make unnecessary.
+    /// Rows rather than ids: a caller handed ids can only resolve them against
+    /// a catalogue of its own — which is the copy this exists to make
+    /// unnecessary. Only the matches are read as rows.
     pub async fn fuzzy_albums(
         self: Arc<Self>,
         query: String,
         limit: u32,
     ) -> Result<Vec<Album>, KoanError> {
         offload::offload(move || {
+            let ids = self.fuzzy_ids(queries::CorpusKind::Album, &query, limit)?;
             let db = self.db()?;
-            let rows = queries::all_albums(&db.conn).map_err(db_err)?;
-            let texts: Vec<String> = rows
-                .iter()
-                .map(|a| format!("{} — {}", a.artist_name, a.title))
-                .collect();
-            let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
-            Ok(fuzzy_rank(&texts, &query, limit)
+            let rows = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    ids: Some(&ids),
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            Ok(in_rank_order(&ids, rows, |a| a.id)
                 .into_iter()
-                .map(|i| Album::from(rows[i].clone()))
+                .map(Album::from)
                 .collect())
         })
         .await
@@ -761,12 +751,19 @@ impl KoanEngine {
         limit: u32,
     ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
+            let ids = self.fuzzy_ids(queries::CorpusKind::Artist, &query, limit)?;
             let db = self.db()?;
-            let rows = queries::all_artists(&db.conn).map_err(db_err)?;
-            let texts: Vec<&str> = rows.iter().map(|a| a.name.as_str()).collect();
-            Ok(fuzzy_rank(&texts, &query, limit)
+            let rows = queries::list_artists(
+                &db.conn,
+                &queries::ArtistQuery {
+                    ids: Some(&ids),
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            Ok(in_rank_order(&ids, rows, |a| a.id)
                 .into_iter()
-                .map(|i| Artist::from(rows[i].clone()))
+                .map(Artist::from)
                 .collect())
         })
         .await
@@ -1555,9 +1552,20 @@ impl KoanEngine {
 
     /// Write the queue and position so the next launch can pick them up.
     /// Call it on quit; it is cheap enough to call on a timer too.
+    ///
+    /// The queue is written only when its contents changed since the last
+    /// save. A cursor moving or a download landing changes the queue a client
+    /// sees, not what is saved of it, so those save the position alone.
     pub async fn save_session(self: Arc<Self>) -> Result<(), KoanError> {
+        use std::sync::atomic::Ordering;
         offload::offload(move || {
             let db = self.db()?;
+            // Read before the snapshot: an edit landing in between moves the
+            // version again, and the next save writes it.
+            let content = self.state.content_version();
+            if self.saved_content.load(Ordering::Acquire) == content {
+                return self.write_position(&db);
+            }
             let (items, cursor) = self.state.snapshot_playlist();
             let persisted: Vec<PersistedQueueItem> = items
                 .iter()
@@ -1577,7 +1585,9 @@ impl KoanEngine {
                 self.state.playback_state() == PlaybackState::Playing,
                 self.state.radio_mode(),
             )
-            .map_err(fav_err)
+            .map_err(fav_err)?;
+            self.saved_content.store(content, Ordering::Release);
+            Ok(())
         })
         .await
     }
@@ -1588,25 +1598,7 @@ impl KoanEngine {
     /// second of playback rather than the whole session. `save_session` still
     /// runs when the queue changes and on quit.
     pub async fn save_position(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            let (items, cursor) = self.state.snapshot_playlist();
-            let cursor_path = cursor.and_then(|cid| {
-                items
-                    .iter()
-                    .find(|i| i.id == cid)
-                    .map(|i| i.path.to_string_lossy().into_owned())
-            });
-            queries::save_playback_position(
-                &db.conn,
-                cursor_path.as_deref(),
-                self.state.position_ms(),
-                self.state.playback_state() == PlaybackState::Playing,
-                self.state.radio_mode(),
-            )
-            .map_err(fav_err)
-        })
-        .await
+        offload::offload(move || self.write_position(&*self.db()?)).await
     }
 
     /// Restore the queue saved by `save_session`, cursor and position included.
@@ -3012,6 +3004,31 @@ impl KoanEngine {
         Ok(self.decorate(&db, sort_rows(rows, sort)))
     }
 
+    /// The fuzzy corpus for `kind`, read once per library version.
+    fn corpus(&self, kind: queries::CorpusKind) -> Result<queries::Corpus, KoanError> {
+        let version = self
+            .library_version
+            .load(std::sync::atomic::Ordering::Relaxed);
+        self.fuzzy
+            .get(&self.db()?.conn, kind, version)
+            .map_err(db_err)
+    }
+
+    /// The ids of the best `limit` matches for `query`, best first.
+    fn fuzzy_ids(
+        &self,
+        kind: queries::CorpusKind,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<i64>, KoanError> {
+        let items = self.corpus(kind)?;
+        let texts: Vec<&str> = items.iter().map(|(_, t)| t.as_str()).collect();
+        Ok(fuzzy_rank(&texts, query, limit)
+            .into_iter()
+            .map(|i| items[i].0)
+            .collect())
+    }
+
     /// Say that the library's rows changed. The watcher turns this into a
     /// `Library` slice when it wakes.
     ///
@@ -3110,7 +3127,7 @@ impl KoanEngine {
         let t_sweep = t0.elapsed();
 
         let (state, _timeline, viz, tx) = Player::spawn();
-        koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), db_path.clone());
+        koan_core::radio::spawn_autoqueue(state.clone(), tx.clone());
         let t_player = t0.elapsed();
 
         // Bumped by the background tasks below as well as by everything the UI
@@ -3172,6 +3189,8 @@ impl KoanEngine {
             sync_progress,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             library_version: library_version.clone(),
+            saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
+            fuzzy: queries::CorpusCache::default(),
         });
         engine.spawn_watcher();
         // A koan server this app syncs from can then tell it what to play, and
@@ -3246,10 +3265,25 @@ impl KoanEngine {
 
     /// A connection for one piece of work, borrowed from the pool.
     ///
-    /// Opening one runs the schema DDL and a WAL checkpoint, which contends
-    /// with downloads writing and can take seconds.
+    /// Opening one checks the schema and checkpoints the WAL, which contends
+    /// with downloads writing.
     fn db(&self) -> Result<koan_core::db::pool::Handle<'static>, KoanError> {
         koan_core::db::pool::shared().get().map_err(db_err)
+    }
+
+    fn write_position(&self, db: &Database) -> Result<(), KoanError> {
+        let cursor_path = self
+            .state
+            .cursor_path()
+            .map(|p| p.to_string_lossy().into_owned());
+        queries::save_playback_position(
+            &db.conn,
+            cursor_path.as_deref(),
+            self.state.position_ms(),
+            self.state.playback_state() == PlaybackState::Playing,
+            self.state.radio_mode(),
+        )
+        .map_err(fav_err)
     }
 
     /// Send to the player this app is controlling: this device's own, or
@@ -3906,6 +3940,14 @@ fn album_order(sort: AlbumSort, seed: i64) -> queries::AlbumOrder {
         AlbumSort::Year => queries::AlbumOrder::YearDesc,
         AlbumSort::Random => queries::AlbumOrder::Random(seed),
     }
+}
+
+/// `rows` in the order of `ids`, for rows read back by id in whatever order
+/// the database chose.
+fn in_rank_order<T>(ids: &[i64], rows: Vec<T>, id: impl Fn(&T) -> i64) -> Vec<T> {
+    let mut by_id: std::collections::HashMap<i64, T> =
+        rows.into_iter().map(|r| (id(&r), r)).collect();
+    ids.iter().filter_map(|i| by_id.remove(i)).collect()
 }
 
 /// Rank `texts` against `query`, best first, and return the indices of the top

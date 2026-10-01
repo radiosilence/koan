@@ -30,6 +30,7 @@ pub enum PickerPartKind {
     Plain,
 }
 
+#[derive(Clone)]
 pub struct PickerItem {
     pub id: i64,
     pub display: String,

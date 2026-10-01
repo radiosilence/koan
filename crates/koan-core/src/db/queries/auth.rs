@@ -41,9 +41,8 @@ pub const LOCAL_USER: i64 = 0;
 
 /// The first admin account, which answers for [`LOCAL_USER`].
 pub fn first_admin(conn: &Connection) -> Result<Option<i64>, rusqlite::Error> {
-    conn.query_row("SELECT MIN(id) FROM users WHERE role = 'admin'", [], |r| {
-        r.get(0)
-    })
+    conn.prepare_cached("SELECT MIN(id) FROM users WHERE role = 'admin'")?
+        .query_row([], |r| r.get(0))
 }
 
 /// The id whose rows `user` reads and writes: `user` itself for an account,
@@ -169,7 +168,7 @@ pub fn get_user_by_username(
     conn: &Connection,
     username: &str,
 ) -> Result<Option<UserRow>, rusqlite::Error> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT id, username, password_hash, role, created_at FROM users WHERE username = ?1",
     )?;
     let mut rows = stmt.query_map(params![username], |row| {
@@ -310,7 +309,7 @@ pub fn get_valid_refresh_token(
     token_id: &str,
 ) -> Result<Option<RefreshTokenRow>, rusqlite::Error> {
     let now = auth::now_unix() as i64;
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT id, user_id, expires_at, revoked, created_at
          FROM refresh_tokens
          WHERE id = ?1 AND revoked = 0 AND expires_at > ?2",
