@@ -54,8 +54,8 @@ extension View {
 /// The transport floats over the bottom of the detail column, so without this
 /// the last row or two sit underneath it and cannot be read, clicked or
 /// dropped on. `.contentMargins(_:_:for: .scrollContent)` is the modifier for
-/// this and it has no effect on `List` — it applies to `ScrollView`. A row that
-/// takes no selection and draws nothing is unglamorous but it works.
+/// this and it has no effect on `List` — it applies to `ScrollView` — so this
+/// is a row that takes no selection and draws nothing.
 struct TransportClearance: View {
     var body: some View {
         Color.clear

@@ -28,7 +28,7 @@ pub struct DeviceInfo {
 
 /// Trait abstracting platform audio output.
 ///
-/// Implementations exist for CoreAudio (macOS) and cpal (Linux).
+/// Implementations exist for CoreAudio (macOS), RemoteIO (iOS) and cpal (Linux).
 /// The decode pipeline (rtrb ring buffer, Symphonia, `PlaybackTimeline`) is
 /// completely decoupled — backends are dumb consumers that drain the ring buffer.
 pub trait AudioBackend: Send + Sync {

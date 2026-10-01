@@ -1,9 +1,7 @@
 /// The symbol for an action, named once.
 ///
 /// The same verb turns up as a toolbar button, a context-menu item and a
-/// menu-bar command, and the three had drifted: "Add to Queue" carried an icon
-/// on the album page and none in the menu you reached from the row beside it.
-/// Naming the symbol here is what keeps them the same action.
+/// menu-bar command. Naming the symbol here is what keeps them the same action.
 ///
 /// Two removals, deliberately distinct: taking rows out of a list is
 /// `remove`, and emptying the whole thing is `clear`.

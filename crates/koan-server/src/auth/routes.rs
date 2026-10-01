@@ -108,7 +108,7 @@ pub struct AuthRouteState {
     pub public_pem: Arc<Vec<u8>>,
     pub access_ttl_secs: u64,
     pub refresh_ttl_secs: u64,
-    /// Mark cookies `Secure`. Only when clients actually reach koan over HTTPS —
+    /// Mark cookies `Secure`. Only when clients reach koan over HTTPS —
     /// a browser discards a `Secure` cookie delivered over plain `http://`, so
     /// setting this on a LAN deployment silently breaks cookie auth entirely.
     pub cookie_secure: bool,
@@ -359,7 +359,6 @@ fn authenticate_blocking(
         Err((status, msg)) => return Err(Box::new((status, msg).into_response())),
     };
 
-    // Look up user.
     let user = match auth_queries::get_user_by_username(&db.conn, username) {
         Ok(Some(u)) => u,
         Ok(None) => {
@@ -401,7 +400,6 @@ fn authenticate_blocking(
         log::warn!("could not seal the password for Subsonic token auth: {e}");
     }
 
-    // Mint access token.
     let access_token = match auth::mint_access_token(
         &state.private_pem,
         user.id,
@@ -418,7 +416,6 @@ fn authenticate_blocking(
         }
     };
 
-    // Create refresh token.
     let refresh_token_id = match auth::random_token() {
         Ok(t) => t,
         Err(e) => {
@@ -438,7 +435,7 @@ fn authenticate_blocking(
         ));
     }
 
-    // Housekeeping: clean up expired tokens on login (non-blocking).
+    // Clear out expired tokens; a failure here does not fail the sign-in.
     let _ = auth_queries::cleanup_expired_tokens(&db.conn);
 
     Ok((user, access_token, refresh_token_id))
@@ -505,7 +502,6 @@ pub(crate) fn rotate(
         }
     };
 
-    // Look up the user.
     let user = match auth_queries::get_user_by_id(&db.conn, token.user_id) {
         Ok(Some(u)) => u,
         Ok(None) => {
@@ -527,7 +523,6 @@ pub(crate) fn rotate(
         }
     };
 
-    // Mint new access token.
     let access_token = match auth::mint_access_token(
         &state.private_pem,
         user.id,
@@ -544,7 +539,6 @@ pub(crate) fn rotate(
         }
     };
 
-    // Issue new refresh token.
     let new_refresh_id = match auth::random_token() {
         Ok(t) => t,
         Err(e) => {

@@ -2,9 +2,9 @@ import SwiftUI
 
 /// What you can do with the record or artist whose page you are on.
 ///
-/// Laid out in full where there is room: labelled buttons in a row, the way the
-/// Mac has always shown them. Where there is not, the words do not simply drop
-/// off — a row of bare glyphs says nothing about what it does. They collapse
+/// Laid out in full where there is room: labelled buttons in a row. Where there
+/// is not, the words do not simply drop off — a row of bare glyphs says nothing
+/// about what it does. They collapse
 /// into the overflow menu instead, which is the same `PlayableMenu` a
 /// long-press already gives you.
 ///

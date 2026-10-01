@@ -1,9 +1,8 @@
 //! Acoustic feature extraction using bliss-audio.
 //!
 //! Extracts a feature vector per track (tempo, timbre, chroma,
-//! spectral features) for acoustic similarity search. bliss-audio v2
-//! produces 23 dimensions; we use whatever the current bliss version
-//! exports as NUMBER_FEATURES.
+//! spectral features) for acoustic similarity search, with as many
+//! dimensions as bliss-audio's `NUMBER_FEATURES`.
 
 use std::path::Path;
 

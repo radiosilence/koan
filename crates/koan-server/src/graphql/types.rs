@@ -391,8 +391,7 @@ pub(super) struct GqlNowPlayingTrack {
 #[ComplexObject]
 impl GqlNowPlayingTrack {
     /// The track's id, when the queue entry came from the library. The remote
-    /// bridge streams `/rest/stream?id=<trackId>`; without it a client had no
-    /// way to name the track the server is playing.
+    /// bridge streams `/rest/stream?id=<trackId>` with it.
     async fn track_id(&self, ctx: &Context<'_>) -> async_graphql::Result<Option<ID>> {
         opt_uid(ctx, UidKind::Track, self.track_id).await
     }

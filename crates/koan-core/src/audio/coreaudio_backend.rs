@@ -4,8 +4,8 @@ use std::sync::atomic::AtomicU64;
 use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo, SampleRateWatch};
 use super::{device, engine};
 
-/// CoreAudio AUHAL backend for macOS. Wraps the existing `engine.rs` and
-/// `device.rs` FFI code behind the `AudioBackend` trait.
+/// CoreAudio AUHAL backend for macOS. Wraps the `engine.rs` and `device.rs`
+/// FFI code behind the `AudioBackend` trait.
 pub struct CoreAudioBackend;
 
 impl CoreAudioBackend {

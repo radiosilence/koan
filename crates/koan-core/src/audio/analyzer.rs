@@ -5,8 +5,7 @@
 //!
 //! # Lock discipline
 //!
-//! The analysis loop follows a strict two-phase discipline to minimise lock
-//! contention:
+//! The analysis loop holds each lock only as long as a copy takes:
 //!
 //! 1. **Input phase** — lock `VizBuffer` briefly, memcpy samples + metadata,
 //!    release immediately.  The decode thread is never blocked for longer than
@@ -14,8 +13,7 @@
 //! 2. **Compute phase** — run windowing, FFT, bin→bar accumulation *without*
 //!    holding any lock.
 //! 3. **Output phase** — take the `VizSnapshot` write lock briefly, swap in the
-//!    finished frame, release.  The TUI thread is blocked for at most one
-//!    ~200-byte memcpy.
+//!    finished frame, release. A reader is blocked only for that swap.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

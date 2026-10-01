@@ -11,11 +11,8 @@ import SwiftUI
 /// a slice arrives only when it differs, and the difference is decided in Rust,
 /// where every one of these types already has an equality of its own.
 ///
-/// That is the point. Every bug this replaced was a Swift-side copy kept in
-/// step with the engine by a rule someone had to remember to write: an album
-/// page with an empty cloud after a download landed, a playlist page that heard
-/// nothing at all, a progress ring patched into one index and not the other.
-/// A snapshot cannot be applied wrongly.
+/// Nothing Swift-side is kept in step with the engine by a rule someone has to
+/// remember to write. A snapshot cannot be applied wrongly.
 ///
 /// **`Observable` by hand**, because the macro's sugar is exactly what is in
 /// the way: it rewrites stored properties into computed ones that call `access`
@@ -28,8 +25,7 @@ import SwiftUI
 /// 1. **Granularity is per keyPath.** Reading `queue` does not subscribe you to
 ///    `positionMs`. Slices are therefore cut by *rate of change*: the position
 ///    and the transfer figures move ten times a second and live in properties
-///    of their own, so a list that draws neither never hears from them. This is
-///    what `PlaybackClock` used to be a whole object for.
+///    of their own, so a list that draws neither never hears from them.
 /// 2. **It is not per element.** Replacing `queue` invalidates everyone reading
 ///    it — an array is one property. So anything that moves at its own rate has
 ///    to leave the array rather than be patched into it, which is why a
@@ -153,9 +149,8 @@ final class EngineMirror: Observable {
     ///
     /// Observed as `queue`, not as itself: it is derived from that array and
     /// moves with it, so giving it an identity of its own would only invite the
-    /// two to be invalidated separately. Two indexes over one array that must
-    /// be patched in step is what broke playlist progress; derived from a single
-    /// slice they cannot disagree.
+    /// two to be invalidated separately. Two indexes over one array patched in
+    /// step can disagree; derived from a single slice they cannot.
     var queuedByTrack: [Int64: QueueItem] {
         access(\.queue)
         return _queuedByTrack
@@ -221,7 +216,7 @@ final class EngineMirror: Observable {
         figure(for: queueItemId)?.progress
     }
 
-    /// How many transfers are actually moving. What the sidebar counts.
+    /// How many transfers are moving. What the sidebar counts.
     var activeTransfers: Int {
         access(\.transfers)
         return _transfers.count(where: { !$0.state.isSettled })
@@ -273,8 +268,8 @@ final class EngineMirror: Observable {
                 _queueVersion = version
                 _queuedByTrack = Dictionary(
                     items.compactMap { item in item.trackId.map { ($0, item) } },
-                    // A track queued twice: prefer the entry that is actually
-                    // doing something over one still sitting idle.
+                    // A track queued twice: prefer the entry that is doing
+                    // something over one still sitting idle.
                     uniquingKeysWith: { a, b in b.status == .queued ? a : b }
                 )
                 _queuedByPlaylistEntry = Dictionary(
@@ -348,10 +343,9 @@ extension EngineMirror {
     ///
     /// For the two places that have asked the engine for something and want the
     /// answer before drawing — a restored queue, a queue mutation to confirm.
-    /// Both looked again every five milliseconds until it arrived; the mirror
-    /// is observable, so the arrival is a thing to be woken by. The deadline is
-    /// one sleep for the whole wait rather than one per look, and it is a
-    /// giving-up clock, not a checking one.
+    /// The mirror is observable, so the arrival is a thing to be woken by
+    /// rather than looked for. The deadline is one sleep for the whole wait,
+    /// and only ever gives up.
     func waitUntil(
         _ deadline: ContinuousClock.Instant,
         _ settled: @escaping @MainActor () -> Bool
@@ -419,9 +413,7 @@ extension View {
     /// For everything asked for on demand rather than mirrored: a record's
     /// tracks, a playlist's rows, the library's counts. The page that draws a
     /// thing is the thing that reloads it, so there is no model holding a rule
-    /// about which pages to refresh — and no page that rule can miss. Missing
-    /// one is what left an album page with an empty cloud after a download
-    /// landed, and a playlist page with nothing at all.
+    /// about which pages to refresh — and no page that rule can miss.
     func reloading<ID: Equatable>(
         on id: ID,
         _ action: @escaping () async -> Void

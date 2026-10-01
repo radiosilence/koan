@@ -27,8 +27,8 @@ const DELAY_LINE_SIZE: usize = crate::player::RING_BUFFER_SIZE + WAVEFORM_SAMPLE
 
 /// A single frame of analysis output, ready for the UI thread.
 ///
-/// Held inside `VizSnapshot` under an RwLock. The UI thread clones this in
-/// <1us (memcpy of 48 floats + 2 floats + 1 float + waveform + Instant) while holding the read lock.
+/// Held inside `VizSnapshot` under an RwLock. A reader clones it under the read
+/// lock, waveform and all; `VizSnapshot::levels` is the read that skips it.
 #[derive(Clone)]
 pub struct VizFrame {
     /// Spectrum bar heights (0.0..1.0), one per bar. Already smoothed by the analyzer.
@@ -121,7 +121,7 @@ impl VizSnapshot {
         })
     }
 
-    /// Read the latest frame. Acquires read lock, clones, releases — <1us.
+    /// Read the latest frame: a clone, waveform included, under the read lock.
     pub fn read(&self) -> VizFrame {
         self.touch();
         self.inner.read().clone()

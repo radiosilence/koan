@@ -72,6 +72,12 @@ struct KoanApp: App {
             }
         }
         .windowToolbarStyle(.unified(showsTitle: false))
+        // Menu commands must not *read* anything that changes often. `.commands`
+        // is part of the Scene body, so reading an observable that ticks —
+        // `isPlaying`, `radioEnabled` — makes SwiftUI rebuild every menu ten times
+        // a second: the Edit menu flickers, and menu items and keyboard shortcuts
+        // go dead because they are torn down mid-use. So the titles here are
+        // fixed and the bodies only ever call methods.
         .commands {
             CommandGroup(after: .newItem) {
                 // ⌘K is the search everywhere else it exists, and koan's
@@ -117,8 +123,8 @@ struct KoanApp: App {
                     .disabledWhileTyping(state?.textFocus)
                 Divider()
                 // Through the library, which is what every heart in the app
-                // reads. Going straight to the engine flipped the row and left
-                // the UI showing the old answer.
+                // reads. Going straight to the engine would flip the row and
+                // leave the UI showing the old answer.
                 ShortcutButton(.favourite) {
                     guard let state, let trackId = state.player.currentTrackId else { return }
                     state.library.toggleFavourite(track: trackId)
@@ -257,15 +263,6 @@ struct KoanApp: App {
     }
 }
 
-/// Menu commands must not *read* anything that changes often.
-///
-/// `.commands` is part of the Scene body, so reading an observable that ticks —
-/// `isPlaying`, `radioEnabled` — makes SwiftUI rebuild every menu ten times a
-/// second. That shows up as the Edit menu flickering, and as menu items and
-/// keyboard shortcuts going dead because they are torn down mid-use. So the
-/// titles here are fixed and the bodies only ever call methods.
-///
-/// Sections reachable from the View menu, in sidebar order.
 /// The library is a file on disk; if it can't be opened there is no app to show.
 private struct StartupErrorView: View {
     let message: String

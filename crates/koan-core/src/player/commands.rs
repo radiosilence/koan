@@ -7,7 +7,7 @@ use super::state::{PlaylistItem, QueueItemId};
 /// Commands from the UI layer to the audio engine.
 #[derive(Debug)]
 pub enum PlayerCommand {
-    /// Set cursor + start playback. Replaces Play/SkipTo/SkipBack/PlayInterrupt.
+    /// Set the cursor and start playback.
     Play(QueueItemId),
     Pause,
     Resume,
@@ -51,9 +51,9 @@ pub enum PlayerCommand {
     ///
     /// Doing this as ClearPlaylist + AddToPlaylist + Play sends three commands
     /// down a bounded channel, and the player acts on each as it arrives: the
-    /// first track starts, then the cursor jumps. Clicking track nine of an
-    /// album visibly flashed track one as playing first. It is also three undo
-    /// entries for one user action.
+    /// first track starts, then the cursor jumps, so clicking track nine of an
+    /// album shows track one playing first. It is also three undo entries for
+    /// one user action.
     ///
     /// `start` past the end starts at the beginning.
     ReplacePlaylist {
@@ -107,7 +107,7 @@ pub enum PlayerCommand {
     RestartOutput,
 }
 
-/// Bounded SPSC command channel.
+/// Bounded command channel.
 ///
 /// Small capacity — we don't want commands queuing up. If the engine is busy,
 /// the UI should know about it, not silently buffer 50 seeks.

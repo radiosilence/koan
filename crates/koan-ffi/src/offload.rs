@@ -41,8 +41,8 @@ static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
 /// Run `f` off the calling thread.
 ///
 /// Order between concurrent calls is undefined — use [`sequenced`] where it
-/// matters. A panic in `f` is re-raised here, so uniffi reports it the same way
-/// it did when these calls were synchronous.
+/// matters. A panic in `f` is re-raised here, so uniffi reports it as it would
+/// a panic in a synchronous call.
 pub async fn offload<T, F>(f: F) -> T
 where
     F: FnOnce() -> T + Send + 'static,

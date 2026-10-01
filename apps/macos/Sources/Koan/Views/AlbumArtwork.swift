@@ -47,19 +47,15 @@ struct AlbumArtwork: View {
 
     @Environment(CoverArtCache.self) private var cache
 
-    /// Held per view rather than read from the cache during `body`.
-    ///
-    /// Reading the cache's dictionaries from `body` made every artwork observe
-    /// every entry, so one cover arriving invalidated all of them — and the
-    /// lookup also inserted into the in-flight set while rendering, which
-    /// invalidated them again. Scrolling the album grid pinned ten cores.
+    /// What this view's `.task` loaded. `body` falls back to the cache, so a
+    /// cover already held draws without waiting for it.
     @State private var image: PlatformImage?
     @State private var isLoading = false
 
     /// A square Color drives the layout and the image sits in an overlay, so a
     /// non-square cover can't stretch the cell it lives in. Sizing the
     /// container from the image instead lets a wide cover push into its
-    /// neighbours, which is what it was doing.
+    /// neighbours.
     @ViewBuilder
     private var square: some View {
         if fills {
@@ -73,19 +69,14 @@ struct AlbumArtwork: View {
         // Read straight through on every pass. A cover the app already holds
         // draws in the *same frame* as the view that asks for it — no
         // placeholder, no fade, no waiting for `.task` to run after the first
-        // render. Opening a record from the grid it was already showing used to
-        // draw a grey square and then dissolve in a bitmap sitting in memory.
-        //
-        // Safe now in a way it was not: this used to subscribe every artwork on
-        // screen to every entry in the cache, because the cache was observable
-        // and the lookup touched its dictionaries. It is neither observable nor
-        // main-actor bound any more — this is a lock and a hash lookup.
+        // render. The cache is neither observable nor main-actor bound, so this
+        // is a lock and a hash lookup and subscribes the view to nothing.
         let ready = image ?? cache.cached(source, size: size)
         return square
-            // The ground stays put. Swapping it for the art meant a *cross*
+            // The ground stays put. Swapping it for the art would be a *cross*
             // dissolve — the placeholder fading out under an image fading in —
-            // so for the length of the fade neither was opaque and the cover
-            // read as translucent before snapping solid. The art comes up over
+            // so for the length of the fade neither would be opaque and the
+            // cover would read as translucent before snapping solid. The art comes up over
             // a ground that never moves, so the composite is opaque throughout.
             .overlay {
                 Rectangle()
@@ -128,8 +119,8 @@ struct AlbumArtwork: View {
 
                 // Settle first. `.task(id:)` is cancelled when the cell is
                 // recycled, so flying past a cover never starts its fetch —
-                // without this, one flick through the grid queued a request for
-                // every album in the library.
+                // without this, one flick through the grid would queue a request
+                // for every album in the library.
                 try? await Task.sleep(for: .milliseconds(180))
                 guard !Task.isCancelled else { return }
 

@@ -27,7 +27,7 @@ final class NowPlayingCentre {
     private var publishedTrack: Int64?
     private var publishedState: PlayState?
     private var publishedPosition: UInt64 = 0
-    /// Which sleeve actually made it into the published info.
+    /// Which sleeve made it into the published info.
     ///
     /// Art arrives after the track does — on a remote library the fetch is an
     /// HTTP round trip — so the first publish for a track carries none, and
@@ -90,7 +90,7 @@ final class NowPlayingCentre {
     /// the image. A closure written inside a `@MainActor` method inherits that
     /// isolation whatever the captures are marked, and the runtime check then
     /// traps the first time a track with artwork starts. Building it here, out
-    /// of the actor's reach, is what actually removes the isolation.
+    /// of the actor's reach, is what removes the isolation.
     private nonisolated static func artwork(for image: PlatformImage) -> MPMediaItemArtwork {
         MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }

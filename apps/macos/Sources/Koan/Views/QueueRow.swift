@@ -6,8 +6,6 @@ import SwiftUI
 /// The two lists are the same row: a mark saying what this track is doing, its
 /// place, its name, a heart, its codec and its length. They differ only in what
 /// they are made of, so the row is made of this instead and each builds one.
-/// Writing a second row that looked like the first is how the playlist ended up
-/// without a codec column and with its playing mark in the wrong place.
 struct QueueRowContent {
     /// The library row behind it, where there is one. A queue can hold a file
     /// that was never indexed; nothing about it can be favourited.
@@ -95,7 +93,7 @@ struct QueueRow: View {
     @Environment(PlayerModel.self) private var player
     /// Whether the List has this row selected. The List says so through the
     /// environment, which is what lets the list above never read its own
-    /// selection: passed down as a value, every click re-ran the whole list.
+    /// selection: passed down as a value, every click would re-run the whole list.
     @Environment(\.backgroundProminence) private var prominence
     @State private var hovering = false
 
@@ -207,11 +205,11 @@ struct QueueRow: View {
         .frame(height: artwork ? 44 : 34)
         #endif
         // Ungrouped, the row carries a sleeve and two lines of text, and the
-        // frame around them left the cover all but touching the separators.
+        // frame around them would leave the cover all but touching the separators.
         // The same six points the album heading gives its own cover — the two
         // kinds of row are in the same list and should breathe alike.
         .padding(.vertical, artwork ? 6 : 0)
-        // Without this the row is only clickable where a view actually sits —
+        // Without this the row is only clickable where a view sits —
         // the Spacer between the title and the duration is a dead zone, and
         // clicks landing there select nothing.
         .contentShape(Rectangle())
@@ -221,12 +219,11 @@ struct QueueRow: View {
     /// A played row steps back rather than disappears — and it does it in
     /// colour, not in alpha.
     ///
-    /// This was `.opacity(0.45)` on the whole row. Any alpha below 1 makes
-    /// SwiftUI render the row into an offscreen layer and composite that,
-    /// because its children overlap and would otherwise show through each
-    /// other — so a queue with a long tail behind the cursor was a long list of
-    /// offscreen passes, every frame it drew. A dimmer foreground style costs
-    /// a colour lookup.
+    /// Any alpha below 1 on the whole row makes SwiftUI render it into an
+    /// offscreen layer and composite that, because its children overlap and
+    /// would otherwise show through each other — so a queue with a long tail
+    /// behind the cursor would be a long list of offscreen passes, every frame
+    /// it drew. A dimmer foreground style costs a colour lookup.
     ///
     /// Never true for a playlist row, whose status is nil: played is something
     /// a queue knows about its own cursor.

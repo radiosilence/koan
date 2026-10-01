@@ -6,7 +6,7 @@ import UIKit
 #endif
 
 /// The handful of places where AppKit and UIKit disagree about a type koan
-/// actually uses.
+/// uses.
 ///
 /// Everything else in the app is SwiftUI and crosses on its own. This exists so
 /// the art pipeline — which is `CGImageSource` end to end and only meets a
@@ -90,11 +90,11 @@ extension View {
     ///
     /// iOS treats such a row as a single tap target unless each button opts out
     /// of the row's own behaviour, and resolves a tap to one of them regardless
-    /// of where it landed — which is how "Sync Now" signed you out. `.borderless`
-    /// is what gives them their own hit testing.
+    /// of where it landed, so "Sync Now" can sign you out. `.borderless` is
+    /// what gives them their own hit testing.
     ///
-    /// macOS gets the bordered buttons it already had: a row there is not a
-    /// control, so there is nothing to opt out of.
+    /// macOS keeps its bordered buttons: a row there is not a control, so there
+    /// is nothing to opt out of.
     func rowButtons() -> some View {
         #if os(macOS)
         self
@@ -114,9 +114,7 @@ extension View {
     /// and it needs a selection to act on.
     ///
     /// A phone has neither. Touch has no double-click, and a `List` selection
-    /// on iOS only exists in edit mode — so every browse list in the app was
-    /// inert: tapping an artist, a track or a history row did nothing at all.
-    /// Here the row takes the tap itself.
+    /// on iOS only exists in edit mode, so here the row takes the tap itself.
     func primaryTap(_ action: @escaping () -> Void) -> some View {
         #if os(macOS)
         self
@@ -303,8 +301,8 @@ extension View {
     /// A row that gives up its own ground so the wash shows through it.
     ///
     /// An AppKit row is already clear. A UIKit one paints the system background
-    /// behind every row, which on a phone put a black band across the record's
-    /// colour wherever there was a list.
+    /// behind every row, which on a phone puts a black band across the record's
+    /// colour wherever there is a list.
     func washedRow() -> some View {
         #if os(macOS)
         self

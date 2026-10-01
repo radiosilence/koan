@@ -9,7 +9,7 @@
 //! leaves.
 //!
 //! The remote server is held to a stricter standard, because its plays feed
-//! Last.fm and friends: it is told what is playing, and where, as playback
+//! Last.fm and similar services: it is told what is playing, and where, as playback
 //! starts, pauses, seeks and stops, and is sent a scrobble only once the track
 //! has been heard (see [`counts_as_heard`]).
 

@@ -61,10 +61,10 @@ pub struct TrackInfo {
     pub duration_ms: u64,
 }
 
-// --- Playlist data model (single source of truth) ---
+// --- Playlist data model ---
 
 /// Minimum bytes written before streaming playback can begin.
-pub const STREAM_THRESHOLD: u64 = 256 * 1024; // 256 KB
+pub const STREAM_THRESHOLD: u64 = 256 * 1024;
 
 /// Held back from the seekable extent of a downloading track.
 ///
@@ -78,7 +78,7 @@ pub const SEEK_SAFETY_MS: u64 = 2_000;
 /// Only what is true of the item regardless of any transfer: whether the bytes
 /// at its path can be played. Whether one is *arriving* is the download store's
 /// business, and asking the item would mean two accounts of one fact that have
-/// to be kept in step — which they were not. Read [`LoadState`] for the two
+/// to be kept in step. Read [`LoadState`] for the two
 /// together.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ItemState {
@@ -163,8 +163,7 @@ pub enum PlaybackSource {
     },
 }
 
-/// A single item in the playlist. Replaces QueueEntry + QueueEntryMeta + pending entries
-/// as the canonical data. Created once when tracks are added to the playlist.
+/// A single item in the playlist. Created once when tracks are added to the playlist.
 #[derive(Debug, Clone)]
 pub struct PlaylistItem {
     pub id: QueueItemId,
@@ -199,7 +198,7 @@ pub struct Playlist {
     pub cursor: Option<QueueItemId>,
 }
 
-// --- UI view types (kept for TUI compat) ---
+// --- UI view types ---
 
 /// Status of a track in the queue — for UI display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,7 +254,7 @@ pub struct SharedPlayerState {
     position_ms: AtomicU64,
     track_info: parking_lot::RwLock<Option<TrackInfo>>,
 
-    /// THE playlist + cursor — one lock, one truth.
+    /// The playlist and its cursor, under one lock.
     playlist: parking_lot::RwLock<Playlist>,
 
     /// Bumped on every playlist mutation so UI can skip redundant redraws.
@@ -454,7 +453,7 @@ impl SharedPlayerState {
         self.quit_requested.load(Ordering::Acquire)
     }
 
-    // --- Metadata refresh (progressive enhancement) ---
+    // --- Metadata refresh ---
 
     /// Signal that metadata has been refreshed mid-stream (e.g. download completed).
     /// The UI loop calls `take_metadata_refresh()` to consume this flag and
@@ -642,7 +641,6 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
-    /// Get the current cursor ID.
     pub fn cursor(&self) -> Option<QueueItemId> {
         self.playlist.read().cursor
     }
@@ -732,7 +730,7 @@ impl SharedPlayerState {
 
     // --- Called from resolve thread ---
 
-    /// Update the load state of a playlist item. Safe — just a field update under lock.
+    /// Update the load state of a playlist item.
     pub fn update_item_state(&self, id: QueueItemId, new_state: ItemState) {
         let mut pl = self.playlist.write();
         if let Some(item) = pl.items.iter_mut().find(|item| item.id == id) {
@@ -831,7 +829,7 @@ impl SharedPlayerState {
         reset
     }
 
-    /// Get the path of an item if it's Ready (legacy convenience — use item_playback_source for streaming).
+    /// The item's path if it is `Ready`. A caller that can stream wants `item_playback_source`.
     pub fn item_path_if_ready(&self, id: QueueItemId) -> Option<PathBuf> {
         let pl = self.playlist.read();
         pl.items.iter().find(|item| item.id == id).and_then(|item| {
@@ -843,7 +841,6 @@ impl SharedPlayerState {
         })
     }
 
-    /// Check if the cursor is on the given item.
     pub fn is_cursor(&self, id: QueueItemId) -> bool {
         self.playlist.read().cursor == Some(id)
     }
@@ -935,12 +932,6 @@ impl SharedPlayerState {
         }
     }
 
-    /// For each ID, the ID of the item before it (or None if first), returned in
-    /// playlist order regardless of the order `ids` arrives in.
-    ///
-    /// Undo replays these left to right, so an item whose recorded predecessor is
-    /// also in `ids` must come after it — otherwise the predecessor is missing at
-    /// replay time and the item lands at the end of the playlist instead.
     /// Put the items in exactly this order.
     ///
     /// Items not named keep their relative order and follow at the end, so a
@@ -966,6 +957,12 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
+    /// For each ID, the ID of the item before it (or None if first), returned in
+    /// playlist order regardless of the order `ids` arrives in.
+    ///
+    /// Undo replays these left to right, so an item whose recorded predecessor is
+    /// also in `ids` must come after it — otherwise the predecessor is missing at
+    /// replay time and the item lands at the end of the playlist instead.
     pub fn items_before(&self, ids: &[QueueItemId]) -> Vec<(QueueItemId, Option<QueueItemId>)> {
         use std::collections::HashSet;
         let wanted: HashSet<QueueItemId> = ids.iter().copied().collect();
@@ -1095,12 +1092,10 @@ impl SharedPlayerState {
             let is_cursor = cursor_pos == Some(i);
             let is_before_cursor = cursor_pos.is_some_and(|cp| i < cp);
 
-            // Byte count comes from the shared atomic, not from the load
-            // state's own copy: the download thread writes it per chunk
-            // without taking the playlist lock, which is what keeps a
-            // transfer from bumping the playlist version a thousand times.
-            // Once per row, because it is the item's state and any transfer
-            // against it as one answer, and every branch below wants both.
+            // The byte count is the download thread's own counter, written per
+            // chunk without the playlist lock, so a transfer never bumps the
+            // playlist version. Derived once per row because every branch below
+            // wants the item's state and its transfer together.
             let load_state = LoadState::of(item);
 
             let dl_progress = match &load_state {

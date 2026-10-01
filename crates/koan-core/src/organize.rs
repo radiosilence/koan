@@ -519,7 +519,7 @@ pub fn check_against_disk(result: &mut OrganizeResult, move_ancillary: bool) {
     let mut dests = DestinationLedger::default();
     let mut planned_ancillary: HashSet<PathBuf> = HashSet::new();
     // One directory read per source folder. An album is one folder and a dozen
-    // tracks, so doing this per file repeated the same readdir a dozen times.
+    // tracks, so doing this per file would repeat the same readdir a dozen times.
     let mut ancillary_by_dir: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
 
     for entry in &mut result.entries {

@@ -188,10 +188,8 @@ fn download_and_play(
     let bytes_written = downloads::ByteFeed::new();
     let stream_ready_sent = std::sync::atomic::AtomicBool::new(false);
 
-    // Told to the download store like any other transfer. It used not to be,
-    // so anything the remote bridge fetched was invisible to the downloads
-    // page and to everything else reading the store — two ways of fetching a
-    // track and only one of them accounted for.
+    // Told to the download store like any other transfer, so the downloads
+    // page and everything else reading the store see what the bridge fetches.
     let store = downloads::store();
     store.queued(downloads::Download {
         id: queue_id,
@@ -256,7 +254,6 @@ fn poll_and_stream_loop(
     let cache_dir = koan_core::config::config_dir().join("cache/remote-stream");
 
     loop {
-        // Poll now playing from server.
         match client.now_playing() {
             Ok(np) => {
                 note_connection(&mut connected, true);

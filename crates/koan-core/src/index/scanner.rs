@@ -84,7 +84,7 @@ pub fn scan_folder(
 
 /// [`scan_folder`] over several folders, telling `on_started` how many audio
 /// files there are once every folder has been walked. The count comes from the
-/// same walk the scan uses: a separate counting walk doubled the directory
+/// same walk the scan uses: a separate counting walk would double the directory
 /// traversal, which on a network mount is most of the cost of a rescan.
 pub fn scan_folders(
     db: &Database,

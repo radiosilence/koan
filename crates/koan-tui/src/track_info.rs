@@ -93,7 +93,6 @@ impl Widget for TrackInfoOverlay<'_> {
             (inner, None)
         };
 
-        // Render cover art.
         if let (Some(img), Some(art_rect)) = (self.cover_art, art_area) {
             CoverArt::new(img).render(art_rect, buf);
         }
@@ -154,7 +153,6 @@ impl Widget for TrackInfoOverlay<'_> {
 
         field("Status", status_str(self.entry.status));
 
-        // Blank line before path.
         lines.push(Line::raw(""));
         lines.push(Line::from(vec![
             Span::styled(format!(" {:<14}", "Path"), key_style),

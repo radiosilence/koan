@@ -108,9 +108,9 @@ private struct SectionHeading: View {
 /// track lives, and where you'd play it from.
 ///
 /// Behaves like any other row: click to go where it lives, drag it to enqueue,
-/// right-click for the same menu the tiles and pills have. It was a `Button`,
-/// which claims the press and left the row as the one result you could neither
-/// drag nor right-click.
+/// right-click for the same menu the tiles and pills have. Not a `Button`,
+/// which claims the press and leaves the row impossible to drag or
+/// right-click.
 private struct SearchTrackRow: View {
     let track: Track
     let selection: PlayableSelection

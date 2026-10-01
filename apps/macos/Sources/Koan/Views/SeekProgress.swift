@@ -7,9 +7,7 @@ import SwiftUI
 /// main-thread callback every frame to move a bar by a pixel — the app awake
 /// for the whole of a fifty-five minute mix. A `CABasicAnimation` is handed
 /// over once and runs in the render server, so between one anchor and the next
-/// this process is not woken at all. That is the whole claim the anchor makes;
-/// animating it here would have quietly cost what publishing the position used
-/// to.
+/// this process is not woken at all, which is the whole claim the anchor makes.
 ///
 /// Nothing here is a clock either. `remaining` is how much of the track is
 /// left, so the animation ends as the track does.

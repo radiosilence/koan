@@ -1,7 +1,4 @@
-//! Shared helpers used by downstream crates (koan-tui, koan-server, koan-cli).
-//!
-//! These functions provide common functionality for building playlist items,
-//! resolving track paths, downloading remote tracks, and building Subsonic clients.
+//! Helpers shared by every front end: koan-tui, koan-server, koan-ffi and koan-cli.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -681,7 +678,7 @@ pub fn requeue_cleared_downloads(
 /// file whose copy on the server failed to merge with it (#221), which is the
 /// one case where the silence is wrong.
 ///
-/// Shared by the TUI, the server and the app, which each had their own copy.
+/// Shared by the TUI, the server and the app.
 pub fn sync_favourite_to_remote(db: &Database, path: &Path, star: bool) {
     let cfg = Config::load().unwrap_or_default();
     if !cfg.remote.enabled {
@@ -722,10 +719,7 @@ pub struct FullSync {
 /// Pull the library, then reconcile favourites and playlists.
 ///
 /// One function because there are four callers — the app, the CLI, the GraphQL
-/// job and koan's own auto-sync — and they had each been told separately what a
-/// sync consists of. Two of them never heard about playlists, and the auto-sync
-/// had never heard about favourites either, so a star made on the server only
-/// arrived if you happened to press the button yourself.
+/// job and koan's own auto-sync — and each must sync the same things.
 ///
 /// The library comes first: favourites and playlists both name tracks by the
 /// server's ids, and neither can find a track the library has not seen yet.
@@ -761,7 +755,7 @@ pub struct FavouriteSync {
 /// first keeps a sync from re-sending every favourite, one request each.
 ///
 /// Covers albums and artists as well as tracks — `getStarred2` returns all
-/// three from one request, and reading only songs left a starred album
+/// three from one request, and reading only songs would leave a starred album
 /// invisible to koan.
 pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> FavouriteSync {
     let mut out = FavouriteSync::default();
@@ -949,8 +943,7 @@ pub fn subsonic_auth(cfg: &Config) -> Option<SubsonicAuth> {
 /// Constructing one builds two blocking `reqwest` clients, each carrying its
 /// own runtime on its own thread, and each starting with a cold connection
 /// pool — so a client per call means a fresh TLS handshake for every cover art
-/// request. The download queue had already worked this out and kept a client
-/// of its own for the app's lifetime; this is that, for everyone.
+/// request.
 ///
 /// Keyed on the credentials, so logging in as someone else replaces the client
 /// rather than serving the old one. Never call from async code: building the
@@ -980,9 +973,7 @@ static SUBSONIC_CLIENT: std::sync::LazyLock<parking_lot::Mutex<CachedClient>> =
 // ---------------------------------------------------------------------------
 
 /// Why a share link could not be made. Each variant is something the user can
-/// act on, which is the point — every caller used to collapse these into
-/// "local-only tracks can't be shared" and send people looking in the wrong
-/// place.
+/// act on.
 #[derive(Debug, thiserror::Error)]
 pub enum ShareError {
     #[error("no remote server is configured")]
@@ -1140,7 +1131,7 @@ pub fn create_share(
 
     // A whole record shares as one album rather than as N tracks — the server
     // renders it as the album it is, and the link survives the user adding to
-    // it. Only when the selection is genuinely the whole thing.
+    // it. Only when the selection is the whole album.
     let one_album = rows
         .first()
         .and_then(|f| f.album_id)
@@ -1210,9 +1201,6 @@ pub fn share_url(public_url: &str, id: &str) -> String {
     format!("{}/share/{id}", public_url.trim_end_matches('/'))
 }
 
-/// The album's own remote ID, but only when `selected` covers every track on
-/// it. Sharing an album link for half an album would hand out more than the
-/// user picked.
 /// An album's id as `createShare` should be given it.
 ///
 /// koan numbers albums and songs separately, publishes album ids bare, and
@@ -1232,6 +1220,9 @@ fn album_share_id_for(koan: bool, remote_id: String) -> String {
     }
 }
 
+/// The album's own remote ID, but only when `selected` covers every track on
+/// it. Sharing an album link for half an album would hand out more than the
+/// user picked.
 fn album_remote_id(conn: &rusqlite::Connection, album_id: i64, selected: usize) -> Option<String> {
     let (remote_id, total): (Option<String>, i64) = conn
         .query_row(
@@ -1448,8 +1439,8 @@ pub fn playlist_item_from_track(
 /// Build playlist items for many tracks at once.
 ///
 /// `track_to_playlist_item` loads the config on every call, which means
-/// reading and parsing `config.toml` and `config.local.toml` once per track —
-/// the reason a large add crawled. This loads it once and memoises album dates,
+/// reading and parsing `config.toml` and `config.local.toml` once per track.
+/// This loads it once and memoises album dates,
 /// so a thousand-track add costs one config read instead of a thousand.
 pub fn playlist_items_for_tracks(db: &Database, tracks: &[queries::TrackRow]) -> Vec<PlaylistItem> {
     use std::collections::HashMap;
@@ -1544,9 +1535,9 @@ pub fn download_track(
     client: &SubsonicClient,
 ) {
     // From the pool. This runs once per track fetched, and opening a
-    // connection here re-ran the schema DDL and attempted a WAL checkpoint —
-    // with several transfers going, several init cycles contending with each
-    // other and with whatever the library was trying to read.
+    // connection runs the schema DDL and a WAL checkpoint — with several
+    // transfers going, several init cycles would contend with each other and
+    // with library reads.
     let db = match crate::db::pool::shared().get() {
         Ok(db) => db,
         Err(e) => {
@@ -1759,9 +1750,9 @@ fn push_log(log_buf: &Arc<Mutex<Vec<String>>>, msg: String) {
 
 /// Why there is no remote client, in words worth showing someone.
 ///
-/// Every caller of `subsonic_client` gets `None` for three different reasons and
-/// used to report the same one — so "koan has no password", which sends you to
-/// sign in, arrived looking like a server that was merely down.
+/// Every caller of `subsonic_client` gets `None` for three different reasons,
+/// and reporting one for all of them makes "koan has no password", which sends
+/// you to sign in, look like a server that is merely down.
 pub fn remote_unavailable(cfg: &Config) -> String {
     if !cfg.remote.enabled {
         return "no remote server is configured".into();
@@ -1777,15 +1768,11 @@ pub fn remote_unavailable(cfg: &Config) -> String {
     "the remote server could not be reached".into()
 }
 
-/// Spawn background downloads for remote tracks with ItemState::Pending.
 /// Submit tracks for download.
 ///
 /// Everything that is not the TUI reaches downloads through here — the FFI, the
-/// GraphQL server and radio's auto-extend. It used to spawn a thread per batch
-/// and walk it with a `for` loop, which meant one track at a time no matter
-/// what `download_workers` said, and no reordering when the cursor moved. It
-/// hands the batch to the shared queue now, which is the same pool, priority
-/// lane and cursor watcher the TUI has always used.
+/// GraphQL server and radio's auto-extend. The batch goes to the shared queue:
+/// the same pool, priority lane and cursor watcher the TUI uses.
 pub fn spawn_downloads(
     pending: Vec<(i64, QueueItemId)>,
     tx: crossbeam_channel::Sender<PlayerCommand>,

@@ -86,7 +86,7 @@ impl OpusBridge {
 
         if channels == 0 || channels > 2 {
             // opus-decoder only supports mono/stereo. Multistream would need
-            // OpusMultistreamDecoder, which we don't handle yet.
+            // OpusMultistreamDecoder, which is not handled.
             return Err(OpusError::Init(format!(
                 "unsupported channel count: {channels} (only mono/stereo supported)"
             )));

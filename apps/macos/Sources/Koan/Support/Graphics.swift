@@ -79,9 +79,8 @@ enum Graphics: Int, CaseIterable, Identifiable {
     /// content, and the soft edge that fades a row out as it passes under the
     /// transport.
     ///
-    /// Separate from `usesGlass`, which is koan's own chrome and the only thing
-    /// the setting used to reach. These two are the platform's, they are on at
-    /// every other step whatever the setting said, and they are re-rendered
+    /// Separate from `usesGlass`, which is koan's own chrome. These two are the
+    /// platform's, kept at every step but `bare`, and they are re-rendered
     /// whenever the content behind them changes — which a page switch does
     /// wholesale.
     var usesWindowGlass: Bool { self != .bare }

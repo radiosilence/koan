@@ -69,7 +69,7 @@ final class AudioSession {
         }
     }
 
-    /// What the session actually settled on, as against what was asked for.
+    /// What the session settled on, as against what was asked for.
     var sampleRate: Double { AVAudioSession.sharedInstance().sampleRate }
 
     private func observe() {

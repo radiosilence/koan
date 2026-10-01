@@ -13,7 +13,7 @@
  */
 import * as z from "zod";
 
-/** Absolute, because a container's working directory is not what you think. */
+/** Absolute: a relative path resolves against the image's working directory. */
 export const AbsolutePath = z
   .string()
   .startsWith("/", "must be an absolute path");

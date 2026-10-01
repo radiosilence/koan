@@ -52,7 +52,7 @@ final class PeopleModel {
     }
 
     /// Runs a change and reloads the list either way, so a refused change
-    /// shows what is actually stored.
+    /// shows what is stored.
     private func attempt(_ work: () async throws -> Void) async -> Bool {
         defer { Task { await load() } }
         do {

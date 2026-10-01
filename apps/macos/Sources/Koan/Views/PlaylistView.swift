@@ -26,8 +26,8 @@ struct PlaylistView: View {
     /// Selection is local `@State` for the same reason the queue's is, and
     /// unread here for the same reason too — see `QueueView.selection`.
     @State private var selection: Set<String> = []
-    /// Where a drop would land, so the gesture says what it will do. Dropping
-    /// `onMove` lost the insertion indicator that came with it; this is it.
+    /// Where a drop would land, so the gesture says what it will do. See
+    /// `insertionLine(showing:)`.
     @State private var dropBefore: Int?
     @State private var renaming = false
     @State private var renameTo = ""
@@ -112,16 +112,15 @@ struct PlaylistView: View {
 
     /// A playlist is playable like a record is, so it gets the record's header:
     /// the big round play button beside the title, Play Next and Queue under
-    /// it. It had three text buttons in a row, which is a shape nothing else in
-    /// the app uses.
+    /// it.
     private var playable: Playable? {
         playlist.map { .playlist(id: $0.id, name: $0.name) }
     }
 
     /// Side by side where there is room, stacked where there is not, as a
-    /// record's page is: on a phone the side-by-side header was wider than the
-    /// screen, so the title and Shuffle wrapped a letter at a time and every
-    /// row below was laid out at the header's width and clipped.
+    /// record's page is: on a phone the side-by-side header is wider than the
+    /// screen, which wraps the title and Shuffle a letter at a time and lays
+    /// every row below out at the header's width, clipped.
     @ViewBuilder private func header(_ rows: [Row]) -> some View {
         if width == .compact {
             VStack(alignment: .leading, spacing: 14) {
@@ -313,12 +312,12 @@ struct PlaylistView: View {
         start(at: nil, shuffled: shuffled)
     }
 
-    /// Play from a position, keeping the rest of the playlist behind it — the
-    /// same thing clicking track nine of an album does.
+    /// Play from an entry, keeping the rest of the playlist behind it — the
+    /// same thing clicking track nine of an album does. An entry rather than a
+    /// position: see `playPlaylist`.
     ///
     /// Stays put afterwards: the playing row is lit on this page, so there is
     /// nothing the queue would show that this does not.
-    /// From the entry, not its position: see `playPlaylist`.
     private func start(at entry: Int64?, shuffled: Bool = false) {
         let engine = playlists.engine
         Task {
@@ -439,11 +438,10 @@ struct PlaylistView: View {
 extension PlaylistView {
     /// A playlist row: an album heading, or one entry.
     ///
-    /// An entry carries its position. It used to find itself by id in the
-    /// entries each time it was asked, which was a walk of the list per row per
-    /// evaluation — quadratic, and evaluated on every click and every pause.
-    /// The rows are rebuilt whenever the entries move, so the position cannot
-    /// go stale.
+    /// An entry carries its position rather than finding itself by id in the
+    /// entries each time it is asked — a walk of the list per row per
+    /// evaluation, on every click and every pause. The rows are rebuilt
+    /// whenever the entries move, so the position cannot go stale.
     enum Row: Identifiable {
         case album(id: String, group: PlaylistGroup)
         case entry(PlaylistEntry, position: Int)
@@ -518,7 +516,7 @@ struct PlaylistGroup {
 /// One entry, wearing whatever the queue currently thinks of it.
 ///
 /// Its own view so that what is playing and what is queued are read per row:
-/// read by the list, every pause and every queue edit re-ran the whole of it.
+/// read by the list, every pause and every queue edit would re-run all of it.
 private struct PlaylistEntryRow: View {
     let entry: PlaylistEntry
     let position: Int
@@ -611,8 +609,8 @@ private extension View {
     /// The line that says where a drop will land.
     ///
     /// Drawn on the row it would land *before*, which is what a drop on a row
-    /// means here. `ForEach.onMove` drew one of these and had to go — it claims
-    /// the drag, so nothing could be dragged out of the playlist.
+    /// means here. `ForEach.onMove` would draw one of these, but it claims the
+    /// drag, so nothing could be dragged out of the playlist.
     func insertionLine(showing: Bool) -> some View {
         overlay(alignment: .top) {
             if showing {

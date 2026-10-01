@@ -1,4 +1,4 @@
-# koan — bit-perfect macOS music player
+# koan — bit-perfect music player
 
 # Build release binary
 build:
@@ -72,11 +72,9 @@ macos-icon:
 
 # Build the FFI static library and regenerate the Swift bindings.
 #
-# One slice, for the machine doing the building. The app used to ship as a
-# universal binary: two cross builds, lipo'd together, which was most of the
-# release job's fifteen minutes and most of the disk it needed. `macos-verify`
-# is what holds this honest — it fails if the assembled app is not the
-# architecture asked for.
+# One slice, for the machine doing the building: a universal binary is two
+# cross builds lipo'd together, most of a release job's time and disk.
+# `macos-verify` fails if the assembled app is not the architecture asked for.
 macos-ffi:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -239,12 +237,7 @@ macos-bundle: macos-build
 # certificate is no more trusted than ad-hoc, and only Developer ID plus
 # notarisation clears that — so this is for development, not distribution.
 #
-# The prompt this removes is the legacy keychain ACL dialog, which authenticates
-# with the login password and cannot use Touch ID — biometrics belong to the
-# data-protection keychain, a different API an app opts into, and which asks on
-# every read by design. "Always Allow" binds the item to the signing identity, so
-# it holds only while that identity is stable, which is what this provides.
-#
+
 # Run once, then export KOAN_SIGN_IDENTITY="koan development".
 macos-signing-cert:
     #!/usr/bin/env bash
@@ -290,7 +283,7 @@ macos-signing-cert:
     echo "created. add this to your shell profile:"
     echo "    export KOAN_SIGN_IDENTITY=\"$name\""
 
-# Check a built kōan.app is actually shippable.
+# Check a built kōan.app is shippable.
 #
 # Two ways the bundle has gone out broken, both of which built and signed
 # cleanly and neither of which showed until someone downloaded it:
@@ -328,7 +321,7 @@ macos-run: macos-bundle
     #!/usr/bin/env bash
     set -euo pipefail
     osascript -e 'quit app "kōan"' 2>/dev/null || true
-    # Wait for it to actually go before replacing it.
+    # Wait for it to exit before replacing it.
     for _ in $(seq 20); do
         pgrep -qf 'kōan.app/Contents/MacOS/koan-app' || break
         sleep 0.2
@@ -396,19 +389,17 @@ macos-test: macos-ffi
     cd {{app_dir}} && swift test
 
 # --- iOS --------------------------------------------------------------------
-# There is no iOS app yet — this proves the shared sources still cross.
+
 
 ios_deployment_target := "26.0"
 
 # Type-check the shared SwiftUI sources against the iOS SDK.
 #
 # The bindings are target-independent, so this needs `macos-ffi` and nothing
-# else: no Rust iOS build, no simulator runtime, a few seconds in CI. It is what
-# keeps the port from rotting while there is no iOS app to notice.
+# else: no Rust iOS build, no simulator runtime, a few seconds in CI.
 #
 # The excluded files are the macOS shell — the scene root, the split view, the
-# menu bar and the machinery that serves it. They have no iOS counterpart yet;
-# the list shrinks to nothing when one exists.
+# menu bar and the machinery that serves it. They have no iOS counterpart.
 ios-typecheck: macos-ffi
     #!/usr/bin/env bash
     set -euo pipefail
@@ -427,7 +418,7 @@ ios-typecheck: macos-ffi
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
         {{app_dir}}/Sources/KoanFFI/koan_ffi.swift
     # SIL, not just a typecheck: Swift 6's data-race checks run on SIL, and
-    # `-typecheck` stops before them. A race it missed failed the 0.44.0 archive.
+    # `-typecheck` stops before them, so an archive can fail on a race it passed.
     xcrun -sdk iphonesimulator swiftc -target "$target" -swift-version 6 \
         -package-name koan \
         -wmo -emit-sil -o /dev/null -module-name Koan -I "$mod" \
@@ -582,8 +573,8 @@ ios-run: ios-bundle
 # The check that matters for iOS: position only advances when RemoteIO's render
 # callback drains the ring buffer, so a track that reaches its end has exercised
 # decode, timeline and output together. `KOAN_STOP_AFTER_MS` forces the teardown
-# instead of waiting for the queue to run out — that is the path that used to
-# double-free CoreAudio's buffer list, and it is shared with macOS.
+# instead of waiting for the queue to run out — the teardown path, shared with
+# macOS, where a double free of CoreAudio's buffer list would show.
 #
 #     just ios-smoke ~/some/short.wav
 ios-smoke FILE:

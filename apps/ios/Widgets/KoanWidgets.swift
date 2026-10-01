@@ -3,8 +3,8 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// The widget extension: what iOS draws for kōan outside the app. For now,
-/// the Live Activity for another device this phone is controlling.
+/// The widget extension: what iOS draws for kōan outside the app — the Live
+/// Activity for another device this phone is controlling.
 @main
 struct KoanWidgets: WidgetBundle {
     var body: some Widget {

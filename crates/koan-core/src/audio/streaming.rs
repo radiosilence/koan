@@ -1,15 +1,14 @@
 //! `PartialFileSource` — a Read+Seek adapter over a file that is still downloading.
 //!
 //! The download thread writes the track to a `.part` file and publishes how far
-//! it has got in an `AtomicU64`; the Symphonia decoder reads the same file
+//! it has got in a `ByteFeed`; the Symphonia decoder reads the same file
 //! through a `PartialFileSource`, which blocks when the read position catches
 //! up to the write head. Playback starts long before the transfer finishes and
 //! seeking anywhere below the write head costs a `lseek`.
 //!
-//! Nothing is copied. An earlier design pumped the file into a shared `Vec<u8>`
-//! so the decoder could read from memory, which cost as much RAM as the track
-//! was long — half a gigabyte for a nine-hour recording, held for as long as it
-//! played. The bytes are already on disk; the page cache is better at this.
+//! Nothing is copied: holding the track in memory would cost as much RAM as the
+//! track is long — half a gigabyte for a nine-hour recording. The bytes are
+//! already on disk; the page cache is better at this.
 //!
 //! The open descriptor survives the download's final rename from `.part` to its
 //! cache path, so a transfer landing mid-playback changes nothing for a reader.
@@ -44,6 +43,10 @@ pub struct PartialFileSource {
     file: File,
     pos: u64,
     /// How many bytes the download has committed to disk so far.
+    ///
+    /// Whatever ends a transfer must call `ByteFeed::done` when it sets the
+    /// status: a read waiting for bytes is parked on the feed, and a download
+    /// that failed has no more bytes to wake it with.
     bytes_written: Arc<crate::remote::downloads::ByteFeed>,
     /// Total expected length, or 0 when the server sent no Content-Length.
     total: u64,
@@ -170,10 +173,6 @@ impl PartialFileSource {
     }
 
     /// Read straight from the file, tolerating a short read at the write head:
-    /// Whatever ends a transfer must call `ByteFeed::done` when it sets the
-    /// status: a read waiting for bytes is parked on the feed, and a download
-    /// that failed has no more bytes to wake it with.
-    ///
     /// `bytes_written` is published by the downloader as it goes and the data
     /// behind it can lag by a moment.
     fn read_available(&mut self, buf: &mut [u8], limit: u64) -> io::Result<usize> {

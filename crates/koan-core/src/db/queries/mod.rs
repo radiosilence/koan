@@ -19,7 +19,7 @@ pub mod vectors;
 
 use std::path::PathBuf;
 
-// Re-export all public items so `use queries::*` still works.
+// Re-exported so callers can `use queries::*`.
 pub use albums::*;
 pub use artists::*;
 pub use auth::LOCAL_USER;
@@ -43,7 +43,7 @@ pub use vectors::*;
 /// SQLite answers by reading every row, because a pattern is opaque to an
 /// index until it has been evaluated. It also takes the pattern out of the
 /// path: `LIKE` reads `_` as "any character" and folds ASCII case, so
-/// `/Volumes/My_Music` matched `/Volumes/My Music` and `/volumes/my_music`
+/// `/Volumes/My_Music` would match `/Volumes/My Music` and `/volumes/my_music`
 /// alike.
 ///
 /// The trailing separator is what keeps `/Volumes/Music` out of

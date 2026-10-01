@@ -16,8 +16,7 @@ pub fn cmd_remote_login(url: &str, username: &str) {
         std::process::exit(1);
     });
 
-    // Pings, stores the password in the platform credential store, and clears
-    // any plaintext copy an older koan left in config.local.toml.
+    // Pings, then writes the credentials to config.local.toml.
     if let Err(e) = koan_core::helpers::set_remote_credentials(url, username, &password) {
         eprintln!("{} {}", "sign-in failed:".red().bold(), e);
         std::process::exit(1);
@@ -138,8 +137,7 @@ pub fn cmd_remote_status() {
     println!("{} {}", "password:".cyan(), described);
 
     // Attempted whenever credentials resolve, rather than gated on a guess
-    // about whether they would. The reach is the only part of this that
-    // actually proves anything.
+    // about whether they would: only reaching the server proves anything.
     let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
         println!(
             "{} {}",

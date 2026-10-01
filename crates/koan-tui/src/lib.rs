@@ -1,7 +1,7 @@
 //! koan-tui — Ratatui TUI for koan music player.
 //!
 //! Library crate that exports `run_tui()`. No main(), no clap, no CLI args.
-//! Depends on koan-core. Uses koan-server for the embedded API server.
+//! Depends on koan-core only.
 
 pub mod app;
 pub mod context_menu;
