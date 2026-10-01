@@ -42,7 +42,7 @@ pub fn cmd_serve(
         // to have queued when it arrived.
         if !running {
             crate::clients::fulfil_from(&watched);
-            if let Ok(db) = koan_core::db::connection::Database::open(&watched) {
+            if let Ok(db) = koan_core::db::connection::Database::open_existing(&watched) {
                 crate::clients::changed_if_library_moved(&db.conn);
             }
         }

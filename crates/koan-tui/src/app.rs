@@ -182,9 +182,6 @@ pub struct App {
     // Track whether we've ever been in Playing state.
     pub has_played: bool,
 
-    /// State has changed and should be persisted at next autosave interval.
-    pub state_dirty: bool,
-
     pub theme: Theme,
 
     /// Cached layout rects from last render for mouse hit-testing.
@@ -331,7 +328,6 @@ impl App {
             last_click_idx: None,
             log_buffer,
             has_played: false,
-            state_dirty: false,
             theme: Theme::default(),
             layout: LayoutRects::default(),
             loading_message: None,
@@ -2865,7 +2861,6 @@ impl App {
         self.queue.vq_cache = self.state.derive_visible_queue();
         if mutated {
             self.queue.vq_version = v;
-            self.state_dirty = true; // Queue mutated — persist.
 
             self.clamp_queue_cursor();
             self.close_stale_track_info();

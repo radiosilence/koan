@@ -469,7 +469,7 @@ pub fn fulfil_from(db_path: &std::path::Path) {
     if registry.orders.lock().is_empty() {
         return;
     }
-    let Ok(db) = koan_core::db::connection::Database::open(db_path) else {
+    let Ok(db) = koan_core::db::connection::Database::open_existing(db_path) else {
         return;
     };
     // Playlist orders are the server's own to carry out: add the tracks, and
@@ -978,38 +978,48 @@ mod outbox {
         let Ok(text) = serde_json::to_string(cmd) else {
             return Vec::new();
         };
+        let absent: Vec<_> = known
+            .into_iter()
+            .filter(|(device, user, _)| {
+                !username.is_some_and(|u| u != user)
+                    && !live.iter().any(|(d, u)| d == device && u == user)
+            })
+            .collect();
+        if absent.is_empty() {
+            return Vec::new();
+        }
         let is_sync = matches!(cmd, LinkCommand::Sync { .. });
         let now = chrono::Utc::now().timestamp();
-        let mut queued = Vec::new();
-        for (device, user, name) in known {
-            if username.is_some_and(|u| u != user)
-                || live.iter().any(|(d, u)| *d == device && *u == user)
-            {
-                continue;
+        // Every playlist edit and scan lands here: one transaction, not two
+        // per device.
+        koan_core::db::queries::atomically(&db.conn, || {
+            let mut queued = Vec::new();
+            for (device, user, name) in absent {
+                if is_sync {
+                    // One pending sync is enough; a full one covers an incremental.
+                    let _ = db.conn.execute(
+                        "DELETE FROM link_outbox WHERE device = ?1 AND username = ?2 AND command LIKE '{\"type\":\"sync\"%'",
+                        [&device, &user],
+                    );
+                }
+                if db
+                    .conn
+                    .execute(
+                        "INSERT INTO link_outbox (device, username, command, created_at) VALUES (?1, ?2, ?3, ?4)",
+                        rusqlite::params![device, user, text, now],
+                    )
+                    .is_ok()
+                {
+                    queued.push(Absent {
+                        device,
+                        username: user,
+                        name,
+                    });
+                }
             }
-            if is_sync {
-                // One pending sync is enough; a full one covers an incremental.
-                let _ = db.conn.execute(
-                    "DELETE FROM link_outbox WHERE device = ?1 AND username = ?2 AND command LIKE '{\"type\":\"sync\"%'",
-                    [&device, &user],
-                );
-            }
-            if db
-                .conn
-                .execute(
-                    "INSERT INTO link_outbox (device, username, command, created_at) VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![device, user, text, now],
-                )
-                .is_ok()
-            {
-                queued.push(Absent {
-                    device,
-                    username: user,
-                    name,
-                });
-            }
-        }
-        queued
+            Ok::<_, rusqlite::Error>(queued)
+        })
+        .unwrap_or_default()
     }
 
     /// A device Apple's push service can reach.

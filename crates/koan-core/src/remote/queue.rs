@@ -396,7 +396,7 @@ fn trim_cache(inner: &Inner) {
         .iter()
         .filter_map(|i| i.db_id)
         .collect();
-    match crate::db::connection::Database::open_default() {
+    match crate::db::pool::shared().get() {
         Ok(db) => {
             crate::helpers::evict_cache(&db, &cfg, &keep, false);
         }

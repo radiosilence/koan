@@ -1,6 +1,6 @@
 //! Database connections, opened once and kept.
 //!
-//! Opening one costs a permissions syscall, the whole schema DDL and a WAL
+//! Opening one costs a permissions syscall, a schema check and a WAL
 //! checkpoint before a single row comes back, and while downloads are writing
 //! the checkpoint contends with them.
 //!

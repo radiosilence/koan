@@ -37,6 +37,35 @@ pub use tracks::*;
 pub use uids::*;
 pub use vectors::*;
 
+/// Run `f` as one unit: its writes land together or not at all, readers never
+/// see them half done, and the write lock is taken once rather than per
+/// statement.
+///
+/// Inside a caller's transaction it is a savepoint, so it nests. Outside one it
+/// begins `IMMEDIATE`: a deferred transaction that reads before it writes
+/// fails outright, without waiting, when another connection wrote in between.
+pub fn atomically<T, E: From<rusqlite::Error>>(
+    conn: &rusqlite::Connection,
+    f: impl FnOnce() -> Result<T, E>,
+) -> Result<T, E> {
+    let (begin, commit, rollback) = if conn.is_autocommit() {
+        ("BEGIN IMMEDIATE", "COMMIT", "ROLLBACK")
+    } else {
+        (
+            "SAVEPOINT atomically",
+            "RELEASE atomically",
+            "ROLLBACK TO atomically; RELEASE atomically",
+        )
+    };
+    conn.execute_batch(begin)?;
+    let result = f();
+    match &result {
+        Ok(_) => conn.execute_batch(commit)?,
+        Err(_) => conn.execute_batch(rollback)?,
+    }
+    result
+}
+
 /// The half-open range of paths under a folder, for `path >= .0 AND path < .1`.
 ///
 /// A prefix match on an indexed column, rather than `LIKE 'folder/%'` — which

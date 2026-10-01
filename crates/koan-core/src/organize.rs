@@ -956,7 +956,7 @@ fn rewrite_path_references(conn: &Connection, old: &Path, new: &Path) -> Result<
         params![new_path, old_path],
     )?;
     conn.execute(
-        "UPDATE playback_state SET cursor_id = ?1 WHERE cursor_id = ?2",
+        "UPDATE playback_position SET cursor_id = ?1 WHERE cursor_id = ?2",
         params![new_path, old_path],
     )?;
     rewrite_queue_json(conn, old_path, new_path)?;

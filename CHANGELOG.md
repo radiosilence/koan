@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Opening the database no longer takes the write lock.** Every open ran the schema DDL and a dozen repair sweeps, each an `UPDATE` or `DELETE` that waits for the lock whether or not it changes a row, so the folder watcher, auto-sync, cache eviction, radio and the server's post-scan work could each stall up to 30 seconds behind a scan or sync. The DDL and sweeps now run only when the schema version moves; `PRAGMA optimize` on open is skipped while another connection is writing. The schema version is now 9: existing databases run the sweeps once more on upgrade, and builds before this one refuse the upgraded database.
+- **A resync of an unchanged library writes nothing.** Every synced track rewrote its row, its ten index entries, its search-index entry and its album, about 220 MB of WAL for a 51,000-track library; an unchanged track is now compared and left alone, which also makes the resync about seven times faster. A track new from a koan server is inserted with the server's uid instead of being given one and then having it replaced.
+- **The playing position is saved without rewriting the queue.** It shared a row with the saved queue, which SQLite rewrites whenever the row changes size, as it does on every track change and when the position passes 32.8 seconds. It now has a table of its own. The queue itself is rewritten only when its contents change, not on every track change or finished download.
+- **Subsonic API-key requests no longer wait for the write lock.** Each one recorded the key's last use with an `UPDATE`, which waited behind any scan or sync; the stamp is now written only when it is stale, and skipped when the lock is held. Share pages count visits the same way.
+- **Multi-row edits are single transactions**: playlist edits (including Subsonic `createPlaylist` and `updatePlaylist`), favourite imports, the offline queue for linked devices, and `scrobble` batches. Readers no longer see a half-applied edit, and a scrobble batch naming a track that does not exist records none of its plays, so a retry does not duplicate them.
+- **Clearing all downloads rewrites only the tracks that had one**, rather than every row in the library.
+- **Indexes for the genre list and filter, and for deleting or merging artists and tracks** (similar artists, organize history, shares, favourites by path, a track's last play).
+
 ## 0.46.3
 
 ### Fixed

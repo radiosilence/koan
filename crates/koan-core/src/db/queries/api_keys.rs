@@ -101,29 +101,41 @@ pub fn authenticate_api_key(
     let given = auth::sha256_hex(key);
     let mut found = None;
     {
-        let mut stmt = conn.prepare("SELECT id, key_hash FROM api_keys")?;
+        let mut stmt = conn.prepare_cached("SELECT id, key_hash, last_used_at FROM api_keys")?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+            ))
         })?;
         for row in rows {
-            let (id, hash) = row?;
+            let (id, hash, last_used) = row?;
             if bool::from(hash.as_bytes().ct_eq(given.as_bytes())) {
-                found = Some(id);
+                found = Some((id, last_used));
             }
         }
     }
-    let Some(id) = found else {
+    let Some((id, last_used)) = found else {
         return Ok(None);
     };
 
+    // Decided here rather than in the UPDATE's WHERE: an UPDATE takes the
+    // write lock even when it matches nothing. A busy lock skips the stamp
+    // rather than holding up the request.
     let now = auth::now_unix() as i64;
-    conn.execute(
-        "UPDATE api_keys SET last_used_at = ?1
-         WHERE id = ?2 AND (last_used_at IS NULL OR last_used_at <= ?3)",
-        params![now, id, now - TOUCH_INTERVAL_SECS],
-    )?;
+    if last_used.is_none_or(|t| t <= now - TOUCH_INTERVAL_SECS)
+        && let Err(e) = crate::db::connection::without_waiting(conn, |conn| {
+            conn.execute(
+                "UPDATE api_keys SET last_used_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )
+        })
+    {
+        log::debug!("api key {id}: last use not recorded: {e}");
+    }
 
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT u.id, u.username, u.password_hash, u.role, u.created_at
          FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.id = ?1",
     )?;
@@ -191,6 +203,29 @@ mod tests {
                 .last_used_at
                 .is_some()
         );
+    }
+
+    /// Signing in must not wait for a scan or sync to finish writing: the
+    /// stamp is skipped while the lock is held, and not attempted while fresh.
+    #[test]
+    fn a_held_write_lock_does_not_hold_up_sign_in() {
+        let (db, tmp) = test_db();
+        let uid = create_user(&db.conn, "alice", "pw", Role::User).unwrap();
+        let (_, key) = create_api_key(&db.conn, uid, "phone").unwrap();
+
+        let writer = Database::open_existing(&tmp.path().join("test.db")).unwrap();
+        writer.conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let started = std::time::Instant::now();
+        assert!(authenticate_api_key(&db.conn, &key).unwrap().is_some());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        writer.conn.execute_batch("ROLLBACK").unwrap();
+
+        authenticate_api_key(&db.conn, &key).unwrap();
+        writer.conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let started = std::time::Instant::now();
+        assert!(authenticate_api_key(&db.conn, &key).unwrap().is_some());
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        writer.conn.execute_batch("ROLLBACK").unwrap();
     }
 
     #[test]

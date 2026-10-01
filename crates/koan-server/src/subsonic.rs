@@ -196,6 +196,12 @@ impl From<String> for SubsonicError {
     }
 }
 
+impl From<rusqlite::Error> for SubsonicError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::internal(e.to_string())
+    }
+}
+
 impl IntoResponse for SubsonicError {
     fn into_response(self) -> Response {
         // Default to XML for error responses produced via `?` in handlers.
@@ -2441,7 +2447,8 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
+            let user = caller.user_id;
             let mut targets = Vec::new();
             for raw in params.all("id") {
                 let (kind, id) = resolve_entity(db, raw)?;
@@ -2463,12 +2470,10 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
             }
             // The caller's other apps show hearts too: a track favourited on
             // a phone while it plays on the Mac should light up there.
-            if let Ok(caller) = validate_auth(&auth, &state) {
-                crate::clients::registry().broadcast(
-                    Some(&caller.username),
-                    koan_core::remote::link::LinkCommand::Sync { full: false },
-                );
-            }
+            crate::clients::registry().broadcast(
+                Some(&caller.username),
+                koan_core::remote::link::LinkCommand::Sync { full: false },
+            );
             Ok(b)
         })
     })
@@ -2575,17 +2580,29 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
         respond_db_user(&state, &auth, Role::User, |db, user, b| {
-            let track_ids: Vec<i64> = params
-                .all("id")
-                .map(|raw| resolve_as(db, raw, EntityKind::Song, "id"))
+            // An offline session flushes hundreds at once: the uids among
+            // them are resolved in one query rather than one each.
+            let raws: Vec<&str> = params.all("id").collect();
+            let by_uid = queries::ids_for_uids(
+                &db.conn,
+                queries::UidKind::Track,
+                raws.iter()
+                    .copied()
+                    .filter(|raw| parse_entity_id(raw).is_none()),
+            )?;
+            let track_ids: Vec<i64> = raws
+                .iter()
+                .map(|raw| match parse_entity_id(raw) {
+                    Some((_, id)) => Ok(id),
+                    None if !queries::is_uid(raw) => Err(SubsonicError::bad_param("id")),
+                    None => by_uid
+                        .get(*raw)
+                        .copied()
+                        .ok_or_else(|| SubsonicError::not_found(EntityKind::Song.noun())),
+                })
                 .collect::<Result<_, _>>()?;
             if track_ids.is_empty() {
                 return Err(SubsonicError::missing_param("id"));
-            }
-            for &track_id in &track_ids {
-                queries::get_track_row(&db.conn, track_id)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?
-                    .ok_or_else(|| SubsonicError::not_found("Track"))?;
             }
 
             // `submission=false` is a now-playing notice, not a play.
@@ -2600,23 +2617,29 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
                 .unwrap_or_default()
                 .as_secs() as i64;
             let times: Vec<Option<i64>> = params.all("time").map(|t| t.parse().ok()).collect();
-            for (i, &track_id) in track_ids.iter().enumerate() {
-                let played_at = times
-                    .get(i)
-                    .copied()
-                    .flatten()
-                    .map_or(now, |time_ms| time_ms / 1000);
-                queries::record_play_at(
-                    &db.conn,
-                    user,
-                    track_id,
-                    played_at,
-                    None,
-                    queries::SOURCE_SUBSONIC,
-                )
-                .map_err(|e| SubsonicError::from(format!("Database error: {}", e)))?;
+            let plays: Vec<(i64, i64)> = track_ids
+                .iter()
+                .enumerate()
+                .map(|(i, &track_id)| {
+                    let played_at = times
+                        .get(i)
+                        .copied()
+                        .flatten()
+                        .map_or(now, |time_ms| time_ms / 1000);
+                    (track_id, played_at)
+                })
+                .collect();
+            // The foreign key is the existence check: one id that names no
+            // track fails the batch, and the transaction leaves none of it.
+            match queries::record_plays_at(&db.conn, user, &plays, queries::SOURCE_SUBSONIC) {
+                Ok(()) => Ok(b),
+                Err(koan_core::db::connection::DbError::Sqlite(
+                    rusqlite::Error::SqliteFailure(e, _),
+                )) if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY => {
+                    Err(SubsonicError::not_found("Track"))
+                }
+                Err(e) => Err(SubsonicError::from(format!("Database error: {}", e))),
             }
-            Ok(b)
         })
     })
     .await
@@ -2963,7 +2986,8 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
         respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let track_ids = song_ids(db, params.all("songId"));
 
-            let id = match params.get("playlistId") {
+            // One transaction, so no reader sees the name without the tracks.
+            let id = queries::atomically(&db.conn, || match params.get("playlistId") {
                 Some(existing) => {
                     let id = playlist_id(db, Some(existing))?;
                     playlist_for(db, user, id, true)?;
@@ -2973,7 +2997,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                     }
                     queries::set_playlist_tracks(&db.conn, id, &track_ids)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                    id
+                    Ok(id)
                 }
                 None => {
                     let name = params
@@ -2983,9 +3007,9 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
                     queries::add_tracks(&db.conn, id, &track_ids)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                    id
+                    Ok::<_, SubsonicError>(id)
                 }
-            };
+            })?;
 
             playlist_changed(id);
             // Since 1.14.0 the response carries the playlist that was created;
@@ -3008,35 +3032,41 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
         respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let id = playlist_id(db, params.get("playlistId").or_else(|| params.get("id")))?;
             playlist_for(db, user, id, true)?;
-
-            if let Some(name) = params.get("name") {
-                queries::rename_playlist(&db.conn, id, name)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            }
-
-            let mut doomed: Vec<usize> = params
-                .all("songIndexToRemove")
-                .filter_map(|i| i.parse::<usize>().ok())
-                .collect();
-            if !doomed.is_empty() {
-                doomed.sort_unstable();
-                doomed.dedup();
-                let mut ids = queries::playlist_track_ids(&db.conn, id)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                for index in doomed.into_iter().rev() {
-                    if index < ids.len() {
-                        ids.remove(index);
-                    }
-                }
-                queries::set_playlist_tracks(&db.conn, id, &ids)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            }
-
             let added = song_ids(db, params.all("songIdToAdd"));
-            if !added.is_empty() {
-                queries::add_tracks(&db.conn, id, &added)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            }
+
+            // One transaction: the indexes to remove are against the list as
+            // the client last saw it, and another edit landing between the
+            // read and the write would shift them.
+            queries::atomically(&db.conn, || {
+                if let Some(name) = params.get("name") {
+                    queries::rename_playlist(&db.conn, id, name)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                }
+
+                let mut doomed: Vec<usize> = params
+                    .all("songIndexToRemove")
+                    .filter_map(|i| i.parse::<usize>().ok())
+                    .collect();
+                if !doomed.is_empty() {
+                    doomed.sort_unstable();
+                    doomed.dedup();
+                    let mut ids = queries::playlist_track_ids(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                    for index in doomed.into_iter().rev() {
+                        if index < ids.len() {
+                            ids.remove(index);
+                        }
+                    }
+                    queries::set_playlist_tracks(&db.conn, id, &ids)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                }
+
+                if !added.is_empty() {
+                    queries::add_tracks(&db.conn, id, &added)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                }
+                Ok::<_, SubsonicError>(())
+            })?;
 
             playlist_changed(id);
             Ok(b)
@@ -5454,6 +5484,30 @@ mod tests {
         )
         .await;
         assert!(body.contains("status=\"ok\""));
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, track_id).unwrap(),
+            0
+        );
+    }
+
+    /// A batch naming one track that does not exist records none of it, so a
+    /// client retrying after fixing the batch does not double the rest.
+    #[tokio::test]
+    async fn a_scrobble_batch_with_a_missing_track_records_nothing() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let db = Database::open(state.pool.path()).unwrap();
+        let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
+
+        let v = json_of(
+            build_test_router(state),
+            &format!(
+                "/rest/scrobble?{}&id={track_id}&id=999999",
+                auth_query("f=json")
+            ),
+        )
+        .await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
         assert_eq!(
             queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, track_id).unwrap(),
             0

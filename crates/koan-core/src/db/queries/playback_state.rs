@@ -34,8 +34,7 @@ pub struct PersistedPlaybackState {
     pub radio_enabled: bool,
 }
 
-/// Save the current playback state to the database.
-/// Uses UPSERT on the single-row playback_state table (id=1).
+/// Save the queue and where it is up to.
 pub fn save_playback_state(
     conn: &Connection,
     items: &[PersistedQueueItem],
@@ -45,33 +44,22 @@ pub fn save_playback_state(
     radio_enabled: bool,
 ) -> rusqlite::Result<()> {
     let json = serde_json::to_string(items).unwrap_or_else(|_| "[]".into());
-    conn.execute(
-        "INSERT INTO playback_state
-             (id, queue_json, cursor_id, position_ms, was_playing, radio_enabled, updated_at)
-         VALUES (1, ?1, ?2, ?3, ?4, ?5, datetime('now'))
-         ON CONFLICT(id) DO UPDATE SET
-           queue_json = ?1, cursor_id = ?2, position_ms = ?3, was_playing = ?4,
-           radio_enabled = ?5, updated_at = datetime('now')",
-        rusqlite::params![
-            json,
-            cursor_path,
-            position_ms as i64,
-            was_playing,
-            radio_enabled
-        ],
-    )?;
-    Ok(())
+    super::atomically(conn, || {
+        conn.execute(
+            "INSERT INTO playback_state (id, queue_json, updated_at)
+             VALUES (1, ?1, datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET queue_json = ?1, updated_at = datetime('now')",
+            [json],
+        )?;
+        save_playback_position(conn, cursor_path, position_ms, was_playing, radio_enabled)
+    })
 }
 
-/// Update only where you are, not what is queued.
+/// Save where the queue is up to, leaving the queue alone.
 ///
-/// The queue is stored as a JSON blob, and re-serialising it every second so a
-/// position survives a crash would mean rewriting megabytes for a library-sized
-/// queue. This touches four columns and leaves the blob alone; the full
-/// `save_playback_state` runs when the queue itself changes.
-///
-/// Does nothing when no state has been saved yet — there is no queue to be
-/// positioned within.
+/// Called every second while music plays. The queue is a JSON blob in a row
+/// of its own, and this never touches it: `save_playback_state` writes it when
+/// the queue itself changes.
 pub fn save_playback_position(
     conn: &Connection,
     cursor_path: Option<&str>,
@@ -79,21 +67,30 @@ pub fn save_playback_position(
     was_playing: bool,
     radio_enabled: bool,
 ) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE playback_state
-            SET cursor_id = ?1, position_ms = ?2, was_playing = ?3,
-                radio_enabled = ?4, updated_at = datetime('now')
-          WHERE id = 1",
-        rusqlite::params![cursor_path, position_ms as i64, was_playing, radio_enabled],
-    )?;
+    conn.prepare_cached(
+        "INSERT INTO playback_position
+             (id, cursor_id, position_ms, was_playing, radio_enabled, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, datetime('now'))
+         ON CONFLICT(id) DO UPDATE SET
+           cursor_id = ?1, position_ms = ?2, was_playing = ?3, radio_enabled = ?4,
+           updated_at = datetime('now')",
+    )?
+    .execute(rusqlite::params![
+        cursor_path,
+        position_ms as i64,
+        was_playing,
+        radio_enabled
+    ])?;
     Ok(())
 }
 
 /// Load persisted playback state. Returns None if no state has been saved.
 pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<PersistedPlaybackState>> {
     let result = conn.query_row(
-        "SELECT queue_json, cursor_id, position_ms, was_playing, radio_enabled
-         FROM playback_state WHERE id = 1",
+        "SELECT s.queue_json, p.cursor_id, COALESCE(p.position_ms, 0),
+                COALESCE(p.was_playing, 0), COALESCE(p.radio_enabled, 0)
+         FROM playback_state s LEFT JOIN playback_position p ON p.id = 1
+         WHERE s.id = 1",
         [],
         |row| {
             let json: String = row.get(0)?;
@@ -132,8 +129,7 @@ pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<Persist
 
 /// Clear persisted playback state.
 pub fn clear_playback_state(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM playback_state", [])?;
-    Ok(())
+    conn.execute_batch("DELETE FROM playback_state; DELETE FROM playback_position;")
 }
 
 impl PersistedQueueItem {
@@ -289,6 +285,44 @@ mod tests {
         }];
         save_playback_state(&conn, &items, None, 0, false, false).unwrap();
         assert!(!load_playback_state(&conn).unwrap().unwrap().was_playing);
+    }
+
+    #[test]
+    fn a_position_save_leaves_the_queue_row_alone() {
+        let conn = test_conn();
+        let items = vec![PersistedQueueItem {
+            path: "/music/track.flac".into(),
+            title: "Track".into(),
+            artist: "Artist".into(),
+            album_artist: "Artist".into(),
+            album: "Album".into(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            db_id: None,
+        }];
+        save_playback_state(&conn, &items, Some("/music/track.flac"), 1_000, true, false).unwrap();
+        let queue_row = |conn: &Connection| -> (String, Option<String>) {
+            conn.query_row(
+                "SELECT queue_json, updated_at FROM playback_state WHERE id = 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        };
+        conn.execute("UPDATE playback_state SET updated_at = 'then'", [])
+            .unwrap();
+        let before = queue_row(&conn);
+
+        save_playback_position(&conn, Some("/music/track.flac"), 61_000, false, true).unwrap();
+
+        assert_eq!(queue_row(&conn), before);
+        let loaded = load_playback_state(&conn).unwrap().unwrap();
+        assert_eq!(loaded.position_ms, 61_000);
+        assert!(!loaded.was_playing);
+        assert!(loaded.radio_enabled);
     }
 
     #[test]

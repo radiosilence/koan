@@ -260,6 +260,11 @@ pub struct SharedPlayerState {
     /// Bumped on every playlist mutation so UI can skip redundant redraws.
     playlist_version: AtomicU64,
 
+    /// Bumped only when what a saved session holds changes: the items and
+    /// their metadata, not the cursor or load states. What decides whether
+    /// the saved queue has to be written again.
+    content_version: AtomicU64,
+
     /// Set by external signals (e.g. souvlaki Quit event) to request clean shutdown.
     quit_requested: AtomicBool,
 
@@ -288,6 +293,7 @@ impl SharedPlayerState {
             track_info: parking_lot::RwLock::new(None),
             playlist: parking_lot::RwLock::new(Playlist::default()),
             playlist_version: AtomicU64::new(0),
+            content_version: AtomicU64::new(0),
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             output_sample_rate: AtomicU64::new(0),
@@ -516,6 +522,16 @@ impl SharedPlayerState {
         self.changed();
     }
 
+    pub fn content_version(&self) -> u64 {
+        self.content_version.load(Ordering::Acquire)
+    }
+
+    /// `bump_version`, for a change to what a saved session holds.
+    fn bump_content(&self) {
+        self.content_version.fetch_add(1, Ordering::AcqRel);
+        self.bump_version();
+    }
+
     /// Say that something here moved, without saying what.
     ///
     /// Every version and atomic in this struct stays exactly as it was — they
@@ -532,7 +548,7 @@ impl SharedPlayerState {
         let mut pl = self.playlist.write();
         pl.items.extend(items);
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Insert items after a specific queue item.
@@ -546,7 +562,7 @@ impl SharedPlayerState {
             pl.items.insert(insert_at + i, item);
         }
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Update file paths for playlist items (after organize moves files).
@@ -558,7 +574,7 @@ impl SharedPlayerState {
             }
         }
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Remove an item by ID.
@@ -570,7 +586,7 @@ impl SharedPlayerState {
             pl.cursor = None;
         }
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Move an item relative to another entry.
@@ -589,7 +605,7 @@ impl SharedPlayerState {
         let insert_at = if after { to + 1 } else { to };
         pl.items.insert(insert_at, item);
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Batch move: extract items by ID, reinsert them at `target` position.
@@ -630,7 +646,7 @@ impl SharedPlayerState {
 
         pl.items = remaining;
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Set the cursor (what's playing / should play).
@@ -645,13 +661,23 @@ impl SharedPlayerState {
         self.playlist.read().cursor
     }
 
+    /// The path of the item under the cursor, without copying the playlist.
+    pub fn cursor_path(&self) -> Option<PathBuf> {
+        let pl = self.playlist.read();
+        let cursor = pl.cursor?;
+        pl.items
+            .iter()
+            .find(|item| item.id == cursor)
+            .map(|item| item.path.clone())
+    }
+
     /// Clear the entire playlist + cursor.
     pub fn clear_playlist(&self) {
         let mut pl = self.playlist.write();
         pl.items.clear();
         pl.cursor = None;
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     // --- Called from decode thread (gapless) ---
@@ -771,7 +797,7 @@ impl SharedPlayerState {
             }
         }
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Get the playback source for an item if it's ready to play.
@@ -954,7 +980,7 @@ impl SharedPlayerState {
         sorted.extend(taken.into_iter().flatten());
         pl.items = sorted;
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// For each ID, the ID of the item before it (or None if first), returned in
@@ -1007,7 +1033,7 @@ impl SharedPlayerState {
         pl.items = items;
         pl.cursor = cursor;
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Remove multiple items by IDs.
@@ -1022,7 +1048,7 @@ impl SharedPlayerState {
             pl.cursor = None;
         }
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Insert a single item after a given ID (or at front if None).
@@ -1039,7 +1065,7 @@ impl SharedPlayerState {
         };
         pl.items.insert(insert_at, item);
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Move a single item to after `after` (or to front if None).
@@ -1058,7 +1084,7 @@ impl SharedPlayerState {
         };
         pl.items.insert(insert_at, item);
         drop(pl);
-        self.bump_version();
+        self.bump_content();
     }
 
     /// Batch move: reposition each item to after its given predecessor.
@@ -1627,6 +1653,31 @@ mod tests {
 
         assert_eq!(snap.entries[0].status, QueueEntryStatus::PriorityPending);
         assert_eq!(snap.entries[1].status, QueueEntryStatus::Downloading);
+    }
+
+    /// The saved queue is rewritten when its contents move, and only then:
+    /// a track change or a download landing is a position save.
+    #[test]
+    fn only_a_change_to_what_is_saved_moves_the_content_version() {
+        let state = SharedPlayerState::new();
+        let a = make_item("a", ItemState::Pending);
+        let b = make_item("b", ItemState::Ready);
+        let (a_id, b_id) = (a.id, b.id);
+
+        let start = state.content_version();
+        state.add_items(vec![a, b]);
+        let added = state.content_version();
+        assert_ne!(added, start);
+
+        state.set_cursor(Some(a_id));
+        state.update_item_state(a_id, ItemState::Ready);
+        state.advance_cursor_loadable();
+        state.retreat_cursor();
+        assert_eq!(state.content_version(), added);
+        assert_eq!(state.cursor_path(), Some(PathBuf::from("/music/a.flac")));
+
+        state.move_item_to(b_id, None);
+        assert_ne!(state.content_version(), added);
     }
 
     #[test]

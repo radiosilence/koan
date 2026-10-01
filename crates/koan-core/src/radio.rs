@@ -918,7 +918,6 @@ fn cache_subsonic_artist_relationships(
 pub fn spawn_autoqueue(
     state: std::sync::Arc<crate::player::state::SharedPlayerState>,
     tx: crossbeam_channel::Sender<crate::player::commands::PlayerCommand>,
-    db_path: std::path::PathBuf,
 ) {
     use crate::player::commands::PlayerCommand;
     use crate::player::state::{QueueEntryStatus, QueueItemId};
@@ -926,7 +925,6 @@ pub fn spawn_autoqueue(
     std::thread::Builder::new()
         .name("koan-radio".into())
         .spawn(move || {
-            let pool = crate::db::pool::Pool::new(db_path);
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(2));
 
@@ -960,7 +958,7 @@ pub fn spawn_autoqueue(
                     cfg.radio.lookahead
                 );
 
-                let Ok(db) = pool.get() else {
+                let Ok(db) = crate::db::pool::shared().get() else {
                     continue;
                 };
                 let (items, cursor) = state.snapshot_playlist();

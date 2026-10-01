@@ -77,7 +77,7 @@ pub fn spawn_library_watch(
                 if folders.is_empty() {
                     return;
                 }
-                let Ok(db) = Database::open(&db_path) else {
+                let Ok(db) = Database::open_existing(&db_path) else {
                     return;
                 };
                 on_state(true);
@@ -238,7 +238,7 @@ pub fn spawn_auto_sync(
                 }
 
                 if let Some(client) = subsonic_client(&cfg)
-                    && let Ok(db) = Database::open(&db_path)
+                    && let Ok(db) = Database::open_existing(&db_path)
                 {
                     on_state(true);
                     match sync_remote(
@@ -373,7 +373,7 @@ pub fn evict_cache(
                 Err(e) => log::warn!("cache eviction: failed to delete {path}: {e}"),
             }
         }
-        if let Err(e) = queries::clear_cache_for_tracks(&db.conn, &album.track_ids) {
+        if let Err(e) = queries::clear_cached_paths_for(&db.conn, &album.track_ids) {
             log::warn!("cache eviction: failed to clear DB for album: {e}");
         }
         log::info!(

@@ -39,6 +39,27 @@ pub fn record_play_at(
     Ok(conn.last_insert_rowid())
 }
 
+/// Record several plays, `(track_id, played_at)`, as one transaction: all of
+/// them or, if any names a track that does not exist, none.
+pub fn record_plays_at(
+    conn: &Connection,
+    user: i64,
+    plays: &[(i64, i64)],
+    source: &str,
+) -> Result<(), DbError> {
+    let user = resolve_user(conn, user)?;
+    super::atomically(conn, || {
+        let mut insert = conn.prepare_cached(
+            "INSERT INTO play_history (user_id, track_id, played_at, source)
+             VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for &(track_id, played_at) in plays {
+            insert.execute(params![user, track_id, played_at, source])?;
+        }
+        Ok(())
+    })
+}
+
 /// Record a play that started just now.
 pub fn record_play(
     conn: &Connection,

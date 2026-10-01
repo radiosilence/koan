@@ -175,13 +175,14 @@ pub fn rename_playlist(conn: &Connection, id: i64, name: &str) -> Result<bool, D
 
 /// Set the sidebar order from the ids in the order they should appear.
 pub fn reorder_playlists(conn: &Connection, ids: &[i64]) -> Result<(), DbError> {
-    for (position, id) in ids.iter().enumerate() {
-        conn.execute(
-            "UPDATE playlists SET sort_order = ?2 WHERE id = ?1",
-            params![id, position as i64],
-        )?;
-    }
-    Ok(())
+    super::atomically(conn, || {
+        let mut update =
+            conn.prepare_cached("UPDATE playlists SET sort_order = ?2 WHERE id = ?1")?;
+        for (position, id) in ids.iter().enumerate() {
+            update.execute(params![id, position as i64])?;
+        }
+        Ok(())
+    })
 }
 
 /// Remember how this playlist is looked at. `None` follows the app default.
@@ -362,28 +363,35 @@ pub fn add_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Result<Vec<i
     if track_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let mut next: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_tracks WHERE playlist_id = ?1",
-        params![id],
-        |r| r.get(0),
-    )?;
-    let mut added = Vec::new();
-    for track_id in track_ids {
-        // A track that no longer exists would fail the foreign key and take the
-        // whole add down with it.
-        let inserted = conn.execute(
-            "INSERT INTO playlist_tracks (playlist_id, position, track_id)
-             SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM tracks WHERE id = ?3)",
-            params![id, next, track_id],
+    super::atomically(conn, || {
+        let mut next: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_tracks WHERE playlist_id = ?1",
+            params![id],
+            |r| r.get(0),
         )?;
-        if inserted > 0 {
-            next += 1;
-            added.push(conn.last_insert_rowid());
+        let mut insert = conn.prepare_cached(INSERT_ENTRY)?;
+        let mut added = Vec::new();
+        for track_id in track_ids {
+            if insert.execute(params![id, next, track_id])? > 0 {
+                next += 1;
+                added.push(conn.last_insert_rowid());
+            }
         }
-    }
-    touch(conn, id)?;
-    Ok(added)
+        touch(conn, id)?;
+        Ok(added)
+    })
 }
+
+/// Insert one entry, unless its track has gone: a track that no longer exists
+/// would fail the foreign key and take the whole edit down with it.
+const INSERT_ENTRY: &str = "INSERT INTO playlist_tracks (playlist_id, position, track_id)
+     SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM tracks WHERE id = ?3)";
+
+/// Positions are unique per playlist, so they cannot be rewritten in place
+/// without colliding on the way through. Entries are first moved to negative
+/// positions, out of the way of anything the table holds, then flipped back.
+const FLIP_NEGATIVE_POSITIONS: &str = "UPDATE playlist_tracks SET position = -position - 1
+     WHERE playlist_id = ?1 AND position < 0";
 
 /// Put the entries in this order. Ids are kept, so nothing holding a reference
 /// to an entry loses it because the playlist was rearranged.
@@ -392,60 +400,52 @@ pub fn add_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Result<Vec<i
 /// to the end — a caller that names all of them, which every caller does, never
 /// meets that case.
 pub fn reorder_entries(conn: &Connection, id: i64, entry_ids: &[i64]) -> Result<(), DbError> {
-    // Positions are unique per playlist, so they cannot be rewritten in place
-    // without colliding on the way through. Negative numbers are out of the way
-    // of anything the table holds.
-    for (position, entry) in entry_ids.iter().enumerate() {
-        conn.execute(
-            "UPDATE playlist_tracks SET position = ?3
-             WHERE id = ?1 AND playlist_id = ?2",
-            params![entry, id, -(position as i64) - 1],
+    super::atomically(conn, || {
+        let mut update = conn.prepare_cached(
+            "UPDATE playlist_tracks SET position = ?3 WHERE id = ?1 AND playlist_id = ?2",
         )?;
-    }
-    conn.execute(
-        "UPDATE playlist_tracks SET position = -position - 1
-         WHERE playlist_id = ?1 AND position < 0",
-        params![id],
-    )?;
-    touch(conn, id)
+        for (position, entry) in entry_ids.iter().enumerate() {
+            update.execute(params![entry, id, -(position as i64) - 1])?;
+        }
+        conn.execute(FLIP_NEGATIVE_POSITIONS, params![id])?;
+        touch(conn, id)
+    })
 }
 
 /// Drop entries by id. Everything after them closes up.
 pub fn remove_entries(conn: &Connection, id: i64, entry_ids: &[i64]) -> Result<usize, DbError> {
-    let mut removed = 0;
-    for entry in entry_ids {
-        removed += conn.execute(
-            "DELETE FROM playlist_tracks WHERE id = ?1 AND playlist_id = ?2",
-            params![entry, id],
-        )?;
-    }
-    if removed > 0 {
-        renumber(conn, id)?;
-        touch(conn, id)?;
-    }
-    Ok(removed)
+    super::atomically(conn, || {
+        let mut delete =
+            conn.prepare_cached("DELETE FROM playlist_tracks WHERE id = ?1 AND playlist_id = ?2")?;
+        let mut removed = 0;
+        for entry in entry_ids {
+            removed += delete.execute(params![entry, id])?;
+        }
+        if removed > 0 {
+            renumber(conn, id)?;
+            touch(conn, id)?;
+        }
+        Ok(removed)
+    })
 }
 
 /// Close the gaps left by a removal, keeping the order and the ids.
 fn renumber(conn: &Connection, id: i64) -> Result<(), DbError> {
-    let order: Vec<i64> = {
-        let mut stmt = conn
-            .prepare("SELECT id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position")?;
-        stmt.query_map(params![id], |row| row.get(0))?
-            .collect::<Result<Vec<_>, _>>()?
-    };
-    for (position, entry) in order.iter().enumerate() {
-        conn.execute(
-            "UPDATE playlist_tracks SET position = ?2 WHERE id = ?1",
-            params![entry, -(position as i64) - 1],
-        )?;
-    }
-    conn.execute(
-        "UPDATE playlist_tracks SET position = -position - 1
-         WHERE playlist_id = ?1 AND position < 0",
-        params![id],
-    )?;
-    Ok(())
+    super::atomically(conn, || {
+        let order: Vec<i64> = conn
+            .prepare_cached(
+                "SELECT id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
+            )?
+            .query_map(params![id], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        let mut update =
+            conn.prepare_cached("UPDATE playlist_tracks SET position = ?2 WHERE id = ?1")?;
+        for (position, entry) in order.iter().enumerate() {
+            update.execute(params![entry, -(position as i64) - 1])?;
+        }
+        conn.execute(FLIP_NEGATIVE_POSITIONS, params![id])?;
+        Ok(())
+    })
 }
 
 /// Replace the whole contents in one go.
@@ -458,22 +458,20 @@ fn renumber(conn: &Connection, id: i64) -> Result<(), DbError> {
 /// Positions are rewritten from zero, so nothing depends on what was there
 /// before.
 pub fn set_playlist_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Result<(), DbError> {
-    conn.execute(
-        "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
-        params![id],
-    )?;
-    let mut next = 0i64;
-    for track_id in track_ids {
-        let inserted = conn.execute(
-            "INSERT INTO playlist_tracks (playlist_id, position, track_id)
-             SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM tracks WHERE id = ?3)",
-            params![id, next, track_id],
+    super::atomically(conn, || {
+        conn.execute(
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
+            params![id],
         )?;
-        if inserted > 0 {
-            next += 1;
+        let mut insert = conn.prepare_cached(INSERT_ENTRY)?;
+        let mut next = 0i64;
+        for track_id in track_ids {
+            if insert.execute(params![id, next, track_id])? > 0 {
+                next += 1;
+            }
         }
-    }
-    touch(conn, id)
+        touch(conn, id)
+    })
 }
 
 /// Take the server's copy of the contents, keeping what only this copy can hold.
@@ -484,6 +482,16 @@ pub fn set_playlist_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Res
 /// following the playlist stays locked to it. Does not mark the playlist
 /// changed: this is the server's copy, not an edit.
 pub fn merge_server_tracks(
+    conn: &Connection,
+    id: i64,
+    server_track_ids: &[i64],
+) -> Result<(), DbError> {
+    super::atomically(conn, || {
+        merge_server_tracks_inner(conn, id, server_track_ids)
+    })
+}
+
+fn merge_server_tracks_inner(
     conn: &Connection,
     id: i64,
     server_track_ids: &[i64],
@@ -514,30 +522,22 @@ pub fn merge_server_tracks(
             *entry = Some(spare.remove(i).0);
         }
     }
+    let mut delete = conn.prepare_cached("DELETE FROM playlist_tracks WHERE id = ?1")?;
     for (entry, _) in spare {
-        conn.execute("DELETE FROM playlist_tracks WHERE id = ?1", params![entry])?;
+        delete.execute(params![entry])?;
     }
 
-    // Negative positions first, out of the way of the unique index.
+    let mut update =
+        conn.prepare_cached("UPDATE playlist_tracks SET position = ?2 WHERE id = ?1")?;
+    let mut insert = conn.prepare_cached(INSERT_ENTRY)?;
     for (position, (entry, track)) in merged.iter().enumerate() {
         let position = -(position as i64) - 1;
         match entry {
-            Some(entry) => conn.execute(
-                "UPDATE playlist_tracks SET position = ?2 WHERE id = ?1",
-                params![entry, position],
-            )?,
-            None => conn.execute(
-                "INSERT INTO playlist_tracks (playlist_id, position, track_id)
-                 SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM tracks WHERE id = ?3)",
-                params![id, position, track],
-            )?,
+            Some(entry) => update.execute(params![entry, position])?,
+            None => insert.execute(params![id, position, track])?,
         };
     }
-    conn.execute(
-        "UPDATE playlist_tracks SET position = -position - 1
-         WHERE playlist_id = ?1 AND position < 0",
-        params![id],
-    )?;
+    conn.execute(FLIP_NEGATIVE_POSITIONS, params![id])?;
     renumber(conn, id)
 }
 
@@ -636,6 +636,26 @@ mod tests {
 
     fn track(conn: &Connection, title: &str, album: &str) -> i64 {
         upsert_track(conn, &sample_meta(title, "Artist", album)).unwrap()
+    }
+
+    /// Edits are their own transaction, and nest inside a caller's: rolling
+    /// the caller back takes the edit with it.
+    #[test]
+    fn an_edit_inside_a_callers_transaction_rolls_back_with_it() {
+        let conn = test_conn();
+        let (a, b) = (track(&conn, "A", "X"), track(&conn, "B", "X"));
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
+        add_tracks(&conn, id, &[a]).unwrap();
+        assert!(conn.is_autocommit(), "committed on its own");
+
+        let tx = conn.unchecked_transaction().unwrap();
+        add_tracks(&tx, id, &[b]).unwrap();
+        let entries = playlist_entry_ids(&tx, id).unwrap();
+        reorder_entries(&tx, id, &[entries[1], entries[0]]).unwrap();
+        assert_eq!(playlist_track_ids(&tx, id).unwrap(), [b, a]);
+        drop(tx);
+
+        assert_eq!(playlist_track_ids(&conn, id).unwrap(), [a]);
     }
 
     #[test]

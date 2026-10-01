@@ -1,4 +1,4 @@
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::connection::DbError;
 
@@ -21,33 +21,30 @@ pub fn get_or_create_artist(
     name: &str,
     remote_id: Option<&str>,
 ) -> Result<i64, DbError> {
-    // Try to find existing.
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM artists WHERE name = ?1 COLLATE NOCASE
+    let existing: Option<(i64, Option<String>)> = conn
+        .prepare_cached(
+            "SELECT id, remote_id FROM artists WHERE name = ?1 COLLATE NOCASE
              ORDER BY name = ?1 DESC, id LIMIT 1",
-            params![name],
-            |row| row.get(0),
-        )
-        .ok();
+        )?
+        .query_row(params![name], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional()?;
 
-    if let Some(id) = existing {
+    if let Some((id, stored)) = existing {
         // The server's current id wins: one that renumbers its library would
         // otherwise leave the artist under an id it no longer answers to.
         if let Some(rid) = remote_id {
-            conn.execute(
-                "UPDATE artists SET remote_id = ?1 WHERE id = ?2 AND remote_id IS NOT ?1",
-                params![rid, id],
-            )?;
+            if stored.as_deref() != Some(rid) {
+                conn.prepare_cached("UPDATE artists SET remote_id = ?1 WHERE id = ?2")?
+                    .execute(params![rid, id])?;
+            }
             super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
         }
         return Ok(id);
     }
 
-    conn.execute(
-        "INSERT INTO artists (name, remote_id) VALUES (?1, ?2)",
-        params![name, remote_id],
-    )?;
+    let uid = super::free_uid(conn, super::UidKind::Artist, remote_id)?;
+    conn.prepare_cached("INSERT INTO artists (name, remote_id, uid) VALUES (?1, ?2, ?3)")?
+        .execute(params![name, remote_id, uid])?;
     let id = conn.last_insert_rowid();
     if let Some(rid) = remote_id {
         super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
