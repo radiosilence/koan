@@ -38,21 +38,21 @@ fn suppress_stderr<F: FnOnce() -> T, T>(f: F) -> T {
 // dup/dup2/close, declared directly.
 unsafe fn nix_dup(fd: i32) -> i32 {
     unsafe extern "C" {
-        safe fn dup(fd: i32) -> i32;
+        fn dup(fd: i32) -> i32;
     }
-    dup(fd)
+    unsafe { dup(fd) }
 }
 unsafe fn nix_dup2(oldfd: i32, newfd: i32) -> i32 {
     unsafe extern "C" {
-        safe fn dup2(oldfd: i32, newfd: i32) -> i32;
+        fn dup2(oldfd: i32, newfd: i32) -> i32;
     }
-    dup2(oldfd, newfd)
+    unsafe { dup2(oldfd, newfd) }
 }
 unsafe fn nix_close(fd: i32) -> i32 {
     unsafe extern "C" {
-        safe fn close(fd: i32) -> i32;
+        fn close(fd: i32) -> i32;
     }
-    close(fd)
+    unsafe { close(fd) }
 }
 
 /// cpal-based audio backend for Linux (ALSA / PipeWire / PulseAudio).
