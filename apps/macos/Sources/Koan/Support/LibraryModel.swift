@@ -122,6 +122,18 @@ final class LibraryModel {
     /// Stored rather than computed because a `List` reads its collection far
     /// more than once per update, and anything derived on read is derived a few
     /// hundred times a frame.
+    /// Where each browser was scrolled to when it was left, so it can be rebuilt
+    /// on the way back and put where it was. Not observed: nothing redraws
+    /// because of them.
+    @ObservationIgnored var albumsTop: Int64?
+    @ObservationIgnored var artistsTop: Int64?
+    /// The artist rows on screen, kept as they come and go so the top one can
+    /// be read when the list is left.
+    @ObservationIgnored var artistsShown: Set<Int64> = []
+    /// How many rows above the visible ones the list keeps ready, so the top
+    /// of what was on screen can be told from the top of what was built.
+    @ObservationIgnored var artistsOverscan = 0
+
     private(set) var visibleAlbums: [Album] = []
     private(set) var visibleArtists: [Artist] = []
     private(set) var visibleFavourites: [Track] = []

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.47.1
+
+### Fixed
+
+- **Moving between pages in the Mac app no longer stalls for half a second.** Most page switches added or removed toolbar items (the filter field, album sorting, selection), which makes AppKit re-tile the toolbar and lay out the whole window again, including the album grid and artist list kept mounted behind the page on screen. The toolbar now keeps the same items on every page, and the album and artist browsers are rebuilt when visited and put back where they were scrolled to instead of being kept mounted. In a scripted run over fourteen page switches the main thread stalled for 3.3 s in total, down from 5.5 s.
+- **Choosing a playlist lights its sidebar row at once.** The row followed the page, so it went dark while the playlist loaded and the previous row lit up again until it arrived.
+
 ## 0.47.0
 
 ### Changed

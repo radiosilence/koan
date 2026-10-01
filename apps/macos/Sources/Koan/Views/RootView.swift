@@ -140,110 +140,9 @@ struct RootView: View {
         }
         .onPreferenceChange(TransportHeightKey.self) { transportHeight = $0 }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { ui.windowSize = $0 }
-        .toolbar {
-            // Back and forward walk the pages you visited, in order,
-            // wherever they were.
-            ToolbarItemGroup(placement: .navigation) {
-                Button { nav.goBack() } label: {
-                    Label("Back", systemImage: Icon.back)
-                }
-                .disabled(!nav.canGoBack)
-                .help("Back (⌘[)")
-
-                Button { nav.goForward() } label: {
-                    Label("Forward", systemImage: Icon.forward)
-                }
-                .disabled(!nav.canGoForward)
-                .help("Forward (⌘])")
-            }
-
-            // Separate items with `ToolbarSpacer` between them, not one
-            // `ToolbarItemGroup`: a group shares a single pane of glass, which
-            // would put the filter field and the lyrics toggle in the same capsule.
-            ToolbarSpacer(.flexible, placement: .primaryAction)
-
-            // Filtering what is on screen belongs with it, not in the sidebar
-            // search, which navigates away instead of narrowing.
-            if let placeholder = nav.section?.filterPlaceholder {
-                ToolbarItem(placement: .primaryAction) {
-                    LibraryFilter(placeholder: placeholder)
-                        .frame(width: 180)
-                }
-            }
-
-            // Sort belongs next to what it sorts, so it only appears there.
-            if nav.section == .albums {
-                // Filtering and sorting are different questions, so they get
-                // different panes of glass rather than one joined control.
-                ToolbarSpacer(.fixed, placement: .primaryAction)
-
-                // A pull-down with the current choice ticked, the way Finder's
-                // arrange control works — rather than a picker forced to a
-                // fixed width, which reads as a control that did not fit.
-                ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Picker("Sort", selection: Binding(
-                            get: { library.albumSort },
-                            set: { library.albumSort = $0 }
-                        )) {
-                            ForEach(AlbumSort.all, id: \.self) { sort in
-                                Text(sort.label).tag(sort)
-                            }
-                        }
-                        .pickerStyle(.inline)
-                        .labelsHidden()
-                    } label: {
-                        Label("Sort", systemImage: "arrow.up.arrow.down")
-                    }
-                    // The accent marks what is playing and what is selected.
-                    // A toolbar control that is always there is neither.
-                    .tint(.primary)
-                    .help("Sort albums — \(library.albumSort.label)")
-                }
-
-                // Its own button rather than an item inside the sort menu:
-                // reshuffling is something you do repeatedly until you like
-                // what you see, and a menu makes that four clicks instead of
-                // one.
-                if library.albumSort == .random {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            library.reshuffleAlbums()
-                        } label: {
-                            Label("Shuffle", systemImage: Icon.reshuffle)
-                        }
-                        .tint(.primary)
-                        .help("Shuffle again")
-                    }
-                }
-
-                // Last, and apart from the filter: what you do with a pick is
-                // not part of narrowing the grid, and next to the field the two
-                // read as one control. Always here, whatever it is showing, so
-                // starting or finishing a selection changes one item rather
-                // than the toolbar.
-                ToolbarSpacer(.fixed, placement: .primaryAction)
-
-                ToolbarItem(placement: .primaryAction) {
-                    SelectionControls(selection: library.selection)
-                }
-            }
-
-            // An artist's records are a grid too, and are picked the same way.
-            if case .artist = nav.current {
-                ToolbarItem(placement: .primaryAction) {
-                    SelectionControls(selection: library.artistSelection)
-                }
-            }
-
-            // Search results are picked the same way, across all three kinds.
-            if nav.section == .searchResults {
-                ToolbarItem(placement: .primaryAction) {
-                    SelectionControls(selection: search.selection)
-                }
-            }
-
-        }
+        // Its own content rather than built here: it reads the page, and a read in
+        // this body would re-run the window on every move.
+        .toolbar { PageToolbar() }
         // Named here, not where it was asked for: most of the things that ask
         // are context menus, and a menu takes its own alerts down with it.
         .newPlaylistAlert()
@@ -515,20 +414,16 @@ private struct Toasts: View {
 private struct StageView: View {
     @Environment(Navigator.self) private var nav
 
-    /// The queue is never torn down, and nor are the album and artist browsers
-    /// once visited; every other page is built when you arrive and thrown away
-    /// when you leave.
+    /// The queue is never torn down; every other page is built when you arrive
+    /// and thrown away when you leave.
     ///
-    /// That asymmetry buys the one thing a `List` cannot be given back: where it
-    /// was scrolled to. On macOS a `List` is AppKit's table, and every SwiftUI
-    /// way of asking one to go to an offset — `scrollPosition`, `scrollTo(y:)`,
-    /// `scrollPosition(id:)` — is inert on it, so a page rebuilt on the way
-    /// back always starts at the top. Keeping it mounted means it never left:
-    /// scroll down the artists, open one, go Back, and the list is where it
-    /// was. The browsers are the pages you leave to look at one thing and come
-    /// back to; a record or an artist is the thing, and starts at its top.
+    /// The queue keeps its place that way. The album and artist browsers are
+    /// rebuilt and put back where they were instead (see `AlbumBrowser` and
+    /// `ArtistBrowser`): a page kept mounted is still laid out with the window,
+    /// and two browsers of thousands of rows kept behind the page on screen
+    /// made every page switch pay to lay them out again.
     ///
-    /// Off stage a page is invisible, untouchable, unfocusable and told so,
+    /// Off stage the queue is invisible, untouchable, unfocusable and told so,
     /// which is what stops the row that is playing animating behind a page you
     /// are looking at.
     var body: some View {
@@ -536,55 +431,21 @@ private struct StageView: View {
             QueueView()
                 .staged(nav.current == .section(.queue))
 
-            ForEach(kept) { section in
-                browser(section)
-                    .id(nav.rewinds[section, default: 0])
-                    .staged(nav.current == .section(section))
-            }
-
-            if let page = unkeptPage {
+            if let page = pageOnStage {
                 page
             }
         }
-        .onChange(of: nav.current, initial: true) { _, now in
-            if let section = now.section, Self.keepable.contains(section), !visited.contains(section) {
-                visited.append(section)
-            }
-        }
     }
 
-    private static let keepable: [Navigator.Section] = [.albums, .artists]
-
-    /// Browsers mounted so far, in the order first visited. Held rather than
-    /// derived so that leaving one keeps it.
-    @State private var visited: [Navigator.Section] = []
-
-    /// What stays mounted: everything visited, and the browser being arrived at
-    /// now. Including the current one here rather than waiting for `visited`
-    /// means the first frame builds it where it will stay, instead of building
-    /// it once as a page and again when it is recorded.
-    private var kept: [Navigator.Section] {
-        guard let section = nav.current.section, Self.keepable.contains(section),
-              !visited.contains(section)
-        else { return visited }
-        return visited + [section]
-    }
-
-    @ViewBuilder private func browser(_ section: Navigator.Section) -> some View {
-        switch section {
-        case .albums: AlbumBrowser()
-        case .artists: ArtistBrowser()
-        default: EmptyView()
-        }
-    }
-
-    /// The page on screen when it is neither the queue nor a kept browser.
-    private var unkeptPage: AnyView? {
+    /// The page on screen when it is not the queue.
+    private var pageOnStage: AnyView? {
         switch nav.current {
         case .section(.queue):
             return nil
-        case .section(let section) where Self.keepable.contains(section):
-            return nil
+        // A browser goes back to its top by scrolling, not by being rebuilt,
+        // since rebuilt it would put itself back where it was.
+        case .section(let section) where section == .albums || section == .artists:
+            return AnyView(page(section))
         case .section(let section):
             return AnyView(page(section).id(nav.rewinds[section, default: 0]))
         case .album(let id):
@@ -601,7 +462,9 @@ private struct StageView: View {
         case .playHistory: HistoryView()
         case .downloads: DownloadsView()
         case .playlist(let id): PlaylistView(playlistId: id)
-        case .queue, .albums, .artists: EmptyView()
+        case .albums: AlbumBrowser()
+        case .artists: ArtistBrowser()
+        case .queue: EmptyView()
         }
     }
 }
@@ -700,5 +563,139 @@ private extension View {
         // which is why `bare` does without it and takes the hard edge instead.
         safeAreaPadding(.bottom, height)
             .scrollEdgeEffectStyle(glass ? .soft : .hard, for: .bottom)
+    }
+}
+
+
+/// The window's toolbar: back and forward, then the controls for the page.
+///
+/// The same items on every page. A control that does not apply to a page is
+/// not drawn there, but its item stays: adding or removing an item makes AppKit
+/// re-tile the toolbar, and a re-tile lays out the whole window — every page
+/// kept mounted behind the one on screen included, which is most of what a
+/// page switch cost.
+private struct PageToolbar: ToolbarContent {
+    @Environment(Navigator.self) private var nav
+    @Environment(LibraryModel.self) private var library
+    @Environment(SearchModel.self) private var search
+
+    var body: some ToolbarContent {
+        // Back and forward walk the pages you visited, in order, wherever they
+        // were.
+        ToolbarItemGroup(placement: .navigation) {
+            Button { nav.goBack() } label: {
+                Label("Back", systemImage: Icon.back)
+            }
+            .disabled(!nav.canGoBack)
+            .help("Back (⌘[)")
+
+            Button { nav.goForward() } label: {
+                Label("Forward", systemImage: Icon.forward)
+            }
+            .disabled(!nav.canGoForward)
+            .help("Forward (⌘])")
+        }
+
+        // Separate items with `ToolbarSpacer` between them, not one
+        // `ToolbarItemGroup`: a group shares a single pane of glass, which
+        // would put the filter field and the lyrics toggle in the same capsule.
+        ToolbarSpacer(.flexible, placement: .primaryAction)
+
+        // Filtering what is on screen belongs with it, not in the sidebar
+        // search, which navigates away instead of narrowing.
+        ToolbarItem(placement: .primaryAction) {
+            if let placeholder = nav.section?.filterPlaceholder {
+                LibraryFilter(placeholder: placeholder)
+                    .frame(width: 180)
+            }
+        }
+        .sharedBackgroundVisibility(nav.section?.filterPlaceholder == nil ? .hidden : .automatic)
+
+        // Sort belongs next to what it sorts, so it only appears there.
+        // Filtering and sorting are different questions, so they get
+        // different panes of glass rather than one joined control.
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+
+        ToolbarItem(placement: .primaryAction) {
+            if nav.section == .albums {
+                AlbumSortControls()
+            }
+        }
+        .sharedBackgroundVisibility(nav.section == .albums ? .automatic : .hidden)
+
+        // Last, and apart from the filter: what you do with a pick is not part
+        // of narrowing the grid, and next to the field the two read as one
+        // control.
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+
+        ToolbarItem(placement: .primaryAction) {
+            if let selection {
+                SelectionControls(selection: selection)
+            }
+        }
+        .sharedBackgroundVisibility(selection == nil ? .hidden : .automatic)
+    }
+
+    /// The pick the page on screen makes, if it makes one: the album grid, an
+    /// artist's records and search results are picked the same way.
+    private var selection: PlayableSelection? {
+        if nav.section == .albums { return library.selection }
+        if case .artist = nav.current { return library.artistSelection }
+        if nav.section == .searchResults { return search.selection }
+        return nil
+    }
+}
+
+/// The album grid's sort, and reshuffling when the sort is random.
+private struct AlbumSortControls: View {
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        HStack(spacing: 2) {
+            // A pull-down with the current choice ticked, the way Finder's
+            // arrange control works — rather than a picker forced to a fixed
+            // width, which reads as a control that did not fit.
+            Menu {
+                Picker("Sort", selection: Binding(
+                    get: { library.albumSort },
+                    set: { library.albumSort = $0 }
+                )) {
+                    ForEach(AlbumSort.all, id: \.self) { sort in
+                        Text(sort.label).tag(sort)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                Label("Sort", systemImage: "arrow.up.arrow.down")
+            }
+            // The accent marks what is playing and what is selected. A toolbar
+            // control that is always there is neither.
+            .tint(.primary)
+            .help("Sort albums — \(library.albumSort.label)")
+
+            // Its own button rather than an item inside the sort menu:
+            // reshuffling is something you do repeatedly until you like what
+            // you see, and a menu makes that four clicks instead of one.
+            Button {
+                library.reshuffleAlbums()
+            } label: {
+                Label("Shuffle", systemImage: Icon.reshuffle)
+            }
+            .tint(.primary)
+            .help("Shuffle again")
+        }
+    }
+}
+
+private extension View {
+    /// A toolbar control that stays laid out on pages it does not apply to,
+    /// unseen and untouchable there. The toolbar keeps the same geometry on
+    /// every page, so moving between pages never makes AppKit re-tile it.
+    func slot(applies: Bool) -> some View {
+        opacity(applies ? 1 : 0)
+            .allowsHitTesting(applies)
+            .disabled(!applies)
+            .accessibilityHidden(!applies)
     }
 }

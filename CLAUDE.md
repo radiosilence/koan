@@ -214,7 +214,7 @@ follows the top of the stack in front — see `TabShell`.
 | `Views/DriftingWash.swift` | The window's wash, as Core Animation. Drift, blur and dissolve belong to the compositor; nothing here costs a main-thread frame |
 | `Support/FrameTimer.swift` | Times a tap against the display link, so the region after a body evaluation — layout, the commit, the render server — is measurable at all. See CONTRIBUTING |
 | `Support/PlayingLevels.swift` | One analyser subscription for every playing indicator on screen, handing each frame straight to the bars as layer geometry — nothing observable, nothing SwiftUI re-runs. Reads the stream only while a bar is attached, which is what lets the analyser park |
-| `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select. Never torn down: `StageView` keeps it mounted behind other pages, because a macOS `List` cannot be scrolled back to where it was. The album and artist browsers are kept the same way once visited |
+| `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select. Never torn down: `StageView` keeps it mounted behind other pages, so its place and its playing row survive a visit elsewhere. The album and artist browsers are rebuilt on each visit and restore their scroll position; kept mounted, they made every page switch lay them out |
 | `Views/PickerSheet.swift` | ⇧⌘K picker: multi-select, add / add-and-play / replace queue |
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |
 | `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |

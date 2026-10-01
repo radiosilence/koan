@@ -8,9 +8,34 @@ struct ArtistBrowser: View {
     @State private var selection: Set<Int64> = []
 
     var body: some View {
+        ScrollViewReader { proxy in
         List(library.visibleArtists, id: \.id, selection: $selection) { artist in
             ArtistRow(artist: artist)
                 .primaryTap { nav.open(artist: artist.id) }
+                .onAppear { library.artistsShown.insert(artist.id) }
+                .onDisappear { library.artistsShown.remove(artist.id) }
+        }
+        // Rebuilt on each visit rather than kept mounted behind other pages
+        // (see `StageView`). A `List` takes no scroll position, but it does go
+        // to a row it is asked for, so the top row is noted on the way out and
+        // asked for on the way back.
+        .onAppear {
+            guard let top = library.artistsTop else { return }
+            proxy.scrollTo(top, anchor: .top)
+            // The list also builds a few rows above the ones on screen. Seen
+            // once here, where the true top is known, so leaving does not
+            // remember a place a little above where you were each time.
+            Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                if let wanted = artistIndex(top), let built = topShownIndex {
+                    library.artistsOverscan = max(0, wanted - built)
+                }
+            }
+        }
+        .onDisappear { library.artistsTop = topShownArtist }
+        .onChange(of: nav.rewinds[.artists]) {
+            if let first = library.visibleArtists.first { proxy.scrollTo(first.id, anchor: .top) }
+        }
         }
         .clearsSelection($selection)
         .washedGround()
@@ -28,6 +53,25 @@ struct ArtistBrowser: View {
                 EmptyState(icon: "music.mic", title: "No artists yet")
             }
         }
+    }
+
+    /// The first row on screen: the highest row built, less the rows the list
+    /// builds above what it shows.
+    private var topShownArtist: Int64? {
+        guard let built = topShownIndex else { return nil }
+        let artists = library.visibleArtists
+        let index = built == 0 ? 0 : min(built + library.artistsOverscan, artists.count - 1)
+        return artists[index].id
+    }
+
+    private var topShownIndex: Int? {
+        let shown = library.artistsShown
+        guard !shown.isEmpty else { return nil }
+        return library.visibleArtists.firstIndex { shown.contains($0.id) }
+    }
+
+    private func artistIndex(_ id: Int64) -> Int? {
+        library.visibleArtists.firstIndex { $0.id == id }
     }
 }
 
