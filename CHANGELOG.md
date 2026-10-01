@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.46.2
+
+### Fixed
+
+- **The queue plays after the iOS app is updated.** iOS moves an app's data to a new path on every update, and the saved queue named tracks by their old file paths: items it could not match came back waiting for a download that was never started, and the playing position was lost, so nothing played until the queue was cleared. A restore now finds each track by its library id, and keeps its place in the queue.
+- **Downloads survive an iOS update.** The paths stored for downloaded tracks named the old location, so every download looked missing: tracks were fetched again beside the copies already on the phone, and the old copies could no longer be evicted. On launch, paths under a moved cache are pointed at where the files now are.
+- **The track you play downloads first, on its own.** Playing an album that was not downloaded started every track at once, each taking a share of the connection, so on a slow link the first track arrived no sooner than the rest. Other downloads now wait until the track under the cursor has arrived.
+- **The parallel-downloads setting takes effect when changed.** It was read once at launch.
+
 ## 0.46.1
 
 ### Fixed

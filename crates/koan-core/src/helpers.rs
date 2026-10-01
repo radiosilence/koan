@@ -645,6 +645,64 @@ pub fn sweep_partial_downloads(cfg: &Config) -> CacheCleared {
     swept
 }
 
+/// Re-root cached paths that name a cache directory other than `cache_dir`.
+///
+/// iOS gives an app a new container path when it is updated. The cache moves
+/// with it, but the absolute paths stored for its files do not, so every
+/// download looks missing: tracks are fetched again beside the copies already
+/// there, and eviction cannot find the old ones to delete. The cache lays
+/// files out as `<cache>/<artist>/<album>/<file>` (`cache_path_for_track`), so
+/// a stale path is re-rooted on its last three components when that file
+/// exists under `cache_dir`. Paths whose file is not there are left alone; the
+/// next play resolves them as it would any missing download.
+///
+/// Returns the number of paths rewritten.
+pub fn relocate_cached_paths(db: &Database, cache_dir: &Path) -> rusqlite::Result<usize> {
+    let prefix = format!("{}/", cache_dir.to_string_lossy().trim_end_matches('/'));
+    let stale: Vec<(i64, String)> = db
+        .conn
+        .prepare(
+            "SELECT id, cached_path FROM tracks
+             WHERE cached_path IS NOT NULL AND substr(cached_path, 1, ?2) != ?1",
+        )?
+        .query_map(
+            rusqlite::params![prefix, prefix.chars().count() as i64],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?
+        .collect::<rusqlite::Result<_>>()?;
+    if stale.is_empty() {
+        return Ok(0);
+    }
+
+    let tx = db.conn.unchecked_transaction()?;
+    let mut moved = 0;
+    for (id, old) in &stale {
+        let tail: Vec<_> = Path::new(old).components().rev().take(3).collect();
+        if tail.len() < 3 {
+            continue;
+        }
+        let new = tail
+            .iter()
+            .rev()
+            .fold(cache_dir.to_path_buf(), |p, c| p.join(c));
+        if new.is_file() {
+            tx.execute(
+                "UPDATE tracks SET cached_path = ?1 WHERE id = ?2",
+                rusqlite::params![new.to_string_lossy(), id],
+            )?;
+            moved += 1;
+        }
+    }
+    tx.commit()?;
+    if moved > 0 {
+        log::info!(
+            "re-rooted {moved} cached path(s) under {}",
+            cache_dir.display()
+        );
+    }
+    Ok(moved)
+}
+
 /// Fetch again anything in the queue whose downloaded copy has just been
 /// removed.
 ///
@@ -1785,6 +1843,68 @@ mod rebuild_tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    #[test]
+    fn cached_paths_follow_a_moved_cache_directory() {
+        let old = tempfile::tempdir().unwrap();
+        let new = tempfile::tempdir().unwrap();
+        let db = test_db();
+
+        let mut rows = Vec::new();
+        for name in ["moved", "gone", "current"] {
+            let mut meta = sample_meta(name, "Artist", "Album");
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(name.into());
+            let id = queries::upsert_track(&db.conn, &meta).unwrap();
+            let tail = format!("Artist/Album/{name}.flac");
+            // Every copy now lives under the new directory except "gone".
+            if name != "gone" {
+                let file = new.path().join(&tail);
+                std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+                std::fs::write(&file, b"audio").unwrap();
+            }
+            let stored = if name == "current" {
+                new.path()
+            } else {
+                old.path()
+            }
+            .join(&tail);
+            queries::set_cached_path(&db.conn, id, &stored.to_string_lossy()).unwrap();
+            rows.push((id, tail));
+        }
+
+        assert_eq!(relocate_cached_paths(&db, new.path()).unwrap(), 1);
+
+        let cached = |id: i64| -> String {
+            db.conn
+                .query_row("SELECT cached_path FROM tracks WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+        let expect = |root: &Path, tail: &str| root.join(tail).to_string_lossy().into_owned();
+        assert_eq!(
+            cached(rows[0].0),
+            expect(new.path(), &rows[0].1),
+            "re-rooted"
+        );
+        assert_eq!(
+            cached(rows[1].0),
+            expect(old.path(), &rows[1].1),
+            "no file, left alone"
+        );
+        assert_eq!(
+            cached(rows[2].0),
+            expect(new.path(), &rows[2].1),
+            "already current"
+        );
+        assert_eq!(
+            relocate_cached_paths(&db, new.path()).unwrap(),
+            0,
+            "idempotent"
+        );
     }
 
     #[test]

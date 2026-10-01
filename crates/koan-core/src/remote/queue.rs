@@ -35,6 +35,72 @@ struct Inner {
     log_buf: Arc<StdMutex<Vec<String>>>,
     /// When the cache was last trimmed to its limit.
     last_evicted: Mutex<Option<std::time::Instant>>,
+    /// Worker threads started so far. Grows to the configured count as work
+    /// arrives; a worker past the current count parks rather than exits.
+    spawned: std::sync::atomic::AtomicUsize,
+}
+
+/// The parallel-downloads setting as it stands now, not as it stood when the
+/// queue was made: the queue lives as long as the process.
+fn workers_allowed() -> usize {
+    config::Config::cached()
+        .remote
+        .download_workers
+        .clamp(1, 16)
+}
+
+/// Start workers until there are as many as the setting allows.
+fn ensure_workers(inner: &Arc<Inner>) {
+    use std::sync::atomic::Ordering;
+    let want = workers_allowed();
+    loop {
+        let have = inner.spawned.load(Ordering::Relaxed);
+        if have >= want {
+            return;
+        }
+        if inner
+            .spawned
+            .compare_exchange(have, have + 1, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            continue;
+        }
+        let worker = inner.clone();
+        if let Err(e) = std::thread::Builder::new()
+            .name(format!("koan-dl-{have}"))
+            .spawn(move || worker_loop(worker, have))
+        {
+            log::error!("failed to spawn download worker {have}: {e}");
+            inner.spawned.fetch_sub(1, Ordering::Relaxed);
+            return;
+        }
+    }
+}
+
+/// What a worker should fetch next: the track under the cursor ahead of
+/// everything, nothing at all while that track is already being fetched, and
+/// otherwise the front of the queue.
+fn next_item(q: &mut Queue, cursor: Option<(i64, QueueItemId)>) -> Option<(i64, QueueItemId)> {
+    match cursor {
+        Some((db_id, _)) if q.in_flight.contains_key(&db_id) => None,
+        Some((_, queue_id)) => q
+            .pending
+            .iter()
+            .position(|(_, qid)| *qid == queue_id)
+            .and_then(|ix| q.pending.remove(ix))
+            .or_else(|| q.pending.pop_front()),
+        None => q.pending.pop_front(),
+    }
+}
+
+/// The track under the cursor, when it still has to be fetched.
+fn cursor_download(state: &SharedPlayerState) -> Option<(i64, QueueItemId)> {
+    let id = state.cursor()?;
+    let item = state.get_item(id)?;
+    if !matches!(item.state, crate::player::state::ItemState::Pending) {
+        return None;
+    }
+    Some((item.db_id?, id))
 }
 
 /// Queue state and the in-flight bookkeeping that keeps a track from being
@@ -107,6 +173,9 @@ impl Drop for Claim {
         } else {
             q.in_flight.remove(&self.db_id);
         }
+        drop(q);
+        // Workers held back for the track under the cursor go on from here.
+        self.inner.has_work.notify_all();
     }
 }
 
@@ -117,9 +186,6 @@ impl DownloadQueue {
         state: Arc<SharedPlayerState>,
         log_buf: Arc<StdMutex<Vec<String>>>,
     ) -> Self {
-        let cfg = config::Config::cached();
-        let num_workers = cfg.remote.download_workers.max(1);
-
         let inner = Arc::new(Inner {
             queue: Mutex::new(Queue::default()),
             has_work: Condvar::new(),
@@ -127,17 +193,9 @@ impl DownloadQueue {
             cmd_tx,
             log_buf,
             last_evicted: Mutex::new(None),
+            spawned: std::sync::atomic::AtomicUsize::new(0),
         });
-
-        for i in 0..num_workers {
-            let inner = inner.clone();
-            if let Err(e) = std::thread::Builder::new()
-                .name(format!("koan-dl-{}", i))
-                .spawn(move || worker_loop(inner))
-            {
-                log::error!("failed to spawn download worker {}: {}", i, e);
-            }
-        }
+        ensure_workers(&inner);
 
         let trimmer = inner.clone();
         let _ = std::thread::Builder::new()
@@ -160,6 +218,7 @@ impl DownloadQueue {
         if items.is_empty() {
             return;
         }
+        ensure_workers(&self.inner);
         self.inner.queue.lock().pending.extend(items);
         self.inner.has_work.notify_all();
     }
@@ -335,14 +394,28 @@ fn trim_cache(inner: &Inner) {
 /// While the server is down, workers take nothing new: the download that found
 /// it down waits it out, and everything behind it stays `Pending` rather than
 /// each piling onto a server that is not answering.
-fn worker_loop(inner: Arc<Inner>) {
+/// One download worker. `index` is its place in the pool: a worker past the
+/// current parallel-downloads setting parks until the setting lets it work.
+///
+/// While the track under the cursor is still being fetched, no worker starts
+/// another transfer. On a slow link every parallel download takes a share of
+/// the bandwidth, and the one track someone is waiting to hear would arrive
+/// last among equals; the rest of the album can follow it.
+fn worker_loop(inner: Arc<Inner>, index: usize) {
     loop {
         let item = loop {
             if let Some(client) = crate::helpers::subsonic_client(&config::Config::cached()) {
                 client.outage().hold();
             }
+            // Read before the queue lock, which is never held across the
+            // player state's.
+            let cursor = cursor_download(&inner.state);
             let mut q = inner.queue.lock();
-            match q.pending.pop_front() {
+            if index >= workers_allowed() {
+                inner.has_work.wait(&mut q);
+                continue;
+            }
+            match next_item(&mut q, cursor) {
                 Some(item) => {
                     // Already being fetched: this entry waits on the one
                     // transfer rather than starting a second over it.
@@ -597,5 +670,33 @@ mod tests {
 
         let order: Vec<QueueItemId> = pending.iter().map(|(_, id)| *id).collect();
         assert_eq!(order, vec![b, d, a, c]);
+    }
+
+    #[test]
+    fn the_track_under_the_cursor_goes_first_and_goes_alone() {
+        let (a, b, c) = (qid(), qid(), qid());
+        let mut q = Queue::default();
+        q.pending.extend([(1, a), (2, b), (3, c)]);
+
+        // Pressed play on the third: it jumps the queue.
+        assert_eq!(next_item(&mut q, Some((3, c))), Some((3, c)));
+        q.in_flight.insert(3, HashSet::from([c]));
+
+        // While it downloads, nothing else starts.
+        assert_eq!(next_item(&mut q, Some((3, c))), None);
+        assert_eq!(q.pending.len(), 2, "the rest wait their turn");
+
+        // Once it has landed the queue runs in order again.
+        q.in_flight.remove(&3);
+        assert_eq!(next_item(&mut q, None), Some((1, a)));
+        assert_eq!(next_item(&mut q, None), Some((2, b)));
+    }
+
+    #[test]
+    fn a_cursor_with_nothing_queued_for_it_holds_nothing_up() {
+        let (a, elsewhere) = (qid(), qid());
+        let mut q = Queue::default();
+        q.pending.push_back((1, a));
+        assert_eq!(next_item(&mut q, Some((9, elsewhere))), Some((1, a)));
     }
 }

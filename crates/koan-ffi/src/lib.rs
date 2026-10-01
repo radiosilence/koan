@@ -1636,14 +1636,14 @@ impl KoanEngine {
             }
 
             let count = items.len() as u32;
+            // Found among the saved items, not the restored ones: re-resolving
+            // can give an item a new path, and `restore_items` keeps one item
+            // per saved entry, in order.
             let cursor = saved
                 .cursor_path
                 .as_ref()
-                .and_then(|cp| {
-                    items
-                        .iter()
-                        .find(|i| i.path.to_string_lossy() == cp.as_str())
-                })
+                .and_then(|cp| saved.items.iter().position(|i| &i.path == cp))
+                .and_then(|ix| items.get(ix))
                 .map(|i| i.id);
 
             self.send_local(PlayerCommand::AddToPlaylist(items))?;
@@ -3093,14 +3093,20 @@ impl KoanEngine {
         init_logging();
         let db_path = config::db_path();
         // Fail fast on a broken library rather than after the audio threads exist.
-        Database::open(&db_path).map_err(|e| KoanError::Database {
+        let db = Database::open(&db_path).map_err(|e| KoanError::Database {
             message: e.to_string(),
         })?;
         let t_db = t0.elapsed();
 
         // Before anything can start a download of its own, so this only ever
         // sees files left by a previous run.
-        koan_core::helpers::sweep_partial_downloads(&Config::load().unwrap_or_default());
+        let cfg = Config::load().unwrap_or_default();
+        koan_core::helpers::sweep_partial_downloads(&cfg);
+        // Before the session is restored, so the queue finds its downloads.
+        if let Err(e) = koan_core::helpers::relocate_cached_paths(&db, &cfg.cache_dir()) {
+            log::warn!("could not re-root cached paths: {e}");
+        }
+        drop(db);
         let t_sweep = t0.elapsed();
 
         let (state, _timeline, viz, tx) = Player::spawn();
@@ -3803,12 +3809,26 @@ fn restore_items(
     db: &Database,
     saved: &[PersistedQueueItem],
 ) -> (Vec<PlaylistItem>, Vec<(i64, QueueItemId)>) {
+    // By id first: a saved path names the container it was written in, which
+    // iOS moves on every update, and a track still downloading when the session
+    // was saved has no row with its path at all. The title guards against an
+    // id SQLite has since reused for another track.
+    let saved_ids: Vec<i64> = saved.iter().filter_map(|i| i.db_id).collect();
+    let titles: HashMap<i64, String> = queries::tracks_by_ids(&db.conn, &saved_ids)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| (r.id, r.title))
+        .collect();
     let ids: Vec<Option<i64>> = saved
         .iter()
         .map(|item| {
-            queries::track_id_by_path(&db.conn, &item.path)
-                .ok()
-                .flatten()
+            item.db_id
+                .filter(|id| titles.get(id) == Some(&item.title))
+                .or_else(|| {
+                    queries::track_id_by_path(&db.conn, &item.path)
+                        .ok()
+                        .flatten()
+                })
         })
         .collect();
 
@@ -4066,5 +4086,92 @@ mod fuzzy_tests {
         texts.push("SPFDJ".into());
         let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
         assert_eq!(fuzzy_rank(&texts, "spfdj", 5), vec![20_000]);
+    }
+}
+
+#[cfg(test)]
+mod restore_tests {
+    use super::*;
+
+    fn track(db: &Database, title: &str, path: &Path) -> i64 {
+        let meta = queries::TrackMeta {
+            title: title.into(),
+            artist: "Artist".into(),
+            album_artist: Some("Artist".into()),
+            album: "Album".into(),
+            date: Some("2024".into()),
+            disc: Some(1),
+            track_number: Some(1),
+            genre: None,
+            label: None,
+            duration_ms: Some(240_000),
+            codec: Some("FLAC".into()),
+            sample_rate: Some(44100),
+            bit_depth: Some(16),
+            channels: Some(2),
+            bitrate: None,
+            size_bytes: None,
+            mtime: None,
+            path: Some(path.to_string_lossy().into_owned()),
+            source: "local".into(),
+            remote_id: None,
+            album_remote_id: None,
+            artist_remote_id: None,
+            mbid: None,
+            album_mbid: None,
+            remote_url: None,
+            album_added_at: None,
+        };
+        queries::upsert_track(&db.conn, &meta).unwrap()
+    }
+
+    fn saved(title: &str, path: &str, db_id: Option<i64>) -> PersistedQueueItem {
+        PersistedQueueItem {
+            path: path.into(),
+            title: title.into(),
+            artist: "Artist".into(),
+            album_artist: "Artist".into(),
+            album: "Album".into(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            db_id,
+        }
+    }
+
+    #[test]
+    fn a_saved_queue_restores_by_id_when_its_paths_have_moved() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let file = dir.path().join("song.flac");
+        std::fs::write(&file, b"audio").unwrap();
+        let id = track(&db, "Song", &file);
+
+        let stale = "/var/mobile/Containers/Data/Application/OLD/Library/Caches/koan/a.flac";
+        let (items, _) = restore_items(
+            &db,
+            &[
+                saved("Song", stale, Some(id)),
+                // An id SQLite has since given to another track.
+                saved("Other", stale, Some(id)),
+                saved("Gone", stale, Some(id + 1000)),
+            ],
+        );
+
+        assert_eq!(items.len(), 3, "one item per saved entry, in order");
+        assert_eq!(items[0].path, file, "found by id, path re-resolved");
+        assert_eq!(items[0].db_id, Some(id));
+        assert_eq!(
+            items[1].path,
+            PathBuf::from(stale),
+            "title mismatch: kept as saved"
+        );
+        assert_eq!(
+            items[2].path,
+            PathBuf::from(stale),
+            "unknown id: kept as saved"
+        );
     }
 }
