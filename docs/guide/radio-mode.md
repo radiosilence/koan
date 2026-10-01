@@ -1,10 +1,10 @@
 # Radio Mode
 
-Radio mode turns kōan into an infinite jukebox. When enabled, kōan keeps the queue topped up from your own library as you listen -- you never run out of music.
+Radio mode keeps the queue topped up from your own library as you listen.
 
 ## Quick start
 
-Press `R` in the TUI to toggle radio mode. That's it. kōan starts adding tracks to your queue based on what's playing.
+Press `R` in the TUI to toggle radio mode. kōan starts adding tracks to your queue based on what's playing.
 
 ## How it works
 
@@ -44,16 +44,13 @@ still there, behind an `allow_network` flag that the auto-queue loop turns off, 
 it is waiting on a background pass that can fill the similar-artist cache while there
 is time for it rather than in front of a pick that is needed now.
 
-Until then: radio is local metadata, acoustic vectors if you have them, and a random
-tail. It is not asking anyone what sounds like what.
 
-Two consequences worth knowing, since they follow from the same gap:
+Two consequences:
 
 - The `similar_artists` cache is only ever written by those network signals, so it
   stays empty. `similarArtists` over GraphQL and FFI, and `getSimilarSongs2` on
   kōan's own Subsonic API, return nothing.
-- Radio works exactly the same offline as online. That is not the graceful
-  degradation it looks like -- there is no online path to degrade from.
+- Radio works the same offline as online, because it has no online path.
 
 ## Configuration
 
@@ -79,7 +76,7 @@ discovery_weight = 0.3        # 0.0 = familiar only, 1.0 = maximize discovery (d
 
 ### Seed window
 
-`seed_window` controls how many recent tracks inform the "similar to what?" query. With the default of 5, radio mode looks at the last 5 tracks to determine the musical direction. A smaller window (1-2) makes the radio more reactive to the single current track; a larger window (10+) gives a broader, more averaged vibe.
+`seed_window` controls how many recent tracks inform the "similar to what?" query. With the default of 5, radio mode looks at the last 5 tracks to determine the musical direction. A smaller window (1-2) makes the radio more reactive to the single current track; a larger window (10+) averages over more of what has played.
 
 ### Lookahead and batch size
 
@@ -87,13 +84,13 @@ discovery_weight = 0.3        # 0.0 = familiar only, 1.0 = maximize discovery (d
 
 ## Acoustic analysis
 
-For the best radio experience, run acoustic analysis on your library:
+Run acoustic analysis on your library:
 
 ```bash
 koan scan --analyze
 ```
 
-This computes acoustic features (tempo, timbre, chroma, and spectral features — a 23-dimensional vector) for each track using bliss-audio. It is the difference between radio finding tracks that genuinely *sound* similar and radio shuffling things that share a genre string.
+This computes acoustic features (tempo, timbre, chroma, and spectral features — a 23-dimensional vector) for each track using bliss-audio. It is the difference between radio finding tracks that *sound* similar and radio shuffling things that share a genre string.
 
 ```toml
 [library]
@@ -104,7 +101,7 @@ Setting `analyze_on_scan = true` runs acoustic analysis on every `koan scan`, ke
 
 ## Tips
 
-- **Start with a track you like.** Radio mode uses whatever's playing as its seed. Queue up a track that sets the vibe you want, then press `R`.
+- **Start with a track you like.** Radio mode uses whatever's playing as its seed. Queue up a track in the direction you want, then press `R`.
 - **Queue some variety first.** If you queue tracks from different genres before enabling radio, the seed window will pick up on the mix and produce more varied results.
 - **Still edit the queue.** Radio mode only adds tracks -- you can still remove tracks you don't want (`e` to edit, `d` to delete). Radio will refill around your changes.
-- **Run the analysis.** `koan scan --analyze` is the single biggest thing you can do for radio quality. Without it, radio has only genre tags, artist names and chance to work with -- and genre tags on a ripped library are often blank or wrong.
+

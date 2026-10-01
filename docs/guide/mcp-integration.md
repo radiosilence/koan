@@ -1,6 +1,6 @@
 # MCP Integration
 
-`koan mcp` runs kōan as a headless player controllable by Claude Desktop (or any MCP client). No TUI, no terminal -- just the audio engine and 2 tools exposed over the Model Context Protocol on stdio. The LLM reads the GraphQL schema, then drives everything through one `graphql` tool.
+`koan mcp` runs kōan as a headless player controlled by Claude Desktop or any other MCP client, with two tools exposed over the Model Context Protocol on stdio. The client reads the GraphQL schema, then drives everything through the `graphql` tool.
 
 ## Setup
 
@@ -63,10 +63,8 @@ Things you can ask Claude when kōan is connected:
 - "Save this queue as 'techno friday'" / "Restore my chill mix"
 - "Turn on radio mode" / "Star this track"
 
-Claude chains multiple GraphQL operations together naturally -- "find all my 90s electronic albums, pick one at random, and queue it up" becomes a search -> filter -> add_to_queue -> play sequence.
+Claude chains GraphQL operations: "find all my 90s electronic albums, pick one at random, and queue it up" becomes an `albums` query filtered by year and genre, then `addToQueue` and `play`.
 
 ## How it differs from the GraphQL API
 
-The MCP server executes GraphQL queries in-process (no HTTP round-trip). The schema and capabilities are identical to the [GraphQL API](graphql-api.md) -- same queries, same mutations, same filters.
-
-The main difference is the transport: MCP uses stdio (for Claude Desktop integration), while the GraphQL API uses HTTP (for scripts, web clients, and other tools).
+The MCP server executes GraphQL in-process against the same schema as the [GraphQL API](graphql-api.md). `koan mcp` serves it over stdio at `user` role, so the mutations that move files, rewrite config, trigger scans or change the output device are refused unless `KOAN_MCP_ADMIN=1` is set (see [In-process access](authentication.md#in-process-access)). A server started with `--mcp-bind` also serves it over HTTP behind an authenticating gateway; see [Headless Server](headless-server.md).

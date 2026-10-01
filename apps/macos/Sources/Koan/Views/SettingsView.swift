@@ -337,7 +337,7 @@ private struct RemoteSettings: View {
                 } header: {
                     Text("Subsonic or Navidrome")
                 } footer: {
-                    Text("Got an invite? Paste it here, or into Server URL, and kōan fills in the rest. Checked against the server, then saved to config.local.toml, readable only by you.")
+                    Text("Paste an invite here, or into Server URL, and kōan fills in the rest. The account is checked against the server, then saved to config.local.toml, readable only by you.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -368,7 +368,7 @@ private struct RemoteSettings: View {
             } header: {
                 Text("Automatic sync")
             } footer: {
-                Text("Incremental — it asks the server what changed. A full sync stays a deliberate choice.")
+                Text("Each sync asks the server only for what changed since the last.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -452,7 +452,7 @@ private struct PlaybackSettings: View {
             } header: {
                 Text("Device")
             } footer: {
-                Text("kōan switches the device sample rate to match the source. No resampling.")
+                Text("kōan asks the device to run at the source's sample rate, so nothing is resampled unless the device refuses.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

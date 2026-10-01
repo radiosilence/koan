@@ -1,6 +1,6 @@
 # Remote Servers
 
-kōan integrates with [Navidrome](https://www.navidrome.org/), Subsonic, and any server with a Subsonic-compatible API. Remote tracks merge seamlessly with your local library into a single unified collection.
+kōan integrates with [Navidrome](https://www.navidrome.org/), Subsonic, and any server with a Subsonic-compatible API. Remote tracks merge with your local library into one collection.
 
 ## Setup
 
@@ -29,11 +29,12 @@ Run `koan remote sync` periodically (or after adding music to your server) to pu
 
 ## How merging works
 
-When you have both local files and a remote server, kōan deduplicates tracks using a 3-strategy match:
+When you have both local files and a remote server, kōan deduplicates tracks by trying, in order:
 
 1. **File path** -- exact local path match
 2. **Remote ID** -- Subsonic server ID
-3. **Content match** -- artist + album + title + track number
+3. **Content match** -- artist + album + disc + track number + title, then the same without the artist
+4. **MusicBrainz ids** -- recording + release
 
 If the same track exists in both sources, it becomes a single database entry. Playback priority:
 
@@ -47,7 +48,7 @@ If a local drive is disconnected, tracks with remote backing are demoted to remo
 
 ## Streaming playback
 
-Remote tracks start playing after just **256KB** is buffered instead of waiting for the full download.
+Remote tracks start playing after **256KB** is buffered instead of waiting for the full download.
 
 - Both front ends draw the fetched extent on the seek bar, weaker than the played one. It is a fraction of bytes on an axis of time, so it is right for lossless and CBR and drifts with the bitrate on VBR -- read it as whether playback is about to run out of track, not as a position
 - The TUI also refuses a seek past the downloaded boundary

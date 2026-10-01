@@ -26,7 +26,7 @@ crates/
                    Depends on koan-core, koan-tui and koan-server.
 
 apps/
-└── macos/         SwiftUI app (SwiftPM, Swift 6, macOS 14+).
+└── macos/         SwiftUI app (SwiftPM, Swift 6, macOS 26+).
                    Links koan-ffi. No Rust of its own.
 ```
 
@@ -40,17 +40,17 @@ Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server`
 |---|---|---|
 | Transport | In-process function calls | HTTP + WebSocket |
 | Audio owned by | The UI's own process | A separate `koan` process |
-| State updates | Poll `now_playing()` | GraphQL subscriptions |
+| State updates | State slices from `observe()` | GraphQL subscriptions |
 | Auth | None needed | JWT, cookies, CORS |
-| For | macOS app, future iOS app | Web SPA, jukebox remotes |
+| For | macOS and iOS apps | Web UI, jukebox remotes |
 
 **Nothing over the FFI blocks its caller.** koan-core is synchronous — rusqlite has no async form, and the audio path is dedicated threads on purpose — so the boundary is where the hop happens: an exported call that can block is `async` and runs on a worker thread, and the handful that stay synchronous read one atomic. Queue mutations and transport commands go down a single lane so they reach the player in the order the user gave them. See `koan-ffi/src/offload.rs`.
 
 **A UI that can link the core should.** The macOS app sits directly on top of the audio engine, so routing its own commands through localhost HTTP would add a daemon, a port, an auth surface and a second process contending for the same SQLite file, and buy nothing. It links `koan-ffi`, and CoreAudio output never leaves Rust, so playback stays bit-perfect.
 
-GraphQL earns its keep for clients that genuinely *cannot* link the core -- a browser, or a phone controlling playback on a different machine.
+GraphQL is for clients that *cannot* link the core -- a browser, or a jukebox remote.
 
-**State goes out as whole slices, never as deltas.** The engine publishes what each corner of its state *is* — what is playing, where the playhead is, the queue, the transfers and their figures, whether the library moved — and a client reads a batch of whatever changed since it last asked. A snapshot cannot be applied wrongly, which a delta can: three bugs in one afternoon were all a client-side copy patched by a rule someone had to remember to write.
+**State goes out as whole slices, never as deltas.** The engine publishes what each corner of its state *is* — what is playing, where the playhead is, the queue, the transfers and their figures, whether the library moved — and a client reads a batch of whatever changed since it last asked. A snapshot cannot be applied wrongly; a delta depends on every client-side copy being patched by a rule someone has to remember to write.
 
 Slices are cut by **rate of change, not by subject**. The playhead and the transfer figures move ten times a second; the queue and the set of transfers move when someone does something. A client subscribes per slice, so a fast field sitting next to a slow one wakes every reader of the slow one at the fast one's rate — which is why a transfer's byte count is not a field on a queue row, and the seekable extent is not a field beside a track's title. See `koan-ffi/src/state.rs`.
 
@@ -216,7 +216,6 @@ A download that gives up sends `TrackFailed` instead, and the parked cursor adva
 | `device.rs` | CoreAudio device enumeration, sample rate get/set/watch (macOS only) |
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
-| `signal.rs` | `Wake` — a generation counter a reader can wait on, and the process-wide one every front end waits on. What lets koan hold state in versions and atomics without anyone having to look again |
 | `viz.rs` | `VizBuffer` (lock-protected ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI thread), `VizLevels` (spectrum reduced to low/mid/high, cloning no waveform) |
 | `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold, beat detection (low-band transient). Runs at whatever rate a client sets, decays to flat when the play head stops, and parks when nothing is reading. Publishes to `VizSnapshot`. |
 | `streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
@@ -264,7 +263,7 @@ Only a single-sourced row is asked — one already carrying both a path and a re
 
 | File | Purpose |
 |---|---|
-| `scanner.rs` | Parallel library scan: walkdir → rayon metadata extraction → sequential DB upsert, one transaction per 1000-file chunk |
+| `scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → one DB transaction per 1000 files, reads and writes running at the same time |
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
 | `id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
 
@@ -296,8 +295,8 @@ fb2k-compatible template engine.
 
 | File | Purpose |
 |---|---|
-| `config.rs` | Figment-based layered config: defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Playback, library, remote, graphql, radio, visualizer, organize, discovery settings. See `Config::update_base()` for safe writes. |
-| `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
+| `config.rs` | Figment-based layered config: defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Library, playback, remote, organize, visualizer, radio, graphql, subsonic, auth, sharing, push and devices sections. `Config::persist()` writes each changed key to the file `layer_of` assigns it. |
+| `signal.rs` | `Wake` — a generation counter a reader can wait on, and the process-wide one every front end waits on. What lets koan hold state in versions and atomics without anyone having to look again |
 | `organize.rs` | File renaming using format strings. Preview/execute/undo, all planned by one `plan()` so a preview and the execute that follows it agree. Scoped by track id or by path. Refuses to overwrite; database rows (track paths, scan cache, favourites, playback state) are rewritten in the same transaction as the move. Playlists need no rewriting — they point at library rows, not at paths. Every move is logged for undo. Moves ancillary files (cover art, cue sheets). |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
 
@@ -318,7 +317,7 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 | `cover_art.rs` | Halfblock rendering: extract from tags -> resize with Lanczos3 -> 2 pixels per terminal cell (upper half block char with FG/BG colors). Forces even pixel height to prevent black bar artifacts. |
 | `track_info.rs` | `TrackInfoOverlay`: modal with full metadata fields + embedded album art |
 | `theme.rs` | Color palette. Cyan for active/cursor, green for albums, DarkGray for hints. |
-| `context_menu.rs` | `ContextMenuOverlay` widget: action list popup (currently: Organize) |
+| `context_menu.rs` | `ContextMenuOverlay` widget: action list popup (play, remove, favourite, track info, organize, copy share link) |
 | `organize.rs` | `OrganizeModalState` + `OrganizeOverlay`: pattern picker, scoped preview table, background execute with path update propagation to player |
 | `visualizer.rs` | 22-mode visualizer: bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, terrain, moire, kaleidoscope, julia, spiral, interference, wormhole, matrix. Picker with live preview, matrix overlay, bass shake. |
 | `viz_picker.rs` | Visualizer mode picker modal with live preview |
@@ -333,10 +332,10 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 | File | Purpose |
 |---|---|
 | `graphql/` | async-graphql schema, resolvers, axum HTTP server. Relay pagination, rich filters, mutations for playback/queue/library/favourites/playlists/radio. rusqlite is blocking, so resolvers run their DB and HTTP work on `spawn_blocking` with a pooled connection; parent → child edges go through dataloaders. |
-| `subsonic/` | Subsonic REST API endpoints for compatibility with existing clients (DSub, Symfonium, play:Sub). |
+| `subsonic.rs` | Subsonic REST API endpoints for compatibility with existing clients (DSub, Symfonium, play:Sub), plus koan's `/rest/koanLink` WebSocket. |
 | `mcp.rs` | MCP server on stdio -- exposes `schema_sdl` and `graphql` tools for Claude Desktop integration. |
 | `clients.rs` | Linked apps by account. Sends each link that asks the account's other devices whenever one changes, relays commands between them, and pushes Live Activity updates for a device a phone is controlling. |
-| `auth.rs` | JWT middleware, Ed25519 token generation/validation, role-based guards. |
+| `auth/` | JWT middleware (cookie or bearer), password checks for transports that send credentials with every request, and the `/auth/login`, `/auth/refresh`, `/auth/logout` routes. |
 
 ## Picker actions
 
@@ -384,13 +383,13 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **QueueItemId (UUIDv7):** Every queue entry gets a unique, time-ordered ID at creation. Queue commands use IDs, not indices. Handles duplicate tracks, survives reordering.
 
-**Status is derived:** `QueueEntryStatus` (Playing/Queued/Played/Downloading/Failed) is computed from cursor position + load state, not stored. Single source of truth.
+**Status is derived:** `QueueEntryStatus` (Playing/Queued/Played/Downloading/Failed) is computed from cursor position + load state, not stored.
 
 **Decode cursor ≠ UI cursor:** The decode thread peeks ahead for gapless without moving the playlist cursor. The player thread syncs them on boundary crossing.
 
 **Atomic visible queue snapshot:** One `derive_visible_queue()` call per frame, cached in `vq_cache`. All render/mouse operations see consistent state within a frame.
 
-**Figment-layered config:** Four layers (defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars) merged by [figment](https://docs.rs/figment). Env vars use `KOAN_SECTION__FIELD` naming (double underscore splits into nested keys). `Config::load()` returns the fully merged result, and `Config::cached()` the shared `Arc`. `KOAN_CONFIG_DIR` moves the whole directory, which is how one machine runs more than one library and how tests avoid reading the configuration of whoever ran them — see `config::isolate_config_for_tests`. Reads go through a process-wide cache keyed on both files' mtimes — koan reaches config from paths that run per frame, and a merge costs two file reads — so a hand-edited config is still picked up while `update_base`/`patch_local` invalidate explicitly. **`Config::update_base()`** is the safe way to programmatically modify `config.toml` — it reads only the base file, applies a mutation closure, and writes back. **`patch_local(section, values)`** writes targeted updates to `config.local.toml` with `0o600` permissions — used for machine-specific values like remote credentials and library paths.
+**Figment-layered config:** Four layers (defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars) merged by [figment](https://docs.rs/figment). Env vars use `KOAN_SECTION__FIELD` naming (double underscore splits into nested keys). `Config::load()` returns the fully merged result, and `Config::cached()` the shared `Arc`. `KOAN_CONFIG_DIR` moves the whole directory, which is how one machine runs more than one library and how tests avoid reading the configuration of whoever ran them — see `config::isolate_config_for_tests`. Reads go through a process-wide cache keyed on both files' mtimes — koan reaches config from paths that run per frame, and a merge costs two file reads — so a hand-edited config is still picked up while `persist` invalidates explicitly. **`Config::persist()`** is the only write path: it applies a mutation closure, diffs the result against the two files, and writes each changed key to the file `config::layer_of` assigns it — secrets, this machine's paths and hardware, and volatile UI state to `config.local.toml` (kept at `0o600`), everything else to `config.toml`. Comments and untouched keys survive.
 
 **Controlling another device is a mode of the engine, not of the UI:** while the app controls another device, `koan-ffi` publishes that device's playback, playhead and queue in the slices its own would go in, and translates each `PlayerCommand` into a `LinkCommand` for it (queue entries by the ids that device reported, tracks by server id). Every page, Control Center and the media keys follow without knowing. A handoff is always carried out by the device that holds the queue, so taking music and sending it are the same command (`handOff { to }`).
 
@@ -400,7 +399,6 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 ## Dependencies
 
-Key choices:
 
 | Dep | Why |
 |---|---|
@@ -408,8 +406,7 @@ Key choices:
 | `rtrb` | Lock-free SPSC ring buffer. The only thing connecting decode → audio output. |
 | `coreaudio-sys` | Raw CoreAudio bindings for AUHAL output unit (macOS only). |
 | `cpal` | Cross-platform audio I/O — ALSA/PipeWire/PulseAudio backend (Linux only). |
-| `keyring` | Cross-platform credential storage (macOS Keychain, Linux secret-service). |
-| `rusqlite` | SQLite via `bundled` (portable, includes FTS5) (portable, includes FTS5). |
+| `rusqlite` | SQLite via `bundled` (portable, includes FTS5). |
 | `lofty` | Tag reading/writing across ID3, Vorbis, MP4, APE. |
 | `ratatui` + `crossterm` | TUI framework + terminal backend. |
 | `nucleo` | Fuzzy matching engine (same as used by Helix editor). |

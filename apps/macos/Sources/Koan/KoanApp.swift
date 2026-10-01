@@ -279,9 +279,7 @@ private struct StartupErrorView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
-            Text("Run `koan scan` to build one.")
-                .font(.callout.monospaced())
-                .foregroundStyle(.tertiary)
+
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

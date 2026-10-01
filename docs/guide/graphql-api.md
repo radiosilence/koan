@@ -1,6 +1,6 @@
 # GraphQL API
 
-kōan exposes a GraphQL API for full programmatic control. The API runs alongside the TUI by default (port 4000, localhost only), or standalone in headless mode.
+The GraphQL API runs alongside the TUI by default (port 4000, localhost only), or standalone in headless mode.
 
 ## Quick start
 
@@ -31,7 +31,7 @@ curl -s http://localhost:4000/graphql \
 
 ## Authentication
 
-Auth is enabled by default (since v0.22.0). Run `koan auth setup` to create a keypair and first admin user before starting the server. See [Authentication](authentication.md) for the full guide.
+Auth is enabled by default. Run `koan auth setup` to create a keypair and first admin user before starting the server. See [Authentication](authentication.md) for the full guide.
 
 ```bash
 koan auth setup              # generate keypair + create admin user
@@ -143,7 +143,7 @@ mutation { playPlaylist(id: 3, shuffled: true) { ok } }
 
 ### Filtering
 
-Every query supports rich filtering:
+Collection queries filter on:
 
 - **Albums**: year range, codec, label, genre
 - **Tracks**: genre, codec, sample rate, bit depth, duration
@@ -199,12 +199,12 @@ every other client slow:
 | Category | Operations |
 |----------|-----------|
 | **Playback** | `play`, `pause`, `resume`, `stop`, `next`, `previous`, `seek` |
-| **Queue** | `add_to_queue`, `insert_in_queue`, `remove_from_queue`, `clear_queue`, `replace_queue`, `get_queue`, `reorder_queue` |
-| **Library** | `search`, `list_artists`, `list_albums`, `list_tracks`, `get_track`, `library_stats` |
-| **State** | `now_playing`, `list_devices`, `set_device` |
-| **Favourites** | `favourite`, `unfavourite`, `list_favourites` |
+| **Queue** | `queue`, `addToQueue`, `removeFromQueue`, `moveInQueue`, `clearQueue`, `replaceQueue`, `undo`, `redo` |
+| **Library** | `artists`, `albums`, `tracks`, `track`, `fuzzySearch`, `libraryStats`, `lyrics`, `coverArt` |
+| **State** | `nowPlaying`, `devices`, `setDevice`, `clearDevice` |
+| **Favourites** | `favourites`, `favourite`, `unfavourite`, `toggleFavourite` |
 | **Playlists** | `playlists`, `playlistTracks`, `createPlaylist`, `saveQueueAsPlaylist`, `addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist` |
-| **Radio** | `enable_radio`, `disable_radio` |
+| **Radio** | `radioStatus`, `enableRadio`, `disableRadio` |
 
 ## Subsonic REST API
 
