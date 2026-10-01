@@ -145,13 +145,13 @@ struct RootView: View {
             // wherever they were.
             ToolbarItemGroup(placement: .navigation) {
                 Button { nav.goBack() } label: {
-                    Label("Back", systemImage: "chevron.left")
+                    Label("Back", systemImage: Icon.back)
                 }
                 .disabled(!nav.canGoBack)
                 .help("Back (⌘[)")
 
                 Button { nav.goForward() } label: {
-                    Label("Forward", systemImage: "chevron.right")
+                    Label("Forward", systemImage: Icon.forward)
                 }
                 .disabled(!nav.canGoForward)
                 .help("Forward (⌘])")
@@ -513,7 +513,6 @@ private struct Toasts: View {
 
 /// The page. One `switch`, no stack.
 private struct StageView: View {
-    @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
 
     /// The queue is never torn down, and nor are the album and artist browsers

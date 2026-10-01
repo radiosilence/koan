@@ -63,7 +63,7 @@ struct FavouritesView: View {
                 }
                 .onKeyPress(.return) {
                     play(selection)
-                    return KeyPress.Result.handled
+                    return .handled
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             }

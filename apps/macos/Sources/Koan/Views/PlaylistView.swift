@@ -17,7 +17,6 @@ struct PlaylistView: View {
 
     @Environment(\.horizontalSizeClass) private var width
     @Environment(PlayerModel.self) private var player
-    @Environment(EngineMirror.self) private var mirror
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
@@ -197,8 +196,8 @@ struct PlaylistView: View {
             // queue does it: a single icon has to choose between naming
             // the mode you are in and the mode you would get.
             Picker("Playlist layout", selection: groupedBinding) {
-                Image(systemName: "square.stack").tag(true)
-                Image(systemName: "list.bullet").tag(false)
+                Image(systemName: Icon.album).tag(true)
+                Image(systemName: Icon.queueSection).tag(false)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -249,36 +248,26 @@ struct PlaylistView: View {
     private func rowView(_ row: Row) -> some View {
         switch row {
         case .album(_, let group):
-            let position = group.positions.first ?? 0
-            PlaylistAlbumHeader(group: group)
-                .rowBehaviour()
-                .insertionLine(showing: dropBefore == position)
-                .dropDestination(for: PlayableTransfer.self) { dropped, _ in
-                    dropBefore = nil
-                    return accept(dropped, before: position)
-                } isTargeted: { targeted in
-                    dropBefore = targeted ? position : (dropBefore == position ? nil : dropBefore)
-                }
+            dropTarget(
+                PlaylistAlbumHeader(group: group).rowBehaviour(),
+                before: group.positions.first ?? 0
+            )
         case .entry(let entry, let position):
-            PlaylistEntryRow(entry: entry, position: position, artwork: !grouped)
-                .rowBehaviour()
-                .primaryTap { play(rowIds: [row.id]) }
-            // Carries where it came from, so dropping it back into this
-            // playlist is a move of *this* row rather than of its track — and
-            // dropping it anywhere else is just a track.
-            .draggable(PlayableTransfer(
-                kind: .track,
-                id: entry.track.id,
-                name: entry.track.title,
-                origin: .init(playlistId: playlistId, position: position)
-            ))
-            .insertionLine(showing: dropBefore == position)
-            .dropDestination(for: PlayableTransfer.self) { dropped, _ in
-                dropBefore = nil
-                return accept(dropped, before: position)
-            } isTargeted: { targeted in
-                dropBefore = targeted ? position : (dropBefore == position ? nil : dropBefore)
-            }
+            dropTarget(
+                PlaylistEntryRow(entry: entry, position: position, artwork: !grouped)
+                    .rowBehaviour()
+                    .primaryTap { play(rowIds: [row.id]) }
+                    // Carries where it came from, so dropping it back into this
+                    // playlist is a move of *this* row rather than of its track —
+                    // and dropping it anywhere else is just a track.
+                    .draggable(PlayableTransfer(
+                        kind: .track,
+                        id: entry.track.id,
+                        name: entry.track.title,
+                        origin: .init(playlistId: playlistId, position: position)
+                    )),
+                before: position
+            )
         }
     }
 
@@ -288,19 +277,26 @@ struct PlaylistView: View {
     /// so without this there is no gesture for the end of the list, which is
     /// where most things are added.
     private var endOfList: some View {
-        Color.clear
-            .frame(height: 28)
-            .listRowSeparator(.hidden)
-            .listRowBackground(Color.clear)
-            .selectionDisabled()
-            .insertionLine(showing: dropBefore == entries.count)
+        dropTarget(
+            Color.clear
+                .frame(height: 28)
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .selectionDisabled(),
+            before: entries.count
+        )
+    }
+
+    /// A row that takes drops landing before `position`, with the line that
+    /// says so.
+    private func dropTarget(_ row: some View, before position: Int) -> some View {
+        row
+            .insertionLine(showing: dropBefore == position)
             .dropDestination(for: PlayableTransfer.self) { dropped, _ in
                 dropBefore = nil
-                return accept(dropped, before: entries.count)
+                return accept(dropped, before: position)
             } isTargeted: { targeted in
-                dropBefore = targeted
-                    ? entries.count
-                    : (dropBefore == entries.count ? nil : dropBefore)
+                dropBefore = targeted ? position : (dropBefore == position ? nil : dropBefore)
             }
     }
 
@@ -308,23 +304,19 @@ struct PlaylistView: View {
 
     // MARK: - Actions
 
-    private func playAll(shuffled: Bool = false) {
-        start(at: nil, shuffled: shuffled)
-    }
-
     /// Play from an entry, keeping the rest of the playlist behind it — the
     /// same thing clicking track nine of an album does. An entry rather than a
     /// position: see `playPlaylist`.
     ///
     /// Stays put afterwards: the playing row is lit on this page, so there is
     /// nothing the queue would show that this does not.
-    private func start(at entry: Int64?, shuffled: Bool = false) {
+    private func start(at entry: Int64) {
         let engine = playlists.engine
         Task {
             _ = try? await engine.playPlaylist(
                 playlistId: playlistId,
                 startEntry: entry,
-                shuffled: shuffled
+                shuffled: false
             )
         }
     }

@@ -102,18 +102,11 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
 
 extension View {
     /// Make this view a drag source for `playable`.
-    func draggablePlayable(_ playable: Playable) -> some View {
-        draggableTransfer(PlayableTransfer(playable))
-    }
-
-    /// The payload directly, for a view that stands for something playable but
-    /// has no `Playable` to hand — an artist name inside an album tile knows an
-    /// id and a name and nothing else.
     ///
     /// `.draggable`, not `.onDrag`: the drag recogniser behind it has a movement
     /// threshold, so a press that never moves is still a click. `.onDrag` claims
     /// the press outright and any tap underneath it never fires.
-    func draggableTransfer(_ transfer: PlayableTransfer) -> some View {
-        draggable(transfer)
+    func draggablePlayable(_ playable: Playable) -> some View {
+        draggable(PlayableTransfer(playable))
     }
 }

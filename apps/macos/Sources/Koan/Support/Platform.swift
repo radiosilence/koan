@@ -124,27 +124,6 @@ extension View {
     }
 }
 
-/// Labels keep their words while there is room, and lose them when there is not.
-///
-/// A row of `Label` buttons is fine beside a sleeve in a window and impossible
-/// on a phone, where each one wraps a character at a time. The symbols are the
-/// same ones the context menus use, so nothing is lost but the words.
-private struct IconOnlyWhenTight: ViewModifier {
-    @Environment(\.horizontalSizeClass) private var width
-
-    func body(content: Content) -> some View {
-        if width == .compact {
-            content.labelStyle(.iconOnly)
-        } else {
-            content
-        }
-    }
-}
-
-extension View {
-    func iconOnlyWhenTight() -> some View { modifier(IconOnlyWhenTight()) }
-}
-
 extension Notification.Name {
     /// The app giving up the foreground — on iOS the last dependable moment
     /// before it is suspended and perhaps killed without another word.

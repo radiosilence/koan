@@ -189,7 +189,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     /// Remembered per record: the wash re-asks every time you navigate, and the
     /// answer cannot change without the artwork changing.
-    @ObservationIgnored private var colours: [String: Color?] = [:]
+    private var colours: [String: Color?] = [:]
 
     // MARK: - Bytes
 
@@ -402,8 +402,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// Hashed so the filename can't collide with anything or exceed a path
     /// limit, and carries no metadata of its own.
     private static func filename(for key: String) -> String {
-        let digest = SHA256.hash(data: Data(key.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        digest(Data(key.utf8))
     }
 
     /// Forget what is cached for records the library has deleted since last
@@ -447,16 +446,5 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         guard let directory else { return }
         try? FileManager.default.removeItem(at: directory)
         _ = Self.makeDirectory()
-    }
-
-    var diskUsage: Int64 {
-        guard let directory,
-              let files = try? FileManager.default.contentsOfDirectory(
-                  at: directory, includingPropertiesForKeys: [.fileSizeKey]
-              )
-        else { return 0 }
-        return files.reduce(0) { total, url in
-            total + Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-        }
     }
 }

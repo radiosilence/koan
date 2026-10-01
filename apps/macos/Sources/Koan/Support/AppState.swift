@@ -59,7 +59,6 @@ final class AppState {
         nav.playlists = playlists
         player.activity = activity
         organize.activity = activity
-        playlists.activity = activity
         // Playlist failures go where every other engine failure goes rather
         // than into a modal of their own.
         playlists.report = { [weak player] message in player?.lastError = message }

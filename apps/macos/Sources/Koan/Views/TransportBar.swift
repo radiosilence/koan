@@ -304,7 +304,7 @@ struct SeekBar: View {
                     // tenth of a percent of the bar, narrower than the bar is
                     // thick, and a capsule that short is not drawn at all.
                     SeekProgress(
-                        fraction: reached,
+                        fraction: player.progress,
                         remaining: runway,
                         thickness: Self.thickness
                     )
@@ -356,14 +356,6 @@ struct SeekBar: View {
         return Capsule().path(
             in: CGRect(x: 0, y: (size.height - thickness) / 2, width: width, height: thickness)
         )
-    }
-
-    /// Where the bar starts from: the drag if there is one, otherwise the
-    /// playhead as of now.
-    private var reached: Double {
-        if let scrubbing = player.scrubbing { return scrubbing }
-        guard player.durationMs > 0 else { return 0 }
-        return Double(player.playhead.at(within: player.durationMs)) / Double(player.durationMs)
     }
 
     /// How much of the track is left to animate through, and zero whenever the

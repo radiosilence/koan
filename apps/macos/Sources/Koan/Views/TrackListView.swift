@@ -5,7 +5,7 @@ import SwiftUI
 /// whether it came from an album, an artist, or the favourites list.
 struct TrackListView: View {
     let title: String
-    var subtitle: String = ""
+    var subtitle = ""
     let tracks: [Track]
     var artwork: AlbumArtwork.Source?
     /// Makes the header's subtitle navigate to the artist.
@@ -18,7 +18,6 @@ struct TrackListView: View {
     var mixedAlbums = false
 
     @Environment(PlayerModel.self) private var player
-    @Environment(EngineMirror.self) private var mirror
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(\.horizontalSizeClass) private var width
@@ -69,7 +68,7 @@ struct TrackListView: View {
                         play(ids)
                     }
                     .onKeyPress(.return) {
-                        playSelection()
+                        play(selection)
                         return .handled
                     }
                     // Arriving from search: single out the matched track rather
@@ -98,8 +97,6 @@ struct TrackListView: View {
         guard let index = tracks.firstIndex(where: { ids.contains($0.id) }) else { return }
         player.playNow(trackIds: tracks.map(\.id), startingAt: index)
     }
-
-    private func playSelection() { play(selection) }
 
     /// Menu for the rows under the pointer — the List hands us the selection
     /// they belong to, so a menu on a multi-selection acts on all of it.
@@ -189,13 +186,9 @@ struct TrackListView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                actions
+                HeaderActions(playable: playable)
                     .padding(.top, 4)
             }
-    }
-
-    private var actions: some View {
-        HeaderActions(playable: playable)
     }
 
     /// The same record can be opened again highlighting a different track.
@@ -250,16 +243,8 @@ struct TrackRow: View {
             if showsAlbum {
                 // The cover is what you recognise a record by, and a list
                 // gathered from the whole library is exactly that job.
-                Group {
-                    if let albumId = track.albumId {
-                        AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: 3)
-                    } else {
-                        Image(systemName: "music.note")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .frame(width: 34, height: 34)
+                TrackSleeve(albumId: track.albumId)
+                    .frame(width: 34, height: 34)
             }
 
             VStack(alignment: .leading, spacing: 1) {
@@ -326,6 +311,21 @@ struct TrackRow: View {
     }
 }
 
+
+/// A track's sleeve at row size, or a note where the library knows no record.
+struct TrackSleeve: View {
+    let albumId: Int64?
+
+    var body: some View {
+        if let albumId {
+            AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: 3)
+        } else {
+            Image(systemName: "music.note")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
 
 /// Whether this track can play right now, and what the queue is doing about it
 /// if not.

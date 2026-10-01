@@ -180,22 +180,13 @@ impl LibraryState {
         }
 
         let insert_pos = self.cursor + 1;
-        let new_nodes: Vec<LibraryNode> = albums
-            .into_iter()
-            .map(|a| {
-                let year = album_year(a.date.as_deref());
-                LibraryNode::Album {
-                    id: a.id,
-                    title: a.title,
-                    year,
-                    expanded: false,
-                }
-            })
-            .collect();
-
-        for (i, node) in new_nodes.into_iter().enumerate() {
-            self.nodes.insert(insert_pos + i, node);
-        }
+        let new_nodes = albums.into_iter().map(|a| LibraryNode::Album {
+            id: a.id,
+            year: album_year(a.date.as_deref()),
+            title: a.title,
+            expanded: false,
+        });
+        self.nodes.splice(insert_pos..insert_pos, new_nodes);
     }
 
     fn expand_album(&mut self) {
@@ -212,20 +203,14 @@ impl LibraryState {
         }
 
         let insert_pos = self.cursor + 1;
-        let new_nodes: Vec<LibraryNode> = tracks
-            .into_iter()
-            .map(|t| LibraryNode::Track {
-                id: t.id,
-                title: t.title,
-                number: t.track_number,
-                duration_ms: t.duration_ms,
-                source: t.source,
-            })
-            .collect();
-
-        for (i, node) in new_nodes.into_iter().enumerate() {
-            self.nodes.insert(insert_pos + i, node);
-        }
+        let new_nodes = tracks.into_iter().map(|t| LibraryNode::Track {
+            id: t.id,
+            title: t.title,
+            number: t.track_number,
+            duration_ms: t.duration_ms,
+            source: t.source,
+        });
+        self.nodes.splice(insert_pos..insert_pos, new_nodes);
     }
 
     fn collapse_at_cursor(&mut self) {

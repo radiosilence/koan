@@ -78,6 +78,37 @@ pub struct AudioEngine {
 // and not shared — it has a single owner at all times.
 unsafe impl Send for AudioEngine {}
 
+impl super::backend::AudioEngineHandle for AudioEngine {
+    fn start(&self) -> std::result::Result<(), super::backend::BackendError> {
+        AudioEngine::start(self).map_err(|e| super::backend::BackendError::Platform(e.to_string()))
+    }
+
+    fn stop(&self) -> std::result::Result<(), super::backend::BackendError> {
+        AudioEngine::stop(self).map_err(|e| super::backend::BackendError::Platform(e.to_string()))
+    }
+
+    fn is_running(&self) -> bool {
+        AudioEngine::is_running(self)
+    }
+
+    fn fade_out(&self) {
+        self.fade().fade_out();
+    }
+
+    fn fade_in(&self) -> std::result::Result<(), super::backend::BackendError> {
+        if AudioEngine::is_running(self) {
+            self.fade().fade_in(false);
+            return Ok(());
+        }
+        self.fade().fade_in(true);
+        super::backend::AudioEngineHandle::start(self)
+    }
+
+    fn is_silent(&self) -> bool {
+        self.fade().is_silent()
+    }
+}
+
 impl AudioEngine {
     /// Create an engine targeting the given device, expecting the given format.
     ///

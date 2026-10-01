@@ -141,7 +141,7 @@ final class AudioSession {
             // speaker back does this), and the session stays down with it. Take
             // the session back once the route has settled.
             if AVAudioSession.InterruptionReason(rawValue: reason) == .routeDisconnected {
-                Task { @MainActor [weak self] in
+                Task { [weak self] in
                     try? await Task.sleep(for: .seconds(1))
                     guard let self, self.interrupted else { return }
                     let lostRoute = self.routeLostAt.map { Date().timeIntervalSince($0) < 3 } ?? false

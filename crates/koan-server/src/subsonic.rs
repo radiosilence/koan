@@ -215,10 +215,6 @@ struct SubsonicParams {
     p: Option<String>,
     #[serde(rename = "apiKey")]
     api_key: Option<String>,
-    #[allow(dead_code)]
-    v: Option<String>,
-    #[allow(dead_code)]
-    c: Option<String>,
     f: Option<String>,
 }
 
@@ -268,8 +264,6 @@ impl RawParams {
             s: self.get("s").map(String::from),
             p: self.get("p").map(String::from),
             api_key: self.get("apiKey").map(String::from),
-            v: self.get("v").map(String::from),
-            c: self.get("c").map(String::from),
             f: self.get("f").map(String::from),
         }
     }

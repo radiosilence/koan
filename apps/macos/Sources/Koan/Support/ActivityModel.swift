@@ -70,8 +70,6 @@ final class ActivityModel {
 
     private(set) var tasks: [Task] = []
 
-    var isBusy: Bool { !tasks.isEmpty }
-
     /// Everything the running tasks between them have hold of.
     ///
     /// Stored rather than derived from `tasks`. `.commands` is part of the Scene
@@ -103,10 +101,6 @@ final class ActivityModel {
         cancelLibraryTask?()
     }
 
-    /// The one to show when there is only room for one. The oldest, so a long
-    /// sync is not hidden by a queue add that started after it.
-    var current: Task? { tasks.first }
-
     /// Run `work` off the main actor with a task registered for its duration.
     ///
     /// The registration is removed however `work` ends, including by throwing,
@@ -115,11 +109,10 @@ final class ActivityModel {
     func run<T: Sendable>(
         _ label: String,
         uses: Resources = [],
-        cancellable: Bool = false,
         followsSync: Bool = false,
         _ work: @escaping @Sendable () async throws -> T
     ) async -> Result<T, Error> {
-        let id = begin(label, uses: uses, cancellable: cancellable, followsSync: followsSync)
+        let id = begin(label, uses: uses, followsSync: followsSync)
         defer { end(id) }
         do {
             return .success(try await work())

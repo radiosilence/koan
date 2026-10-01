@@ -6,7 +6,6 @@ import SwiftUI
 /// album or artist page, the same way you would if you'd browsed there.
 struct SearchResultsView: View {
     @Environment(SearchModel.self) private var search
-    @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
     @Environment(UIState.self) private var ui
     @Environment(\.onStage) private var onStage
@@ -115,8 +114,6 @@ private struct SearchTrackRow: View {
     let track: Track
     let selection: PlayableSelection
 
-    @Environment(LibraryModel.self) private var library
-    @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
     @Environment(Navigator.self) private var nav
     @State private var hovering = false
@@ -129,16 +126,8 @@ private struct SearchTrackRow: View {
 
             // The cover is what you recognise a track by, and a results
             // list is exactly where you are trying to recognise something.
-            Group {
-                if let albumId = track.albumId {
-                    AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: 3)
-                } else {
-                    Image(systemName: "music.note")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .frame(width: 40, height: 40)
+            TrackSleeve(albumId: track.albumId)
+                .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.title).lineLimit(1)

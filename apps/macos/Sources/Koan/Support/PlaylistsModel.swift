@@ -47,8 +47,6 @@ final class PlaylistsModel {
     /// new playlist with nothing in it yet.
     var naming: [Int64]?
 
-    /// Set by `AppState`, so a slow reload shows up alongside everything else.
-    weak var activity: ActivityModel?
     /// Set by `AppState`. Read for the library version a playlist's rows were
     /// loaded at.
     weak var mirror: EngineMirror?

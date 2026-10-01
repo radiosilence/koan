@@ -80,7 +80,7 @@ final class LibraryModel {
 
     /// Substring filter over whatever the current section is showing. It
     /// narrows the query, not the answer.
-    var filter: String = "" {
+    var filter = "" {
         didSet {
             guard filter != oldValue, !adopting else { return }
             reload(debounced: true)
@@ -415,8 +415,7 @@ final class LibraryModel {
     func toggleFavourite(track id: Int64) {
         let engine = self.engine
         Task {
-            let now = (try? await engine.toggleFavourite(trackId: id))
-            guard let now else { return }
+            guard let now = try? await engine.toggleFavourite(trackId: id) else { return }
             if now { favouriteTrackIds.insert(id) } else { favouriteTrackIds.remove(id) }
             reloadFavourites()
         }
@@ -425,8 +424,7 @@ final class LibraryModel {
     func toggleFavourite(album id: Int64) {
         let engine = self.engine
         Task {
-            let now = (try? await engine.toggleFavouriteAlbum(albumId: id))
-            guard let now else { return }
+            guard let now = try? await engine.toggleFavouriteAlbum(albumId: id) else { return }
             if now { favouriteAlbumIds.insert(id) } else { favouriteAlbumIds.remove(id) }
             reloadFavourites()
         }
@@ -435,8 +433,7 @@ final class LibraryModel {
     func toggleFavourite(artist id: Int64) {
         let engine = self.engine
         Task {
-            let now = (try? await engine.toggleFavouriteArtist(artistId: id))
-            guard let now else { return }
+            guard let now = try? await engine.toggleFavouriteArtist(artistId: id) else { return }
             if now { favouriteArtistIds.insert(id) } else { favouriteArtistIds.remove(id) }
             reloadFavourites()
         }

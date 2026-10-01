@@ -70,49 +70,6 @@ impl AudioBackend for IosAudioBackend {
     ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
         let engine = engine::AudioEngine::new(0, sample_rate, channels, consumer, samples_played)
             .map_err(|e| BackendError::StreamCreation(e.to_string()))?;
-        Ok(Box::new(IosEngineHandle { engine }))
-    }
-}
-
-struct IosEngineHandle {
-    engine: engine::AudioEngine,
-}
-
-// SAFETY: as on macOS — `engine::AudioEngine` is already `Send`, and this is a
-// thin wrapper with a single owner.
-unsafe impl Send for IosEngineHandle {}
-
-impl AudioEngineHandle for IosEngineHandle {
-    fn start(&self) -> Result<(), BackendError> {
-        self.engine
-            .start()
-            .map_err(|e| BackendError::Platform(e.to_string()))
-    }
-
-    fn stop(&self) -> Result<(), BackendError> {
-        self.engine
-            .stop()
-            .map_err(|e| BackendError::Platform(e.to_string()))
-    }
-
-    fn is_running(&self) -> bool {
-        self.engine.is_running()
-    }
-
-    fn fade_out(&self) {
-        self.engine.fade().fade_out();
-    }
-
-    fn fade_in(&self) -> Result<(), BackendError> {
-        if self.engine.is_running() {
-            self.engine.fade().fade_in(false);
-            return Ok(());
-        }
-        self.engine.fade().fade_in(true);
-        self.start()
-    }
-
-    fn is_silent(&self) -> bool {
-        self.engine.fade().is_silent()
+        Ok(Box::new(engine))
     }
 }

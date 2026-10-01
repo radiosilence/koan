@@ -250,47 +250,11 @@ pub fn random_tracks_excluding(
 
     let rows = stmt
         .raw_query()
-        .mapped(|row| {
-            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
-            Ok(TrackRow {
-                id: row.get(0)?,
-                album_id: row.get(1)?,
-                artist_id: row.get(2)?,
-                artist_name: artist_name.clone(),
-                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
-                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                disc: row.get(6)?,
-                track_number: row.get(7)?,
-                title: row.get(8)?,
-                duration_ms: row.get(9)?,
-                path: row.get(10)?,
-                codec: row.get(11)?,
-                sample_rate: row.get(12)?,
-                bit_depth: row.get(13)?,
-                channels: row.get(14)?,
-                bitrate: row.get(15)?,
-                genre: row.get(16)?,
-                source: row.get(17)?,
-                remote_id: row.get(18)?,
-                cached_path: row.get(19)?,
-            })
-        })
+        .mapped(super::row_to_track_row)
         .collect::<Result<Vec<_>, _>>()?;
 
     // Take only `count` from the scored results.
     Ok(rows.into_iter().take(count).collect())
-}
-
-/// Get all unique genres in the library.
-pub fn all_genres(conn: &Connection) -> Result<Vec<String>, DbError> {
-    let mut stmt =
-        conn.prepare("SELECT DISTINCT genre FROM tracks WHERE genre IS NOT NULL ORDER BY genre")?;
-
-    let rows = stmt
-        .query_map([], |row| row.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
-
-    Ok(rows)
 }
 
 #[cfg(test)]
@@ -447,31 +411,6 @@ mod tests {
             "expected at least 3 preferred tracks in top 5, got {}",
             preferred_count
         );
-    }
-
-    #[test]
-    fn test_all_genres() {
-        let db = test_db();
-
-        let mut m1 = sample_meta("T1", "A1", "Al1");
-        m1.genre = Some("Electronic".into());
-        m1.path = Some("/music/Al1/T1.flac".into());
-        upsert_track(&db.conn, &m1).unwrap();
-
-        let mut m2 = sample_meta("T2", "A2", "Al2");
-        m2.genre = Some("IDM".into());
-        m2.path = Some("/music/Al2/T2.flac".into());
-        upsert_track(&db.conn, &m2).unwrap();
-
-        let mut m3 = sample_meta("T3", "A3", "Al3");
-        m3.genre = Some("Electronic".into()); // duplicate
-        m3.path = Some("/music/Al3/T3.flac".into());
-        upsert_track(&db.conn, &m3).unwrap();
-
-        let genres = all_genres(&db.conn).unwrap();
-        assert_eq!(genres.len(), 2);
-        assert!(genres.contains(&"Electronic".to_string()));
-        assert!(genres.contains(&"IDM".to_string()));
     }
 
     #[test]

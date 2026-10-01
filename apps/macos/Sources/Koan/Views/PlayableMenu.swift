@@ -72,6 +72,26 @@ enum Playable {
     }
 }
 
+extension LibraryModel {
+    func isFavourite(_ playable: Playable) -> Bool {
+        switch playable {
+        case .track(let t): isFavourite(track: t.id)
+        case .album(let a): isFavourite(album: a.id)
+        case .artist(let id, _): isFavourite(artist: id)
+        case .playlist: false
+        }
+    }
+
+    func toggleFavourite(_ playable: Playable) {
+        switch playable {
+        case .track(let t): toggleFavourite(track: t.id)
+        case .album(let a): toggleFavourite(album: a.id)
+        case .artist(let id, _): toggleFavourite(artist: id)
+        case .playlist: break
+        }
+    }
+}
+
 /// The actions every playable thing offers. Drop into a `.contextMenu`.
 struct PlayableMenu: View {
     let playable: Playable
@@ -108,10 +128,10 @@ struct PlayableMenu: View {
         if playable.isLibraryContent {
             Divider()
 
-            Button { toggleFavourite() } label: {
+            Button { library.toggleFavourite(playable) } label: {
                 Label(favouriteTitle, systemImage: isFavourite ? Icon.favourited : Icon.favourite)
             }
-            Button { share() } label: {
+            Button { Share.link(for: playable, engine: library.engine, player: player) } label: {
                 Label("Copy Share Link", systemImage: Icon.share)
             }
             // Renames files on disk; a phone has no library folder, and no
@@ -179,14 +199,7 @@ struct PlayableMenu: View {
         }
     }
 
-    private var isFavourite: Bool {
-        switch playable {
-        case .track(let t): library.isFavourite(track: t.id)
-        case .album(let a): library.isFavourite(album: a.id)
-        case .artist(let id, _): library.isFavourite(artist: id)
-        case .playlist: false
-        }
-    }
+    private var isFavourite: Bool { library.isFavourite(playable) }
 
     /// An album or an artist is favourited as itself, not as its tracks.
     /// Subsonic stars all three, and starring an album's tracks one by one
@@ -201,15 +214,6 @@ struct PlayableMenu: View {
         }
     }
 
-    private func toggleFavourite() {
-        switch playable {
-        case .track(let t): library.toggleFavourite(track: t.id)
-        case .album(let a): library.toggleFavourite(album: a.id)
-        case .artist(let id, _): library.toggleFavourite(artist: id)
-        case .playlist: break
-        }
-    }
-
     /// Resolve off the main actor, then act. An artist can be thousands of
     /// tracks and the resolution is a database query.
     private func act(_ body: @escaping @MainActor ([Int64]) -> Void) {
@@ -220,10 +224,6 @@ struct PlayableMenu: View {
             guard !ids.isEmpty else { return }
             body(ids)
         }
-    }
-
-    private func share() {
-        Share.link(for: playable, engine: library.engine, player: player)
     }
 }
 
@@ -364,24 +364,10 @@ struct FavouriteHeaderButton: View {
 
     @Environment(LibraryModel.self) private var library
 
-    private var isOn: Bool {
-        switch playable {
-        case .track(let t): library.isFavourite(track: t.id)
-        case .album(let a): library.isFavourite(album: a.id)
-        case .artist(let id, _): library.isFavourite(artist: id)
-        case .playlist: false
-        }
-    }
+    private var isOn: Bool { library.isFavourite(playable) }
 
     var body: some View {
-        Button {
-            switch playable {
-            case .track(let t): library.toggleFavourite(track: t.id)
-            case .album(let a): library.toggleFavourite(album: a.id)
-            case .artist(let id, _): library.toggleFavourite(artist: id)
-            case .playlist: break
-            }
-        } label: {
+        Button { library.toggleFavourite(playable) } label: {
             Label(isOn ? "Favourited" : "Favourite", systemImage: isOn ? Icon.favourited : Icon.favourite)
                 .foregroundStyle(isOn ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
         }

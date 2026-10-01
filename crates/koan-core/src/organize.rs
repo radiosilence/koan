@@ -37,8 +37,6 @@ pub enum OrganizeError {
     Format(#[from] FormatError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("no tracks with local paths found")]
-    NoLocalTracks,
     #[error("no destination folder: add a library folder, or pass --base-dir")]
     NoDestination,
     #[error("no organize batches to undo")]
@@ -683,12 +681,6 @@ pub fn resolve(
         None => Selection::All,
     };
     resolve_selection(db, selection)
-}
-
-/// Read a selection of file paths, which may or may not be in the library.
-/// Unknown files pay for a tag read; known ones come from their row.
-pub fn resolve_paths(db: &Database, paths: &[PathBuf]) -> Result<ResolvedSelection, OrganizeError> {
-    resolve_selection(db, Selection::Paths(paths))
 }
 
 fn resolve_selection(

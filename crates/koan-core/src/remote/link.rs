@@ -500,11 +500,6 @@ pub fn report(report: LinkReport) -> bool {
     true
 }
 
-/// Whether the link to the server is up.
-pub fn is_up() -> bool {
-    LINK.lock().is_some()
-}
-
 type Socket = tungstenite::WebSocket<MaybeTlsStream<TcpStream>>;
 
 fn connect(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<(Socket, RawFd), String> {

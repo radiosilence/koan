@@ -14,8 +14,6 @@ struct OrganizeSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        @Bindable var organize = organize
-
         VStack(spacing: 0) {
             header
             Divider()
@@ -333,7 +331,6 @@ struct OrganizeWindow: View {
 
     @Environment(OrganizeModel.self) private var organize
 
-    @ViewBuilder
     var body: some View {
         if organize.subject != nil {
             OrganizeSheet()

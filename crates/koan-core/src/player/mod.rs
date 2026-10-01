@@ -175,7 +175,7 @@ impl Player {
             _viz_analyzer: viz_analyzer,
             undo_stack: UndoStack::new(),
             batch_buffer: None,
-            output_device_name: cfg.playback.output_device.clone(),
+            output_device_name: cfg.playback.output_device,
             backend: crate::audio::platform_backend(),
             last_skip: std::time::Instant::now(),
             stream_mode: streaming::ProbeMode::Full,
@@ -460,20 +460,7 @@ impl Player {
 
         self.timeline.reset();
 
-        // Gapless lookahead: the decode thread maintains its own cursor
-        // (separate from the UI cursor) so it can look ahead through the
-        // playlist without affecting what the UI shows as "now playing".
-        let advance_state = self.shared_state.clone();
-        let decode_cursor = parking_lot::Mutex::new(Some(id));
-        let next_track = move || {
-            let current = decode_cursor.lock().take()?;
-            let next = advance_state.peek_next_ready_after(current);
-            if let Some((next_id, _)) = &next {
-                let mut guard = decode_cursor.lock();
-                *guard = Some(*next_id);
-            }
-            next
-        };
+        let next_track = self.decode_cursor(id);
 
         // Load ReplayGain config for this playback session.
         let cfg = crate::config::Config::load_or_default();
@@ -509,6 +496,25 @@ impl Player {
         });
 
         Ok(())
+    }
+
+    /// Gapless lookahead: the decode thread keeps its own cursor, separate
+    /// from the UI cursor, so it can look ahead through the playlist without
+    /// moving what the UI shows as now playing.
+    fn decode_cursor(
+        &self,
+        id: QueueItemId,
+    ) -> impl Fn() -> Option<(QueueItemId, PathBuf)> + Send + 'static {
+        let state = self.shared_state.clone();
+        let cursor = parking_lot::Mutex::new(Some(id));
+        move || {
+            let current = cursor.lock().take()?;
+            let next = state.peek_next_ready_after(current);
+            if let Some((next_id, _)) = &next {
+                *cursor.lock() = Some(*next_id);
+            }
+            next
+        }
     }
 
     /// Probe a partially-downloaded file on its own thread, and start it when
@@ -791,17 +797,7 @@ impl Player {
         self.timeline.reset();
 
         // Gapless lookahead after streaming: next track uses normal file path.
-        let advance_state = self.shared_state.clone();
-        let decode_cursor = parking_lot::Mutex::new(Some(id));
-        let next_track = move || {
-            let current = decode_cursor.lock().take()?;
-            let next = advance_state.peek_next_ready_after(current);
-            if let Some((next_id, _)) = &next {
-                let mut guard = decode_cursor.lock();
-                *guard = Some(*next_id);
-            }
-            next
-        };
+        let next_track = self.decode_cursor(id);
 
         let first = buffer::SourceEntry {
             id,
@@ -1528,15 +1524,15 @@ impl Player {
     }
 
     /// Apply an undo/redo entry: mutate the playlist and return the inverse entry.
-    fn apply_entry(&mut self, entry: UndoEntry) -> Option<UndoEntry> {
+    fn apply_entry(&mut self, entry: UndoEntry) -> UndoEntry {
         match entry {
-            UndoEntry::Added { ids } => {
+            UndoEntry::Added { ids } | UndoEntry::Inserted { ids } => {
                 // Undo of "items were added": snapshot them with positions, then remove.
                 let items_with_pos = self.snapshot_for_undo(&ids);
                 self.shared_state.remove_items(&ids);
-                Some(UndoEntry::Removed {
+                UndoEntry::Removed {
                     items: items_with_pos,
-                })
+                }
             }
             UndoEntry::Removed { items } => {
                 // Undo of "items were removed": re-insert each at its position.
@@ -1545,50 +1541,41 @@ impl Player {
                     ids.push(item.id);
                     self.shared_state.insert_item_at(*item, after);
                 }
-                Some(UndoEntry::Added { ids })
-            }
-            UndoEntry::Inserted { ids } => {
-                // Same as Added — snapshot positions, remove items.
-                let items_with_pos = self.snapshot_for_undo(&ids);
-                self.shared_state.remove_items(&ids);
-                Some(UndoEntry::Removed {
-                    items: items_with_pos,
-                })
+                UndoEntry::Added { ids }
             }
             UndoEntry::Moved { id, was_after } => {
                 let current_after = self.shared_state.item_before(id);
                 self.shared_state.move_item_to(id, was_after);
-                Some(UndoEntry::Moved {
+                UndoEntry::Moved {
                     id,
                     was_after: current_after,
-                })
+                }
             }
             UndoEntry::MovedBatch { entries } => {
                 let ids: Vec<QueueItemId> = entries.iter().map(|(id, _)| *id).collect();
                 let current_positions = self.shared_state.items_before(&ids);
                 self.shared_state.move_items_to(&entries);
-                Some(UndoEntry::MovedBatch {
+                UndoEntry::MovedBatch {
                     entries: current_positions,
-                })
+                }
             }
             UndoEntry::Replaced { items, cursor } => {
                 let (current_items, current_cursor) = self.shared_state.snapshot_playlist();
                 self.shared_state.restore_playlist(items, cursor);
-                Some(UndoEntry::Replaced {
+                UndoEntry::Replaced {
                     items: current_items,
                     cursor: current_cursor,
-                })
+                }
             }
             UndoEntry::Batch(entries) => {
                 // Apply entries in reverse order, collect inverses.
-                let mut inverses = Vec::with_capacity(entries.len());
-                for entry in entries.into_iter().rev() {
-                    if let Some(inverse) = self.apply_entry(entry) {
-                        inverses.push(inverse);
-                    }
-                }
+                let mut inverses: Vec<_> = entries
+                    .into_iter()
+                    .rev()
+                    .map(|e| self.apply_entry(e))
+                    .collect();
                 inverses.reverse();
-                Some(UndoEntry::Batch(inverses))
+                UndoEntry::Batch(inverses)
             }
         }
     }
@@ -1631,9 +1618,8 @@ impl Player {
         let Some(entry) = self.undo_stack.pop_undo() else {
             return;
         };
-        if let Some(inverse) = self.apply_entry(entry) {
-            self.undo_stack.push_redo(inverse);
-        }
+        let inverse = self.apply_entry(entry);
+        self.undo_stack.push_redo(inverse);
         self.reconcile_playback();
     }
 
@@ -1642,9 +1628,8 @@ impl Player {
         let Some(entry) = self.undo_stack.pop_redo() else {
             return;
         };
-        if let Some(inverse) = self.apply_entry(entry) {
-            self.undo_stack.push_undo_keep_redo(inverse);
-        }
+        let inverse = self.apply_entry(entry);
+        self.undo_stack.push_undo_keep_redo(inverse);
         self.reconcile_playback();
     }
 

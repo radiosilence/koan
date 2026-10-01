@@ -14,8 +14,6 @@ pub enum FormatError {
     UnclosedConditional(usize),
     #[error("unclosed function at position {0}")]
     UnclosedFunction(usize),
-    #[error("unexpected character '{0}' at position {1}")]
-    UnexpectedChar(char, usize),
     #[error("unknown function '${0}' at position {1}")]
     UnknownFunction(String, usize),
     #[error("expression nested more than {MAX_DEPTH} levels deep at position {0}")]

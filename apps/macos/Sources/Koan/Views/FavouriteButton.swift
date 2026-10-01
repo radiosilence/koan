@@ -8,7 +8,7 @@ import SwiftUI
 struct FavouriteButton: View {
     let isOn: Bool
     /// Whether to show it while it is off — hover, usually.
-    var showing: Bool = true
+    var showing = true
     var size: Font = .body
     /// A shortcut to mention in the tooltip, where one reaches this heart.
     var hint: String?

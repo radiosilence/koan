@@ -119,7 +119,7 @@ struct QueueView: View {
                     // Enter plays the selection, the way Return opens things
                     // everywhere else on the platform.
                     .onKeyPress(.return) {
-                        playSelection()
+                        play(rowIds: selection)
                         return .handled
                     }
                     #if os(macOS)
@@ -425,7 +425,6 @@ struct QueueView: View {
         player.play(itemId: id)
     }
 
-    private func playSelection() { play(rowIds: selection) }
 
     /// Scrolls only. The TUI's `g` moves a cursor because the cursor is how you
     /// look around there; here the pointer and the selection are separate things
@@ -632,31 +631,6 @@ struct QueueGroup: Identifiable {
     let albumArtist: String
     let album: String
     var items: [QueueItem]
-
-    /// Contiguous runs of the same album, mirroring the TUI's grouping. Items
-    /// with no album title each stand alone rather than collecting into an
-    /// "unknown album" bucket that doesn't exist.
-    static func group(_ items: [QueueItem]) -> [QueueGroup] {
-        var groups: [QueueGroup] = []
-        for item in items {
-            let key = item.album
-            if !key.isEmpty,
-               var last = groups.last,
-               last.album == key,
-               last.albumArtist == item.albumArtist {
-                last.items.append(item)
-                groups[groups.count - 1] = last
-            } else {
-                groups.append(QueueGroup(
-                    id: item.queueItemId,
-                    albumArtist: item.albumArtist,
-                    album: key,
-                    items: [item]
-                ))
-            }
-        }
-        return groups
-    }
 
     var year: String? { items.first?.year }
 }
