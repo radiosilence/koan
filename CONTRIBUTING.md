@@ -74,6 +74,23 @@ AppKit-backed items when the body declaring them re-runs, which throws away the
 filter field and the focus in it. `let _ = Self._printChanges()` at the top of
 a body prints what made it run.
 
+### Layout is paid for by everything mounted
+
+Hiding a view with `opacity` leaves it in layout, and a window-wide layout pass
+lays out everything mounted in it. Two things follow:
+
+- The window toolbar declares the same items on every page; a control that does
+  not apply to a page is left out of its item, not the item out of the toolbar.
+  Adding or removing an item makes AppKit re-tile the toolbar, and a re-tile is
+  a window-wide layout pass.
+- Pages are not kept mounted behind the one on screen to keep their scroll
+  position. They are rebuilt and put back where they were — `ScrollPosition` for
+  a scroll view, `ScrollViewReader` for a `List`. The queue is the exception.
+
+`Hangs` and `os_signpost` in Instruments show it: a `click-to-page` region that
+ends quickly followed by a hang on the main thread is the page being laid out,
+not read.
+
 ## Submitting a PR
 
 1. Fork the repo and create a feature branch.

@@ -1021,7 +1021,7 @@ fn execute_single_move(
     let size = source_meta.len();
     let mtime = mtime_secs(&source_meta);
 
-    let tx = db.conn.unchecked_transaction()?;
+    let tx = crate::db::queries::write_transaction(&db.conn)?;
     log_move(
         &tx,
         batch_id,
@@ -1164,7 +1164,7 @@ pub fn undo(db: &Database) -> Result<UndoResult, OrganizeError> {
             continue;
         }
 
-        let tx = db.conn.unchecked_transaction()?;
+        let tx = crate::db::queries::write_transaction(&db.conn)?;
         if let Err(e) = rewrite_path_references(&tx, to, from) {
             result.errors.push((to.to_path_buf(), e.to_string()));
             continue;

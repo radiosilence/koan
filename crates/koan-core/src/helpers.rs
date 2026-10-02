@@ -461,7 +461,7 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
     let folder = &crate::index::spelling::on_disk(folder);
     let (lower, upper) = queries::folder_prefix_range(folder);
 
-    let tx = db.conn.unchecked_transaction()?;
+    let tx = crate::db::queries::write_transaction(&db.conn)?;
     // Still on the server: keep the row, drop the local file.
     tx.execute(
         "UPDATE tracks SET path = NULL, source = 'remote'
@@ -498,7 +498,7 @@ fn delete_track_rows(conn: &rusqlite::Connection, ids: &[i64]) -> rusqlite::Resu
 /// A track held both locally and remotely keeps its row and loses its remote id;
 /// one that only ever came from the server goes.
 pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbError> {
-    let tx = db.conn.unchecked_transaction()?;
+    let tx = crate::db::queries::write_transaction(&db.conn)?;
 
     let ids: Vec<i64> = {
         let mut stmt =
@@ -674,7 +674,7 @@ pub fn relocate_cached_paths(db: &Database, cache_dir: &Path) -> rusqlite::Resul
         return Ok(0);
     }
 
-    let tx = db.conn.unchecked_transaction()?;
+    let tx = crate::db::queries::write_transaction(&db.conn)?;
     let mut moved = 0;
     for (id, old) in &stale {
         let tail: Vec<_> = Path::new(old).components().rev().take(3).collect();
@@ -787,6 +787,12 @@ pub fn sync_remote(
     username: &str,
     progress: &(dyn Fn(crate::remote::sync::SyncProgress) + Sync),
 ) -> Result<FullSync, crate::remote::sync::SyncError> {
+    // One at a time. An automatic sync still reconciling favourites when a
+    // full sync was asked for wrote under it, and each fought the other for
+    // the write lock. The second waits for the first, and then has little
+    // left to do.
+    static SYNCING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    let _one_at_a_time = SYNCING.lock();
     let library = crate::remote::sync::sync_library(db, client, full, url, username, progress)?;
     Ok(FullSync {
         library,

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.47.1
+
+### Fixed
+
+- **Moving between pages in the Mac app no longer stalls for half a second.** Most page switches added or removed toolbar items (the filter field, album sorting, selection), which makes AppKit re-tile the toolbar and lay out the whole window again, including the album grid and artist list kept mounted behind the page on screen. The toolbar now keeps the same items on every page, and the album and artist browsers are rebuilt when visited and put back where they were scrolled to instead of being kept mounted. In a scripted run over fourteen page switches the main thread stalled for 3.3 s in total, down from 5.5 s.
+- **A sync that meets another writer waits for it instead of losing tracks.** Sync pages, scan chunks and other read-then-write work opened deferred transactions, which SQLite refuses to upgrade to a write, without waiting, once another connection has written since their first read. A full sync started while an automatic one was still reconciling favourites failed hundreds of track writes this way, and paused while other statements waited out the lock. They now take the write lock when they begin, and only one sync runs at a time.
+- **A sync that could not write some tracks says so and tries again.** Failed track writes were logged but not counted, so the sync reported nothing failed and an incremental one moved its high-water mark past them. They now count as failures, which leaves the mark where it was.
+- **`koan.log` is kept to a size.** It grew without limit; a run of lock errors took it to several gigabytes. Above 16 MiB it is moved aside to `koan.log.1`, replacing the one before, checked when opened and every few thousand lines.
+- **Choosing a playlist lights its sidebar row at once.** The row followed the page, so it went dark while the playlist loaded and the previous row lit up again until it arrived.
+
 ## 0.47.0
 
 ### Changed

@@ -81,6 +81,10 @@ final class Navigator {
     private var cursor = 0
     /// The move being loaded, if there is one.
     private var moving: Task<Void, Never>?
+    /// Where that move is going. The sidebar lights it at once: lit only on
+    /// arrival, the row clicked went dark again while the page loaded, and the
+    /// old one lit back up until it did.
+    private(set) var destination: Page?
 
     private let library: LibraryModel
     /// Set by `AppState`. A playlist is a page like any other, and its rows are
@@ -102,14 +106,15 @@ final class Navigator {
     }
 
     /// How many times each section has been sent back to its top. The stage
-    /// keys a section's page on it, so a bump rebuilds the page: on macOS a
-    /// `List` cannot be told to scroll, and starting over is the one way to
-    /// put it at the top. See `StageView`.
+    /// keys most pages on it, so a bump rebuilds the page at its top; the album
+    /// and artist browsers, which put themselves back where they were when
+    /// rebuilt, watch it and scroll to the top instead. See `StageView`.
     private(set) var rewinds: [Section: Int] = [:]
 
     /// A click on the sidebar row for the page already showing: back to the
     /// top, the way a browser tab's own link reloads it. A click from anywhere
-    /// else is an ordinary move, and a page kept alive keeps its place.
+    /// else is an ordinary move, and the queue and the browsers keep their
+    /// place.
     func rewind(_ section: Section) {
         guard current == .section(section) else { return }
         rewinds[section, default: 0] += 1
@@ -157,7 +162,13 @@ final class Navigator {
 
     /// Go to a page, recording it. The only way anything moves.
     func go(to next: Page) {
-        guard next != current else { return }
+        guard next != current else {
+            // Back to the page still showing, while another is loading: that
+            // move is no longer wanted.
+            moving?.cancel()
+            destination = nil
+            return
+        }
         move(to: next) { [weak self] in self?.record(next) }
     }
 
@@ -182,6 +193,7 @@ final class Navigator {
     /// to be there.
     private func move(to next: Page, arriving: @escaping @MainActor () -> Void) {
         moving?.cancel()
+        destination = next
         moving = Task {
             await Trace.region("click-to-page") {
                 let listing = await Trace.region("prepare") { await prepared(for: next) }
@@ -190,6 +202,7 @@ final class Navigator {
                     apply(next, showing: listing)
                     arriving()
                 }
+                destination = nil
             }
         }
     }
@@ -261,7 +274,7 @@ final class Navigator {
     /// either the page it already shows, which `go(to:)` discards, or a click.
     var sidebarSelection: Binding<Section?> {
         Binding(
-            get: { self.current.section },
+            get: { (self.destination ?? self.current).section },
             set: { [weak self] chosen in
                 guard let self, let chosen else { return }
                 show(chosen)

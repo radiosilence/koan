@@ -37,6 +37,20 @@ pub use tracks::*;
 pub use uids::*;
 pub use vectors::*;
 
+/// A write transaction that holds the write lock from its first statement.
+///
+/// What `Connection::unchecked_transaction` gives is deferred: it takes the
+/// lock at its first write, and if another connection wrote since its first
+/// read, SQLite refuses that upgrade outright rather than waiting, since
+/// waiting could deadlock. A scan chunk or a sync page that met another writer
+/// therefore failed every statement in it. Immediate waits for the lock the way
+/// any other statement does.
+pub fn write_transaction(
+    conn: &rusqlite::Connection,
+) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+    rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+}
+
 /// Run `f` as one unit: its writes land together or not at all, readers never
 /// see them half done, and the write lock is taken once rather than per
 /// statement.
@@ -245,5 +259,66 @@ pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
         album_mbid: None,
         remote_url: None,
         album_added_at: None,
+    }
+}
+
+#[cfg(test)]
+mod write_transaction_tests {
+    use std::time::Duration;
+
+    fn open(path: &std::path::Path) -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.pragma_update(None, "journal_mode", "wal").unwrap();
+        conn.busy_timeout(Duration::from_secs(5)).unwrap();
+        conn
+    }
+
+    /// A deferred transaction that read before another connection committed
+    /// cannot write at all, however long the busy timeout; `write_transaction`
+    /// waits its turn instead. This is what a sync page meeting another writer
+    /// ran into.
+    #[test]
+    fn a_write_transaction_waits_where_a_deferred_one_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.db");
+        open(&path)
+            .execute_batch("CREATE TABLE t (x INTEGER)")
+            .unwrap();
+
+        let deferred = open(&path);
+        let tx = deferred.unchecked_transaction().unwrap();
+        let _: i64 = tx
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        open(&path).execute("INSERT INTO t VALUES (1)", []).unwrap();
+        let err = tx.execute("INSERT INTO t VALUES (2)", []).unwrap_err();
+        assert!(
+            err.to_string().contains("locked") || err.to_string().contains("busy"),
+            "{err}"
+        );
+        drop(tx);
+
+        let path_for_writer = path.clone();
+        let writer = std::thread::spawn(move || {
+            let conn = open(&path_for_writer);
+            conn.execute_batch("BEGIN IMMEDIATE; INSERT INTO t VALUES (3)")
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+            conn.execute_batch("COMMIT").unwrap();
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        let conn = open(&path);
+        let tx = super::write_transaction(&conn).unwrap();
+        let _: i64 = tx
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        tx.execute("INSERT INTO t VALUES (4)", []).unwrap();
+        tx.commit().unwrap();
+        writer.join().unwrap();
+
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM t", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 3);
     }
 }

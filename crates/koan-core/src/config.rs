@@ -966,17 +966,61 @@ pub fn db_path() -> PathBuf {
     config_dir().join("koan.db")
 }
 
-/// Open `koan.log` for appending, creating the configuration directory first.
+/// Above this, `koan.log` is moved aside to `koan.log.1`, replacing the one
+/// before, so the log never holds more than twice it.
+const LOG_LIMIT: u64 = 16 * 1024 * 1024;
+/// How many lines go by between looks at the file's size: the app stays open
+/// for days, so checking only when the file is opened is not enough.
+const LOG_CHECK_EVERY: u32 = 4096;
+
+/// `koan.log`, kept to a size. Every logger writes through one of these.
+#[derive(Default)]
+pub struct LogFile {
+    file: Option<fs::File>,
+    lines: u32,
+}
+
+impl LogFile {
+    pub fn write(&mut self, line: std::fmt::Arguments) {
+        use std::io::Write as _;
+        if self.file.is_none() {
+            self.file = open_log();
+        }
+        let Some(file) = self.file.as_mut() else {
+            return;
+        };
+        let _ = writeln!(file, "{line}");
+        self.lines = self.lines.wrapping_add(1);
+        if self.lines.is_multiple_of(LOG_CHECK_EVERY)
+            && file.metadata().is_ok_and(|m| m.len() > LOG_LIMIT)
+        {
+            self.file = open_log();
+        }
+    }
+
+    pub fn flush(&mut self) {
+        if let Some(file) = self.file.as_mut() {
+            let _ = std::io::Write::flush(file);
+        }
+    }
+}
+
+/// Open `koan.log` for appending, creating the configuration directory first
+/// and moving an oversized log aside.
 ///
 /// A logger starts before anything else has had reason to create the
 /// directory, so on a first launch it would otherwise find nowhere to write.
-pub fn open_log() -> Option<fs::File> {
+fn open_log() -> Option<fs::File> {
     let dir = config_dir();
     fs::create_dir_all(&dir).ok()?;
+    let path = dir.join("koan.log");
+    if fs::metadata(&path).is_ok_and(|m| m.len() > LOG_LIMIT) {
+        let _ = fs::rename(&path, dir.join("koan.log.1"));
+    }
     fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join("koan.log"))
+        .open(path)
         .ok()
 }
 

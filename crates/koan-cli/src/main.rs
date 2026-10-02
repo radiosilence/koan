@@ -1,4 +1,4 @@
-use std::io::{self, Write as _};
+use std::io;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -19,14 +19,14 @@ static LOGGER: OnceLock<BufferedLogger> = OnceLock::new();
 
 struct BufferedLogger {
     buffer: Mutex<Option<Arc<Mutex<Vec<String>>>>>,
-    log_file: Mutex<Option<std::fs::File>>,
+    log_file: Mutex<config::LogFile>,
 }
 
 impl BufferedLogger {
     fn init() {
         let logger = LOGGER.get_or_init(|| BufferedLogger {
             buffer: Mutex::new(None),
-            log_file: Mutex::new(config::open_log()),
+            log_file: Mutex::new(config::LogFile::default()),
         });
         log::set_logger(logger).expect("failed to set logger");
         log::set_max_level(log::LevelFilter::Info);
@@ -61,15 +61,11 @@ impl log::Log for BufferedLogger {
         );
 
         // Always write to log file (including noisy library warnings).
-        let mut log_file = self.log_file.lock().unwrap();
-        if log_file.is_none() {
-            *log_file = config::open_log();
-        }
-        if let Some(file) = log_file.as_mut() {
-            let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-            let _ = writeln!(file, "[{}] {}", now, msg);
-        }
-        drop(log_file);
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        self.log_file
+            .lock()
+            .unwrap()
+            .write(format_args!("[{}] {}", now, msg));
 
         // Suppress warn-level noise from lofty/symphonia internals on stderr/buffer.
         // Our own fallback warnings (from koan_core) still come through.
@@ -88,9 +84,7 @@ impl log::Log for BufferedLogger {
     }
 
     fn flush(&self) {
-        if let Some(file) = self.log_file.lock().unwrap().as_mut() {
-            let _ = file.flush();
-        }
+        self.log_file.lock().unwrap().flush();
     }
 }
 

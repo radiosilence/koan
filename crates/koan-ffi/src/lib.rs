@@ -102,10 +102,9 @@ pub trait ProgressReporter: Send + Sync {
 /// hosted by a GUI, so a favourite that failed to reach the server, or a track
 /// that would not decode, leaves nothing behind to look at.
 fn init_logging() {
-    use std::io::Write as _;
     use std::sync::Mutex;
 
-    struct FileLogger(Mutex<Option<std::fs::File>>);
+    struct FileLogger(Mutex<config::LogFile>);
 
     impl log::Log for FileLogger {
         fn enabled(&self, metadata: &log::Metadata) -> bool {
@@ -116,33 +115,26 @@ fn init_logging() {
             if !self.enabled(record.metadata()) {
                 return;
             }
-            let Ok(mut guard) = self.0.lock() else { return };
-            if guard.is_none() {
-                *guard = config::open_log();
-            }
-            let Some(file) = guard.as_mut() else { return };
+            let Ok(mut file) = self.0.lock() else { return };
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-            let _ = writeln!(
-                file,
+            file.write(format_args!(
                 "[{}] {}: {}",
                 now,
                 record.level().as_str().to_lowercase(),
                 record.args()
-            );
+            ));
         }
 
         fn flush(&self) {
-            if let Ok(mut guard) = self.0.lock()
-                && let Some(file) = guard.as_mut()
-            {
-                let _ = file.flush();
+            if let Ok(mut file) = self.0.lock() {
+                file.flush();
             }
         }
     }
 
     static LOGGER: std::sync::OnceLock<FileLogger> = std::sync::OnceLock::new();
 
-    let logger = LOGGER.get_or_init(|| FileLogger(Mutex::new(config::open_log())));
+    let logger = LOGGER.get_or_init(|| FileLogger(Mutex::new(config::LogFile::default())));
     // A second engine in one process is not an error worth failing over.
     if log::set_logger(logger).is_ok() {
         log::set_max_level(log::LevelFilter::Info);
