@@ -677,13 +677,15 @@ private struct AlbumSortControls: View {
             // Its own button rather than an item inside the sort menu:
             // reshuffling is something you do repeatedly until you like what
             // you see, and a menu makes that four clicks instead of one.
-            Button {
-                library.reshuffleAlbums()
-            } label: {
-                Label("Shuffle", systemImage: Icon.reshuffle)
+            if library.albumSort == .random {
+                Button {
+                    library.reshuffleAlbums()
+                } label: {
+                    Label("Shuffle", systemImage: Icon.reshuffle)
+                }
+                .tint(.primary)
+                .help("Shuffle again")
             }
-            .tint(.primary)
-            .help("Shuffle again")
         }
     }
 }
