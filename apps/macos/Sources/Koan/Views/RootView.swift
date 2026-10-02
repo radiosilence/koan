@@ -172,23 +172,6 @@ struct RootView: View {
     }
 }
 
-/// The filter field, and the only reader of what is typed into it.
-///
-/// Its own view because the field reads the filter back on every update, and
-/// SwiftUI charges that read to whichever body the field sits in. Placed in
-/// `RootView` directly, that would be the root: every keystroke would re-run
-/// the window and rebuild the toolbar, field and focus with it.
-private struct LibraryFilter: View {
-    let placeholder: String
-    @Environment(LibraryModel.self) private var library
-    @Environment(UIState.self) private var ui
-
-    var body: some View {
-        @Bindable var library = library
-        FilterField(placeholder: placeholder, text: $library.filter, focusToken: ui.filterFocusToken)
-    }
-}
-
 extension EnvironmentValues {
     /// The colour the room is wearing — what `.tint` was set to, readable.
     ///
@@ -359,48 +342,6 @@ private struct TransportOverlay: View {
                     )
                 }
             )
-    }
-}
-
-/// Select, or what to do with what has been selected. The only reader of the
-/// selection outside the tiles, so a tick re-runs this and not the root.
-private struct SelectionControls: View {
-    let selection: PlayableSelection
-
-    @Environment(LibraryModel.self) private var library
-    @Environment(PlayerModel.self) private var player
-
-    var body: some View {
-        if selection.isActive {
-            let count = selection.picked.count
-            HStack(spacing: 2) {
-                Button {
-                    selection.commit(engine: library.engine, player: player, play: true)
-                } label: {
-                    Label(count > 0 ? "Play \(count)" : "Play", systemImage: Icon.play)
-                        .labelStyle(.titleAndIcon)
-                }
-                .disabled(count == 0)
-                .help("Play the selection, replacing the queue")
-                Button {
-                    selection.commit(engine: library.engine, player: player, play: false)
-                } label: {
-                    Label(count > 0 ? "Add \(count) to Queue" : "Add to Queue", systemImage: Icon.queue)
-                        .labelStyle(.titleAndIcon)
-                }
-                .disabled(count == 0)
-                .help("Add the selection to the end of the queue")
-                Button("Done") { selection.end() }
-                    .help("Stop selecting (Esc)")
-            }
-        } else {
-            Button {
-                selection.begin()
-            } label: {
-                Label("Select", systemImage: Icon.selectAll)
-            }
-            .help("Pick several to play or queue (⌘-click one, or ⌘A)")
-        }
     }
 }
 
@@ -589,18 +530,15 @@ private extension View {
     }
 }
 
-
-/// The window's toolbar: back and forward, then the controls for the page.
+/// The window's toolbar: back and forward, and nothing that changes with the
+/// page.
 ///
-/// The same items on every page. A control that does not apply to a page is
-/// not drawn there, but its item stays: adding or removing an item makes AppKit
-/// re-tile the toolbar, and a re-tile lays out the whole window — every page
-/// kept mounted behind the one on screen included, which is most of what a
-/// page switch cost.
+/// A toolbar item whose content changes from page to page — a filter field on
+/// one, a sort menu on another — makes AppKit re-tile the toolbar, and a
+/// re-tile lays out the whole window. The controls for a page are in the
+/// page's own header instead; see `PageControls`.
 private struct PageToolbar: ToolbarContent {
     @Environment(Navigator.self) private var nav
-    @Environment(LibraryModel.self) private var library
-    @Environment(SearchModel.self) private var search
 
     var body: some ToolbarContent {
         // Back and forward walk the pages you visited, in order, wherever they
@@ -618,109 +556,6 @@ private struct PageToolbar: ToolbarContent {
             .disabled(!nav.canGoForward)
             .help("Forward (⌘])")
         }
-
-        // Separate items with `ToolbarSpacer` between them, not one
-        // `ToolbarItemGroup`: a group shares a single pane of glass, which
-        // would put the filter field and the lyrics toggle in the same capsule.
-        ToolbarSpacer(.flexible, placement: .primaryAction)
-
-        // Filtering what is on screen belongs with it, not in the sidebar
-        // search, which navigates away instead of narrowing.
-        ToolbarItem(placement: .primaryAction) {
-            if let placeholder = nav.section?.filterPlaceholder {
-                LibraryFilter(placeholder: placeholder)
-                    .frame(width: 180)
-            }
-        }
-        .sharedBackgroundVisibility(nav.section?.filterPlaceholder == nil ? .hidden : .automatic)
-
-        // Sort belongs next to what it sorts, so it only appears there.
-        // Filtering and sorting are different questions, so they get
-        // different panes of glass rather than one joined control.
-        ToolbarSpacer(.fixed, placement: .primaryAction)
-
-        ToolbarItem(placement: .primaryAction) {
-            if nav.section == .albums {
-                AlbumSortControls()
-            }
-        }
-        .sharedBackgroundVisibility(nav.section == .albums ? .automatic : .hidden)
-
-        // Last, and apart from the filter: what you do with a pick is not part
-        // of narrowing the grid, and next to the field the two read as one
-        // control.
-        ToolbarSpacer(.fixed, placement: .primaryAction)
-
-        ToolbarItem(placement: .primaryAction) {
-            if let selection {
-                SelectionControls(selection: selection)
-            }
-        }
-        .sharedBackgroundVisibility(selection == nil ? .hidden : .automatic)
-    }
-
-    /// The pick the page on screen makes, if it makes one: the album grid, an
-    /// artist's records and search results are picked the same way.
-    private var selection: PlayableSelection? {
-        if nav.section == .albums { return library.selection }
-        if case .artist = nav.current { return library.artistSelection }
-        if nav.section == .searchResults { return search.selection }
-        return nil
     }
 }
 
-/// The album grid's sort, and reshuffling when the sort is random.
-private struct AlbumSortControls: View {
-    @Environment(LibraryModel.self) private var library
-
-    var body: some View {
-        HStack(spacing: 2) {
-            // A pull-down with the current choice ticked, the way Finder's
-            // arrange control works — rather than a picker forced to a fixed
-            // width, which reads as a control that did not fit.
-            Menu {
-                Picker("Sort", selection: Binding(
-                    get: { library.albumSort },
-                    set: { library.albumSort = $0 }
-                )) {
-                    ForEach(AlbumSort.all, id: \.self) { sort in
-                        Text(sort.label).tag(sort)
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            } label: {
-                Label("Sort", systemImage: "arrow.up.arrow.down")
-            }
-            // The accent marks what is playing and what is selected. A toolbar
-            // control that is always there is neither.
-            .tint(.primary)
-            .help("Sort albums — \(library.albumSort.label)")
-
-            // Its own button rather than an item inside the sort menu:
-            // reshuffling is something you do repeatedly until you like what
-            // you see, and a menu makes that four clicks instead of one.
-            if library.albumSort == .random {
-                Button {
-                    library.reshuffleAlbums()
-                } label: {
-                    Label("Shuffle", systemImage: Icon.reshuffle)
-                }
-                .tint(.primary)
-                .help("Shuffle again")
-            }
-        }
-    }
-}
-
-private extension View {
-    /// A toolbar control that stays laid out on pages it does not apply to,
-    /// unseen and untouchable there. The toolbar keeps the same geometry on
-    /// every page, so moving between pages never makes AppKit re-tile it.
-    func slot(applies: Bool) -> some View {
-        opacity(applies ? 1 : 0)
-            .allowsHitTesting(applies)
-            .disabled(!applies)
-            .accessibilityHidden(!applies)
-    }
-}

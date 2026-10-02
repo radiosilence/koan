@@ -71,14 +71,19 @@ struct FavouritesView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text("Favourites")
-                .font(.title2.weight(.semibold))
-            Text(summary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Favourites")
+                    .font(.title2.weight(.semibold))
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            #if os(macOS)
+            PageControls(filter: Navigator.Section.favourites.filterPlaceholder)
+            #endif
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Only the kinds you have, so a tracks-only library reads as a count of

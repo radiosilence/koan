@@ -8,6 +8,17 @@ struct ArtistBrowser: View {
     @State private var selection: Set<Int64> = []
 
     var body: some View {
+        VStack(spacing: 0) {
+            #if os(macOS)
+            PageHeader(title: "Artists", detail: Format.count(Int64(library.visibleArtists.count), "artist")) {
+                PageControls(filter: Navigator.Section.artists.filterPlaceholder)
+            }
+            #endif
+            list
+        }
+    }
+
+    private var list: some View {
         ScrollViewReader { proxy in
         List(library.visibleArtists, id: \.id, selection: $selection) { artist in
             ArtistRow(artist: artist)
@@ -221,8 +232,13 @@ struct ArtistDetailView: View {
                             .foregroundStyle(.secondary)
                         if let artist {
                             let playable = Playable.artist(id: artist.id, name: artist.name)
-                            HeaderActions(playable: playable, shuffle: shufflePlay)
-                                .padding(.top, 4)
+                            HStack(spacing: 10) {
+                                HeaderActions(playable: playable, shuffle: shufflePlay)
+                                #if os(macOS)
+                                SelectionControls(selection: library.artistSelection)
+                                #endif
+                            }
+                            .padding(.top, 4)
                         }
                     }
                 }

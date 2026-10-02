@@ -18,6 +18,21 @@ struct AlbumBrowser: View {
     #endif
 
     var body: some View {
+        VStack(spacing: 0) {
+            #if os(macOS)
+            PageHeader(title: "Albums", detail: Format.count(Int64(library.visibleAlbums.count), "album")) {
+                PageControls(
+                    filter: Navigator.Section.albums.filterPlaceholder,
+                    sortsAlbums: true,
+                    selection: library.selection
+                )
+            }
+            #endif
+            grid
+        }
+    }
+
+    private var grid: some View {
         ScrollView {
                 if library.visibleAlbums.isEmpty {
                     EmptyState(

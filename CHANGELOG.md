@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Page controls live in the page, and the toolbar holds only back and forward.** The filter field, album sort and Select changed from page to page in the toolbar, and every change made AppKit re-tile it and lay out the whole window. They now sit at the end of each page's header; Albums and Artists gain one, titled with a count. Page switches settle about 7% sooner in a scripted run of sixteen.
+
 ### Fixed
 
 - **The shuffle button only appears when albums are sorted at random.** 0.47.1 showed it for every sort.

@@ -81,6 +81,9 @@ struct HistoryView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
+            #if os(macOS)
+            PageControls(filter: Navigator.Section.playHistory.filterPlaceholder)
+            #endif
             Button("Clear…") { confirmingClear = true }
                 .disabled(entries.isEmpty)
         }

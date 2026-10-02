@@ -26,6 +26,15 @@ struct SearchResultsView: View {
                 .frame(maxWidth: .infinity, minHeight: 320)
             } else {
                 VStack(alignment: .leading, spacing: 26) {
+                    #if os(macOS)
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text("Results for “\(search.query)”")
+                            .font(.system(size: 26, weight: .semibold))
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        SelectionControls(selection: search.selection)
+                    }
+                    #endif
                     if !search.artists.isEmpty { artistSection }
                     if !search.albums.isEmpty { albumSection }
                     if !search.tracks.isEmpty { trackSection }
