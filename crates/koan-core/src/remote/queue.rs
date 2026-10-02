@@ -462,23 +462,26 @@ fn worker_loop(inner: Arc<Inner>, index: usize) {
 /// Also wakes the workers, which hold back while the cursor's track is being
 /// fetched: one that looked before the cursor moved is waiting on a track
 /// nobody wants any more.
+///
+/// Looks before it first waits. The watcher is made with the queue, by the
+/// first downloads queued — on the first play after launch, by that play — and
+/// the player can move the cursor between `enqueue` looking at it and this
+/// thread starting to listen. Waiting first, that move was missed by both, and
+/// the track waited its turn behind whatever else was queued.
 fn cursor_watcher(inner: Arc<Inner>) {
     let changed = crate::signal::engine_changed();
     let mut seen = changed.generation();
     let mut last_cursor: Option<QueueItemId> = None;
     loop {
-        seen = changed.wait(seen);
-
         let current = inner.state.cursor();
-        if current == last_cursor {
-            continue;
+        if current != last_cursor {
+            last_cursor = current;
+            inner.has_work.notify_all();
+            if let Some(cursor_id) = current {
+                promote_cursor(&inner, cursor_id);
+            }
         }
-        last_cursor = current;
-        inner.has_work.notify_all();
-
-        if let Some(cursor_id) = current {
-            promote_cursor(&inner, cursor_id);
-        }
+        seen = changed.wait(seen);
     }
 }
 
@@ -730,8 +733,9 @@ mod tests {
         assert_eq!(next_item(&mut q, Some((9, elsewhere))), Some((1, a)));
     }
 
-    #[test]
-    fn a_cursor_set_before_its_tracks_were_queued_still_goes_first() {
+    /// The first play after launch: the player has the new queue and its
+    /// cursor, and the download queue holds its tracks.
+    fn first_play() -> (Arc<Inner>, Vec<(i64, QueueItemId)>) {
         crate::config::isolate_config_for_tests();
         let item = |title: &str, db_id: i64| crate::player::state::PlaylistItem {
             playlist_entry_id: None,
@@ -769,6 +773,12 @@ mod tests {
             spawned: std::sync::atomic::AtomicUsize::new(0),
         });
         inner.queue.lock().pending.extend(ids.iter().copied());
+        (inner, ids)
+    }
+
+    #[test]
+    fn a_cursor_set_before_its_tracks_were_queued_still_goes_first() {
+        let (inner, ids) = first_play();
         promote_cursor(&inner, ids[0].1);
 
         let left: Vec<_> = inner.queue.lock().pending.iter().copied().collect();
@@ -777,5 +787,21 @@ mod tests {
             vec![ids[2]],
             "the cursor's track and the next went to the priority lane"
         );
+    }
+
+    /// The watcher starts after the cursor moved, with nothing further to wake
+    /// it: it still sends the cursor's track ahead.
+    #[test]
+    fn a_watcher_started_after_the_cursor_moved_still_promotes_it() {
+        let (inner, ids) = first_play();
+        let watched = inner.clone();
+        std::thread::spawn(move || cursor_watcher(watched));
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while inner.queue.lock().pending.len() > 1 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let left: Vec<_> = inner.queue.lock().pending.iter().copied().collect();
+        assert_eq!(left, vec![ids[2]], "promoted without waiting for a change");
     }
 }
