@@ -60,6 +60,12 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     /// `headingHeight` tall.
     var isHeading: (Row.Item) -> Bool = { _ in false }
     var headingHeight: CGFloat = 28
+    /// Each row's height, where a list's rows differ — an album heading in
+    /// the queue is taller than its tracks.
+    var heightOf: ((Row.Item) -> CGFloat)?
+    /// Whether rows that kept their identity changed what they show — a
+    /// queue row's status. Visible rows are redrawn when it says so.
+    var changed: (([Row.Item], [Row.Item]) -> Bool)?
     /// The context menu for these rows, built with the page's environment.
     var menu: (Set<ID>, EnvironmentValues) -> NSMenu? = { _, _ in nil }
     /// Double-click or Return.
@@ -80,6 +86,13 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     /// one track of a record.
     var reveal: ID?
     var revealed: () -> Void = {}
+    /// Rows dragged within the list and dropped before the row at an index:
+    /// a reorder. AppKit draws the line where they would land.
+    var move: (([ID], Int) -> Void)?
+    /// Playables dropped from elsewhere before the row at an index.
+    var accept: (([PlayableTransfer], Int) -> Bool)?
+    /// Scroll a row into view: bumped token, the row, and where it should sit.
+    var jump: (token: Int, to: ID?, place: JumpPlace) = (0, nil, .centre)
     let insets: EdgeInsets
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -100,8 +113,12 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         table.allowsMultipleSelection = true
         table.allowsTypeSelect = true
         table.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        table.setDraggingSourceOperationMask(.copy, forLocal: true)
+        table.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
+        var accepted: [NSPasteboard.PasteboardType] = []
+        if move != nil { accepted.append(.koanRow) }
+        if accept != nil { accepted.append(NSPasteboard.PasteboardType(UTType.koanPlayable.identifier)) }
+        if !accepted.isEmpty { table.registerForDraggedTypes(accepted) }
 
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -143,6 +160,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var selectAllToken: Int?
         private var rewinds: Int?
         private var restored = false
+        private var jumpToken: Int?
         /// Set while the table applies a selection it was handed, so the
         /// change is not handed straight back.
         private var applying = false
@@ -186,7 +204,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
                 index = Dictionary(ids.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
                 table.reloadData()
                 shownKey = parent.contextKey
-            } else if parent.contextKey != shownKey {
+            } else if parent.contextKey != shownKey || parent.changed?(self.items, parent.items) == true {
                 self.items = parent.items
                 shownKey = parent.contextKey
                 reshowVisible()
@@ -201,6 +219,11 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             selectAllToken = parent.selectAllToken
             if let rewinds, rewinds != parent.rewinds { scroll(to: 0) }
             rewinds = parent.rewinds
+            if let token = jumpToken, token != parent.jump.token,
+               let target = parent.jump.to, let row = index[target] {
+                jump(to: row, place: parent.jump.place)
+            }
+            jumpToken = parent.jump.token
             if table.rowHeight != parent.rowHeight {
                 table.rowHeight = parent.rowHeight
                 table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<items.count))
@@ -225,6 +248,25 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private func scroll(to offset: CGFloat) {
             guard let scroll else { return }
             scroll.contentView.scroll(to: NSPoint(x: -scroll.contentInsets.left, y: offset - scroll.contentInsets.top))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+
+        private func jump(to row: Int, place: JumpPlace) {
+            guard let table, let scroll else { return }
+            let rect = table.rect(ofRow: row)
+            let visible = scroll.contentView.bounds.height - scroll.contentInsets.top - scroll.contentInsets.bottom
+            let y: CGFloat = switch place {
+            case .top: rect.minY
+            case .centre: rect.midY - visible / 2
+            case .bottom: rect.maxY - visible
+            }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                scroll.contentView.animator().setBoundsOrigin(NSPoint(
+                    x: scroll.contentView.bounds.minX,
+                    y: max(y, 0) - scroll.contentInsets.top
+                ))
+            }
             scroll.reflectScrolledClipView(scroll.contentView)
         }
 
@@ -267,7 +309,8 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
 
         func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
             guard let parent, row < items.count else { return tableView.rowHeight }
-            return parent.isHeading(items[row]) ? parent.headingHeight : parent.rowHeight
+            if parent.isHeading(items[row]) { return parent.headingHeight }
+            return parent.heightOf?(items[row]) ?? parent.rowHeight
         }
 
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
@@ -325,15 +368,61 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
             guard let parent, row < ids.count else { return nil }
             table?.dragging = true
-            guard let transfer = parent.drag([ids[row]]).first,
-                  let data = try? JSONEncoder().encode(transfer)
-            else { return nil }
-            let item = NSPasteboardItem()
-            item.setData(data, forType: NSPasteboard.PasteboardType(UTType.koanPlayable.identifier))
-            item.setString(transfer.name, forType: .string)
+            let transfer = parent.drag([ids[row]]).first
+            guard transfer != nil || parent.move != nil else { return nil }
+            let item = transfer.flatMap(pasteboardItem) ?? NSPasteboardItem()
+            // Which row, for a drop back into this list to read as a move.
+            if parent.move != nil { item.setString(String(row), forType: .koanRow) }
             return item
         }
+
+        // MARK: Drop
+
+        func tableView(
+            _ tableView: NSTableView, validateDrop info: any NSDraggingInfo,
+            proposedRow row: Int, proposedDropOperation operation: NSTableView.DropOperation
+        ) -> NSDragOperation {
+            guard let parent else { return [] }
+            // Between rows, never onto one: a drop lands before the row.
+            if operation == .on { tableView.setDropRow(row, dropOperation: .above) }
+            if (info.draggingSource as AnyObject?) === tableView, parent.move != nil,
+               info.draggingPasteboard.types?.contains(.koanRow) == true {
+                return .move
+            }
+            return parent.accept == nil ? [] : .copy
+        }
+
+        func tableView(
+            _ tableView: NSTableView, acceptDrop info: any NSDraggingInfo,
+            row: Int, dropOperation: NSTableView.DropOperation
+        ) -> Bool {
+            guard let parent else { return false }
+            let items = info.draggingPasteboard.pasteboardItems ?? []
+            if (info.draggingSource as AnyObject?) === tableView, let move = parent.move {
+                let rows = items.compactMap { $0.string(forType: .koanRow).flatMap(Int.init) }
+                let moving = rows.sorted().compactMap { $0 < ids.count ? ids[$0] : nil }
+                if !moving.isEmpty {
+                    move(moving, row)
+                    return true
+                }
+            }
+            guard let accept = parent.accept else { return false }
+            let type = NSPasteboard.PasteboardType(UTType.koanPlayable.identifier)
+            let transfers = items.compactMap { $0.data(forType: type) }
+                .compactMap { try? JSONDecoder().decode(PlayableTransfer.self, from: $0) }
+            return !transfers.isEmpty && accept(transfers, row)
+        }
     }
+}
+
+/// Where a row asked for should sit once scrolled to.
+enum JumpPlace {
+    case top, centre, bottom
+}
+
+extension NSPasteboard.PasteboardType {
+    /// A row of a `KoanTable` being dragged within it.
+    static let koanRow = NSPasteboard.PasteboardType("cc.blit.koan.row")
 }
 
 /// The table under a `KoanTable`: hover for every row from one tracking area,

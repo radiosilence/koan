@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **The Mac app's queue and playlists are AppKit tables too.** They were the last lists on SwiftUI's `List`, which sets up every row before drawing: a long queue or playlist stalled the page on arrival. Grouping, statuses, the playing bars, reordering by drag, drops from elsewhere, jumping to what is playing and the menus behave as before.
 - **The Mac app's artist list, history, favourites, search and record pages open faster.** SwiftUI's `List` on macOS sets up every row in a page's data before drawing it, about a millisecond a row, so these pages stalled on arrival. In a scripted run the artist list and history settled in under half the time and sixteen page switches took a third less. On the Mac these are now AppKit tables and collections whose rows are layers and labels, made only as they scroll in. Behaviour is as before: selection and its keys, the menus, dragging, hover links and hearts, search's pick. iOS keeps its lists.
 - **The Mac app's album grid scrolls at full frame rate.** SwiftUI's grid rebuilt each tile as it scrolled in and re-laid out every tile on screen on each step, about 22–27 ms a step on a 4K display, short of a 60 Hz frame. On the Mac the grid is now an AppKit collection view that reuses its tiles: 11–12 ms a step. Clicking, hover, the heart, picking several records, dragging and the context menu behave as before. The codec badge is a dark scrim rather than clear glass, since a glass view per tile cost more than the rest of the grid. iOS keeps its SwiftUI grid.
 

@@ -36,7 +36,13 @@ struct QueueView: View {
     /// The queue outlives the page you are on — see `StageView`. Anything
     /// aimed at whatever list is in front of you has to check.
     @Environment(\.onStage) private var onStage
-
+    #if os(macOS)
+    @Environment(CoverArtCache.self) private var art
+    @Environment(PlayingLevels.self) private var levels
+    @Environment(\.roomTint) private var tint
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("graphics") private var graphics = Graphics.full
+    #endif
 
     /// Grouped or one row per track. Persisted because it is a preference about
     /// how you listen rather than about the queue in front of you: an album
@@ -88,6 +94,105 @@ struct QueueView: View {
                 .task { if library.stats == nil { library.loadStats() } }
                 #endif
             } else {
+                #if os(macOS)
+                table(rows)
+                #else
+                list(rows)
+                #endif
+            }
+        }
+        // On the whole stage, not the List: an empty queue is exactly when you
+        // want to drop a folder on it, and it has no rows to land on.
+        .dropDestination(for: URL.self) { urls, _ in
+            player.importFiles(urls)
+            return true
+        }
+    }
+
+    #if os(macOS)
+    /// A `KoanTable` — see there for why the Mac's lists are AppKit.
+    private func table(_ rows: [Row]) -> some View {
+        let lines = rows.map(line)
+        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let jumpTarget: String? = switch ui.queueJumpTarget {
+        case .top: rows.first?.id
+        case .bottom: rows.last?.id
+        case .playing: player.currentItemId
+        }
+        let jumpPlace: JumpPlace = switch ui.queueJumpTarget {
+        case .top: .top
+        case .bottom: .bottom
+        case .playing: .centre
+        }
+        let key: [AnyHashable] = [
+            AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(tint),
+            AnyHashable(library.favouriteTrackIds),
+            AnyHashable(rows.compactMap { row -> String? in
+                guard case .track(let item) = row, let transfer = SourceBadges.transfer(of: item) else { return nil }
+                return "\(transfer):\(mirror.progress(for: transfer) ?? -1)"
+            }),
+        ]
+        return SafeAreaReader { insets in
+            KoanTable(
+                items: lines,
+                id: \.id,
+                context: QueueTableRow.Context(
+                    isPlaying: player.isPlaying,
+                    barsLive: live,
+                    tint: NSColor(tint),
+                    favourites: library.favouriteTrackIds,
+                    progress: { mirror.progress(for: $0) },
+                    art: art,
+                    levels: levels,
+                    toggleFavourite: { library.toggleFavourite(track: $0) }
+                ),
+                contextKey: AnyHashable(key),
+                selection: $selection,
+                make: QueueTableRow.init,
+                heightOf: QueueTableRow.height(of:),
+                changed: { $0 != $1 },
+                menu: { ids, environment in hostedMenu(menu(forRows: ids), environment: environment) },
+                primaryAction: { play(rowIds: $0) },
+                delete: { _ in removeSelected() },
+                selectAllToken: onStage ? ui.selectAllToken : 0,
+                move: { ids, before in
+                    let moving = IndexSet(ids.compactMap { id in rows.firstIndex { $0.id == id } })
+                    move(from: moving, to: before)
+                },
+                jump: (ui.queueJumpToken, jumpTarget, jumpPlace),
+                insets: EdgeInsets(top: 0, leading: insets.leading, bottom: insets.bottom, trailing: 0)
+            )
+        }
+        .clearsSelection($selection)
+    }
+
+    /// A row of the queue as the table draws it.
+    private func line(_ row: Row) -> QueueLine {
+        switch row {
+        case .album(let id, let group):
+            QueueLine(id: id, kind: .heading(QueueHeading(
+                title: group.title,
+                artist: group.album.isEmpty ? nil : (group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist),
+                detail: group.detail,
+                sleeve: group.items.first?.sleeve,
+                sleeveSize: 52
+            )))
+        case .single(let item):
+            QueueLine(id: item.queueItemId, kind: .track(
+                QueueRowContent(item: item), isCurrent: item.status == .playing, showArtist: true, artwork: true
+            ))
+        case .track(let item):
+            QueueLine(id: item.queueItemId, kind: .track(
+                QueueRowContent(item: item),
+                isCurrent: item.status == .playing,
+                showArtist: !grouped || item.artist != item.albumArtist,
+                artwork: !grouped
+            ))
+        }
+    }
+    #endif
+
+    private func list(_ rows: [Row]) -> some View {
                 ScrollViewReader { scroll in
                     List(selection: $selection) {
                         ForEach(rows) { row in
@@ -131,14 +236,6 @@ struct QueueView: View {
                     .clearsSelection($selection)
                     #endif
                 }
-            }
-        }
-        // On the whole stage, not the List: an empty queue is exactly when you
-        // want to drop a folder on it, and it has no rows to land on.
-        .dropDestination(for: URL.self) { urls, _ in
-            player.importFiles(urls)
-            return true
-        }
     }
 
     // MARK: - Header
@@ -633,6 +730,24 @@ struct QueueGroup: Identifiable {
     var items: [QueueItem]
 
     var year: String? { items.first?.year }
+
+    var title: String {
+        if !album.isEmpty { return album }
+        return albumArtist.isEmpty ? "Unknown Artist" : albumArtist
+    }
+
+    /// "2007 · 11 tracks · 59:10 · FLAC". The codec only earns its place when
+    /// the whole run shares one — a mixed group would be lying.
+    var detail: String {
+        var parts: [String] = []
+        if let year, !year.isEmpty { parts.append(year) }
+        parts.append(Format.count(Int64(items.count), "track"))
+        let total = items.compactMap(\.durationMs).reduce(0, +)
+        if total > 0 { parts.append(Format.duration(total)) }
+        let codecs = Set(items.compactMap(\.codec))
+        if let codec = codecs.first, codecs.count == 1 { parts.append(codec.uppercased()) }
+        return parts.joined(separator: " · ")
+    }
 }
 
 /// What the selection is, and what to do with it. The one reader of the
@@ -712,7 +827,7 @@ private struct QueueAlbumHeader: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(Format.title(title))
+                Text(Format.title(group.title))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(Format.titleLines)
@@ -726,7 +841,7 @@ private struct QueueAlbumHeader: View {
                         .lineLimit(1)
                 }
 
-                Text(detail)
+                Text(group.detail)
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
@@ -736,23 +851,5 @@ private struct QueueAlbumHeader: View {
         }
         .textCase(nil)
         .padding(.vertical, 6)
-    }
-
-    private var title: String {
-        if !group.album.isEmpty { return group.album }
-        return group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist
-    }
-
-    /// "2007 · 11 tracks · 59:10 · FLAC". The codec only earns its place when
-    /// the whole run shares one — a mixed group would be lying.
-    private var detail: String {
-        var parts: [String] = []
-        if let year = group.year, !year.isEmpty { parts.append(year) }
-        parts.append(Format.count(Int64(group.items.count), "track"))
-        let total = group.items.compactMap(\.durationMs).reduce(0, +)
-        if total > 0 { parts.append(Format.duration(total)) }
-        let codecs = Set(group.items.compactMap(\.codec))
-        if let codec = codecs.first, codecs.count == 1 { parts.append(codec.uppercased()) }
-        return parts.joined(separator: " · ")
     }
 }

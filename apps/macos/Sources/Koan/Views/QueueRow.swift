@@ -6,7 +6,7 @@ import SwiftUI
 /// The two lists are the same row: a mark saying what this track is doing, its
 /// place, its name, a heart, its codec and its length. They differ only in what
 /// they are made of, so the row is made of this instead and each builds one.
-struct QueueRowContent {
+struct QueueRowContent: Equatable {
     /// The library row behind it, where there is one. A queue can hold a file
     /// that was never indexed; nothing about it can be favourited.
     var trackId: Int64?
