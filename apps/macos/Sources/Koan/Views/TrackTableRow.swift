@@ -108,8 +108,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
     private let artist = NSTextField(labelWithString: "")
     private let dot = NSTextField(labelWithString: "·")
     private let album = NSTextField(labelWithString: "")
-    private let badge = CALayer()
-    private let ring = CAShapeLayer()
+    private let availability = AvailabilityMark()
     private let heart = CALayer()
     private let quality = NSTextField(labelWithString: "")
     private let duration = NSTextField(labelWithString: "")
@@ -122,13 +121,12 @@ final class TrackTableRow: NSTableCellView, TableRow {
     private var hovered: Part?
     private var sleeveLoad: Task<Void, Never>?
     private var markImage: CGImage? { didSet { mark.contents = markImage } }
-    private var badgeImage: CGImage? { didSet { badge.contents = badgeImage } }
     private var heartImage: CGImage? { didSet { heart.contents = heartImage } }
 
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        for layer in [mark, sleeve, badge, ring, heart, note] { self.layer?.addSublayer(layer) }
+        for layer in [mark, sleeve, availability, heart, note] { self.layer?.addSublayer(layer) }
         sleeve.cornerRadius = 3
         sleeve.masksToBounds = true
         sleeve.contentsGravity = .resizeAspectFill
@@ -138,9 +136,6 @@ final class TrackTableRow: NSTableCellView, TableRow {
         sleeve.addSublayer(placeholder)
         noRecord.contentsGravity = .center
         sleeve.addSublayer(noRecord)
-        ring.fillColor = nil
-        ring.lineWidth = 1.5
-        ring.lineCap = .round
         for label in [number, title, artist, dot, album, quality, duration, heading] {
             label.lineBreakMode = .byTruncatingTail
             label.maximumNumberOfLines = 1
@@ -170,7 +165,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         self.context = context
         let isHeading = item.isHeading
         for view in [number, title, artist, dot, album, quality, duration] as [NSView] { view.isHidden = isHeading }
-        for layer in [mark, sleeve, badge, ring, heart, note] { layer.isHidden = isHeading }
+        for layer in [mark, sleeve, availability, heart, note] { layer.isHidden = isHeading }
         heading.isHidden = !isHeading
         if case .heading(let text) = item.kind {
             heading.stringValue = text
@@ -249,11 +244,14 @@ final class TrackTableRow: NSTableCellView, TableRow {
         quality.textColor = selected ? onAccent : .tertiaryLabelColor
         duration.textColor = selected ? onAccent : .secondaryLabelColor
 
+        availability.isHidden = !context.columns.contains(.availability)
         if context.columns.contains(.availability) {
-            showAvailability(track, context: context, selected: selected, appearance: appearance)
-        } else {
-            badge.isHidden = true
-            ring.isHidden = true
+            let queued = context.queued[track.id]
+            let state = AvailabilityMark.state(
+                onServer: track.onServer, onDisk: track.onDisk, queued: queued, progress: context.progress
+            )
+            availability.show(state, tint: context.tint, selected: selected, appearance: appearance)
+            toolTip = AvailabilityMark.help(state, failure: queued?.failureReason)
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -308,52 +306,6 @@ final class TrackTableRow: NSTableCellView, TableRow {
             context.levels.detach(bars)
             bars.rest()
         }
-    }
-
-    /// Where the file is, or how its download is going. Only this changes
-    /// while a download moves.
-    private func showAvailability(_ track: Track, context: Context, selected: Bool, appearance: NSAppearance) {
-        let queued = context.queued[track.id]
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
-        ring.isHidden = true
-        badge.isHidden = false
-        let quiet: NSColor = selected ? .white : .tertiaryLabelColor
-        let plain: NSColor = selected ? .white : .secondaryLabelColor
-        if let queued, queued.status == .priorityPending {
-            badgeImage = Symbol.image("arrow.down.circle", size: 11, colours: [selected ? .white : context.tint], appearance: appearance)
-        } else if let queued, queued.status == .failed {
-            badgeImage = Symbol.image("exclamationmark.triangle.fill", size: 11, colours: [.systemOrange], appearance: appearance)
-        } else if let transfer = SourceBadges.transfer(of: queued) {
-            badge.isHidden = true
-            ring.isHidden = false
-            ring.strokeColor = plain.cgColor
-            if let fraction = context.progress(transfer) {
-                ring.removeAnimation(forKey: "spin")
-                ring.strokeEnd = max(0.02, fraction)
-            } else if ring.animation(forKey: "spin") == nil {
-                ring.strokeEnd = 0.7
-                let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-                spin.toValue = Double.pi * 2
-                spin.duration = 1
-                spin.repeatCount = .infinity
-                ring.add(spin, forKey: "spin")
-            }
-        } else if track.onServer {
-            badgeImage = Symbol.image(track.onDisk ? "cloud.fill" : "cloud", size: 9, colours: [track.onDisk ? plain : quiet], appearance: appearance)
-        } else if track.onDisk {
-            badgeImage = Symbol.image("internaldrive", size: 9, colours: [plain], appearance: appearance)
-        } else {
-            badgeImage = nil
-        }
-        toolTip = availabilityHelp(track, queued: queued)
-    }
-
-    private func availabilityHelp(_ track: Track, queued: QueueItem?) -> String? {
-        if let queued, queued.status == .priorityPending { return "Queued for download" }
-        if let queued, queued.status == .failed { return queued.failureReason ?? "Couldn't be fetched" }
-        return nil
     }
 
     private func showSleeve(_ albumId: Int64?, art: CoverArtCache) {
@@ -452,9 +404,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         }
         if context.columns.contains(.availability) {
             let slot = CGRect(x: right - 30, y: (height - 16) / 2, width: 30, height: 16)
-            badge.frame = Symbol.frame(of: badgeImage, centredIn: CGRect(x: slot.maxX - 14, y: slot.minY, width: 14, height: slot.height))
-            ring.frame = CGRect(x: slot.maxX - 12, y: slot.midY - 6, width: 12, height: 12)
-            ring.path = CGPath(ellipseIn: ring.bounds.insetBy(dx: 1, dy: 1), transform: nil)
+            availability.frame = slot
             right = slot.minX - 8
         }
         CATransaction.commit()

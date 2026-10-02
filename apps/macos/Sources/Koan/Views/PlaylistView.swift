@@ -21,6 +21,15 @@ struct PlaylistView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
     @Environment(UIState.self) private var ui
+    #if os(macOS)
+    @Environment(EngineMirror.self) private var mirror
+    @Environment(CoverArtCache.self) private var art
+    @Environment(PlayingLevels.self) private var levels
+    @Environment(\.roomTint) private var tint
+    @Environment(\.onStage) private var onStage
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("graphics") private var graphics = Graphics.full
+    #endif
 
     /// Selection is local `@State` for the same reason the queue's is, and
     /// unread here for the same reason too — see `QueueView.selection`.
@@ -63,6 +72,9 @@ struct PlaylistView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                #if os(macOS)
+                table(rows)
+                #else
                 List(selection: $selection) {
                     ForEach(rows) { row in
                         rowView(row)
@@ -87,6 +99,7 @@ struct PlaylistView: View {
                 .onChange(of: ui.selectAllToken) { _, _ in
                     selection = Set(rows.map(\.id))
                 }
+                #endif
             }
         }
         // On the whole page, not the List: an empty playlist is exactly when
@@ -106,6 +119,88 @@ struct PlaylistView: View {
             Button("Rename") { playlists.rename(id: playlistId, to: renameTo) }
         }
     }
+
+    #if os(macOS)
+    /// A `KoanTable` — see there for why the Mac's lists are AppKit.
+    private func table(_ rows: [Row]) -> some View {
+        let current = player.currentPlaylistEntryId
+        let lines = rows.map { row -> QueueLine in
+            switch row {
+            case .album(let id, let group):
+                let track = group.entries.first?.track
+                return QueueLine(id: id, kind: .heading(QueueHeading(
+                    title: group.album,
+                    artist: group.artist.isEmpty ? "Unknown Artist" : group.artist,
+                    detail: nil,
+                    sleeve: track.map { $0.albumId.map { .album($0) } ?? .track($0.id) },
+                    sleeveSize: 44
+                )))
+            case .entry(let entry, let position):
+                let isCurrent = current == entry.id
+                return QueueLine(id: row.id, kind: .track(
+                    QueueRowContent(
+                        entry: entry,
+                        position: position + 1,
+                        queued: mirror.queuedByPlaylistEntry[entry.id],
+                        isCurrent: isCurrent
+                    ),
+                    isCurrent: isCurrent,
+                    showArtist: true,
+                    artwork: !grouped
+                ))
+            }
+        }
+        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let key: [AnyHashable] = [
+            AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(tint), AnyHashable(library.favouriteTrackIds),
+        ]
+        // Where a drop before the row at `index` lands in the playlist.
+        let position = { (index: Int) -> Int in
+            guard index < rows.count else { return entries.count }
+            return rows[index].positions.first ?? entries.count
+        }
+        return SafeAreaReader { insets in
+            KoanTable(
+                items: lines,
+                id: \.id,
+                context: QueueTableRow.Context(
+                    isPlaying: player.isPlaying,
+                    barsLive: live,
+                    tint: NSColor(tint),
+                    favourites: library.favouriteTrackIds,
+                    progress: { mirror.progress(for: $0) },
+                    art: art,
+                    levels: levels,
+                    toggleFavourite: { library.toggleFavourite(track: $0) }
+                ),
+                contextKey: AnyHashable(key),
+                selection: $selection,
+                make: QueueTableRow.init,
+                heightOf: QueueTableRow.height(of:),
+                changed: { $0 != $1 },
+                menu: { ids, environment in hostedMenu(menu(forRows: ids), environment: environment) },
+                primaryAction: { play(rowIds: $0) },
+                // Carries where it came from, so dropping it back into this
+                // playlist is a move of *this* row rather than of its track —
+                // and dropping it anywhere else is just a track.
+                drag: { ids in
+                    rows.filter { ids.contains($0.id) }.compactMap { row -> PlayableTransfer? in
+                        guard case .entry(let entry, let at) = row else { return nil }
+                        return PlayableTransfer(
+                            kind: .track, id: entry.track.id, name: entry.track.title,
+                            origin: .init(playlistId: playlistId, position: at)
+                        )
+                    }
+                },
+                delete: { _ in removeSelected() },
+                selectAllToken: ui.selectAllToken,
+                accept: { dropped, index in accept(dropped, before: position(index)) },
+                insets: EdgeInsets(top: 0, leading: insets.leading, bottom: insets.bottom, trailing: 0)
+            )
+        }
+        .clearsSelection($selection)
+    }
+    #endif
 
     // MARK: - Header
 
