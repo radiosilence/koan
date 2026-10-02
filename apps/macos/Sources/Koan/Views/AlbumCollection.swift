@@ -365,7 +365,7 @@ final class AlbumTile: NSCollectionViewItem {
         let tint: NSColor
         let usesGlass: Bool
         let actions: Actions
-        let menu: (Album) -> NSMenu
+        var menu: (Album) -> NSMenu
     }
 
     private enum Part { case sleeve, title, artist, elsewhere }

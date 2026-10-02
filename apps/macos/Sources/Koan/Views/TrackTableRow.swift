@@ -31,6 +31,13 @@ struct TrackLine: Equatable {
     }
 }
 
+extension TrackTableRow {
+    /// A lead column wide enough for the longest number in a list of `count`.
+    static func leadWidth(for count: Int) -> CGFloat {
+        max(22, CGFloat(String(count).count) * 7 + 8)
+    }
+}
+
 /// The columns a track list draws beside the title.
 struct TrackColumns: OptionSet {
     let rawValue: Int

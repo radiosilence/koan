@@ -74,6 +74,7 @@ struct TrackListView: View {
                 id: \.id,
                 context: TrackTableRow.Context(
                     showsAlbum: mixedAlbums,
+                    leadWidth: TrackTableRow.leadWidth(for: tracks.count),
                     currentTrackId: current,
                     isPlaying: playing,
                     barsLive: live,
