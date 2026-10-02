@@ -5,11 +5,10 @@ struct AlbumBrowser: View {
     @Environment(LibraryModel.self) private var library
     @Environment(UIState.self) private var ui
     @Environment(Navigator.self) private var nav
-    /// Where the grid is. Seeded from the model on the way in and written back
-    /// on the way out, since the browser is rebuilt on each visit.
-    @State private var position = ScrollPosition(idType: Int64.self)
-    /// Kept mounted behind other pages once visited — see `StageView`.
-    @Environment(\.onStage) private var onStage
+    /// Where the grid is scrolled to, as a distance rather than an album: a
+    /// reshuffle reorders every album, and following the one at the top would
+    /// carry the grid to wherever it landed.
+    @State private var position = ScrollPosition()
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
     #if os(macOS)
@@ -35,29 +34,24 @@ struct AlbumBrowser: View {
                             AlbumGridCell(album: album, selection: library.selection)
                         }
                     }
-                    .scrollTargetLayout()
                     .padding(20)
                     .modifier(SelectionDrag(selection: library.selection))
                 }
             }
             // ⌘A picks everything the filter is showing, starting a selection
-            // if there was none — only while this is the page on screen, since
-            // it stays mounted behind the others. Escape and leaving the page
-            // drop it.
-            .onChange(of: ui.selectAllToken) { _, _ in
-                guard onStage else { return }
-                library.selection.selectAll()
-            }
+            // if there was none. Escape and leaving the page drop it.
+            .onChange(of: ui.selectAllToken) { _, _ in library.selection.selectAll() }
             .onChange(of: ui.clearSelectionToken) { _, _ in library.selection.end() }
-            .onChange(of: onStage) { _, now in if !now { library.selection.end() } }
             .onDisappear { library.selection.end() }
             // Rebuilt on each visit rather than kept mounted behind other pages
             // (see `StageView`), and put back where it was.
-            .scrollPosition($position, anchor: .top)
-            .onAppear {
-                if let top = library.albumsTop { position.scrollTo(id: top, anchor: .top) }
+            .scrollPosition($position)
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in
+                library.albumsOffset = y
             }
-            .onDisappear { library.albumsTop = position.viewID(type: Int64.self) }
+            .onAppear {
+                if let y = library.albumsOffset { position.scrollTo(y: y) }
+            }
             .onChange(of: nav.rewinds[.albums]) { position.scrollTo(edge: .top) }
     }
 }
