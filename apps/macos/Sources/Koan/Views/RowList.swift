@@ -16,7 +16,7 @@ import SwiftUI
 ///
 /// Rows mark themselves with `listRow(_:)`, the way a `List`'s rows are tagged.
 /// Rows that are not selectable — a header, a grid of tiles — go in without it.
-struct RowList<ID: Hashable, Content: View, Menu: View>: View {
+struct RowList<ID: Hashable & Sendable, Content: View, Menu: View>: View {
     @Binding var selection: Set<ID>
     /// Every selectable id in the order shown, for ranges and the arrow keys.
     let order: [ID]
@@ -99,8 +99,9 @@ struct RowList<ID: Hashable, Content: View, Menu: View>: View {
 @Observable
 final class RowSelection {
     private(set) var selected: Set<AnyHashable> = []
-    /// Lit in the accent while the list has the keyboard, grey otherwise, as a
-    /// table's selection is.
+    /// Lit while the list has the keyboard and dimmed otherwise, in a table's
+    /// own selection colours: koan's declared accent, which is a neutral, not
+    /// the record's tint the controls around it wear.
     var focused = false
     /// Where a ⇧-click or ⇧-arrow range is measured from.
     @ObservationIgnored private var anchor: AnyHashable?
@@ -196,7 +197,9 @@ private struct ListRow<ID: Hashable>: ViewModifier {
             .background {
                 if selected {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(selection.focused ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary))
+                        .fill(Color(nsColor: selection.focused
+                            ? .selectedContentBackgroundColor
+                            : .unemphasizedSelectedContentBackgroundColor))
                 }
             }
             // How a table tells its rows they are selected, so text and icons
