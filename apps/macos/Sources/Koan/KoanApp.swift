@@ -137,9 +137,11 @@ struct KoanApp: App {
             CommandGroup(replacing: .undoRedo) {
                 // ⌘Z while typing is undoing the typing, not the queue — and
                 // the field editor has its own undo stack to do it with.
-                ShortcutButton(.undo) { state?.player.undo() }
+                // On a playlist's page, that playlist's edits; anywhere else,
+                // the queue's.
+                ShortcutButton(.undo) { state?.player.undo(playlist: state?.nav.openPlaylistId) }
                     .disabledWhileTyping(state?.textFocus)
-                ShortcutButton(.redo) { state?.player.redo() }
+                ShortcutButton(.redo) { state?.player.redo(playlist: state?.nav.openPlaylistId) }
                     .disabledWhileTyping(state?.textFocus)
             }
 
