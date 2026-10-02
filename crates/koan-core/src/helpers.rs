@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::config::Config;
 use crate::db::connection::Database;
@@ -1563,6 +1564,10 @@ pub fn download_track(
     cfg: &Config,
     client: &SubsonicClient,
 ) {
+    if !in_queue_soon(state, queue_id, Duration::from_secs(5)) {
+        return;
+    }
+
     // From the pool. This runs once per track fetched, and opening a
     // connection runs the schema DDL and a WAL checkpoint — with several
     // transfers going, several init cycles would contend with each other and
@@ -1750,6 +1755,31 @@ pub fn download_track(
     }
 }
 
+/// Wait for the player to hold `id`, at most `timeout`. Whether it does.
+///
+/// Queueing a track sends the player the command that adds it and starts its
+/// download together, and a download worker already running can begin before
+/// the player has applied the command. Until then the track reads as taken
+/// out of the queue, which is what cancels a download, so the download
+/// cancelled itself before a byte moved and nothing tried it again. Woken
+/// when the queue changes rather than polled; a track that never arrives — a
+/// queue replaced again before the player took it — is not fetched.
+fn in_queue_soon(state: &SharedPlayerState, id: QueueItemId, timeout: Duration) -> bool {
+    let changed = crate::signal::engine_changed();
+    let deadline = std::time::Instant::now() + timeout;
+    let mut seen = changed.generation();
+    loop {
+        if state.get_item(id).is_some() {
+            return true;
+        }
+        let now = std::time::Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        seen = changed.wait_until(seen, deadline - now);
+    }
+}
+
 /// Mark a queue item unplayable and tell the player, if it is waiting on it.
 ///
 /// Setting `ItemState::Failed` alone is not enough: the player only wakes for
@@ -1810,6 +1840,58 @@ pub fn spawn_downloads(
         return;
     }
     crate::remote::queue::shared(&tx, &state, None).enqueue(pending);
+}
+
+#[cfg(test)]
+mod queue_arrival_tests {
+    use super::*;
+    use crate::player::state::{ItemState, PlaylistItem};
+
+    fn item() -> PlaylistItem {
+        PlaylistItem {
+            playlist_entry_id: None,
+            id: QueueItemId::new(),
+            db_id: Some(1),
+            path: std::path::PathBuf::from("/cache/one.flac"),
+            title: "One".into(),
+            artist: "Artist".into(),
+            album_artist: "Artist".into(),
+            album: "Album".into(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            state: ItemState::Pending,
+        }
+    }
+
+    /// The download starts before the player has the track, which arrives a
+    /// moment later: the download waits for it rather than cancelling.
+    #[test]
+    fn a_download_waits_for_its_track_to_reach_the_queue() {
+        let state = Arc::new(SharedPlayerState::new());
+        let track = item();
+        let id = track.id;
+        let player = state.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            player.add_items(vec![track]);
+        });
+        assert!(in_queue_soon(&state, id, Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn a_track_that_never_arrives_is_not_waited_for_long() {
+        let state = SharedPlayerState::new();
+        let started = std::time::Instant::now();
+        assert!(!in_queue_soon(
+            &state,
+            QueueItemId::new(),
+            Duration::from_millis(100)
+        ));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
 }
 
 #[cfg(test)]
