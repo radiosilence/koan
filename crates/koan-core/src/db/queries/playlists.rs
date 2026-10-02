@@ -474,6 +474,44 @@ pub fn set_playlist_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Res
     })
 }
 
+/// A playlist's entries, in order: each one's id and its track. What an undo
+/// puts back — see [`restore_entries`].
+pub fn entry_snapshot(conn: &Connection, id: i64) -> Result<Vec<(i64, i64)>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, track_id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
+    )?;
+    let rows = stmt.query_map(params![id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Put a playlist back exactly as an [`entry_snapshot`] found it.
+///
+/// Unlike [`set_playlist_tracks`], entries keep their ids, so a queue
+/// following the playlist stays locked to it through an undo. An id another
+/// playlist has taken since is given a new one; a track gone from the library
+/// is left out, as adding it would be refused.
+pub fn restore_entries(conn: &Connection, id: i64, entries: &[(i64, i64)]) -> Result<(), DbError> {
+    super::atomically(conn, || {
+        conn.execute(
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
+            params![id],
+        )?;
+        let mut insert = conn.prepare_cached(
+            "INSERT INTO playlist_tracks (id, playlist_id, position, track_id)
+             SELECT CASE WHEN EXISTS (SELECT 1 FROM playlist_tracks WHERE id = ?1) THEN NULL ELSE ?1 END,
+                    ?2, ?3, ?4
+             WHERE EXISTS (SELECT 1 FROM tracks WHERE id = ?4)",
+        )?;
+        let mut next = 0i64;
+        for (entry_id, track_id) in entries {
+            if insert.execute(params![entry_id, id, next, track_id])? > 0 {
+                next += 1;
+            }
+        }
+        touch(conn, id)
+    })
+}
+
 /// Take the server's copy of the contents, keeping what only this copy can hold.
 ///
 /// Entries whose track has no server id never went to the server, so its copy
@@ -672,6 +710,29 @@ mod tests {
         assert_eq!(row.name, "Evening");
         assert_eq!(row.track_count, 2);
         assert_eq!(row.duration_ms, 480_000);
+    }
+
+    #[test]
+    fn restore_puts_entries_back_with_their_ids() {
+        let conn = test_conn();
+        let (a, b, c) = (
+            track(&conn, "A", "X"),
+            track(&conn, "B", "X"),
+            track(&conn, "C", "X"),
+        );
+        let id = create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
+        add_tracks(&conn, id, &[a, b, c]).unwrap();
+        let before = entry_snapshot(&conn, id).unwrap();
+        assert_eq!(
+            before.iter().map(|e| e.1).collect::<Vec<_>>(),
+            vec![a, b, c]
+        );
+
+        remove_entries(&conn, id, &[before[1].0]).unwrap();
+        reorder_entries(&conn, id, &[before[2].0, before[0].0]).unwrap();
+        restore_entries(&conn, id, &before).unwrap();
+
+        assert_eq!(entry_snapshot(&conn, id).unwrap(), before);
     }
 
     #[test]

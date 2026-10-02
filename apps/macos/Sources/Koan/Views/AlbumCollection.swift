@@ -96,8 +96,7 @@ struct AlbumCollection: NSViewRepresentable {
             usesGlass: usesGlass,
             actions: actions,
             menu: { album in
-                NSHostingMenu(rootView: PlayableMenu(playable: .album(album))
-                    .transformEnvironment(\.self) { $0 = environment })
+                hostedMenu(PlayableMenu(playable: .album(album)), environment: environment)
             }
         )
         coordinator.show(albums)
@@ -843,6 +842,11 @@ private final class TileView: NSView, NSDraggingSource {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        tile?.applyColours()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
         tile?.applyColours()
     }
 

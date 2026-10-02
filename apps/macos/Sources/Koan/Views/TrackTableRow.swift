@@ -198,6 +198,14 @@ final class TrackTableRow: NSTableCellView, TableRow {
         didSet { restyle() }
     }
 
+    /// Made before it is in the window, a row draws its symbols in whatever
+    /// appearance it has then; drawn again once it has the window's.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        restyle()
+        paintSleeve()
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         restyle()
