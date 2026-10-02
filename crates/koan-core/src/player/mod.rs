@@ -991,7 +991,17 @@ impl Player {
     }
 
     /// Resume playback. Fades back in if the pause faded out.
+    ///
+    /// With nothing loaded — a session restored stopped, or a start that
+    /// failed — there is nothing to resume, and play starts the track under
+    /// the cursor instead of doing nothing.
     pub fn resume(&mut self) {
+        if self.active_playback.is_none() {
+            if let Some(id) = self.shared_state.cursor() {
+                self.play(id);
+            }
+            return;
+        }
         if let Some(ref playback) = self.active_playback {
             let engine = &playback.engine;
             let resumed = if engine.is_running() || engine.is_silent() {
@@ -1890,6 +1900,36 @@ mod tests {
 
         player.stop_playback_and_clear_state();
         assert!(player.in_flight.is_none(), "the stop consumed it");
+    }
+
+    #[test]
+    fn resume_with_nothing_loaded_plays_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
+
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+        });
+        let item = PlaylistItem {
+            db_id: Some(5),
+            path,
+            ..make_item("t")
+        };
+        let id = item.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
+        player.shared_state.set_cursor(Some(id));
+        assert!(player.active_playback.is_none());
+
+        player.process_command(PlayerCommand::Resume);
+        assert!(
+            player.active_playback.is_some(),
+            "the cursor's track started"
+        );
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
+        player.process_command(PlayerCommand::Stop);
     }
 
     #[test]
