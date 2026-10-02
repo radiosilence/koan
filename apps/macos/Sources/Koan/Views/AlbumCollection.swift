@@ -68,7 +68,9 @@ struct AlbumCollection: NSViewRepresentable {
         let insets = NSEdgeInsets(top: self.insets.top, left: 0, bottom: self.insets.bottom, right: 0)
         if scroll.contentInsets.top != insets.top || scroll.contentInsets.bottom != insets.bottom {
             scroll.contentInsets = insets
-            scroll.scrollerInsets = insets
+            // The scroller runs up under the toolbar, as a SwiftUI scroll
+            // view's does, and stops above the transport.
+            scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: insets.bottom, right: 0)
         }
         // The sidebar floats over the page's leading edge. The grid scrolls
         // under it, as the toolbar, but its first column starts clear of it.
