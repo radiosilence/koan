@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.48.1
+
+### Fixed
+
+- **The first album played after launch downloads at once.** The download queue, and the watcher that sends the playing track ahead of everything else, are made by the first downloads queued. When the player moved its cursor between the queue looking at it and the watcher starting to listen, neither saw the move, and the track waited its turn behind every other download — a minute or more with one download at a time. The watcher now looks as it starts. 0.46.3 closed the other order of the same race.
+
 ## 0.48.0
 
 ### Changed
