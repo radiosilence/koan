@@ -4,15 +4,119 @@
 //! The database module owns what a playlist *is*. This owns what happens to it
 //! next — which is either a Subsonic call or an M3U8 on disk.
 
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
-use crate::db::connection::Database;
+use crate::db::connection::{Database, DbError};
 use crate::db::queries;
 use crate::helpers::subsonic_client;
 use crate::player::state::SharedPlayerState;
 use crate::remote::client::SubsonicClient;
+
+/// Each playlist's earlier states, for undo and redo.
+///
+/// The queue keeps its own (`player::undo`); this is the same for playlists,
+/// held by whoever edits them. An edit records the playlist as it was first;
+/// undoing puts that back exactly, entry ids included, so a queue following
+/// the playlist stays locked to it. Per playlist, so undoing in one never
+/// reaches into another, and in memory: it lasts the session, as the queue's
+/// does.
+#[derive(Default)]
+pub struct PlaylistHistory {
+    steps: parking_lot::Mutex<HashMap<i64, Steps>>,
+}
+
+#[derive(Default)]
+struct Steps {
+    undo: Vec<Vec<(i64, i64)>>,
+    redo: Vec<Vec<(i64, i64)>>,
+}
+
+/// How many edits back a playlist can go, as the queue's history.
+const HISTORY_DEPTH: usize = 100;
+
+impl PlaylistHistory {
+    /// Before an edit: the playlist as it is now. A new edit forgets what had
+    /// been undone.
+    pub fn record(&self, conn: &rusqlite::Connection, id: i64) -> Result<(), DbError> {
+        let before = queries::entry_snapshot(conn, id)?;
+        let mut steps = self.steps.lock();
+        let steps = steps.entry(id).or_default();
+        steps.undo.push(before);
+        if steps.undo.len() > HISTORY_DEPTH {
+            steps.undo.remove(0);
+        }
+        steps.redo.clear();
+        Ok(())
+    }
+
+    /// Back one edit. Whether there was one.
+    pub fn undo(&self, conn: &rusqlite::Connection, id: i64) -> Result<bool, DbError> {
+        self.step(conn, id, true)
+    }
+
+    /// Forward one undone edit. Whether there was one.
+    pub fn redo(&self, conn: &rusqlite::Connection, id: i64) -> Result<bool, DbError> {
+        self.step(conn, id, false)
+    }
+
+    fn step(&self, conn: &rusqlite::Connection, id: i64, back: bool) -> Result<bool, DbError> {
+        let mut all = self.steps.lock();
+        let steps = all.entry(id).or_default();
+        let target = if back {
+            steps.undo.pop()
+        } else {
+            steps.redo.pop()
+        };
+        let Some(target) = target else {
+            return Ok(false);
+        };
+        let now = queries::entry_snapshot(conn, id)?;
+        queries::restore_entries(conn, id, &target)?;
+        if back {
+            steps.redo.push(now)
+        } else {
+            steps.undo.push(now)
+        }
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    use crate::db::queries::{LOCAL_USER, sample_meta, upsert_track};
+
+    #[test]
+    fn undo_and_redo_walk_a_playlists_edits() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let (a, b) = (
+            upsert_track(&conn, &sample_meta("A", "Artist", "X")).unwrap(),
+            upsert_track(&conn, &sample_meta("B", "Artist", "X")).unwrap(),
+        );
+        let id = queries::create_playlist(&conn, LOCAL_USER, "Mix", None).unwrap();
+        let history = PlaylistHistory::default();
+
+        history.record(&conn, id).unwrap();
+        queries::add_tracks(&conn, id, &[a, b]).unwrap();
+        let full = queries::entry_snapshot(&conn, id).unwrap();
+        history.record(&conn, id).unwrap();
+        queries::remove_entries(&conn, id, &[full[0].0]).unwrap();
+
+        assert!(history.undo(&conn, id).unwrap());
+        assert_eq!(queries::entry_snapshot(&conn, id).unwrap(), full);
+        assert!(history.undo(&conn, id).unwrap());
+        assert!(queries::entry_snapshot(&conn, id).unwrap().is_empty());
+        assert!(!history.undo(&conn, id).unwrap(), "nothing further back");
+
+        assert!(history.redo(&conn, id).unwrap());
+        assert_eq!(queries::entry_snapshot(&conn, id).unwrap(), full);
+    }
+}
 
 /// The queue, and the playlist or record it is still exactly.
 ///

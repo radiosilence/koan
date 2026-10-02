@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- **⌘Z undoes edits to the playlist on screen.** Removing, reordering, adding to or shuffling a playlist could not be undone; ⌘Z went to the queue whatever the page. The engine now keeps each playlist's earlier states, as it does the queue's, and puts them back exactly — entry ids included, so a queue following the playlist stays locked to it. Undo and redo take an optional playlist, and act on the queue without one.
 - **Play starts the queue when nothing is loaded.** After a start that failed, or a session restored stopped, play and resume did nothing until a track was double-clicked: there was no playback to resume. They now start the track under the cursor.
 
 ## 0.47.2

@@ -350,8 +350,10 @@ final class PlayerModel {
     }
 
     func clearQueue() { attempt { try await self.engine.clearQueue() } }
-    func undo() { attempt { try await self.engine.undo() } }
-    func redo() { attempt { try await self.engine.redo() } }
+    /// The last edit to a playlist taken back, or to the queue when none is
+    /// named.
+    func undo(playlist: Int64? = nil) { attempt { try await self.engine.undo(playlistId: playlist) } }
+    func redo(playlist: Int64? = nil) { attempt { try await self.engine.redo(playlistId: playlist) } }
 
     // MARK: - Devices & modes
 
