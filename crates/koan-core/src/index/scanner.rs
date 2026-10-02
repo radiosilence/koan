@@ -385,7 +385,7 @@ fn index_files(
             break;
         }
 
-        let tx = match db.conn.unchecked_transaction() {
+        let tx = match crate::db::queries::write_transaction(&db.conn) {
             Ok(tx) => tx,
             Err(e) => {
                 log::error!("failed to begin scan transaction: {}", e);
@@ -463,7 +463,7 @@ fn index_files(
 
 /// Remove the rows under `path` whose files are gone, in one transaction.
 fn remove_stale(db: &Database, path: &Path, force_remove: bool, result: &mut ScanResult) {
-    let tx = match db.conn.unchecked_transaction() {
+    let tx = match crate::db::queries::write_transaction(&db.conn) {
         Ok(tx) => tx,
         Err(e) => {
             log::error!("failed to begin stale-removal transaction: {}", e);
@@ -560,7 +560,7 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
         .map(|path| (path.clone(), isolate_read(path, metadata::read_metadata)))
         .collect();
 
-    let tx = match db.conn.unchecked_transaction() {
+    let tx = match crate::db::queries::write_transaction(&db.conn) {
         Ok(tx) => tx,
         Err(e) => {
             result
@@ -694,7 +694,7 @@ pub fn analyze_missing(
     // Store sequentially.
     let mut analyzed = 0usize;
     let mut errors = 0usize;
-    let tx = match db.conn.unchecked_transaction() {
+    let tx = match crate::db::queries::write_transaction(&db.conn) {
         Ok(tx) => tx,
         Err(e) => {
             log::error!("failed to begin analysis transaction: {}", e);

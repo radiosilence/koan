@@ -90,7 +90,7 @@ pub fn set_listened_ms(
 /// Forget specific plays of `user`'s.
 pub fn delete_plays(conn: &Connection, user: i64, ids: &[i64]) -> Result<usize, DbError> {
     let user = resolve_user(conn, user)?;
-    let tx = conn.unchecked_transaction()?;
+    let tx = crate::db::queries::write_transaction(conn)?;
     let mut removed = 0;
     {
         let mut stmt = tx.prepare("DELETE FROM play_history WHERE id = ?1 AND user_id = ?2")?;

@@ -30,6 +30,10 @@ pub struct SyncResult {
     /// Pages of songs that could not be fetched, on the bulk path. Counts
     /// against completeness the same way.
     pub pages_failed: usize,
+    /// Tracks the server listed that could not be written. Counts against
+    /// completeness the same way: until they are written, an incremental sync
+    /// must not move past them.
+    pub tracks_failed: usize,
     /// Tracks removed because the server no longer has them.
     pub tracks_removed: usize,
 }
@@ -37,7 +41,7 @@ pub struct SyncResult {
 impl SyncResult {
     /// Whether the run covered everything it set out to.
     pub fn is_complete(&self) -> bool {
-        self.albums_failed == 0 && self.pages_failed == 0
+        self.albums_failed == 0 && self.pages_failed == 0 && self.tracks_failed == 0
     }
 }
 
@@ -308,18 +312,20 @@ pub fn sync_library(
         update_last_sync(db, server_url, username, sync_start)?;
     } else {
         log::warn!(
-            "{} album(s) and {} page(s) failed to fetch — leaving last_sync unchanged so the next sync retries them",
+            "{} album(s) and {} page(s) failed to fetch and {} track(s) failed to write — leaving last_sync unchanged so the next sync retries them",
             result.albums_failed,
             result.pages_failed,
+            result.tracks_failed,
         );
     }
 
     log::info!(
-        "sync complete: {} artists, {} albums, {} tracks, {} failed",
+        "sync complete: {} artists, {} albums, {} tracks, {} albums and {} tracks failed",
         result.artists_synced,
         result.albums_synced,
         result.tracks_synced,
         result.albums_failed,
+        result.tracks_failed,
     );
 
     db.optimize();
@@ -673,7 +679,10 @@ fn sync_by_album(
 /// Best-effort: a library that synced its tracks fine should not fail because
 /// one artist row could not be updated.
 fn write_artists(db: &Database, artists: &[SubsonicArtist], result: &mut SyncResult) {
-    if db.conn.execute_batch("BEGIN").is_err() {
+    // Immediate: a transaction that reads before it writes cannot take the
+    // write lock later if another connection wrote in between, and fails at
+    // once instead of waiting for it.
+    if db.conn.execute_batch("BEGIN IMMEDIATE").is_err() {
         return;
     }
     let mut enriched = 0;
@@ -708,8 +717,10 @@ fn write_albums(
     result: &mut SyncResult,
     song_ids: &mut HashSet<String>,
 ) -> Result<(), SyncError> {
+    // Immediate, for the reason `write_artists` gives: deferred, a page that
+    // met another writer failed every insert in it, logging each.
     db.conn
-        .execute_batch("BEGIN")
+        .execute_batch("BEGIN IMMEDIATE")
         .map_err(crate::db::connection::DbError::from)?;
 
     for album in albums {
@@ -757,7 +768,10 @@ fn write_albums(
 
             match queries::upsert_synced_track(&db.conn, &meta, song_ids) {
                 Ok(_) => result.tracks_synced += 1,
-                Err(e) => log::warn!("failed to insert remote track {}: {}", song.title, e),
+                Err(e) => {
+                    result.tracks_failed += 1;
+                    log::warn!("failed to insert remote track {}: {}", song.title, e);
+                }
             }
         }
 

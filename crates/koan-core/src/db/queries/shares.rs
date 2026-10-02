@@ -102,7 +102,7 @@ pub fn create_share(
     expires_at: Option<i64>,
 ) -> Result<ShareRow, DbError> {
     let id = new_id()?;
-    let tx = conn.unchecked_transaction()?;
+    let tx = crate::db::queries::write_transaction(conn)?;
     tx.execute(
         "INSERT INTO shares (id, description, created_at, expires_at, kind, subject_id, start_track_id, user_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
