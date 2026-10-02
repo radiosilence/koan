@@ -100,6 +100,10 @@ final class TrackTableRow: NSTableCellView, TableRow {
     private let mark = CALayer()
     private var bars: PlayingBarsView?
     private let sleeve = CALayer()
+    /// What a sleeve shows until, or instead of, its art: the ensō on a grey
+    /// ground, as `AlbumArtwork` draws it, or a note for a track on no record.
+    private let placeholder = CAShapeLayer()
+    private let noRecord = CALayer()
     private let title = NSTextField(labelWithString: "")
     private let artist = NSTextField(labelWithString: "")
     private let dot = NSTextField(labelWithString: "·")
@@ -128,6 +132,12 @@ final class TrackTableRow: NSTableCellView, TableRow {
         sleeve.cornerRadius = 3
         sleeve.masksToBounds = true
         sleeve.contentsGravity = .resizeAspectFill
+        placeholder.fillColor = nil
+        placeholder.lineCap = .round
+        placeholder.opacity = 0.5
+        sleeve.addSublayer(placeholder)
+        noRecord.contentsGravity = .center
+        sleeve.addSublayer(noRecord)
         ring.fillColor = nil
         ring.lineWidth = 1.5
         ring.lineCap = .round
@@ -196,6 +206,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         restyle()
+        paintSleeve()
     }
 
     /// Everything that follows hover, the selection, what is playing, the
@@ -348,18 +359,39 @@ final class TrackTableRow: NSTableCellView, TableRow {
     private func showSleeve(_ albumId: Int64?, art: CoverArtCache) {
         sleeveLoad?.cancel()
         guard let albumId else {
-            sleeve.contents = nil
+            setSleeve(nil, onRecord: false)
             return
         }
         if let held = art.cached(.album(albumId), size: .thumb) {
-            sleeve.contents = held.bitmap
+            setSleeve(held.bitmap, onRecord: true)
             return
         }
-        sleeve.contents = nil
+        setSleeve(nil, onRecord: true)
         sleeveLoad = Task { [weak self] in
             let image = await art.image(for: .album(albumId), size: .thumb)
             guard !Task.isCancelled, let self, self.item?.track?.albumId == albumId else { return }
-            self.sleeve.contents = image?.bitmap
+            self.setSleeve(image?.bitmap, onRecord: true)
+        }
+    }
+
+    private func setSleeve(_ image: CGImage?, onRecord: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        sleeve.contents = image
+        placeholder.isHidden = image != nil || !onRecord
+        noRecord.isHidden = onRecord
+        CATransaction.commit()
+        paintSleeve()
+    }
+
+    private func paintSleeve() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            sleeve.backgroundColor = sleeve.contents == nil ? NSColor.quaternaryLabelColor.cgColor : nil
+            placeholder.strokeColor = NSColor.tertiaryLabelColor.cgColor
+            noRecord.contents = Symbol.image("music.note", size: 10, colours: [.tertiaryLabelColor], appearance: effectiveAppearance)
+            CATransaction.commit()
         }
     }
 
@@ -392,6 +424,11 @@ final class TrackTableRow: NSTableCellView, TableRow {
         if context.showsAlbum {
             let side = RowMetrics.sleeve
             sleeve.frame = CGRect(x: x, y: (height - side) / 2, width: side, height: side)
+            let inset = side * 0.26
+            placeholder.frame = sleeve.bounds
+            placeholder.lineWidth = side * 0.045
+            placeholder.path = EnsoShape().path(in: CGRect(x: inset, y: inset, width: side - 2 * inset, height: side - 2 * inset)).cgPath
+            noRecord.frame = sleeve.bounds
             x += side + Self.spacing
         }
 

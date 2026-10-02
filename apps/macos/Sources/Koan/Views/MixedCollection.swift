@@ -652,6 +652,8 @@ private final class TrackItem: NSCollectionViewItem {
     static let identifier = NSUserInterfaceItemIdentifier("TrackItem")
     let row = TrackTableRow()
     private let highlight = CALayer()
+    /// The line a table draws between rows.
+    private let separator = CALayer()
 
     override func loadView() {
         let root = NSView()
@@ -659,6 +661,7 @@ private final class TrackItem: NSCollectionViewItem {
         highlight.cornerRadius = 6
         highlight.cornerCurve = .continuous
         root.layer?.addSublayer(highlight)
+        root.layer?.addSublayer(separator)
         root.addSubview(row)
         view = root
     }
@@ -668,6 +671,11 @@ private final class TrackItem: NSCollectionViewItem {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         highlight.frame = view.bounds
+        // At the bottom edge; the view is not flipped.
+        separator.frame = CGRect(x: 8, y: 0, width: view.bounds.width - 16, height: 1 / (view.window?.backingScaleFactor ?? 2))
+        view.effectiveAppearance.performAsCurrentDrawingAppearance {
+            separator.backgroundColor = NSColor.separatorColor.cgColor
+        }
         CATransaction.commit()
         row.frame = view.bounds.insetBy(dx: 8, dy: 0)
     }
