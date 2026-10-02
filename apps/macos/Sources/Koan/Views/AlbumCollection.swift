@@ -357,7 +357,8 @@ final class AlbumTile: NSCollectionViewItem {
     /// What every tile is shown in.
     struct Context {
         let art: CoverArtCache
-        let selection: PlayableSelection
+        /// The page's pick, where its tiles take part in one.
+        let selection: PlayableSelection?
         let picked: Set<Playable.Key>
         let selecting: Bool
         let favourites: Set<Int64>
@@ -713,7 +714,7 @@ final class AlbumTile: NSCollectionViewItem {
     /// The pointer is at `point` in the tile, or has left it. Whether it is
     /// over a link, for the cursor.
     @discardableResult
-    fileprivate func hover(at point: NSPoint?) -> Bool {
+    func hover(at point: NSPoint?) -> Bool {
         let now = point.map(part(at:))
         if now != hovered, let context {
             hovered = now
@@ -722,13 +723,13 @@ final class AlbumTile: NSCollectionViewItem {
         return now == .artist && context?.selecting == false
     }
 
-    fileprivate func hoverEnded() { hover(at: nil) }
+    func hoverEnded() { hover(at: nil) }
 
     fileprivate func clicked(at point: NSPoint) {
         guard let album, let context else { return }
         // A tick while picking, or a new pick on ⌘-click — the way
         // `AlbumGridCell` takes clicks before anything else gets them.
-        if context.selection.take(.album(album)) { return }
+        if context.selection?.take(.album(album)) == true { return }
         act(part(at: point))
     }
 
@@ -759,7 +760,7 @@ final class AlbumTile: NSCollectionViewItem {
 
     @objc private func toggleFavourite() {
         guard let album, let context else { return }
-        if context.selection.take(.album(album)) { return }
+        if context.selection?.take(.album(album)) == true { return }
         context.actions.toggleFavourite(album.id)
     }
 
@@ -779,7 +780,7 @@ final class AlbumTile: NSCollectionViewItem {
         }
         let key = Playable.album(album).key
         if context.selecting, context.picked.contains(key) {
-            return context.selection.picked.map(PlayableTransfer.init)
+            return (context.selection?.picked ?? []).map(PlayableTransfer.init)
         }
         return [PlayableTransfer(.album(album))]
     }
