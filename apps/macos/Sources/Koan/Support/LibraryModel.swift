@@ -300,17 +300,17 @@ final class LibraryModel {
         // the same page reads worse than a slow page.
         if let held = detailRecord, held.albumId == id, held.stamp == stamp { return }
 
-        // The sleeve and the colour the room takes from it. Coming from the grid
-        // both are already decoded, and the page, its cover and the room's
-        // colour go up in one change — see `ArtworkBleed.answered`, which reads
-        // them straight through rather than waiting to be handed them.
+        // The sleeve and the colour the room takes from it. Once both are
+        // decoded the page, its cover and the room's colour go up in one
+        // change — see `ArtworkBleed.answered`, which reads them straight
+        // through rather than waiting to be handed them.
         //
         // Never waited on. Arriving cold this is an HTTP round trip, and every
         // millisecond spent here is a millisecond the click looks ignored: the
         // navigator holds the page you are leaving on screen until this returns.
         // The room catches up on its own a moment later, which costs a second
         // commit and is the right trade — a page you are already reading.
-        warm(album: id)
+        warm(.album(id))
         let engine = self.engine
         let loaded = await Trace.region("engine-reads") {
             await Task.detached(priority: .userInitiated) {
@@ -408,12 +408,18 @@ final class LibraryModel {
     }
 
     /// Put this record's sleeve and its colour in the cache, if they are not
-    /// there already. Detached and never waited on — see the call site.
-    private func warm(album id: Int64) {
-        guard let art, art.cached(.album(id), size: .tile) == nil else { return }
+    /// there already. Detached and never waited on — see `prepare(album:)`.
+    ///
+    /// Each on its own account: a grid has drawn the sleeve of every record
+    /// in it and worked out the colour of none of them.
+    func warm(_ source: AlbumArtwork.Source) {
+        guard let art else { return }
+        let needsImage = art.cached(source, size: .tile) == nil
+        let needsColour = art.cachedColour(for: source) == nil
+        guard needsImage || needsColour else { return }
         Task.detached {
-            _ = await art.image(for: .album(id), size: .tile)
-            _ = await art.dominantColour(for: .album(id))
+            if needsImage { _ = await art.image(for: source, size: .tile) }
+            if needsColour { _ = await art.dominantColour(for: source) }
         }
     }
 

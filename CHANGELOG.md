@@ -6,6 +6,7 @@
 
 - **The shuffle button only appears when albums are sorted at random.** 0.47.1 showed it for every sort.
 - **Reshuffling keeps the album grid where it is.** 0.47.1 remembered the grid's place by the album at its top, so a reshuffle followed that album to wherever it landed. The place is now a scroll distance, which a reshuffle leaves alone and a visit back to the page still restores.
+- **The Mac app's colour no longer flashes to the accent on the way to a record.** Opening an album from the grid found its sleeve already decoded and took that to mean its colour was too, which the grid never works out; playlists were not warmed at all. The room fell back to the accent for the moment the colour was missing, then eased back over two seconds, taking every tinted control with it. Both are now warmed on their own account, and a colour still being worked out keeps the room in the one it is wearing.
 
 ## 0.47.1
 
