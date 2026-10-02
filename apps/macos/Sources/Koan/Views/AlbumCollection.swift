@@ -245,14 +245,19 @@ final class AlbumGridView: NSCollectionView {
     // Hover for every tile from one tracking area. One per tile is a
     // tracking area per tile for AppKit to move on every scroll step.
 
+    private var tracking: NSTrackingArea?
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard trackingAreas.isEmpty else { return }
-        addTrackingArea(NSTrackingArea(
+        // Ours, alongside whatever the view keeps for itself.
+        guard tracking == nil else { return }
+        let area = NSTrackingArea(
             rect: .zero,
             options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
             owner: self
-        ))
+        )
+        addTrackingArea(area)
+        tracking = area
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -792,52 +797,6 @@ final class AlbumTile: NSCollectionViewItem {
             sleeve.borderColor = NSColor.white.withAlphaComponent(0.06).cgColor
             ensō.strokeColor = NSColor.tertiaryLabelColor.cgColor
         }
-    }
-}
-
-/// SF Symbols drawn once into bitmaps for layers, which take no part in
-/// layout or hit-testing.
-@MainActor
-private enum Symbol {
-    private static var cache: [String: CGImage] = [:]
-
-    static func image(_ name: String, size: CGFloat, colours: [NSColor]) -> CGImage? {
-        let key = "\(name) \(size) \(colours.map(\.description))"
-        if let held = cache[key] { return held }
-        let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
-            .applying(.init(paletteColors: colours))
-        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(configuration),
-            let bitmap = NSBitmapImageRep(
-                bitmapDataPlanes: nil,
-                pixelsWide: Int(ceil(symbol.size.width * 2)), pixelsHigh: Int(ceil(symbol.size.height * 2)),
-                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-            )
-        else { return nil }
-        bitmap.size = symbol.size
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-        symbol.draw(in: NSRect(origin: .zero, size: symbol.size))
-        NSGraphicsContext.restoreGraphicsState()
-        cache[key] = bitmap.cgImage
-        return bitmap.cgImage
-    }
-
-    /// Where a symbol drawn by `image` sits at its natural size: it is drawn
-    /// at 2×, so half its pixels.
-    static func frame(of image: CGImage?, centredIn rect: CGRect) -> CGRect {
-        let size = size(of: image)
-        return CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height)
-    }
-
-    static func frame(of image: CGImage?, at origin: CGPoint) -> CGRect {
-        CGRect(origin: origin, size: size(of: image))
-    }
-
-    private static func size(of image: CGImage?) -> CGSize {
-        guard let image else { return .zero }
-        return CGSize(width: CGFloat(image.width) / 2, height: CGFloat(image.height) / 2)
     }
 }
 

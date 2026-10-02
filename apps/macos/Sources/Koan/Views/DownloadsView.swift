@@ -69,7 +69,7 @@ private struct DownloadRow: View {
             // A record is what you recognise a download by, and this is a list
             // of things you are waiting for.
             AlbumArtwork(source: .track(transfer.trackId), size: .thumb, cornerRadius: 3)
-                .frame(width: 34, height: 34)
+                .frame(width: RowMetrics.sleeve, height: RowMetrics.sleeve)
 
             rows
         }

@@ -118,7 +118,7 @@ struct QueueRow: View {
 
                 if artwork, let sleeve = item.sleeve {
                     AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 3)
-                        .frame(width: 34, height: 34)
+                        .frame(width: RowMetrics.sleeve, height: RowMetrics.sleeve)
                         // The one thing a foreground style cannot dim. A leaf
                         // image has nothing under it to flatten, so its own
                         // layer costs what a row's did not.
@@ -194,21 +194,16 @@ struct QueueRow: View {
             }
         }
         // Fixed height so a row doesn't grow when a download indicator appears
-        // and shrink when it finishes, reflowing the list each time.
-        // The same 34pt sleeve in the same 44pt row as an album's tracklist —
-        // a cover crammed into a row sized for a number reads as cramped
-        // however much padding is put around it.
+        // and shrink when it finishes, reflowing the list each time. The same
+        // heights as every other list's rows — see `RowMetrics`.
         #if os(iOS)
-        // At least that height, and taller for a title on two lines.
-        .frame(minHeight: artwork ? 44 : 34)
+        .frame(minHeight: artwork ? RowMetrics.art : RowMetrics.text)
         #else
-        .frame(height: artwork ? 44 : 34)
+        .frame(height: artwork ? RowMetrics.art : RowMetrics.text)
         #endif
-        // Ungrouped, the row carries a sleeve and two lines of text, and the
-        // frame around them would leave the cover all but touching the separators.
-        // The same six points the album heading gives its own cover — the two
-        // kinds of row are in the same list and should breathe alike.
-        .padding(.vertical, artwork ? 6 : 0)
+        // Ungrouped, the row carries a sleeve and two lines, and the cover
+        // would all but touch the separators without a little room.
+        .padding(.vertical, artwork ? RowMetrics.artPadding : 0)
         // Without this the row is only clickable where a view sits —
         // the Spacer between the title and the duration is a dead zone, and
         // clicks landing there select nothing.

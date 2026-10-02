@@ -1,0 +1,34 @@
+import CoreGraphics
+
+/// How tall a list's rows are, on every page. Rows holding the same things are
+/// the same height wherever they appear, so moving between the queue, a
+/// record and history does not change how dense the page is.
+///
+/// Heights are of the row's contents. A list adds its own padding above and
+/// below — four points on the Mac, which `KoanTable` matches — so the rows on
+/// screen are these plus that.
+enum RowMetrics {
+    #if os(macOS)
+    /// A row of one line: an artist.
+    static let line: CGFloat = 24
+    /// A row of text: a track's title, and its credit under it when it has one.
+    static let text: CGFloat = 34
+    /// A row with a sleeve beside two lines of text.
+    static let art: CGFloat = 40
+    /// The sleeve in such a row.
+    static let sleeve: CGFloat = 32
+    /// What a list puts above and below each row.
+    static let padding: CGFloat = 4
+    /// What a row with a sleeve adds above and below, so the cover clears the
+    /// separators.
+    static let artPadding: CGFloat = 4
+    #else
+    /// The least a row stands, before the list's own insets. Taller for a
+    /// title on two lines.
+    static let line: CGFloat = 44
+    static let text: CGFloat = 34
+    static let art: CGFloat = 42
+    static let sleeve: CGFloat = 32
+    static let artPadding: CGFloat = 4
+    #endif
+}

@@ -6,8 +6,71 @@ struct ArtistBrowser: View {
     @Environment(Navigator.self) private var nav
     /// Without a selection binding a List row has nothing to do with a click.
     @State private var selection: Set<Int64> = []
+    #if os(macOS)
+    @Environment(PlayerModel.self) private var player
+    @Environment(UIState.self) private var ui
+    @Environment(\.roomTint) private var tint
+    #endif
 
     var body: some View {
+        #if os(macOS)
+        table
+        #else
+        list
+        #endif
+    }
+
+    #if os(macOS)
+    /// A `KoanTable` — see there for why the Mac's lists are AppKit.
+    private var table: some View {
+        SafeAreaReader { insets in
+            KoanTable(
+                items: library.visibleArtists,
+                id: \.id,
+                context: ArtistTableRow.Context(
+                    favourites: library.favouriteArtistIds,
+                    tint: NSColor(tint),
+                    play: { artist in
+                        let ids = await Playable.artist(id: artist.id, name: artist.name).trackIds(using: library.engine)
+                        player.playNow(trackIds: ids)
+                    },
+                    open: { nav.open(artist: $0) },
+                    toggleFavourite: { library.toggleFavourite(artist: $0) }
+                ),
+                contextKey: AnyHashable([AnyHashable(library.favouriteArtistIds), AnyHashable(tint)]),
+                selection: $selection,
+                make: ArtistTableRow.init,
+                menu: { ids, environment in
+                    // A set has no first; with several picked, no one artist is meant.
+                    guard ids.count == 1, let id = ids.first,
+                          let artist = library.visibleArtists.first(where: { $0.id == id })
+                    else { return nil }
+                    return hostedMenu(PlayableMenu(playable: .artist(id: artist.id, name: artist.name)), environment: environment)
+                },
+                primaryAction: { ids in
+                    if ids.count == 1, let id = ids.first { nav.open(artist: id) }
+                },
+                drag: { ids in
+                    library.visibleArtists.filter { ids.contains($0.id) }
+                        .map { PlayableTransfer(.artist(id: $0.id, name: $0.name)) }
+                },
+                selectAllToken: ui.selectAllToken,
+                offset: library.artistsOffset,
+                noteOffset: { library.artistsOffset = $0 },
+                rewinds: nav.rewinds[.artists] ?? 0,
+                insets: insets
+            )
+        }
+        .clearsSelection($selection)
+        .overlay {
+            if library.visibleArtists.isEmpty {
+                EmptyState(icon: "music.mic", title: "No artists yet")
+            }
+        }
+    }
+    #endif
+
+    private var list: some View {
         ScrollViewReader { proxy in
         List(library.visibleArtists, id: \.id, selection: $selection) { artist in
             ArtistRow(artist: artist)
@@ -139,9 +202,9 @@ private struct ArtistRow: View {
         }
         .onHover { hovered = $0 }
         #if os(iOS)
-        .frame(minHeight: 44)
+        .frame(minHeight: RowMetrics.line)
         #else
-        .frame(height: 24)
+        .frame(height: RowMetrics.line)
         #endif
         .rowBehaviour(playable: playable)
     }

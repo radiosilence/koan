@@ -17,6 +17,14 @@ struct HistoryView: View {
     @Environment(PlayerModel.self) private var player
     @State private var selection: Set<Int64> = []
     @State private var confirmingClear = false
+    #if os(macOS)
+    @Environment(Navigator.self) private var nav
+    @Environment(EngineMirror.self) private var mirror
+    @Environment(CoverArtCache.self) private var art
+    @Environment(PlayingLevels.self) private var levels
+    @Environment(UIState.self) private var ui
+    @Environment(\.roomTint) private var tint
+    #endif
 
     private var entries: [PlayHistoryEntry] { library.visiblePlayHistory }
 
@@ -36,6 +44,79 @@ struct HistoryView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                #if os(macOS)
+                table
+                #else
+                list
+                #endif
+            }
+        }
+        .alert("Clear History?", isPresented: $confirmingClear) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) { library.clearPlayHistory() }
+        } message: {
+            Text("Every play is forgotten. This cannot be undone.")
+        }
+    }
+
+    #if os(macOS)
+    /// A `KoanTable` — see there for why the Mac's lists are AppKit.
+    private var table: some View {
+        var lines: [TrackLine] = []
+        for (index, day) in days.enumerated() {
+            lines.append(TrackLine(id: -Int64(index) - 1, kind: .heading(day.key)))
+            for entry in day.entries {
+                lines.append(TrackLine(
+                    id: entry.id,
+                    kind: .track(entry.track),
+                    lead: HistoryDate.time(entry.playedAt),
+                    // A play recorded by another client scrobbling in did not
+                    // happen here, and saying so stops it reading as a phantom.
+                    note: entry.source == "local" ? nil : "Scrobbled by another client"
+                ))
+            }
+        }
+        return SafeAreaReader { insets in
+            KoanTable(
+                items: lines,
+                id: \.id,
+                context: TrackTableRow.Context(
+                    showsAlbum: true,
+                    columns: [],
+                    leadWidth: 46,
+                    currentTrackId: nil,
+                    isPlaying: false,
+                    barsLive: false,
+                    tint: NSColor(tint),
+                    favourites: [],
+                    queued: [:],
+                    progress: { _ in nil },
+                    art: art,
+                    levels: levels,
+                    play: { line in if let track = line.track { player.playNow(trackIds: [track.id]) } },
+                    openArtist: { nav.open(artist: $0) },
+                    openAlbum: { nav.open(album: $0) },
+                    toggleFavourite: { _ in }
+                ),
+                contextKey: AnyHashable(tint),
+                selection: $selection,
+                make: TrackTableRow.init,
+                rowHeight: TrackTableRow.artHeight,
+                isHeading: \.isHeading,
+                headingHeight: TrackTableRow.headingHeight,
+                menu: { ids, environment in hostedMenu(menu(for: ids), environment: environment) },
+                primaryAction: play,
+                drag: { ids in tracks(for: ids).map { PlayableTransfer(.track($0)) } },
+                delete: { _ in forgetSelected() },
+                selectAllToken: ui.selectAllToken,
+                insets: insets
+            )
+        }
+        .clearsSelection($selection)
+    }
+    #endif
+
+    private var list: some View {
                 List(selection: $selection) {
                     ForEach(days, id: \.key) { day in
                         Section(day.key) {
@@ -60,17 +141,6 @@ struct HistoryView: View {
                     play(selection)
                     return .handled
                 }
-                #if os(macOS)
-                .onDeleteCommand { forgetSelected() }
-                #endif
-            }
-        }
-        .alert("Clear History?", isPresented: $confirmingClear) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear", role: .destructive) { library.clearPlayHistory() }
-        } message: {
-            Text("Every play is forgotten. This cannot be undone.")
-        }
     }
 
     private var header: some View {
@@ -171,7 +241,7 @@ private struct HistoryRow: View {
             // The cover is what you recognise a record by, and scanning back
             // through a week of listening is exactly that job.
             TrackSleeve(albumId: track.albumId)
-                .frame(width: 34, height: 34)
+                .frame(width: RowMetrics.sleeve, height: RowMetrics.sleeve)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.title)
@@ -209,7 +279,7 @@ private struct HistoryRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 48, alignment: .trailing)
         }
-        .frame(height: 44)
+        .frame(height: RowMetrics.art)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
     }
