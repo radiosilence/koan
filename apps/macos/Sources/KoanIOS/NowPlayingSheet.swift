@@ -14,6 +14,7 @@ struct NowPlayingSheet: View {
     @Environment(Navigator.self) private var nav
     @Environment(UIState.self) private var ui
     @Environment(\.dismiss) private var dismiss
+    @State private var showingDevices = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -41,6 +42,7 @@ struct NowPlayingSheet: View {
         // A link followed from here has moved the navigator to a page behind
         // the sheet; the sheet gets out of the way of it.
         .onChange(of: nav.current) { dismiss() }
+        .devicePickerSheet(isPresented: $showingDevices)
     }
 
     /// The sleeve, or the words, in the same place — the way a record and its
@@ -150,7 +152,7 @@ struct NowPlayingSheet: View {
 
             Spacer()
 
-            DevicePickerButton(labelled: player.isControllingAnother)
+            DevicePickerButton(open: $showingDevices, labelled: player.isControllingAnother)
                 .font(.subheadline)
 
             if let format = player.currentFormat {
