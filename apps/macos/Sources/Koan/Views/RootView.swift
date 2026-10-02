@@ -226,6 +226,16 @@ struct RecordRoom: ViewModifier {
     /// The colour of a record the cache could not already answer for, and which
     /// record it was worked out for. Only consulted when the cache cannot.
     @State private var fetchedTint: (source: AlbumArtwork.Source, colour: Color?)?
+    /// The colour the room is wearing, kept on while the next one is worked
+    /// out. Falling back to the accent instead flashes every tinted control to
+    /// it and back again on the way to a record whose colour is not in yet.
+    /// Not observed: it is read and written in the same pass, and remembering
+    /// it must not cost one.
+    @State private var worn = Worn()
+
+    private final class Worn {
+        var colour: Color?
+    }
 
     /// Only for a colour that had to be worked out, which arrives after the page
     /// and would otherwise cut. A colour already in hand needs no ease: it lands
@@ -243,11 +253,24 @@ struct RecordRoom: ViewModifier {
     /// reads its bitmap: a colour the app already holds lands in the same commit
     /// as the page that wanted it. Held in `@State` and written by a task, it
     /// would be a second commit every time — the page, and then the room around it.
-    private var recordTint: Color? {
-        guard let colourSource else { return nil }
+    ///
+    /// Doubly optional, as `ArtworkBleed.answered` is: the outer `nil` is a
+    /// colour not worked out yet, the inner one a record with none.
+    private var recordTint: Color?? {
+        guard let colourSource else { return .some(nil) }
         if let held = art.cachedColour(for: colourSource) { return held }
         guard let fetchedTint, fetchedTint.source == colourSource else { return nil }
-        return fetchedTint.colour
+        return .some(fetchedTint.colour)
+    }
+
+    /// The colour to put on, which is then the one being worn.
+    private func wear() -> Color {
+        let tint = switch recordTint {
+        case .some(let colour): colour ?? .koanAccent
+        case .none: worn.colour ?? .koanAccent
+        }
+        worn.colour = tint
+        return tint
     }
 
     private var colourSource: AlbumArtwork.Source? {
@@ -266,7 +289,7 @@ struct RecordRoom: ViewModifier {
         let wash = colourSource
         let player = player
         let artCache = art
-        let tint = recordTint ?? .koanAccent
+        let tint = wear()
         // Over an opaque ground, because this *replaces* the window's own
         // background rather than sitting on it — a half-transparent wash on its
         // own leaves you looking through the app at the desktop.
@@ -677,13 +700,15 @@ private struct AlbumSortControls: View {
             // Its own button rather than an item inside the sort menu:
             // reshuffling is something you do repeatedly until you like what
             // you see, and a menu makes that four clicks instead of one.
-            Button {
-                library.reshuffleAlbums()
-            } label: {
-                Label("Shuffle", systemImage: Icon.reshuffle)
+            if library.albumSort == .random {
+                Button {
+                    library.reshuffleAlbums()
+                } label: {
+                    Label("Shuffle", systemImage: Icon.reshuffle)
+                }
+                .tint(.primary)
+                .help("Shuffle again")
             }
-            .tint(.primary)
-            .help("Shuffle again")
         }
     }
 }

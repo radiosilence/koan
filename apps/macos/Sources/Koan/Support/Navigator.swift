@@ -220,6 +220,8 @@ final class Navigator {
             return nil
         case .section(.playlist(let id)):
             await playlists?.prepare(id: id)
+            // The room takes a playlist's colour from its first record.
+            if let lead = playlists?.covers[id]?.first { library.warm(lead) }
             return await library.prepare(section: .playlist(id))
         case .section(let section):
             return await library.prepare(section: section)
