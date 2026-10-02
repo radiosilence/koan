@@ -570,6 +570,10 @@ struct SafeAreaReader<Content: View>: View {
 /// A SwiftUI menu as an `NSMenu`, reading what the page reads.
 @MainActor
 func hostedMenu(_ menu: some View, environment: EnvironmentValues) -> NSMenu {
-    NSHostingMenu(rootView: menu.transformEnvironment(\.self) { $0 = environment })
+    // A hosted menu shows a label's title alone unless asked for its icon,
+    // which a SwiftUI context menu shows by itself.
+    NSHostingMenu(rootView: menu
+        .labelStyle(.titleAndIcon)
+        .transformEnvironment(\.self) { $0 = environment })
 }
 #endif

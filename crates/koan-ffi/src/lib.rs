@@ -225,6 +225,9 @@ pub struct KoanEngine {
     /// What the fuzzy searches match against, kept until `library_version`
     /// moves.
     fuzzy: queries::CorpusCache,
+    /// Each playlist's earlier states, for undo. The queue's own history is
+    /// the player's.
+    playlist_history: koan_core::playlists::PlaylistHistory,
 }
 
 /// How far a client's own reckoning of the playhead may drift before it is
@@ -521,12 +524,21 @@ impl KoanEngine {
         offload::sequenced(move || self.send(PlayerCommand::ClearPlaylist)).await
     }
 
-    pub async fn undo(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::Undo)).await
+    /// Take back the last edit to a playlist, or to the queue when none is
+    /// named.
+    pub async fn undo(self: Arc<Self>, playlist_id: Option<i64>) -> Result<(), KoanError> {
+        match playlist_id {
+            Some(id) => self.step_playlist(id, true).await,
+            None => offload::sequenced(move || self.send(PlayerCommand::Undo)).await,
+        }
     }
 
-    pub async fn redo(self: Arc<Self>) -> Result<(), KoanError> {
-        offload::sequenced(move || self.send(PlayerCommand::Redo)).await
+    /// Put back the last edit taken back, to a playlist or the queue.
+    pub async fn redo(self: Arc<Self>, playlist_id: Option<i64>) -> Result<(), KoanError> {
+        match playlist_id {
+            Some(id) => self.step_playlist(id, false).await,
+            None => offload::sequenced(move || self.send(PlayerCommand::Redo)).await,
+        }
     }
 
     // --- Library -----------------------------------------------------------
@@ -1320,6 +1332,9 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            self.playlist_history
+                .record(&db.conn, playlist_id)
+                .map_err(db_err)?;
             let locked = self.locked_to(&db, playlist_id);
             let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
             self.follow_playlist(&db, playlist_id, locked);
@@ -1345,6 +1360,9 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            self.playlist_history
+                .record(&db.conn, playlist_id)
+                .map_err(db_err)?;
             let locked = self.locked_to(&db, playlist_id);
             let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
             if !added.is_empty() {
@@ -1375,6 +1393,9 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            self.playlist_history
+                .record(&db.conn, playlist_id)
+                .map_err(db_err)?;
             let locked = self.locked_to(&db, playlist_id);
             queries::reorder_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
             self.follow_playlist(&db, playlist_id, locked);
@@ -1393,6 +1414,9 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            self.playlist_history
+                .record(&db.conn, playlist_id)
+                .map_err(db_err)?;
             let locked = self.locked_to(&db, playlist_id);
             let removed =
                 queries::remove_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
@@ -1409,6 +1433,9 @@ impl KoanEngine {
     pub async fn shuffle_playlist(self: Arc<Self>, playlist_id: i64) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            self.playlist_history
+                .record(&db.conn, playlist_id)
+                .map_err(db_err)?;
             let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
             koan_core::helpers::shuffle(&mut entries);
             let order: Vec<i64> = entries.iter().map(|e| e.id).collect();
@@ -3183,6 +3210,7 @@ impl KoanEngine {
             library_version: library_version.clone(),
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
             fuzzy: queries::CorpusCache::default(),
+            playlist_history: Default::default(),
         });
         engine.spawn_watcher();
         // A koan server this app syncs from can then tell it what to play, and
@@ -3473,6 +3501,29 @@ impl KoanEngine {
                 log::info!("session restore: track never became ready, leaving position at 0");
             })
             .ok();
+    }
+
+    /// Undo or redo a playlist edit: put it back, follow it from the queue if
+    /// the queue is following, and tell everyone as any edit would.
+    async fn step_playlist(self: Arc<Self>, playlist_id: i64, back: bool) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let locked = self.locked_to(&db, playlist_id);
+            let history = &self.playlist_history;
+            let moved = if back {
+                history.undo(&db.conn, playlist_id)
+            } else {
+                history.redo(&db.conn, playlist_id)
+            }
+            .map_err(db_err)?;
+            if moved {
+                self.follow_playlist(&db, playlist_id, locked);
+                self.bump_library();
+                koan_core::playlists::push_to_remote(playlist_id);
+            }
+            Ok(())
+        })
+        .await
     }
 
     /// Whether the queue is still exactly this playlist.

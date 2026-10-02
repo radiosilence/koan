@@ -35,9 +35,12 @@ enum Symbol {
         appearance.performAsCurrentDrawingAppearance {
             let rect = NSRect(origin: .zero, size: symbol.size)
             symbol.draw(in: rect)
+            // The colour replaces the glyph's, keeping only its shape. Laid
+            // over it instead, a translucent colour — every label colour but
+            // the first — would be tinted by the black glyph underneath.
             if colours.count == 1 {
                 colours[0].set()
-                rect.fill(using: .sourceAtop)
+                rect.fill(using: .sourceIn)
             }
         }
         NSGraphicsContext.restoreGraphicsState()

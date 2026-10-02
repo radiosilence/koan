@@ -101,6 +101,11 @@ final class Navigator {
 
     // MARK: - Moves
 
+    /// The playlist on screen, if the page is one.
+    var openPlaylistId: Int64? {
+        if case .section(.playlist(let id)) = current { id } else { nil }
+    }
+
     func show(_ section: Section) {
         go(to: .section(section))
     }
