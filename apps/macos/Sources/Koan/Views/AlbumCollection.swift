@@ -247,14 +247,19 @@ final class AlbumGridView: NSCollectionView {
     // Hover for every tile from one tracking area. One per tile is a
     // tracking area per tile for AppKit to move on every scroll step.
 
+    private var tracking: NSTrackingArea?
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard trackingAreas.isEmpty else { return }
-        addTrackingArea(NSTrackingArea(
+        // Ours, alongside whatever the view keeps for itself.
+        guard tracking == nil else { return }
+        let area = NSTrackingArea(
             rect: .zero,
             options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
             owner: self
-        ))
+        )
+        addTrackingArea(area)
+        tracking = area
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -354,14 +359,15 @@ final class AlbumTile: NSCollectionViewItem {
     /// What every tile is shown in.
     struct Context {
         let art: CoverArtCache
-        let selection: PlayableSelection
+        /// The page's pick, where its tiles take part in one.
+        let selection: PlayableSelection?
         let picked: Set<Playable.Key>
         let selecting: Bool
         let favourites: Set<Int64>
         let tint: NSColor
         let usesGlass: Bool
         let actions: Actions
-        let menu: (Album) -> NSMenu
+        var menu: (Album) -> NSMenu
     }
 
     private enum Part { case sleeve, title, artist, elsewhere }
@@ -710,7 +716,7 @@ final class AlbumTile: NSCollectionViewItem {
     /// The pointer is at `point` in the tile, or has left it. Whether it is
     /// over a link, for the cursor.
     @discardableResult
-    fileprivate func hover(at point: NSPoint?) -> Bool {
+    func hover(at point: NSPoint?) -> Bool {
         let now = point.map(part(at:))
         if now != hovered, let context {
             hovered = now
@@ -719,13 +725,13 @@ final class AlbumTile: NSCollectionViewItem {
         return now == .artist && context?.selecting == false
     }
 
-    fileprivate func hoverEnded() { hover(at: nil) }
+    func hoverEnded() { hover(at: nil) }
 
     fileprivate func clicked(at point: NSPoint) {
         guard let album, let context else { return }
         // A tick while picking, or a new pick on ⌘-click — the way
         // `AlbumGridCell` takes clicks before anything else gets them.
-        if context.selection.take(.album(album)) { return }
+        if context.selection?.take(.album(album)) == true { return }
         act(part(at: point))
     }
 
@@ -756,7 +762,7 @@ final class AlbumTile: NSCollectionViewItem {
 
     @objc private func toggleFavourite() {
         guard let album, let context else { return }
-        if context.selection.take(.album(album)) { return }
+        if context.selection?.take(.album(album)) == true { return }
         context.actions.toggleFavourite(album.id)
     }
 
@@ -776,7 +782,7 @@ final class AlbumTile: NSCollectionViewItem {
         }
         let key = Playable.album(album).key
         if context.selecting, context.picked.contains(key) {
-            return context.selection.picked.map(PlayableTransfer.init)
+            return (context.selection?.picked ?? []).map(PlayableTransfer.init)
         }
         return [PlayableTransfer(.album(album))]
     }
@@ -794,52 +800,6 @@ final class AlbumTile: NSCollectionViewItem {
             sleeve.borderColor = NSColor.white.withAlphaComponent(0.06).cgColor
             ensō.strokeColor = NSColor.tertiaryLabelColor.cgColor
         }
-    }
-}
-
-/// SF Symbols drawn once into bitmaps for layers, which take no part in
-/// layout or hit-testing.
-@MainActor
-private enum Symbol {
-    private static var cache: [String: CGImage] = [:]
-
-    static func image(_ name: String, size: CGFloat, colours: [NSColor]) -> CGImage? {
-        let key = "\(name) \(size) \(colours.map(\.description))"
-        if let held = cache[key] { return held }
-        let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
-            .applying(.init(paletteColors: colours))
-        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(configuration),
-            let bitmap = NSBitmapImageRep(
-                bitmapDataPlanes: nil,
-                pixelsWide: Int(ceil(symbol.size.width * 2)), pixelsHigh: Int(ceil(symbol.size.height * 2)),
-                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-            )
-        else { return nil }
-        bitmap.size = symbol.size
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-        symbol.draw(in: NSRect(origin: .zero, size: symbol.size))
-        NSGraphicsContext.restoreGraphicsState()
-        cache[key] = bitmap.cgImage
-        return bitmap.cgImage
-    }
-
-    /// Where a symbol drawn by `image` sits at its natural size: it is drawn
-    /// at 2×, so half its pixels.
-    static func frame(of image: CGImage?, centredIn rect: CGRect) -> CGRect {
-        let size = size(of: image)
-        return CGRect(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2, width: size.width, height: size.height)
-    }
-
-    static func frame(of image: CGImage?, at origin: CGPoint) -> CGRect {
-        CGRect(origin: origin, size: size(of: image))
-    }
-
-    private static func size(of image: CGImage?) -> CGSize {
-        guard let image else { return .zero }
-        return CGSize(width: CGFloat(image.width) / 2, height: CGFloat(image.height) / 2)
     }
 }
 

@@ -17,6 +17,16 @@ struct FavouritesView: View {
     @Environment(LibraryModel.self) private var library
 
     @State private var selection: Set<Int64> = []
+    #if os(macOS)
+    @Environment(EngineMirror.self) private var mirror
+    @Environment(CoverArtCache.self) private var art
+    @Environment(PlayingLevels.self) private var levels
+    @Environment(UIState.self) private var ui
+    @Environment(\.roomTint) private var tint
+    @Environment(\.onStage) private var onStage
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("graphics") private var graphics = Graphics.full
+    #endif
     /// The list's width, for how many records fit across a row.
     @State private var width: CGFloat = 0
 
@@ -48,6 +58,94 @@ struct FavouritesView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                #if os(macOS)
+                collection
+                #else
+                list
+                #endif
+            }
+        }
+    }
+
+    #if os(macOS)
+    /// A `MixedCollection` — see there for why the Mac's page is AppKit.
+    private var collection: some View {
+        let lines = tracks.enumerated().map { TrackLine(id: $1.id, kind: .track($1), lead: "\($0 + 1)", position: $0) }
+        let queued = mirror.queuedByTrack
+        let current = player.currentTrackId
+        let playing = player.isPlaying
+        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let key: [AnyHashable] = [
+            AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
+            AnyHashable(library.favouriteTrackIds), AnyHashable(library.favouriteAlbumIds),
+            AnyHashable(queued.map { "\($0.key):\($0.value.status):\(SourceBadges.transfer(of: $0.value).flatMap(mirror.progress(for:)) ?? -1)" }.sorted()),
+        ]
+        let library = library
+        let nav = nav
+        let player = player
+        return SafeAreaReader { insets in
+            MixedCollection(
+                artists: artists,
+                albums: albums,
+                tracks: lines,
+                tileContext: AlbumTile.Context(
+                    art: art,
+                    selection: nil,
+                    picked: [],
+                    selecting: false,
+                    favourites: library.favouriteAlbumIds,
+                    tint: NSColor(tint),
+                    usesGlass: graphics.usesGlass,
+                    actions: AlbumTile.Actions(
+                        open: { nav.open(album: $0) },
+                        openArtist: { nav.open(artist: $0) },
+                        play: { id in
+                            nav.open(album: id)
+                            let engine = library.engine
+                            let ids = await Task.detached { (try? await engine.trackIds(albumId: id, artistId: nil)) ?? [] }.value
+                            player.playNow(trackIds: ids)
+                        },
+                        toggleFavourite: { library.toggleFavourite(album: $0) }
+                    ),
+                    menu: { _ in NSMenu() }
+                ),
+                trackContext: TrackTableRow.Context(
+                    showsAlbum: true,
+                    leadWidth: TrackTableRow.leadWidth(for: tracks.count),
+                    currentTrackId: current,
+                    isPlaying: playing,
+                    barsLive: live,
+                    tint: NSColor(tint),
+                    favourites: library.favouriteTrackIds,
+                    queued: queued,
+                    progress: { mirror.progress(for: $0) },
+                    art: art,
+                    levels: levels,
+                    play: { line in play([line.id]) },
+                    openArtist: { nav.open(artist: $0) },
+                    openAlbum: { nav.open(album: $0) },
+                    toggleFavourite: { library.toggleFavourite(track: $0) }
+                ),
+                contextKey: AnyHashable(key),
+                selection: $selection,
+                albumMenu: { album, environment in
+                    hostedMenu(PlayableMenu(playable: .album(album)), environment: environment)
+                },
+                artistMenu: { artist, environment in
+                    hostedMenu(PlayableMenu(playable: .artist(id: artist.id, name: artist.name)), environment: environment)
+                },
+                trackMenu: { ids, environment in hostedMenu(menu(for: ids), environment: environment) },
+                openArtist: { nav.open(artist: $0) },
+                primaryAction: play,
+                selectAllToken: ui.selectAllToken,
+                insets: insets
+            )
+        }
+        .clearsSelection($selection)
+    }
+    #endif
+
+    private var list: some View {
                 List(selection: $selection) {
                     if !artists.isEmpty { artistSection }
                     if !albums.isEmpty { albumSection }
@@ -66,8 +164,6 @@ struct FavouritesView: View {
                     return .handled
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-            }
-        }
     }
 
     private var header: some View {

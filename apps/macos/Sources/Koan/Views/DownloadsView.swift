@@ -10,6 +10,13 @@ import SwiftUI
 struct DownloadsView: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(AppState.self) private var app
+    #if os(macOS)
+    @Environment(Navigator.self) private var nav
+    @Environment(LibraryModel.self) private var library
+    @Environment(CoverArtCache.self) private var art
+    @Environment(UIState.self) private var ui
+    @State private var selection: Set<String> = []
+    #endif
 
     var body: some View {
         Group {
@@ -22,6 +29,9 @@ struct DownloadsView: View {
                     )
                 )
             } else {
+                #if os(macOS)
+                table
+                #else
                 List {
                     ForEach(mirror.transfers, id: \.queueItemId) { transfer in
                         DownloadRow(transfer: transfer)
@@ -29,6 +39,7 @@ struct DownloadsView: View {
                     }
                 }
                 .listStyle(.inset)
+                #endif
             }
         }
         .navigationTitle("Downloads")
@@ -39,6 +50,85 @@ struct DownloadsView: View {
                 }
                 .help("Forget the transfers that have already settled")
             }
+        }
+    }
+}
+
+#if os(macOS)
+extension DownloadsView {
+    /// A `KoanTable` — see there for why the Mac's lists are AppKit.
+    private var table: some View {
+        let transfers = mirror.transfers
+        // What the rows draw that moves: each transfer's state, and the
+        // figures of the ones still going.
+        let key = transfers.map { transfer -> String in
+            let figures = transfer.state == .running || transfer.state == .queued
+                ? mirror.figure(for: transfer.queueItemId) : nil
+            return "\(transfer.queueItemId):\(transfer.state):\(figures?.bytesWritten ?? 0):\(figures?.bytesPerSecond ?? 0)"
+        }
+        let library = library
+        let nav = nav
+        return SafeAreaReader { insets in
+            KoanTable(
+                items: transfers,
+                id: \.queueItemId,
+                context: DownloadTableRow.Context(
+                    figures: { mirror.figure(for: $0) },
+                    art: art,
+                    showInLibrary: { DownloadMenu.showInLibrary($0, library: library, nav: nav) }
+                ),
+                contextKey: AnyHashable(key),
+                selection: $selection,
+                make: DownloadTableRow.init,
+                menu: { ids, environment in
+                    guard ids.count == 1, let transfer = transfers.first(where: { ids.contains($0.queueItemId) }) else {
+                        return nil
+                    }
+                    return hostedMenu(DownloadMenu(transfer: transfer), environment: environment)
+                },
+                primaryAction: { ids in
+                    if let transfer = transfers.first(where: { ids.contains($0.queueItemId) }) {
+                        DownloadMenu.showInLibrary(transfer, library: library, nav: nav)
+                    }
+                },
+                selectAllToken: ui.selectAllToken,
+                insets: insets
+            )
+        }
+        .clearsSelection($selection)
+    }
+}
+#endif
+
+/// What a download's menu offers, on either platform.
+struct DownloadMenu: View {
+    let transfer: Transfer
+
+    @Environment(Navigator.self) private var nav
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        Button { Self.showInLibrary(transfer, library: library, nav: nav) } label: {
+            Label("Show in Library", systemImage: Icon.album)
+        }
+        if transfer.state == .done {
+            Button { library.clearDownloads(trackIds: [transfer.trackId]) } label: {
+                Label("Remove Downloaded File", systemImage: Icon.clear)
+            }
+        }
+    }
+
+    /// The record it came off, which is where you go to find it. Resolved when
+    /// asked rather than carried on every row — the store holds transfers, not
+    /// library rows, and most rows are never clicked.
+    static func showInLibrary(_ transfer: Transfer, library: LibraryModel, nav: Navigator) {
+        let engine = library.engine
+        let trackId = transfer.trackId
+        Task {
+            guard let albumId = (try? await engine.track(trackId: trackId))??.albumId else {
+                return
+            }
+            nav.open(album: albumId, highlighting: trackId)
         }
     }
 }
@@ -69,23 +159,14 @@ private struct DownloadRow: View {
             // A record is what you recognise a download by, and this is a list
             // of things you are waiting for.
             AlbumArtwork(source: .track(transfer.trackId), size: .thumb, cornerRadius: 3)
-                .frame(width: 34, height: 34)
+                .frame(width: RowMetrics.sleeve, height: RowMetrics.sleeve)
 
             rows
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .contextMenu {
-            Button { showInLibrary() } label: {
-                Label("Show in Library", systemImage: Icon.album)
-            }
-            if transfer.state == .done {
-                Button { library.clearDownloads(trackIds: [transfer.trackId]) } label: {
-                    Label("Remove Downloaded File", systemImage: Icon.clear)
-                }
-            }
-        }
+        .contextMenu { DownloadMenu(transfer: transfer) }
     }
 
     private var rows: some View {
@@ -135,18 +216,8 @@ private struct DownloadRow: View {
         }
     }
 
-    /// The record it came off, which is where you go to find it. Resolved when
-    /// asked rather than carried on every row — the store holds transfers, not
-    /// library rows, and most rows are never clicked.
     private func showInLibrary() {
-        let engine = library.engine
-        let trackId = transfer.trackId
-        Task {
-            guard let albumId = (try? await engine.track(trackId: trackId))??.albumId else {
-                return
-            }
-            nav.open(album: albumId, highlighting: trackId)
-        }
+        DownloadMenu.showInLibrary(transfer, library: library, nav: nav)
     }
 
     private var isRunning: Bool { transfer.state == .running || transfer.state == .queued }

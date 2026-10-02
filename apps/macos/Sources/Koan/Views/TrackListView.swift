@@ -22,6 +22,16 @@ struct TrackListView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(\.horizontalSizeClass) private var width
     @State private var selection: Set<Int64> = []
+    #if os(macOS)
+    @Environment(EngineMirror.self) private var mirror
+    @Environment(CoverArtCache.self) private var art
+    @Environment(PlayingLevels.self) private var levels
+    @Environment(UIState.self) private var ui
+    @Environment(\.roomTint) private var tint
+    @Environment(\.onStage) private var onStage
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("graphics") private var graphics = Graphics.full
+    #endif
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,6 +44,74 @@ struct TrackListView: View {
                 EmptyState(icon: "music.note.list", title: emptyTitle)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                #if os(macOS)
+                table
+                #else
+                list
+                #endif
+            }
+        }
+    }
+
+    #if os(macOS)
+    /// A `KoanTable` — see there for why the Mac's lists are AppKit.
+    private var table: some View {
+        let numbered = tracks.enumerated().map { TrackLine(id: $1.id, kind: .track($1), lead: "\($0 + 1)", position: $0) }
+        let queued = mirror.queuedByTrack
+        let current = player.currentTrackId
+        let playing = player.isPlaying
+        let live = onStage && !reduceMotion && graphics.animatesIndicators
+        // What the rows draw that can change under them, as one value. Download
+        // progress is in it, so a moving download redraws the rows on screen.
+        let key = [
+            AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
+            AnyHashable(library.favouriteTrackIds),
+            AnyHashable(queued.map { "\($0.key):\($0.value.status):\(SourceBadges.transfer(of: $0.value).flatMap(mirror.progress(for:)) ?? -1)" }.sorted()),
+        ]
+        return SafeAreaReader { insets in
+            KoanTable(
+                items: numbered,
+                id: \.id,
+                context: TrackTableRow.Context(
+                    showsAlbum: mixedAlbums,
+                    leadWidth: TrackTableRow.leadWidth(for: tracks.count),
+                    currentTrackId: current,
+                    isPlaying: playing,
+                    barsLive: live,
+                    tint: NSColor(tint),
+                    favourites: library.favouriteTrackIds,
+                    queued: queued,
+                    progress: { mirror.progress(for: $0) },
+                    art: art,
+                    levels: levels,
+                    play: { line in player.playNow(trackIds: tracks.map(\.id), startingAt: line.position) },
+                    openArtist: { nav.open(artist: $0) },
+                    openAlbum: { nav.open(album: $0) },
+                    toggleFavourite: { library.toggleFavourite(track: $0) }
+                ),
+                contextKey: AnyHashable(key),
+                selection: $selection,
+                make: TrackTableRow.init,
+                rowHeight: mixedAlbums ? TrackTableRow.artHeight : TrackTableRow.height,
+                menu: { ids, environment in
+                    let chosen = tracks.filter { ids.contains($0.id) }
+                    if chosen.count == 1, let track = chosen.first {
+                        return hostedMenu(PlayableMenu(playable: .track(track)), environment: environment)
+                    }
+                    return chosen.isEmpty ? nil : hostedMenu(QueueActions(trackIds: chosen.map(\.id)), environment: environment)
+                },
+                primaryAction: play,
+                drag: { ids in tracks.filter { ids.contains($0.id) }.map { PlayableTransfer(.track($0)) } },
+                selectAllToken: ui.selectAllToken,
+                reveal: nav.highlightedTrackId,
+                revealed: { nav.highlightedTrackId = nil },
+                insets: insets
+            )
+        }
+    }
+    #endif
+
+    private var list: some View {
                 // A real List rather than a LazyVStack of tap gestures. Stacking
                 // single- and double-tap recognisers on a plain view makes
                 // clicks resolve against each other and drop; List gives native
@@ -82,8 +160,6 @@ struct TrackListView: View {
                         nav.highlightedTrackId = nil
                     }
                 }
-            }
-        }
     }
 
     /// Only a gathered list is narrowed by the filter; a record's tracklist
@@ -244,7 +320,7 @@ struct TrackRow: View {
                 // The cover is what you recognise a record by, and a list
                 // gathered from the whole library is exactly that job.
                 TrackSleeve(albumId: track.albumId)
-                    .frame(width: 34, height: 34)
+                    .frame(width: RowMetrics.sleeve, height: RowMetrics.sleeve)
             }
 
             VStack(alignment: .leading, spacing: 1) {
@@ -300,9 +376,9 @@ struct TrackRow: View {
                 .frame(width: 48, alignment: .trailing)
         }
         #if os(iOS)
-        .frame(minHeight: showsAlbum ? 44 : 34)
+        .frame(minHeight: showsAlbum ? RowMetrics.art : RowMetrics.text)
         #else
-        .frame(height: showsAlbum ? 44 : 34)
+        .frame(height: showsAlbum ? RowMetrics.art : RowMetrics.text)
         #endif
         // The row is only clickable where a view sits; the Spacer would
         // otherwise be a dead zone.

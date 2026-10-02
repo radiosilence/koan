@@ -122,6 +122,9 @@ final class LibraryModel {
     /// on the way back and put where it was. Not observed: nothing redraws
     /// because of them.
     @ObservationIgnored var albumsOffset: CGFloat?
+    /// The Mac's artist list, which is a table and remembers a distance as the
+    /// album grid does. The phone's list goes back to a row instead — below.
+    @ObservationIgnored var artistsOffset: CGFloat?
     @ObservationIgnored var artistsTop: Int64?
     /// The artist rows on screen, kept as they come and go so the top one can
     /// be read when the list is left.

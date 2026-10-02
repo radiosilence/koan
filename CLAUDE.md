@@ -216,6 +216,11 @@ follows the top of the stack in front — see `TabShell`.
 | `Support/PlayingLevels.swift` | One analyser subscription for every playing indicator on screen, handing each frame straight to the bars as layer geometry — nothing observable, nothing SwiftUI re-runs. Reads the stream only while a bar is attached, which is what lets the analyser park |
 | `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select. Never torn down: `StageView` keeps it mounted behind other pages, so its place and its playing row survive a visit elsewhere. The album and artist browsers are rebuilt on each visit and restore their scroll position; kept mounted, they made every page switch lay them out |
 | `Views/AlbumCollection.swift` | The Mac's album grid: `NSCollectionView`, tiles of layers and labels. SwiftUI's grid cost 22–27 ms per scroll step at 4K; this one 11–12. Behaviour mirrors `AlbumGridCell`, which iOS and the artist page keep. AppKit controls are SwiftUI graphs on macOS 26, so a tile makes its few only while showing them |
+| `Views/KoanTable.swift` | The Mac's lists: an `NSTableView` of `TableRow`s, made of layers and labels. SwiftUI's `List` on macOS sets up every row in the data set before a page draws; a table makes the rows on screen. Selection, keys, drags and the SwiftUI menus hosted. iOS keeps `List` |
+| `Views/TrackTableRow.swift` | The Mac's track row, for album pages, history and favourites: number or time, bars, sleeve, links, availability, heart, format, length — and day headings |
+| `Views/MixedCollection.swift` | Favourites and search on the Mac: pills, record tiles and track rows in one collection view, each made as it scrolls in. Search's pick works across all three |
+| `Views/LayerSymbol.swift` | SF Symbols drawn once into bitmaps for layers. One colour is a template, as SwiftUI draws it |
+| `Support/RowMetrics.swift` | How tall rows are, on every list and both platforms |
 | `Views/PickerSheet.swift` | ⇧⌘K picker: multi-select, add / add-and-play / replace queue |
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |
 | `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |
