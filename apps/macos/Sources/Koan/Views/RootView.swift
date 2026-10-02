@@ -229,13 +229,7 @@ struct RecordRoom: ViewModifier {
     /// The colour the room is wearing, kept on while the next one is worked
     /// out. Falling back to the accent instead flashes every tinted control to
     /// it and back again on the way to a record whose colour is not in yet.
-    /// Not observed: it is read and written in the same pass, and remembering
-    /// it must not cost one.
-    @State private var worn = Worn()
-
-    private final class Worn {
-        var colour: Color?
-    }
+    @State private var worn: Color?
 
     /// Only for a colour that had to be worked out, which arrives after the page
     /// and would otherwise cut. A colour already in hand needs no ease: it lands
@@ -263,14 +257,13 @@ struct RecordRoom: ViewModifier {
         return .some(fetchedTint.colour)
     }
 
-    /// The colour to put on, which is then the one being worn.
-    private func wear() -> Color {
-        let tint = switch recordTint {
+    /// The colour to put on: the record's once it is known, and until then
+    /// the one already on.
+    private var tint: Color {
+        switch recordTint {
         case .some(let colour): colour ?? .koanAccent
-        case .none: worn.colour ?? .koanAccent
+        case .none: worn ?? .koanAccent
         }
-        worn.colour = tint
-        return tint
     }
 
     private var colourSource: AlbumArtwork.Source? {
@@ -289,7 +282,6 @@ struct RecordRoom: ViewModifier {
         let wash = colourSource
         let player = player
         let artCache = art
-        let tint = wear()
         // Over an opaque ground, because this *replaces* the window's own
         // background rather than sitting on it — a half-transparent wash on its
         // own leaves you looking through the app at the desktop.
@@ -334,6 +326,7 @@ struct RecordRoom: ViewModifier {
             // a neutral so the two never argue.
             .tint(tint)
             .environment(\.roomTint, tint)
+            .onChange(of: tint, initial: true) { _, now in worn = now }
     }
 }
 
