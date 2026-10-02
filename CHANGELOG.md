@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The Mac app's album grid scrolls at full frame rate.** SwiftUI's grid rebuilt each tile as it scrolled in and re-laid out every tile on screen on each step, about 22–27 ms a step on a 4K display, short of a 60 Hz frame. On the Mac the grid is now an AppKit collection view that reuses its tiles: 11–12 ms a step. Clicking, hover, the heart, picking several records, dragging and the context menu behave as before. The codec badge is a dark scrim rather than clear glass, since a glass view per tile cost more than the rest of the grid. iOS keeps its SwiftUI grid.
+
 ## 0.47.2
 
 ### Fixed

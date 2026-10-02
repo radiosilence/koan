@@ -5,12 +5,22 @@ struct AlbumBrowser: View {
     @Environment(LibraryModel.self) private var library
     @Environment(UIState.self) private var ui
     @Environment(Navigator.self) private var nav
+    #if os(macOS)
+    @Environment(PlayerModel.self) private var player
+    @Environment(\.roomTint) private var tint
+    @AppStorage("graphics") private var graphics = Graphics.full
+    /// The toolbar's and the transport's share of the page, which the grid
+    /// scrolls under.
+    @State private var insets = EdgeInsets()
+    #else
     /// Where the grid is scrolled to, as a distance rather than an album: a
     /// reshuffle reorders every album, and following the one at the top would
     /// carry the grid to wherever it landed.
     @State private var position = ScrollPosition()
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
+    #endif
+
     #if os(macOS)
     private static let emptyDetail = "Add a music folder in Settings → Library, or sign in to a server in Settings → Server."
     #else
@@ -18,42 +28,97 @@ struct AlbumBrowser: View {
     #endif
 
     var body: some View {
-        ScrollView {
-                if library.visibleAlbums.isEmpty {
-                    EmptyState(
-                        icon: "square.stack",
-                        title: library.filter.isEmpty ? "No albums yet" : "Nothing matches",
-                        detail: library.filter.isEmpty
-                            ? Self.emptyDetail
-                            : "Try a different filter."
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 340)
-                } else {
-                    LazyVGrid(columns: columns, spacing: 22) {
-                        ForEach(library.visibleAlbums, id: \.id) { album in
-                            AlbumGridCell(album: album, selection: library.selection)
-                        }
-                    }
-                    .padding(20)
-                    .modifier(SelectionDrag(selection: library.selection))
-                }
-            }
+        albums
             // ⌘A picks everything the filter is showing, starting a selection
             // if there was none. Escape and leaving the page drop it.
             .onChange(of: ui.selectAllToken) { _, _ in library.selection.selectAll() }
             .onChange(of: ui.clearSelectionToken) { _, _ in library.selection.end() }
             .onDisappear { library.selection.end() }
-            // Rebuilt on each visit rather than kept mounted behind other pages
-            // (see `StageView`), and put back where it was.
-            .scrollPosition($position)
-            .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in
-                library.albumsOffset = y
-            }
-            .onAppear {
-                if let y = library.albumsOffset { position.scrollTo(y: y) }
-            }
-            .onChange(of: nav.rewinds[.albums]) { position.scrollTo(edge: .top) }
     }
+
+    private var empty: some View {
+        EmptyState(
+            icon: "square.stack",
+            title: library.filter.isEmpty ? "No albums yet" : "Nothing matches",
+            detail: library.filter.isEmpty
+                ? Self.emptyDetail
+                : "Try a different filter."
+        )
+        .frame(maxWidth: .infinity, minHeight: 340)
+    }
+
+    #if os(macOS)
+    /// An `AlbumCollection` — see there for why the Mac's grid is AppKit.
+    @ViewBuilder
+    private var albums: some View {
+        if library.visibleAlbums.isEmpty {
+            ScrollView { empty }
+        } else {
+            let selection = library.selection
+            AlbumCollection(
+                albums: library.visibleAlbums,
+                selection: selection,
+                picked: Set(selection.picked.map(\.key)),
+                selecting: selection.isActive,
+                favourites: library.favouriteAlbumIds,
+                tint: tint,
+                usesGlass: graphics.usesGlass,
+                insets: insets,
+                rewinds: nav.rewinds[.albums] ?? 0,
+                actions: actions
+            )
+            .ignoresSafeArea()
+            .background {
+                Color.clear.onGeometryChange(for: EdgeInsets.self) { $0.safeAreaInsets } action: { insets = $0 }
+            }
+        }
+    }
+
+    private var actions: AlbumTile.Actions {
+        let library = library
+        let nav = nav
+        let player = player
+        return AlbumTile.Actions(
+            open: { nav.open(album: $0) },
+            openArtist: { nav.open(artist: $0) },
+            // The record is where the tracks are, so that is where a click on
+            // its sleeve leaves you, as `PlayableArtwork` does.
+            play: { id in
+                nav.open(album: id)
+                let engine = library.engine
+                let ids = await Task.detached { (try? await engine.trackIds(albumId: id, artistId: nil)) ?? [] }.value
+                player.playNow(trackIds: ids)
+            },
+            toggleFavourite: { library.toggleFavourite(album: $0) }
+        )
+    }
+    #else
+    private var albums: some View {
+        ScrollView {
+            if library.visibleAlbums.isEmpty {
+                empty
+            } else {
+                LazyVGrid(columns: columns, spacing: 22) {
+                    ForEach(library.visibleAlbums, id: \.id) { album in
+                        AlbumGridCell(album: album, selection: library.selection)
+                    }
+                }
+                .padding(20)
+                .modifier(SelectionDrag(selection: library.selection))
+            }
+        }
+        // Rebuilt on each visit rather than kept mounted behind other pages
+        // (see `StageView`), and put back where it was.
+        .scrollPosition($position)
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in
+            library.albumsOffset = y
+        }
+        .onAppear {
+            if let y = library.albumsOffset { position.scrollTo(y: y) }
+        }
+        .onChange(of: nav.rewinds[.albums]) { position.scrollTo(edge: .top) }
+    }
+    #endif
 }
 
 struct AlbumDetailView: View {
