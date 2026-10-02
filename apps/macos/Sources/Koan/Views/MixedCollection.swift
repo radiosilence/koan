@@ -27,6 +27,16 @@ struct MixedCollection: NSViewRepresentable {
     let openArtist: (Int64) -> Void
     /// Double-click or Return on tracks.
     let primaryAction: (Set<Int64>) -> Void
+    /// Whether the tracks are a list to select from, as favourites, or
+    /// results that go somewhere when clicked, as search.
+    var tracksSelect = true
+    /// A click on a result track.
+    var openTrack: (Track) -> Void = { _ in }
+    /// The page's pick, where everything on it takes part in one — see
+    /// `PlayableSelection`.
+    var pick: PlayableSelection?
+    /// How many are in each section, beside its title.
+    var counts = false
     var selectAllToken = 0
     let insets: EdgeInsets
 
@@ -226,15 +236,55 @@ struct MixedCollection: NSViewRepresentable {
             let header = collectionView.makeSupplementaryView(
                 ofKind: kind, withIdentifier: SectionHeader.identifier, for: indexPath
             ) as? SectionHeader ?? SectionHeader()
-            header.title.stringValue = sections[indexPath.section].title
+            let section = sections[indexPath.section]
+            header.title.stringValue = section.title
+            header.count.stringValue = parent?.counts == true ? "\(count(of: section))" : ""
+            header.needsLayout = true
             return header
+        }
+
+        private func count(of section: Section) -> Int {
+            guard let parent else { return 0 }
+            switch section {
+            case .artists: return parent.artists.count
+            case .albums: return parent.albums.count
+            case .tracks: return parent.tracks.count
+            }
         }
 
         // MARK: Selection
 
         func collectionView(_ collectionView: NSCollectionView, shouldSelectItemsAt indexPaths: Set<IndexPath>) -> Set<IndexPath> {
-            indexPaths.filter { $0.section < sections.count && sections[$0.section] == .tracks }
+            guard parent?.tracksSelect == true else { return [] }
+            return indexPaths.filter { $0.section < sections.count && sections[$0.section] == .tracks }
         }
+
+        /// A click on a result track: a tick while picking, a new pick on
+        /// ⌘-click, otherwise to where the track lives.
+        fileprivate func activate(_ path: IndexPath) {
+            guard let parent, let track = track(at: path) else { return }
+            if parent.pick?.take(.track(track)) == true { return }
+            parent.openTrack(track)
+        }
+
+        fileprivate func track(at path: IndexPath) -> Track? {
+            guard let parent, path.section < sections.count, sections[path.section] == .tracks,
+                  path.item < parent.tracks.count
+            else { return nil }
+            return parent.tracks[path.item].track
+        }
+
+        /// What dragging `playable` carries: the whole pick when it is part of
+        /// it, otherwise itself.
+        fileprivate func transfers(dragging playable: Playable) -> [PlayableTransfer] {
+            if let pick = parent?.pick, pick.isActive, pick.contains(playable.key) {
+                return pick.picked.map(PlayableTransfer.init)
+            }
+            return [PlayableTransfer(playable)]
+        }
+
+        fileprivate var picking: Bool { parent?.pick?.isActive == true }
+        fileprivate func isPicked(_ key: Playable.Key) -> Bool { parent?.pick?.contains(key) == true }
 
         func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
             selectionChanged()
@@ -279,7 +329,8 @@ struct MixedCollection: NSViewRepresentable {
         // MARK: Drag
 
         func collectionView(_ collectionView: NSCollectionView, canDragItemsAt indexPaths: Set<IndexPath>, with event: NSEvent) -> Bool {
-            indexPaths.allSatisfy { $0.section < sections.count && sections[$0.section] == .tracks }
+            parent?.tracksSelect == true
+                && indexPaths.allSatisfy { $0.section < sections.count && sections[$0.section] == .tracks }
         }
 
         func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> (any NSPasteboardWriting)? {
@@ -507,6 +558,11 @@ final class MixedCollectionView: NSCollectionView {
         }
         guard let track = item as? TrackItem else { return super.mouseDown(with: event) }
         let hit = track.row.hit(at: track.view.convert(point, from: self))
+        if owner?.parent?.tracksSelect == false {
+            if case .button(let action) = hit { return action() }
+            resultPressed(event, at: path, hit: hit)
+            return
+        }
         if case .button(let action) = hit {
             action()
             return
@@ -519,6 +575,29 @@ final class MixedCollectionView: NSCollectionView {
         if case .link(let action) = hit, event.clickCount == 1,
            !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift) {
             action()
+        }
+    }
+
+    /// A press on a result track: a click goes where it lives (or ticks it),
+    /// a link goes where it names, a drag carries it — or the pick.
+    private func resultPressed(_ event: NSEvent, at path: IndexPath, hit: RowHit) {
+        guard let window, let owner, let track = owner.track(at: path) else { return }
+        let start = event.locationInWindow
+        while let next = window.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+            if next.type == .leftMouseUp {
+                if case .link(let action) = hit, !owner.picking { action() } else { owner.activate(path) }
+                return
+            }
+            if hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) > 3 {
+                let items = owner.transfers(dragging: .track(track)).compactMap(pasteboardItem).map { item in
+                    let dragging = NSDraggingItem(pasteboardWriter: item)
+                    let origin = convert(start, from: nil)
+                    dragging.setDraggingFrame(NSRect(x: origin.x - 20, y: origin.y - 10, width: 40, height: 20), contents: nil)
+                    return dragging
+                }
+                if !items.isEmpty { beginDraggingSession(with: items, event: event, source: PillDragSource.shared) }
+                return
+            }
         }
     }
 
@@ -542,12 +621,16 @@ final class MixedCollectionView: NSCollectionView {
 private final class SectionHeader: NSView, NSCollectionViewElement {
     static let identifier = NSUserInterfaceItemIdentifier("SectionHeader")
     let title = NSTextField(labelWithString: "")
+    let count = NSTextField(labelWithString: "")
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         title.font = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold)
         title.textColor = .secondaryLabelColor
+        count.font = .monospacedDigitSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular)
+        count.textColor = .tertiaryLabelColor
         addSubview(title)
+        addSubview(count)
     }
 
     required init?(coder: NSCoder) { fatalError("not decoded") }
@@ -557,7 +640,10 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
     override func layout() {
         super.layout()
         let height = ceil(title.intrinsicContentSize.height)
-        title.frame = CGRect(x: 0, y: bounds.height - height - 6, width: bounds.width, height: height)
+        let width = ceil(title.intrinsicContentSize.width)
+        title.frame = CGRect(x: 0, y: bounds.height - height - 6, width: width, height: height)
+        let countHeight = ceil(count.intrinsicContentSize.height)
+        count.frame = CGRect(x: width + 4, y: title.frame.maxY - countHeight - 1, width: 60, height: countHeight)
     }
 }
 
@@ -626,7 +712,10 @@ private final class ArtistPillItem: NSCollectionViewItem {
     }
 
     override func loadView() {
-        let root = NSView()
+        let root = AppearanceView()
+        // Made before it is in the window, a pill draws in whatever appearance
+        // it has then; drawn again once it knows the window's.
+        root.changed = { [weak self] in self?.restyle() }
         root.wantsLayer = true
         root.layer?.addSublayer(capsule)
         mic.contentsGravity = .resizeAspect
@@ -649,8 +738,16 @@ private final class ArtistPillItem: NSCollectionViewItem {
         view.needsLayout = true
     }
 
+    /// The mic, or a tick while the page is picking.
     private var micImage: CGImage? {
-        Symbol.image("music.mic", size: 9, colours: [.tertiaryLabelColor], appearance: view.effectiveAppearance)
+        let appearance = view.effectiveAppearance
+        guard let coordinator, coordinator.picking, let artist else {
+            return Symbol.image("music.mic", size: 9, colours: [.tertiaryLabelColor], appearance: appearance)
+        }
+        let tint = coordinator.parent?.tileContext.tint ?? .controlAccentColor
+        return coordinator.isPicked(Playable.artist(id: artist.id, name: artist.name).key)
+            ? Symbol.image("checkmark.circle.fill", size: 10, colours: [.white, tint], appearance: appearance)
+            : Symbol.image("circle", size: 10, colours: [.tertiaryLabelColor], appearance: appearance)
     }
 
     private func restyle() {
@@ -683,18 +780,38 @@ private final class ArtistPillItem: NSCollectionViewItem {
         guard let artist, let window = view.window else { return }
         let start = event.locationInWindow
         while let next = window.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+            let playable = Playable.artist(id: artist.id, name: artist.name)
             if next.type == .leftMouseUp {
+                if coordinator?.parent?.pick?.take(playable) == true { return }
                 coordinator?.parent?.openArtist(artist.id)
                 return
             }
-            if hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) > 3,
-               let item = pasteboardItem(PlayableTransfer(.artist(id: artist.id, name: artist.name))) {
-                let dragging = NSDraggingItem(pasteboardWriter: item)
-                dragging.setDraggingFrame(view.bounds, contents: nil)
-                view.beginDraggingSession(with: [dragging], event: event, source: PillDragSource.shared)
+            if hypot(next.locationInWindow.x - start.x, next.locationInWindow.y - start.y) > 3 {
+                let transfers = coordinator?.transfers(dragging: playable) ?? [PlayableTransfer(playable)]
+                let items = transfers.compactMap(pasteboardItem).map { item in
+                    let dragging = NSDraggingItem(pasteboardWriter: item)
+                    dragging.setDraggingFrame(view.bounds, contents: nil)
+                    return dragging
+                }
+                if !items.isEmpty { view.beginDraggingSession(with: items, event: event, source: PillDragSource.shared) }
                 return
             }
         }
+    }
+}
+
+/// A view that says when the appearance it draws in changes, or arrives.
+private final class AppearanceView: NSView {
+    var changed: (() -> Void)?
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        changed?()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        changed?()
     }
 }
 

@@ -58,6 +58,9 @@ final class TrackTableRow: NSTableCellView, TableRow {
         let showsAlbum: Bool
         var columns = TrackColumns.all
         var leadWidth: CGFloat = 22
+        /// Whether the page is picking, and what — the lead is a tick then.
+        var picking = false
+        var picked: Set<Playable.Key> = []
         let currentTrackId: Int64?
         let isPlaying: Bool
         /// Whether the bars follow the music — see `PlayingIndicator.live`.
@@ -207,15 +210,20 @@ final class TrackTableRow: NSTableCellView, TableRow {
         let current = context.currentTrackId == track.id
         let onAccent: NSColor = .alternateSelectedControlTextColor
 
-        // The number, the bars or the play mark: one slot, so the column does
-        // not twitch.
-        let showsMark = hovered != nil
+        // The number, the bars, the play mark or a tick: one slot, so the
+        // column does not twitch.
+        let ticked = context.picked.contains(Playable.track(track).key)
+        let showsMark = hovered != nil || context.picking
         number.isHidden = showsMark || current
         number.textColor = selected ? onAccent : .tertiaryLabelColor
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         mark.isHidden = !showsMark
-        if showsMark {
+        if context.picking {
+            markImage = ticked
+                ? Symbol.image("checkmark.circle.fill", size: 13, colours: [.white, context.tint], appearance: appearance)
+                : Symbol.image("circle", size: 13, colours: [.tertiaryLabelColor], appearance: appearance)
+        } else if showsMark {
             markImage = Symbol.image("play.circle.fill", size: 15, colours: [selected ? .white : context.tint], appearance: appearance)
         }
         CATransaction.commit()
@@ -453,6 +461,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
 
     func hit(at point: NSPoint) -> RowHit {
         guard let item, let context, let track = item.track else { return .plain }
+        if context.picking { return .plain }
         switch part(at: point) {
         case .lead: return .button { [weak self] in _ = self?.play() }
         case .heart: return .button { context.toggleFavourite(track.id) }
