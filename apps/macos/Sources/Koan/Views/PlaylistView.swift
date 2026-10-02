@@ -20,7 +20,6 @@ struct PlaylistView: View {
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
-    @Environment(UIState.self) private var ui
 
     /// Selection is local `@State` for the same reason the queue's is, and
     /// unread here for the same reason too — see `QueueView.selection`.
@@ -63,30 +62,24 @@ struct PlaylistView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(selection: $selection) {
+                RowList(
+                    selection: $selection,
+                    order: rows.map(\.id),
+                    menu: { ids in menu(forRows: ids) },
+                    primaryAction: { ids in play(rowIds: ids) },
+                    onDelete: { _ in removeSelected() }
+                ) {
                     ForEach(rows) { row in
                         rowView(row)
+                            .listRow(row.id)
                     }
                     endOfList
                 }
+                #if os(iOS)
                 .listStyle(.inset)
-                .washedGround()
-                .contextMenu(forSelectionType: String.self) { ids in
-                    menu(forRows: ids)
-                } primaryAction: { ids in
-                    play(rowIds: ids)
-                }
-                .onKeyPress(.return) {
-                    play(rowIds: selection)
-                    return .handled
-                }
-                #if os(macOS)
-                .onDeleteCommand { removeSelected() }
                 #endif
+                .washedGround()
                 .clearsSelection($selection)
-                .onChange(of: ui.selectAllToken) { _, _ in
-                    selection = Set(rows.map(\.id))
-                }
             }
         }
         // On the whole page, not the List: an empty playlist is exactly when

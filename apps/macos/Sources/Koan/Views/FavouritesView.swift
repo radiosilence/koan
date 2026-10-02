@@ -8,8 +8,8 @@ import SwiftUI
 /// sections: they are all answers to one question, and a mode you have to
 /// remember you are in is a worse way to find out you favourited a record.
 ///
-/// One `List` rather than search's `ScrollView`, because the tracks here are a
-/// working list: range-select, Return to play, a menu on the selection. The
+/// One `RowList` rather than search's `ScrollView`, because the tracks here are
+/// a working list: range-select, Return to play, a menu on the selection. The
 /// artists and records ride above them as rows that cannot be selected.
 struct FavouritesView: View {
     @Environment(PlayerModel.self) private var player
@@ -48,23 +48,21 @@ struct FavouritesView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(selection: $selection) {
+                RowList(
+                    selection: $selection,
+                    order: tracks.map(\.id),
+                    menu: { ids in menu(for: ids) },
+                    primaryAction: { ids in play(ids) }
+                ) {
                     if !artists.isEmpty { artistSection }
                     if !albums.isEmpty { albumSection }
                     if !tracks.isEmpty { trackSection }
                 }
+                #if os(iOS)
                 .listStyle(.inset)
+                #endif
                 .washedGround()
                 .clearsSelection($selection)
-                .contextMenu(forSelectionType: Int64.self) { ids in
-                    menu(for: ids)
-                } primaryAction: { ids in
-                    play(ids)
-                }
-                .onKeyPress(.return) {
-                    play(selection)
-                    return .handled
-                }
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             }
         }
@@ -94,7 +92,7 @@ struct FavouritesView: View {
     // MARK: - Sections
 
     private var artistSection: some View {
-        Section("Artists") {
+        Section {
             FlowLayout(spacing: 8) {
                 ForEach(artists, id: \.id) { artist in
                     ArtistPill(name: artist.name, artistId: artist.id)
@@ -102,6 +100,8 @@ struct FavouritesView: View {
             }
             .padding(.vertical, 4)
             .selectionDisabled()
+        } header: {
+            RowListHeader("Artists")
         }
     }
 
@@ -114,7 +114,7 @@ struct FavouritesView: View {
     /// nothing would ever scroll off. Rows of the List are what the List recycles, so the
     /// grid is cut into them.
     private var albumSection: some View {
-        Section("Albums") {
+        Section {
             ForEach(albumRows, id: \.first!.id) { row in
                 HStack(alignment: .top, spacing: Self.tileSpacing) {
                     ForEach(row, id: \.id) { album in
@@ -126,6 +126,8 @@ struct FavouritesView: View {
                 .padding(.vertical, 6)
                 .selectionDisabled()
             }
+        } header: {
+            RowListHeader("Albums")
         }
     }
 
@@ -143,7 +145,7 @@ struct FavouritesView: View {
     }
 
     private var trackSection: some View {
-        Section("Tracks") {
+        Section {
             // Once per pass, not once per row — see `TrackListView`.
             let allTrackIds = tracks.map(\.id)
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
@@ -157,7 +159,10 @@ struct FavouritesView: View {
                 )
                 .rowBehaviour(playable: .track(track))
                 .primaryTap { play([track.id]) }
+                .listRow(track.id)
             }
+        } header: {
+            RowListHeader("Tracks")
         }
     }
 

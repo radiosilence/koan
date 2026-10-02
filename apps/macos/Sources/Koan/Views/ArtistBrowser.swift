@@ -4,19 +4,28 @@ import SwiftUI
 struct ArtistBrowser: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
-    /// Without a selection binding a List row has nothing to do with a click.
     @State private var selection: Set<Int64> = []
 
     var body: some View {
         ScrollViewReader { proxy in
-        List(library.visibleArtists, id: \.id, selection: $selection) { artist in
-            ArtistRow(artist: artist)
-                .primaryTap { nav.open(artist: artist.id) }
-                .onAppear { library.artistsShown.insert(artist.id) }
-                .onDisappear { library.artistsShown.remove(artist.id) }
+        RowList(
+            selection: $selection,
+            order: library.visibleArtists.map(\.id),
+            menu: { ids in menu(for: ids) },
+            primaryAction: { ids in
+                if ids.count == 1, let id = ids.first { nav.open(artist: id) }
+            }
+        ) {
+            ForEach(library.visibleArtists, id: \.id) { artist in
+                ArtistRow(artist: artist)
+                    .primaryTap { nav.open(artist: artist.id) }
+                    .onAppear { library.artistsShown.insert(artist.id) }
+                    .onDisappear { library.artistsShown.remove(artist.id) }
+                    .listRow(artist.id)
+            }
         }
         // Rebuilt on each visit rather than kept mounted behind other pages
-        // (see `StageView`). A `List` takes no scroll position, but it does go
+        // (see `StageView`). The list takes no scroll position, but it does go
         // to a row it is asked for, so the top row is noted on the way out and
         // asked for on the way back.
         .onAppear {
@@ -39,19 +48,19 @@ struct ArtistBrowser: View {
         }
         .clearsSelection($selection)
         .washedGround()
-        .contextMenu(forSelectionType: Int64.self) { ids in
-            // A set has no first; with several picked, no one artist is meant.
-            if ids.count == 1, let id = ids.first,
-               let artist = library.visibleArtists.first(where: { $0.id == id }) {
-                PlayableMenu(playable: .artist(id: artist.id, name: artist.name))
-            }
-        } primaryAction: { ids in
-            if ids.count == 1, let id = ids.first { nav.open(artist: id) }
-        }
         .overlay {
             if library.visibleArtists.isEmpty {
                 EmptyState(icon: "music.mic", title: "No artists yet")
             }
+        }
+    }
+
+    /// A set has no first; with several picked, no one artist is meant.
+    @ViewBuilder
+    private func menu(for ids: Set<Int64>) -> some View {
+        if ids.count == 1, let id = ids.first,
+           let artist = library.visibleArtists.first(where: { $0.id == id }) {
+            PlayableMenu(playable: .artist(id: artist.id, name: artist.name))
         }
     }
 

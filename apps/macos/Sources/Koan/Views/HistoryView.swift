@@ -36,33 +36,31 @@ struct HistoryView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(selection: $selection) {
+                RowList(
+                    selection: $selection,
+                    order: entries.map(\.id),
+                    menu: { ids in menu(for: ids) },
+                    primaryAction: { ids in play(ids) },
+                    onDelete: { ids in forget(ids) }
+                ) {
                     ForEach(days, id: \.key) { day in
-                        Section(day.key) {
+                        Section {
                             ForEach(day.entries, id: \.id) { entry in
                                 HistoryRow(entry: entry)
                                     .primaryTap { play([entry.id]) }
                                     .washedRow()
-                                    .tag(entry.id)
+                                    .listRow(entry.id)
                             }
+                        } header: {
+                            RowListHeader(day.key)
                         }
                     }
                 }
+                #if os(iOS)
                 .listStyle(.inset)
+                #endif
                 .washedGround()
                 .clearsSelection($selection)
-                .contextMenu(forSelectionType: Int64.self) { ids in
-                    menu(for: ids)
-                } primaryAction: { ids in
-                    play(ids)
-                }
-                .onKeyPress(.return) {
-                    play(selection)
-                    return .handled
-                }
-                #if os(macOS)
-                .onDeleteCommand { forgetSelected() }
-                #endif
             }
         }
         .alert("Clear History?", isPresented: $confirmingClear) {
@@ -101,9 +99,9 @@ struct HistoryView: View {
 
     /// Forgets the selected plays. The tracks themselves are untouched —
     /// history is a log, and this only erases the log.
-    private func forgetSelected() {
-        guard !selection.isEmpty else { return }
-        library.forgetPlays(ids: selection)
+    private func forget(_ ids: Set<Int64>) {
+        guard !ids.isEmpty else { return }
+        library.forgetPlays(ids: ids)
         selection = []
     }
 
