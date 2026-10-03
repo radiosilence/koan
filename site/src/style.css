@@ -19,6 +19,9 @@
   --muted: #8c8c8c;
   --rule: #383838;
   --brand: #e65e5e;
+  --code-string: #a3c38b;
+  --code-number: #d9a866;
+  --code-name: #7fb4d9;
 }
 
 @media (prefers-color-scheme: light) {
@@ -30,6 +33,9 @@
     --rule: #e0e0e0;
     /* blit's red is under 4.5:1 on white; this is the same hue, darker. */
     --brand: #c43f3f;
+    --code-string: #3d7a2a;
+    --code-number: #9a5b00;
+    --code-name: #1f6a9a;
   }
 }
 
@@ -182,5 +188,35 @@
 
   .docs-nav a[aria-current="page"] {
     @apply text-brand;
+  }
+}
+
+/*
+ * Code in the documentation, highlighted by pandoc. It marks tokens with short classes; four colours cover them:
+ * keywords in the brand red, strings, literals and names, with comments muted as on the homepage.
+ */
+@layer components {
+  .sourceCode a {
+    @apply no-underline;
+  }
+
+  .sourceCode :is(.kw, .cf, .op) {
+    color: var(--brand);
+  }
+
+  .sourceCode :is(.st, .ss, .ch, .vs, .sc) {
+    color: var(--code-string);
+  }
+
+  .sourceCode :is(.dv, .bn, .fl, .cn, .dt) {
+    color: var(--code-number);
+  }
+
+  .sourceCode :is(.fu, .bu, .at, .va, .ot, .im) {
+    color: var(--code-name);
+  }
+
+  .sourceCode :is(.co, .do, .an, .cv, .in) {
+    @apply text-muted;
   }
 }

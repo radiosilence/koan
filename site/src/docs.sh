@@ -54,7 +54,7 @@ render() {
   mkdir -p "$out/$name"
   pandoc --from gfm --to html5 --standalone \
     --template src/docs.html --lua-filter src/docs.lua \
-    --syntax-highlighting=none --columns=10000 --variable "nav=$(nav "$name")" \
+    --syntax-highlighting=pygments --columns=10000 --variable "nav=$(nav "$name")" \
     --variable "path=/docs/${name:+$name/}" \
     --output "$out/$name/index.html" "$@"
 }
