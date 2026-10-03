@@ -146,7 +146,6 @@ Type to filter. In any picker, press `Enter` to add to queue, `Ctrl+Enter` to ad
 | `L` | Toggle lyrics panel |
 | `f` | Favourite / unfavourite |
 | `v` | Visualizer picker (22 modes with live preview) |
-| `R` | Toggle radio mode (infinite play) |
 
 ### Managing the queue
 
@@ -177,7 +176,6 @@ Then `koan play --album <TAB>` shows your actual albums with artist names.
 
 - **[Configuration](reference/configuration.md)** -- customize playback, visualizer, organize patterns, and more
 - **[Authentication](guide/authentication.md)** -- set up API auth, manage users
-- **[Radio Mode](guide/radio-mode.md)** -- let kōan pick tracks for you
 - **[File Organization](guide/file-organization.md)** -- rename your library using format string patterns
 - **[Remote Servers](guide/remote-servers.md)** -- advanced Subsonic/Navidrome setup
 - **[GraphQL API](guide/graphql-api.md)** -- programmatic control and headless operation

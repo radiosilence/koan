@@ -74,7 +74,6 @@ const SECTIONS: &[Section] = &[
         title: "Toggles",
         bindings: &[
             ("L", "Lyrics panel"),
-            ("R", "Radio mode (auto-queue)"),
             ("V", "Visualiser on/off"),
             ("v", "Visualiser picker"),
             ("M", "Visualiser mode cycle"),

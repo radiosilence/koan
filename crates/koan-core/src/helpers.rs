@@ -326,13 +326,11 @@ pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connect
     // from tracks and would otherwise keep answering for rows that are gone.
     db.conn.execute_batch(
         "BEGIN;
-         DELETE FROM track_vectors;
          DELETE FROM lyrics_cache;
          DELETE FROM play_history;
          DELETE FROM scan_cache;
          DELETE FROM tracks_fts;
          DELETE FROM tracks;
-         DELETE FROM similar_artists;
          DELETE FROM albums;
          DELETE FROM artists;
          COMMIT;",
@@ -498,7 +496,6 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
 
 fn delete_track_rows(conn: &rusqlite::Connection, ids: &[i64]) -> rusqlite::Result<()> {
     for id in ids {
-        conn.execute("DELETE FROM track_vectors WHERE track_id = ?1", [id])?;
         conn.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", [id])?;
         conn.execute("DELETE FROM play_history WHERE track_id = ?1", [id])?;
         conn.execute("DELETE FROM scan_cache WHERE track_id = ?1", [id])?;
@@ -529,7 +526,6 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
           WHERE remote_id IS NOT NULL",
         [],
     )?;
-    tx.execute("DELETE FROM similar_artists", [])?;
     prune_empty_albums_and_artists(&tx)?;
     tx.commit()?;
     Ok(ids.len() as u64)
@@ -542,11 +538,6 @@ fn prune_empty_albums_and_artists(
     tx.execute(
         "DELETE FROM albums WHERE NOT EXISTS
            (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)",
-        [],
-    )?;
-    tx.execute(
-        "DELETE FROM similar_artists WHERE NOT EXISTS
-           (SELECT 1 FROM albums WHERE albums.artist_id = similar_artists.artist_id)",
         [],
     )?;
     tx.execute(
@@ -1878,8 +1869,8 @@ pub fn remote_unavailable(cfg: &Config) -> String {
 
 /// Submit tracks for download.
 ///
-/// Everything that is not the TUI reaches downloads through here — the FFI, the
-/// GraphQL server and radio's auto-extend. The batch goes to the shared queue:
+/// Everything that is not the TUI reaches downloads through here — the FFI and the
+/// GraphQL server. The batch goes to the shared queue:
 /// the same pool, priority lane and cursor watcher the TUI uses.
 pub fn spawn_downloads(
     pending: Vec<(i64, QueueItemId)>,

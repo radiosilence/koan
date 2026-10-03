@@ -40,7 +40,6 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | `X` | Toggle matrix overlay on visualizer |
 | `S` | Toggle bass shake on visualizer |
 | `L` | Toggle lyrics panel |
-| `R` | Toggle radio mode |
 | `f` | Favourite / unfavourite current track |
 | `?` | Open help modal |
 | `n` | Next track |
@@ -169,7 +168,6 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 | `,` | Back 10 seconds |
 | `.` | Forward 10 seconds |
 | `f` | Favourite the current track |
-| `R` | Radio mode |
 | `p` | Add music (the ⇧⌘K picker) |
 | `/` | Search the library |
 | `l` or `a` | Albums |
@@ -191,7 +189,6 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 | `⌘←` / `⌘→` | Previous / next track |
 | `⌥←` / `⌥→` | Seek ∓10 seconds |
 | `⌘D` | Favourite the current track |
-| `⌥⌘R` | Radio mode |
 | `⌥⌘L` | Lyrics panel |
 | `⌘Z` / `⇧⌘Z` | Undo / redo a queue change |
 | `⌘X` `⌘C` `⌘V` `⌫` `⌘A` | Queue editing, or the ordinary thing while typing |

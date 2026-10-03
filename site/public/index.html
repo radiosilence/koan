@@ -124,7 +124,7 @@ sudo pacman -S alsa-lib dbus</code></pre>
       <h2>Setting it up</h2>
 
       <h3>One computer</h3>
-      <p>In the macOS app, everything is in Settings: <strong>Library</strong> points kōan at your music and scans it, and playback, output device and radio have their own panes. No terminal is needed.</p>
+      <p>In the macOS app, everything is in Settings: <strong>Library</strong> points kōan at your music and scans it, and playback and devices have their own panes. No terminal is needed.</p>
       <p>From the command line:</p>
       <pre><code>koan config init   <span class="c"># create the config dir and a commented template</span>
 <span class="c"># edit ~/.config/koan/config.local.toml:</span>
@@ -194,7 +194,6 @@ sift import ~/Downloads/some-album</code></pre>
         <li><strong>Gapless</strong>: the decoder runs ahead across track boundaries.</li>
         <li><strong>Formats</strong>: FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF and CAF, in Ogg, Matroska/WebM and MP4 containers.</li>
         <li><strong>ReplayGain</strong> in track and album modes, with peak limiting and a configurable pre-amp.</li>
-        <li><strong>Radio mode</strong>: endless play from your own library, scored on acoustic similarity, genre, era and related artists. ListenBrainz and MusicBrainz supply the related artists; every pick is a track already in your library.</li>
         <li><strong>Media keys</strong> and now-playing through Control Center on macOS and MPRIS on Linux.</li>
       </ul>
 
@@ -232,7 +231,7 @@ sift import ~/Downloads/some-album</code></pre>
 
     <section id="ios" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>The iOS app</h2>
-      <p>The macOS app's pages and engine in a phone's shell: a tab bar for the queue, the library, search and settings, and Now Playing with synced lyrics, radio and AirPlay over the playing record's colour. It plays from a server and caches what it plays, so the rest of an album or queue carries on underground. On an iPad with room for a sidebar it takes the Mac's layout. Output goes through the system mixer, so bit-perfect is a claim for the Mac and Linux only.</p>
+      <p>The macOS app's pages and engine in a phone's shell: a tab bar for the queue, the library, search and settings, and Now Playing with synced lyrics and AirPlay over the playing record's colour. It plays from a server and caches what it plays, so the rest of an album or queue carries on underground. On an iPad with room for a sidebar it takes the Mac's layout. Output goes through the system mixer, so bit-perfect is a claim for the Mac and Linux only.</p>
     </section>
 
     <figure class="mx-auto my-8 max-w-5xl px-5">

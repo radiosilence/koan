@@ -119,7 +119,7 @@ use rmcp::tool;
 ///
 /// The transport carries no credential, so anything reachable here is reachable
 /// by whoever can talk to the MCP process. `User` covers everything the tool
-/// advertises — browsing, playback, queue, favourites, playlists, radio — and
+/// advertises — browsing, playback, queue, favourites, playlists — and
 /// leaves out the admin mutations that move files on disk (`organize*`), rewrite
 /// config, or change the output device. `KOAN_MCP_ADMIN=1` opts back in.
 fn mcp_role() -> koan_core::auth::Role {
@@ -209,17 +209,17 @@ once, then do everything through `graphql`.
 
 ## Where the music plays
 The user listens in kōan apps on their devices, linked to this server. Query \
-`clients { name platform playing nowPlaying album positionMs durationMs radio queue { trackId \
+`clients { name platform playing nowPlaying album positionMs durationMs queue { trackId \
 title artist current } }` to see each device, what it is playing and what it has queued. Every \
 command about the user's music goes to a device:
 - `controlClient(action: PAUSE|RESUME|NEXT|PREVIOUS)`, `seekOnClient(positionMs)`
 - `playOnClient(trackIds, startAt)` replaces the queue and plays; `enqueue: true` appends. \
 A phone iOS has suspended is not linked but is still reached. Music comes up there as a \
-notification to tap, since iOS lets no app start audio on its own from sleep; queue, radio and \
+notification to tap, since iOS lets no app start audio on its own from sleep; queue and \
 other changes are applied as it wakes. The message says when a device was asleep: tell the user \
 to tap the notification
 - `playNextOnClient(trackIds)`, `jumpOnClient(trackId)` (skip to a track, queued or not), \
-`removeFromClient(trackIds)`, `clearClient`, `setClientRadio(enabled)`, `syncClient`
+`removeFromClient(trackIds)`, `clearClient`, `syncClient`
 - **Making a playlist the user asked for** (\"make me a cyberpunk playlist\"): research what \
 fits, find each track in the library, `createPlaylist` with those in order. For picks the \
 library lacks, fetch the album with slsk's `grab`, then `addToPlaylistWhenAdded(playlistId, \
@@ -243,12 +243,12 @@ cannot, and a report can be stale or, from an older app (`playing: null`), absen
 
 **Never use the server's own player for the user's music.** `play`, `pause`, `resume`, \
 `next`, `previous`, `seek`, `nowPlaying`, `queue`, `addToQueue`, `replaceQueue`, \
-`playPlaylist` and the radio mutations drive a headless player on the server that nobody \
+and `playPlaylist` drive a headless player on the server that nobody \
 hears; `nowPlaying` there reports nothing about what the user is listening to.
 
 ## The library
 - `artists`, `albums`, `tracks` with filters (genre, year range, codec, sample rate, bit depth, \
-duration, favourites), `randomTracks`, `similarArtists`, `similarTracks`, `fuzzySearch`
+duration, favourites), `randomTracks`, `fuzzySearch`
 - Build a set from these, then send its track ids to a device with `playOnClient`. Track ids are \
 integers in queries; pass them to the client mutations as strings.
 - Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
@@ -270,11 +270,11 @@ everything through `graphql`.
 ## Playback
 This player is what the user hears: `play`, `pause`, `resume`, `stop`, `next`, `previous`, \
 `seek`, `nowPlaying`; the queue with `queue`, `addToQueue`, `replaceQueue`, `removeFromQueue`, \
-`moveInQueue`, `clearQueue`, `undo`, `redo`; radio with `enableRadio`, `disableRadio`.
+`moveInQueue`, `clearQueue`, `undo`, `redo`.
 
 ## The library
 - `artists`, `albums`, `tracks` with filters (genre, year range, codec, sample rate, bit depth, \
-duration, favourites), `randomTracks`, `similarArtists`, `similarTracks`, `fuzzySearch`
+duration, favourites), `randomTracks`, `fuzzySearch`
 - Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
 - Playlists: `playlists`, `playlistTracks`, `createPlaylist`, `saveQueueAsPlaylist`, \
 `addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist`

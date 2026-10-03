@@ -1,6 +1,5 @@
 use rayon::prelude::*;
 
-mod analyze;
 mod auth;
 mod cache;
 mod config;
@@ -12,7 +11,6 @@ mod scan;
 mod search;
 mod subsonic;
 
-pub use analyze::cmd_analyze;
 pub use auth::{
     cmd_auth_api_key_create, cmd_auth_api_key_list, cmd_auth_api_key_revoke, cmd_auth_create_user,
     cmd_auth_delete_user, cmd_auth_invite, cmd_auth_list_users, cmd_auth_login, cmd_auth_logout,

@@ -575,38 +575,6 @@ impl QueryRoot {
         .await
     }
 
-    async fn radio_status(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlRadioStatus> {
-        let state = ctx.data::<Arc<SharedPlayerState>>()?;
-        Ok(GqlRadioStatus {
-            enabled: state.radio_mode(),
-        })
-    }
-
-    async fn similar_artists(
-        &self,
-        ctx: &Context<'_>,
-        artist_id: async_graphql::ID,
-    ) -> async_graphql::Result<Vec<GqlSimilarArtist>> {
-        let artist_id = super::row_id(ctx, UidKind::Artist, &artist_id).await?;
-        with_db(ctx, move |db| {
-            let entries = queries::get_similar_artists_detailed(&db.conn, artist_id)
-                .map_err(|e| super::internal_error("db", e))?;
-            Ok(entries
-                .into_iter()
-                .map(|e| GqlSimilarArtist {
-                    artist: GqlSimilarArtistInfo {
-                        id: e.artist.id,
-                        name: e.artist.name,
-                    },
-                    score: e.score,
-                    source: e.source,
-                    relationship: e.relationship,
-                })
-                .collect())
-        })
-        .await
-    }
-
     async fn play_history(
         &self,
         ctx: &Context<'_>,
@@ -750,48 +718,6 @@ impl QueryRoot {
         .await
     }
 
-    async fn similar_tracks(
-        &self,
-        ctx: &Context<'_>,
-        track_id: async_graphql::ID,
-        #[graphql(default = 20)] limit: i32,
-    ) -> async_graphql::Result<Vec<GqlSimilarTrack>> {
-        let track_id = super::row_id(ctx, UidKind::Track, &track_id).await?;
-        let limit = limit.clamp(0, MAX_PAGE as i32) as usize;
-        let (target, rows) = with_db(ctx, move |db| {
-            let target = queries::get_vector(&db.conn, track_id)
-                .map_err(|e| super::internal_error("db", e))?;
-            let rows = match target {
-                Some(_) => {
-                    queries::vector_rows(&db.conn).map_err(|e| super::internal_error("db", e))?
-                }
-                None => Vec::new(),
-            };
-            Ok((target, rows))
-        })
-        .await?;
-        let Some(target) = target else {
-            return Ok(Vec::new());
-        };
-        // Ranked with the connection given back.
-        let results =
-            blocking(move || Ok(queries::nearest(&target, &rows, limit, Some(track_id)))).await?;
-        with_db(ctx, move |db| {
-            let by_id = tracks_by_id(db, results.iter().map(|(tid, _)| *tid).collect())?;
-
-            Ok(results
-                .into_iter()
-                .filter_map(|(tid, dist)| {
-                    by_id.get(&tid).map(|row| GqlSimilarTrack {
-                        row: row.clone(),
-                        distance: dist as f64,
-                    })
-                })
-                .collect())
-        })
-        .await
-    }
-
     async fn cover_art(
         &self,
         ctx: &Context<'_>,
@@ -877,8 +803,7 @@ impl QueryRoot {
     }
 
     /// Current configuration.
-    async fn config(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlConfig> {
-        let radio_enabled = ctx.data::<Arc<SharedPlayerState>>()?.radio_mode();
+    async fn config(&self) -> async_graphql::Result<GqlConfig> {
         blocking(move || {
             let cfg = Config::load().unwrap_or_default();
             Ok(GqlConfig {
@@ -898,7 +823,6 @@ impl QueryRoot {
                 remote_username: cfg.remote.username.clone(),
                 cache_limit: cfg.remote.cache_limit.clone(),
                 visualizer_fps: cfg.visualizer.fps as i32,
-                radio_enabled,
                 graphql_port: cfg.graphql.port as i32,
                 graphql_playground: cfg.graphql.playground,
             })

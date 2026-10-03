@@ -2378,8 +2378,7 @@ mod tests {
             duration_ms: None,
             db_id: None,
         };
-        queries::save_playback_state(&db.conn, &[item], Some(&source_str), 0, false, false)
-            .unwrap();
+        queries::save_playback_state(&db.conn, &[item], Some(&source_str), 0, false).unwrap();
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
         let dest = result.moves().next().unwrap().dest().to_path_buf();

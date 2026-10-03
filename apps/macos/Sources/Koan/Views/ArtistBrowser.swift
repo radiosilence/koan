@@ -234,7 +234,6 @@ struct ArtistDetailView: View {
 
     private var artist: Artist? { record?.artist }
     private var albums: [Album] { record?.albums ?? [] }
-    private var similar: [SimilarArtist] { record?.similar ?? [] }
     private var info: ArtistInfo? { record?.info }
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
@@ -312,18 +311,6 @@ struct ArtistDetailView: View {
                     }
                     .transition(.opacity)
                 }
-
-                if !similar.isEmpty {
-                    Divider()
-                    Text("Similar Artists")
-                        .font(.headline)
-                    // Cached relationships only — this never reaches the network.
-                    FlowLayout(spacing: 8) {
-                        ForEach(similar, id: \.artistId) { entry in
-                            ArtistPill(name: entry.name, artistId: entry.artistId)
-                        }
-                    }
-                }
             }
             .padding(22)
             .animation(.easeOut(duration: 0.2), value: info?.bio)
@@ -332,8 +319,7 @@ struct ArtistDetailView: View {
         // Only for a library change — the artist arrived before the page did.
         .reloading(on: artistId) { await library.prepare(artist: artistId) }
         // The same pick as the album browser's, over this artist's records
-        // alone. It ends with the page — including when a similar artist
-        // replaces it in place.
+        // alone. It ends with the page.
         .onChange(of: ui.selectAllToken) { _, _ in
             guard onStage else { return }
             library.artistSelection.selectAll()

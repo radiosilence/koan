@@ -132,8 +132,8 @@ Running `koan config init` on an existing setup is safe -- it merges new default
 
 Machine-scoped settings are left out of the `config.toml` template entirely --
 listing them, even commented out, invites them into a dotfiles repo. That means
-you can commit `~/.config/koan/` and share playback, visualizer, organize and
-radio settings across machines while library paths, credentials and window sizes
+you can commit `~/.config/koan/` and share playback, visualizer and organize
+settings across machines while library paths, credentials and window sizes
 stay local.
 
 ---
@@ -196,17 +196,9 @@ Run `koan devices` to list available audio outputs.
 # config.local.toml (this machine's paths)
 [library]
 folders = ["/Volumes/Music/library", "/Users/me/Music"]
-
-# config.toml
-[library]
-analyze_on_scan = false     # run acoustic analysis on every scan (default: false)
 ```
 
 One or more directories to scan for music. Subdirectories are scanned recursively.
-
-`analyze_on_scan` computes acoustic features during every `koan scan`, which
-roughly doubles it. Off by default -- run `koan scan --analyze` when you want the
-features refreshed. Radio mode uses them for "sounds like" matching.
 
 ---
 
@@ -454,21 +446,6 @@ A discoverable device can be seen and controlled by any koan app on the
 network, whoever is signed in there: playback and the queue, never the library
 or the files on disk. If the port is taken, koan listens on another and
 announces that one, so only typed addresses miss it.
-
----
-
-## `[radio]`
-
-```toml
-[radio]
-lookahead = 5                 # tracks to keep queued ahead (default: 5)
-batch_size = 5                # tracks added per refill (default: 5)
-history_window = 200          # don't repeat last N tracks (default: 200)
-seed_window = 5               # recent tracks used as seed for similarity (default: 5)
-discovery_weight = 0.3        # 0.0 = familiar only, 1.0 = maximize discovery (default: 0.3)
-```
-
-See [Radio Mode](../guide/radio-mode.md) for a full guide.
 
 ---
 

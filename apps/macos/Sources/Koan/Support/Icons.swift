@@ -17,7 +17,6 @@ enum Icon {
     static let previous = "backward.fill"
     static let skipForward = "goforward.10"
     static let skipBack = "gobackward.10"
-    static let radio = "dot.radiowaves.left.and.right"
 
     static let favourite = "heart"
     static let favourited = "heart.fill"

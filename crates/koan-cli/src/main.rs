@@ -179,15 +179,10 @@ enum Commands {
         #[arg(long)]
         force: bool,
         /// Delete stale tracks even when so many are missing that it looks like an
-        /// unmounted volume. Takes their play history, lyrics and embeddings too.
+        /// unmounted volume. Takes their play history and lyrics too.
         #[arg(long)]
         force_remove: bool,
-        /// Also run acoustic analysis after scanning
-        #[arg(long)]
-        analyze: bool,
     },
-    /// Run acoustic analysis on the library for similarity features
-    Analyze,
     /// Search the library
     Search {
         /// Search query
@@ -454,15 +449,8 @@ fn main() {
             path,
             force,
             force_remove,
-            analyze,
-        }) => {
-            commands::cmd_scan(path.as_deref(), force, force_remove);
-            if analyze {
-                commands::cmd_analyze();
-            }
-        }
+        }) => commands::cmd_scan(path.as_deref(), force, force_remove),
         Some(Commands::Mcp) => koan_server::mcp::cmd_mcp(),
-        Some(Commands::Analyze) => commands::cmd_analyze(),
         Some(Commands::Search { query }) => commands::cmd_search(&query),
         Some(Commands::Library) => commands::cmd_library(),
         Some(Commands::CheckDb { path }) => {

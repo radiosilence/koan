@@ -345,7 +345,6 @@ final class LibraryModel {
         /// For an artist who owns no albums (a guest, a compilation track):
         /// the tracks credited to them, which are then the whole page.
         var appearances: [Track] = []
-        var similar: [SimilarArtist]
         /// Biography and photograph, as cached. Filled in from the network
         /// after the page is up — see `enrich(artist:)`.
         var info: ArtistInfo?
@@ -366,7 +365,6 @@ final class LibraryModel {
                 async let albums = try? await engine.albums(
                     artistId: id, sort: .year, seed: 0, search: nil
                 )
-                async let similar = try? await engine.similarArtists(artistId: id)
                 async let info = try? await engine.artistInfo(artistId: id)
                 let cached = await info ?? nil
                 let owned = await albums ?? []
@@ -384,7 +382,6 @@ final class LibraryModel {
                     artist: await artist ?? nil,
                     albums: owned,
                     appearances: appearances,
-                    similar: await similar ?? [],
                     info: cached,
                     infoLoading: cached == nil
                 )

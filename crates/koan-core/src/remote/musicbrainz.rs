@@ -1,4 +1,4 @@
-//! MusicBrainz API client — artist search and relationship graph.
+//! MusicBrainz API client — artist search, Wikidata links, release credits.
 //!
 //! Uses `musicbrainz.org/ws/2/` with JSON format. No API key required.
 //! Rate limit: 1 request per second (enforced by caller, not this module).
@@ -21,37 +21,6 @@ pub enum MusicBrainzError {
     NotFound,
     #[error("rate limited")]
     RateLimited,
-}
-
-/// An artist relationship from MusicBrainz.
-#[derive(Debug, Clone)]
-pub struct ArtistRelation {
-    /// Name of the related artist.
-    pub name: String,
-    /// MBID of the related artist.
-    pub mbid: String,
-    /// Relationship type: "member of band", "collaboration", "associated act", etc.
-    pub relation_type: String,
-    /// Simplified category: "member", "collaborator", "associated".
-    pub category: RelationCategory,
-}
-
-/// Simplified relationship categories for scoring.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RelationCategory {
-    Member,
-    Collaborator,
-    Associated,
-}
-
-impl RelationCategory {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Member => "member",
-            Self::Collaborator => "collaborator",
-            Self::Associated => "associated",
-        }
-    }
 }
 
 /// Search result from MusicBrainz artist search.
@@ -86,8 +55,6 @@ struct MbArtist {
 struct MbRelation {
     #[serde(rename = "type")]
     relation_type: Option<String>,
-    #[serde(default)]
-    artist: Option<MbRelatedArtist>,
     #[serde(default)]
     url: Option<MbUrl>,
 }
@@ -155,54 +122,6 @@ pub fn search_artist(
         .collect())
 }
 
-/// Look up an artist's MBID by exact name match. Returns the best match if score >= 90.
-pub fn lookup_artist_mbid(
-    http: &reqwest::blocking::Client,
-    artist_name: &str,
-) -> Result<Option<String>, MusicBrainzError> {
-    let results = search_artist(http, artist_name, 3)?;
-    Ok(results.into_iter().find(|r| r.score >= 90).map(|r| r.mbid))
-}
-
-/// Fetch artist relationships (collaborators, band members, associated acts) by MBID.
-pub fn get_artist_relations(
-    http: &reqwest::blocking::Client,
-    artist_mbid: &str,
-) -> Result<Vec<ArtistRelation>, MusicBrainzError> {
-    let url = format!(
-        "{}/artist/{}?inc=artist-rels&fmt=json",
-        MB_BASE, artist_mbid
-    );
-    let resp = http.get(&url).header("User-Agent", USER_AGENT).send()?;
-
-    if resp.status().as_u16() == 503 {
-        return Err(MusicBrainzError::RateLimited);
-    }
-    if resp.status().as_u16() == 404 {
-        return Err(MusicBrainzError::NotFound);
-    }
-
-    let artist: MbArtist = resp.json()?;
-    let mut relations = Vec::new();
-
-    for rel in artist.relations {
-        if let (Some(rel_type), Some(related)) = (rel.relation_type, rel.artist) {
-            if related.id == artist_mbid {
-                continue; // Skip self-references.
-            }
-            let category = categorize_relation(&rel_type);
-            relations.push(ArtistRelation {
-                name: related.name,
-                mbid: related.id,
-                relation_type: rel_type,
-                category,
-            });
-        }
-    }
-
-    Ok(relations)
-}
-
 /// The Wikidata item an artist is linked to, as its id (`Q2358013`).
 pub fn wikidata_id(
     http: &reqwest::blocking::Client,
@@ -247,24 +166,6 @@ pub fn release_artists(
         .collect())
 }
 
-/// Categorize a MusicBrainz relation type string into a simplified category.
-fn categorize_relation(rel_type: &str) -> RelationCategory {
-    let lower = rel_type.to_lowercase();
-    if lower.contains("member") || lower.contains("part of") {
-        RelationCategory::Member
-    } else if lower.contains("collaborat")
-        || lower.contains("remix")
-        || lower.contains("producer")
-        || lower.contains("performing")
-        || lower.contains("instrument")
-        || lower.contains("vocal")
-    {
-        RelationCategory::Collaborator
-    } else {
-        RelationCategory::Associated
-    }
-}
-
 /// An HTTP client carrying the User-Agent MusicBrainz requires.
 pub fn default_client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
@@ -278,37 +179,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_categorize_relation_member() {
-        assert_eq!(
-            categorize_relation("member of band"),
-            RelationCategory::Member
-        );
-        assert_eq!(categorize_relation("is part of"), RelationCategory::Member);
-    }
-
-    #[test]
-    fn test_categorize_relation_collaborator() {
-        assert_eq!(
-            categorize_relation("collaboration"),
-            RelationCategory::Collaborator
-        );
-        assert_eq!(categorize_relation("remix"), RelationCategory::Collaborator);
-        assert_eq!(
-            categorize_relation("producer"),
-            RelationCategory::Collaborator
-        );
-    }
-
-    #[test]
-    fn test_categorize_relation_associated() {
-        assert_eq!(categorize_relation("tribute"), RelationCategory::Associated);
-        assert_eq!(
-            categorize_relation("support act"),
-            RelationCategory::Associated
-        );
-    }
-
-    #[test]
     fn test_deserialize_search_response() {
         let json = r#"{
             "artists": [
@@ -320,30 +190,5 @@ mod tests {
         assert_eq!(resp.artists.len(), 2);
         assert_eq!(resp.artists[0].name, "Aphex Twin");
         assert_eq!(resp.artists[0].score, Some(100));
-    }
-
-    #[test]
-    fn test_deserialize_artist_with_relations() {
-        let json = r#"{
-            "id": "f22942a1-6f70-4f48-866e-238cb2308fbd",
-            "name": "Aphex Twin",
-            "relations": [
-                {
-                    "type": "collaboration",
-                    "artist": {"id": "abc-123", "name": "µ-Ziq"}
-                },
-                {
-                    "type": "member of band",
-                    "artist": {"id": "def-456", "name": "Universal Indicator"}
-                }
-            ]
-        }"#;
-        let artist: MbArtist = serde_json::from_str(json).unwrap();
-        assert_eq!(artist.relations.len(), 2);
-        assert_eq!(
-            artist.relations[0].relation_type.as_deref(),
-            Some("collaboration")
-        );
-        assert_eq!(artist.relations[0].artist.as_ref().unwrap().name, "µ-Ziq");
     }
 }
