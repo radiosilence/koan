@@ -40,7 +40,7 @@ fn local_path(next: &str) -> &str {
 /// A form cannot carry Datastar's header, so these POSTs prove they came from
 /// this origin the way a browser does: `Sec-Fetch-Site`, or an `Origin` naming
 /// the host the request was sent to.
-fn same_origin(headers: &HeaderMap) -> bool {
+pub(super) fn same_origin(headers: &HeaderMap) -> bool {
     let get = |name| headers.get(name).and_then(|v| v.to_str().ok());
     if get(header::HeaderName::from_static("sec-fetch-site")) == Some("same-origin") {
         return true;

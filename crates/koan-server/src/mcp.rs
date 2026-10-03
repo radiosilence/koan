@@ -55,8 +55,10 @@ pub struct KoanMcpServer {
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     graphql_schema: crate::graphql::KoanSchema,
-    /// Checks account headers; `None` on stdio, which has no headers.
+    /// Checks account headers; `None` on stdio and on the main port.
     users: Option<Arc<crate::auth::password::PasswordVerifier>>,
+    /// Served over HTTP: a server whose music plays on the devices linked to it.
+    http: bool,
 }
 
 impl KoanMcpServer {
@@ -70,6 +72,7 @@ impl KoanMcpServer {
             tool_router: Self::tool_router(),
             graphql_schema,
             users: None,
+            http: false,
         }
     }
 
@@ -82,10 +85,14 @@ impl KoanMcpServer {
             role: mcp_role(),
             ..AuthUser::anonymous_admin()
         };
+        let parts = extensions.get::<axum::http::request::Parts>();
+        // Signed in through koan's own OAuth; see `bearer_gate`.
+        if let Some(user) = parts.and_then(|p| p.extensions.get::<AuthUser>()) {
+            return Ok(user.clone());
+        }
         let Some(users) = &self.users else {
             return Ok(local);
         };
-        let parts = extensions.get::<axum::http::request::Parts>();
         let get = |h: &str| {
             parts
                 .and_then(|p| p.headers.get(h))
@@ -187,7 +194,7 @@ impl ServerHandler for KoanMcpServer {
         // Over HTTP this is a server: its own player is headless and nobody
         // hears it, and what the user listens to is the apps linked to it. On
         // stdio it is the user's own machine, and its player is the music.
-        let instructions = if self.users.is_some() {
+        let instructions = if self.http {
             SERVER_INSTRUCTIONS
         } else {
             LOCAL_INSTRUCTIONS
@@ -306,6 +313,7 @@ pub fn spawn_http(
     };
     let mut template = KoanMcpServer::new(state, cmd_tx, pool.clone());
     template.users = Some(Arc::new(crate::auth::password::PasswordVerifier::new(pool)));
+    template.http = true;
     // Bound here rather than on the thread, so a taken port fails the start.
     let listener = std::net::TcpListener::bind(addr)?;
     listener.set_nonblocking(true)?;
@@ -333,6 +341,83 @@ pub fn spawn_http(
                 }
             });
         })
+}
+
+/// `/mcp` on the main port, for clients holding a token from koan's own OAuth
+/// (`ui::oauth`). Each request acts as the account its token names, at that
+/// account's role.
+pub fn router(
+    state: Arc<SharedPlayerState>,
+    cmd_tx: Sender<PlayerCommand>,
+    auth: crate::auth::middleware::AuthState,
+    public_url: Option<String>,
+) -> axum::Router {
+    use rmcp::transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    };
+    let mut template = KoanMcpServer::new(state, cmd_tx, auth.pool.clone());
+    template.http = true;
+    let service = StreamableHttpService::new(
+        move || Ok(template.clone()),
+        Arc::new(LocalSessionManager::default()),
+        // The main app's Host guard has already checked the Host.
+        StreamableHttpServerConfig::default().disable_allowed_hosts(),
+    );
+    axum::Router::new()
+        .nest_service("/mcp", service)
+        .layer(axum::middleware::from_fn_with_state(
+            (auth, public_url),
+            bearer_gate,
+        ))
+}
+
+/// Let a request with a valid access token through as its account. Without
+/// one, the 401 names the resource metadata, which is how a client finds where
+/// to sign in.
+async fn bearer_gate(
+    axum::extract::State((auth, public_url)): axum::extract::State<(
+        crate::auth::middleware::AuthState,
+        Option<String>,
+    )>,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{StatusCode, header};
+    use axum::response::IntoResponse;
+    let user = if auth.auth_enabled {
+        let token = req
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .and_then(|t| koan_core::auth::validate_access_token(&auth.public_pem, t).ok());
+        match token {
+            Some(claims) => crate::auth::current_user(&auth.pool, claims).await,
+            None => None,
+        }
+    } else {
+        Some(AuthUser::anonymous_admin())
+    };
+    match user {
+        Some(user) => {
+            req.extensions_mut().insert(user);
+            next.run(req).await
+        }
+        None => {
+            let base =
+                crate::origin::origin(req.headers(), public_url.as_deref()).unwrap_or_default();
+            let challenge = format!(
+                "Bearer resource_metadata=\"{base}{}\"",
+                crate::ui::RESOURCE_METADATA
+            );
+            (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, challenge)],
+                "sign in to kōan",
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Entry point for `koan mcp` — starts a headless player with an MCP server on stdio.

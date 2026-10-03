@@ -231,6 +231,12 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         login_limiter: Arc::new(LoginRateLimiter::default()),
     };
 
+    let mcp_routes = crate::mcp::router(
+        state.clone(),
+        cmd_tx.clone(),
+        auth_state.clone(),
+        cfg.sharing.public_url.clone(),
+    );
     let schema = build_schema(state, cmd_tx, pool.clone(), viz);
 
     if auth_enabled {
@@ -330,7 +336,11 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
 
-        let mut app = auth_app.merge(gql_app).merge(share_routes).merge(ui_routes);
+        let mut app = auth_app
+            .merge(gql_app)
+            .merge(share_routes)
+            .merge(ui_routes)
+            .merge(mcp_routes);
         if let Some(sub) = subsonic_merged {
             app = app.merge(sub);
         }
