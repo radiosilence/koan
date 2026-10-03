@@ -99,6 +99,8 @@ pub fn router(
         .route("/artists", get(pages::artists))
         .route("/artists/more", get(pages::artists_more))
         .route("/artist/{id}", get(pages::artist))
+        .route("/playlists", get(pages::playlists))
+        .route("/playlist/{id}", get(pages::playlist))
         .route("/search", get(pages::search))
         .route("/search/results", get(pages::search_results))
         .route("/queue", get(pages::queue))

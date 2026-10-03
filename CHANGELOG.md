@@ -7,6 +7,7 @@
 - **A koan server is its own MCP server and OAuth provider.** Adding `https://<server>/mcp` as a connector in Claude, or any MCP client that supports OAuth, opens the server's own sign-in page; approving connects that client as the signed-in account. No gateway or external identity provider is involved. It needs `sharing.public_url`, since every address OAuth hands out is built on it. Through MCP an admin account acts as `user`, because track metadata reaches the model and can carry instructions; `KOAN_MCP_ADMIN=1` lifts the cap. MCP never runs `organizeExecute`, `organizeUndo` or `updateConfig`, whatever the role, and a connection's tokens are good at `/mcp` only, so GraphQL cannot be used to get round either limit. Any client may register, and the consent page names it by the host it returns to, which it cannot fake; `mcp.redirect_hosts` restricts registration to listed hosts. The web UI's Assistants page gives the address and the steps, and a browser opening `/mcp` lands there. See [MCP Integration](docs/guide/mcp-integration.md#connecting-to-a-server).
 - **Open MCP sessions end at shutdown** rather than holding it up until the process is killed.
 - **A spent OAuth refresh token or code presented again revokes its connection**, since it means a copy is in someone else's hands.
+- **Playlists in the web UI.** A Playlists section lists the account's own playlists and everyone's public ones; a playlist page plays, shuffles or queues it like an album. Viewing only; editing stays in the apps.
 
 ### Removed
 

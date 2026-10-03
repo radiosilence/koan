@@ -277,7 +277,7 @@
     const page = main.firstElementChild;
     const title = page && page.dataset.title;
     document.title = title ? `${title} · koan` : "koan";
-    const section = { "": "albums", album: "albums", artist: "artists" }[location.pathname.split("/")[1]]
+    const section = { "": "albums", album: "albums", artist: "artists", playlist: "playlists" }[location.pathname.split("/")[1]]
       ?? location.pathname.split("/")[1];
     for (const a of all("a[data-nav]")) {
       if (a.dataset.nav === section) a.setAttribute("aria-current", "page");
