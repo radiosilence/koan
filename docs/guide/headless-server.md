@@ -122,16 +122,108 @@ The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, 
 
 Set `sharing.public_url` to the public address (`KOAN_SHARING__PUBLIC_URL`) for share links and for MCP clients to sign in at `/mcp`.
 
-### Docker Compose
+### Kubernetes
 
-[`deploy/compose/compose.yaml`](https://github.com/radiosilence/koan/blob/main/deploy/compose/compose.yaml) runs kōan behind Caddy, which obtains and renews the TLS certificate. On a machine whose hostname resolves to it, with ports 80 and 443 open:
+The server needs one pod with two volumes: the library, read-only, and a state directory at `/config` that outlives the pod. It is a single SQLite index, so it runs as one replica and is replaced rather than rolled. Set `KOAN_LIBRARY__FOLDERS`, `KOAN_GRAPHQL__ALLOWED_HOSTS` and `KOAN_SHARING__PUBLIC_URL` as in the Compose example below, and terminate TLS in front of it.
+
+#### With Pulumi
+
+[`@radiosilence/koan-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi) is a Pulumi component that deploys the server into a namespace. Its version is koan's: each release publishes both, and a pinned package deploys exactly that image.
+
+It is published to GitHub Packages, which wants a token with `read:packages` even for public packages:
+
+```ini
+# .npmrc
+@radiosilence:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
 
 ```bash
-curl -O https://raw.githubusercontent.com/radiosilence/koan/main/deploy/compose/compose.yaml
+npm install @radiosilence/koan-pulumi @pulumi/kubernetes @pulumi/pulumi zod
+```
+
+`createKoan(provider, namespace, config)` validates `config` against `KoanConfSchema` and creates a Deployment, a Service on port 80 and a NetworkPolicy. It creates no Ingress; it returns `routes` naming the Service and hostname, for whatever fronts the cluster to route.
+
+```ts
+import * as k8s from "@pulumi/kubernetes";
+import { createKoan } from "@radiosilence/koan-pulumi";
+
+const provider = new k8s.Provider("cluster", {});
+const ns = new k8s.core.v1.Namespace("koan", { metadata: { name: "koan" } }, { provider });
+
+const koan = createKoan(provider, ns.metadata.name, {
+  hostname: "music.example.com",
+  library: { existingClaim: "music" },
+  state: { existingClaim: "koan-state" },
+});
+
+export const routes = koan.routes;
+```
+
+| Option | |
+|--------|-|
+| `hostname` | Required. Becomes `allowed_hosts` and `sharing.public_url` (`https://<hostname>`), so TLS is expected in front |
+| `library` | Required: `existingClaim` or `hostPath`. Mounted read-only at `/music` |
+| `state` | `existingClaim` or `hostPath`, mounted at `/config`. Unset, it is an `emptyDir` and the index and accounts go with the pod |
+| `image` | `repository`, `tag` (defaults to the package's version), `pullPolicy` |
+| `nodeSelector` | Needed with a `hostPath`, which is one node's disk |
+| `push` | `existingSecret` holding the APNs key under `apns-key`, plus `keyId` and `teamId`: wakes the iOS app when it is suspended |
+| `resources` | Requests default to 250m / 256Mi, limits to 6 CPU / 5Gi |
+| `networkPolicy` | On by default. Ingress only from `api.from` (a Traefik pod by default) plus `extraIngress`; egress to cluster DNS and the public internet, with `privateCidrs` excluded |
+
+Load-bearing behaviour:
+
+- **One replica, `Recreate`.** The index is a single SQLite database, which two pods cannot share.
+- **The database is migrated in a Job before the Deployment changes.** With persistent state, each update first runs `koan check-db` against a snapshot of the live database. If the new version's migration fails, the update stops and the old pod keeps serving.
+- **The state directory is chowned on first use.** kubelet creates a missing `hostPath` as root and koan runs as uid 1000, so an init container makes it 1000's. Turn this off with `initPermissions.enabled: false`.
+- **The root filesystem is read-only.** Artwork and lyrics caches go to an `emptyDir` and are rebuilt after a restart.
+
+Unknown options are rejected rather than ignored, so a stack carrying options a newer package removed fails at `pulumi preview`.
+
+Once it is running, create the admin account in the pod:
+
+```bash
+kubectl -n koan exec -it deploy/koan -- koan auth setup
+```
+
+### Docker Compose
+
+kōan behind Caddy, which obtains and renews the TLS certificate. Save as `compose.yaml`:
+
+```yaml
+services:
+  koan:
+    image: ghcr.io/radiosilence/koan:latest
+    restart: unless-stopped
+    environment:
+      KOAN_LIBRARY__FOLDERS: '["/music"]'
+      KOAN_GRAPHQL__ALLOWED_HOSTS: '["${KOAN_HOST:?set KOAN_HOST to the server hostname}"]'
+      KOAN_GRAPHQL__COOKIE_SECURE: "true"
+      KOAN_SHARING__PUBLIC_URL: https://${KOAN_HOST}
+      KOAN_SUBSONIC__ENABLED: "true"
+    volumes:
+      # The image runs as uid 1000; a bind mount here has to be writable by it.
+      - koan-config:/config
+      - ${MUSIC:?set MUSIC to the music folder}:/music:ro
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    command: caddy reverse-proxy --from ${KOAN_HOST} --to koan:4000
+    volumes:
+      - caddy-data:/data
+
+volumes:
+  koan-config:
+  caddy-data:
+```
+
+On a machine whose hostname resolves to it, with ports 80 and 443 open:
+
+```bash
 KOAN_HOST=music.example.com MUSIC=/mnt/music docker compose up -d
 docker compose exec koan koan auth setup   # the admin account
 ```
 
 Then open `https://music.example.com` and sign in. The Subsonic API is on for kōan accounts; `koan subsonic setup` adds a shared secret for clients that have none. Config, the database and keys live in the `koan-config` volume. The image runs as uid 1000, so a bind mount in its place has to be writable by that uid.
-
-On Kubernetes, a versioned Pulumi component package, [`@radiosilence/koan-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi), is published to GitHub Packages alongside each release. It exports `createKoan`, which builds the Deployment, its init container, Services and NetworkPolicy from a config object validated against `KoanConfSchema`.
