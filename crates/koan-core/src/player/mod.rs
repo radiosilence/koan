@@ -121,6 +121,8 @@ pub struct Player {
     history: Option<PlayRecorder>,
     /// How much of the current track has been heard so far.
     in_flight: Option<InFlight>,
+    /// When the silence after a rate switch runs out and the track is heard.
+    lead_in_ends: Option<std::time::Instant>,
     /// Playback sessions started — lets tests assert how many engine restarts
     /// an operation costs.
     #[cfg(test)]
@@ -192,6 +194,7 @@ impl Player {
             shared_state,
             commands,
             active_playback: None,
+            lead_in_ends: None,
             timeline,
             viz_buffer,
             viz_snapshot,
@@ -244,7 +247,7 @@ impl Player {
     /// commonly refused) resamples instead of playing at the wrong speed.
     #[allow(clippy::type_complexity)]
     fn create_engine_for(
-        &self,
+        &mut self,
         info: &buffer::StreamInfo,
         consumer: rtrb::Consumer<f32>,
     ) -> Result<(Box<dyn AudioEngineHandle>, Option<Box<dyn SampleRateWatch>>), PlayerError> {
@@ -308,12 +311,24 @@ impl Player {
             self.timeline.samples_played_counter(),
         )?;
         // iOS answers 0 for a rate that belongs to the app's session, and no
-        // switch it can make is one to wait out.
-        if device_rate > 0.0 && (settled - device_rate).abs() > 0.1 {
-            let ms = crate::config::Config::load_or_default()
-                .playback
-                .rate_switch_lead_in_ms;
-            engine.lead_in(source_rate as u64 * ms as u64 / 1000);
+        // switch it can make is one to wait out. A new engine inside the
+        // silence, a seek, still has the rest of the relock ahead of it.
+        let now = std::time::Instant::now();
+        let lead_in = if device_rate > 0.0 && (settled - device_rate).abs() > 0.1 {
+            std::time::Duration::from_millis(
+                crate::config::Config::load_or_default()
+                    .playback
+                    .rate_switch_lead_in_ms as u64,
+            )
+        } else {
+            self.lead_in_ends
+                .map(|end| end.saturating_duration_since(now))
+                .unwrap_or_default()
+        };
+        self.lead_in_ends = None;
+        if !lead_in.is_zero() {
+            engine.lead_in((settled * lead_in.as_secs_f64()) as u64);
+            self.lead_in_ends = Some(now + lead_in);
         }
 
         Ok((engine, rate_watch))
@@ -1077,6 +1092,7 @@ impl Player {
         if let Some(ref playback) = self.active_playback {
             let engine = &playback.engine;
             let resumed = if engine.is_running() || engine.is_silent() {
+                self.lead_in_ends = None;
                 engine.fade_in()
             } else {
                 engine.start()
@@ -1366,6 +1382,16 @@ impl Player {
         let Some(playback) = self.active_playback.as_ref() else {
             return;
         };
+
+        // The playhead held still through the silence while clients counted
+        // on from where it was published; this is where they hear it move.
+        if self
+            .lead_in_ends
+            .is_some_and(|end| std::time::Instant::now() >= end)
+        {
+            self.lead_in_ends = None;
+            self.shared_state.changed();
+        }
 
         if self.shared_state.playback_state() == PlaybackState::Paused
             && playback.engine.is_running()
@@ -1766,15 +1792,22 @@ impl Player {
     }
 
     /// When something changes that no command announces: the playhead
-    /// reaching the next queued track, or a pause fading to silence.
+    /// reaching the next queued track, the silence after a rate switch
+    /// running out, or a pause fading to silence.
     fn next_wake(&self) -> Option<std::time::Instant> {
         let playback = self.active_playback.as_ref()?;
         let now = std::time::Instant::now();
         match self.shared_state.playback_state() {
-            PlaybackState::Playing => self
-                .timeline
-                .until_next_track()
-                .map(|left| now + left + BOUNDARY_SLACK),
+            PlaybackState::Playing => {
+                let next_track = self
+                    .timeline
+                    .until_next_track()
+                    .map(|left| now + left + BOUNDARY_SLACK);
+                match (next_track, self.lead_in_ends) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (a, b) => a.or(b),
+                }
+            }
             PlaybackState::Paused if playback.engine.is_running() => Some(now + FADE_CHECK),
             _ => None,
         }
@@ -3203,6 +3236,40 @@ mod tests {
             .create_engine_for(&info, consumer)
             .expect("engine creation should succeed");
         lead_in.load(Ordering::Relaxed)
+    }
+
+    #[test]
+    fn an_engine_made_inside_the_silence_keeps_the_rest_of_it() {
+        // A seek straight after a rate switch: the device is still relocking,
+        // though the new engine finds its rate already matching.
+        let mut player = Player::new();
+        let lead_in = Arc::new(AtomicU64::new(0));
+        player.backend = Box::new(SlowBackend {
+            observed: Default::default(),
+            state: player.shared_state.clone(),
+            lead_in: lead_in.clone(),
+        });
+        let info = |sample_rate| buffer::StreamInfo {
+            codec: "FLAC".into(),
+            sample_rate,
+            channels: 2,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let (_p, consumer) = rtrb::RingBuffer::new(16);
+        player.create_engine_for(&info(44100), consumer).unwrap();
+        let first = lead_in.swap(0, Ordering::Relaxed);
+        assert!(first > 0);
+
+        let (_p, consumer) = rtrb::RingBuffer::new(16);
+        player.create_engine_for(&info(48000), consumer).unwrap();
+        let carried = lead_in.load(Ordering::Relaxed);
+        // Frames at the new engine's rate: what is left of the same second.
+        assert!(
+            carried > 0 && carried < first * 48000 / 44100,
+            "carried {carried} of {first}"
+        );
     }
 
     #[test]

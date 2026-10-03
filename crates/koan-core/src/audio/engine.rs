@@ -428,11 +428,27 @@ unsafe extern "C" fn render_callback(
 
     // Silence the device has to hear before the music: nothing is read from
     // the ring and nothing counts as played, so the playhead waits with it.
-    let lead_in = data.lead_in.load(Ordering::Relaxed);
-    if lead_in > 0 {
-        let frames = (total_samples / channels.max(1)) as u64;
-        data.lead_in
-            .store(lead_in.saturating_sub(frames), Ordering::Relaxed);
+    // Taken with a compare-exchange, so a `fade_in` clearing it in between is
+    // not overwritten with what was left.
+    let frames = (total_samples / channels.max(1)) as u64;
+    let mut left = data.lead_in.load(Ordering::Relaxed);
+    let mut holding = false;
+    while left > 0 {
+        match data.lead_in.compare_exchange_weak(
+            left,
+            left.saturating_sub(frames),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => {
+                holding = true;
+                break;
+            }
+            Err(now) => left = now,
+        }
+    }
+    if holding {
+        data.fader.hold();
         // SAFETY: `total_samples` is clamped to the buffer's own size.
         unsafe { std::slice::from_raw_parts_mut(out_ptr, total_samples).fill(0.0) };
         data.in_callback.store(false, Ordering::Release);
