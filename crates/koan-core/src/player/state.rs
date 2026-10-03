@@ -251,7 +251,10 @@ pub struct VisibleQueueSnapshot {
 #[derive(Debug)]
 pub struct SharedPlayerState {
     state: AtomicU8,
+    /// Where a session starts, and where a stopped one stands. While one is
+    /// running the playhead is read off the timeline instead.
     position_ms: AtomicU64,
+    timeline: std::sync::OnceLock<Arc<crate::audio::buffer::PlaybackTimeline>>,
     track_info: parking_lot::RwLock<Option<TrackInfo>>,
 
     /// The playlist and its cursor, under one lock.
@@ -290,6 +293,7 @@ impl SharedPlayerState {
         Arc::new(Self {
             state: AtomicU8::new(PlaybackState::Stopped as u8),
             position_ms: AtomicU64::new(0),
+            timeline: std::sync::OnceLock::new(),
             track_info: parking_lot::RwLock::new(None),
             playlist: parking_lot::RwLock::new(Playlist::default()),
             playlist_version: AtomicU64::new(0),
@@ -312,8 +316,20 @@ impl SharedPlayerState {
         self.changed();
     }
 
+    /// Where the playhead is, read off the samples the output has played, so
+    /// it is right whenever it is asked and nothing has to keep it up to date.
     pub fn position_ms(&self) -> u64 {
+        if self.playback_state() != PlaybackState::Stopped
+            && let Some((_, at)) = self.timeline.get().and_then(|t| t.playhead())
+        {
+            return at;
+        }
         self.position_ms.load(Ordering::Acquire)
+    }
+
+    /// The timeline the playhead is read from. Set once, by the player.
+    pub(crate) fn attach_timeline(&self, timeline: Arc<crate::audio::buffer::PlaybackTimeline>) {
+        let _ = self.timeline.set(timeline);
     }
 
     pub fn set_position_ms(&self, pos: u64) {

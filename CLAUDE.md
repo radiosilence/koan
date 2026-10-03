@@ -278,7 +278,7 @@ follows the top of the stack in front — see `TabShell`.
 ## Concurrency patterns to follow
 
 - **TUI→Player communication:** always via `PlayerCommand` through the crossbeam channel. Never reach into player internals from the TUI thread.
-- **Player→TUI communication:** via `SharedPlayerState` (atomics + RwLock). TUI polls on tick (50ms).
+- **Player→TUI communication:** via `SharedPlayerState` (atomics + RwLock). The player thread sleeps until a command or a known event — the playhead reaching a queued track, a fade reaching silence — and `position_ms()` reads the playhead live. The TUI redraws on its own tick.
 - **Audio thread (CoreAudio/cpal):** atomics and rtrb only. No allocations, no locks, no channels.
 - **Decode thread:** owns the Symphonia decoder. Communicates via rtrb producer + `PlaybackTimeline` (RwLock for boundaries, atomics for counters).
 - **Background work** (downloads, lyrics fetch, organize): spawn named threads, communicate results via crossbeam one-shot channels or `Arc<Mutex<Option<T>>>` polling.

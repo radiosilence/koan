@@ -31,6 +31,14 @@ pub(crate) const RING_BUFFER_SIZE: usize = 192_000 * 2;
 /// the way over lands in the last moment of it rather than in the next track.
 const SEEK_END_GUARD_MS: u64 = 500;
 
+/// Past the moment the next track should start, so the wake finds the
+/// playhead already in it rather than a hair short.
+const BOUNDARY_SLACK: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// How often to look at a fading pause, for the few checks it takes to reach
+/// silence.
+const FADE_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
+
 #[derive(Debug, Error)]
 pub enum PlayerError {
     #[error("backend error: {0}")]
@@ -165,9 +173,17 @@ impl Player {
             timeline.samples_played_counter(),
         );
 
+        let shared_state = SharedPlayerState::new();
+        shared_state.attach_timeline(timeline.clone());
+        let commands = CommandChannel::new();
+        let tx = commands.tx.clone();
+        timeline.on_queued(move || {
+            let _ = tx.try_send(PlayerCommand::TrackQueued);
+        });
+
         Self {
-            shared_state: SharedPlayerState::new(),
-            commands: CommandChannel::new(),
+            shared_state,
+            commands,
             active_playback: None,
             timeline,
             viz_buffer,
@@ -1044,6 +1060,7 @@ impl Player {
         let Some(playback) = self.active_playback.take() else {
             return;
         };
+        self.bank_listening();
         let ActivePlayback {
             engine,
             mut decode_handle,
@@ -1230,17 +1247,29 @@ impl Player {
     /// rather than closing unconditionally — otherwise scrubbing around a
     /// track would enter it into history once per seek.
     fn on_track_changed(&mut self, id: QueueItemId, position_ms: u64) {
-        if self.in_flight.as_ref().is_some_and(|f| f.item == id) {
+        if let Some(f) = self.in_flight.as_mut().filter(|f| f.item == id) {
+            f.jump(position_ms);
             return;
         }
         self.finish_play();
         let track_id = self.shared_state.item_db_id(id);
-        self.in_flight = Some(InFlight::new(id, track_id));
+        self.in_flight = Some(InFlight::new(id, track_id, position_ms));
         if let (Some(track_id), Some(recorder)) = (track_id, self.history.as_ref()) {
             recorder.record(PlayEvent::Started {
                 track_id,
                 position_ms,
             });
+        }
+    }
+
+    /// Count what has played of the track in flight since it was last
+    /// counted. Before anything that resets the timeline, which is where the
+    /// playhead is read from, and before a track is closed out.
+    fn bank_listening(&mut self) {
+        if let Some(f) = self.in_flight.as_mut()
+            && let Some(at) = self.timeline.position_of(f.item)
+        {
+            f.advance(at);
         }
     }
 
@@ -1263,6 +1292,7 @@ impl Player {
     /// Tell history how long the current track was heard for. Returns what was
     /// reported, which is how the tests see it.
     fn finish_play(&mut self) -> Option<PlayEvent> {
+        self.bank_listening();
         let flight = self.in_flight.take()?;
         let event = PlayEvent::Finished {
             track_id: flight.track_id()?,
@@ -1289,33 +1319,33 @@ impl Player {
             log::error!("stopping after fade failed: {}", e);
         }
 
-        if let Some((id, path, info, position_ms)) = self.timeline.current_playback() {
-            self.shared_state.set_position_ms(position_ms);
-
-            // A gapless transition moves the needle without anything on this
-            // thread having asked it to, so the play is banked from here.
+        // A gapless transition moves the needle without anything on this
+        // thread having asked it to, so the play is banked from here.
+        let Some((id, position_ms)) = self.timeline.playhead() else {
+            return;
+        };
+        if self.in_flight.as_ref().is_none_or(|f| f.item != id) {
             self.on_track_changed(id, position_ms);
-            if let Some(f) = self.in_flight.as_mut() {
-                f.advance(position_ms);
-            }
+        }
 
-            // Update track_info + cursor if the timeline shows a different track
-            // (gapless transition happened).
-            let current_id = self.shared_state.track_info().map(|t| t.id);
-            if current_id != Some(id) {
-                log::info!("timeline: now playing {:?}", id);
-                self.shared_state.set_track_info(Some(TrackInfo {
-                    id,
-                    path,
-                    codec: info.codec,
-                    sample_rate: info.sample_rate,
-                    bit_depth: info.bit_depth,
-                    bitrate_kbps: info.bitrate_kbps,
-                    channels: info.channels,
-                    duration_ms: info.duration_ms,
-                }));
-                self.shared_state.set_cursor(Some(id));
-            }
+        // Update track_info + cursor if the timeline shows a different track
+        // (gapless transition happened).
+        let current_id = self.shared_state.track_info().map(|t| t.id);
+        if current_id != Some(id)
+            && let Some((id, path, info, _)) = self.timeline.current_playback()
+        {
+            log::info!("timeline: now playing {:?}", id);
+            self.shared_state.set_track_info(Some(TrackInfo {
+                id,
+                path,
+                codec: info.codec,
+                sample_rate: info.sample_rate,
+                bit_depth: info.bit_depth,
+                bitrate_kbps: info.bitrate_kbps,
+                channels: info.channels,
+                duration_ms: info.duration_ms,
+            }));
+            self.shared_state.set_cursor(Some(id));
         }
     }
 
@@ -1506,6 +1536,9 @@ impl Player {
             }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
             PlayerCommand::DecodeFinished => self.on_decode_finished(),
+            // Nothing to do but wake: the loop works out when the playhead
+            // reaches the track just queued.
+            PlayerCommand::TrackQueued => {}
             PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),
             PlayerCommand::StreamProbed { id, info, mode } => self.stream_probed(id, *info, mode),
             PlayerCommand::TrackFailed(id) => self.track_failed(id),
@@ -1644,20 +1677,42 @@ impl Player {
     }
 
     /// Run the command loop. Blocks until the sender is dropped.
+    ///
+    /// Asleep until there is something to do: a command, or one of the two
+    /// things that happen without one — see `next_wake`. A paused or stopped
+    /// player does not wake at all.
     pub fn run(&mut self) {
-        use std::time::Duration;
+        use crossbeam_channel::RecvTimeoutError;
 
         let rx = self.commands.rx.clone();
         loop {
-            // Poll with timeout so we update position even without commands.
-            match rx.recv_timeout(Duration::from_millis(50)) {
+            let received = match self.next_wake() {
+                Some(at) => rx.recv_deadline(at),
+                None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+            };
+            match received {
                 Ok(cmd) => self.process_command(cmd),
-                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
             }
             self.update_playback_state();
         }
         self.stop();
+    }
+
+    /// When something changes that no command announces: the playhead
+    /// reaching the next queued track, or a pause fading to silence.
+    fn next_wake(&self) -> Option<std::time::Instant> {
+        let playback = self.active_playback.as_ref()?;
+        let now = std::time::Instant::now();
+        match self.shared_state.playback_state() {
+            PlaybackState::Playing => self
+                .timeline
+                .until_next_track()
+                .map(|left| now + left + BOUNDARY_SLACK),
+            PlaybackState::Paused if playback.engine.is_running() => Some(now + FADE_CHECK),
+            _ => None,
+        }
     }
 
     /// Spawn the player on a background thread, returning the shared state,
@@ -1929,6 +1984,38 @@ mod tests {
             "the cursor's track started"
         );
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn a_player_with_nothing_coming_has_nothing_to_wake_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
+
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+        });
+        let item = PlaylistItem {
+            path,
+            ..make_item("t")
+        };
+        let id = item.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
+        assert_eq!(player.next_wake(), None, "stopped");
+
+        player.process_command(PlayerCommand::Play(id));
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
+        assert_eq!(
+            player.next_wake(),
+            None,
+            "playing, with no track queued after it"
+        );
+
+        player.pause_now();
+        assert_eq!(player.next_wake(), None, "paused");
         player.process_command(PlayerCommand::Stop);
     }
 
