@@ -2658,7 +2658,7 @@ impl KoanEngine {
                                 at: now,
                             });
                             last_seekable = seekable;
-                            out.publish(StateSlice::Playhead {
+                            out.reanchor(StateSlice::Playhead {
                                 position_ms: snapshot.position_ms,
                                 seekable_ms: seekable,
                                 playing,

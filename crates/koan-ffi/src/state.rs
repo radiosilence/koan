@@ -179,9 +179,23 @@ impl EngineState {
     /// of each slice is kept, so a burst inside one tick collapses to one
     /// message.
     pub fn publish(&self, slice: StateSlice) {
+        self.send(slice, false);
+    }
+
+    /// Publish a playhead anchor whether or not it reads the same as the last.
+    ///
+    /// An anchor is a value at a moment, and the moment is not in the slice: a
+    /// playhead held at 0:00 through the silence before a track, while clients
+    /// counted on from an earlier 0:00, is re-anchored with the same three
+    /// fields. The caller has already judged it stale.
+    pub fn reanchor(&self, slice: StateSlice) {
+        self.send(slice, true);
+    }
+
+    fn send(&self, slice: StateSlice, always: bool) {
         let mut slots = self.slots.lock();
         let i = slice.slot() as usize;
-        if slots.latest[i].as_ref() == Some(&slice) {
+        if !always && slots.latest[i].as_ref() == Some(&slice) {
             return;
         }
         slots.clock += 1;
@@ -425,6 +439,22 @@ mod tests {
         assert!(state.since(&mut seen).is_empty());
         state.publish(library(8));
         assert_eq!(state.since(&mut seen), vec![library(8)]);
+    }
+
+    #[test]
+    fn an_anchor_at_the_same_place_is_still_sent() {
+        let state = EngineState::new();
+        let mut seen = [0; SLOTS];
+        let held = StateSlice::Playhead {
+            position_ms: 0,
+            seekable_ms: 0,
+            playing: true,
+        };
+        state.reanchor(held.clone());
+        state.since(&mut seen);
+
+        state.reanchor(held.clone());
+        assert_eq!(state.since(&mut seen), vec![held]);
     }
 
     /// A slow client misses values, never the fact that a slice moved. This is
