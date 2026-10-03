@@ -1183,6 +1183,8 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
         .attr_opt_int("bitRate", track.bitrate.map(i64::from))
         .attr_opt("suffix", Some(suffix))
         .attr_opt("contentType", Some(content_type))
+        // koan's own: the suffix cannot tell ALAC from AAC, both being m4a.
+        .attr_opt("codec", track.codec.as_deref())
         .attr_opt("genre", track.genre.as_deref())
         .attr_opt(
             "albumId",
@@ -1598,15 +1600,19 @@ fn artist_index(db: &Database) -> Result<ArtistIndex, SubsonicError> {
     Ok(index_map)
 }
 
+/// A stored codec as a Subsonic `suffix` and `contentType`.
+///
+/// Covers both what the indexer stores (`index::metadata`) and the suffixes a
+/// track synced from another Subsonic server arrives with.
 fn codec_to_mime(codec: &str) -> (&str, &str) {
     match codec.to_uppercase().as_str() {
         "FLAC" => ("flac", "audio/flac"),
         "MP3" => ("mp3", "audio/mpeg"),
-        "AAC" | "M4A" => ("m4a", "audio/mp4"),
+        "AAC" | "ALAC" | "M4A" | "MP4" => ("m4a", "audio/mp4"),
         "OPUS" => ("opus", "audio/opus"),
-        "VORBIS" | "OGG" => ("ogg", "audio/ogg"),
-        "WAV" => ("wav", "audio/wav"),
-        "AIFF" => ("aiff", "audio/aiff"),
+        "VORBIS" | "OGG" | "OGA" => ("ogg", "audio/ogg"),
+        "WAV" | "PCM" => ("wav", "audio/wav"),
+        "AIFF" | "AIF" => ("aiff", "audio/aiff"),
         "APE" => ("ape", "audio/x-ape"),
         _ => ("bin", "application/octet-stream"),
     }
@@ -1616,9 +1622,9 @@ pub(crate) fn extension_to_mime(ext: &str) -> &str {
     match ext.to_lowercase().as_str() {
         "flac" => "audio/flac",
         "mp3" => "audio/mpeg",
-        "m4a" | "aac" | "mp4" => "audio/mp4",
+        "m4a" | "aac" | "mp4" | "alac" => "audio/mp4",
         "opus" => "audio/opus",
-        "ogg" => "audio/ogg",
+        "ogg" | "oga" => "audio/ogg",
         "wav" => "audio/wav",
         "aiff" | "aif" => "audio/aiff",
         "ape" => "audio/x-ape",
@@ -4356,6 +4362,17 @@ mod tests {
         assert_eq!(codec_to_mime("MP3"), ("mp3", "audio/mpeg"));
         assert_eq!(codec_to_mime("AAC"), ("m4a", "audio/mp4"));
         assert_eq!(codec_to_mime("Opus"), ("opus", "audio/opus"));
+        assert_eq!(codec_to_mime("ALAC"), ("m4a", "audio/mp4"));
+        assert_eq!(codec_to_mime("Vorbis"), ("ogg", "audio/ogg"));
+        assert_eq!(codec_to_mime("PCM"), ("wav", "audio/wav"));
+        assert_eq!(codec_to_mime("WAV"), ("wav", "audio/wav"));
+        assert_eq!(codec_to_mime("AIFF"), ("aiff", "audio/aiff"));
+        assert_eq!(codec_to_mime("aif"), ("aiff", "audio/aiff"));
+        assert_eq!(codec_to_mime("APE"), ("ape", "audio/x-ape"));
+        assert_eq!(
+            codec_to_mime("Unknown"),
+            ("bin", "application/octet-stream")
+        );
     }
 
     #[test]
