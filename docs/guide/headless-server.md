@@ -122,19 +122,11 @@ The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, 
 
 Set `sharing.public_url` to the public address (`KOAN_SHARING__PUBLIC_URL`) for share links and for MCP clients to sign in at `/mcp`.
 
-### Docker Compose
+### Kubernetes
 
-[`deploy/compose/compose.yaml`](https://github.com/radiosilence/koan/blob/main/deploy/compose/compose.yaml) runs kōan behind Caddy, which obtains and renews the TLS certificate. On a machine whose hostname resolves to it, with ports 80 and 443 open:
+The server needs one pod with two volumes: the library, read-only, and a state directory at `/config` that outlives the pod. It is a single SQLite index, so it runs as one replica and is replaced rather than rolled. Set `KOAN_LIBRARY__FOLDERS`, `KOAN_GRAPHQL__ALLOWED_HOSTS` and `KOAN_SHARING__PUBLIC_URL` as in the Compose example below, and terminate TLS in front of it.
 
-```bash
-curl -O https://raw.githubusercontent.com/radiosilence/koan/main/deploy/compose/compose.yaml
-KOAN_HOST=music.example.com MUSIC=/mnt/music docker compose up -d
-docker compose exec koan koan auth setup   # the admin account
-```
-
-Then open `https://music.example.com` and sign in. The Subsonic API is on for kōan accounts; `koan subsonic setup` adds a shared secret for clients that have none. Config, the database and keys live in the `koan-config` volume. The image runs as uid 1000, so a bind mount in its place has to be writable by that uid.
-
-### Kubernetes (Pulumi)
+#### With Pulumi
 
 [`@radiosilence/koan-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi) is a Pulumi component that deploys the server into a namespace. Its version is koan's: each release publishes both, and a pinned package deploys exactly that image.
 
@@ -193,3 +185,45 @@ Once it is running, create the admin account in the pod:
 ```bash
 kubectl -n koan exec -it deploy/koan -- koan auth setup
 ```
+
+### Docker Compose
+
+kōan behind Caddy, which obtains and renews the TLS certificate. Save as `compose.yaml`:
+
+```yaml
+services:
+  koan:
+    image: ghcr.io/radiosilence/koan:latest
+    restart: unless-stopped
+    environment:
+      KOAN_LIBRARY__FOLDERS: '["/music"]'
+      KOAN_GRAPHQL__ALLOWED_HOSTS: '["${KOAN_HOST:?set KOAN_HOST to the server hostname}"]'
+      KOAN_GRAPHQL__COOKIE_SECURE: "true"
+      KOAN_SHARING__PUBLIC_URL: https://${KOAN_HOST}
+      KOAN_SUBSONIC__ENABLED: "true"
+    volumes:
+      # The image runs as uid 1000; a bind mount here has to be writable by it.
+      - koan-config:/config
+      - ${MUSIC:?set MUSIC to the music folder}:/music:ro
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    command: caddy reverse-proxy --from ${KOAN_HOST} --to koan:4000
+    volumes:
+      - caddy-data:/data
+
+volumes:
+  koan-config:
+  caddy-data:
+```
+
+On a machine whose hostname resolves to it, with ports 80 and 443 open:
+
+```bash
+KOAN_HOST=music.example.com MUSIC=/mnt/music docker compose up -d
+docker compose exec koan koan auth setup   # the admin account
+```
+
+Then open `https://music.example.com` and sign in. The Subsonic API is on for kōan accounts; `koan subsonic setup` adds a shared secret for clients that have none. Config, the database and keys live in the `koan-config` volume. The image runs as uid 1000, so a bind mount in its place has to be writable by that uid.
