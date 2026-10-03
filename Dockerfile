@@ -1,5 +1,4 @@
-# koan as a headless server: GraphQL and Subsonic on 4000, and MCP over HTTP
-# on 8081 when KOAN_MCP_BIND is set. No sound card is needed; playback
+# koan as a headless server: GraphQL, Subsonic and MCP on 4000. No sound card is needed; playback
 # mutations fail cleanly without one, and everything else works.
 FROM rust:1-bookworm AS chef
 RUN apt-get update \
@@ -31,5 +30,5 @@ COPY --from=build /src/target/release/koan /usr/local/bin/koan
 USER 1000
 # Config, database and auth keys; mount a volume here.
 ENV KOAN_CONFIG_DIR=/config
-EXPOSE 4000 8081
+EXPOSE 4000
 ENTRYPOINT ["koan", "--headless", "--bind", "0.0.0.0"]

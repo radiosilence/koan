@@ -8,8 +8,6 @@ describe("KoanConfSchema", () => {
     const c = KoanConfSchema.parse(base);
     expect(c.image.repository).toBe("ghcr.io/radiosilence/koan");
     expect(c.api.port).toBe(4000);
-    expect(c.mcp.enabled).toBe(true);
-    expect(c.mcp.port).toBe(8081);
     expect(c.initPermissions.image).toBe("alpine:3.21");
     expect(c.resources.requests).toEqual({ cpu: "250m", memory: "256Mi" });
     expect(c.resources.limits).toEqual({ cpu: "6", memory: "5Gi" });

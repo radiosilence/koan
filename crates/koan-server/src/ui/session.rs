@@ -147,7 +147,11 @@ async fn rotate_from(s: &UiState, headers: &HeaderMap) -> Option<(String, String
         .flatten()
 }
 
-pub(super) async fn signout(State(s): State<UiState>, headers: HeaderMap) -> Response {
+pub(super) async fn signout(
+    State(s): State<UiState>,
+    headers: HeaderMap,
+    Form(q): Form<NextParam>,
+) -> Response {
     if !same_origin(&headers) {
         return cross_site();
     }
@@ -159,9 +163,15 @@ pub(super) async fn signout(State(s): State<UiState>, headers: HeaderMap) -> Res
         })
         .await;
     }
+    // Back to sign in, and then to where the user was: the consent page signs
+    // out to let another account approve.
+    let to = match local_path(&q.next) {
+        "/" => "/login".to_owned(),
+        next => format!("/login?next={}", encode(next)),
+    };
     (
         StatusCode::SEE_OTHER,
-        [(header::LOCATION, "/login")],
+        [(header::LOCATION, to)],
         s.auth.cleared_cookies(),
     )
         .into_response()

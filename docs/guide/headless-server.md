@@ -34,8 +34,9 @@ kōan logs to `~/.config/koan/koan.log` in daemon mode. The GraphQL API is avail
 | `--subsonic PORT` | Serve the Subsonic REST API on its own port as well |
 | `--port PORT` | Custom GraphQL port (default: 4000) |
 | `--bind ADDR` | Bind address (default: 127.0.0.1) |
-| `--mcp-bind ADDR:PORT` | Also serve MCP over HTTP at `/mcp` (env `KOAN_MCP_BIND`). It trusts the `x-koan-username` / `x-koan-password` a gateway sends, so only that gateway may reach it; `KOAN_MCP_REQUIRE_LOGIN=1` refuses requests without them |
 | `-d` | Detach and run as background daemon |
+
+MCP is served at `/mcp` on the same port, with its own OAuth sign-in once `sharing.public_url` is set; see [MCP Integration](mcp-integration.md#connecting-to-a-server).
 
 A headless server indexes the library folders when it starts and again whenever they change, as the macOS app does.
 
@@ -140,6 +141,6 @@ An app is linked while it runs. iOS suspends a backgrounded app that is not play
 
 The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first user with `koan auth setup` inside the container, and `koan subsonic setup` to enable the Subsonic API.
 
-MCP over HTTP (`KOAN_MCP_BIND=0.0.0.0:8081`) carries no credential of its own, like the stdio transport: put an authenticating gateway in front of it and let nothing else reach that port.
+Set `sharing.public_url` to the public address (`KOAN_SHARING__PUBLIC_URL`) for share links and for MCP clients to sign in at `/mcp`.
 
 On Kubernetes, a versioned Pulumi component package, [`@radiosilence/koan-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi), is published to GitHub Packages alongside each release. It exports `createKoan`, which builds the Deployment, its init container, Services and NetworkPolicy from a config object validated against `KoanConfSchema`.

@@ -251,10 +251,10 @@ follows the top of the stack in front — see `TabShell`.
 | `graphql/server.rs` | HTTP server (axum), `cmd_serve`, `start_api_background`, daemon mode, timeout/load-shed/panic-catch layers |
 | `subsonic.rs` | Subsonic-compatible REST API (XML/JSON, auth, streaming, cover art), plus koan's `/rest/koanLink` WebSocket |
 | `clients.rs` | Linked koan apps by account, and sending them `LinkCommand`s — what `clients`, `playOnClient` and `controlClient` use. Sends each link the account's other devices as they change, relays commands between them (`koanCommand` too), pushes Live Activity updates |
-| `mcp.rs` | MCP server for Claude Desktop (schema_sdl + graphql tools) |
+| `mcp.rs` | MCP server (schema_sdl + graphql tools): stdio for `koan mcp`, `/mcp` on the main port behind koan's own tokens, admin capped at `user` |
 | `push.rs` | Apple push notifications to the iOS app: ES256 token auth, HTTP/2 to APNs. A background push wakes a suspended app to link; a play request becomes a notification to tap |
 | `share.rs` | Public share pages and their audio, answering for a share's own tracks only |
-| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use |
+| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use. `ui/oauth.rs` is the OAuth 2.1 authorization server for `/mcp`: discovery, stateless registration, consent, PKCE token exchange |
 
 ### koan-cli (`crates/koan-cli/src/`)
 

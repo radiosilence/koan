@@ -37,7 +37,7 @@ use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries;
 
 use crate::auth::AuthUser;
-use crate::auth::routes::{AuthRouteState, login_rate_limit};
+use crate::auth::routes::{AuthRouteState, RateLimiter, login_rate_limit, rate_limit};
 use crate::covers::Covers;
 use crate::share::{asset, blocking, not_found};
 
@@ -66,6 +66,8 @@ pub struct UiState {
     public_url: Option<String>,
     /// OAuth codes awaiting their token request.
     codes: oauth::Codes,
+    /// `mcp.redirect_hosts`.
+    redirect_hosts: Arc<Vec<String>>,
 }
 
 pub fn router(
@@ -74,6 +76,7 @@ pub fn router(
     auth_enabled: bool,
     covers: Arc<Covers>,
     public_url: Option<String>,
+    redirect_hosts: Vec<String>,
 ) -> axum::Router {
     let state = UiState {
         pool,
@@ -83,6 +86,7 @@ pub fn router(
         auth_enabled,
         public_url,
         codes: oauth::Codes::default(),
+        redirect_hosts: Arc::new(redirect_hosts),
     };
     let gated = axum::Router::new()
         .route("/", get(pages::albums))
@@ -132,8 +136,26 @@ pub fn router(
             "/.well-known/oauth-authorization-server",
             get(oauth::authorization_server),
         )
-        .route("/oauth/register", post(oauth::register))
-        .route("/oauth/token", post(oauth::token))
+        // Unauthenticated, so capped per IP: registering stores nothing, but
+        // signs a client id each time.
+        .route(
+            "/oauth/register",
+            post(oauth::register)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    oauth::MAX_REGISTRATION_BODY,
+                ))
+                .layer(from_fn_with_state(
+                    Arc::new(RateLimiter::new(3600, 10)),
+                    rate_limit,
+                )),
+        )
+        .route(
+            "/oauth/token",
+            post(oauth::token).layer(from_fn_with_state(
+                Arc::new(RateLimiter::new(60, 60)),
+                rate_limit,
+            )),
+        )
         .route("/login", sign_in)
         .route("/auth/resume", get(session::resume))
         .route("/auth/renew", post(session::renew))

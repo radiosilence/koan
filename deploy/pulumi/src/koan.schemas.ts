@@ -29,18 +29,6 @@ export const KoanConfSchema = z.strictObject({
       port: z.number().int().positive().default(4000),
     })
     .prefault({}),
-  mcp: z
-    .strictObject({
-      /**
-       * MCP over HTTP carries no credential check of its own — only what
-       * networkPolicy.mcp.from admits can reach it.
-       */
-      enabled: z.boolean().default(true),
-      port: z.number().int().positive().default(8081),
-      /** Defaults to "<full name>-mcp". */
-      serviceName: z.string().default(""),
-    })
-    .prefault({}),
   service: z
     .strictObject({
       /** The API Service's name. Defaults to the release's full name. */
@@ -112,7 +100,7 @@ export const KoanConfSchema = z.strictObject({
   networkPolicy: z
     .strictObject({
       /**
-       * Restricts ingress to the API and MCP ports and egress to DNS plus
+       * Restricts ingress to the API port and egress to DNS plus
        * the public internet (artwork, lyrics, similar-artist lookups);
        * nothing inside the cluster is koan's business beyond the peers below.
        */
@@ -122,18 +110,6 @@ export const KoanConfSchema = z.strictObject({
           /** Defaults to a Traefik ingress controller by its pod-name label. */
           from: z.array(NetworkPolicyPeer).default([
             { podSelector: { matchLabels: { "app.kubernetes.io/name": "traefik" } } },
-          ]),
-        })
-        .prefault({}),
-      mcp: z
-        .strictObject({
-          /**
-           * Defaults to an MCP gateway by its common pod-name label; MCP
-           * trusts whatever reaches it, so this should name only that
-           * gateway.
-           */
-          from: z.array(NetworkPolicyPeer).default([
-            { podSelector: { matchLabels: { app: "mcp-gateway" } } },
           ]),
         })
         .prefault({}),

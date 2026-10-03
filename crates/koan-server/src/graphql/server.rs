@@ -12,7 +12,7 @@ use koan_core::player::state::SharedPlayerState;
 use super::{KoanSchema, build_schema};
 use crate::auth::AuthUser;
 use crate::auth::middleware::{AuthState, auth_middleware};
-use crate::auth::routes::{AuthRouteState, LoginRateLimiter, auth_router};
+use crate::auth::routes::{AuthRouteState, RateLimiter, auth_router};
 
 // ---------------------------------------------------------------------------
 // `koan --headless` entry point (standalone headless server)
@@ -23,7 +23,6 @@ pub fn cmd_serve(
     bind: Option<std::net::IpAddr>,
     subsonic_port: Option<u16>,
     playground: bool,
-    mcp_bind: Option<std::net::SocketAddr>,
 ) {
     use koan_core::player::Player;
 
@@ -47,16 +46,6 @@ pub fn cmd_serve(
             }
         }
     });
-
-    if let Some(addr) = mcp_bind {
-        match crate::mcp::spawn_http(addr, state.clone(), cmd_tx.clone(), pool.clone()) {
-            Ok(_) => log::info!("MCP over HTTP at http://{addr}/mcp"),
-            Err(e) => {
-                eprintln!("koan: MCP listener on {addr}: {e}");
-                std::process::exit(1);
-            }
-        }
-    }
 
     if let Err(e) = run_api_blocking(ApiServerOpts {
         state,
@@ -228,7 +217,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         access_ttl_secs: access_ttl,
         refresh_ttl_secs: refresh_ttl,
         cookie_secure: cfg.graphql.cookie_secure,
-        login_limiter: Arc::new(LoginRateLimiter::default()),
+        login_limiter: Arc::new(RateLimiter::default()),
     };
 
     let mcp_routes = crate::mcp::router(
@@ -291,6 +280,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             auth_enabled,
             covers.clone(),
             cfg.sharing.public_url.clone(),
+            cfg.mcp.redirect_hosts.clone(),
         );
 
         // Auth routes — always accessible (no auth middleware).
@@ -672,7 +662,6 @@ pub fn cmd_serve_daemon(
     bind: Option<std::net::IpAddr>,
     subsonic_port: Option<u16>,
     playground: bool,
-    mcp_bind: Option<std::net::SocketAddr>,
 ) {
     use std::fs;
     use std::process::Command;
@@ -689,9 +678,6 @@ pub fn cmd_serve_daemon(
     cmd.arg("--bind").arg(bind_val.to_string());
     if let Some(sp) = subsonic_port {
         cmd.arg("--subsonic").arg(sp.to_string());
-    }
-    if let Some(addr) = mcp_bind {
-        cmd.arg("--mcp-bind").arg(addr.to_string());
     }
     if playground || cfg.graphql.playground {
         cmd.arg("--playground");

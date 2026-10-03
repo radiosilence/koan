@@ -20,8 +20,8 @@ const selectorLabels = () => ({
 });
 
 /**
- * koan: a headless music server — GraphQL and Subsonic over a media library,
- * plus MCP over HTTP for a gateway.
+ * koan: a headless music server — GraphQL, Subsonic and MCP over a media
+ * library, all on the API port.
  *
  * No Ingress: the deployer routes to the API Service, so this creates only
  * the Deployment, its Services and its NetworkPolicy.
@@ -35,7 +35,6 @@ export function createKoan(
   const options = { provider };
   const image = `${conf.image.repository}:${conf.image.tag || `v${APP_VERSION}`}`;
   const apiServiceName = conf.service.name || NAME;
-  const mcpServiceName = conf.mcp.serviceName || `${NAME}-mcp`;
 
   // What every pod here shares: the node, the user, and the state directory
   // made writable by that user.
@@ -159,21 +158,13 @@ export function createKoan(
                 imagePullPolicy: conf.image.pullPolicy,
                 args: ["--port", String(conf.api.port)],
                 env: [
-                  ...(conf.mcp.enabled
-                    ? [
-                        { name: "KOAN_MCP_BIND", value: `0.0.0.0:${conf.mcp.port}` },
-                        // The gateway forwards each user's koan account; a
-                        // request without one is refused rather than run at a
-                        // default role.
-                        { name: "KOAN_MCP_REQUIRE_LOGIN", value: "1" },
-                      ]
-                    : []),
                   { name: "KOAN_LIBRARY__FOLDERS", value: '["/music"]' },
                   // koan refuses a Host it was not told about.
                   { name: "KOAN_GRAPHQL__ALLOWED_HOSTS", value: `["${conf.hostname}"]` },
                   // Served over HTTPS in front of the Service.
                   { name: "KOAN_GRAPHQL__COOKIE_SECURE", value: "true" },
-                  // Share links are built on the address strangers reach.
+                  // Share links and MCP's OAuth are built on the address
+                  // strangers reach.
                   { name: "KOAN_SHARING__PUBLIC_URL", value: `https://${conf.hostname}` },
                   ...(conf.push.existingSecret
                     ? [
@@ -188,10 +179,7 @@ export function createKoan(
                       ]
                     : []),
                 ],
-                ports: [
-                  { name: "api", containerPort: conf.api.port },
-                  ...(conf.mcp.enabled ? [{ name: "mcp", containerPort: conf.mcp.port }] : []),
-                ],
+                ports: [{ name: "api", containerPort: conf.api.port }],
                 readinessProbe: { tcpSocket: { port: "api" }, periodSeconds: 10 },
                 livenessProbe: { tcpSocket: { port: "api" }, initialDelaySeconds: 30, periodSeconds: 30 },
                 resources: { limits: conf.resources.limits, requests: conf.resources.requests },
@@ -238,17 +226,6 @@ export function createKoan(
     options,
   );
 
-  const mcpService = conf.mcp.enabled
-    ? new k8s.core.v1.Service(
-        mcpServiceName,
-        {
-          metadata: { name: mcpServiceName, namespace, labels: labels() },
-          spec: { selector: selectorLabels(), ports: [{ port: conf.mcp.port, targetPort: "mcp" }] },
-        },
-        options,
-      )
-    : undefined;
-
   if (conf.networkPolicy.enabled) {
     new k8s.networking.v1.NetworkPolicy(
       "koan-netpol",
@@ -263,10 +240,6 @@ export function createKoan(
               from: conf.networkPolicy.api.from,
               ports: [{ protocol: "TCP", port: conf.api.port }],
             },
-            // MCP has no credential check of its own: the gateway only.
-            ...(conf.mcp.enabled
-              ? [{ from: conf.networkPolicy.mcp.from, ports: [{ protocol: "TCP", port: conf.mcp.port }] }]
-              : []),
             ...conf.networkPolicy.extraIngress,
           ],
           egress: [
@@ -292,6 +265,5 @@ export function createKoan(
     routes: [{ service: apiServiceName, hostname: conf.hostname }],
     deployment,
     apiService,
-    ...(mcpService && { mcpService }),
   } satisfies Deployed & Record<string, unknown>;
 }

@@ -148,6 +148,14 @@ koan auth delete-user alice
 - **Refresh**: `POST /auth/refresh` with `{"refresh_token": "..."}` returns new access + refresh tokens.
 - **Logout**: `POST /auth/logout` with `{"refresh_token": "..."}` revokes the token.
 
+## OAuth, for MCP clients
+
+With `sharing.public_url` set, the server is an OAuth 2.1 authorization server for its own `/mcp`: discovery at `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`, open registration at `/oauth/register`, consent at `/oauth/authorize` behind the web UI's sign-in, and `/oauth/token` (authorization code with PKCE S256, and refresh). What it issues are ordinary kōan access and refresh tokens, so a connection is a session like any other and `/mcp` checks it as GraphQL does.
+
+Two things differ from an app's session. A client id is a JWT signed with the server's key, carrying the client's redirect URIs, so registrations need no storage and rotating the keys sends every client back to register. And each connection's refresh tokens are one grant: a spent refresh token presented again more than 30 seconds later, or a code exchanged twice, means a copy is in other hands, and revokes the whole grant. App and browser sessions are exempt, since tabs and tasks sharing one session may race a refresh.
+
+`/oauth/register` allows 10 registrations per IP per hour and `/oauth/token` 60 requests per IP per minute.
+
 ## GraphQL Playground
 
 ```bash
@@ -224,7 +232,7 @@ refresh_token_ttl = "30d" # refresh token lifetime
 
 ## In-process access
 
-The TUI runs in the same process as the player and bypasses auth entirely. The MCP server does too, but executes at `user` role rather than admin — its transport carries no credential, so anything it can reach is reachable by whoever can talk to the MCP process. That leaves out the mutations that move files (`organize*`), rewrite config, trigger scans, or change the output device. Set `KOAN_MCP_ADMIN=1` to opt back in.
+The TUI runs in the same process as the player and bypasses auth entirely. `koan mcp` does too, but executes at `user` role rather than admin — its transport carries no credential, so anything it can reach is reachable by whoever can talk to the MCP process. A server's `/mcp` acts as the signed-in account, with an admin account capped the same way. That leaves out the mutations that move files (`organize*`), rewrite config, trigger scans, or change the output device. Set `KOAN_MCP_ADMIN=1` to opt back in.
 
 Auth otherwise applies to HTTP API clients (GraphQL, web UI). The Subsonic REST API is separate — see below.
 

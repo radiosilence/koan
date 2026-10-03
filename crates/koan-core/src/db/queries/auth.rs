@@ -24,6 +24,33 @@ pub struct RefreshTokenRow {
     pub expires_at: i64,
     pub revoked: bool,
     pub created_at: Option<String>,
+    /// The OAuth grant the token descends from, and the client it was granted
+    /// to; `None` for app and web sessions.
+    pub grant: Option<OAuthGrant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OAuthGrant {
+    pub id: String,
+    pub client_name: String,
+}
+
+const TOKEN_COLUMNS: &str = "id, user_id, expires_at, revoked, created_at, grant_id, client_name";
+
+fn token_row(row: &rusqlite::Row) -> rusqlite::Result<RefreshTokenRow> {
+    let grant_id: Option<String> = row.get(5)?;
+    let client_name: Option<String> = row.get(6)?;
+    Ok(RefreshTokenRow {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        expires_at: row.get(2)?,
+        revoked: row.get::<_, i32>(3)? != 0,
+        created_at: row.get(4)?,
+        grant: grant_id.map(|id| OAuthGrant {
+            id,
+            client_name: client_name.unwrap_or_default(),
+        }),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -296,9 +323,27 @@ pub fn store_refresh_token(
     user_id: i64,
     expires_at: i64,
 ) -> Result<(), rusqlite::Error> {
+    store_grant_token(conn, token_id, user_id, expires_at, None)
+}
+
+/// Store a refresh token belonging to an OAuth grant, or to none.
+pub fn store_grant_token(
+    conn: &Connection,
+    token_id: &str,
+    user_id: i64,
+    expires_at: i64,
+    grant: Option<&OAuthGrant>,
+) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO refresh_tokens (id, user_id, expires_at) VALUES (?1, ?2, ?3)",
-        params![auth::sha256_hex(token_id), user_id, expires_at],
+        "INSERT INTO refresh_tokens (id, user_id, expires_at, grant_id, client_name)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            auth::sha256_hex(token_id),
+            user_id,
+            expires_at,
+            grant.map(|g| &g.id),
+            grant.map(|g| &g.client_name),
+        ],
     )?;
     Ok(())
 }
@@ -309,20 +354,11 @@ pub fn get_valid_refresh_token(
     token_id: &str,
 ) -> Result<Option<RefreshTokenRow>, rusqlite::Error> {
     let now = auth::now_unix() as i64;
-    let mut stmt = conn.prepare_cached(
-        "SELECT id, user_id, expires_at, revoked, created_at
-         FROM refresh_tokens
-         WHERE id = ?1 AND revoked = 0 AND expires_at > ?2",
-    )?;
-    let mut rows = stmt.query_map(params![auth::sha256_hex(token_id), now], |row| {
-        Ok(RefreshTokenRow {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            expires_at: row.get(2)?,
-            revoked: row.get::<_, i32>(3)? != 0,
-            created_at: row.get(4)?,
-        })
-    })?;
+    let mut stmt = conn.prepare_cached(&format!(
+        "SELECT {TOKEN_COLUMNS} FROM refresh_tokens
+         WHERE id = ?1 AND revoked = 0 AND expires_at > ?2"
+    ))?;
+    let mut rows = stmt.query_map(params![auth::sha256_hex(token_id), now], token_row)?;
     match rows.next() {
         Some(Ok(token)) => Ok(Some(token)),
         Some(Err(e)) => Err(e),
@@ -338,20 +374,12 @@ pub fn consume_refresh_token(
     token_id: &str,
 ) -> Result<Option<RefreshTokenRow>, rusqlite::Error> {
     let now = auth::now_unix() as i64;
-    let mut stmt = conn.prepare(
-        "UPDATE refresh_tokens SET revoked = 1
+    let mut stmt = conn.prepare(&format!(
+        "UPDATE refresh_tokens SET revoked = 1, used_at = ?2
          WHERE id = ?1 AND revoked = 0 AND expires_at > ?2
-         RETURNING id, user_id, expires_at, revoked, created_at",
-    )?;
-    let mut rows = stmt.query_map(params![auth::sha256_hex(token_id), now], |row| {
-        Ok(RefreshTokenRow {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            expires_at: row.get(2)?,
-            revoked: row.get::<_, i32>(3)? != 0,
-            created_at: row.get(4)?,
-        })
-    })?;
+         RETURNING {TOKEN_COLUMNS}"
+    ))?;
+    let mut rows = stmt.query_map(params![auth::sha256_hex(token_id), now], token_row)?;
     match rows.next() {
         Some(Ok(token)) => Ok(Some(token)),
         Some(Err(e)) => Err(e),
@@ -377,11 +405,44 @@ pub fn revoke_all_user_tokens(conn: &Connection, user_id: i64) -> Result<usize, 
     Ok(count)
 }
 
-/// Clean up expired/revoked refresh tokens (housekeeping).
+/// A refresh token of an OAuth grant spent once already, more than `grace_secs`
+/// ago, is a copy in someone else's hands: revoke the whole grant, so whichever
+/// side refreshed first loses it too. The grace covers a client retrying a
+/// refresh whose answer it never received. Returns how many tokens were revoked.
+///
+/// OAuth grants only: browser tabs and app tasks share one session and may
+/// race a refresh, which is not theft.
+pub fn revoke_replayed_grant(
+    conn: &Connection,
+    token_id: &str,
+    grace_secs: i64,
+) -> Result<usize, rusqlite::Error> {
+    let cutoff = auth::now_unix() as i64 - grace_secs;
+    conn.execute(
+        "UPDATE refresh_tokens SET revoked = 1
+         WHERE revoked = 0 AND grant_id = (
+           SELECT grant_id FROM refresh_tokens
+           WHERE id = ?1 AND revoked = 1 AND grant_id IS NOT NULL AND used_at < ?2)",
+        params![auth::sha256_hex(token_id), cutoff],
+    )
+}
+
+/// Revoke every refresh token of an OAuth grant.
+pub fn revoke_grant(conn: &Connection, grant_id: &str) -> Result<usize, rusqlite::Error> {
+    conn.execute(
+        "UPDATE refresh_tokens SET revoked = 1 WHERE grant_id = ?1 AND revoked = 0",
+        params![grant_id],
+    )
+}
+
+/// Clean up expired/revoked refresh tokens (housekeeping). A spent token of an
+/// OAuth grant stays until it would have expired, so `revoke_replayed_grant`
+/// can still recognise it.
 pub fn cleanup_expired_tokens(conn: &Connection) -> Result<usize, rusqlite::Error> {
     let now = auth::now_unix() as i64;
     let count = conn.execute(
-        "DELETE FROM refresh_tokens WHERE revoked = 1 OR expires_at <= ?1",
+        "DELETE FROM refresh_tokens
+         WHERE expires_at <= ?1 OR (revoked = 1 AND (grant_id IS NULL OR used_at IS NULL))",
         params![now],
     )?;
     Ok(count)
@@ -479,6 +540,36 @@ mod tests {
         store_refresh_token(&db.conn, "tok-old", uid, 0).unwrap();
         assert!(
             get_valid_refresh_token(&db.conn, "tok-old")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_spent_grant_token_coming_back_revokes_the_grant() {
+        let (db, _tmp) = test_db();
+        let uid = create_user(&db.conn, "user", "pass", Role::User).unwrap();
+        let future = auth::now_unix() as i64 + 86400;
+        let grant = OAuthGrant {
+            id: "g1".into(),
+            client_name: "Claude".into(),
+        };
+        store_grant_token(&db.conn, "first", uid, future, Some(&grant)).unwrap();
+        let spent = consume_refresh_token(&db.conn, "first").unwrap().unwrap();
+        assert_eq!(spent.grant.as_ref(), Some(&grant));
+        store_grant_token(&db.conn, "second", uid, future, Some(&grant)).unwrap();
+        // An app session, spent the same way, is not a grant.
+        store_refresh_token(&db.conn, "app", uid, future).unwrap();
+        consume_refresh_token(&db.conn, "app").unwrap().unwrap();
+
+        // Within the grace: a retry, nothing revoked.
+        assert_eq!(revoke_replayed_grant(&db.conn, "first", 30).unwrap(), 0);
+        assert_eq!(revoke_replayed_grant(&db.conn, "app", -1).unwrap(), 0);
+        // Spent and kept, so cleanup leaves it to be recognised.
+        cleanup_expired_tokens(&db.conn).unwrap();
+        assert_eq!(revoke_replayed_grant(&db.conn, "first", -1).unwrap(), 1);
+        assert!(
+            get_valid_refresh_token(&db.conn, "second")
                 .unwrap()
                 .is_none()
         );
