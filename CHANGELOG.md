@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Opening koan with the music paused stays silent.** The player had no way to load a track without starting the output, so restoring a paused session played it, seeked it and paused it, and a moment of the track got out before the pause. Seeking while paused had the same shape. A track can now be opened paused, and a restored session is cued at its position in one command, playing or not.
+
 ## 0.48.2
 
 ### Fixed

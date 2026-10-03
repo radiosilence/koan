@@ -324,13 +324,12 @@ pub fn run_tui(
                 .item_load_state(r.item)
                 .is_some_and(|s| matches!(s, LoadState::Ready))
             {
-                tx.send(PlayerCommand::Play(r.item)).ok();
-                if r.position_ms > 0 {
-                    tx.send(PlayerCommand::Seek(r.position_ms)).ok();
-                }
-                if !r.was_playing {
-                    tx.send(PlayerCommand::Pause).ok();
-                }
+                tx.send(PlayerCommand::Cue {
+                    id: r.item,
+                    position_ms: r.position_ms,
+                    play: r.was_playing,
+                })
+                .ok();
                 pending_restore = None;
             }
         }

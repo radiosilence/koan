@@ -3449,8 +3449,8 @@ impl KoanEngine {
     /// Load the cursor's track, seek to `position_ms`, and stop there.
     ///
     /// Setting the position atomic alone achieves nothing — the engine has not
-    /// opened the file, so the first play starts from zero. The sequence is the
-    /// TUI's: play to load and seek, then immediately pause. It waits for the
+    /// opened the file, so the first play starts from zero. The track is cued
+    /// there instead, loaded and left paused unless it was playing. It waits for the
     /// track to be Ready first, because a remote track is still downloading at
     /// this point, and gives up rather than waiting forever on one that fails.
     fn park_at(&self, id: QueueItemId, position_ms: u64, resume: bool) {
@@ -3477,17 +3477,15 @@ impl KoanEngine {
                         .item_load_state(id)
                         .is_some_and(|s| matches!(s, LoadState::Ready))
                     {
-                        let _ = tx.send(PlayerCommand::Play(id));
-                        if position_ms > 0 {
-                            let _ = tx.send(PlayerCommand::Seek(position_ms));
-                        }
                         // Whether to stay parked is decided here, not by the
                         // caller: this runs on a thread that waits for the
                         // track to become ready, so a Resume sent alongside
-                        // would land long before the Pause and be undone.
-                        if !resume {
-                            let _ = tx.send(PlayerCommand::Pause);
-                        }
+                        // would land long before the cue and be undone.
+                        let _ = tx.send(PlayerCommand::Cue {
+                            id,
+                            position_ms,
+                            play: resume,
+                        });
                         return;
                     }
                     let Some(left) = deadline.checked_duration_since(Instant::now()) else {

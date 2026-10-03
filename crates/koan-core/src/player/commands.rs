@@ -9,6 +9,15 @@ use super::state::{PlaylistItem, QueueItemId};
 pub enum PlayerCommand {
     /// Set the cursor and start playback.
     Play(QueueItemId),
+    /// Set the cursor and load `id` at `position_ms`, playing or paused.
+    ///
+    /// What a restored session does. Play, Seek and Pause in turn would start
+    /// the track from the top and let a moment of it out before the pause.
+    Cue {
+        id: QueueItemId,
+        position_ms: u64,
+        play: bool,
+    },
     Pause,
     Resume,
     Stop,
