@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.49.1
 
 ### Changed
 
@@ -10,6 +10,7 @@
 ### Fixed
 
 - **A sync whose album listing came up short no longer removes or relinks tracks.** An album deleted on the server mid-walk shifts the next page of the listing, and the album pushed out of view had its tracks treated as gone. The album itself was already checked before being removed; its tracks now wait for a listing that is whole.
+- **The start of a track at a new sample rate is no longer lost.** Switching the output device's rate makes it relock its clock, and interfaces such as Focusrite's mute until it has — about a second, during which koan was already playing. A rate change is now followed by a second of silence before the track, and the playhead waits with it. `playback.rate_switch_lead_in_ms` sets the length for a device that needs more or less; macOS only, where koan changes the device rate.
 
 ## 0.49.0
 

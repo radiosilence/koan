@@ -116,6 +116,10 @@ pub struct PlaybackConfig {
     /// Album art width in terminal columns (default: 24).
     /// Height is always width/2 (square via halfblock rendering).
     pub art_size: u16,
+    /// Silence played after the output device changes sample rate, so the
+    /// start of the track is not lost while the device relocks its clock.
+    /// How long that takes is a property of the device.
+    pub rate_switch_lead_in_ms: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +182,7 @@ impl Default for PlaybackConfig {
             fade_on_pause: true,
             output_device: None,
             art_size: 24,
+            rate_switch_lead_in_ms: 1000,
         }
     }
 }
@@ -522,6 +527,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "remote.cache_limit"
         // This machine's hardware.
         | "playback.output_device"
+        | "playback.rate_switch_lead_in_ms"
         // Which machine serves Subsonic, and as whom. Enabling a REST API is a
         // decision about one host, and the secret guarding it is per-machine.
         | "subsonic.enabled"

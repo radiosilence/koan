@@ -89,6 +89,16 @@ impl Fader {
         wanted.min(self.pos * channels.max(1))
     }
 
+    /// A callback that plays silence in place of the ring. A fade out has
+    /// nothing audible to ramp down, so it is done at once; left pending, it
+    /// would ramp through the start of the track when the silence ended.
+    pub fn hold(&mut self) {
+        if !self.control.audible.load(Ordering::Acquire) {
+            self.pos = 0;
+            self.control.silent.store(true, Ordering::Release);
+        }
+    }
+
     /// Apply the ramp to interleaved samples just read from the ring.
     pub fn apply(&mut self, samples: &mut [f32], channels: usize) {
         let rising = self.control.audible.load(Ordering::Acquire);
@@ -126,6 +136,23 @@ mod tests {
         let mut out = vec![1.0f32; wanted];
         fader.apply(&mut out, 2);
         out
+    }
+
+    #[test]
+    fn a_fade_out_over_silence_is_silent_at_once() {
+        let control = FadeControl::new();
+        let mut fader = Fader::new(control.clone(), RATE);
+        fader.hold();
+        assert!(!control.is_silent(), "holding at full level fades nothing");
+
+        control.fade_out();
+        fader.hold();
+        assert!(control.is_silent());
+        assert_eq!(
+            fader.readable(64, 2),
+            0,
+            "nothing of the track plays after the pause"
+        );
     }
 
     #[test]

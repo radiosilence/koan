@@ -145,6 +145,7 @@ stay local.
 replaygain = "off"          # off | track | album
 pre_amp_db = 0.0            # dB gain on top of ReplayGain (default: 0.0)
 fade_on_pause = true        # fade out on pause, back in on resume (default: true)
+rate_switch_lead_in_ms = 1000 # silence after a sample rate change (default: 1000)
 target_fps = 60             # TUI render rate in Hz (default: 60)
 show_fps = false            # FPS counter overlay in top-right corner (default: false)
 
@@ -168,6 +169,10 @@ ReplayGain normalizes loudness across tracks. kōan reads standard ReplayGain ta
 ### Fade on pause
 
 With `fade_on_pause`, pause ramps the output down over 150ms before the audio unit stops, and resume ramps it back up. The ramp is applied in the render callback and only while it runs; at full level samples are copied unmodified. The position rests on the last sample that was audible, not on audio consumed during the fade and discarded. Off, pause and resume cut immediately.
+
+### Rate switch lead-in
+
+When a track needs the output device at a different sample rate, the device relocks its clock, and many interfaces mute until it has. koan cannot see that happen: CoreAudio reports the new rate as soon as it is accepted, and no property says when the clock has locked. Audio sent in that window is lost, so the start of the track goes missing. `rate_switch_lead_in_ms` plays that much silence first, through the running output so devices that only relock on a live stream do so, and the playhead stays at the start until the track itself is heard. Only a rate change adds it; a resume clears it. How long the relock takes depends on the device, so the setting lives in `config.local.toml`. 0 turns it off.
 
 ### Render FPS
 

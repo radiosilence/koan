@@ -43,6 +43,8 @@ struct CallbackData {
     /// Drop spins on this to avoid tearing down while a callback is in flight.
     in_callback: Arc<AtomicBool>,
     fader: Fader,
+    /// Frames of silence still to play before the ring is read.
+    lead_in: Arc<AtomicU64>,
 }
 
 // SAFETY: `rtrb::Consumer` is `!Send` due to internal raw pointers, but our usage is
@@ -68,6 +70,7 @@ pub struct AudioEngine {
     running: Arc<AtomicBool>,
     in_callback: Arc<AtomicBool>,
     fade: Arc<FadeControl>,
+    lead_in: Arc<AtomicU64>,
 }
 
 // SAFETY: AudioEngine contains an AudioUnit (opaque C pointer) and a *mut CallbackData.
@@ -96,6 +99,8 @@ impl super::backend::AudioEngineHandle for AudioEngine {
     }
 
     fn fade_in(&self) -> std::result::Result<(), super::backend::BackendError> {
+        // A resume comes long after any rate switch the lead-in was covering.
+        self.lead_in.store(0, Ordering::Relaxed);
         if AudioEngine::is_running(self) {
             self.fade().fade_in(false);
             return Ok(());
@@ -106,6 +111,10 @@ impl super::backend::AudioEngineHandle for AudioEngine {
 
     fn is_silent(&self) -> bool {
         self.fade().is_silent()
+    }
+
+    fn lead_in(&self, frames: u64) {
+        self.lead_in.store(frames, Ordering::Relaxed);
     }
 }
 
@@ -124,6 +133,7 @@ impl AudioEngine {
         let running = Arc::new(AtomicBool::new(false));
         let in_callback = Arc::new(AtomicBool::new(false));
         let fade = FadeControl::new();
+        let lead_in = Arc::new(AtomicU64::new(0));
 
         let desc = AudioComponentDescription {
             componentType: kAudioUnitType_Output,
@@ -200,6 +210,7 @@ impl AudioEngine {
             samples_played,
             in_callback: in_callback.clone(),
             fader: Fader::new(fade.clone(), sample_rate),
+            lead_in: lead_in.clone(),
         }));
 
         let render_cb = AURenderCallbackStruct {
@@ -226,6 +237,7 @@ impl AudioEngine {
             running,
             in_callback,
             fade,
+            lead_in,
         })
     }
 
@@ -413,6 +425,35 @@ unsafe extern "C" fn render_callback(
     let out_ptr = buf.mData as *mut f32;
 
     let channels = channels as usize;
+
+    // Silence the device has to hear before the music: nothing is read from
+    // the ring and nothing counts as played, so the playhead waits with it.
+    // Taken with a compare-exchange, so a `fade_in` clearing it in between is
+    // not overwritten with what was left.
+    let frames = (total_samples / channels.max(1)) as u64;
+    let mut left = data.lead_in.load(Ordering::Relaxed);
+    let mut holding = false;
+    while left > 0 {
+        match data.lead_in.compare_exchange_weak(
+            left,
+            left.saturating_sub(frames),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => {
+                holding = true;
+                break;
+            }
+            Err(now) => left = now,
+        }
+    }
+    if holding {
+        data.fader.hold();
+        // SAFETY: `total_samples` is clamped to the buffer's own size.
+        unsafe { std::slice::from_raw_parts_mut(out_ptr, total_samples).fill(0.0) };
+        data.in_callback.store(false, Ordering::Release);
+        return 0;
+    }
     let available = data.consumer.slots();
     let to_read = available.min(data.fader.readable(total_samples, channels));
 
