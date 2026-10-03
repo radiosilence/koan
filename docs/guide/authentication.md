@@ -208,7 +208,7 @@ Refresh tokens are stored in the database as `sha256(token)`, so a database read
 
 ## Subsonic API
 
-`/rest/*` is kōan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`). Clients sign in one of three ways:
+`/rest/*` is kōan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`). Clients sign in with one of:
 
 - **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
 - **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. argon2 is expensive by design, so at most one check per core (2 to 8) runs at once and a request arriving when all are busy gets error 0, "server busy", rather than waiting. The protocol sends the password with every request, so use it only over HTTPS.

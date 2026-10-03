@@ -53,7 +53,7 @@ cargo install --path crates/koan-cli
 ```
 
 
-Single binary. macOS works out of the box (CoreAudio). Linux needs ALSA dev headers:
+Single binary. macOS needs nothing else. Linux needs the ALSA and D-Bus development headers:
 
 ```bash
 # Debian/Ubuntu
