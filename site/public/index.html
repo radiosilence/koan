@@ -37,6 +37,7 @@
       <a href="#install">Install</a>
       <a href="#setup">Set up</a>
       <a href="#features">Features</a>
+      <a href="#assistants">Assistants</a>
       <a href="https://github.com/radiosilence/koan">GitHub</a>
     </nav>
   </header>
@@ -157,7 +158,7 @@ docker exec -it koan koan subsonic setup   <span class="c"># turn on the Subsoni
       <p>A Navidrome or other Subsonic server works in the kōan server's place, for the apps and terminal UI; the web UI, share pages, linked apps and MCP are kōan's own. Local and remote tracks merge into one library, local files take priority for playback, and remote tracks stream while they download.</p>
 
       <h3>On Kubernetes</h3>
-      <p>Each release publishes a Pulumi component at the same version, <a href="https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi"><code>@radiosilence/koan-pulumi</code></a>, on GitHub Packages. It builds the Deployment, its Services and a NetworkPolicy that admits only your ingress to the API and only your MCP gateway to MCP:</p>
+      <p>Each release publishes a Pulumi component at the same version, <a href="https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi"><code>@radiosilence/koan-pulumi</code></a>, on GitHub Packages. It builds the Deployment, its Service and a NetworkPolicy that admits only your ingress:</p>
       <pre><code><span class="c"># .npmrc (GitHub Packages wants a token even for public packages)</span>
 @radiosilence:registry=https://npm.pkg.github.com</code></pre>
       <pre><code>import { createKoan } from "@radiosilence/koan-pulumi";
@@ -211,7 +212,7 @@ sift import ~/Downloads/some-album</code></pre>
       <ul>
         <li><strong>GraphQL API</strong> for full control alongside the app or TUI, or headless as a music server.</li>
         <li><strong>Subsonic-compatible API</strong>, so other Subsonic clients can play from a kōan server.</li>
-        <li><strong>MCP server</strong> (<code>koan mcp</code>) exposing the player to Claude Desktop.</li>
+        <li><strong>MCP</strong> for assistants: at <code>/mcp</code> on a server, signing in with a kōan account, or <code>koan mcp</code> for a desktop client. See <a href="#assistants">below</a>.</li>
         <li><strong>Accounts</strong> with Ed25519 JWTs, three roles and 1Password CLI integration.</li>
       </ul>
 
@@ -261,8 +262,28 @@ sift import ~/Downloads/some-album</code></pre>
         <li><strong>OpenSubsonic API.</strong> Subsonic apps such as Play:Sub, and kōan's own app and terminal UI on other machines, connect with a kōan account: by password, by token auth or with an API key.</li>
         <li><strong>Accounts.</strong> Admin, user and read-only roles, and API keys that can be revoked from the web UI.</li>
         <li><strong>Linked apps.</strong> kōan's Mac and iPhone apps keep a connection open to a kōan server, which makes each one a remote the server can drive: see what it is playing and its queue, start an album on it, queue, pause and skip. Playlist edits and library changes reach every device without a sync, and one that is away receives them when it next connects. A plain Subsonic server can only answer what an app asks.</li>
-        <li><strong>MCP.</strong> Over HTTP, behind a gateway that signs people in, so an assistant can browse the library and drive playback as that person, on any of their linked devices: "play this album on my phone", or a playlist that fills as the albums for it arrive.</li>
+        <li><strong>MCP.</strong> At <code>/mcp</code>, with the server as its own sign-in, so an assistant can browse the library and drive playback on any of the person's linked devices. See <a href="#assistants">With an assistant</a>.</li>
       </ul>
+    </section>
+
+    <section id="assistants" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
+      <h2>With an assistant</h2>
+      <p>A kōan server is an MCP server. Claude, or any assistant that speaks MCP, can search your library, build playlists and play music on your phone or computer, as you:</p>
+      <ul>
+        <li>"Play something like Polar Bear on my phone."</li>
+        <li>"What's this song? Skip to the Phace remix."</li>
+        <li>"Make me a playlist for a long drive, and add the albums it needs when they arrive."</li>
+        <li>"Pause the music on the desktop."</li>
+      </ul>
+
+      <h3>Connecting</h3>
+      <p>In Claude, open Settings → Connectors → Add custom connector and enter your server's address with <code>/mcp</code> on the end:</p>
+      <pre><code>https://music.example.com/mcp</code></pre>
+      <p>Claude opens a page on your server. Sign in with your kōan account, check that it names <code>claude.ai</code>, and allow it. Other assistants that support OAuth connect the same way, and the server's web UI has an Assistants page with the address to copy. No gateway or identity provider is involved: the server is its own sign-in, and needs <code>public_url</code> set to the address it is reached at.</p>
+
+      <h3>What it can and cannot do</h3>
+      <p>A connection acts as the account that approved it, on that account's devices and playlists. It can never move, rename or delete a file, or change where the library is. Those are refused through MCP whatever the account, because track titles and tags reach the model, and any of them could carry an instruction. An admin account connects with ordinary rights for the same reason. Its tokens work at <code>/mcp</code> and nowhere else.</p>
+      <p>Without a server, <code>koan mcp</code> runs the player on this machine for a desktop client such as Claude Desktop. The <a href="https://github.com/radiosilence/koan/blob/main/docs/guide/mcp-integration.md">MCP guide</a> covers both.</p>
     </section>
 
     <section id="docs" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
