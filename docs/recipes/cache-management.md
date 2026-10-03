@@ -33,7 +33,7 @@ cache_limit = "50GB"
 
 Eviction rules:
 - Evicts whole albums (not individual tracks), oldest last-played first
-- **Favourited tracks are never evicted** -- starring a track protects it from cache cleanup
+- Favourited tracks are never evicted
 - Eviction runs when kōan starts and again as each download lands
 - Size is calculated from the database (fast), not by scanning the filesystem
 

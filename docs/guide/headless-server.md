@@ -114,7 +114,7 @@ mutation { queueOnClientWhenAdded(artist: "Rilo Kiley", album: "Under the Blackl
 
 Every mutation takes an optional `client`, an id or name from `clients`. Without it the server picks the app that is playing, else the one that played in the last six hours, else the only one linked, and otherwise answers with the choices so the caller can ask. Track ids are the server's; an app that has not seen one syncs first, and its pages show what the sync brought in. A user sees and commands their own account's apps; an admin sees everyone's.
 
-An app is linked while it runs. iOS suspends a backgrounded app that is not playing, and the server drops a link it has not heard from in 100 seconds. The iOS app's **Stay reachable when paused** setting (Settings → Playback) keeps it running after a pause by playing silence: indefinitely on the charger, and for a chosen time on battery, since it keeps the audio hardware awake. Opening the app relinks at once.
+An app is linked while it runs. iOS suspends a backgrounded app that is not playing, and the server drops a link it has not heard from in 100 seconds. A server with [`[push]`](../reference/configuration.md#push) configured wakes a suspended phone to relink and take the command; a request to play arrives as a notification to tap, since iOS does not let an app start audio from the background. Opening the app relinks at once.
 
 ## In a container
 
@@ -171,12 +171,7 @@ export const routes = koan.routes;
 | `resources` | Requests default to 250m / 256Mi, limits to 6 CPU / 5Gi |
 | `networkPolicy` | On by default. Ingress only from `api.from` (a Traefik pod by default) plus `extraIngress`; egress to cluster DNS and the public internet, with `privateCidrs` excluded |
 
-Load-bearing behaviour:
-
-- **One replica, `Recreate`.** The index is a single SQLite database, which two pods cannot share.
-- **The database is migrated in a Job before the Deployment changes.** With persistent state, each update first runs `koan check-db` against a snapshot of the live database. If the new version's migration fails, the update stops and the old pod keeps serving.
-- **The state directory is chowned on first use.** kubelet creates a missing `hostPath` as root and koan runs as uid 1000, so an init container makes it 1000's. Turn this off with `initPermissions.enabled: false`.
-- **The root filesystem is read-only.** Artwork and lyrics caches go to an `emptyDir` and are rebuilt after a restart.
+With persistent state, each update first runs `koan check-db` in a Job against a snapshot of the live database. If the new version's migration fails there, the update stops and the old pod keeps serving. kubelet creates a missing `hostPath` as root, and koan runs as uid 1000, so an init container hands the state directory to that uid before the server starts; `initPermissions.enabled: false` turns it off. The root filesystem is read-only, and the artwork and lyrics caches live in an `emptyDir`, rebuilt after a restart.
 
 Unknown options are rejected rather than ignored, so a stack carrying options a newer package removed fails at `pulumi preview`.
 
