@@ -72,7 +72,7 @@ pub struct Found {
 /// Keyed as the dialers are.
 static FOUND: Mutex<Vec<(String, Found)>> = Mutex::new(Vec::new());
 
-/// iOS refused this app the local network: the person has not allowed it.
+/// The system refused this app the local network: the person has not allowed it.
 static BLOCKED: AtomicBool = AtomicBool::new(false);
 
 /// Bumped to have every dialer try again at once.
@@ -83,8 +83,9 @@ pub fn found() -> Vec<Found> {
     FOUND.lock().iter().map(|(_, f)| f.clone()).collect()
 }
 
-/// Whether iOS is keeping this app off the local network. The fix is the
-/// person's: Settings → Privacy & Security → Local Network.
+/// Whether the system is keeping this app off the local network. The fix is
+/// the person's: Privacy & Security → Local Network, in Settings on iOS and
+/// System Settings on macOS.
 pub fn local_network_blocked() -> bool {
     BLOCKED.load(Ordering::Relaxed)
 }
@@ -109,11 +110,23 @@ fn note(key: &str, problem: Option<String>) {
     }
 }
 
+/// Whether a failed connection is iOS keeping this app off the local network,
+/// which it reports as an unreachable host. On macOS that error means only
+/// that the address is not reachable from here: a sleeping phone, a stale
+/// link-local address.
+fn locally_refused(error: &str) -> bool {
+    let e = error.to_lowercase();
+    cfg!(target_os = "ios")
+        && (e.contains("no route to host") || e.contains("network is unreachable"))
+}
+
 /// What a failed connection means to someone looking at the picker.
 fn explain(error: &str) -> String {
     let e = error.to_lowercase();
-    if e.contains("no route to host") || e.contains("network is unreachable") {
+    if locally_refused(error) {
         "Blocked: allow Local Network for kōan in Settings".into()
+    } else if e.contains("no route to host") || e.contains("network is unreachable") {
+        "Not reachable from this network".into()
     } else if e.contains("refused") {
         "Not accepting connections. Is kōan open there, and discoverable?".into()
     } else if e.contains("timed out") || e.contains("would block") {
@@ -580,11 +593,10 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>) {
             }
             Err(e) => {
                 log::debug!("nearby: {addr}: {e}");
-                let problem = explain(&e);
-                if problem.starts_with("Blocked") {
+                if locally_refused(&e) {
                     set_blocked(true);
                 }
-                note(&key, Some(problem));
+                note(&key, Some(explain(&e)));
             }
         }
         let redials = REDIAL.load(Ordering::Relaxed);
@@ -975,8 +987,8 @@ mod bonjour {
         }
     }
 
-    /// What the responder answers when iOS has not let this app onto the
-    /// local network.
+    /// What the responder answers when the system has not let this app onto
+    /// the local network.
     const POLICY_DENIED: i32 = -65570;
 
     static BROWSE_ERR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);

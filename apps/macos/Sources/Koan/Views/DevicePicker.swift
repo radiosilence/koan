@@ -205,14 +205,23 @@ private struct DeviceChoiceRow: View {
     }
 }
 
-/// iOS keeps an app off the local network until the person allows it, and
-/// says nothing otherwise: without this the picker would just be empty.
+enum LocalNetwork {
+    #if os(iOS)
+    static let settings = "Settings"
+    #else
+    static let settings = "System Settings"
+    #endif
+    static let blocked = "Blocked. Allow Local Network for kōan in \(settings) → Privacy & Security."
+}
+
+/// The system keeps an app off the local network until the person allows it,
+/// and says nothing otherwise: without this the picker would just be empty.
 private struct LocalNetworkBlocked: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("kōan can't see this network", systemImage: "wifi.exclamationmark")
                 .font(.callout.weight(.medium))
-            Text("Allow Local Network for kōan in Settings → Privacy & Security to find devices here.")
+            Text("Allow Local Network for kōan in \(LocalNetwork.settings) → Privacy & Security to find devices here.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
