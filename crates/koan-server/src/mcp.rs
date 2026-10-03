@@ -48,8 +48,9 @@ pub struct KoanMcpServer {
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     graphql_schema: crate::graphql::KoanSchema,
-    /// Served over HTTP: a server whose music plays on the devices linked to it.
-    http: bool,
+    /// A headless server: its own player is heard by nobody, and the music
+    /// plays on the devices linked to it.
+    headless: bool,
 }
 
 impl KoanMcpServer {
@@ -58,11 +59,11 @@ impl KoanMcpServer {
         cmd_tx: Sender<PlayerCommand>,
         pool: Arc<koan_core::db::pool::Pool>,
     ) -> Self {
-        let graphql_schema = crate::graphql::build_schema(state, cmd_tx, pool, None);
+        let graphql_schema = crate::graphql::build_schema_extended(state, cmd_tx, pool, Denylist);
         Self {
             tool_router: Self::tool_router(),
             graphql_schema,
-            http: false,
+            headless: false,
         }
     }
 
@@ -99,6 +100,41 @@ fn mcp_role() -> koan_core::auth::Role {
         koan_core::auth::Role::Admin
     } else {
         koan_core::auth::Role::User
+    }
+}
+
+/// Mutations the MCP never runs, whoever is calling and at whatever role,
+/// `KOAN_MCP_ADMIN` included: everything that moves or rewrites files on disk,
+/// and the config that says where the library is. A model that has been
+/// misled, or is simply wrong, can then lose nobody any music. GraphQL itself
+/// still offers them to an admin.
+pub const DENIED_MUTATIONS: &[&str] = &["organizeExecute", "organizeUndo", "updateConfig"];
+
+/// Refuses `DENIED_MUTATIONS` as they resolve, so no alias, fragment or
+/// variable spelling of the query gets past it.
+struct Denylist;
+
+impl async_graphql::extensions::ExtensionFactory for Denylist {
+    fn create(&self) -> Arc<dyn async_graphql::extensions::Extension> {
+        Arc::new(Denylist)
+    }
+}
+
+#[async_trait::async_trait]
+impl async_graphql::extensions::Extension for Denylist {
+    async fn resolve(
+        &self,
+        ctx: &async_graphql::extensions::ExtensionContext<'_>,
+        info: async_graphql::extensions::ResolveInfo<'_>,
+        next: async_graphql::extensions::NextResolve<'_>,
+    ) -> async_graphql::ServerResult<Option<async_graphql::Value>> {
+        if info.parent_type == "MutationRoot" && DENIED_MUTATIONS.contains(&info.name) {
+            return Err(async_graphql::ServerError::new(
+                format!("{} is not available through MCP", info.name),
+                None,
+            ));
+        }
+        next.run(ctx, info).await
     }
 }
 
@@ -167,7 +203,7 @@ impl ServerHandler for KoanMcpServer {
         // Over HTTP this is a server: its own player is headless and nobody
         // hears it, and what the user listens to is the apps linked to it. On
         // stdio it is the user's own machine, and its player is the music.
-        let instructions = if self.http {
+        let instructions = if self.headless {
             SERVER_INSTRUCTIONS
         } else {
             LOCAL_INSTRUCTIONS
@@ -239,7 +275,8 @@ integers in queries; pass them to the client mutations as strings.
 account; confirm with the user first. `shares`, `updateShare`, `deleteShare` manage them.
 
 ## Not available
-`organize*` (moves files on disk), `updateConfig` and `triggerScan` are refused unless \
+`organizeExecute`, `organizeUndo` (move files on disk) and `updateConfig` are never run \
+through MCP. Other admin mutations (`triggerScan`, user management) are refused unless \
 `KOAN_MCP_ADMIN=1` is set.";
 
 const LOCAL_INSTRUCTIONS: &str = "kōan is the user's music player on this machine and their \
@@ -262,8 +299,8 @@ duration, favourites), `randomTracks`, `similarArtists`, `similarTracks`, `fuzzy
 - Sharing: `createShare(trackIds, description)` makes a public link; confirm with the user first.
 
 ## Not available
-`organize*` (moves files on disk), `updateConfig`, `triggerScan` and `setDevice` are refused \
-unless `KOAN_MCP_ADMIN=1` is set.
+`organizeExecute`, `organizeUndo` (move files on disk) and `updateConfig` are never run \
+through MCP. `triggerScan` and `setDevice` are refused unless `KOAN_MCP_ADMIN=1` is set.
 
 ## IDs
 Track IDs are integers from the library; queue item IDs are UUIDs from the queue.";
@@ -281,17 +318,22 @@ pub fn router(
     cmd_tx: Sender<PlayerCommand>,
     auth: crate::auth::middleware::AuthState,
     public_url: Option<String>,
+    headless: bool,
+    shutdown: tokio_util::sync::CancellationToken,
 ) -> axum::Router {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
     let mut template = KoanMcpServer::new(state, cmd_tx, auth.pool.clone());
-    template.http = true;
+    template.headless = headless;
     let service = StreamableHttpService::new(
         move || Ok(template.clone()),
         Arc::new(LocalSessionManager::default()),
-        // The main app's Host guard has already checked the Host.
-        StreamableHttpServerConfig::default().disable_allowed_hosts(),
+        // The main app's Host guard has already checked the Host. Cancelled at
+        // shutdown, so open event streams end rather than hold it up.
+        StreamableHttpServerConfig::default()
+            .disable_allowed_hosts()
+            .with_cancellation_token(shutdown),
     );
     // No request timeout: a session's GET is an event stream that stays open.
     axum::Router::new()
@@ -344,7 +386,14 @@ async fn bearer_gate(
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .and_then(|t| koan_core::auth::validate_access_token(&auth.public_pem, t).ok());
+            .and_then(|t| {
+                koan_core::auth::validate_scoped_token(
+                    &auth.public_pem,
+                    t,
+                    Some(koan_core::auth::MCP_SCOPE),
+                )
+                .ok()
+            });
         match token {
             Some(claims) => crate::auth::current_user(&auth.pool, claims).await,
             None => None,
@@ -472,7 +521,14 @@ mod tests {
             introspection_key: None,
             pool: Arc::new(koan_core::db::pool::Pool::new(tmp.path().join("test.db"))),
         };
-        let app = router(SharedPlayerState::new(), ch.tx.clone(), auth, None);
+        let app = router(
+            SharedPlayerState::new(),
+            ch.tx.clone(),
+            auth,
+            None,
+            true,
+            Default::default(),
+        );
         let req = |accept: &str| {
             axum::http::Request::get("/mcp")
                 .header(axum::http::header::ACCEPT, accept)
@@ -483,6 +539,28 @@ mod tests {
         assert_eq!(r.headers()[axum::http::header::LOCATION], "/connect");
         let r = app.oneshot(req("text/event-stream")).await.unwrap();
         assert_eq!(r.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mutations_that_touch_files_are_refused_whoever_asks() {
+        use koan_core::auth::Role;
+        let (server, _ch, _tmp) = test_server();
+        let admin = as_user(AuthUser {
+            user_id: 1,
+            username: "owner".into(),
+            role: Role::Admin,
+        });
+        let Json(resp) = server
+            .graphql(
+                Parameters(GraphqlParams {
+                    query: "mutation { undo: organizeUndo { ok } }".into(),
+                    variables: None,
+                }),
+                admin,
+            )
+            .await;
+        let errors = resp.result["errors"].to_string();
+        assert!(errors.contains("not available through MCP"), "{errors}");
     }
 
     fn insert_test_track(db_path: &std::path::Path, title: &str, artist: &str, album: &str) -> i64 {

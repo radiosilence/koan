@@ -559,12 +559,14 @@ pub(crate) fn rotate(
         }
     };
 
-    let access_token = match auth::mint_access_token(
+    // A grant's tokens stay as narrow as the grant.
+    let access_token = match auth::mint_scoped_token(
         &state.private_pem,
         user.id,
         &user.username,
         user.role,
         state.access_ttl_secs,
+        token.grant.as_ref().map(|_| auth::MCP_SCOPE),
     ) {
         Ok(t) => t,
         Err(e) => {

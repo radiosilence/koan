@@ -13,6 +13,7 @@ categories = ["multimedia::audio"]
 async-graphql = { version = "7", features = ["dataloader"] }
 async-graphql-axum = "7"
 async-stream = "0.3"
+async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.23"
 crossbeam-channel = "0.5"

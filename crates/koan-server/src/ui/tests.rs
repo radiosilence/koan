@@ -930,10 +930,22 @@ mod oauth {
         let r = token(&f, &exchange).await;
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
         let t = json(&r);
+        // Good at /mcp and nowhere else.
+        let access = t["access_token"].as_str().unwrap();
         let claims =
-            auth::validate_access_token(&f.state.public_pem, t["access_token"].as_str().unwrap())
+            auth::validate_scoped_token(&f.state.public_pem, access, Some(auth::MCP_SCOPE))
                 .unwrap();
         assert_eq!(claims.username, "alice");
+        assert!(auth::validate_access_token(&f.state.public_pem, access).is_err());
+        let r = send(
+            &f.app,
+            get("/albums")
+                .header(header::COOKIE, format!("koan_access={access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_ne!(r.status, StatusCode::OK);
         let refresh = t["refresh_token"].as_str().unwrap().to_owned();
 
         let r = token(
@@ -946,6 +958,8 @@ mod oauth {
         )
         .await;
         assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        let refreshed = json(&r)["access_token"].as_str().unwrap().to_owned();
+        assert!(auth::validate_access_token(&f.state.public_pem, &refreshed).is_err());
         let rotated = json(&r)["refresh_token"].as_str().unwrap().to_owned();
 
         // The code again: refused, and the grant it made is revoked.
@@ -960,6 +974,38 @@ mod oauth {
         )
         .await;
         assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn a_redirect_uri_is_matched_as_registered_and_may_be_left_out() {
+        let f = setup_at(true, Some(ORIGIN));
+        // Re-serialised, this gains a trailing slash.
+        let registered = "http://localhost:33418";
+        let reg = register(&f, registered).await;
+        let client_id = json(&reg)["client_id"].as_str().unwrap().to_owned();
+        let challenge = challenge();
+        for given in ["", registered] {
+            let mut params = authorize_params(&client_id, &challenge);
+            params[2] = ("redirect_uri", given);
+            let uri = format!("/oauth/authorize?{}", query(&params));
+            let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+            let r = approve(&f, &params, ORIGIN).await;
+            assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+            let code = code_of(r.location());
+            let r = token(
+                &f,
+                &[
+                    ("grant_type", "authorization_code"),
+                    ("code", code.as_str()),
+                    ("redirect_uri", given),
+                    ("client_id", client_id.as_str()),
+                    ("code_verifier", VERIFIER),
+                ],
+            )
+            .await;
+            assert_eq!(r.status, StatusCode::OK, "{given:?}: {}", r.body);
+        }
     }
 
     #[tokio::test]

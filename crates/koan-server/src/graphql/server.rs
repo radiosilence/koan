@@ -56,6 +56,7 @@ pub fn cmd_serve(
         subsonic_port,
         playground,
         viz: None, // headless — no viz analyzer
+        headless: true,
     }) {
         eprintln!("koan: {}", e);
         std::process::exit(1);
@@ -136,6 +137,8 @@ pub struct ApiServerOpts {
     pub subsonic_port: Option<u16>,
     pub playground: bool,
     pub viz: Option<Arc<VizSnapshot>>,
+    /// No TUI or app: the player here is heard by nobody.
+    pub headless: bool,
 }
 
 /// Run the GraphQL (+ optional Subsonic) API server, blocking the current thread.
@@ -153,6 +156,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         subsonic_port,
         playground,
         viz,
+        headless,
     } = opts;
     use axum::routing::{get, post};
 
@@ -220,11 +224,14 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         login_limiter: Arc::new(RateLimiter::default()),
     };
 
+    let shutdown = tokio_util::sync::CancellationToken::new();
     let mcp_routes = crate::mcp::router(
         state.clone(),
         cmd_tx.clone(),
         auth_state.clone(),
         cfg.sharing.public_url.clone(),
+        headless,
+        shutdown.clone(),
     );
     let schema = build_schema(state, cmd_tx, pool.clone(), viz);
 
@@ -387,7 +394,10 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             gql_listener,
             app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
         )
-        .with_graceful_shutdown(shutdown_signal());
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            shutdown.cancel();
+        });
 
         // `--subsonic <port>` set to something other than the GraphQL port adds
         // a dedicated Subsonic listener.
@@ -456,6 +466,7 @@ pub fn start_api_background(
         subsonic_port,
         playground,
         viz: None,
+        headless: false,
     }) {
         log::error!("API server not started: {}", e);
     }

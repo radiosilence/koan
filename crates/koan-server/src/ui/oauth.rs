@@ -56,7 +56,11 @@ pub const RESOURCE_METADATA: &str = "/.well-known/oauth-protected-resource/mcp";
 pub(super) struct Code {
     client_id: String,
     client_name: String,
+    /// As registered: compared as a string, never re-serialised.
     redirect_uri: String,
+    /// Whether the authorization request named it, which decides whether the
+    /// token request must (RFC 6749 §4.1.3).
+    redirect_given: bool,
     challenge: String,
     user_id: i64,
     expires: u64,
@@ -242,7 +246,8 @@ fn resource_ok(base: &str, resource: &str) -> bool {
 /// An authorization request this server will answer: a client it registered,
 /// and one of that client's own redirect URIs. Until both hold, a failure is a
 /// page here, never a redirect, or this would bounce users to any address.
-fn check(s: &UiState, q: &AuthorizeParams) -> Result<(String, Client, Url), Box<Response>> {
+/// The client's registered redirect URI is returned as the string it registered.
+fn check(s: &UiState, q: &AuthorizeParams) -> Result<(String, Client, String, Url), Box<Response>> {
     let refuse = |why: &str| {
         Box::new(html(
             StatusCode::BAD_REQUEST,
@@ -262,7 +267,7 @@ fn check(s: &UiState, q: &AuthorizeParams) -> Result<(String, Client, Url), Box<
         ));
     }
     let url = Url::parse(&uri).map_err(|_| refuse("This app's return address is not valid."))?;
-    Ok((base, c, url))
+    Ok((base, c, uri, url))
 }
 
 /// The answer to an authorization request whose client and redirect URI hold:
@@ -325,7 +330,7 @@ pub(super) async fn authorize(
     Extension(user): Extension<AuthUser>,
     Query(q): Query<AuthorizeParams>,
 ) -> Response {
-    let (base, c, to) = match check(&s, &q) {
+    let (base, c, _, to) = match check(&s, &q) {
         Ok(v) => v,
         Err(r) => return *r,
     };
@@ -346,7 +351,7 @@ pub(super) async fn authorize(
     let fields = [
         hidden("response_type", &q.response_type),
         hidden("client_id", &q.client_id),
-        hidden("redirect_uri", to.as_str()),
+        hidden("redirect_uri", &q.redirect_uri),
         hidden("code_challenge", &q.code_challenge),
         hidden("code_challenge_method", &q.code_challenge_method),
         hidden("state", &q.state),
@@ -359,7 +364,7 @@ pub(super) async fn authorize(
         serde_urlencoded_pairs(&[
             ("response_type", &q.response_type),
             ("client_id", &q.client_id),
-            ("redirect_uri", to.as_str()),
+            ("redirect_uri", &q.redirect_uri),
             ("code_challenge", &q.code_challenge),
             ("code_challenge_method", &q.code_challenge_method),
             ("state", &q.state),
@@ -413,7 +418,7 @@ pub(super) async fn approve(
     if !super::session::same_origin(&headers) {
         return (StatusCode::FORBIDDEN, "cross-site request refused").into_response();
     }
-    let (base, c, to) = match check(&s, &q) {
+    let (base, c, uri, to) = match check(&s, &q) {
         Ok(v) => v,
         Err(r) => return *r,
     };
@@ -440,7 +445,8 @@ pub(super) async fn approve(
             Code {
                 client_id: q.client_id.clone(),
                 client_name: c.client_name,
-                redirect_uri: to.to_string(),
+                redirect_uri: uri,
+                redirect_given: !q.redirect_uri.is_empty(),
                 challenge: q.code_challenge.clone(),
                 user_id: user.user_id,
                 expires: now + CODE_TTL_SECS,
@@ -496,7 +502,8 @@ fn exchange(s: &UiState, t: &TokenRequest) -> Exchange {
     let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(Sha256::digest(t.code_verifier.as_bytes()));
     if code.client_id != t.client_id
-        || code.redirect_uri != t.redirect_uri
+        || !(t.redirect_uri == code.redirect_uri
+            || !code.redirect_given && t.redirect_uri.is_empty())
         || challenge != code.challenge
     {
         return Exchange::Refused;
@@ -559,12 +566,13 @@ pub(super) async fn token(State(s): State<UiState>, Form(t): Form<TokenRequest>)
             let issued = tokio::task::spawn_blocking(move || {
                 let db = open(&st.pool)?;
                 let user = auth_queries::get_user_by_id(&db.conn, user_id).ok()??;
-                let access = auth::mint_access_token(
+                let access = auth::mint_scoped_token(
                     &st.auth.private_pem,
                     user.id,
                     &user.username,
                     user.role,
                     st.auth.access_ttl_secs,
+                    Some(auth::MCP_SCOPE),
                 )
                 .ok()?;
                 let refresh = auth::random_token().ok()?;

@@ -13,7 +13,9 @@ The server is its own OAuth authorization server, so nothing else is needed in f
 
 What a connection can do:
 
-- It acts as the account that approved it, at that account's role, except that an admin account acts as `user`. Track titles, tags and share descriptions reach the model and any of them can carry an instruction; capped, a model cannot be talked into moving files or rewriting config. `KOAN_MCP_ADMIN=1` lifts the cap.
+- It acts as the account that approved it, at that account's role, except that an admin account acts as `user`; `KOAN_MCP_ADMIN=1` lifts that cap.
+- Whatever the role, MCP never runs `organizeExecute`, `organizeUndo` or `updateConfig`: nothing reached through it can move, rename or delete a file, or change where the library is. Track titles, tags and share descriptions reach the model, and any of them can carry an instruction. GraphQL still offers those mutations to admins, for tools that manage the library.
+- Its tokens are good at `/mcp` only. GraphQL and the web UI refuse them, so the limits above cannot be stepped round by presenting the same token elsewhere.
 - Any client may register, under any name it likes. The consent page names a client by the host it returns to, which is the part that cannot be faked: approve only a connection you started, for a host you recognise. `mcp.redirect_hosts` limits registration to the hosts listed (plus this machine, for desktop clients):
 
 ```toml
@@ -88,4 +90,4 @@ Claude chains GraphQL operations: "find all my 90s electronic albums, pick one a
 
 ## How it differs from the GraphQL API
 
-The MCP server executes GraphQL in-process against the same schema as the [GraphQL API](graphql-api.md). `koan mcp` serves it over stdio at `user` role, so the mutations that move files, rewrite config, trigger scans or change the output device are refused unless `KOAN_MCP_ADMIN=1` is set (see [In-process access](authentication.md#in-process-access)). A server's `/mcp` acts as the signed-in account, capped the same way.
+The MCP server executes GraphQL in-process against the same schema as the [GraphQL API](graphql-api.md). `koan mcp` serves it over stdio at `user` role, so the mutations that trigger scans or change the output device are refused unless `KOAN_MCP_ADMIN=1` is set, and those that move files or rewrite config are refused always (see [In-process access](authentication.md#in-process-access)). A server's `/mcp` acts as the signed-in account, capped the same way.
