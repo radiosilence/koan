@@ -74,8 +74,22 @@ struct AppState {
     http: reqwest::Client,
     /// The web UI's cover cache, so every front end reads one set of renders.
     covers: Arc<crate::covers::Covers>,
-    /// `getIndexes`'s `lastModified`, and the library it was read from.
-    last_modified: parking_lot::Mutex<Option<(u64, i64)>>,
+    /// What `getIndexes`'s `lastModified` was last worked out from.
+    last_modified: parking_lot::Mutex<Option<LibraryModified>>,
+}
+
+/// When the library last changed, as far as this process has seen.
+#[derive(Clone, Copy)]
+struct LibraryModified {
+    fingerprint: u64,
+    /// The five-minute window `newest_file` was read in.
+    window: u64,
+    /// The newest track file's mtime, in milliseconds.
+    newest_file: i64,
+    /// When the fingerprint was last seen to change, in milliseconds. The
+    /// first reading in a process counts as a change, since what changed while
+    /// it was down cannot be known: a restart has clients walk once.
+    changed: i64,
 }
 
 impl AppState {
@@ -85,7 +99,11 @@ impl AppState {
             .map_err(|e| SubsonicError::from(e.to_string()))
     }
 
-    /// When a track file last changed, in milliseconds.
+    /// When the library last changed, in milliseconds: the later of the
+    /// newest track file and the last time a track, album or artist was added
+    /// or removed. Clients that keep a copy of the library — koan's own among
+    /// them — compare it with what they last walked, so it has to move for a
+    /// deletion too, which no file's mtime records.
     ///
     /// `MAX(mtime)` reads every track, and clients poll `getIndexes`. Read
     /// again when the library's rows change, and every five minutes for a file
@@ -93,18 +111,19 @@ impl AppState {
     fn last_modified(&self, db: &Database) -> Result<i64, SubsonicError> {
         let internal =
             |e: koan_core::db::connection::DbError| SubsonicError::internal(e.to_string());
-        let window = std::time::SystemTime::now()
+        let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            / 300;
-        let key = queries::library_fingerprint(&db.conn).map_err(internal)? ^ window;
-        if let Some((at, value)) = *self.last_modified.lock()
-            && at == key
+            .unwrap_or_default();
+        let window = now.as_secs() / 300;
+        let fingerprint = queries::library_fingerprint(&db.conn).map_err(internal)?;
+        let held = *self.last_modified.lock();
+        if let Some(h) = held
+            && h.fingerprint == fingerprint
+            && h.window == window
         {
-            return Ok(value);
+            return Ok(h.newest_file.max(h.changed));
         }
-        let value: i64 = db
+        let newest_file: i64 = db
             .conn
             .query_row(
                 "SELECT COALESCE(MAX(mtime), 0) * 1000 FROM tracks",
@@ -112,8 +131,17 @@ impl AppState {
                 |r| r.get(0),
             )
             .map_err(|e| SubsonicError::internal(e.to_string()))?;
-        *self.last_modified.lock() = Some((key, value));
-        Ok(value)
+        let changed = match held {
+            Some(h) if h.fingerprint == fingerprint => h.changed,
+            _ => now.as_millis() as i64,
+        };
+        *self.last_modified.lock() = Some(LibraryModified {
+            fingerprint,
+            window,
+            newest_file,
+            changed,
+        });
+        Ok(newest_file.max(changed))
     }
 }
 
@@ -1731,15 +1759,34 @@ async fn get_artists(
 /// The file-browse counterpart of `getArtists`. DSub and every folder-oriented
 /// client enumerate the library through this and `getMusicDirectory`, so
 /// without them they see an empty server.
+#[derive(Debug, Default, Deserialize)]
+struct IndexesParams {
+    #[serde(rename = "ifModifiedSince")]
+    if_modified_since: Option<i64>,
+}
+
 async fn get_indexes(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
+    Query(indexes): Query<IndexesParams>,
 ) -> Response {
     offload_response(move || {
         respond_db(&state, &params, |db, b| {
+            let last_modified = state.last_modified(db)?;
+            // Nothing changed since the caller last looked: the timestamp
+            // alone, which is all a client checking for changes reads.
+            if indexes
+                .if_modified_since
+                .is_some_and(|since| since >= last_modified)
+            {
+                return Ok(b.child(
+                    XmlNode::new("indexes")
+                        .attr_int("lastModified", last_modified)
+                        .attr("ignoredArticles", IGNORED_ARTICLES),
+                ));
+            }
             let index_map = artist_index(db)?;
             let uids = Uids::load(db, index_map.values().flatten().map(|a| a.id), [], [])?;
-            let last_modified = state.last_modified(db)?;
 
             let mut indexes_node = XmlNode::new("indexes")
                 .attr_int("lastModified", last_modified)
@@ -5185,6 +5232,54 @@ mod tests {
         let (_, body) = get_response(app, &format!("/rest/getScanStatus?{}", auth_query(""))).await;
         assert!(body.contains("scanning=\"false\""));
         assert!(body.contains("count=\"1\""));
+    }
+
+    /// A client keeping a copy of the library asks whether it moved; a
+    /// deletion has to move it, though it touches no file.
+    #[tokio::test]
+    async fn get_indexes_says_when_the_library_moved() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let modified = |body: &str| -> i64 {
+            let at = body.find("lastModified=\"").unwrap() + "lastModified=\"".len();
+            body[at..].split('"').next().unwrap().parse().unwrap()
+        };
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(app, &format!("/rest/getIndexes?{}", auth_query(""))).await;
+        let first = modified(&body);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/getIndexes?{}&ifModifiedSince={first}",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert_eq!(modified(&body), first);
+        assert!(!body.contains("<artist"), "unchanged: the timestamp alone");
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let db = Database::open(state.pool.path()).unwrap();
+        db.conn
+            .execute(
+                "DELETE FROM tracks WHERE id = (SELECT MAX(id) FROM tracks)",
+                [],
+            )
+            .unwrap();
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/getIndexes?{}&ifModifiedSince={first}",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert!(modified(&body) > first, "a deletion moves it");
     }
 
     #[tokio::test]

@@ -25,7 +25,7 @@ pub fn cmd_remote_login(url: &str, username: &str) {
     println!("{}", "password stored in the OS credential store".green());
 }
 
-pub fn cmd_remote_sync(full: bool) {
+pub fn cmd_remote_sync() {
     let cfg = config::Config::load().unwrap_or_default();
     let client = match koan_core::helpers::subsonic_client(&cfg) {
         Some(c) => c,
@@ -45,7 +45,7 @@ pub fn cmd_remote_sync(full: bool) {
     let synced = match koan_core::helpers::sync_remote(
         &db,
         &client,
-        full,
+        koan_core::helpers::Walk::Always,
         &cfg.remote.url,
         &cfg.remote.username,
         &draw_progress,

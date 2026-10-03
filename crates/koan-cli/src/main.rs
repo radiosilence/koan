@@ -250,8 +250,8 @@ enum RemoteCommands {
     },
     /// Sync remote library to local database
     Sync {
-        /// Force a full sync instead of incremental
-        #[arg(long)]
+        /// Accepted and ignored: every sync walks the whole library.
+        #[arg(long, hide = true)]
         full: bool,
     },
     /// Show remote server status
@@ -487,7 +487,7 @@ fn main() {
         },
         Some(Commands::Remote(sub)) => match sub {
             RemoteCommands::Login { url, username } => commands::cmd_remote_login(&url, &username),
-            RemoteCommands::Sync { full } => commands::cmd_remote_sync(full),
+            RemoteCommands::Sync { .. } => commands::cmd_remote_sync(),
             RemoteCommands::Status => commands::cmd_remote_status(),
         },
         Some(Commands::Cache(sub)) => match sub {

@@ -53,5 +53,4 @@ enum Icon {
     static let rescan = "arrow.clockwise"
     static let rescanAll = "arrow.clockwise.circle"
     static let sync = "arrow.triangle.2.circlepath"
-    static let syncAll = "arrow.triangle.2.circlepath.circle"
 }

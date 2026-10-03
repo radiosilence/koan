@@ -2206,9 +2206,10 @@ impl KoanEngine {
         offload::offload(move || self.scan_blocking(force, reporter)).await
     }
 
-    /// Pull the remote library into the local database. Long and network-bound.
-    /// `full` ignores the incremental cursor and re-walks every album.
-    pub async fn sync_remote(self: Arc<Self>, full: bool) -> Result<SyncSummary, KoanError> {
+    /// Pull the remote library into the local database: walk it, then
+    /// reconcile favourites and playlists. Long and network-bound. What the
+    /// Sync button does — koan's own syncs go by `Walk::IfChanged`.
+    pub async fn sync_remote(self: Arc<Self>) -> Result<SyncSummary, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
             let cfg = Config::load().unwrap_or_default();
@@ -2222,7 +2223,7 @@ impl KoanEngine {
             let synced = koan_core::helpers::sync_remote(
                 &db,
                 &client,
-                full,
+                koan_core::helpers::Walk::Always,
                 &cfg.remote.url,
                 &cfg.remote.username,
                 &|p| meter.set(p),
@@ -3766,7 +3767,12 @@ impl KoanEngine {
                 Ok(())
             }),
             LinkCommand::Sync { full } => self.db().map(|db| {
-                koan_core::remote::link::sync(&db, full);
+                let walk = if full {
+                    koan_core::helpers::Walk::Always
+                } else {
+                    koan_core::helpers::Walk::IfChanged
+                };
+                koan_core::remote::link::sync(&db, walk);
                 self.library_changed();
             }),
             LinkCommand::Radio { enabled } => {

@@ -306,12 +306,8 @@ private struct RemoteSettings: View {
                         // out is a config write, and greying it out while a
                         // sync runs strands you on a server you are trying to
                         // leave.
-                        Group {
-                            Button("Sync Now") { model.syncNow(full: false) }
-                            Button("Full Sync") { model.syncNow(full: true) }
-                                .help("Walk the whole library rather than only what changed")
-                        }
-                        .disabled(activity.conflicts(with: [.remoteTracks]))
+                        Button("Sync") { model.syncNow() }
+                            .disabled(activity.conflicts(with: [.remoteTracks]))
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                     }

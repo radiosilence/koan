@@ -212,17 +212,19 @@ pub fn spawn_library_watch(
 
 /// Keep the library in step with the server, without being asked.
 ///
-/// One sync shortly after startup, then every `auto_sync_interval_mins`. Always
-/// incremental: it asks the server what changed rather than walking the whole
-/// library, which is what makes it cheap enough to run unattended. A full sync
-/// stays a deliberate action.
+/// One sync shortly after startup, then every `auto_sync_interval_mins` for a
+/// server that cannot say when it changes. A koan server can: it sends every
+/// linked app a sync when its library or a playlist moves, and queues one for
+/// an app that was away, so a timer would only ask a question already
+/// answered. Each run walks the library only if the server says it moved —
+/// see `Walk::IfChanged` — which is what makes it cheap enough to run
+/// unattended.
 ///
 /// The startup run is delayed a few seconds so it is not competing with the
 /// first frame and the first track for the disk.
 ///
 /// `on_state` reports whether a sync is running, so a UI can say so rather than
-/// appearing to do nothing, and `on_progress` how far it has got. The first
-/// sync against a server has no watermark and walks the whole library.
+/// appearing to do nothing, and `on_progress` how far it has got.
 pub fn spawn_auto_sync(
     db_path: std::path::PathBuf,
     on_state: impl Fn(bool) + Send + 'static,
@@ -250,7 +252,7 @@ pub fn spawn_auto_sync(
                     match sync_remote(
                         &db,
                         &client,
-                        false,
+                        Walk::IfChanged,
                         &cfg.remote.url,
                         &cfg.remote.username,
                         &on_progress,
@@ -272,10 +274,18 @@ pub fn spawn_auto_sync(
                     on_state(false);
                 }
 
-                match cfg.remote.auto_sync_interval_mins {
-                    // Once at startup and no more.
-                    0 => return,
-                    mins => std::thread::sleep(std::time::Duration::from_secs(mins * 60)),
+                // Once at startup and no more, or on the interval. A koan
+                // server's own syncs make the interval redundant; it is still
+                // slept, since the server signed in to can change.
+                let mins = cfg.remote.auto_sync_interval_mins;
+                if mins == 0 {
+                    return;
+                }
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(mins * 60));
+                    if !crate::remote::profile::current().is_some_and(|p| p.links()) {
+                        break;
+                    }
                 }
             }
         })
@@ -772,10 +782,21 @@ pub fn sync_favourite_to_remote(db: &Database, path: &Path, star: bool) {
 
 /// Everything a sync is.
 #[derive(Debug, Default)]
-pub struct FullSync {
+pub struct Synced {
     pub library: crate::remote::sync::SyncResult,
     pub favourites: FavouriteSync,
     pub playlists: crate::playlists::PlaylistSync,
+}
+
+/// Whether a sync walks the server's library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Walk {
+    /// Somebody asked: walk it, whatever the server says.
+    Always,
+    /// On koan's own account — a server saying something changed, a timer, a
+    /// favourite on another device: walk it only if the server's library has
+    /// moved since the last complete walk.
+    IfChanged,
 }
 
 /// Pull the library, then reconcile favourites and playlists.
@@ -785,22 +806,46 @@ pub struct FullSync {
 ///
 /// The library comes first: favourites and playlists both name tracks by the
 /// server's ids, and neither can find a track the library has not seen yet.
+/// Walking it is most of a sync's cost — fifty thousand tracks written for
+/// every walk — so `Walk::IfChanged` asks the server first. Its version is
+/// read before the walk, so a change landing mid-walk leaves it newer than
+/// what is recorded, and the next sync walks again. Favourites and playlists
+/// are a request or two each, and are reconciled every time.
 pub fn sync_remote(
     db: &Database,
     client: &SubsonicClient,
-    full: bool,
+    walk: Walk,
     url: &str,
     username: &str,
     progress: &(dyn Fn(crate::remote::sync::SyncProgress) + Sync),
-) -> Result<FullSync, crate::remote::sync::SyncError> {
+) -> Result<Synced, crate::remote::sync::SyncError> {
+    use crate::remote::sync;
     // One at a time. An automatic sync still reconciling favourites when a
-    // full sync was asked for wrote under it, and each fought the other for
-    // the write lock. The second waits for the first, and then has little
-    // left to do.
+    // sync was asked for wrote under it, and each fought the other for the
+    // write lock. The second waits for the first, and then has little left
+    // to do.
     static SYNCING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
     let _one_at_a_time = SYNCING.lock();
-    let library = crate::remote::sync::sync_library(db, client, full, url, username, progress)?;
-    Ok(FullSync {
+
+    let walked = sync::library_version(db, url);
+    let version = client
+        .library_modified(walked)
+        .inspect_err(|e| log::debug!("library version unavailable: {e}"))
+        .ok()
+        .flatten();
+    let library = if walk == Walk::IfChanged && version.is_some() && version == walked {
+        log::info!("library unchanged on the server; not walked");
+        sync::SyncResult::default()
+    } else {
+        let library = sync::sync_library(db, client, url, username, progress)?;
+        if library.is_complete()
+            && let Some(version) = version
+        {
+            sync::set_library_version(db, url, username, version)?;
+        }
+        library
+    };
+    Ok(Synced {
         library,
         favourites: reconcile_favourites(db, client),
         playlists: crate::playlists::reconcile_playlists(db, client, url, username),

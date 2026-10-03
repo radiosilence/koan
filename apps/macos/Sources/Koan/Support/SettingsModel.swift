@@ -172,20 +172,20 @@ final class SettingsModel {
         }
     }
 
-    func syncNow(full: Bool) {
+    func syncNow() {
         let engine = self.engine
         Task {
             let result = await activity.run(
-                full ? "Full sync with server" : "Syncing with server",
+                "Syncing with server",
                 uses: [.remoteTracks],
                 followsSync: true
             ) {
-                try await engine.syncRemote(full: full)
+                try await engine.syncRemote()
             }
             switch result {
             case .success(let s):
-                // Zero is the normal answer for an incremental sync with nothing
-                // new, and "0 tracks across 0 albums" reads as a failure.
+                // "0 tracks across 0 albums" reads as a failure, and is what
+                // an empty server answers.
                 lastResult = s.tracks == 0 && s.favouritesImported == 0
                     ? "Already up to date"
                     : "\(s.tracks.formatted(.number)) tracks across \(s.albums.formatted(.number)) albums"

@@ -923,8 +923,8 @@ pub fn remove_vanished_remote(
 /// id. The file keeps the old one, so the sync finds nothing by id and inserts
 /// the recording again, and the content match refuses the pair because both
 /// rows carry a remote id. The library shows every track twice, and the file's
-/// link points at nothing. Only a complete full sync has seen every id the
-/// server knows, so only one may call this.
+/// link points at nothing. Only a complete sync that listed everything has
+/// seen every id the server knows, so only one may call this.
 pub fn relink_vanished_remote_ids(
     conn: &Connection,
     live: &HashSet<String>,
@@ -3282,7 +3282,8 @@ mod tests {
         remote("Habits", "Habits (single)", "t3", "al-2");
         let count = |sql: &str| -> i64 { db.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
 
-        // An incremental sync: the single's album is gone from the listing.
+        // A sync that could not vouch for every track: the single's album is
+        // gone from the listing.
         let albums: HashSet<String> = ["al-1".to_string()].into();
         assert_eq!(
             remove_vanished_remote(&db.conn, None, Some(&albums)).unwrap(),
@@ -3294,7 +3295,7 @@ mod tests {
         );
         assert_eq!(count("SELECT COUNT(*) FROM tracks"), 2);
 
-        // A full sync: one track gone from an album that stays.
+        // A sync that listed everything: one track gone from an album that stays.
         let tracks: HashSet<String> = ["t1".to_string()].into();
         assert_eq!(
             remove_vanished_remote(&db.conn, Some(&tracks), Some(&albums)).unwrap(),

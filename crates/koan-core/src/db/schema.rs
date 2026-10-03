@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -143,7 +143,8 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             id        INTEGER PRIMARY KEY,
             url       TEXT NOT NULL UNIQUE,
             username  TEXT NOT NULL,
-            last_sync INTEGER
+            last_sync INTEGER,
+            library_version INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS organize_log (
@@ -488,6 +489,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("playlists", "synced_revision", "INTEGER"),
     ("playlists", "remote_changed", "TEXT"),
     ("playlists", "remote_account", "TEXT"),
+    ("remote_servers", "library_version", "INTEGER"),
 ];
 
 /// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a

@@ -492,16 +492,16 @@ final class LibraryModel {
     /// Pull the remote library. Minutes on a large server, so it runs detached.
     /// Nothing here refreshes anything: the engine announces the rows it wrote,
     /// and `libraryChanged()` runs off that.
-    func syncRemote(full: Bool = false) {
+    func syncRemote() {
         guard activity?.conflicts(with: [.remoteTracks]) != true else { return }
         let engine = self.engine
         let job = activity?.begin(
-            full ? "Full sync with server" : "Syncing with server",
+            "Syncing with server",
             uses: [.remoteTracks],
             followsSync: true
         )
         Task {
-            _ = try? await engine.syncRemote(full: full)
+            _ = try? await engine.syncRemote()
             if let job { activity?.end(job) }
         }
     }

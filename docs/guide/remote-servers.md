@@ -16,16 +16,16 @@ koan remote sync
 
 The first sync fetches your entire remote library. This can take a while for large collections (tens of thousands of tracks), but progress is displayed throughout.
 
-## Incremental sync
+## Staying in sync
 
-After the first full sync, subsequent runs are **incremental** -- only albums added since the last sync are fetched:
+Every sync walks the whole library, which is what lets it notice a track the server deleted or gave a new id. The apps sync on their own, and only when the server's library has changed:
+
+- A **koan server** tells every linked app when its library or a playlist changes, and queues the sync for an app that is away.
+- **Navidrome and other Subsonic servers** are checked on a timer (`auto_sync_interval_mins`). Each check asks `getIndexes` for the library's `lastModified` and syncs only if it moved since the last sync.
 
 ```bash
-koan remote sync          # incremental (fast)
-koan remote sync --full   # force complete re-sync
+koan remote sync          # sync now
 ```
-
-Run `koan remote sync` periodically (or after adding music to your server) to pull new tracks.
 
 ## How merging works
 

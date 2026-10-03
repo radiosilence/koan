@@ -45,7 +45,7 @@ extension AppState {
             let synced = await activity.run(
                 "Loading the library", uses: [.remoteTracks], followsSync: true
             ) {
-                try await engine.syncRemote(full: true)
+                try await engine.syncRemote()
             }
             if case .failure(let error) = synced {
                 player.lastError = SettingsModel.describe(error)
