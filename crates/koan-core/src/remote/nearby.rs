@@ -134,14 +134,22 @@ pub fn refresh() {
         stop.stop();
     }
     reconfigure();
-    REDIAL.fetch_add(1, Ordering::Relaxed);
-    if let Some(r) = RUNNING.lock().as_ref() {
-        for d in r.dialers.values() {
-            d.stop.waker.wake();
-        }
-    }
+    redial(None);
     #[cfg(target_vendor = "apple")]
     bonjour::restart();
+}
+
+/// Dial every device now rather than when its backoff runs out, `except` the
+/// dialer asking.
+fn redial(except: Option<&str>) {
+    REDIAL.fetch_add(1, Ordering::Relaxed);
+    if let Some(r) = RUNNING.lock().as_ref() {
+        for (key, d) in &r.dialers {
+            if Some(key.as_str()) != except {
+                d.stop.waker.wake();
+            }
+        }
+    }
 }
 
 /// A flag, and a way to interrupt every thread that watches it.
@@ -532,9 +540,9 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>) {
     let mut wait = RETRY_MIN;
     while !stop.stopped() {
         let addr = at.lock().clone();
+        let mut served = false;
         match connect(&addr) {
             Ok(mut socket) => {
-                wait = RETRY_MIN;
                 let fd = socket.get_ref().as_raw_fd();
                 let Ok(waker) = Waker::new() else { return };
                 stop.also_wake(&waker);
@@ -548,12 +556,19 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>) {
                     duplicate: false,
                 };
                 let result = wire::drive(&mut socket, fd, &waker, &mut session);
-                if let Some(id) = session.id.take() {
-                    if let Some(conns) = CONNS.lock().as_mut() {
-                        conns.remove(&id);
-                    }
-                    devices::nearby_gone(&id);
-                }
+                served = session
+                    .id
+                    .take()
+                    .inspect(|id| {
+                        if let Some(conns) = CONNS.lock().as_mut() {
+                            conns.remove(id);
+                        }
+                        devices::nearby_gone(id);
+                        // A dialer that found this device already served has been
+                        // backing off; it is wanted now.
+                        redial(Some(&key));
+                    })
+                    .is_some();
                 if session.this_device {
                     FOUND.lock().retain(|(k, _)| *k != key);
                     devices::touch();
@@ -581,11 +596,22 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>) {
         // SAFETY: a live array of the length given.
         unsafe { libc::poll(fds.as_mut_ptr(), 1, wait.as_millis() as i32) };
         stop.drain();
-        wait = if REDIAL.load(Ordering::Relaxed) != redials {
-            RETRY_MIN
-        } else {
-            (wait * 2).min(RETRY_MAX)
-        };
+        wait = next_wait(wait, served, REDIAL.load(Ordering::Relaxed) != redials);
+    }
+}
+
+/// How long to wait before dialling again.
+///
+/// Only a connection that served starts the backoff over. A device already
+/// connected another way answers every dial and is hung up on, and resetting
+/// on that would dial it every two seconds for as long as both are awake.
+fn next_wait(wait: Duration, served: bool, redialed: bool) -> Duration {
+    if redialed {
+        RETRY_MIN
+    } else if served {
+        RETRY_MIN * 2
+    } else {
+        (wait * 2).min(RETRY_MAX)
     }
 }
 
@@ -1197,5 +1223,29 @@ mod bonjour {
             assert_eq!(txt_value(&txt, "platform").as_deref(), Some("ios"));
             assert_eq!(txt_value(&txt, "name"), None);
         }
+    }
+}
+
+#[cfg(test)]
+mod dial_tests {
+    use super::*;
+
+    #[test]
+    fn a_duplicate_backs_off_like_a_failure() {
+        let mut wait = RETRY_MIN;
+        for _ in 0..10 {
+            wait = next_wait(wait, false, false);
+        }
+        assert_eq!(wait, RETRY_MAX);
+    }
+
+    #[test]
+    fn a_connection_that_served_starts_over() {
+        assert_eq!(next_wait(RETRY_MAX, true, false), RETRY_MIN * 2);
+    }
+
+    #[test]
+    fn a_redial_skips_the_wait() {
+        assert_eq!(next_wait(RETRY_MAX, false, true), RETRY_MIN);
     }
 }

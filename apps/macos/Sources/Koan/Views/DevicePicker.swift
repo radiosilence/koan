@@ -237,7 +237,10 @@ private struct LocalNetworkBlocked: View {
 /// controlled when it is not this one.
 struct DevicePickerButton: View {
     @Environment(PlayerModel.self) private var player
-    @State private var open = false
+    /// Held by the host. On iOS the sheet hangs off a view that outlives the
+    /// button: the tab bar accessory is rebuilt while a sheet is up on iPad,
+    /// and a sheet bound to the button's own state goes with it.
+    @Binding var open: Bool
     /// Show the controlled device's name beside the icon.
     var labelled = true
 
@@ -259,12 +262,6 @@ struct DevicePickerButton: View {
         .accessibilityLabel(controlledName.map { "Playing on \($0)" } ?? "Play on another device")
         #if os(macOS)
         .popover(isPresented: $open, arrowEdge: .top) { DevicePicker() }
-        #else
-        .sheet(isPresented: $open) {
-            ScrollView { DevicePicker() }
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
         #endif
     }
 
@@ -273,3 +270,17 @@ struct DevicePickerButton: View {
         return player.controlled?.name ?? "another device"
     }
 }
+
+#if os(iOS)
+extension View {
+    /// The sheet a `DevicePickerButton` opens, attached to a view that
+    /// outlives the button.
+    func devicePickerSheet(isPresented: Binding<Bool>) -> some View {
+        sheet(isPresented: isPresented) {
+            ScrollView { DevicePicker() }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+}
+#endif

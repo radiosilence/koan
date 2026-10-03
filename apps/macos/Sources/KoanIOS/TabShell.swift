@@ -21,6 +21,7 @@ struct TabShell: View {
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(ActivityModel.self) private var activity
     @State private var showingNowPlaying = false
+    @State private var showingDevices = false
     /// Which tab is showing. Held rather than derived from the navigator: a
     /// record belongs to whichever tab it was opened from, and the navigator
     /// cannot say which that was.
@@ -50,8 +51,9 @@ struct TabShell: View {
         // Above the tab bar rather than below it — `safeAreaInset` would put
         // the transport where the tab bar goes, which is to say on top of it.
         .tabViewBottomAccessory {
-            MiniPlayer(showingNowPlaying: $showingNowPlaying)
+            MiniPlayer(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices)
         }
+        .devicePickerSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
         // sidebar; with no sidebar they float above the transport, which is
         // the one part of the screen that is the same wherever you are.

@@ -12,6 +12,10 @@
 
 - **"Stay reachable when paused"** (non-App Store builds). It played silence to keep a paused phone running so its link to the server stayed up, which pushes now do without keeping the audio hardware awake.
 
+### Fixed
+
+- **A device found twice on the network is no longer dialled every two seconds.** A Mac that reached a phone both by Bonjour and by a remembered address kept one connection and hung up the other, and the hang-up reset that dialer's backoff, so it connected, handshook and hung up every two seconds for as long as both were awake. Overnight that was over twelve thousand connections waking a phone playing in the background. A duplicate now backs off to once a minute, and takes over as soon as the connection it deferred to goes.
+
 ## 0.48.2
 
 ### Fixed
