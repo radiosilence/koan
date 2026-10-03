@@ -1,16 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Added
-
-- **Documentation on koan.rocks.** The guides in `docs/` and this changelog are published at [koan.rocks/docs](https://koan.rocks/docs/), so the site and the README link there rather than to files on GitHub. The site build fails on a link to a page or heading that does not exist.
-- **Migrating from Navidrome.** A guide to what a koan server offers and lacks next to Navidrome, and how a typical Navidrome container, reverse proxy, accounts and clients translate. See [Migrating from Navidrome](docs/guide/migrating-from-navidrome.md).
-
-### Fixed
-
-- **Stale documentation.** Corrected claims that no longer matched the code: `koan play --server` (not `koan --server`), Subsonic token auth for accounts, the `[subsonic]` shared secret's role, cache eviction as downloads land, every sync walking the whole library, `koan config` output, `$len` counting bytes. Added `[sharing]` and `[mcp]` to the configuration reference, and cut repetition across the guides.
-
 ## 0.50.0
 
 ### Added
