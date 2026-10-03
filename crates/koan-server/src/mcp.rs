@@ -51,6 +51,8 @@ pub struct KoanMcpServer {
     /// A headless server: its own player is heard by nobody, and the music
     /// plays on the devices linked to it.
     headless: bool,
+    /// `sharing.public_url`, where an MCP client fetches koan's icon from.
+    public_url: Option<String>,
 }
 
 impl KoanMcpServer {
@@ -64,6 +66,7 @@ impl KoanMcpServer {
             tool_router: Self::tool_router(),
             graphql_schema,
             headless: false,
+            public_url: None,
         }
     }
 
@@ -197,6 +200,23 @@ impl KoanMcpServer {
     }
 }
 
+impl KoanMcpServer {
+    /// Who this server is to a client, with the icon a client shows beside it.
+    /// Without an icon, clients guess from the domain and find its parent's.
+    fn implementation(&self) -> rmcp::model::Implementation {
+        let info =
+            rmcp::model::Implementation::new("koan", env!("CARGO_PKG_VERSION")).with_title("kōan");
+        match self.public_url.as_deref().map(|u| u.trim_end_matches('/')) {
+            Some(base) => info.with_website_url(base).with_icons(vec![
+                rmcp::model::Icon::new(format!("{base}/ui/assets/icon-192.png"))
+                    .with_mime_type("image/png")
+                    .with_sizes(vec!["192x192".into()]),
+            ]),
+            None => info,
+        }
+    }
+}
+
 #[rmcp::tool_handler]
 impl ServerHandler for KoanMcpServer {
     fn get_info(&self) -> ServerConfig {
@@ -209,10 +229,7 @@ impl ServerHandler for KoanMcpServer {
             LOCAL_INSTRUCTIONS
         };
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(rmcp::model::Implementation::new(
-                "koan",
-                env!("CARGO_PKG_VERSION"),
-            ))
+            .with_server_info(self.implementation())
             .with_instructions(instructions)
     }
 }
@@ -326,6 +343,7 @@ pub fn router(
     };
     let mut template = KoanMcpServer::new(state, cmd_tx, auth.pool.clone());
     template.headless = headless;
+    template.public_url = public_url.clone();
     let service = StreamableHttpService::new(
         move || Ok(template.clone()),
         Arc::new(LocalSessionManager::default()),
@@ -561,6 +579,15 @@ mod tests {
             .await;
         let errors = resp.result["errors"].to_string();
         assert!(errors.contains("not available through MCP"), "{errors}");
+    }
+
+    #[test]
+    fn a_server_with_an_address_names_its_icon() {
+        let (mut server, _ch, _tmp) = test_server();
+        assert!(server.get_info().server_info.icons.is_none());
+        server.public_url = Some("https://koan.test/".into());
+        let icons = server.get_info().server_info.icons.unwrap();
+        assert_eq!(icons[0].src, "https://koan.test/ui/assets/icon-192.png");
     }
 
     fn insert_test_track(db_path: &std::path::Path, title: &str, artist: &str, album: &str) -> i64 {
