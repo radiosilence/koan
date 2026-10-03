@@ -1,6 +1,7 @@
 [tools]
 # Standalone binaries, so the site has no package manifest: the Tailwind CLI for the stylesheet, pandoc for the
-# documentation pages.
+# documentation pages, and nano-web, the server the image runs, for previewing.
+"github:radiosilence/nano-web" = "1"
 "github:tailwindlabs/tailwindcss" = "4"
 pandoc = "3.12"
 
@@ -13,3 +14,9 @@ run = "src/docs.sh"
 description = "Compile the stylesheet into public/"
 depends = ["docs"]
 run = "tailwindcss --input src/style.css --output public/style.css --minify"
+
+# nano-web, as in the image. --dev re-reads files as they change; rerun `mise run css` after editing docs or styles.
+[tasks.preview]
+description = "Build the site and serve it on http://localhost:3000"
+depends = ["css"]
+run = "nano-web serve public --port 3000 --dev"
