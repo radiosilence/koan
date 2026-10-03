@@ -11,6 +11,7 @@ import SwiftUI
 struct MiniPlayer: View {
     @Environment(PlayerModel.self) private var player
     @Binding var showingNowPlaying: Bool
+    @Binding var showingDevices: Bool
 
     private var entry: QueueItem? { player.currentEntry }
 
@@ -42,7 +43,7 @@ struct MiniPlayer: View {
                 // Reachable with nothing playing here, which is when a phone
                 // is most likely to be wanted as a remote.
                 if player.hasOtherDevices || player.isControllingAnother {
-                    DevicePickerButton(labelled: false)
+                    DevicePickerButton(open: $showingDevices, labelled: false)
                         .font(.body)
                         .frame(width: Self.target, height: Self.target)
                 }

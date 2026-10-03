@@ -5,6 +5,7 @@
 ### Fixed
 
 - **Opening koan with the music paused stays silent.** The player had no way to load a track without starting the output, so restoring a paused session played it, seeked it and paused it, and a moment of the track got out before the pause. Seeking while paused had the same shape. A track can now be opened paused, and a restored session is cued at its position in one command, playing or not.
+- **A device found twice on the network is no longer dialled every two seconds.** A Mac that reached a phone both by Bonjour and by a remembered address kept one connection and hung up the other, and the hang-up reset that dialer's backoff, so it connected, handshook and hung up every two seconds for as long as both were awake. Overnight that was over twelve thousand connections waking a phone playing in the background. A duplicate now backs off to once a minute, and takes over as soon as the connection it deferred to goes.
 
 ## 0.48.2
 
