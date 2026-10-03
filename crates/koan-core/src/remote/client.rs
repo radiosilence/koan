@@ -419,6 +419,20 @@ impl SubsonicClient {
         Ok(resp.scan_status.and_then(|s| s.count))
     }
 
+    /// When the server's library last changed, in milliseconds, as
+    /// `getIndexes` reports it. Asked `since` the version last seen, so a
+    /// library that has not moved answers with the timestamp alone. `None`
+    /// where the server gives none.
+    pub fn library_modified(&self, since: Option<i64>) -> Result<Option<i64>, SubsonicError> {
+        let since = since.map(|v| v.to_string());
+        let params: Vec<(&str, &str)> = since
+            .as_deref()
+            .map(|v| vec![("ifModifiedSince", v)])
+            .unwrap_or_default();
+        let resp = self.get_with_params("getIndexes", &params)?;
+        Ok(resp.indexes.and_then(|i| i.last_modified))
+    }
+
     /// Search for tracks/albums/artists.
     pub fn search(&self, query: &str) -> Result<SubsonicSearchResult, SubsonicError> {
         let resp = self.get_with_params("search3", &[("query", query)])?;
@@ -769,6 +783,7 @@ struct SubsonicResponse {
     playlists: Option<SubsonicPlaylists>,
     playlist: Option<SubsonicPlaylistFull>,
     scan_status: Option<SubsonicScanStatus>,
+    indexes: Option<SubsonicIndexes>,
     users: Option<KoanUsers>,
     invite: Option<KoanInvite>,
 }
@@ -808,6 +823,12 @@ struct SubsonicExtension {
     name: String,
     #[serde(default)]
     versions: Vec<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SubsonicIndexes {
+    last_modified: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]

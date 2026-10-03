@@ -113,8 +113,7 @@ Manage Subsonic/Navidrome remote servers.
 
 ```bash
 koan remote login URL user        # authenticate (prompts for password)
-koan remote sync                  # incremental sync (new albums since last sync)
-koan remote sync --full           # full re-sync of entire library
+koan remote sync                  # sync the library, favourites and playlists
 koan remote status                # show remote server info
 ```
 

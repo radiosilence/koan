@@ -165,7 +165,7 @@ fn configure(conn: &Connection) -> Result<(), DbError> {
     conn.pragma_update(None, "analysis_limit", 400i64)?;
     // Past rusqlite's default of 16, which the per-request reads alone exceed.
     conn.set_prepared_statement_cache_capacity(128);
-    // The WAL keeps its high-water mark on disk after a checkpoint. A full sync
+    // The WAL keeps its high-water mark on disk after a checkpoint. A sync
     // grows it; this lets it shrink back.
     conn.pragma_update(None, "journal_size_limit", 67_108_864i64)?;
     // Here rather than with the schema: `open_existing` skips the DDL, and a

@@ -24,15 +24,14 @@ pub struct SyncResult {
     pub artists_synced: usize,
     pub albums_synced: usize,
     pub tracks_synced: usize,
-    /// Albums whose details could not be fetched. Non-zero means `last_sync`
-    /// was left where it was so the next sync picks them up again.
+    /// Albums whose details could not be fetched. Non-zero leaves the
+    /// library's version unrecorded, so the next sync walks it again.
     pub albums_failed: usize,
     /// Pages of songs that could not be fetched, on the bulk path. Counts
     /// against completeness the same way.
     pub pages_failed: usize,
     /// Tracks the server listed that could not be written. Counts against
-    /// completeness the same way: until they are written, an incremental sync
-    /// must not move past them.
+    /// completeness the same way.
     pub tracks_failed: usize,
     /// Tracks removed because the server no longer has them.
     pub tracks_removed: usize,
@@ -62,6 +61,35 @@ pub fn get_last_sync(
     }
 }
 
+/// The library version, as the server gave it, that the last complete walk
+/// was of. See `helpers::sync_remote`.
+pub fn library_version(db: &Database, url: &str) -> Option<i64> {
+    db.conn
+        .query_row(
+            "SELECT library_version FROM remote_servers WHERE url = ?1",
+            params![url],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .ok()
+        .flatten()
+}
+
+/// Record that the library as of `version` has been walked in full.
+pub fn set_library_version(
+    db: &Database,
+    url: &str,
+    username: &str,
+    version: i64,
+) -> Result<(), crate::db::connection::DbError> {
+    db.conn.execute(
+        "INSERT INTO remote_servers (url, username, library_version)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(url) DO UPDATE SET library_version = ?3",
+        params![url, username, version],
+    )?;
+    Ok(())
+}
+
 /// Update (or insert) the last sync timestamp for a remote server.
 pub fn update_last_sync(
     db: &Database,
@@ -76,41 +104,6 @@ pub fn update_last_sync(
         params![url, username, timestamp],
     )?;
     Ok(())
-}
-
-/// Parse an ISO 8601 / RFC 3339 timestamp string into a unix timestamp (seconds).
-/// Returns `None` if the string can't be parsed.
-///
-/// Handles common Subsonic/Navidrome variants:
-/// - Full RFC 3339: `2024-01-15T10:30:00Z`, `2024-01-15T10:30:00+05:30`
-/// - Fractional seconds: `2024-01-15T10:30:00.123Z`
-/// - Missing timezone (assumed UTC): `2024-01-15T10:30:00`
-fn parse_iso8601_to_unix(s: &str) -> Option<i64> {
-    use chrono::{DateTime, FixedOffset, NaiveDateTime};
-
-    // Try strict RFC 3339 first (handles Z, offsets, fractional seconds).
-    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-        return Some(dt.timestamp());
-    }
-
-    // Subsonic sometimes omits timezone — parse as naive and assume UTC.
-    // Try with fractional seconds first, then without.
-    if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
-        return Some(naive.and_utc().timestamp());
-    }
-    if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Some(naive.and_utc().timestamp());
-    }
-
-    // Some servers use space instead of T.
-    if let Ok(dt) = DateTime::<FixedOffset>::parse_from_str(s, "%Y-%m-%d %H:%M:%S%:z") {
-        return Some(dt.timestamp());
-    }
-    if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-        return Some(naive.and_utc().timestamp());
-    }
-
-    None
 }
 
 /// Which part of a sync is running.
@@ -139,7 +132,7 @@ pub struct SyncProgress {
 /// Albums and songs per list request. 500 is the most `getAlbumList2` allows.
 const PAGE_SIZE: u32 = 500;
 
-/// Song pages in flight at once during a full sync. The walk is bound by
+/// Song pages in flight at once during a sync. The walk is bound by
 /// round trips, not bandwidth; four hides most of a mobile link's latency
 /// without asking much of the server.
 const FETCH_LANES: usize = 4;
@@ -147,50 +140,35 @@ const FETCH_LANES: usize = 4;
 /// Attempts at one song page before it counts as failed.
 const PAGE_ATTEMPTS: u32 = 3;
 
-/// Changed albums above which an incremental sync pages every song rather
-/// than fetching each album: about a hundred requests for the whole library,
-/// against one per album.
-const PAGED_ABOVE: usize = 200;
-
 /// Pull the Navidrome/Subsonic library into the local DB.
 ///
 /// The album list is always walked in `alphabeticalByName` order: it is the one
 /// ordering stable under concurrent server-side inserts, so an offset walk can
 /// never skip an album that was added between two pages.
 ///
-/// A first or full sync then pages through every song with an empty `search3`
-/// query — about a hundred requests for fifty thousand tracks — and joins them
-/// to the album list. Fetching each album on its own costs one round trip per
-/// album, which on a phone is minutes. A server that does not answer an empty
-/// query gets the per-album walk instead, as does an incremental sync, which
-/// only fetches albums created after `last_sync` and so has few to fetch.
+/// Then it pages through every song with an empty `search3` query — about a
+/// hundred requests for fifty thousand tracks — and joins them to the album
+/// list. Fetching each album on its own costs one round trip per album, which
+/// on a phone is minutes; a server that does not answer an empty query gets
+/// that walk instead. Listing everything is what lets a sync see a track the
+/// server deleted from an album, or a file it gave a new id.
 ///
-/// `last_sync` only advances when everything was fetched. A run that lost
-/// albums or pages to network errors leaves the timestamp alone so the next
-/// sync fetches them again, rather than writing a permanent hole in the library.
+/// Whether to walk at all is the caller's: see `helpers::sync_remote`, which
+/// asks the server whether its library moved first.
+///
+/// `last_sync` only advances when everything was fetched.
 ///
 /// Deduplication happens in `upsert_track`, which merges a server's copy of a
 /// track onto the local row for it instead of creating a duplicate.
 pub fn sync_library(
     db: &Database,
     client: &SubsonicClient,
-    full: bool,
     server_url: &str,
     username: &str,
     progress: &(dyn Fn(SyncProgress) + Sync),
 ) -> Result<SyncResult, SyncError> {
     let mut result = SyncResult::default();
-
-    let last_sync = if full {
-        None
-    } else {
-        get_last_sync(db, server_url)?
-    };
-
-    match last_sync {
-        Some(ts) => log::info!("incremental sync (albums created after {})", ts),
-        None => log::info!("full sync"),
-    }
+    log::info!("syncing the library from {server_url}");
 
     let sync_start = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -199,26 +177,7 @@ pub fn sync_library(
 
     let albums = list_albums(client, progress)?;
 
-    // An incremental sync fetches albums created since the last one, and any
-    // the client holds differently from how the server lists them: a retag
-    // on the server keeps an album's `created` and can give it a new id, and
-    // neither would otherwise ever be read again. An unparseable `created` is
-    // treated as new: re-fetching is cheap, missing is not.
-    let held = last_sync.and_then(|_| held_albums(db));
-    let wanted: Vec<&SubsonicAlbum> = albums
-        .iter()
-        .filter(|a| match last_sync {
-            None => true,
-            Some(ts) => {
-                a.created
-                    .as_deref()
-                    .and_then(parse_iso8601_to_unix)
-                    .is_none_or(|created| created >= ts)
-                    || held.as_ref().is_some_and(|h| differs(a, h.get(&a.id)))
-            }
-        })
-        .collect();
-    let expected: u64 = wanted
+    let expected: u64 = albums
         .iter()
         .filter_map(|a| a.song_count)
         .map(|n| n.max(0) as u64)
@@ -226,11 +185,11 @@ pub fn sync_library(
 
     let mut song_ids: HashSet<String> = HashSet::new();
     let mut total = (expected > 0).then_some(expected);
-    let walked = if (last_sync.is_none() || wanted.len() > PAGED_ABOVE) && !wanted.is_empty() {
-        if total.is_none() {
-            total = client.song_count().ok().flatten();
-        }
-        sync_all_songs(
+    if total.is_none() {
+        total = client.song_count().ok().flatten();
+    }
+    let walked = !albums.is_empty()
+        && sync_all_songs(
             db,
             client,
             &albums,
@@ -238,15 +197,13 @@ pub fn sync_library(
             &mut result,
             &mut song_ids,
             progress,
-        )?
-    } else {
-        false
-    };
+        )?;
     if !walked {
+        let all: Vec<&SubsonicAlbum> = albums.iter().collect();
         sync_by_album(
             db,
             client,
-            &wanted,
+            &all,
             total,
             &mut result,
             &mut song_ids,
@@ -272,12 +229,24 @@ pub fn sync_library(
         total: None,
     });
 
+    // Albums this library holds that the listing left out are asked about one
+    // by one; see `confirm_missing_albums`. One the server still answers for
+    // means the album listing came up short — an album deleted mid-walk shifts
+    // the next page — and the songs of an album nobody listed were never
+    // fetched, so nothing can be concluded about its tracks this time.
+    let mut live_albums: std::collections::HashSet<String> =
+        albums.iter().map(|a| a.id.clone()).collect();
+    if result.is_complete() && !live_albums.is_empty() {
+        confirm_missing_albums(db, client, &mut live_albums);
+    }
+    let albums_short = live_albums.len() > albums.len();
+
     // An empty listing is far likelier to be a server fault than an empty
     // library, and would unlink every file. So is one shorter than the count
     // the server gave: a track deleted mid-walk shifts a later page by one, and
     // the track it pushes out of view is not gone.
-    let listed_everything = total.is_none_or(|n| song_ids.len() as u64 >= n);
-    if full && result.is_complete() && !song_ids.is_empty() && listed_everything {
+    let listed_everything = !albums_short && total.is_none_or(|n| song_ids.len() as u64 >= n);
+    if result.is_complete() && !song_ids.is_empty() && listed_everything {
         match queries::relink_vanished_remote_ids(&db.conn, &song_ids) {
             Ok(0) => {}
             Ok(n) => log::info!("{n} files had ids the server no longer knows; relinked"),
@@ -285,18 +254,11 @@ pub fn sync_library(
         }
     }
 
-    // What the server deleted goes here too. Every sync lists every album, so
-    // an album gone from that list goes on any sync; a single track deleted
-    // from an album only shows on a full one, which lists every track. Both
-    // are held to the same guards as above: an empty or short listing is a
-    // fault, not a deletion.
-    let mut live_albums: std::collections::HashSet<String> =
-        albums.iter().map(|a| a.id.clone()).collect();
-    if result.is_complete() && !live_albums.is_empty() {
-        confirm_missing_albums(db, client, &mut live_albums);
-    }
-    let live_tracks = (full && result.is_complete() && !song_ids.is_empty() && listed_everything)
-        .then_some(&song_ids);
+    // What the server deleted goes here too: an album gone from the list, or a
+    // track gone from an album. Both are held to the same guards as above: an
+    // empty or short listing is a fault, not a deletion.
+    let live_tracks =
+        (result.is_complete() && !song_ids.is_empty() && listed_everything).then_some(&song_ids);
     if result.is_complete() && !live_albums.is_empty() {
         match queries::remove_vanished_remote(&db.conn, live_tracks, Some(&live_albums)) {
             Ok(0) => {}
@@ -312,7 +274,7 @@ pub fn sync_library(
         update_last_sync(db, server_url, username, sync_start)?;
     } else {
         log::warn!(
-            "{} album(s) and {} page(s) failed to fetch and {} track(s) failed to write — leaving last_sync unchanged so the next sync retries them",
+            "{} album(s) and {} page(s) failed to fetch and {} track(s) failed to write — the next sync walks the library again",
             result.albums_failed,
             result.pages_failed,
             result.tracks_failed,
@@ -331,61 +293,6 @@ pub fn sync_library(
     db.optimize();
 
     Ok(result)
-}
-
-/// An album as this client holds it: what a listing of the server's albums
-/// can be checked against.
-struct HeldAlbum {
-    title: String,
-    artist: String,
-    tracks: i64,
-    seconds: i64,
-}
-
-/// Every album this client holds from the server, by the server's id. `None`
-/// if it cannot be read, which leaves an incremental sync to go by `created`
-/// alone rather than fetching everything.
-fn held_albums(db: &Database) -> Option<HashMap<String, HeldAlbum>> {
-    let read = || -> rusqlite::Result<HashMap<String, HeldAlbum>> {
-        let mut stmt = db.conn.prepare(
-            "SELECT al.remote_id, al.title, COALESCE(ar.name, ''),
-                    COUNT(t.id), COALESCE(SUM(t.duration_ms), 0) / 1000
-             FROM albums al
-             LEFT JOIN artists ar ON ar.id = al.artist_id
-             LEFT JOIN tracks t ON t.album_id = al.id AND t.remote_id IS NOT NULL
-             WHERE al.remote_id IS NOT NULL
-             GROUP BY al.id",
-        )?;
-        stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                HeldAlbum {
-                    title: r.get(1)?,
-                    artist: r.get(2)?,
-                    tracks: r.get(3)?,
-                    seconds: r.get(4)?,
-                },
-            ))
-        })?
-        .collect()
-    };
-    read()
-        .inspect_err(|e| log::warn!("could not read held albums; syncing by date alone: {e}"))
-        .ok()
-}
-
-/// Whether the server lists an album differently from how it is held: not
-/// held at all, renamed, credited to someone else, or with other tracks.
-fn differs(listed: &SubsonicAlbum, held: Option<&HeldAlbum>) -> bool {
-    let Some(held) = held else { return true };
-    listed.name != held.title
-        || listed.artist.as_deref().is_some_and(|a| a != held.artist)
-        || listed
-            .song_count
-            .is_some_and(|n| i64::from(n) != held.tracks)
-        || listed
-            .duration
-            .is_some_and(|d| (d - held.seconds).abs() > 2)
 }
 
 /// Ask the server about each album this library holds that the listing left
@@ -554,7 +461,7 @@ fn sync_all_songs(
 }
 
 /// One page of songs, retried a couple of times: a failed page is a hole in
-/// the library until the next full sync, so it is worth a second ask.
+/// the library until the next sync, so it is worth a second ask.
 fn fetch_page(
     client: &SubsonicClient,
     offset: u32,
@@ -631,9 +538,8 @@ fn group_by_album(
 /// progress moves often, large enough that the fetches overlap.
 const ALBUM_BATCH: usize = 100;
 
-/// Fetch each album on its own and write them a batch at a time. What an
-/// incremental sync does, and what a full one falls back to on a server that
-/// cannot list songs in bulk.
+/// Fetch each album on its own and write them a batch at a time, for a server
+/// that cannot list songs in bulk.
 fn sync_by_album(
     db: &Database,
     client: &SubsonicClient,
@@ -810,93 +716,6 @@ fn positive(value: Option<i32>) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_rfc3339_with_z() {
-        // 2024-01-15T10:30:00Z = 1705314600
-        assert_eq!(
-            parse_iso8601_to_unix("2024-01-15T10:30:00Z"),
-            Some(1705314600)
-        );
-    }
-
-    #[test]
-    fn parse_rfc3339_with_offset() {
-        // 10:30 IST (+05:30) = 05:00 UTC = 1705294800
-        assert_eq!(
-            parse_iso8601_to_unix("2024-01-15T10:30:00+05:30"),
-            Some(1705294800)
-        );
-    }
-
-    #[test]
-    fn parse_rfc3339_negative_offset() {
-        // 10:30 EST (-05:00) = 15:30 UTC = 1705332600
-        assert_eq!(
-            parse_iso8601_to_unix("2024-01-15T10:30:00-05:00"),
-            Some(1705332600)
-        );
-    }
-
-    #[test]
-    fn parse_fractional_seconds_z() {
-        assert_eq!(
-            parse_iso8601_to_unix("2024-01-15T10:30:00.123Z"),
-            Some(1705314600)
-        );
-    }
-
-    #[test]
-    fn parse_fractional_seconds_offset() {
-        assert_eq!(
-            parse_iso8601_to_unix("2024-01-15T10:30:00.999+00:00"),
-            Some(1705314600)
-        );
-    }
-
-    #[test]
-    fn parse_no_timezone_assumes_utc() {
-        assert_eq!(
-            parse_iso8601_to_unix("2024-01-15T10:30:00"),
-            Some(1705314600)
-        );
-    }
-
-    #[test]
-    fn parse_no_timezone_fractional() {
-        assert_eq!(
-            parse_iso8601_to_unix("2024-01-15T10:30:00.500"),
-            Some(1705314600)
-        );
-    }
-
-    #[test]
-    fn parse_space_separator_with_tz() {
-        assert_eq!(
-            parse_iso8601_to_unix("2024-01-15 10:30:00+00:00"),
-            Some(1705314600)
-        );
-    }
-
-    #[test]
-    fn parse_space_separator_no_tz() {
-        assert_eq!(
-            parse_iso8601_to_unix("2024-01-15 10:30:00"),
-            Some(1705314600)
-        );
-    }
-
-    #[test]
-    fn parse_garbage_returns_none() {
-        assert_eq!(parse_iso8601_to_unix("not-a-date"), None);
-        assert_eq!(parse_iso8601_to_unix(""), None);
-        assert_eq!(parse_iso8601_to_unix("2024"), None);
-    }
-
-    #[test]
-    fn parse_epoch() {
-        assert_eq!(parse_iso8601_to_unix("1970-01-01T00:00:00Z"), Some(0));
-    }
 
     // --- Sync → DB integration tests ---
 
@@ -1158,6 +977,8 @@ mod tests {
         song_pages: Mutex<Vec<usize>>,
         /// Song pages that fail with a 500, by offset.
         failing_song_pages: Mutex<HashSet<usize>>,
+        /// `getIndexes`'s `lastModified`; `None` answers without one.
+        library_modified: Mutex<Option<i64>>,
     }
 
     impl StubServer {
@@ -1294,6 +1115,15 @@ mod tests {
                     ),
                 )
             }
+            "getIndexes" => match *state.library_modified.lock().unwrap() {
+                Some(at) => (
+                    200,
+                    format!(
+                        r#"{{"subsonic-response":{{"status":"ok","indexes":{{"lastModified":{at}}}}}}}"#
+                    ),
+                ),
+                None => (200, r#"{"subsonic-response":{"status":"ok"}}"#.to_string()),
+            },
             "search3" => {
                 let offset: usize = params.get("songOffset").and_then(|o| o.parse().ok()).unwrap_or(0);
                 let size: usize = params.get("songCount").and_then(|s| s.parse().ok()).unwrap_or(20);
@@ -1380,7 +1210,7 @@ mod tests {
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
-        let first = sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
+        let first = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
         assert_eq!(first.albums_failed, 1, "the failing album must be counted");
         assert_eq!(first.albums_synced, 3);
         assert!(!first.is_complete());
@@ -1394,7 +1224,7 @@ mod tests {
         // still has no watermark to skip past.
         state.failing.lock().unwrap().clear();
         state.album_calls.lock().unwrap().clear();
-        let second = sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
+        let second = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
 
         assert!(
             state
@@ -1430,7 +1260,7 @@ mod tests {
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
-        let result = sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
+        let result = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
         assert_eq!(result.albums_failed, 0);
 
         let calls = state.album_calls.lock().unwrap().clone();
@@ -1476,7 +1306,7 @@ mod tests {
         });
         let server = StubServer::start(state);
         let client = SubsonicClient::new(&server.url(), "u", "p");
-        sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
+        sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
 
         let rows: Vec<(Option<String>, Option<String>)> = db
             .conn
@@ -1519,7 +1349,7 @@ mod tests {
         });
         let server = StubServer::start(state);
         let client = SubsonicClient::new(&server.url(), "u", "p");
-        sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
+        sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
 
         let rows: Vec<(i64, String, String)> = db
             .conn
@@ -1548,103 +1378,55 @@ mod tests {
         );
     }
 
+    /// koan's own syncs walk the library only when the server says it moved;
+    /// one that was asked for walks it regardless.
     #[test]
-    fn incremental_sync_only_fetches_albums_created_after_last_sync() {
+    fn a_library_that_has_not_moved_is_not_walked_again() {
+        use crate::helpers::{Walk, sync_remote};
         let (db, _dir) = test_db();
-        let mut albums = stub_albums(3);
-        albums[0].2 = "2020-01-01T00:00:00Z".into();
-        albums[1].2 = "2020-01-01T00:00:00Z".into();
-        albums[2].2 = "2030-01-01T00:00:00Z".into();
-
         let state = Arc::new(StubState {
-            albums: Mutex::new(albums),
+            albums: Mutex::new(stub_albums(3)),
+            library_modified: Mutex::new(Some(1_000)),
             ..Default::default()
         });
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
+        let walks = || state.list_types.lock().unwrap().len();
+        let sync = |walk| sync_remote(&db, &client, walk, &server.url(), "u", &|_| {}).unwrap();
 
-        // Everything held as the server lists it, then the watermark put
-        // between the two vintages.
-        sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
-        state.album_calls.lock().unwrap().clear();
-        let watermark = parse_iso8601_to_unix("2025-01-01T00:00:00Z").unwrap();
-        update_last_sync(&db, &server.url(), "u", watermark).unwrap();
+        sync(Walk::IfChanged);
+        let first = walks();
+        assert!(first > 0, "nothing recorded, so walked");
 
-        let result = sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
+        sync(Walk::IfChanged);
+        assert_eq!(walks(), first, "unchanged, so not walked");
 
-        assert_eq!(result.albums_synced, 1, "only the new album needs fetching");
-        assert_eq!(
-            *state.album_calls.lock().unwrap(),
-            vec!["a0002".to_string()]
-        );
+        sync(Walk::Always);
+        let asked = walks();
+        assert!(asked > first, "asked for, so walked");
+
+        *state.library_modified.lock().unwrap() = Some(2_000);
+        sync(Walk::IfChanged);
+        assert!(walks() > asked, "moved, so walked");
     }
 
-    /// A retag on the server keeps an album's `created`. Going by the date
-    /// alone, the client would hold the old tags until a full sync.
+    /// A server that gives no version is walked every time.
     #[test]
-    fn incremental_sync_fetches_an_album_the_server_now_lists_differently() {
+    fn a_server_without_a_library_version_is_always_walked() {
+        use crate::helpers::{Walk, sync_remote};
         let (db, _dir) = test_db();
-        let mut albums = stub_albums(3);
-        for a in &mut albums {
-            a.2 = "2020-01-01T00:00:00Z".into();
-        }
         let state = Arc::new(StubState {
-            albums: Mutex::new(albums),
+            albums: Mutex::new(stub_albums(3)),
             ..Default::default()
         });
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
-        sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
-        state.album_calls.lock().unwrap().clear();
+        let walks = || state.list_types.lock().unwrap().len();
 
-        state.albums.lock().unwrap()[1].1 = "Album 0001 (Retitled)".into();
-        let result = sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
-
-        assert_eq!(
-            *state.album_calls.lock().unwrap(),
-            vec!["a0001".to_string()]
-        );
-        assert_eq!(result.albums_synced, 1);
-        let title: String = db
-            .conn
-            .query_row(
-                "SELECT title FROM albums WHERE remote_id = 'a0001'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(title, "Album 0001 (Retitled)");
-    }
-
-    /// An album the client has never held is fetched however old the server
-    /// says it is: a retag can move tracks to a new album id with an old date.
-    #[test]
-    fn incremental_sync_fetches_an_album_it_does_not_hold() {
-        let (db, _dir) = test_db();
-        let mut albums = stub_albums(2);
-        for a in &mut albums {
-            a.2 = "2020-01-01T00:00:00Z".into();
-        }
-        let state = Arc::new(StubState {
-            albums: Mutex::new(albums),
-            ..Default::default()
-        });
-        let server = StubServer::start(state.clone());
-        let client = SubsonicClient::new(&server.url(), "u", "p");
-        sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
-        state.album_calls.lock().unwrap().clear();
-
-        state.albums.lock().unwrap().push((
-            "a0099".into(),
-            "Album 0099".into(),
-            "2020-01-01T00:00:00Z".into(),
-        ));
-        sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
-
-        assert_eq!(
-            *state.album_calls.lock().unwrap(),
-            vec!["a0099".to_string()]
-        );
+        sync_remote(&db, &client, Walk::IfChanged, &server.url(), "u", &|_| {}).unwrap();
+        let first = walks();
+        sync_remote(&db, &client, Walk::IfChanged, &server.url(), "u", &|_| {}).unwrap();
+        assert!(walks() > first);
     }
 
     /// An album missing from the listing is removed only once the server says
@@ -1658,10 +1440,10 @@ mod tests {
         });
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
-        sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
+        sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
 
         state.unlisted.lock().unwrap().insert("a0001".into());
-        let shifted = sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
+        let shifted = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
         assert_eq!(shifted.tracks_removed, 0, "still there, only unlisted");
 
         state
@@ -1669,27 +1451,8 @@ mod tests {
             .lock()
             .unwrap()
             .retain(|(id, _, _)| id != "a0001");
-        let deleted = sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
+        let deleted = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
         assert_eq!(deleted.tracks_removed, 1);
-    }
-
-    #[test]
-    fn album_with_unparseable_created_is_always_fetched() {
-        let (db, _dir) = test_db();
-        let state = Arc::new(StubState {
-            albums: Mutex::new(vec![("a0000".into(), "Album".into(), "who knows".into())]),
-            ..Default::default()
-        });
-        let server = StubServer::start(state.clone());
-        let client = SubsonicClient::new(&server.url(), "u", "p");
-
-        update_last_sync(&db, &server.url(), "u", 4_000_000_000).unwrap();
-        let result = sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
-
-        assert_eq!(
-            result.albums_synced, 1,
-            "an album with no usable timestamp must not be assumed old"
-        );
     }
 
     /// A server that lists songs for an empty query is synced in pages of
@@ -1706,7 +1469,7 @@ mod tests {
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
         let seen = Mutex::new(Vec::new());
-        let result = sync_library(&db, &client, true, &server.url(), "u", &|p| {
+        let result = sync_library(&db, &client, &server.url(), "u", &|p| {
             seen.lock().unwrap().push(p)
         })
         .unwrap();
@@ -1758,7 +1521,7 @@ mod tests {
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
-        let result = sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
+        let result = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
 
         assert_eq!(state.song_pages.lock().unwrap().clone(), vec![0]);
         assert_eq!(state.album_calls.lock().unwrap().len(), 3);
@@ -1780,7 +1543,7 @@ mod tests {
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
-        let result = sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
+        let result = sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
 
         assert_eq!(result.pages_failed, 1);
         assert!(!result.is_complete());
@@ -1793,26 +1556,6 @@ mod tests {
             .filter(|&&o| o == 500)
             .count();
         assert_eq!(retries as u32, PAGE_ATTEMPTS);
-    }
-
-    /// An incremental sync fetches the few new albums one by one rather than
-    /// walking every song.
-    #[test]
-    fn an_incremental_sync_does_not_walk_every_song() {
-        let (db, _dir) = test_db();
-        let state = Arc::new(StubState {
-            albums: Mutex::new(stub_albums(3)),
-            lists_songs: true,
-            ..Default::default()
-        });
-        let server = StubServer::start(state.clone());
-        let client = SubsonicClient::new(&server.url(), "u", "p");
-        update_last_sync(&db, &server.url(), "u", 0).unwrap();
-
-        sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
-
-        assert!(state.song_pages.lock().unwrap().is_empty());
-        assert_eq!(state.album_calls.lock().unwrap().len(), 3);
     }
 
     #[test]
