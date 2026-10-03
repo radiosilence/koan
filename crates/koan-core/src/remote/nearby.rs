@@ -191,9 +191,49 @@ pub fn start(local: Local) {
         dialers: HashMap::new(),
     });
     reconfigure();
+    dial_remembered();
+    #[cfg(target_vendor = "apple")]
+    std::thread::Builder::new()
+        .name("koan-bonjour".into())
+        .spawn(bonjour::browse_forever)
+        .expect("failed to spawn the Bonjour thread");
+}
+
+/// Stop looking for other devices, and hang up on them: a phone in the
+/// background with nothing to control. What `wake` starts again. Listening is
+/// `reconfigure`'s, and goes by `quiet::findable`.
+pub fn suspend() {
+    if let Some(r) = RUNNING.lock().as_mut() {
+        for (_, d) in r.dialers.drain() {
+            d.stop.stop();
+        }
+    }
+    FOUND.lock().clear();
+    devices::touch();
+    #[cfg(target_vendor = "apple")]
+    bonjour::pause();
+}
+
+/// Look for other devices again, as at startup.
+pub fn wake() {
+    reconfigure();
+    dial_remembered();
+    #[cfg(target_vendor = "apple")]
+    bonjour::restart();
+}
+
+/// Dial the devices reached before, at the addresses they were reached at,
+/// which answers before Bonjour has said anything.
+fn dial_remembered() {
+    if !crate::quiet::awake() {
+        return;
+    }
     if let Some(r) = RUNNING.lock().as_mut() {
         for seen in devices::remembered_nearby() {
             let key = format!("id:{}", seen.id);
+            if r.dialers.contains_key(&key) {
+                continue;
+            }
             FOUND.lock().push((
                 key.clone(),
                 Found {
@@ -207,11 +247,6 @@ pub fn start(local: Local) {
             spawn_dialer(r, key, seen.addr);
         }
     }
-    #[cfg(target_vendor = "apple")]
-    std::thread::Builder::new()
-        .name("koan-bonjour".into())
-        .spawn(bonjour::browse_forever)
-        .expect("failed to spawn the Bonjour thread");
 }
 
 /// Apply `devices.*` from the config as it is now: listen or stop, and dial
@@ -220,7 +255,10 @@ pub fn reconfigure() {
     let cfg = Config::load().unwrap_or_default();
     let mut running = RUNNING.lock();
     let Some(r) = running.as_mut() else { return };
-    match (&r.listener, cfg.devices.discoverable) {
+    match (
+        &r.listener,
+        cfg.devices.discoverable && crate::quiet::findable(),
+    ) {
         (None, true) => {
             if let Some(stop) = Stop::new() {
                 let (local, port, s) = (r.local.clone(), cfg.devices.port, stop.clone());
@@ -252,6 +290,9 @@ pub fn reconfigure() {
         }
         keep
     });
+    if !crate::quiet::awake() {
+        return;
+    }
     for addr in wanted {
         if !r.dialers.contains_key(&addr) {
             spawn_dialer(r, addr.clone(), addr);
@@ -663,7 +704,8 @@ impl wire::Session for Controlling<'_> {
 
 #[cfg(target_vendor = "apple")]
 fn announced(name: String, host: String, port: u16, id: Option<String>, platform: Option<String>) {
-    if id.is_some() && id == devices::this_id() {
+    // A resolve that finished after browsing was paused.
+    if !crate::quiet::awake() || id.is_some() && id == devices::this_id() {
         return;
     }
     set_blocked(false);
@@ -915,11 +957,22 @@ mod bonjour {
     static RESTART: std::sync::OnceLock<std::sync::Arc<crate::remote::wire::Waker>> =
         std::sync::OnceLock::new();
     static RESTART_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    static PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
     /// Browse afresh: after iOS suspended the app its connection to the
     /// responder may be gone, and a live one says nothing new until
-    /// something changes.
+    /// something changes. Ends a pause.
     pub fn restart() {
+        PAUSED.store(false, std::sync::atomic::Ordering::Relaxed);
+        RESTART_ASKED.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(w) = RESTART.get() {
+            w.wake();
+        }
+    }
+
+    /// Stop browsing until `restart`.
+    pub fn pause() {
+        PAUSED.store(true, std::sync::atomic::Ordering::Relaxed);
         RESTART_ASKED.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(w) = RESTART.get() {
             w.wake();
@@ -934,6 +987,16 @@ mod bonjour {
         };
         let _ = RESTART.set(waker.clone());
         loop {
+            while PAUSED.load(std::sync::atomic::Ordering::Relaxed) {
+                let mut fds = [libc::pollfd {
+                    fd: waker.read_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                }];
+                // SAFETY: a live array of the length given.
+                unsafe { libc::poll(fds.as_mut_ptr(), 1, -1) };
+                waker.drain();
+            }
             if let Err(e) = browse_once(&waker) {
                 log::warn!("nearby: browsing stopped: {e}");
             }

@@ -375,6 +375,8 @@ pub fn set_target(id: Option<String>) {
         });
         s.save();
     });
+    // Controlling another device keeps a backgrounded app awake.
+    crate::quiet::reapply();
 }
 
 /// The app is in front again after iOS may have suspended it: link now,

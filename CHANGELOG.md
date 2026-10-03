@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **In the background, the iOS app does nothing it was not asked to.** Playing or paused, a backgrounded phone used to keep its link to the server open, browse and dial the network for other koan devices, sync every hour and rescan a library folder iOS does not have every fifteen minutes. All of that now waits until the app comes forward, and catches up then. A phone playing in the background still listens and advertises itself, which costs nothing until someone connects, so a Mac can find and control it; paused, it is not on the network at all. Controlling another device keeps it awake, since the Live Activity follows that device, and a push from the server holds it awake while it links and does what was asked.
+
+### Removed
+
+- **"Stay reachable when paused"** (non-App Store builds). It played silence to keep a paused phone running so its link to the server stayed up, which pushes now do without keeping the audio hardware awake.
+
 ## 0.48.2
 
 ### Fixed

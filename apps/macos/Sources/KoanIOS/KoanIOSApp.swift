@@ -16,7 +16,6 @@ struct KoanIOSApp: App {
     /// A link opened before the engine was up, handled once it is.
     @State private var pendingURL: URL?
     @State private var session = AudioSession()
-    @State private var keepalive = Keepalive()
     @State private var remoteActivity: RemoteActivityController?
     @Environment(\.scenePhase) private var scenePhase
     @State private var powerSaving = ProcessInfo.processInfo.isLowPowerModeEnabled
@@ -69,7 +68,7 @@ struct KoanIOSApp: App {
                 powerSaving = ProcessInfo.processInfo.isLowPowerModeEnabled
             }
             .onChange(of: scenePhase) { _, phase in
-                keepalive.setBackground(phase == .background)
+                state?.player.engine.setBackground(background: phase == .background)
                 state?.player.engine.logNote(message: "scene \(phase)")
                 if phase == .active { session.recoverIfInterrupted() }
                 // Suspended in the background, the link to the server went
@@ -78,7 +77,7 @@ struct KoanIOSApp: App {
                 if phase == .active { state?.player.engine.linkNudge() }
             }
             .onChange(of: state?.player.isPlaying ?? false) { _, playing in
-                keepalive.setPlaying(playing)
+                state?.player.engine.setPlaying(playing: playing)
             }
             .task {
                 guard state == nil, startupError == nil else { return }

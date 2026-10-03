@@ -147,6 +147,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/queue.rs` | The download queue: worker pool, a priority lane for the track under the cursor, cursor-aware reordering |
 | `remote/downloads.rs` | The download store — what koan is fetching and what it just fetched. One place every front end reads, rather than each deriving its own |
 | `radio.rs` | Radio mode: similar artists, MusicBrainz relationships, genre and era, play history — a seed that drifts as it plays |
+| `quiet.rs` | What runs in the background on iOS: nothing nobody asked for. Link, nearby browse and dial, sync and rescans wait here; a phone playing stays findable. Lifted by controlling another device or a push |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
 | `helpers.rs` | Shared by every front end: sign-in, favourite reconciliation, sharing, auto-sync and folder watching, forget-folder/forget-remote, cache and index maintenance |
 | `playlists.rs` | Playlists beyond the database: two-way Subsonic reconciliation, background pushes, M3U8 export |

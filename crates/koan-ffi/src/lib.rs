@@ -266,6 +266,28 @@ impl KoanEngine {
         koan_core::remote::devices::resume();
     }
 
+    /// The app went to the background, or came back. In the background
+    /// nothing runs that nobody asked for — see `koan_core::quiet`.
+    pub fn set_background(&self, background: bool) {
+        koan_core::quiet::set_background(background);
+    }
+
+    /// Whether the app is playing: a phone playing in the background stays
+    /// findable on the network, one paused in the background does not.
+    pub fn set_playing(&self, playing: bool) {
+        koan_core::quiet::set_playing(playing);
+    }
+
+    /// Stay awake in the background until `release_awake`: for a push, while
+    /// the link takes what the server kept.
+    pub fn hold_awake(&self) {
+        koan_core::quiet::hold();
+    }
+
+    pub fn release_awake(&self) {
+        koan_core::quiet::release();
+    }
+
     /// Write to koan's log, beside the engine's own lines: for events only the
     /// app sees, such as an audio interruption, where the order relative to
     /// what the engine did is the whole point.
