@@ -119,6 +119,13 @@ pub struct Player {
     playback_starts: usize,
 }
 
+/// Whether a track opens playing, or loaded and paused.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Start {
+    Playing,
+    Paused,
+}
+
 /// Holds the resources for an active playback session.
 struct ActivePlayback {
     engine: Box<dyn AudioEngineHandle>,
@@ -367,7 +374,7 @@ impl Player {
 
         match self.shared_state.item_playback_source(id) {
             Some(PlaybackSource::Ready(path)) => {
-                if let Err(e) = self.start_playback(id, &path, 0) {
+                if let Err(e) = self.start_playback(id, &path, 0, Start::Playing) {
                     log::error!("play failed: {}", e);
                 }
             }
@@ -394,6 +401,27 @@ impl Player {
         }
     }
 
+    /// Load a track at `position_ms`, playing or paused — where a restored
+    /// session picks up. Only a track already on disk can be cued; one that is
+    /// not plays the ordinary way, if it was to play at all.
+    fn cue(&mut self, id: QueueItemId, position_ms: u64, start: Start) {
+        self.shared_state.set_cursor(Some(id));
+        let Some(PlaybackSource::Ready(path)) = self.shared_state.item_playback_source(id) else {
+            if start == Start::Playing {
+                self.play(id);
+            }
+            return;
+        };
+        if let Err(e) = self.start_playback(id, &path, position_ms, start) {
+            log::error!("cue failed: {}", e);
+            return;
+        }
+        self.report(match start {
+            Start::Playing => PlaybackReportState::Playing,
+            Start::Paused => PlaybackReportState::Paused,
+        });
+    }
+
     /// Start playback of a file.
     ///
     /// A failure leaves the player cleanly stopped. Displaying a track that no
@@ -403,12 +431,13 @@ impl Player {
         id: QueueItemId,
         path: &Path,
         seek_ms: u64,
+        start: Start,
     ) -> Result<(), PlayerError> {
         #[cfg(test)]
         {
             self.playback_starts += 1;
         }
-        let result = self.open_playback(id, path, seek_ms);
+        let result = self.open_playback(id, path, seek_ms, start);
         if result.is_err() {
             self.stop_playback_and_clear_state();
         }
@@ -421,6 +450,7 @@ impl Player {
         id: QueueItemId,
         path: &Path,
         seek_ms: u64,
+        start: Start,
     ) -> Result<(), PlayerError> {
         self.stop_engine();
 
@@ -484,9 +514,16 @@ impl Player {
         )?;
 
         let (engine, rate_watch) = self.create_engine_for(&info, consumer)?;
-        engine.start()?;
-
-        self.shared_state.set_playback_state(PlaybackState::Playing);
+        let state = match start {
+            Start::Playing => {
+                engine.start()?;
+                PlaybackState::Playing
+            }
+            // Loaded and decoding, but the unit is left stopped: starting it
+            // and stopping it again lets a moment of the track out.
+            Start::Paused => PlaybackState::Paused,
+        };
+        self.shared_state.set_playback_state(state);
 
         self.active_playback = Some(ActivePlayback {
             engine,
@@ -658,7 +695,7 @@ impl Player {
         match self.shared_state.item_playback_source(id) {
             // The download landed while probing: play it as an ordinary file.
             Some(PlaybackSource::Ready(path)) => {
-                if let Err(e) = self.start_playback(id, &path, 0) {
+                if let Err(e) = self.start_playback(id, &path, 0, Start::Playing) {
                     log::error!("stream probe: playback failed: {}", e);
                 }
             }
@@ -673,7 +710,7 @@ impl Player {
                     total,
                     mode,
                 };
-                if let Err(e) = self.start_streaming_playback(id, source, 0, info) {
+                if let Err(e) = self.start_streaming_playback(id, source, 0, info, Start::Playing) {
                     log::error!("stream probe: streaming playback failed: {}", e);
                 }
             }
@@ -711,8 +748,9 @@ impl Player {
         source: StreamSource,
         seek_ms: u64,
         info: buffer::StreamInfo,
+        start: Start,
     ) -> Result<(), PlayerError> {
-        let result = self.open_streaming_playback(id, source, seek_ms, info);
+        let result = self.open_streaming_playback(id, source, seek_ms, info, start);
         if result.is_err() {
             self.stop_playback_and_clear_state();
         }
@@ -725,6 +763,7 @@ impl Player {
         source: StreamSource,
         seek_ms: u64,
         info: buffer::StreamInfo,
+        start: Start,
     ) -> Result<(), PlayerError> {
         self.stop_engine();
         // Held so a seek can reopen the same way without probing again.
@@ -835,9 +874,16 @@ impl Player {
         )?;
 
         let (engine, rate_watch) = self.create_engine_for(&info, consumer)?;
-        engine.start()?;
-
-        self.shared_state.set_playback_state(PlaybackState::Playing);
+        let state = match start {
+            Start::Playing => {
+                engine.start()?;
+                PlaybackState::Playing
+            }
+            // Loaded and decoding, but the unit is left stopped: starting it
+            // and stopping it again lets a moment of the track out.
+            Start::Paused => PlaybackState::Paused,
+        };
+        self.shared_state.set_playback_state(state);
 
         self.active_playback = Some(ActivePlayback {
             engine,
@@ -889,6 +935,11 @@ impl Player {
     /// downloading when it started and is not renamed when the download lands.
     fn restart_current(&mut self, info: &TrackInfo, position_ms: u64) -> Result<(), PlayerError> {
         let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
+        let start = if was_paused {
+            Start::Paused
+        } else {
+            Start::Playing
+        };
 
         match self.shared_state.item_playback_source(info.id) {
             Some(PlaybackSource::Streaming {
@@ -913,17 +964,14 @@ impl Player {
                     total,
                     mode: self.stream_mode,
                 };
-                self.start_streaming_playback(info.id, source, position_ms, known)?;
+                self.start_streaming_playback(info.id, source, position_ms, known, start)?;
             }
             Some(PlaybackSource::Ready(path)) => {
-                self.start_playback(info.id, &path, position_ms)?;
+                self.start_playback(info.id, &path, position_ms, start)?;
             }
             None => return Ok(()),
         }
 
-        if was_paused {
-            self.pause_now();
-        }
         self.report(if was_paused {
             PlaybackReportState::Paused
         } else {
@@ -1118,7 +1166,7 @@ impl Player {
         // Cursor is on this item but not yet playing — start playback now.
         if !is_playing && let Some(path) = self.shared_state.item_path_if_ready(id) {
             log::info!("track_ready: starting playback for {:?}", id);
-            if let Err(e) = self.start_playback(id, &path, 0) {
+            if let Err(e) = self.start_playback(id, &path, 0, Start::Playing) {
                 log::error!("track_ready playback failed: {}", e);
             }
         }
@@ -1151,7 +1199,7 @@ impl Player {
                     "track_stream_ready: track already ready, starting normal playback for {:?}",
                     id
                 );
-                if let Err(e) = self.start_playback(id, &path, 0) {
+                if let Err(e) = self.start_playback(id, &path, 0, Start::Playing) {
                     log::error!("track_stream_ready playback failed: {}", e);
                 }
             }
@@ -1383,6 +1431,15 @@ impl Player {
     pub fn process_command(&mut self, cmd: PlayerCommand) {
         match cmd {
             PlayerCommand::Play(id) => self.play(id),
+            PlayerCommand::Cue {
+                id,
+                position_ms,
+                play,
+            } => self.cue(
+                id,
+                position_ms,
+                if play { Start::Playing } else { Start::Paused },
+            ),
             PlayerCommand::Pause => self.pause(),
             PlayerCommand::Resume => self.resume(),
             PlayerCommand::Stop => self.stop(),
@@ -1715,7 +1772,7 @@ mod tests {
     use super::*;
     use state::PlaylistItem;
     use std::path::PathBuf;
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn make_item(title: &str) -> PlaylistItem {
         PlaylistItem {
@@ -1912,6 +1969,7 @@ mod tests {
         player.backend = Box::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
+            starts: Default::default(),
         });
         let item = PlaylistItem {
             db_id: Some(5),
@@ -1933,6 +1991,47 @@ mod tests {
     }
 
     #[test]
+    fn a_track_cued_paused_never_starts_the_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
+
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+            starts: starts.clone(),
+        });
+        let item = PlaylistItem {
+            path,
+            ..make_item("t")
+        };
+        let id = item.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
+
+        player.process_command(PlayerCommand::Cue {
+            id,
+            position_ms: 2_000,
+            play: false,
+        });
+        assert!(player.active_playback.is_some(), "loaded");
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
+        assert_eq!(player.shared_state.position_ms(), 2_000);
+        assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
+
+        // Seeking while paused reopens the track, and stays quiet too.
+        player.process_command(PlayerCommand::Seek(4_000));
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
+        assert_eq!(starts.load(Ordering::Relaxed), 0);
+
+        player.process_command(PlayerCommand::Resume);
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
+        assert_eq!(starts.load(Ordering::Relaxed), 1);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
     fn the_server_hears_each_turn_playback_takes() {
         use PlaybackReportState::{Paused, Playing, Stopped};
         use history::PlaybackReport;
@@ -1945,6 +2044,7 @@ mod tests {
         player.backend = Box::new(StuckBackend {
             rate: 8_000.0,
             asked: Default::default(),
+            starts: Default::default(),
         });
         let (recorder, events) = PlayRecorder::capture();
         player.history = Some(recorder);
@@ -2718,18 +2818,26 @@ mod tests {
     struct StuckBackend {
         rate: f64,
         asked: Arc<std::sync::Mutex<Option<(f64, u32)>>>,
+        /// How many times an engine it made was started.
+        starts: Arc<std::sync::atomic::AtomicUsize>,
     }
 
-    struct NullEngine;
+    struct NullEngine {
+        starts: Arc<std::sync::atomic::AtomicUsize>,
+        running: std::sync::atomic::AtomicBool,
+    }
     impl AudioEngineHandle for NullEngine {
         fn start(&self) -> Result<(), BackendError> {
+            self.starts.fetch_add(1, Ordering::Relaxed);
+            self.running.store(true, Ordering::Relaxed);
             Ok(())
         }
         fn stop(&self) -> Result<(), BackendError> {
+            self.running.store(false, Ordering::Relaxed);
             Ok(())
         }
         fn is_running(&self) -> bool {
-            false
+            self.running.load(Ordering::Relaxed)
         }
         fn fade_out(&self) {}
         fn fade_in(&self) -> Result<(), BackendError> {
@@ -2779,7 +2887,10 @@ mod tests {
             _samples_played: Arc<AtomicU64>,
         ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
             *self.asked.lock().unwrap() = Some((sample_rate, channels));
-            Ok(Box::new(NullEngine))
+            Ok(Box::new(NullEngine {
+                starts: self.starts.clone(),
+                running: Default::default(),
+            }))
         }
     }
 
@@ -2789,6 +2900,7 @@ mod tests {
         player.backend = Box::new(StuckBackend {
             rate: device_rate,
             asked: asked.clone(),
+            starts: Default::default(),
         });
 
         let info = buffer::StreamInfo {
@@ -2826,6 +2938,7 @@ mod tests {
         player.backend = Box::new(StuckBackend {
             rate: device_rate,
             asked: Arc::new(std::sync::Mutex::new(None)),
+            starts: Default::default(),
         });
         let state = player.shared_state.clone();
 
@@ -2903,7 +3016,10 @@ mod tests {
             _consumer: rtrb::Consumer<f32>,
             _samples_played: Arc<AtomicU64>,
         ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
-            Ok(Box::new(NullEngine))
+            Ok(Box::new(NullEngine {
+                starts: Default::default(),
+                running: Default::default(),
+            }))
         }
     }
 
@@ -3013,6 +3129,7 @@ mod tests {
             inner: StuckBackend {
                 rate: 44100.0,
                 asked: Arc::new(std::sync::Mutex::new(None)),
+                starts: Default::default(),
             },
             captured: captured.clone(),
         });
