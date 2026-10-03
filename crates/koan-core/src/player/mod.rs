@@ -2105,7 +2105,10 @@ mod tests {
         });
         assert!(player.active_playback.is_some(), "loaded");
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
-        assert_eq!(player.shared_state.position_ms(), 2_000);
+        // Where the seek asked for until the decoder says where it landed: the
+        // start of the packet holding 2s, which can be a little before it.
+        let at = player.shared_state.position_ms();
+        assert!((1_750..=2_000).contains(&at), "cued at {at}ms");
         assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
 
         // Seeking while paused reopens the track, and stays quiet too.
