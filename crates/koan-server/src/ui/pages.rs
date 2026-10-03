@@ -82,6 +82,7 @@ href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></d
 <script src=\"/ui/assets/player.js\" defer></script><script src=\"/ui/assets/ui.js\" defer></script>\
 </head><body><nav class=side aria-label=Library><a class=brand href=\"/\">kōan</a>\
 <a href=\"/albums\" data-nav=albums>Albums</a><a href=\"/artists\" data-nav=artists>Artists</a>\
+<a href=\"/playlists\" data-nav=playlists>Playlists</a>\
 <a href=\"/search\" data-nav=search>Search</a><a href=\"/queue\" data-nav=queue>Queue</a>{account}</nav>\
 <main id=content>{content}</main><div class=account-foot>{account}</div>\
 <footer class=bar><progress class=progress data-np=progress max=1 value=0></progress>\
@@ -610,6 +611,107 @@ data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{}/share')\">Share<
         cells(&albums, &versions)
     );
     respond(&s, &headers, &user, &artist.name, "artist", &inner)
+}
+
+pub(super) async fn playlists(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+) -> Response {
+    let st = s.clone();
+    let found = blocking(move || {
+        let db = open(&st.pool)?;
+        queries::list_playlists(&db.conn, user.user_id).ok()
+    })
+    .await;
+    let Some(lists) = found else {
+        return unavailable();
+    };
+    let list = if lists.is_empty() {
+        "<p class=empty>No playlists yet.</p>".to_owned()
+    } else {
+        let rows = lists.iter().fold(String::new(), |mut out, p| {
+            let _ = write!(
+                out,
+                "<li><a href=\"/playlist/{}\"><span class=t>{}</span><span class=d>{} track{} · {}</span></a></li>",
+                p.id,
+                escape(&p.name),
+                p.track_count,
+                if p.track_count == 1 { "" } else { "s" },
+                duration(Some(p.duration_ms)),
+            );
+            out
+        });
+        format!("<ul class=list>{rows}</ul>")
+    };
+    let inner = format!("<h1>Playlists</h1>{list}");
+    respond(&s, &headers, &user, "Playlists", "playlists", &inner)
+}
+
+/// A playlist, laid out like an album so its rows play and queue the same way.
+/// The caller's own playlists and anyone's public ones.
+pub(super) async fn playlist(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Response {
+    let st = s.clone();
+    let found = blocking(move || {
+        let db = open(&st.pool)?;
+        let me = queries::auth::resolve_user(&db.conn, user.user_id).ok()?;
+        let list = queries::get_playlist(&db.conn, id)
+            .ok()?
+            .filter(|p| p.readable_by(me))?;
+        let tracks = queries::playlist_tracks(&db.conn, id).ok()?;
+        let versions = track_versions(&db.conn, &tracks);
+        Some((list, tracks, versions))
+    })
+    .await;
+    let Some((list, tracks, versions)) = found else {
+        return not_found();
+    };
+    let rows: String = tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| track_row(t, i + 1, true, true, &versions, false))
+        .collect();
+    let cover = tracks
+        .iter()
+        .find_map(|t| t.album_id)
+        .map(|a| {
+            format!(
+                "<img class=cover src=\"{}\" width={large} height={large} alt=\"\">",
+                cover_url(a, crate::covers::LARGE, &versions),
+                large = crate::covers::LARGE,
+            )
+        })
+        .unwrap_or_default();
+    let mut sub = Vec::new();
+    if let Some(owner) = list.owner.as_deref().filter(|o| !o.is_empty()) {
+        sub.push(escape(owner));
+    }
+    sub.push(format!(
+        "{} track{}",
+        tracks.len(),
+        if tracks.len() == 1 { "" } else { "s" }
+    ));
+    sub.push(duration(Some(list.duration_ms)));
+    let comment = list
+        .comment
+        .as_deref()
+        .filter(|c| !c.is_empty())
+        .map(|c| format!("<p class=sub>{}</p>", escape(c)))
+        .unwrap_or_default();
+    let inner = format!(
+        "<header class=hero>{cover}<div class=info><p class=kicker>Playlist</p><h1>{title}</h1>\
+<p class=sub>{sub}</p>{comment}<div class=actions><button class=primary data-act=play>Play</button>\
+<button data-act=shuffle>Shuffle</button><button data-act=queue>Add to queue</button></div></div></header>\
+<ol class=tracks data-context=album>{rows}</ol>",
+        title = escape(&list.name),
+        sub = sub.join(" · "),
+    );
+    respond(&s, &headers, &user, &list.name, "playlist", &inner)
 }
 
 fn results(s: &UiState, q: &str) -> String {

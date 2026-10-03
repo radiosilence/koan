@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Playlists in the web UI.** A Playlists section lists the account's own playlists and everyone's public ones; a playlist page plays, shuffles or queues it like an album. Viewing only; editing stays in the apps.
+
 ## 0.49.2
 
 ### Removed
