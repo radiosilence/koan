@@ -36,11 +36,15 @@ reorder, add an album, favourite the track. Library pages are still this
 device's library; what you add goes to the other device's queue by the
 server's id for each track.
 
-**Move here** on a row sends what the controlled device is playing (its whole
-queue and where it is in the current track) to that row's device, pauses the
-source, and controls the destination from then on. On a phone, **Move here** on
-*This iPhone* brings the Mac's music to the phone. Tracks only on the source
-device, with no server id, stay behind, and the app says how many.
+**Move here** on a row pauses the controlled device, then sends what it was
+playing (its whole queue, and the point in the current track where it went
+silent) to that row's device, and controls the destination from then on. The
+destination opens the track at that point rather than starting it and seeking,
+so nothing is heard twice and the start of the track is not heard at all. A
+track the destination has to download waits until the whole file has arrived. A
+paused source arrives paused. On a phone, **Move here** on *This iPhone* brings
+the Mac's music to the phone. Tracks only on the source device, with no server
+id, stay behind, and the app says how many.
 
 ## The lock screen
 
