@@ -134,4 +134,62 @@ docker compose exec koan koan auth setup   # the admin account
 
 Then open `https://music.example.com` and sign in. The Subsonic API is on for kōan accounts; `koan subsonic setup` adds a shared secret for clients that have none. Config, the database and keys live in the `koan-config` volume. The image runs as uid 1000, so a bind mount in its place has to be writable by that uid.
 
-On Kubernetes, a versioned Pulumi component package, [`@radiosilence/koan-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi), is published to GitHub Packages alongside each release. It exports `createKoan`, which builds the Deployment, its init container, Services and NetworkPolicy from a config object validated against `KoanConfSchema`.
+### Kubernetes (Pulumi)
+
+[`@radiosilence/koan-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi) is a Pulumi component that deploys the server into a namespace. Its version is koan's: each release publishes both, and a pinned package deploys exactly that image.
+
+It is published to GitHub Packages, which wants a token with `read:packages` even for public packages:
+
+```ini
+# .npmrc
+@radiosilence:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+```bash
+npm install @radiosilence/koan-pulumi @pulumi/kubernetes @pulumi/pulumi zod
+```
+
+`createKoan(provider, namespace, config)` validates `config` against `KoanConfSchema` and creates a Deployment, a Service on port 80 and a NetworkPolicy. It creates no Ingress; it returns `routes` naming the Service and hostname, for whatever fronts the cluster to route.
+
+```ts
+import * as k8s from "@pulumi/kubernetes";
+import { createKoan } from "@radiosilence/koan-pulumi";
+
+const provider = new k8s.Provider("cluster", {});
+const ns = new k8s.core.v1.Namespace("koan", { metadata: { name: "koan" } }, { provider });
+
+const koan = createKoan(provider, ns.metadata.name, {
+  hostname: "music.example.com",
+  library: { existingClaim: "music" },
+  state: { existingClaim: "koan-state" },
+});
+
+export const routes = koan.routes;
+```
+
+| Option | |
+|--------|-|
+| `hostname` | Required. Becomes `allowed_hosts` and `sharing.public_url` (`https://<hostname>`), so TLS is expected in front |
+| `library` | Required: `existingClaim` or `hostPath`. Mounted read-only at `/music` |
+| `state` | `existingClaim` or `hostPath`, mounted at `/config`. Unset, it is an `emptyDir` and the index and accounts go with the pod |
+| `image` | `repository`, `tag` (defaults to the package's version), `pullPolicy` |
+| `nodeSelector` | Needed with a `hostPath`, which is one node's disk |
+| `push` | `existingSecret` holding the APNs key under `apns-key`, plus `keyId` and `teamId`: wakes the iOS app when it is suspended |
+| `resources` | Requests default to 250m / 256Mi, limits to 6 CPU / 5Gi |
+| `networkPolicy` | On by default. Ingress only from `api.from` (a Traefik pod by default) plus `extraIngress`; egress to cluster DNS and the public internet, with `privateCidrs` excluded |
+
+Load-bearing behaviour:
+
+- **One replica, `Recreate`.** The index is a single SQLite database, which two pods cannot share.
+- **The database is migrated in a Job before the Deployment changes.** With persistent state, each update first runs `koan check-db` against a snapshot of the live database. If the new version's migration fails, the update stops and the old pod keeps serving.
+- **The state directory is chowned on first use.** kubelet creates a missing `hostPath` as root and koan runs as uid 1000, so an init container makes it 1000's. Turn this off with `initPermissions.enabled: false`.
+- **The root filesystem is read-only.** Artwork and lyrics caches go to an `emptyDir` and are rebuilt after a restart.
+
+Unknown options are rejected rather than ignored, so a stack carrying options a newer package removed fails at `pulumi preview`.
+
+Once it is running, create the admin account in the pod:
+
+```bash
+kubectl -n koan exec -it deploy/koan -- koan auth setup
+```
