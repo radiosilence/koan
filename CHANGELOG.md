@@ -6,6 +6,10 @@
 
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
 
+### Fixed
+
+- **ALAC tracks from a koan server no longer show as "BIN".** The server had no suffix or content type for ALAC, PCM or `.aif`, so it published those tracks as `bin`, `application/octet-stream`, and an app syncing from it stored `bin` as the codec. Every codec the indexer records now has its suffix and content type. Since a suffix cannot tell ALAC from AAC (both are `m4a`), a koan server also sends the stored codec in a `codec` attribute, which koan clients prefer over the suffix. Tracks already synced pick up the correct codec on the next full library sync.
+
 ## 0.50.2
 
 ### Changed

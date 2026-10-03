@@ -648,7 +648,7 @@ fn write_albums(
                 genre: song.genre.clone().or_else(|| album.genre.clone()),
                 label: None,
                 duration_ms: song.duration.map(|d| d * 1000),
-                codec: song.suffix.clone(),
+                codec: song.codec.clone().or_else(|| song.suffix.clone()),
                 // OpenSubsonic servers report these; a plain Subsonic one
                 // leaves them out and the track keeps no quality figures.
                 //

@@ -936,6 +936,9 @@ pub struct SubsonicSong {
     pub bit_rate: Option<i32>,
     pub suffix: Option<String>,
     pub content_type: Option<String>,
+    /// Sent by a koan server only; a suffix cannot tell ALAC from AAC.
+    #[serde(default, deserialize_with = "non_empty")]
+    pub codec: Option<String>,
     pub album_id: Option<String>,
     pub artist_id: Option<String>,
     // OpenSubsonic. Absent on a plain Subsonic server, which is why they are
@@ -1157,6 +1160,19 @@ mod tests {
         assert_eq!(song.sampling_rate, Some(44100));
         assert_eq!(song.bit_depth, Some(16));
         assert_eq!(song.channel_count, Some(2));
+    }
+
+    /// A koan server names the codec, which the suffix cannot: ALAC and AAC
+    /// are both m4a.
+    #[test]
+    fn a_koan_server_names_the_codec() {
+        let json = r#"{"id": "1", "title": "Seawhite", "suffix": "m4a", "codec": "ALAC"}"#;
+        let song: SubsonicSong = serde_json::from_str(json).unwrap();
+        assert_eq!(song.codec.as_deref(), Some("ALAC"));
+
+        let json = r#"{"id": "1", "title": "Seawhite", "suffix": "m4a"}"#;
+        let song: SubsonicSong = serde_json::from_str(json).unwrap();
+        assert_eq!(song.codec, None);
     }
 
     /// A plain Subsonic server omits them, and a missing sample rate is not
