@@ -53,8 +53,13 @@ pub struct DecodeHandle {
 
 impl DecodeHandle {
     /// Signal the decode thread to stop without waiting for it to exit.
+    /// Unparks it too: a full ring has it parked for as long as the output
+    /// takes to drain half of it.
     pub fn signal_stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = &self.thread {
+            handle.thread().unpark();
+        }
     }
 
     /// Create a DecodeHandle with no real thread (for tests only).
@@ -105,6 +110,20 @@ pub struct TrackBoundary {
     pub seek_samples: u64,
 }
 
+impl TrackBoundary {
+    /// Where in this track the playhead is when `played` samples have played.
+    fn position_ms(&self, played: u64) -> Option<u64> {
+        let ch = self.info.channels as u64;
+        let rate = self.info.sample_rate as u64;
+        if ch == 0 || rate == 0 {
+            return None;
+        }
+        // Add seek offset since that's where playback started within the track.
+        let track_samples = played.saturating_sub(self.sample_offset);
+        Some((track_samples / ch) * 1000 / rate + (self.seek_samples / ch) * 1000 / rate)
+    }
+}
+
 /// Shared timeline that the decode thread writes and the UI reads.
 /// The decode thread appends boundaries; the UI reads them + samples_played
 /// to derive current track and position.
@@ -118,6 +137,18 @@ pub struct PlaybackTimeline {
     /// Incremented by every `reset()`. A decode thread writes only while the
     /// generation it started in is still the current one.
     generation: AtomicU64,
+    /// Told when the decoder queues another track, which is when the moment
+    /// the playhead reaches it becomes known.
+    queued: parking_lot::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+}
+
+impl std::fmt::Debug for PlaybackTimeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlaybackTimeline")
+            .field("samples_played", &self.samples_played)
+            .field("generation", &self.generation)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PlaybackTimeline {
@@ -127,7 +158,53 @@ impl PlaybackTimeline {
             samples_written: AtomicU64::new(0),
             samples_played: Arc::new(AtomicU64::new(0)),
             generation: AtomicU64::new(0),
+            queued: parking_lot::Mutex::new(None),
         })
+    }
+
+    /// Call `f` whenever the decoder queues another track.
+    pub fn on_queued(&self, f: impl Fn() + Send + Sync + 'static) {
+        *self.queued.lock() = Some(Box::new(f));
+    }
+
+    /// The track under the playhead and how far into it, without the clones
+    /// `current_playback` makes.
+    pub fn playhead(&self) -> Option<(QueueItemId, u64)> {
+        let bounds = self.boundaries.read();
+        let played = self.samples_played.load(Ordering::Acquire);
+        let idx = bounds.partition_point(|b| b.sample_offset <= played);
+        let current = bounds.get(idx.checked_sub(1)?)?;
+        Some((current.id, current.position_ms(played)?))
+    }
+
+    /// How far into `id` playback has got, stopping at its end once the
+    /// playhead has moved on to the next track.
+    pub fn position_of(&self, id: QueueItemId) -> Option<u64> {
+        let bounds = self.boundaries.read();
+        let played = self.samples_played.load(Ordering::Acquire);
+        let idx = bounds.iter().rposition(|b| b.id == id)?;
+        let at = bounds
+            .get(idx + 1)
+            .map_or(played, |next| played.min(next.sample_offset));
+        bounds[idx].position_ms(at)
+    }
+
+    /// How long until the playhead reaches the track queued after the one
+    /// playing, at the rate this one plays. None with nothing queued.
+    pub fn until_next_track(&self) -> Option<std::time::Duration> {
+        let bounds = self.boundaries.read();
+        let played = self.samples_played.load(Ordering::Acquire);
+        let idx = bounds.partition_point(|b| b.sample_offset <= played);
+        let next = bounds.get(idx)?;
+        let current = bounds.get(idx.checked_sub(1)?)?;
+        let per_second = current.info.sample_rate as u64 * current.info.channels as u64;
+        if per_second == 0 {
+            return None;
+        }
+        let left = next.sample_offset - played;
+        Some(std::time::Duration::from_micros(
+            left.saturating_mul(1_000_000) / per_second,
+        ))
     }
 
     /// The current session's generation, to be handed to `writer`.
@@ -164,7 +241,6 @@ impl PlaybackTimeline {
     }
 
     /// Derive current track info and position from the playback head.
-    /// Called by the UI on every tick.
     /// Returns (id, path, stream_info, position_ms).
     ///
     /// Acquires the boundaries read lock BEFORE reading `samples_played` so
@@ -194,17 +270,7 @@ impl PlaybackTimeline {
             return None;
         };
 
-        let ch = current.info.channels as u64;
-        let rate = current.info.sample_rate as u64;
-        if ch == 0 || rate == 0 {
-            return None;
-        }
-
-        // Position within this track: (played - track_start) converted to ms.
-        // Add seek offset since that's where playback started within the track.
-        let track_samples = played.saturating_sub(current.sample_offset);
-        let position_ms =
-            (track_samples / ch) * 1000 / rate + (current.seek_samples / ch) * 1000 / rate;
+        let position_ms = current.position_ms(played)?;
 
         Some((
             current.id,
@@ -247,11 +313,16 @@ impl TimelineWriter<'_> {
 
     /// Called by decode thread when starting a new track.
     fn push_boundary(&self, boundary: TrackBoundary) {
-        let mut bounds = self.timeline.boundaries.write();
-        if !self.is_current() {
-            return;
+        {
+            let mut bounds = self.timeline.boundaries.write();
+            if !self.is_current() {
+                return;
+            }
+            bounds.push(boundary);
         }
-        bounds.push(boundary);
+        if let Some(queued) = self.timeline.queued.lock().as_ref() {
+            queued();
+        }
     }
 
     /// Called by decode thread after pushing samples.
@@ -634,23 +705,33 @@ fn decode_queue_loop<N>(
         }
     }
 
-    wait_for_drain(&producer, stop);
+    wait_for_drain(&producer, stop, format);
 }
 
-const FULL_RING_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
+/// How long the output takes to play `samples` interleaved samples. Without a
+/// format to go by, a step short enough to poll with.
+fn time_to_play(samples: usize, format: Option<PcmFormat>) -> std::time::Duration {
+    match format {
+        Some((rate, channels)) if rate > 0 && channels > 0 => std::time::Duration::from_micros(
+            samples as u64 * 1_000_000 / (rate as u64 * channels as u64),
+        ),
+        _ => std::time::Duration::from_millis(2),
+    }
+}
 
 /// Block until the audio engine has consumed everything in the ring buffer.
 ///
 /// A session ends only once its audio has been heard, so the player can tear
 /// the engine down without clipping the tail of the last track decoded.
 /// Returns early if playback is torn down underneath us.
-fn wait_for_drain(producer: &rtrb::Producer<f32>, stop: &AtomicBool) {
+fn wait_for_drain(producer: &rtrb::Producer<f32>, stop: &AtomicBool, format: Option<PcmFormat>) {
     let capacity = producer.buffer().capacity();
     while !stop.load(Ordering::Relaxed) && !producer.is_abandoned() {
-        if producer.slots() >= capacity {
+        let left = capacity.saturating_sub(producer.slots());
+        if left == 0 {
             return;
         }
-        thread::sleep(std::time::Duration::from_millis(2));
+        thread::park_timeout(time_to_play(left, format));
     }
 }
 
@@ -934,11 +1015,13 @@ fn decode_single(
             let slots = producer.slots();
             if slots == 0 {
                 // A full ring is the steady state, so this is the wait playback
-                // spends nearly all its time in. The ring holds a second or more
-                // of audio at any rate koan plays, and 10ms is still fine enough
-                // for the viz delay line; half a millisecond would be two
-                // thousand wakes a second for the length of every track.
-                thread::sleep(FULL_RING_WAIT);
+                // spends nearly all its time in: until the output has played
+                // half of it, which leaves the other half — a second or more at
+                // any rate koan plays — to refill against. The viz delay line
+                // is read at the playhead, so a refill arriving in one burst
+                // reads the same as one trickling in. A stop unparks it.
+                let half = producer.buffer().capacity() / 2;
+                thread::park_timeout(time_to_play(half, Some((sample_rate, channels))));
                 continue;
             }
 
@@ -1237,6 +1320,55 @@ mod tests {
     }
 
     #[test]
+    fn the_next_track_is_due_when_the_current_one_has_played_out() {
+        let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
+        let (a, b) = (QueueItemId::new(), QueueItemId::new());
+        // One second of 44.1kHz stereo before b starts.
+        tl.push_boundary(make_boundary(a, 0, 0, 2, 44100));
+        assert_eq!(timeline.until_next_track(), None, "nothing queued after it");
+        tl.push_boundary(make_boundary(b, 88200, 0, 2, 44100));
+
+        timeline.samples_played.store(44100, Ordering::Relaxed);
+        assert_eq!(
+            timeline.until_next_track(),
+            Some(std::time::Duration::from_millis(500))
+        );
+        timeline.samples_played.store(88200, Ordering::Relaxed);
+        assert_eq!(timeline.until_next_track(), None, "b is playing now");
+    }
+
+    #[test]
+    fn the_queued_callback_hears_each_track() {
+        let timeline = PlaybackTimeline::new();
+        let heard = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = heard.clone();
+        timeline.on_queued(move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+        });
+        let tl = writer(&timeline);
+        tl.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
+        tl.push_boundary(make_boundary(QueueItemId::new(), 88200, 0, 2, 44100));
+        assert_eq!(heard.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn a_track_played_past_reads_as_played_to_its_end() {
+        let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
+        let (a, b) = (QueueItemId::new(), QueueItemId::new());
+        tl.push_boundary(make_boundary(a, 0, 0, 2, 44100));
+        tl.push_boundary(make_boundary(b, 88200, 0, 2, 44100));
+        timeline
+            .samples_played
+            .store(88200 + 44100, Ordering::Relaxed);
+
+        assert_eq!(timeline.position_of(a), Some(1000));
+        assert_eq!(timeline.position_of(b), Some(500));
+        assert_eq!(timeline.playhead(), Some((b, 500)));
+    }
+
+    #[test]
     fn test_timeline_reset() {
         // After reset(), current_playback() returns None and all counters are cleared.
         let timeline = PlaybackTimeline::new();
@@ -1473,7 +1605,7 @@ mod tests {
             consumer
         });
 
-        wait_for_drain(&producer, &stop);
+        wait_for_drain(&producer, &stop, None);
         assert_eq!(producer.slots(), 64, "drain must wait for an empty buffer");
         drop(reader.join().unwrap());
     }
@@ -1482,7 +1614,7 @@ mod tests {
     fn drain_returns_when_playback_is_torn_down() {
         let (producer, consumer) = rtrb::RingBuffer::<f32>::new(64);
         let stop = Arc::new(AtomicBool::new(true));
-        wait_for_drain(&producer, &stop);
+        wait_for_drain(&producer, &stop, None);
         drop(consumer);
     }
 

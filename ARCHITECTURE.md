@@ -73,7 +73,7 @@ Five threads at steady state during playback:
                 ▼
 ┌─────────────────────────────────────────────────┐
 │ Player Thread ("koan-player")                   │
-│ Command loop: recv_timeout(50ms)                │
+│ Command loop: sleeps until a command or event   │
 │ Owns ActivePlayback (engine + decode handle)    │
 │ Writes SharedPlayerState, syncs timeline        │
 └───────┬───────────────────┬─────────────────────┘
@@ -105,7 +105,7 @@ Five threads at steady state during playback:
 | PCM samples | Decode | Audio RT | `rtrb` SPSC ring buffer (lock-free) |
 | `samples_played` | Audio RT | TUI, Player | `AtomicU64` (Relaxed) |
 | `PlaybackState` | Player | TUI | `AtomicU8` (Relaxed) |
-| `position_ms` | Player | TUI | `AtomicU64` (Relaxed) |
+| `position_ms` | Player | TUI | `AtomicU64` (Relaxed) — a session's start and a stopped player's place; while playing or paused, `position_ms()` reads the playhead off the timeline |
 | `track_info` | Player | TUI | `parking_lot::RwLock` |
 | `Playlist` | Player | TUI, Decode | `parking_lot::RwLock` |
 | `playlist_version` | Player | TUI | `AtomicU64` (Relaxed) |
@@ -158,7 +158,7 @@ The decode thread doesn't stop between tracks. When Symphonia hits EOF:
 3. The ring buffer producer stays alive — no gap in the PCM stream
 4. A new `TrackBoundary` is pushed to the timeline with `sample_offset` = cumulative samples so far
 5. The audio backend keeps draining. When `samples_played` crosses the boundary, the UI sees the track change
-6. Player's `update_playback_state()` (every 50ms tick) notices the boundary crossing and syncs the cursor
+6. The decoder pushing the boundary wakes the player (`TrackQueued`), which works out when the playhead reaches it and sleeps until then; it wakes at the crossing and syncs the cursor
 
 The decode thread has its own cursor (`decode_cursor`) separate from the UI playlist cursor. Decode only *peeks* ahead — it never moves the real cursor. The player thread moves the cursor when the timeline confirms the transition.
 

@@ -97,6 +97,9 @@ pub enum PlayerCommand {
     TrackFailed(QueueItemId),
     /// Decode thread exhausted the playlist — auto-advance or stop.
     DecodeFinished,
+    /// The decoder queued the next track, so when the playhead reaches it is
+    /// now known.
+    TrackQueued,
     /// Undo the last reversible playlist operation.
     Undo,
     /// Redo the last undone operation.

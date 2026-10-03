@@ -62,8 +62,10 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         didReceiveRemoteNotification userInfo: [AnyHashable: Any]
     ) async -> UIBackgroundFetchResult {
         Self.engine?.logNote(message: "push: woken")
+        Self.engine?.holdAwake()
         Self.engine?.linkNudge()
         try? await Task.sleep(for: .seconds(20))
+        Self.engine?.releaseAwake()
         return .newData
     }
 

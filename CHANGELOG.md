@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+
+- **In the background, the iOS app does nothing it was not asked to.** Playing or paused, a backgrounded phone used to keep its link to the server open, browse and dial the network for other koan devices, sync every hour and rescan a library folder iOS does not have every fifteen minutes. All of that now waits until the app comes forward, and catches up then. A phone playing in the background still listens and advertises itself, which costs nothing until someone connects, so a Mac can find and control it; paused, it is not on the network at all. Controlling another device keeps it awake, since the Live Activity follows that device, and a push from the server holds it awake while it links and does what was asked.
+
+- **The player sleeps until there is something to do.** It woke every 50ms to copy the playhead into shared state, playing, paused or stopped — a hundred and sixteen wakes a second from a paused Mac with nothing on screen moving. The playhead is now read off the samples played when it is asked for, and the player wakes only for a command, for the moment the playhead reaches a queued track, or while a pause fades out. Listening time for history is counted at those moments instead of being summed tick by tick. The decoder, which looked at a full ring buffer every 10ms, now sleeps until half of it has played. Measured on a Mac: 200 context switches a second playing becomes 89, nearly all of them the audio output's own callback; 116 paused becomes none.
+
+### Removed
+
+- **"Stay reachable when paused"** (non-App Store builds). It played silence to keep a paused phone running so its link to the server stayed up, which pushes now do without keeping the audio hardware awake.
+
 ### Fixed
 
 - **Opening koan with the music paused stays silent.** The player had no way to load a track without starting the output, so restoring a paused session played it, seeked it and paused it, and a moment of the track got out before the pause. Seeking while paused had the same shape. A track can now be opened paused, and a restored session is cued at its position in one command, playing or not.

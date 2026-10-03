@@ -23,10 +23,6 @@ use crate::db::queries;
 use crate::player::state::QueueItemId;
 use crate::remote::client::PlaybackReportState;
 
-/// A position jump larger than this is a seek, not playback, and buys no
-/// credit. The player polls every 50ms, so a real tick is far below it.
-const MAX_TICK_MS: u64 = 2_000;
-
 /// Last.fm's floor: a track shorter than this is never scrobbled.
 const SCROBBLE_MIN_TRACK_MS: u64 = 30_000;
 
@@ -54,11 +50,12 @@ pub struct InFlight {
 }
 
 impl InFlight {
-    pub fn new(item: QueueItemId, track_id: Option<i64>) -> Self {
+    /// Entered at `position_ms`, which is where counting starts.
+    pub fn new(item: QueueItemId, track_id: Option<i64>, position_ms: u64) -> Self {
         Self {
             item,
             track_id,
-            last_position_ms: 0,
+            last_position_ms: position_ms,
             listened_ms: 0,
         }
     }
@@ -74,12 +71,16 @@ impl InFlight {
         self.track_id = Some(track_id);
     }
 
-    /// Fold a newly observed playback position into the listened total.
+    /// Fold in the playhead having played on to `position_ms`. Only ever
+    /// given a position reached by playing from the last one; a seek goes
+    /// through `jump`.
     pub fn advance(&mut self, position_ms: u64) {
-        let delta = position_ms.saturating_sub(self.last_position_ms);
-        if delta <= MAX_TICK_MS {
-            self.listened_ms += delta;
-        }
+        self.listened_ms += position_ms.saturating_sub(self.last_position_ms);
+        self.last_position_ms = position_ms;
+    }
+
+    /// The playhead moved to `position_ms` without playing there.
+    pub fn jump(&mut self, position_ms: u64) {
         self.last_position_ms = position_ms;
     }
 
@@ -415,16 +416,23 @@ mod tests {
     }
 
     fn flight() -> InFlight {
-        InFlight::new(QueueItemId::new(), Some(1))
+        InFlight::new(QueueItemId::new(), Some(1), 0)
     }
 
     #[test]
-    fn listening_accumulates_across_ticks() {
+    fn listening_accumulates_across_readings() {
         let mut f = flight();
-        for tick in 1..=100 {
-            f.advance(tick * 50);
+        for reading in 1..=100 {
+            f.advance(reading * 50);
         }
         assert_eq!(f.listened_ms(), 5_000);
+    }
+
+    #[test]
+    fn an_hour_between_readings_is_an_hour_heard() {
+        let mut f = flight();
+        f.advance(3_600_000);
+        assert_eq!(f.listened_ms(), 3_600_000);
     }
 
     #[test]
@@ -441,7 +449,7 @@ mod tests {
     fn seeking_forward_does_not_credit_the_skipped_stretch() {
         let mut f = flight();
         f.advance(1_000);
-        f.advance(280_000); // dragged the seek bar to the end
+        f.jump(280_000); // dragged the seek bar to the end
         f.advance(280_050);
         assert_eq!(f.listened_ms(), 1_050);
     }
@@ -450,9 +458,9 @@ mod tests {
     fn seeking_backward_does_not_go_negative_or_double_count() {
         let mut f = flight();
         f.advance(100_000);
-        f.advance(0); // back to the start
+        f.jump(0); // back to the start
         f.advance(50);
-        assert_eq!(f.listened_ms(), 50);
+        assert_eq!(f.listened_ms(), 100_050);
     }
 
     #[test]
@@ -486,8 +494,7 @@ mod tests {
     #[test]
     fn starting_mid_track_does_not_credit_the_offset() {
         // Session restore resumes at a saved position.
-        let mut f = flight();
-        f.advance(120_000);
+        let mut f = InFlight::new(QueueItemId::new(), Some(1), 120_000);
         f.advance(120_050);
         assert_eq!(f.listened_ms(), 50);
     }

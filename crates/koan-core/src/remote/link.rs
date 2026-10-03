@@ -413,6 +413,7 @@ const RETRY_MAX: Duration = Duration::from_secs(60);
 fn run(local: Local) {
     let mut wait = RETRY_MIN;
     loop {
+        crate::quiet::wait_until_awake();
         let cfg = Config::load().unwrap_or_default();
         let Some(auth) = subsonic_auth(&cfg) else {
             rest(RETRY_MAX);
@@ -484,6 +485,13 @@ fn rest(d: Duration) -> bool {
         NUDGE.1.wait_for(&mut nudged, d);
     }
     std::mem::replace(&mut *nudged, false)
+}
+
+/// Close the link, if it is up: the app has nothing to keep it open for.
+pub fn hang_up() {
+    if let Some(up) = LINK.lock().as_ref() {
+        up.waker.wake();
+    }
 }
 
 /// The link while it is up: what waits to go up it, and how to wake it.
@@ -612,6 +620,10 @@ impl wire::Session for LinkSession<'_> {
             Ok(cmd) => (self.local.on_command)(cmd, CommandSource::Account),
             Err(e) => log::warn!("link: not a command ({e}): {text}"),
         }
+    }
+
+    fn done(&self) -> bool {
+        !crate::quiet::awake()
     }
 }
 

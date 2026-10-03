@@ -150,6 +150,9 @@ pub fn spawn_library_watch(
             let mut check_at = Instant::now() + CHECK;
             let mut rescan_at = Instant::now() + RESCAN;
             loop {
+                // Changes heard meanwhile wait in the channel; a rescan that
+                // fell due runs as soon as this returns.
+                crate::quiet::wait_until_awake();
                 let now = Instant::now();
                 let wake = settle_at
                     .map_or(check_at, |at| at.min(check_at))
@@ -230,6 +233,8 @@ pub fn spawn_auto_sync(
         .spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(5));
             loop {
+                // Due while the app was in the background: runs when it is not.
+                crate::quiet::wait_until_awake();
                 let cfg = Config::load().unwrap_or_default();
                 if !cfg.remote.enabled || !cfg.remote.auto_sync {
                     // Re-read rather than exit: the setting can be turned on
