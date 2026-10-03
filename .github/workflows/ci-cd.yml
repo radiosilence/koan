@@ -73,8 +73,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     timeout-minutes: 45
+    # A newer push cancels a PR's checks, never main's: a release run's
+    # publish jobs need these to finish.
     concurrency:
-      group: fmt-${{ github.ref }}
+      group: fmt-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,7 +94,7 @@ jobs:
     needs: changes
     timeout-minutes: 45
     concurrency:
-      group: clippy-${{ matrix.os }}-${{ github.ref }}
+      group: clippy-${{ matrix.os }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     strategy:
       matrix:
@@ -126,7 +128,7 @@ jobs:
     needs: changes
     timeout-minutes: 45
     concurrency:
-      group: test-${{ matrix.os }}-${{ github.ref }}
+      group: test-${{ matrix.os }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     strategy:
       matrix:
@@ -162,7 +164,7 @@ jobs:
     needs: changes
     timeout-minutes: 45
     concurrency:
-      group: build-${{ matrix.os }}-${{ github.ref }}
+      group: build-${{ matrix.os }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     strategy:
       matrix:
@@ -213,7 +215,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     timeout-minutes: 45
     concurrency:
-      group: macos-app-${{ github.ref }}
+      group: macos-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -256,7 +258,7 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     timeout-minutes: 30
     concurrency:
-      group: msrv-${{ github.ref }}
+      group: msrv-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -570,7 +572,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, check-version, publish-crate, publish-package]
-    if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.create-release.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       contents: write
     steps:
@@ -614,7 +616,7 @@ jobs:
     # version is already out (below), so a release re-run after a binary fails
     # passes straight through here.
     needs: [fmt, clippy, test, build, check-version]
-    if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.check-version.outputs.should_release == 'true' }}
     env:
       VERSION: ${{ needs.check-version.outputs.version }}
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -658,7 +660,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [publish-release, check-version]
-    if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -758,7 +760,7 @@ jobs:
     # Before the release: the updater that deploys koan follows releases, and
     # a release it finds must already have its package.
     needs: [fmt, clippy, test, build, container, check-version]
-    if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
+    if: ${{ !cancelled() && !failure() && !contains(needs.*.result, 'cancelled') && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       packages: write
       contents: read
