@@ -1,5 +1,6 @@
 @import "tailwindcss" source(none);
 @source "../public/**/*.html";
+@source "./docs.html";
 
 @font-face {
   font-family: "Geist Mono";
@@ -89,6 +90,35 @@
     @apply my-4 list-disc space-y-2 ps-5 marker:text-muted;
   }
 
+  ol {
+    @apply my-4 list-decimal space-y-2 ps-5 marker:text-muted;
+  }
+
+  h4 {
+    @apply mt-6 mb-2 text-sm font-semibold text-muted;
+  }
+
+  blockquote {
+    @apply my-4 border-s-2 border-rule ps-4 text-muted;
+  }
+
+  hr {
+    @apply my-8 border-rule;
+  }
+
+  table {
+    @apply my-4 block w-full overflow-x-auto border-collapse text-[13px]/relaxed;
+  }
+
+  th,
+  td {
+    @apply min-w-32 border-b border-rule py-1.5 pe-4 text-start align-top;
+  }
+
+  th {
+    @apply font-semibold;
+  }
+
   pre {
     @apply my-4 overflow-x-auto rounded-md border border-rule bg-surface px-4 py-3 text-[13px]/relaxed;
   }
@@ -105,5 +135,52 @@
   /* Comments inside the command listings. */
   pre .c {
     @apply text-muted;
+  }
+}
+
+/* Documentation pages: markdown rendered by pandoc, so styled by context rather than class. */
+@layer components {
+  .doc h1 {
+    @apply mb-6 text-4xl font-extralight lowercase;
+  }
+
+  .doc h2 {
+    @apply mt-12 scroll-mt-4;
+  }
+
+  .doc h3 {
+    @apply scroll-mt-4;
+  }
+
+  .doc .toc {
+    @apply mb-10 border-s border-rule ps-4 text-sm;
+  }
+
+  .doc .toc ul {
+    @apply my-0 list-none space-y-1 ps-0;
+  }
+
+  .doc .toc a {
+    @apply text-muted no-underline hover:text-ink;
+  }
+
+  .doc .toc ul ul {
+    @apply hidden;
+  }
+
+  .docs-nav h2 {
+    @apply mt-6 mb-2 text-xs font-semibold tracking-wide text-muted uppercase;
+  }
+
+  .docs-nav ul {
+    @apply my-0 list-none space-y-1 ps-0 text-sm;
+  }
+
+  .docs-nav a {
+    @apply text-ink no-underline hover:text-brand;
+  }
+
+  .docs-nav a[aria-current="page"] {
+    @apply text-brand;
   }
 }

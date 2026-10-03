@@ -9,6 +9,7 @@ Feasibility research and implementation plans for koan's next major features.
 | [02](02-dsp-and-profiles.md) | DSP + Headphone Profiles | ~5-7 days | Insert between decode and ring buffer. `biquad` for parametric EQ. AutoEQ profiles trivially parseable. |
 | [04](04-tagging.md) | Tag Editing | ~8-12 days | vimv-style (TSV + $EDITOR) first, TUI inline editor second. Terminal suspend/resume is a standard ratatui pattern. |
 | [09](09-artist-metadata.md) | Artist Metadata | — | Bios, images and similar artists from MusicBrainz/Last.fm. |
+| [10](10-gapless-encoder-trim.md) | Gapless Encoder Trim | — | Trim encoder delay and padding on lossy codecs only, as foobar2000 does. |
 
 ## Shipped
 
@@ -34,8 +35,8 @@ Plans 03, 07 and 08 live in `archive/`. Plans 01, 06 and 09 were written before 
 - **MusicBrainz/AcoustID** (Plan 04): requires chromaprint C FFI, breaking the pure-Rust philosophy.
   Optional stretch goal.
 
-The cpal-vs-raw-ALSA question is settled: cpal, for compatibility. Direct ALSA remains a future option
-if bit-perfect output on Linux needs it — see `docs/architecture-improvements.md`.
+The cpal-vs-raw-ALSA question is settled: cpal, for compatibility. A direct ALSA `hw:` backend remains a
+future option if bit-perfect output on Linux needs it.
 
 ## Suggested Implementation Order
 

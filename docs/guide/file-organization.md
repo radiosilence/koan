@@ -1,6 +1,6 @@
-# File Organization
+# File organization
 
-kōan can rename and reorganize your music library using fb2k-compatible format strings, from the TUI or the macOS app.
+Organize moves and renames files into a library folder by a foobar2000-style [format string](../format-strings.md), from the TUI or the macOS app. Every move is previewed before anything is touched.
 
 ## In the macOS app
 
@@ -10,7 +10,7 @@ kōan can rename and reorganize your music library using fb2k-compatible format 
 4. Read the preview
 5. **Move Files**
 
-Dropping a folder of files from Finder onto the queue indexes them into the library where they are and queues them, which is the usual way in: drop a rip, listen to it, then organize it into the tree once you are happy. Importing does not move anything -- files land in the music tree only after you have seen where they are going.
+Dropping a folder from Finder onto the queue indexes the files where they are and queues them, without moving anything. Organize them into the library once you have listened.
 
 ## In the TUI
 
@@ -23,7 +23,7 @@ Dropping a folder of files from Finder onto the queue indexes them into the libr
 7. Preview the file moves
 8. Execute
 
-Playlist paths update automatically. Playback continues uninterrupted (Unix rename preserves open file descriptors). Ancillary files (cover.jpg, .cue, .log) move with the music. Empty directories are cleaned up.
+A track that is playing keeps playing while it moves.
 
 ## Reading the preview
 
@@ -36,11 +36,11 @@ Every selected file gets a row, whatever happens to it:
 | **⚠** | Blocked. Something already holds that path, or two files in this run resolve to it. The file stays where it is. |
 | **✗** | The pattern produced nothing usable for this file. |
 
-A blocked file keeps its row next to the destination it collided with, rather than being counted up underneath. Nothing is ever overwritten, and that guarantee is only worth something if you can see what it saved you from before you commit.
+A blocked file is listed with the destination it collided with.
 
 ## Destination
 
-Files are organized into a **configured library folder** (from `[library] folders` in your config). The CLI and TUI use the first one; the macOS app lets you pick when there is more than one. The format pattern generates the relative path within that folder.
+Files are organized into a **configured library folder** (from `[library] folders` in your config). The TUI uses the first one; the macOS app lets you pick when there is more than one. The format pattern generates the relative path within that folder.
 
 For example, with `folders = ["/Volumes/Music/library"]` and the `standard` pattern, a track becomes:
 
@@ -48,13 +48,11 @@ For example, with `folders = ["/Volumes/Music/library"]` and the `standard` patt
 /Volumes/Music/library/Aphex Twin/(1999) Windowlicker EP/01. Windowlicker.flac
 ```
 
-With no library folder configured there is nowhere to organize *into*, and kōan says so rather than offering a plan — a pattern on its own produces a relative path, which is not a place.
+With no library folder configured, organize refuses to plan.
 
 ## Configuring patterns
 
-The macOS app edits them in place: **Edit** next to the pattern picker turns it into a field, the preview follows what you type, and **Save** writes it back to `config.toml` under its name. A pattern you have edited but not saved still previews and still runs, so trying one out costs nothing.
-
-Or define them in your config directly:
+In the macOS app, **Edit** next to the pattern picker turns the pattern into a field; the preview follows what you type, and **Save** writes it to `config.toml`. An unsaved edit still previews and runs. Patterns can also be written in the config:
 
 ```toml
 [organize]
@@ -67,38 +65,9 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$le
 flat = "%artist% - %title%"
 ```
 
-### Pattern breakdown
-
-**`standard`** -- simple artist/album/track hierarchy:
-```
-Aphex Twin/(1999) Windowlicker EP/01. Windowlicker.flac
-```
-
-**`va-aware`** -- handles compilations:
-- Normal album: `Aphex Twin/(1999) Windowlicker EP [FLAC]/01. Windowlicker.flac`
-- VA compilation: `Various Artists/Ministry of Sound [FLAC]/01. DJ Shadow - Building Steam.flac`
-
-When the album artist is "Various Artists", the per-track artist is included in the filename and the redundant year prefix is omitted.
-
-**`flat`** -- everything in one directory:
-```
-Aphex Twin - Windowlicker.flac
-```
-
-## Format string syntax
-
-Patterns use fb2k-compatible syntax:
-
-- `%field%` -- metadata value (artist, title, album, date, tracknumber, etc.)
-- `[...]` -- conditional block, only included if all fields inside have values
-- `$function()` -- transform functions ($if, $stricmp, $left, $num, etc.)
-- `/` -- directory separator
-
-See [Format Strings](../format-strings.md) for the complete syntax reference and all 59 functions.
+`va-aware` puts the track artist in the file name and drops the year when the album artist is Various Artists. [Format strings](../format-strings.md) has more examples and every function.
 
 ## Safety
-
-Music files are irreplaceable, so organize refuses anything it can't do without risk rather than doing its best.
 
 - **Nothing is ever overwritten.** Two tracks that resolve to the same destination, or a destination that already holds a file, are flagged as conflicts in the preview -- the second file stays exactly where it is. On macOS the check is case-insensitive, because `Rain.flac` and `RAIN.flac` are one file there.
 - **Preview matches execute.** Both read metadata through the same resolver, so the paths you confirm are the paths that get used.

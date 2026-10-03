@@ -37,6 +37,7 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | `i` | Track info modal (codec, sample rate, cover art) |
 | `z` | Zoom album art |
 | `v` | Visualizer picker (22 modes with live preview) |
+| `V` | Show / hide the visualizer |
 | `X` | Toggle matrix overlay on visualizer |
 | `S` | Toggle bass shake on visualizer |
 | `L` | Toggle lyrics panel |
@@ -82,7 +83,7 @@ Tree view: artist -> album -> track.
 | Key | Action |
 |-----|--------|
 | `Up` / `Down` | Navigate |
-| `Enter` | Expand node or enqueue track |
+| `Enter` | Expand node, or append the track and play it |
 | `f` | Filter library (type to search) |
 | `Esc` | Exit library browser |
 

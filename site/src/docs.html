@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$pagetitle$ · kōan</title>
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <link rel="canonical" href="https://koan.rocks$path$">
+  <link rel="icon" href="/icon-32.png" sizes="32x32">
+  <link rel="icon" href="/icon-192.png" sizes="192x192">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="preload" href="/geist-mono.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <a class="absolute -top-12 left-4 z-10 bg-surface px-3 py-2 focus:top-4" href="#main">Skip to content</a>
+
+  <header class="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-4 gap-y-3 px-5 py-5">
+    <a class="flex items-center gap-3 text-ink no-underline" href="/"><img class="rounded-md" src="/icon-32.png" width="32" height="32" alt="">kōan</a>
+    <nav class="flex flex-wrap gap-x-2.5 gap-y-1 text-sm whitespace-nowrap sm:gap-x-5 [&>a]:text-muted [&>a]:no-underline [&>a:hover]:text-ink" aria-label="Site">
+      <a href="/#install">Install</a>
+      <a href="/docs/">Docs</a>
+      <a href="/docs/changelog/">Changelog</a>
+      <a href="https://github.com/radiosilence/koan">GitHub</a>
+    </nav>
+  </header>
+
+  <div class="mx-auto grid max-w-5xl gap-x-10 px-5 md:grid-cols-[12rem_minmax(0,1fr)]">
+    <details class="docs-nav border-b border-rule pb-2 md:hidden">
+      <summary class="cursor-pointer py-2 text-sm text-muted">Contents</summary>
+      $nav$
+    </details>
+    <nav class="docs-nav hidden self-start md:sticky md:top-4 md:block md:max-h-[calc(100vh-2rem)] md:overflow-y-auto" aria-label="Documentation">
+      $nav$
+    </nav>
+
+    <main id="main" class="doc max-w-2xl min-w-0 pt-4 pb-16">
+      <h1>$title$</h1>
+$if(toc)$
+      <nav class="toc" aria-label="On this page">
+        $table-of-contents$
+      </nav>
+$endif$
+$body$
+    </main>
+  </div>
+
+  <footer class="mx-auto max-w-5xl border-t border-rule px-5 pt-8 pb-12 text-sm text-muted [&>p]:my-1">
+    <p>kōan is open source under the MIT licence. <a href="https://github.com/radiosilence/koan">Source</a> · <a href="https://github.com/radiosilence/koan/releases">Releases</a> · <a href="https://github.com/radiosilence/koan/tree/main/docs">Edit these pages</a></p>
+    <p>This site has no tracking, analytics or cookies. <a href="/privacy.html">Privacy</a></p>
+  </footer>
+</body>
+</html>

@@ -1,14 +1,4 @@
-# Architecture Improvements Plan
-
-
-
-## Linux: direct ALSA
-
-The Linux backend is cpal (`CpalBackend`), chosen for ALSA, PipeWire and PulseAudio coverage. A direct ALSA `hw:` backend for bit-perfect output remains an option.
-
----
-
-## 3. Gapless: Custom vs Symphonia
+# Gapless: Custom vs Symphonia
 
 ### What Symphonia Provides
 
@@ -38,7 +28,3 @@ Most of kōan's gapless code is playlist orchestration that Symphonia can't hand
 ### Recommendation
 
 Use Symphonia's trim info for lossy codecs (MP3, AAC, Opus) where encoder delay is a format artifact, not musical content. Leave lossless (FLAC, ALAC, WAV) untouched. This matches foobar2000's behavior.
-
----
-
-

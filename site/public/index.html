@@ -38,6 +38,7 @@
       <a href="#setup">Set up</a>
       <a href="#features">Features</a>
       <a href="#assistants">Assistants</a>
+      <a href="/docs/">Docs</a>
       <a href="https://github.com/radiosilence/koan">GitHub</a>
     </nav>
   </header>
@@ -147,7 +148,7 @@ koan               <span class="c"># launch the TUI</span></code></pre>
 
 docker exec -it koan koan auth setup       <span class="c"># signing keys and the admin account</span>
 docker exec -it koan koan subsonic setup   <span class="c"># turn on the Subsonic API</span></code></pre>
-      <p>Put it behind a reverse proxy with TLS at the hostname you listed. The server refuses any <code>Host</code> it was not given, and share links are built on <code>public_url</code>. Add accounts for other people with <code>koan auth create-user</code>. Without a container, <code>koan --headless --bind 0.0.0.0</code> does the same with the config in <code>~/.config/koan</code>; the <a href="https://github.com/radiosilence/koan/blob/main/docs/guide/headless-server.md">headless server guide</a> has the details.</p>
+      <p>Put it behind a reverse proxy with TLS at the hostname you listed. The server refuses any <code>Host</code> it was not given, and share links are built on <code>public_url</code>. Add accounts for other people with <code>koan auth create-user</code>. Without a container, <code>koan --headless --bind 0.0.0.0</code> does the same with the config in <code>~/.config/koan</code>; <a href="/docs/headless-server/">Running a server</a> has the details, and <a href="/docs/migrating-from-navidrome/">Migrating from Navidrome</a> translates a Navidrome setup.</p>
       <p>Then sign in from each client with a kōan account:</p>
       <ul>
         <li><strong>Browser:</strong> open the hostname.</li>
@@ -255,7 +256,7 @@ sift import ~/Downloads/some-album</code></pre>
 
     <section id="server" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>As a server</h2>
-      <p>Run kōan on the machine that holds the music (<code>koan --headless</code>, or a container) and it serves the library to everything else. It stands in for Navidrome rather than needing it.</p>
+      <p>Run kōan on the machine that holds the music (<code>koan --headless</code>, or a container) and it serves the library to everything else. It stands in for Navidrome rather than needing it; <a href="/docs/migrating-from-navidrome/">Migrating from Navidrome</a> covers the move.</p>
       <ul>
         <li><strong>Web UI.</strong> Albums, artists, search and a queue, laid out for a phone as well as a desktop. Sorting and filters live in the URL. Playback is gapless, in the browser.</li>
         <li><strong>Share links.</strong> Sharing a track shares its album, cued to that track. An album shares the album, and an artist their albums. The page plays without an account, and a pasted link unfurls with its cover.</li>
@@ -283,32 +284,33 @@ sift import ~/Downloads/some-album</code></pre>
 
       <h3>What it can and cannot do</h3>
       <p>A connection acts as the account that approved it, on that account's devices and playlists. It can never move, rename or delete a file, or change where the library is. Those are refused through MCP whatever the account, because track titles and tags reach the model, and any of them could carry an instruction. An admin account connects with ordinary rights for the same reason. Its tokens work at <code>/mcp</code> and nowhere else.</p>
-      <p>Without a server, <code>koan mcp</code> runs the player on this machine for a desktop client such as Claude Desktop. The <a href="https://github.com/radiosilence/koan/blob/main/docs/guide/mcp-integration.md">MCP guide</a> covers both.</p>
+      <p>Without a server, <code>koan mcp</code> runs the player on this machine for a desktop client such as Claude Desktop. The <a href="/docs/mcp-integration/">MCP guide</a> covers both.</p>
     </section>
 
     <section id="docs" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>Documentation</h2>
       <ul class="list-none columns-2 ps-0 [&>li]:break-inside-avoid">
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/getting-started.md">Getting started</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/guide/remote-servers.md">Remote servers</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/guide/radio-mode.md">Radio mode</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/guide/file-organization.md">File organisation</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/format-strings.md">Format strings</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/guide/headless-server.md">Headless server</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/guide/graphql-api.md">GraphQL API</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/guide/mcp-integration.md">MCP integration</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/guide/authentication.md">Authentication</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/reference/configuration.md">Configuration</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/reference/keybindings.md">Keybindings</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/reference/cli.md">CLI reference</a></li>
-        <li><a href="https://github.com/radiosilence/koan/blob/main/docs/recipes/troubleshooting.md">Troubleshooting</a></li>
+        <li><a href="/docs/getting-started/">Getting started</a></li>
+        <li><a href="/docs/migrating-from-navidrome/">Migrating from Navidrome</a></li>
+        <li><a href="/docs/headless-server/">Running a server</a></li>
+        <li><a href="/docs/authentication/">Authentication</a></li>
+        <li><a href="/docs/devices/">Playing on another device</a></li>
+        <li><a href="/docs/remote-servers/">Remote servers</a></li>
+        <li><a href="/docs/file-organization/">File organisation</a></li>
+        <li><a href="/docs/format-strings/">Format strings</a></li>
+        <li><a href="/docs/mcp-integration/">MCP integration</a></li>
+        <li><a href="/docs/graphql-api/">GraphQL API</a></li>
+        <li><a href="/docs/configuration/">Configuration</a></li>
+        <li><a href="/docs/cli/">CLI</a></li>
+        <li><a href="/docs/keybindings/">Keybindings</a></li>
+        <li><a href="/docs/troubleshooting/">Troubleshooting</a></li>
       </ul>
       <p>Architecture, contributing and how kōan compares with other players are in the <a href="https://github.com/radiosilence/koan">repository</a>.</p>
     </section>
   </main>
 
   <footer class="mx-auto max-w-2xl border-t border-rule px-5 pt-8 pb-12 text-sm text-muted [&>p]:my-1">
-    <p>kōan is open source under the MIT licence. <a href="https://github.com/radiosilence/koan">Source</a> · <a href="https://github.com/radiosilence/koan/releases">Releases</a> · <a href="https://github.com/radiosilence/koan/blob/main/CHANGELOG.md">Changelog</a></p>
+    <p>kōan is open source under the MIT licence. <a href="https://github.com/radiosilence/koan">Source</a> · <a href="https://github.com/radiosilence/koan/releases">Releases</a> · <a href="/docs/changelog/">Changelog</a></p>
     <p>This site has no tracking, analytics or cookies. <a href="/privacy.html">Privacy</a></p>
   </footer>
 </body>
