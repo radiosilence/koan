@@ -25,7 +25,7 @@ use koan_core::db::queries::{self, AlbumRow, ArtistRow, TrackRow};
 
 /// The page's own script and stylesheet, from this server and nowhere else;
 /// `connect-src` is for the player fetching the tracks it decodes.
-const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; \
+const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; \
      media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// The gapless queue player, shared with the web UI.
@@ -61,7 +61,7 @@ pub fn router(
         )
         .route(
             "/share/assets/{name}",
-            get(|Path(name): Path<String>| async move { icon(&name).unwrap_or_else(not_found) }),
+            get(|Path(name): Path<String>| async move { binary_asset(&name).unwrap_or_else(not_found) }),
         )
         .route("/share/{id}", get(page))
         .route("/share/{id}/cover", get(cover))
@@ -102,18 +102,23 @@ fn live<'a>(pool: &'a Pool, id: &str) -> Option<(Handle<'a>, ShareRow, Vec<Track
 }
 
 /// The app icon, as the browser tab and home-screen icons of the web UI and
-/// the share pages. The same images koan.rocks uses.
-pub(crate) fn icon(name: &str) -> Option<Response> {
-    let bytes: &'static [u8] = match name {
-        "icon-32.png" => include_bytes!("../assets/icon-32.png"),
-        "icon-192.png" => include_bytes!("../assets/icon-192.png"),
-        "apple-touch-icon.png" => include_bytes!("../assets/apple-touch-icon.png"),
+/// the share pages, and the typeface both set their text in. The same files
+/// koan.rocks uses.
+pub(crate) fn binary_asset(name: &str) -> Option<Response> {
+    let (bytes, kind): (&'static [u8], _) = match name {
+        "icon-32.png" => (include_bytes!("../assets/icon-32.png"), "image/png"),
+        "icon-192.png" => (include_bytes!("../assets/icon-192.png"), "image/png"),
+        "apple-touch-icon.png" => (
+            include_bytes!("../assets/apple-touch-icon.png"),
+            "image/png",
+        ),
+        "geist-mono.woff2" => (include_bytes!("../assets/geist-mono.woff2"), "font/woff2"),
         _ => return None,
     };
     Some(
         (
             [
-                (header::CONTENT_TYPE, "image/png"),
+                (header::CONTENT_TYPE, kind),
                 (header::CACHE_CONTROL, "public, max-age=86400"),
             ],
             bytes,

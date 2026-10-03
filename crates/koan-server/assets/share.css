@@ -1,40 +1,333 @@
-:root { --bg: #101214; --panel: #181b1f; --line: #262a30; --text: #e6e6e6; --dim: #8b9099; --accent: #7dd3a7; color-scheme: dark; }
-* { box-sizing: border-box; }
-html, body { overflow-x: hidden; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif; -webkit-text-size-adjust: 100%; }
-main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; padding-top: max(24px, env(safe-area-inset-top)); }
-.hero { display: flex; gap: 20px; align-items: flex-end; margin-bottom: 20px; }
-.cover { width: 200px; height: 200px; flex: 0 0 auto; object-fit: cover; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); }
-.info { min-width: 0; flex: 1; }
-.kicker { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
-h1 { font-size: 26px; line-height: 1.2; margin: 4px 0; overflow-wrap: anywhere; }
-.sub { margin: 0 0 14px; color: var(--dim); }
-.controls { display: flex; gap: 8px; align-items: center; }
-button { font: inherit; color: var(--text); background: var(--line); border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; cursor: pointer; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #0b1a12; font-weight: 600; min-width: 96px; }
-button.quiet { background: transparent; color: var(--dim); }
-button:disabled { opacity: .5; cursor: default; }
-.scrub { display: flex; gap: 10px; align-items: center; margin-top: 12px; color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
-.scrub input { flex: 1; accent-color: var(--accent); min-width: 0; }
-ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
-li { display: flex; gap: 12px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
-li:hover { border-color: #353a42; }
-li.playing { border-left: 3px solid var(--accent); }
-li.playing .t { color: var(--accent); }
-.n { width: 1.5em; text-align: right; color: var(--dim); font-variant-numeric: tabular-nums; }
-.t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.t small { display: block; color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
-.d { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
-noscript a { color: var(--accent); }
-.note { margin: -6px 0 14px; color: var(--text); font-style: italic; overflow-wrap: anywhere; }
-.album { margin-top: 28px; }
-.album header { display: flex; gap: 14px; align-items: center; margin-bottom: 10px; }
-.album .art { width: 64px; height: 64px; flex: none; object-fit: cover; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); }
-.album .art.missing { visibility: hidden; }
-.album h2 { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
-.album .sub { margin: 2px 0 0; font-size: 13px; }
-@media (max-width: 560px) {
-  .hero { flex-direction: column; align-items: stretch; }
-  .cover { width: 100%; height: auto; aspect-ratio: 1; }
-  h1 { font-size: 22px; }
+/*! tailwindcss v4.3.3 | MIT License | https://tailwindcss.com */
+@layer properties;
+@layer theme, base, components, utilities;
+@layer theme {
+  :root, :host {
+    --default-font-family: "Geist Mono", ui-monospace, monospace;
+  }
+}
+@layer utilities {
+  .absolute {
+    position: absolute;
+  }
+  .static {
+    position: static;
+  }
+  .hidden {
+    display: none;
+  }
+  .inline {
+    display: inline;
+  }
+  .blur {
+    --tw-blur: blur(8px);
+    filter: var(--tw-blur,) var(--tw-brightness,) var(--tw-contrast,) var(--tw-grayscale,) var(--tw-hue-rotate,) var(--tw-invert,) var(--tw-saturate,) var(--tw-sepia,) var(--tw-drop-shadow,);
+  }
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("geist-mono.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+:root {
+  color-scheme: dark light;
+  --bg: #1e1e1e;
+  --surface: #2a2a2a;
+  --rule: #383838;
+  --hover: #4d4d4d;
+  --ink: #cccccc;
+  --muted: #8c8c8c;
+  --brand: #7dd3a7;
+  --bad: #ef6b73;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --surface: #f2f2f2;
+    --rule: #e0e0e0;
+    --hover: #c4c4c4;
+    --ink: #333333;
+    --muted: #666666;
+    --brand: #1f7a50;
+    --bad: #c43f3f;
+  }
+}
+@layer components {
+  * {
+    box-sizing: border-box;
+  }
+  html, body {
+    overflow-x: hidden;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.45 var(--default-font-family);
+    -webkit-text-size-adjust: 100%;
+  }
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 24px 16px 48px;
+    padding-top: max(24px, env(safe-area-inset-top));
+  }
+  .hero {
+    display: flex;
+    gap: 20px;
+    align-items: flex-end;
+    margin-bottom: 20px;
+  }
+  .cover {
+    width: 200px;
+    height: 200px;
+    flex: 0 0 auto;
+    object-fit: cover;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+  }
+  .info {
+    min-width: 0;
+    flex: 1;
+  }
+  .kicker {
+    margin: 0;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--muted);
+  }
+  h1 {
+    font-size: 26px;
+    font-weight: 200;
+    line-height: 1.2;
+    margin: 4px 0;
+    overflow-wrap: anywhere;
+  }
+  .sub {
+    margin: 0 0 14px;
+    color: var(--muted);
+  }
+  .controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  button {
+    font: inherit;
+    color: var(--ink);
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+  }
+  button.primary {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: var(--bg);
+    font-weight: 600;
+    min-width: 96px;
+  }
+  button.quiet {
+    background: transparent;
+    color: var(--muted);
+  }
+  button:disabled {
+    opacity: .5;
+    cursor: default;
+  }
+  .scrub {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .scrub input {
+    flex: 1;
+    accent-color: var(--brand);
+    min-width: 0;
+  }
+  ol {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 6px;
+  }
+  li {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+  }
+  li:hover {
+    border-color: var(--hover);
+  }
+  li.playing {
+    border-left: 3px solid var(--brand);
+  }
+  li.playing .t {
+    color: var(--brand);
+  }
+  .n {
+    width: 1.5em;
+    text-align: right;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .t {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .t small {
+    display: block;
+    color: var(--muted);
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .d {
+    color: var(--muted);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  noscript a {
+    color: var(--brand);
+  }
+  .note {
+    margin: -6px 0 14px;
+    color: var(--ink);
+    font-style: italic;
+    overflow-wrap: anywhere;
+  }
+  .album {
+    margin-top: 28px;
+  }
+  .album header {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .album .art {
+    width: 64px;
+    height: 64px;
+    flex: none;
+    object-fit: cover;
+    border-radius: 6px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+  }
+  .album .art.missing {
+    visibility: hidden;
+  }
+  .album h2 {
+    font-size: 17px;
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+  .album .sub {
+    margin: 2px 0 0;
+    font-size: 13px;
+  }
+  @media (max-width: 560px) {
+    .hero {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .cover {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 1;
+    }
+    h1 {
+      font-size: 22px;
+    }
+  }
+}
+@property --tw-blur {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-brightness {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-contrast {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-grayscale {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-hue-rotate {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-invert {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-opacity {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-saturate {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-sepia {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-drop-shadow {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-drop-shadow-color {
+  syntax: "*";
+  inherits: false;
+}
+@property --tw-drop-shadow-alpha {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
+}
+@property --tw-drop-shadow-size {
+  syntax: "*";
+  inherits: false;
+}
+@layer properties {
+  @supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
+    *, ::before, ::after, ::backdrop {
+      --tw-blur: initial;
+      --tw-brightness: initial;
+      --tw-contrast: initial;
+      --tw-grayscale: initial;
+      --tw-hue-rotate: initial;
+      --tw-invert: initial;
+      --tw-opacity: initial;
+      --tw-saturate: initial;
+      --tw-sepia: initial;
+      --tw-drop-shadow: initial;
+      --tw-drop-shadow-color: initial;
+      --tw-drop-shadow-alpha: 100%;
+      --tw-drop-shadow-size: initial;
+    }
+  }
 }

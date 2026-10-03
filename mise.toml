@@ -1,4 +1,5 @@
 [tools]
 rust = "latest"
 just = "latest"
+"github:tailwindlabs/tailwindcss" = "4.3.3"
 xcodegen = "2.46.0"

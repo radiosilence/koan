@@ -1,0 +1,52 @@
+/*
+ * The share page's stylesheet, compiled by Tailwind into assets/share.css (`just css`). The compiled file is committed:
+ * the crate embeds it, and building koan must not need the Tailwind CLI. No preflight; the rules below are the reset.
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "../src/share.rs";
+@source "../assets/share.js";
+@import "../../../site/src/theme.css";
+
+@layer components {
+  * { box-sizing: border-box; }
+  html, body { overflow-x: hidden; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 var(--default-font-family); -webkit-text-size-adjust: 100%; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; padding-top: max(24px, env(safe-area-inset-top)); }
+  .hero { display: flex; gap: 20px; align-items: flex-end; margin-bottom: 20px; }
+  .cover { width: 200px; height: 200px; flex: 0 0 auto; object-fit: cover; border-radius: 8px; background: var(--surface); border: 1px solid var(--rule); }
+  .info { min-width: 0; flex: 1; }
+  .kicker { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  h1 { font-size: 26px; font-weight: 200; line-height: 1.2; margin: 4px 0; overflow-wrap: anywhere; }
+  .sub { margin: 0 0 14px; color: var(--muted); }
+  .controls { display: flex; gap: 8px; align-items: center; }
+  button { font: inherit; color: var(--ink); background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--brand); border-color: var(--brand); color: var(--bg); font-weight: 600; min-width: 96px; }
+  button.quiet { background: transparent; color: var(--muted); }
+  button:disabled { opacity: .5; cursor: default; }
+  .scrub { display: flex; gap: 10px; align-items: center; margin-top: 12px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .scrub input { flex: 1; accent-color: var(--brand); min-width: 0; }
+  ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+  li { display: flex; gap: 12px; align-items: center; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+  li:hover { border-color: var(--hover); }
+  li.playing { border-left: 3px solid var(--brand); }
+  li.playing .t { color: var(--brand); }
+  .n { width: 1.5em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .t small { display: block; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+  .d { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  noscript a { color: var(--brand); }
+  .note { margin: -6px 0 14px; color: var(--ink); font-style: italic; overflow-wrap: anywhere; }
+  .album { margin-top: 28px; }
+  .album header { display: flex; gap: 14px; align-items: center; margin-bottom: 10px; }
+  .album .art { width: 64px; height: 64px; flex: none; object-fit: cover; border-radius: 6px; background: var(--surface); border: 1px solid var(--rule); }
+  .album .art.missing { visibility: hidden; }
+  .album h2 { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
+  .album .sub { margin: 2px 0 0; font-size: 13px; }
+  @media (max-width: 560px) {
+    .hero { flex-direction: column; align-items: stretch; }
+    .cover { width: 100%; height: auto; aspect-ratio: 1; }
+    h1 { font-size: 22px; }
+  }
+}

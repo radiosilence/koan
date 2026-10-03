@@ -1,0 +1,53 @@
+/*
+ * The look koan.rocks, the documentation, the web UI and the share pages have in common: the typeface, the greys and
+ * the accent. Imported by site/src/style.css and crates/koan-server/styles/; each adds its own rules on top.
+ *
+ * The font URL is relative, so it resolves beside whichever stylesheet imports this: /geist-mono.woff2 on the site,
+ * /ui/assets/ and /share/assets/ on a server.
+ */
+@font-face {
+  font-family: "Geist Mono";
+  src: url("geist-mono.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Dark is the default; the light values apply only when the reader asks for them. */
+:root {
+  color-scheme: dark light;
+  --bg: #1e1e1e;
+  --surface: #2a2a2a;
+  --rule: #383838;
+  --hover: #4d4d4d;
+  --ink: #cccccc;
+  --muted: #8c8c8c;
+  --brand: #7dd3a7;
+  --bad: #ef6b73;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --surface: #f2f2f2;
+    --rule: #e0e0e0;
+    --hover: #c4c4c4;
+    --ink: #333333;
+    --muted: #666666;
+    /* The green is under 2:1 on white; this is the same hue, darker. */
+    --brand: #1f7a50;
+    --bad: #c43f3f;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-rule: var(--rule);
+  --color-hover: var(--hover);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-bad: var(--bad);
+  --default-font-family: "Geist Mono", ui-monospace, monospace;
+}
