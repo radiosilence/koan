@@ -30,7 +30,6 @@ pub struct Config {
     pub organize: OrganizeConfig,
     #[serde(alias = "visualiser")]
     pub visualizer: VisualizerConfig,
-    pub radio: RadioConfig,
     pub graphql: GraphqlConfig,
     pub subsonic: SubsonicConfig,
     pub auth: AuthConfig,
@@ -90,9 +89,6 @@ impl Default for PushConfig {
 #[serde(default)]
 pub struct LibraryConfig {
     pub folders: Vec<PathBuf>,
-    /// Run acoustic analysis as part of every scan rather than only on
-    /// `koan scan --analyze`. It roughly doubles a scan, so it is off.
-    pub analyze_on_scan: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -167,7 +163,6 @@ impl Default for LibraryConfig {
         });
         Self {
             folders: vec![music_dir],
-            analyze_on_scan: false,
         }
     }
 }
@@ -460,35 +455,6 @@ impl Default for DevicesConfig {
 
 /// "koan" on a phone keypad.
 pub const DEVICES_PORT: u16 = 5626;
-
-/// Radio / infinite play mode configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct RadioConfig {
-    /// Number of tracks to keep queued ahead of the cursor.
-    pub lookahead: usize,
-    /// Number of tracks to add each time the queue runs low.
-    pub batch_size: usize,
-    /// Don't repeat any of the last N tracks (play history exclusion window).
-    pub history_window: usize,
-    /// Number of recently played tracks to use as seed (drifting seed window).
-    pub seed_window: usize,
-    /// Discovery weight: 0.0 = only familiar tracks, 1.0 = maximise discovery.
-    /// Controls the recency bonus — higher values boost never-played/long-forgotten tracks.
-    pub discovery_weight: f64,
-}
-
-impl Default for RadioConfig {
-    fn default() -> Self {
-        Self {
-            lookahead: 5,
-            batch_size: 5,
-            history_window: 200,
-            seed_window: 5,
-            discovery_weight: 0.3,
-        }
-    }
-}
 
 /// Which of the two files a setting is written to when koan changes it itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

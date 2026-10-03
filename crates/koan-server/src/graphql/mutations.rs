@@ -272,19 +272,6 @@ impl MutationRoot {
         Ok(GqlStatus::success(format!("cleared {}", reached(&sent))))
     }
 
-    /// Turn radio (the queue topping itself up with similar tracks) on or off
-    /// on a linked koan app.
-    async fn set_client_radio(
-        &self,
-        ctx: &Context<'_>,
-        enabled: bool,
-        client: Option<String>,
-    ) -> async_graphql::Result<GqlStatus> {
-        require_role(ctx, Role::User)?;
-        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Radio { enabled }).await?;
-        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
-    }
-
     /// Queue an album on a linked koan app once it is in the library: for
     /// one being downloaded now (slsk's `grab`). Matched by artist and title
     /// substrings after each library scan; if it is already here it is sent
@@ -653,7 +640,6 @@ impl MutationRoot {
         let position_ms = state.position_ms();
         let was_playing =
             state.playback_state() == koan_core::player::state::PlaybackState::Playing;
-        let radio_enabled = state.radio_mode();
         let persisted: Vec<PersistedQueueItem> = items
             .iter()
             .map(PersistedQueueItem::from_playlist_item)
@@ -677,7 +663,6 @@ impl MutationRoot {
                 cursor_path.as_deref(),
                 position_ms,
                 was_playing,
-                radio_enabled,
             )
             .map_err(|e| super::internal_error("db", e))?;
             Ok(GqlStatus::success("playback state saved"))
@@ -897,22 +882,6 @@ impl MutationRoot {
             }
         }
         Ok(GqlStatus::success(format!("playing {count} track(s)")))
-    }
-
-    // -- Radio --
-
-    async fn enable_radio(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
-        require_role(ctx, Role::User)?;
-        let state = ctx.data::<Arc<SharedPlayerState>>()?;
-        state.set_radio_mode(true);
-        Ok(GqlStatus::success("radio mode enabled"))
-    }
-
-    async fn disable_radio(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
-        require_role(ctx, Role::User)?;
-        let state = ctx.data::<Arc<SharedPlayerState>>()?;
-        state.set_radio_mode(false);
-        Ok(GqlStatus::success("radio mode disabled"))
     }
 
     // -- Organize --

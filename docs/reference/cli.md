@@ -75,12 +75,9 @@ Scan configured library folders and index metadata.
 
 ```bash
 koan scan                         # standard metadata scan
-koan scan --analyze               # scan + acoustic analysis in one pass
 ```
 
 Scanning runs in parallel using rayon. Subsequent scans are incremental -- only new or modified files are re-indexed (based on mtime + size from the scan cache).
-
-The `--analyze` flag computes acoustic features for radio mode similarity scoring. This is slower than a plain scan.
 
 ---
 

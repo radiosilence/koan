@@ -1,13 +1,11 @@
 import KoanFFI
 import SwiftUI
 
-/// An artist as a tappable chip. Used for search results and for the similar
-/// artists on an artist page — same look, same behaviour, one definition.
+/// An artist as a tappable chip, wherever artists are listed among other
+/// results.
 struct ArtistPill: View {
     let name: String
     let artistId: Int64
-    /// Similar-artist chips carry a score; search results don't.
-    var detail: String?
     /// The page's pick, where the pill takes part in one — see
     /// `PlayableSelection`.
     var selection: PlayableSelection?
@@ -33,11 +31,6 @@ struct ArtistPill: View {
                 .font(.callout)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            if let detail {
-                Text(detail)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
         }
         .frame(maxWidth: 260, alignment: .leading)
         .padding(.horizontal, 11)

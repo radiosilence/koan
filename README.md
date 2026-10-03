@@ -81,8 +81,8 @@ koan                                        # launch the TUI
 
 **Rather not touch a terminal?** Install the app instead and do all of the above
 inside it: **Settings → Library** points kōan at your music and scans it,
-**Settings → Server** signs you in to Navidrome or Subsonic, and playback,
-output device and radio have their own panes. Everything in this quickstart can
+**Settings → Server** signs you in to Navidrome or Subsonic, and playback and
+devices have their own panes. Everything in this quickstart can
 be done from the app; the headless server and the MCP endpoint still want a
 shell.
 
@@ -107,11 +107,10 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Subsonic/Navidrome** -- library sync that runs when the server changes, unified local+remote browsing, streaming playback, two-way sync of favourites and playlists
 - **Music server** -- run headless and kōan serves the library itself: a mobile-first web UI with gapless browser playback, share links (a track shares its album cued to it) that unfurl with their cover, and an OpenSubsonic API for Subsonic apps, signed in with a kōan account by password, token or API key. See [Headless Server](docs/guide/headless-server.md)
 - **Playlists** -- ordered, named, reorderable; synced both ways with Navidrome, exportable as M3U8
-- **Radio mode** -- infinite play, scored from your own library: acoustic similarity over bliss-audio feature vectors (once you have run `koan scan --analyze`), genre and era matching, same-artist, and a random tail. It does not query anyone for recommendations -- [the guide says why](docs/guide/radio-mode.md#what-it-does-not-use)
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
 - **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` — 59 of them — for display and file organization
 - **File organization** -- rename/reorganize your library from the macOS app or the TUI using format string patterns
-- **GraphQL API** -- alongside the app and TUI, or headless. Relay pagination, filters, and mutations for playback, the queue, favourites, playlists, radio and the library
+- **GraphQL API** -- alongside the app and TUI, or headless. Relay pagination, filters, and mutations for playback, the queue, favourites, playlists and the library
 - **MCP server** -- `koan mcp` exposes the player to Claude Desktop via Model Context Protocol, and a server serves it over HTTP behind an authenticating gateway, acting as the signed-in account
 - **Queue management** -- undo/redo (100-deep), multi-select, drag-reorder, Finder drag & drop, session persistence
 - **SQLite FTS5 search** -- full-text search across your entire library
@@ -182,7 +181,6 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 |-------|---------------|
 | **[Getting Started](docs/getting-started.md)** | First-time setup, local and remote libraries, your first session |
 | **[Authentication](docs/guide/authentication.md)** | JWT auth, user management, 1Password integration, recovery |
-| **[Radio Mode](docs/guide/radio-mode.md)** | Infinite play, what it scores on and what it doesn't, tuning discovery |
 | **[Remote Servers](docs/guide/remote-servers.md)** | Navidrome/Subsonic setup, sync, streaming, cache management |
 | **[File Organization](docs/guide/file-organization.md)** | Rename and reorganize your library from the macOS app or the TUI |
 | **[GraphQL API](docs/guide/graphql-api.md)** | Headless operation, queries, mutations, daemon mode |
@@ -243,7 +241,7 @@ Requires Swift 6 and macOS 26+.
 The same SwiftUI app over the same engine, in a phone's shell. `koan-core` runs
 in-process through `koan-ffi`, as on the Mac, and plays out through RemoteIO. A
 tab bar holds the queue, the library, search and settings; Now Playing has the
-seek bar, synced lyrics, radio and an AirPlay picker, over the playing record's
+seek bar, synced lyrics and an AirPlay picker, over the playing record's
 colour. An iPad with room for a sidebar gets the Mac's layout instead.
 
 It plays from a Subsonic or Navidrome server, since a phone has no music folder

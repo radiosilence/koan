@@ -277,7 +277,7 @@ export function createKoan(
                 { protocol: "TCP", port: 53 },
               ],
             },
-            // Artwork, lyrics and similar-artist lookups are public
+            // Artwork, lyrics and artist-info lookups are public
             // services; nothing inside the cluster or a private network is
             // koan's business.
             { to: [{ ipBlock: { cidr: "0.0.0.0/0", except: conf.networkPolicy.privateCidrs } }] },

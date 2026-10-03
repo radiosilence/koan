@@ -70,9 +70,6 @@ pub fn cmd_play(
     let download_queue =
         koan_core::remote::queue::shared(&tx, &state, Some(log_buffer.clone())).clone();
 
-    // Radio's top-up loop lives in koan-core so every client behaves the same.
-    koan_core::radio::spawn_autoqueue(state.clone(), tx.clone());
-
     // Spawn the API server on a background thread if requested.
     if let Some(opts) = api_opts {
         let db_path = config::db_path();

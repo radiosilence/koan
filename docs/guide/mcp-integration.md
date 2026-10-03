@@ -61,7 +61,7 @@ Things you can ask Claude when kōan is connected:
 - "Search my library for anything with 'rain' in the title"
 - "Switch audio output to my DAC"
 - "Save this queue as 'techno friday'" / "Restore my chill mix"
-- "Turn on radio mode" / "Star this track"
+- "Star this track"
 
 Claude chains GraphQL operations: "find all my 90s electronic albums, pick one at random, and queue it up" becomes an `albums` query filtered by year and genre, then `addToQueue` and `play`.
 

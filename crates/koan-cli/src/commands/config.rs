@@ -201,7 +201,7 @@ folders = [{folders_str}]
 /// Sections koan used to have. Preserved user sections are how a config
 /// survives a koan that does not know about them yet, but that same rule would
 /// keep a retired section alive forever once koan stopped reading it.
-const RETIRED_SECTIONS: &[&str] = &["discovery"];
+const RETIRED_SECTIONS: &[&str] = &["discovery", "radio"];
 
 /// Generate config.toml content with all defaults commented out.
 ///
@@ -435,12 +435,16 @@ va = "%album artist%/%album%/%title%"
     #[test]
     fn retired_settings_are_not_resurrected() {
         let out = template_from(
-            "[playback]\nticker_fps = 8\n\n[radio]\nuse_subsonic = true\n\n\
+            "[playback]\nticker_fps = 8\n\n[library]\nanalyze_on_scan = true\n\n\
+             [radio]\nuse_subsonic = true\nlookahead = 9\n\n\
              [discovery]\nacoustic_weight = 0.5\n",
         );
         for gone in [
             "ticker_fps",
+            "analyze_on_scan",
+            "[radio]",
             "use_subsonic",
+            "lookahead",
             "[discovery]",
             "acoustic_weight",
         ] {

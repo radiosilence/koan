@@ -74,7 +74,7 @@ struct KoanApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         // Menu commands must not *read* anything that changes often. `.commands`
         // is part of the Scene body, so reading an observable that ticks —
-        // `isPlaying`, `radioEnabled` — makes SwiftUI rebuild every menu ten times
+        // `isPlaying`, the queue — makes SwiftUI rebuild every menu ten times
         // a second: the Edit menu flickers, and menu items and keyboard shortcuts
         // go dead because they are torn down mid-use. So the titles here are
         // fixed and the bodies only ever call methods.
@@ -129,7 +129,6 @@ struct KoanApp: App {
                     guard let state, let trackId = state.player.currentTrackId else { return }
                     state.library.toggleFavourite(track: trackId)
                 }
-                ShortcutButton(.radio) { state?.player.toggleRadio() }
             }
 
             // Replaces the stock Edit ▸ Undo, which has no undo manager behind

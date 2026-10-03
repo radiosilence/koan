@@ -808,27 +808,6 @@ impl KoanEngine {
         .await
     }
 
-    pub async fn similar_artists(
-        self: Arc<Self>,
-        artist_id: i64,
-    ) -> Result<Vec<SimilarArtist>, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            let rows =
-                queries::get_similar_artists_detailed(&db.conn, artist_id).map_err(db_err)?;
-            Ok(rows
-                .into_iter()
-                .map(|e| SimilarArtist {
-                    artist_id: e.artist.id,
-                    name: e.artist.name,
-                    score: e.score,
-                    source: e.source,
-                })
-                .collect())
-        })
-        .await
-    }
-
     pub async fn library_stats(self: Arc<Self>) -> Result<Stats, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -1624,7 +1603,6 @@ impl KoanEngine {
                 cursor_path.as_deref(),
                 self.state.position_ms(),
                 self.state.playback_state() == PlaybackState::Playing,
-                self.state.radio_mode(),
             )
             .map_err(fav_err)?;
             self.saved_content.store(content, Ordering::Release);
@@ -1657,8 +1635,6 @@ impl KoanEngine {
                 return Ok(0);
             };
 
-            // Restored whether or not there is a queue left to play.
-            self.state.set_radio_mode(saved.radio_enabled);
             // Controlling another device, as the last run left it: this one's
             // queue comes back, but not playing over that device's.
             let resume = saved.was_playing && koan_core::remote::devices::target().is_none();
@@ -1760,25 +1736,6 @@ impl KoanEngine {
     /// Read from config rather than the player so it survives a restart.
     pub async fn current_device(self: Arc<Self>) -> Option<String> {
         offload::offload(move || Config::cached().playback.output_device.clone()).await
-    }
-
-    // --- Radio -------------------------------------------------------------
-
-    /// Radio keeps the queue topped up with tracks chosen by similarity to
-    /// what you've been listening to. The picking loop is spawned with the
-    /// engine and watches this flag.
-    pub fn set_radio(&self, enabled: bool) {
-        match koan_core::remote::devices::target() {
-            Some(target) => {
-                let cmd = koan_core::remote::link::LinkCommand::Radio { enabled };
-                std::thread::spawn(move || {
-                    if let Err(e) = koan_core::remote::devices::send(&target, cmd) {
-                        log::warn!("devices: radio on {target}: {e}");
-                    }
-                });
-            }
-            None => self.state.set_radio_mode(enabled),
-        }
     }
 
     // --- Devices -----------------------------------------------------------
@@ -1899,10 +1856,6 @@ impl KoanEngine {
                 },
                 pre_amp_db: cfg.playback.pre_amp_db,
                 fade_on_pause: cfg.playback.fade_on_pause,
-
-                radio_lookahead: cfg.radio.lookahead as u32,
-                radio_batch_size: cfg.radio.batch_size as u32,
-                radio_discovery_weight: cfg.radio.discovery_weight,
                 devices_discoverable: cfg.devices.discoverable,
                 devices_addresses: cfg.devices.addresses.clone(),
             }
@@ -1940,10 +1893,6 @@ impl KoanEngine {
                 };
                 cfg.playback.pre_amp_db = s.pre_amp_db;
                 cfg.playback.fade_on_pause = s.fade_on_pause;
-
-                cfg.radio.lookahead = s.radio_lookahead as usize;
-                cfg.radio.batch_size = (s.radio_batch_size.max(1)) as usize;
-                cfg.radio.discovery_weight = s.radio_discovery_weight.clamp(0.0, 1.0);
 
                 cfg.devices.discoverable = s.devices_discoverable;
                 cfg.devices.addresses = s
@@ -2911,7 +2860,6 @@ impl KoanEngine {
                 entry,
                 format: None,
                 playlist_version: 0,
-                radio_enabled: st.radio,
             },
         });
         out.publish(StateSlice::Playhead {
@@ -2979,8 +2927,7 @@ impl KoanEngine {
     ///
     /// While this answers, the queue follows that playlist or record: an edit
     /// there lands here too. It stops answering the moment the queue is
-    /// rearranged, added to, or extended by radio — which is also when the
-    /// following stops.
+    /// rearranged or added to — which is also when the following stops.
     fn queue_lock_blocking(&self) -> Option<QueueLock> {
         let db = self.db().ok()?;
         match koan_core::playlists::queue_lock(&db, &self.state)? {
@@ -3169,7 +3116,6 @@ impl KoanEngine {
         let t_sweep = t0.elapsed();
 
         let (state, _timeline, viz, tx) = Player::spawn();
-        koan_core::radio::spawn_autoqueue(state.clone(), tx.clone());
         let t_player = t0.elapsed();
 
         // Bumped by the background tasks below as well as by everything the UI
@@ -3269,7 +3215,6 @@ impl KoanEngine {
                     album: item.as_ref().map(|i| i.album.clone()),
                     position_ms: state.position_ms(),
                     duration_ms: state.duration_ms(),
-                    radio: state.radio_mode(),
                     queue: held.as_ref().map(|(_, q)| q.clone()).unwrap_or_default(),
                 }
             }),
@@ -3302,7 +3247,6 @@ impl KoanEngine {
                 .as_ref()
                 .map(|i| StreamFormat::of(i, self.state.output_sample_rate())),
             playlist_version: self.state.playlist_version(),
-            radio_enabled: self.state.radio_mode(),
         }
     }
 
@@ -3324,7 +3268,6 @@ impl KoanEngine {
             cursor_path.as_deref(),
             self.state.position_ms(),
             self.state.playback_state() == PlaybackState::Playing,
-            self.state.radio_mode(),
         )
         .map_err(fav_err)
     }
@@ -3775,10 +3718,6 @@ impl KoanEngine {
                 koan_core::remote::link::sync(&db, walk);
                 self.library_changed();
             }),
-            LinkCommand::Radio { enabled } => {
-                self.state.set_radio_mode(enabled);
-                Ok(())
-            }
             LinkCommand::Seek { position_ms } => self.send_local(PlayerCommand::Seek(position_ms)),
             LinkCommand::Pause => self.send_local(PlayerCommand::Pause),
             LinkCommand::Resume => self.send_local(PlayerCommand::Resume),
@@ -3823,7 +3762,6 @@ impl KoanEngine {
             0
         };
         let dropped = (items.len() - kept.len()) as u32;
-        let radio = self.state.radio_mode();
         let send = |cmd| {
             koan_core::remote::devices::send(to, cmd)
                 .map_err(|message| KoanError::Remote { message })
@@ -3833,9 +3771,6 @@ impl KoanEngine {
             start_at: start_at as u32,
             position_ms,
         })?;
-        if radio {
-            send(LinkCommand::Radio { enabled: true })?;
-        }
         self.send_local(PlayerCommand::Pause)?;
         log::info!("devices: handed the queue to {to}, {dropped} left out");
         Ok(dropped)

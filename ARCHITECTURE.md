@@ -257,7 +257,7 @@ Statistics matter as much as the indexes: with none, the planner guesses the sam
 
 **Track dedup:** `upsert_track` tries its match strategies in order: (1) exact path match, (2) remote_id match, (2b) during a sync only, a row in the same album/disc/track/title slot whose remote_id the sync has not seen, which is the same track after the server renumbered it, (3) content match (artist + album + disc + track# + title, then the same without the artist), (4) MusicBrainz recording + release ids, which match however each source names the album. Every cross-source step applies only where one side has no local path and one side has no remote_id. First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows, while keeping two files on disk as two tracks however identical their tags: multi-disc releases repeat title and track number across discs. A merge fills gaps only — it never overwrites a populated column with NULL, so a remote sync that knows nothing about sample rate cannot erase what the local scan measured.
 
-A row matched by path or remote_id is then asked the content-match question a second time, against the corrected metadata. Strategies 1 and 2 pin a row to the source it was first seen from, so a file indexed with bad tags could never merge with its remote copy however good the tags later became — the path kept matching, and the merge that should have happened never got asked. If the counterpart turns up, `merge_track_rows` folds it in: play history concatenates, lyrics and the embedding fill a gap or are dropped, favourites need no move because they are keyed by path. An album left with nothing in it goes too, since a corrected tag usually strands a misreading nobody wants in the browser.
+A row matched by path or remote_id is then asked the content-match question a second time, against the corrected metadata. Strategies 1 and 2 pin a row to the source it was first seen from, so a file indexed with bad tags could never merge with its remote copy however good the tags later became — the path kept matching, and the merge that should have happened never got asked. If the counterpart turns up, `merge_track_rows` folds it in: play history concatenates, lyrics fill a gap or are dropped, favourites need no move because they are keyed by path. An album left with nothing in it goes too, since a corrected tag usually strands a misreading nobody wants in the browser.
 
 Only a single-sourced row is asked — one already carrying both a path and a remote id has nothing left to absorb. Unchanged files never reach `upsert_track` at all, so repairing a library that already holds duplicates from this means `koan scan --force`.
 
@@ -297,7 +297,7 @@ fb2k-compatible template engine.
 
 | File | Purpose |
 |---|---|
-| `config.rs` | Figment-based layered config: defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Library, playback, remote, organize, visualizer, radio, graphql, subsonic, auth, sharing, push and devices sections. `Config::persist()` writes each changed key to the file `layer_of` assigns it. |
+| `config.rs` | Figment-based layered config: defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Library, playback, remote, organize, visualizer, graphql, subsonic, auth, sharing, push and devices sections. `Config::persist()` writes each changed key to the file `layer_of` assigns it. |
 | `signal.rs` | `Wake` — a generation counter a reader can wait on, and the process-wide one every front end waits on. What lets koan hold state in versions and atomics without anyone having to look again |
 | `organize.rs` | File renaming using format strings. Preview/execute/undo, all planned by one `plan()` so a preview and the execute that follows it agree. Scoped by track id or by path. Refuses to overwrite; database rows (track paths, scan cache, favourites, playback state) are rewritten in the same transaction as the move. Playlists need no rewriting — they point at library rows, not at paths. Every move is logged for undo. Moves ancillary files (cover art, cue sheets). |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
@@ -333,7 +333,7 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 
 | File | Purpose |
 |---|---|
-| `graphql/` | async-graphql schema, resolvers, axum HTTP server. Relay pagination, rich filters, mutations for playback/queue/library/favourites/playlists/radio. rusqlite is blocking, so resolvers run their DB and HTTP work on `spawn_blocking` with a pooled connection; parent → child edges go through dataloaders. |
+| `graphql/` | async-graphql schema, resolvers, axum HTTP server. Relay pagination, rich filters, mutations for playback/queue/library/favourites/playlists. rusqlite is blocking, so resolvers run their DB and HTTP work on `spawn_blocking` with a pooled connection; parent → child edges go through dataloaders. |
 | `subsonic.rs` | Subsonic REST API endpoints for compatibility with existing clients (DSub, Symfonium, play:Sub), plus koan's `/rest/koanLink` WebSocket. |
 | `mcp.rs` | MCP server on stdio -- exposes `schema_sdl` and `graphql` tools for Claude Desktop integration. |
 | `clients.rs` | Linked apps by account. Sends each link that asks the account's other devices whenever one changes, relays commands between them, and pushes Live Activity updates for a device a phone is controlling. |
@@ -397,7 +397,7 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **Track dedup across sources:** Local file + Subsonic remote entry for the same song = one DB row. Local path always wins for playback.
 
-**Stale removal is guarded, not eager:** deleting a track takes its play history, lyrics and embedding with it, so an unmounted volume must never look like a deletion. A folder that yields zero audio files is skipped entirely; an IO error while stat-ing a path counts as "cannot tell", not "gone"; and a run that would clear more than 20% of a folder holding at least 100 tracks is refused outright. `koan scan --force-remove` lifts that last brake and only that one.
+**Stale removal is guarded, not eager:** deleting a track takes its play history and lyrics with it, so an unmounted volume must never look like a deletion. A folder that yields zero audio files is skipped entirely; an IO error while stat-ing a path counts as "cannot tell", not "gone"; and a run that would clear more than 20% of a folder holding at least 100 tracks is refused outright. `koan scan --force-remove` lifts that last brake and only that one.
 
 ## Dependencies
 

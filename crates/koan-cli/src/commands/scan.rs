@@ -37,7 +37,7 @@ pub fn cmd_scan(path: Option<&Path>, force: bool, force_remove: bool) {
             "{} {}",
             "force-remove:".yellow().bold(),
             "missing files will be deleted however many there are, along with their \
-             play history, lyrics and embeddings"
+             play history and lyrics"
                 .yellow(),
         );
     }
@@ -147,28 +147,6 @@ pub fn cmd_scan(path: Option<&Path>, force: bool, force_remove: bool) {
                 "  {} {}",
                 "…".dimmed(),
                 format!("and {} more", result.errors.len() - 20).dimmed()
-            );
-        }
-    }
-
-    // Run acoustic analysis if configured.
-    if cfg.library.analyze_on_scan {
-        let missing = koan_core::db::queries::tracks_missing_vectors(&db.conn).unwrap_or_default();
-        if !missing.is_empty() {
-            eprintln!();
-            eprintln!(
-                "{} analyzing {} tracks for acoustic similarity...",
-                "♪".cyan(),
-                missing.len().to_string().cyan().bold()
-            );
-            let analysis_start = std::time::Instant::now();
-            let (ok, err) = koan_core::index::scanner::analyze_missing(&db, None);
-            let analysis_elapsed = analysis_start.elapsed();
-            eprintln!(
-                "  {} analyzed  {} errors  {}",
-                ok.to_string().green().bold(),
-                err.to_string().red(),
-                format!("({:.1}s)", analysis_elapsed.as_secs_f64()).dimmed(),
             );
         }
     }
