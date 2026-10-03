@@ -307,6 +307,14 @@ impl Player {
             consumer,
             self.timeline.samples_played_counter(),
         )?;
+        // iOS answers 0 for a rate that belongs to the app's session, and no
+        // switch it can make is one to wait out.
+        if device_rate > 0.0 && (settled - device_rate).abs() > 0.1 {
+            let ms = crate::config::Config::load_or_default()
+                .playback
+                .rate_switch_lead_in_ms;
+            engine.lead_in(source_rate as u64 * ms as u64 / 1000);
+        }
 
         Ok((engine, rate_watch))
     }
@@ -2928,6 +2936,7 @@ mod tests {
     struct NullEngine {
         starts: Arc<std::sync::atomic::AtomicUsize>,
         running: std::sync::atomic::AtomicBool,
+        lead_in: Arc<AtomicU64>,
     }
     impl AudioEngineHandle for NullEngine {
         fn start(&self) -> Result<(), BackendError> {
@@ -2948,6 +2957,9 @@ mod tests {
         }
         fn is_silent(&self) -> bool {
             false
+        }
+        fn lead_in(&self, frames: u64) {
+            self.lead_in.store(frames, Ordering::Relaxed);
         }
     }
 
@@ -2993,6 +3005,7 @@ mod tests {
             Ok(Box::new(NullEngine {
                 starts: self.starts.clone(),
                 running: Default::default(),
+                lead_in: Default::default(),
             }))
         }
     }
@@ -3074,6 +3087,7 @@ mod tests {
     struct SlowBackend {
         observed: Arc<std::sync::Mutex<Vec<Option<u32>>>>,
         state: Arc<SharedPlayerState>,
+        lead_in: Arc<AtomicU64>,
     }
 
     impl AudioBackend for SlowBackend {
@@ -3122,6 +3136,7 @@ mod tests {
             Ok(Box::new(NullEngine {
                 starts: Default::default(),
                 running: Default::default(),
+                lead_in: self.lead_in.clone(),
             }))
         }
     }
@@ -3141,6 +3156,7 @@ mod tests {
         player.backend = Box::new(SlowBackend {
             observed: observed.clone(),
             state: state.clone(),
+            lead_in: Default::default(),
         });
 
         let info = buffer::StreamInfo {
@@ -3162,6 +3178,40 @@ mod tests {
             "mid-switch the output rate must read as unknown, not as the last track's"
         );
         assert_eq!(state.output_sample_rate(), Some(44100));
+    }
+
+    /// The lead-in an engine was given, for a track at `source_rate` on a
+    /// device sitting at 48 kHz.
+    fn lead_in_for(source_rate: u32) -> u64 {
+        let mut player = Player::new();
+        let lead_in = Arc::new(AtomicU64::new(0));
+        player.backend = Box::new(SlowBackend {
+            observed: Default::default(),
+            state: player.shared_state.clone(),
+            lead_in: lead_in.clone(),
+        });
+        let info = buffer::StreamInfo {
+            codec: "FLAC".into(),
+            sample_rate: source_rate,
+            channels: 2,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let (_producer, consumer) = rtrb::RingBuffer::new(16);
+        player
+            .create_engine_for(&info, consumer)
+            .expect("engine creation should succeed");
+        lead_in.load(Ordering::Relaxed)
+    }
+
+    #[test]
+    fn silence_leads_in_only_after_the_device_changed_rate() {
+        assert!(
+            lead_in_for(44100) > 0,
+            "the device is relocking, so the start of the track would be lost"
+        );
+        assert_eq!(lead_in_for(48000), 0, "no switch, nothing to wait for");
     }
 
     /// Backend that hands its rate-change callback back to the test.

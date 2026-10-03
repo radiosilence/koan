@@ -92,6 +92,12 @@ pub trait AudioEngineHandle: Send {
     /// Ramp back to full volume, starting the unit if it was stopped.
     fn fade_in(&self) -> Result<(), BackendError>;
     fn is_silent(&self) -> bool;
+    /// Play `frames` of silence before anything from the ring, without
+    /// counting them as played. A device that has just changed rate is
+    /// relocking its clock, and many mute while they do: what is sent then is
+    /// never heard. Nothing reports when the clock has locked, so the wait is
+    /// a length of time. Cleared by `fade_in`.
+    fn lead_in(&self, _frames: u64) {}
 }
 
 #[cfg(test)]
