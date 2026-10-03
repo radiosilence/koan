@@ -23,6 +23,7 @@ struct TransportBar: View {
     /// and the lyrics panel both take their room out of this, so the window
     /// being wide is no promise that the bar is.
     @State private var barWidth: CGFloat = 0
+    @State private var showingDevices = false
 
     /// Wide enough to read as a slab rather than a pill at this height.
     private static let radius: CGFloat = 26
@@ -248,7 +249,7 @@ struct TransportBar: View {
             .buttonStyle(.glass)
             .help("Radio (⌥⌘R) — when the queue runs low, keep it topped up with similar tracks")
 
-            DevicePickerButton(labelled: !compact)
+            DevicePickerButton(open: $showingDevices, labelled: !compact)
                 .font(.caption)
 
             // This Mac's own output; nothing it chooses reaches another device.
