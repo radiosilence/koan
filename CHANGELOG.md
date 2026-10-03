@@ -4,7 +4,12 @@
 
 ### Changed
 
+- **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
+
+### Fixed
+
+- **A command reaches a suspended iPhone after the app has been reinstalled.** A reinstall gives the app a new device id and leaves the old one's push token behind under the same name, so the server answered "several can be reached: iPhone, iPhone" and sent no push. It now wakes the device seen most recently.
 
 ## 0.50.2
 
