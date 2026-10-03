@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.50.1
+
+### Fixed
+
+- **A release no longer publishes without its binaries.** A push to main cancelled the previous run's builds and tests, and the publish jobs treated a cancelled dependency as a pass: 0.50.0 went to crates.io, npm and TestFlight with an empty GitHub release and no Homebrew update. Pushes to main no longer cancel each other, and publishing stops if anything it depends on was cancelled or the binaries were not built.
+
 ## 0.50.0
 
 ### Added
