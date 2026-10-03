@@ -58,7 +58,8 @@ pub enum LinkCommand {
         enabled: bool,
     },
     /// Pull what the server has changed: library, favourites and playlists.
-    /// `full` walks every track rather than what changed.
+    /// The library is walked only if the server says it moved, unless `full`,
+    /// which walks it regardless.
     Sync {
         #[serde(default)]
         full: bool,
@@ -633,7 +634,7 @@ impl wire::Session for LinkSession<'_> {
 /// A koan server names a track by its uid, which this library adopted when it
 /// synced the track; another server by the id it issued. A server can name a
 /// track added since the last sync; if any are missing and `may_sync`, an
-/// incremental sync runs first, and whatever is still missing after it is left
+/// sync runs first, and whatever is still missing after it is left
 /// out. An id a sync already failed to find does not start another for a
 /// while: a command naming a track deleted on the server would otherwise sync
 /// every time it arrived.
@@ -668,7 +669,7 @@ pub fn resolve_tracks(
     if missing.is_empty() || !may_sync || missing.iter().all(|id| recently_missed(id)) {
         return (found.into_iter().flatten().collect(), false);
     }
-    sync(db, false);
+    sync(db, crate::helpers::Walk::IfChanged);
     let found = lookup(db);
     let mut missed = MISSED.lock();
     let now = Instant::now();
@@ -692,13 +693,13 @@ fn recently_missed(id: &str) -> bool {
 
 /// A sync from the configured server, as the app runs its own: the library,
 /// then favourites and playlists.
-pub fn sync(db: &crate::db::connection::Database, full: bool) {
+pub fn sync(db: &crate::db::connection::Database, walk: crate::helpers::Walk) {
     let cfg = Config::load().unwrap_or_default();
     if let Some(client) = subsonic_client(&cfg)
         && let Err(e) = crate::helpers::sync_remote(
             db,
             &client,
-            full,
+            walk,
             &cfg.remote.url,
             &cfg.remote.username,
             &|_| {},

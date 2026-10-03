@@ -93,7 +93,7 @@ koan remote login https://music.example.com admin
 koan remote sync
 ```
 
-The first sync fetches your entire library. Subsequent syncs are **incremental** -- only new albums since the last sync. Use `--full` to force a complete re-sync.
+Every sync fetches your entire library. koan syncs on its own when the server's library changes: a koan server tells it, and for Navidrome and other Subsonic servers it checks on a timer and syncs only if something moved.
 
 See [Remote Servers](guide/remote-servers.md) for the full setup guide.
 

@@ -219,7 +219,8 @@ impl MutationRoot {
 
     /// Have every device of this account pull what the server has changed,
     /// now if linked, else when it next links. Playlist edits and library
-    /// changes already do this on their own.
+    /// changes already do this on their own. Each device walks the library only
+    /// if it moved since its last walk; `full` has it walk regardless.
     async fn sync_clients(
         &self,
         ctx: &Context<'_>,
@@ -1116,7 +1117,7 @@ impl MutationRoot {
             let synced = koan_core::helpers::sync_remote(
                 &db,
                 &client,
-                false,
+                koan_core::helpers::Walk::Always,
                 &cfg.remote.url,
                 &cfg.remote.username,
                 &|p| job.progress(p.done, p.total, describe_sync(p)),

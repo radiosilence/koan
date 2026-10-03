@@ -104,7 +104,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Native macOS app** -- SwiftUI, built out of Liquid Glass. Album-grouped queue with drag reorder, playlists, library and artist browsing, ⌘K search, synced lyrics, play history, file organization, and first-run setup
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
-- **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, two-way sync of favourites and playlists
+- **Subsonic/Navidrome** -- library sync that runs when the server changes, unified local+remote browsing, streaming playback, two-way sync of favourites and playlists
 - **Music server** -- run headless and kōan serves the library itself: a mobile-first web UI with gapless browser playback, share links (a track shares its album cued to it) that unfurl with their cover, and an OpenSubsonic API for Subsonic apps, signed in with a kōan account by password, token or API key. See [Headless Server](docs/guide/headless-server.md)
 - **Playlists** -- ordered, named, reorderable; synced both ways with Navidrome, exportable as M3U8
 - **Radio mode** -- infinite play, scored from your own library: acoustic similarity over bliss-audio feature vectors (once you have run `koan scan --analyze`), genre and era matching, same-artist, and a random tail. It does not query anyone for recommendations -- [the guide says why](docs/guide/radio-mode.md#what-it-does-not-use)

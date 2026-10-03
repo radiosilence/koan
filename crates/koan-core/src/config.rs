@@ -144,11 +144,11 @@ pub struct RemoteConfig {
     /// recently used first, at startup and as downloads land.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_limit: Option<String>,
-    /// Sync the library from the server on startup and on a timer.
+    /// Sync the library from the server on startup, and on a timer for a server
+    /// that cannot say when it changes; a koan server tells its apps itself.
     ///
-    /// Incremental — it asks the server what changed rather than walking
-    /// everything, so it is cheap enough to run unattended. A full sync stays a
-    /// deliberate action.
+    /// Each run walks the library only if the server says it changed since the
+    /// last walk, so it is cheap enough to run unattended.
     pub auto_sync: bool,
     /// Minutes between automatic syncs. 0 runs one at startup and no more.
     pub auto_sync_interval_mins: u64,

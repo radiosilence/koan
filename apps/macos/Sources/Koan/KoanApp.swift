@@ -207,13 +207,8 @@ struct KoanApp: App {
                 }
                 .disabled(state?.activity.conflicts(with: .localLibrary) ?? false)
                 Divider()
-                Group {
-                    Button { state?.library.syncRemote() } label: {
-                        Label("Sync Remote Library", systemImage: Icon.sync)
-                    }
-                    Button { state?.library.syncRemote(full: true) } label: {
-                        Label("Full Remote Sync", systemImage: Icon.syncAll)
-                    }
+                Button { state?.library.syncRemote() } label: {
+                    Label("Sync", systemImage: Icon.sync)
                 }
                 .disabled(state?.activity.conflicts(with: [.remoteTracks]) ?? false)
                 Divider()

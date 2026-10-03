@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **One sync, and it runs when the server changes.** "Sync" and "Full Sync" are one action, and every sync walks the whole library: the incremental kind was walking all of it anyway — every album looked changed every hour — without the part that notices a track deleted from an album. What made it cheap now comes first instead: before walking, koan asks the server when its library last changed (`getIndexes`'s `lastModified`) and walks only if that moved since the last complete walk. Favourites and playlists are reconciled every time, which is a request or two. A koan server already tells its linked apps when its library or a playlist changes, so they no longer sync on a timer; Navidrome and other Subsonic servers are checked on the timer, and synced only when something moved. A favourite made on another device costs a favourites reconcile rather than a walk of the library. `koan remote sync --full` is accepted and does the same as `koan remote sync`.
+- **A koan server's `getIndexes` `lastModified` moves when anything is added or removed**, not only when a file changes, and `ifModifiedSince` is answered with the timestamp alone when nothing has.
+
+### Fixed
+
+- **A sync whose album listing came up short no longer removes or relinks tracks.** An album deleted on the server mid-walk shifts the next page of the listing, and the album pushed out of view had its tracks treated as gone. The album itself was already checked before being removed; its tracks now wait for a listing that is whole.
+
 ## 0.49.0
 
 ### Changed
