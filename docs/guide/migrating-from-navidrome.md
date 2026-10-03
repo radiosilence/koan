@@ -9,7 +9,6 @@ You do not have to switch to use kōan's apps. The macOS and iOS apps and the te
 - **Apps that control each other.** kōan's apps keep a connection open to a kōan server. Any device can see what another is playing, take over its queue, or hand the music to it, across networks. Against Navidrome they can only find each other on the local network. See [Playing on another device](devices.md).
 - **Changes arrive without polling.** A kōan server tells linked apps when the library or a playlist changes. Against Navidrome, apps check on a timer.
 - **An assistant can drive it.** The server is an MCP server with its own OAuth sign-in. Claude and other assistants connect as a kōan account and can search the library, build playlists and play music on that account's devices. See [MCP integration](mcp-integration.md).
-- **Share pages that play.** A share link opens a page with a player that works without an account, and unfurls with its cover when pasted.
 - **Native players.** The macOS app and terminal UI play bit-perfect where the device allows, gapless, and cache what they stream so it plays again offline. The server itself needs no sound card.
 
 ## What you give up
