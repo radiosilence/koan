@@ -60,7 +60,7 @@ services:
       - /mnt/music:/music:ro
 ```
 
-with `koan-config` declared under `volumes:`. Then create the admin account:
+with `koan-config` declared under `volumes:`. Navidrome makes its first admin on the sign-in page; kōan has no sign-up page, so the first admin is created from a shell in the container (see [The first account](headless-server.md#the-first-account)):
 
 ```bash
 docker compose exec koan koan auth setup
@@ -91,7 +91,7 @@ music.example.com {
 
 ### Accounts
 
-Navidrome's accounts do not carry over. Create each one in kōan:
+Navidrome's accounts do not carry over. With the admin account made, create the rest on the web UI's Users page, or from the shell:
 
 ```bash
 koan auth create-user --username alice --role user
