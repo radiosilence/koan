@@ -16,9 +16,10 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS build
 COPY --from=planner /src/recipe.json recipe.json
-RUN cargo chef cook --release --locked -p koan-cli --recipe-path recipe.json
+RUN cargo chef cook --release --locked -p koan-cli --no-default-features --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --locked -p koan-cli
+# Without the terminal player: a server has no terminal to draw it in.
+RUN cargo build --release --locked -p koan-cli --no-default-features
 
 FROM debian:bookworm-slim
 # ALSA and D-Bus are linked by the audio backend and media-key support.

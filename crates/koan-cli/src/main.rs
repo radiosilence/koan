@@ -32,12 +32,14 @@ impl BufferedLogger {
         log::set_max_level(log::LevelFilter::Info);
     }
 
+    #[cfg(feature = "tui")]
     fn set_buffer(buf: Arc<Mutex<Vec<String>>>) {
         if let Some(logger) = LOGGER.get() {
             *logger.buffer.lock().unwrap() = Some(buf);
         }
     }
 
+    #[cfg(feature = "tui")]
     fn clear_buffer() {
         if let Some(logger) = LOGGER.get() {
             *logger.buffer.lock().unwrap() = None;
@@ -381,7 +383,9 @@ fn main() {
     ctrlc::set_handler(|| {
         if SIGINT_RECEIVED.load(Ordering::Relaxed) {
             // Second Ctrl+C — force restore terminal and exit.
+            #[cfg(feature = "tui")]
             let _ = crossterm::terminal::disable_raw_mode();
+            #[cfg(feature = "tui")]
             let _ = crossterm::execute!(
                 std::io::stdout(),
                 crossterm::terminal::LeaveAlternateScreen,
@@ -523,6 +527,49 @@ fn main() {
 /// Launch the player/TUI. Shared by `koan play` and bare `koan` (no subcommand).
 #[allow(clippy::too_many_arguments)]
 fn start_player(
+    cli: &Cli,
+    paths: &[PathBuf],
+    ids: &[i64],
+    album: Option<i64>,
+    artist: Option<i64>,
+    start_in_library: bool,
+    clear: bool,
+    server: Option<String>,
+    jukebox: bool,
+) {
+    #[cfg(not(feature = "tui"))]
+    {
+        let _ = (
+            cli,
+            paths,
+            ids,
+            album,
+            artist,
+            start_in_library,
+            clear,
+            server,
+            jukebox,
+        );
+        eprintln!("koan: this build has no player; run it with --headless");
+        std::process::exit(2);
+    }
+    #[cfg(feature = "tui")]
+    start_tui(
+        cli,
+        paths,
+        ids,
+        album,
+        artist,
+        start_in_library,
+        clear,
+        server,
+        jukebox,
+    );
+}
+
+#[cfg(feature = "tui")]
+#[allow(clippy::too_many_arguments)]
+fn start_tui(
     cli: &Cli,
     paths: &[PathBuf],
     ids: &[i64],

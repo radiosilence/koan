@@ -14,7 +14,8 @@ use koan_tui::app::PickerAction;
 use koan_tui::enqueue::enqueue_playlist;
 use koan_tui::play::TuiCallbacks;
 
-use super::{install_terminal_panic_hook, open_db, parse_dropped_paths, playlist_items_from_paths};
+use super::open_db;
+use super::player::{install_terminal_panic_hook, parse_dropped_paths, playlist_items_from_paths};
 use crate::BufferedLogger;
 
 /// Options for running the GraphQL/Subsonic API server alongside the TUI.

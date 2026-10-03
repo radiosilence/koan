@@ -17,12 +17,12 @@ path = "src/main.rs"
 chrono = "0.4"
 clap = { version = "4.6", features = ["derive", "env"] }
 clap_complete = { version = "4.6", features = ["unstable-dynamic"] }
-crossterm = "0.29"
+crossterm = { version = "0.29", optional = true }
 ctrlc = "3"
 jwalk = "0.9"
 koan-core = { workspace = true }
 koan-server = { workspace = true }
-koan-tui = { workspace = true }
+koan-tui = { workspace = true, optional = true }
 log = "0.4"
 owo-colors = "4"
 rayon = "1"
@@ -32,6 +32,12 @@ rpassword = "7.4"
 serde_json = "1"
 toml = "1.1"
 walkdir = { workspace = true }
+
+[features]
+default = ["tui"]
+# The terminal player. A server has no terminal to draw it in: the container
+# image builds with `--no-default-features`.
+tui = ["dep:koan-tui", "dep:crossterm"]
 
 [dev-dependencies]
 tempfile = "3"
