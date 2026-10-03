@@ -22,9 +22,9 @@
 
 kōan switches the audio device's sample rate to match the source file. If you hear artifacts:
 
-- Check that your DAC supports the source sample rate (`koan probe <file>` to check)
-- Some USB DACs need a moment to lock onto a new sample rate -- this is normal for the first ~100ms of a rate-switched track
-- If using AirPlay or Bluetooth, sample rate switching isn't supported -- kōan will play at whatever rate the device is already set to
+- Check that the DAC supports the file's sample rate; `koan probe <file>` shows it.
+- If the start of a track goes missing after a rate change, the device is slow to relock its clock. Raise `playback.rate_switch_lead_in_ms` (see [Configuration](../reference/configuration.md#rate-switch-lead-in)).
+- AirPlay and Bluetooth devices do not switch rate; kōan plays at the rate they are set to.
 
 ### Port already in use (GraphQL API)
 
@@ -40,10 +40,7 @@ Another kōan instance (or another process) is using port 4000. Either:
 
 ### Scan doesn't find my files
 
-- Check that `[library] folders` in `config.local.toml` points to the right directory
-- kōan scans recursively -- you only need the top-level directory
-- Supported formats: FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF, CAF, Ogg, MKV/WebM, MP4
-- Run `koan config` to verify the resolved config
+Check that `[library] folders` names the top-level directory (scans are recursive) and that `koan config` shows it. Supported formats are FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF and CAF, in Ogg, Matroska/WebM and MP4 containers.
 
 ### Duplicate tracks after remote sync
 
@@ -53,7 +50,7 @@ kōan merges a local file with the server's copy when their artist, album, disc,
 
 ### Search returns nothing
 
-Make sure you've run `koan scan` at least once. The FTS5 index is built during scanning.
+The search index is built by `koan scan`; run it at least once.
 
 ## Remote
 
@@ -63,9 +60,7 @@ Make sure you've run `koan scan` at least once. The FTS5 index is built during s
 koan remote status    # check connection
 ```
 
-- Verify the URL is correct (include `https://` or `http://`)
-- Check that the Subsonic API is enabled on your server (Navidrome: Settings -> Subsonic)
-- Try the URL in a browser to verify the server is reachable
+Check that the URL includes `https://` or `http://` and opens in a browser. On a kōan server, the Subsonic API has to be enabled with `koan subsonic setup`.
 
 ### Authentication failed
 
@@ -73,57 +68,31 @@ koan remote status    # check connection
 koan remote login https://music.example.com admin
 ```
 
-Re-run login to update credentials. kōan uses MD5+salt authentication (standard Subsonic protocol). Some servers require enabling "legacy authentication" in their settings.
+Re-run login to update the stored password. kōan signs in with Subsonic token auth (salted MD5).
 
 ### Sync stalls or is very slow
 
-The first sync fetches all albums and tracks. For large libraries (50k+ tracks), this can take several minutes.
-
-- Progress is displayed during sync
-- Subsequent syncs are incremental (much faster)
-- Check your server's rate limits if sync seems throttled
+A sync walks the whole library, which takes minutes for 50,000 tracks or more. The automatic syncs skip the walk when the server reports no change, so only the first one and forced ones are slow.
 
 ## TUI
 
 ### Album art not showing
 
-Album art uses halfblock rendering (Unicode block characters). Requirements:
-- Terminal must support Unicode
-- Terminal must support 256 colors or truecolor
-- Art is extracted from embedded tags (FLAC, MP3, etc.) or downloaded from the remote server
-
-If art shows as garbled characters, your terminal may not support halfblock rendering. Try a different terminal (iTerm2, Ghostty, WezTerm, Kitty all work well).
+Art is drawn with Unicode half-block characters in truecolor or 256 colours. Garbled art means the terminal or its font lacks one of those.
 
 ### Visualizer not showing
 
-The visualizer renders in the transport area when album art is present. If it's not visible:
-- Check that `[visualizer] enabled = true` (default)
-- The terminal window needs to be wide enough to fit both album art and the visualizer
-- Press `v` to open the visualizer picker and try different modes
-- Some terminals with limited Unicode support may not render the block characters correctly
+The visualizer draws in the transport area beside the album art, so it needs a window wide enough for both. `V` toggles it, and it stays off while `[visualizer] enabled = false`.
 
 ### Terminal not restored after crash
 
-If kōan crashes and leaves your terminal in a bad state (no echo, wrong colors):
-
-```bash
-reset
-```
-
-kōan installs a panic hook that attempts to restore the terminal on any thread, but some crash modes (SIGKILL, OOM) bypass the hook.
+Run `reset`. kōan restores the terminal on a panic, but not when it is killed outright.
 
 ## Config
 
 ### Changes not taking effect
 
-Config is loaded at startup. Restart kōan after editing config files.
-
-Check the resolved config to verify your changes are being picked up:
-```bash
-koan config
-```
-
-Environment variables (`KOAN_*`) override file config. If a value isn't what you expect, check for conflicting env vars.
+The TUI and server read config at startup, so restart after editing. `koan config` shows the merged result and any `KOAN_*` environment variables, which override both files.
 
 ### Secrets appearing in config.toml
 
@@ -131,4 +100,4 @@ Every setting kōan writes goes through `Config::persist()`, which sends secrets
 
 ## Logs
 
-kōan logs to `~/.config/koan/koan.log`. Check this file for detailed error messages when something goes wrong. In daemon mode (`-d`), this is the primary debugging tool.
+kōan logs to `~/.config/koan/koan.log`.

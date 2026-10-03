@@ -1,4 +1,4 @@
-# CLI Reference
+# CLI
 
 kōan is a single binary with subcommands. Running `koan` with no subcommand launches the TUI player.
 
@@ -23,9 +23,9 @@ koan --no-api                           # TUI only (no GraphQL server)
 These are root-level flags (not under `play`).
 
 ```bash
-koan --headless                   # GraphQL API on 127.0.0.1:4000, no TUI
-koan --headless --playground      # with GraphiQL web IDE
-koan --headless --subsonic 4040   # + Subsonic REST on port 4040
+koan --headless                   # serve on 127.0.0.1:4000, no TUI
+koan --headless --playground      # with GraphiQL at /graphql
+koan --headless --subsonic 4040   # Subsonic also on a port of its own
 koan --port 8080                  # custom GraphQL port
 koan --bind 0.0.0.0              # listen on all interfaces (auth enabled by default)
 koan -d                           # background daemon
@@ -63,7 +63,7 @@ Create the config directory with a commented template.
 koan config init
 ```
 
-Generates `config.toml` with all defaults commented out as reference -- uncomment what you want to customize. Safe to re-run; merges new defaults without overwriting your changes.
+Writes `config.toml` with every default commented out. Re-running adds new defaults without touching your changes.
 
 See [Configuration](configuration.md) for details on what gets created.
 
@@ -77,7 +77,7 @@ Scan configured library folders and index metadata.
 koan scan                         # standard metadata scan
 ```
 
-Scanning runs in parallel using rayon. Subsequent scans are incremental -- only new or modified files are re-indexed (based on mtime + size from the scan cache).
+Only files whose modification time or size changed are re-read; `--force` re-reads everything. See [Getting started](../getting-started.md#removed-files) for `--force-remove`.
 
 ---
 
@@ -141,7 +141,7 @@ Show the resolved configuration from all layers.
 koan config
 ```
 
-Displays defaults, config.toml values, config.local.toml overrides, and active `KOAN_*` environment variables with the final merged result.
+Prints which config files were read, the names of any active `KOAN_*` environment variables, and the merged result, with secrets masked.
 
 ---
 

@@ -1,4 +1,4 @@
-# Format Strings
+# Format strings
 
 fb2k-compatible format string engine used by organize and library display formatting.
 
@@ -92,7 +92,7 @@ Single quotes escape special characters (`[`, `]`, `%`, `$`, `,`, `(`). Use them
 | `$insert(s,sub,pos)` | string, substring, position | insert at position |
 | `$replace(s,from,to)` | string, search, replacement | string replace |
 | `$repeat(s,n)` | string, count | repeat n times |
-| `$len(s)` | string | character count |
+| `$len(s)` | string | length in bytes |
 | `$abbr(s)` | string | first letter of each word |
 | `$stripprefix(s)` | string | remove leading "A "/"The " |
 | `$swapprefix(s)` | string | "The Beatles" → "Beatles, The" |
@@ -223,12 +223,6 @@ The `[%discnumber%-]` conditional means the disc prefix only appears if `discnum
 Skip the date prefix for Various Artists compilations:
 
 ```
-%album artist%/$if($stricmp(%album artist%,Various Artists),,'('$left(%date%,4)')')%album% '['\%codec%'']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%
-```
-
-Or in a config file where quoting is simpler:
-
-```
 %album artist%/$if($stricmp(%album artist%,Various Artists),,['('$left(%date%,4)')' ])%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%
 ```
 
@@ -240,7 +234,7 @@ Various Artists/Warp 20 Recreated [FLAC]/03. Flying Lotus - Roygbiv.flac
 ### Label-based with $if2 fallback
 
 ```
-$if2(%label%,%album artist%)/%album% '['\%codec%'']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%
+$if2(%label%,%album artist%)/%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%
 ```
 
 ```

@@ -1,29 +1,14 @@
-# Headless Server
+# Running a server
 
-Run kōan as a background music server with no TUI -- controlled entirely via the GraphQL API, Subsonic REST API, or MCP.
+`koan --headless` runs kōan with no terminal UI, serving the library to other machines: a web UI, the Subsonic API, GraphQL and MCP, all on one port. The container image runs the same thing; see [In a container](#in-a-container).
 
 ## Quick start
 
 ```bash
-# Headless with GraphiQL IDE
-koan --headless --playground
-
-# Background daemon
-koan -d
-
-# Daemon with all APIs
-koan -d --playground --subsonic 4040
+koan auth setup                       # signing keys and the first admin account
+koan subsonic setup                   # turn on the Subsonic API
+koan --headless --bind 0.0.0.0        # serve on every interface, port 4000
 ```
-
-## Daemon mode
-
-The `-d` flag detaches kōan from the terminal and runs it in the background:
-
-```bash
-koan -d
-```
-
-kōan logs to `~/.config/koan/koan.log` in daemon mode. The GraphQL API is available on `http://localhost:4000/graphql` by default.
 
 ## Server flags
 
@@ -31,10 +16,10 @@ kōan logs to `~/.config/koan/koan.log` in daemon mode. The GraphQL API is avail
 |------|--------|
 | `--headless` | No TUI, API only |
 | `--playground` | Enable GraphiQL web IDE at `GET /graphql` |
-| `--subsonic PORT` | Serve the Subsonic REST API on its own port as well |
+| `--subsonic PORT` | Also serve the Subsonic API on a port of its own, for clients that expect one |
 | `--port PORT` | Custom GraphQL port (default: 4000) |
 | `--bind ADDR` | Bind address (default: 127.0.0.1) |
-| `-d` | Detach and run as background daemon |
+| `-d` | Detach and run in the background, logging to `~/.config/koan/koan.log` |
 
 MCP is served at `/mcp` on the same port, with its own OAuth sign-in once `sharing.public_url` is set; see [MCP Integration](mcp-integration.md#connecting-to-a-server).
 
@@ -44,15 +29,14 @@ A headless server indexes the library folders when it starts and again whenever 
 
 ```toml
 [graphql]
-enabled = true            # redundant in headless mode, but controls TUI+API mode
-port = 4000               # GraphQL API port
+port = 4000               # the server's port
 bind = "127.0.0.1"        # bind address
 playground = false        # GraphiQL IDE
 
 # config.local.toml — which machine serves Subsonic
 [subsonic]
-enabled = true            # mount /rest/* on the GraphQL port
-port = 4040               # and on a dedicated port too (optional)
+enabled = true            # serve /rest/* on the main port
+port = 4040               # and on a port of its own (optional)
 ```
 
 Or via environment variables:
@@ -68,8 +52,8 @@ export KOAN_GRAPHQL__PLAYGROUND=true
 Connect a TUI from another machine to a running headless kōan:
 
 ```bash
-koan --server http://host:4000          # full TUI
-koan --server http://host:4000 --jukebox  # remote control only (no local playback)
+koan play --server http://host:4000            # full TUI
+koan play --server http://host:4000 --jukebox  # remote control only (no local playback)
 ```
 
 ## Authentication
@@ -87,11 +71,7 @@ To disable auth (localhost-only setups):
 auth_enabled = false
 ```
 
-> **Warning:** with auth disabled, anything that can reach the port is an admin — it can read your
-> entire library, control playback and rewrite config. The `Origin` and `Host` checks keep a web page
-> you visit from being that "anything", but they are not a substitute for auth: any other machine on
-> the network still gets in. Only disable auth on a host you control, bound to `127.0.0.1`, and never
-> with the port forwarded.
+With auth disabled, anything that can reach the port is an admin; see [Recovery / lockout](authentication.md#recovery--lockout) before doing it.
 
 ## Web UI
 
@@ -141,5 +121,17 @@ An app is linked while it runs. iOS suspends a backgrounded app that is not play
 The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first user with `koan auth setup` inside the container, and `koan subsonic setup` to enable the Subsonic API.
 
 Set `sharing.public_url` to the public address (`KOAN_SHARING__PUBLIC_URL`) for share links and for MCP clients to sign in at `/mcp`.
+
+### Docker Compose
+
+[`deploy/compose/compose.yaml`](https://github.com/radiosilence/koan/blob/main/deploy/compose/compose.yaml) runs kōan behind Caddy, which obtains and renews the TLS certificate. On a machine whose hostname resolves to it, with ports 80 and 443 open:
+
+```bash
+curl -O https://raw.githubusercontent.com/radiosilence/koan/main/deploy/compose/compose.yaml
+KOAN_HOST=music.example.com MUSIC=/mnt/music docker compose up -d
+docker compose exec koan koan auth setup   # the admin account
+```
+
+Then open `https://music.example.com` and sign in. The Subsonic API is on for kōan accounts; `koan subsonic setup` adds a shared secret for clients that have none. Config, the database and keys live in the `koan-config` volume. The image runs as uid 1000, so a bind mount in its place has to be writable by that uid.
 
 On Kubernetes, a versioned Pulumi component package, [`@radiosilence/koan-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi), is published to GitHub Packages alongside each release. It exports `createKoan`, which builds the Deployment, its init container, Services and NetworkPolicy from a config object validated against `KoanConfSchema`.

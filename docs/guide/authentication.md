@@ -5,56 +5,24 @@ kōan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default
 ## Quick start
 
 ```bash
-# 1. Set up auth (generates Ed25519 keypair + creates admin user)
-koan auth setup
+koan auth setup               # signing keys and the first admin account
+koan --headless --port 4000
 
-# 2. Start the server
-koan --headless --port 4000  # or: koan play (starts API alongside TUI)
-
-# 3. Get a token
+# Sign in: returns an access token, a refresh token and its lifetime
 curl -s -X POST http://localhost:4000/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "your-password"}'
 
-# Response:
-# { "access_token": "eyJ...", "refresh_token": "...", "expires_in": 900 }
-
-# 4. Use the token
-curl -s http://localhost:4000/graphql \
-  -H "Authorization: Bearer eyJ..." \
-  -H "Content-Type: application/json" \
-  -d '{"query": "{ libraryStats { totalTracks totalArtists totalAlbums } }"}' | jq
-```
-
-### Full curl workflow
-
-```bash
-# Login and capture tokens
-RESPONSE=$(curl -s -X POST http://localhost:4000/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "your-password"}')
-
-ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
-REFRESH_TOKEN=$(echo "$RESPONSE" | jq -r '.refresh_token')
-
-echo "Access token (15min):  ${ACCESS_TOKEN:0:20}..."
-echo "Refresh token (30d):   ${REFRESH_TOKEN:0:20}..."
-
-# Make authenticated GraphQL requests
+# Call the API with the access token
 curl -s http://localhost:4000/graphql \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"query": "{ libraryStats { totalTracks totalArtists totalAlbums } }"}' | jq
+  -d '{"query": "{ libraryStats { totalTracks } }"}'
 
-# When access token expires, refresh it (returns new pair)
-RESPONSE=$(curl -s -X POST http://localhost:4000/auth/refresh \
+# When it expires, exchange the refresh token for a new pair
+curl -s -X POST http://localhost:4000/auth/refresh \
   -H "Content-Type: application/json" \
-  -d "{\"refresh_token\": \"$REFRESH_TOKEN\"}")
-
-ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
-REFRESH_TOKEN=$(echo "$RESPONSE" | jq -r '.refresh_token')
-
-echo "New access token: ${ACCESS_TOKEN:0:20}..."
+  -d "{\"refresh_token\": \"$REFRESH_TOKEN\"}"
 ```
 
 ### Non-interactive setup (scripting/CI)
@@ -68,10 +36,8 @@ KOAN_PASSWORD=secret koan auth create-user --username alice --role user
 ## CLI authentication
 
 ```bash
-# Login to a running koan server (stores the refresh token in config.local.toml)
+# Sign in to a kōan server; prompts for the password and keeps the refresh token in config.local.toml
 koan auth login --server http://localhost:4000 --username admin
-# Prompts for password interactively
-
 ```
 
 `koan play --server <url>` signs in with the stored token when its `server`
@@ -169,11 +135,7 @@ The playground page only renders with the correct `?introspection-key=` param (4
 
 ## 1Password integration
 
-If the `op` CLI is detected on your system:
-
-- **Password generation**: offered on user creation (`[Y/n]` — generates a 32-char random password and prints it)
-- **Credential saving**: offered after creation (`Save to 1Password as 'koan@hostname'? [Y/n]`)
-- **Updates**: if a `koan@hostname` item already exists, offers to update it instead of creating a duplicate
+With the `op` CLI installed, creating a user offers to generate a 32-character password and to save it to 1Password as `koan@hostname`, updating that item if it already exists.
 
 ## Keypair
 
@@ -250,7 +212,8 @@ Refresh tokens are stored in the database as `sha256(token)`, so a database read
 
 - **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
 - **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. argon2 is expensive by design, so at most one check per core (2 to 8) runs at once and a request arriving when all are busy gets error 0, "server busy", rather than waiting. The protocol sends the password with every request, so use it only over HTTPS.
-- **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret, for clients that only speak token auth. Token auth needs the plaintext on the server, which kōan does not keep for accounts, so a token for any other username gets error 41 and a client falls back to a password or a key.
+- **Token** (`u` + `t` + `s`) — checked against the account's password, kept sealed with AES-256-GCM for this purpose. An account that has not signed in by password since kōan began keeping that copy has nothing to check a token against, gets error 41, and the client falls back to a password or a key; one password sign-in, or `koan auth reset-password`, fixes it.
+- **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret and its username, acting as `user`, for clients that have no account.
 
 ```bash
 koan auth api-key create --username alice --name phone   # prints the key once
