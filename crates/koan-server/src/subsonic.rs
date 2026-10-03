@@ -4840,7 +4840,7 @@ mod tests {
                 concat!(
                     r#"<song id="{id}" title="Test Song" album="Test Album" artist="Test Artist" "#,
                     r#"track="1" discNumber="1" duration="240" bitRate="1411" suffix="flac" "#,
-                    r#"contentType="audio/flac" genre="Rock" albumId="{album}" artistId="{artist}" "#,
+                    r#"contentType="audio/flac" codec="FLAC" genre="Rock" albumId="{album}" artistId="{artist}" "#,
                     r#"parent="{album}" coverArt="{id}" type="music" isDir="false" "#,
                     r#"mediaType="song" bitDepth="16" samplingRate="44100" channelCount="2" "#,
                     r#"displayArtist="Test Artist" displayAlbumArtist="Test Artist" "#,
