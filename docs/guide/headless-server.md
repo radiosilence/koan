@@ -114,7 +114,7 @@ The page and its audio answer for the share's own tracks and nothing else, addre
 
 ## Playing on a linked app
 
-The macOS and iOS apps, signed in to a kōan server, hold a WebSocket open to it at `/rest/koanLink` (authenticated like any other `/rest` call; a kōan extension, not part of OpenSubsonic). Down it the server sends commands; up it each app reports what it is playing, where it is in the track, whether radio is on, and its queue.
+The macOS and iOS apps, signed in to a kōan server, hold a WebSocket open to it at `/rest/koanLink` (authenticated like any other `/rest` call; a kōan extension, not part of OpenSubsonic). Down it the server sends commands; up it each app reports what it is playing, where it is in the track, and its queue.
 
 ```graphql
 { clients { name platform playing nowPlaying positionMs queue { trackId title current } } }
@@ -129,7 +129,6 @@ mutation { queueOnClientWhenAdded(artist: "Rilo Kiley", album: "Under the Blackl
 | `jumpOnClient(trackId)` | Play that track: from the queue, or slotted in after the current one |
 | `removeFromClient(trackIds)`, `clearClient` | Edit the queue |
 | `controlClient(action)`, `seekOnClient(positionMs)` | Pause, resume, next, previous; seek |
-| `setClientRadio(enabled)` | Radio on or off |
 | `syncClient` | Pull what the server has added since the app last synced |
 | `queueOnClientWhenAdded(artist, album, playNext)` | Queue an album once it is in the library, e.g. one slsk is downloading. Checked after every library scan; lapses after a day. `clientOrders` lists them, `cancelClientOrder` withdraws one |
 

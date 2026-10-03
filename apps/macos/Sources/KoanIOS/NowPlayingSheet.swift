@@ -128,8 +128,8 @@ struct NowPlayingSheet: View {
         .disabled(player.currentEntry == nil)
     }
 
-    /// What the Mac keeps at the right of its bar: what the output is handed,
-    /// radio, and where the sound goes. Lyrics joins them, since there is no
+    /// What the Mac keeps at the right of its bar: what the output is handed
+    /// and where the sound goes. Lyrics joins them, since there is no
     /// inspector here for it to open in.
     private var extras: some View {
         HStack(spacing: 18) {
@@ -140,15 +140,6 @@ struct NowPlayingSheet: View {
                     .symbolVariant(ui.showLyrics ? .fill : .none)
             }
             .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")
-
-            Toggle(isOn: Binding(
-                get: { player.radioEnabled },
-                set: { player.setRadio($0) }
-            )) {
-                Image(systemName: Icon.radio)
-            }
-            .toggleStyle(.button)
-            .accessibilityLabel("Radio")
 
             Spacer()
 

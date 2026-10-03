@@ -54,9 +54,6 @@ pub enum LinkCommand {
         track_ids: Vec<String>,
     },
     Clear,
-    Radio {
-        enabled: bool,
-    },
     /// Pull what the server has changed: library, favourites and playlists.
     /// The library is walked only if the server says it moved, unless `full`,
     /// which walks it regardless.
@@ -195,7 +192,6 @@ impl LinkCommand {
             | Self::HandOff { .. }
             | Self::Devices { .. }
             | Self::Clear
-            | Self::Radio { .. }
             | Self::Sync { .. }
             | Self::Seek { .. }
             | Self::Pause
@@ -220,8 +216,6 @@ pub struct LinkState {
     pub position_ms: u64,
     #[serde(default)]
     pub duration_ms: u64,
-    #[serde(default)]
-    pub radio: bool,
     /// The queue, or the part of it around the current track when it is long.
     #[serde(default)]
     pub queue: Vec<LinkQueueEntry>,

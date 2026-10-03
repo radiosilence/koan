@@ -146,7 +146,6 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/wikimedia.rs` | Wikidata items, Wikipedia lead sections and Commons images — where artist bios and photos come from |
 | `remote/queue.rs` | The download queue: worker pool, a priority lane for the track under the cursor, cursor-aware reordering |
 | `remote/downloads.rs` | The download store — what koan is fetching and what it just fetched. One place every front end reads, rather than each deriving its own |
-| `radio.rs` | Radio mode: similar artists, MusicBrainz relationships, genre and era, play history — a seed that drifts as it plays |
 | `quiet.rs` | What runs in the background on iOS: nothing nobody asked for. Link, nearby browse and dial, sync and rescans wait here; a phone playing stays findable. Lifted by controlling another device or a push |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
 | `helpers.rs` | Shared by every front end: sign-in, favourite reconciliation, sharing, auto-sync and folder watching, forget-folder/forget-remote, cache and index maintenance |
@@ -227,7 +226,7 @@ follows the top of the stack in front — see `TabShell`.
 | `Views/PickerSheet.swift` | ⇧⌘K picker: multi-select, add / add-and-play / replace queue |
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |
 | `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |
-| `Views/SettingsView.swift` | Library / Server / Playback / Radio / Devices — everything needed to set koan up without a terminal |
+| `Views/SettingsView.swift` | Library / Server / Playback / Devices / Appearance — everything needed to set koan up without a terminal |
 | `Views/ActivityIndicator.swift` | The running-task rows at the foot of the sidebar |
 | `Views/FavouriteButton.swift` | The heart, wherever something can be favourited |
 | `Views/DevicePicker.swift` | Play on: pick a device to control, Move here to send the music there. While another device is controlled the engine publishes its state as the app's own — see ARCHITECTURE |

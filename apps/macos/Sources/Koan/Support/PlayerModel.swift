@@ -107,7 +107,6 @@ final class PlayerModel {
     var currentItemId: String? { mirror.playback.queueItemId }
     var currentEntry: QueueItem? { mirror.playback.entry }
     var currentFormat: StreamFormat? { mirror.playback.format }
-    var radioEnabled: Bool { mirror.playback.radioEnabled }
     var queueVersion: UInt64 { mirror.queueVersion }
     var durationMs: UInt64 { mirror.playback.durationMs }
     var queue: [QueueItem] { mirror.queue }
@@ -373,8 +372,6 @@ final class PlayerModel {
         currentDevice = name
     }
 
-    func setRadio(_ enabled: Bool) { engine.setRadio(enabled: enabled) }
-
     // MARK: - Where music plays
 
     /// The other device being controlled; `nil` while it is this one.
@@ -423,10 +420,6 @@ final class PlayerModel {
         }
         return destination?.sameLibrary ?? true
     }
-
-    /// Flips it without the caller having to read the current value — menus
-    /// that read observable state rebuild themselves constantly.
-    func toggleRadio() { setRadio(!radioEnabled) }
 
     // MARK: - Edit actions
     //

@@ -121,9 +121,9 @@ mod history_tests {
 /// The queue, and the playlist or record it is still exactly.
 ///
 /// While the two match, the queue *follows* a playlist: an edit there is an
-/// edit here, quietly. The moment you rearrange the queue yourself, add to it,
-/// or let radio extend it, they stop matching and the playlist becomes a
-/// document you are editing rather than the thing you are listening to.
+/// edit here, quietly. The moment you rearrange the queue yourself or add to
+/// it, they stop matching and the playlist becomes a document you are editing
+/// rather than the thing you are listening to.
 ///
 /// A record cannot be edited, so locking to one buys no following — only the
 /// ability to say what you are listening to, which is worth saying.
@@ -140,7 +140,7 @@ pub fn queue_lock(db: &Database, state: &SharedPlayerState) -> Option<QueueLock>
     }
 
     // Every item has to have come from the same playlist. One that did not —
-    // played next, dropped in, found by radio — is the queue having diverged.
+    // played next, dropped in — is the queue having diverged.
     let entry_ids: Vec<i64> = items.iter().filter_map(|i| i.playlist_entry_id).collect();
     if entry_ids.len() == items.len()
         && let Ok(Some(playlist_id)) = queries::playlist_of_entry(&db.conn, entry_ids[0])
@@ -649,7 +649,7 @@ mod tests {
         );
 
         // Something that never came from the playlist — played next, dropped
-        // in, found by radio.
+        // in.
         state.add_items(vec![queued(None)]);
         assert_eq!(queue_lock(&db, &state), None);
     }

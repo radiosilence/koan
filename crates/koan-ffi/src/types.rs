@@ -222,7 +222,6 @@ pub struct NowPlaying {
     pub format: Option<StreamFormat>,
     /// Bumped on every queue mutation — cheap change detection for the UI.
     pub playlist_version: u64,
-    pub radio_enabled: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
@@ -794,14 +793,6 @@ impl From<koan_core::artist_info::ArtistInfo> for ArtistInfo {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
-pub struct SimilarArtist {
-    pub artist_id: i64,
-    pub name: String,
-    pub score: f64,
-    pub source: String,
-}
-
 /// Sort orders the library browser offers. Applied by the database, because a
 /// listing that is read a page at a time has to be ordered before it is cut.
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -880,10 +871,6 @@ pub struct Settings {
     pub replaygain: String,
     pub pre_amp_db: f64,
     pub fade_on_pause: bool,
-
-    pub radio_lookahead: u32,
-    pub radio_batch_size: u32,
-    pub radio_discovery_weight: f64,
 
     /// Open to control from any koan app on the local network.
     pub devices_discoverable: bool,

@@ -9,7 +9,6 @@ use rayon::prelude::*;
 use crate::db::connection::Database;
 use crate::db::queries::{self, TrackMeta};
 
-use super::features;
 use super::metadata::{self, is_audio_file};
 
 /// Result of a folder scan.
@@ -634,95 +633,6 @@ pub fn full_scan(
     let total = scan_folders(db, &existing, opts, None, on_track);
     db.optimize();
     total
-}
-
-/// Info about an analyzed track, passed to the progress callback.
-pub struct AnalysisEvent<'a> {
-    pub path: &'a str,
-    pub success: bool,
-    pub current: usize,
-    pub total: usize,
-}
-
-/// Run acoustic analysis on all tracks missing vectors.
-/// Uses rayon for parallel analysis, stores results sequentially.
-pub fn analyze_missing(
-    db: &Database,
-    on_track: Option<&(dyn Fn(AnalysisEvent) + Sync)>,
-) -> (usize, usize) {
-    let missing = match queries::tracks_missing_vectors(&db.conn) {
-        Ok(m) => m,
-        Err(e) => {
-            log::error!("failed to query missing vectors: {}", e);
-            return (0, 0);
-        }
-    };
-
-    if missing.is_empty() {
-        return (0, 0);
-    }
-
-    let total = missing.len();
-    log::info!("analyzing {} tracks for acoustic features", total);
-
-    // Analyze in parallel.
-    let results: Vec<(i64, String, Result<Vec<f32>, features::AnalysisError>)> = missing
-        .par_iter()
-        .enumerate()
-        .map(|(i, (track_id, path))| {
-            let result = match catch_unwind(AssertUnwindSafe(|| {
-                features::analyze_track(Path::new(path))
-            })) {
-                Ok(r) => r,
-                Err(_) => Err(features::AnalysisError::Bliss(format!(
-                    "panicked while analyzing {}",
-                    path
-                ))),
-            };
-            if let Some(cb) = &on_track {
-                cb(AnalysisEvent {
-                    path,
-                    success: result.is_ok(),
-                    current: i + 1,
-                    total,
-                });
-            }
-            (*track_id, path.clone(), result)
-        })
-        .collect();
-
-    // Store sequentially.
-    let mut analyzed = 0usize;
-    let mut errors = 0usize;
-    let tx = match crate::db::queries::write_transaction(&db.conn) {
-        Ok(tx) => tx,
-        Err(e) => {
-            log::error!("failed to begin analysis transaction: {}", e);
-            return (0, 0);
-        }
-    };
-    for (track_id, path, result) in results {
-        match result {
-            Ok(embedding) => {
-                if let Err(e) = queries::store_vector(&tx, track_id, &embedding) {
-                    log::warn!("failed to store vector for {}: {}", path, e);
-                    errors += 1;
-                } else {
-                    analyzed += 1;
-                }
-            }
-            Err(e) => {
-                log::warn!("analysis failed for {}: {}", path, e);
-                errors += 1;
-            }
-        }
-    }
-    if let Err(e) = tx.commit() {
-        log::error!("failed to commit analysis transaction: {}", e);
-    }
-
-    log::info!("analysis complete: {} ok, {} errors", analyzed, errors);
-    (analyzed, errors)
 }
 
 #[cfg(test)]

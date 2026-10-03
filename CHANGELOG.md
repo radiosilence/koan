@@ -12,6 +12,12 @@
 
 - **`--mcp-bind` (`KOAN_MCP_BIND`), `KOAN_MCP_REQUIRE_LOGIN` and the gateway credential headers.** MCP is served at `/mcp` on the main port. The Pulumi component's `mcp` and `networkPolicy.mcp` options are gone with them, and are now rejected; drop them from the stack's config.
 
+## 0.49.2
+
+### Removed
+
+- **Radio.** It is to be rebuilt from scratch, and until then it is gone everywhere: the toggle and settings pane in the macOS and iOS apps, `R` in the TUI, the `[radio]` config section, `enableRadio`/`disableRadio`/`radioStatus`/`setClientRadio` and `radio` on `clients` in GraphQL, and the link's `radio` command and state field. What only radio used goes with it: acoustic analysis (`koan analyze`, `koan scan --analyze`, `library.analyze_on_scan`, the bliss-audio dependency) and the `similarTracks` query; the similar-artist cache fed by ListenBrainz and MusicBrainz relationships, with the Similar Artists section of the artist page, the `similarArtists` query and Subsonic's `getSimilarSongs2`, which now answers as unsupported. The schema moves to version 11, dropping the `similar_artists` and `track_vectors` tables and the saved radio toggle; a database opened by this version is refused by older ones. Leftover `[radio]` and `analyze_on_scan` keys in `config.toml` are ignored. An older app sending the radio command to a newer one has it logged and dropped.
+
 ## 0.49.1
 
 ### Changed

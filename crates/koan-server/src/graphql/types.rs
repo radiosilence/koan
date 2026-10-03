@@ -553,8 +553,6 @@ pub(super) struct GqlClient {
     /// Into the current track, now: reported, and run on since if playing.
     pub position_ms: u64,
     pub duration_ms: u64,
-    /// Whether radio is topping its queue up.
-    pub radio: bool,
     /// Unix seconds; when it was last seen playing since it linked.
     pub last_played_at: Option<i64>,
     /// Its queue, or the part around the current track when it is long.
@@ -597,7 +595,6 @@ impl From<crate::clients::ClientInfo> for GqlClient {
             album: c.state.album.clone(),
             position_ms,
             duration_ms: c.state.duration_ms,
-            radio: c.state.radio,
             queue: c
                 .state
                 .queue
@@ -671,30 +668,6 @@ pub(super) struct GqlDevice {
 }
 
 #[derive(SimpleObject)]
-#[graphql(name = "SimilarArtist")]
-pub(super) struct GqlSimilarArtist {
-    pub artist: GqlSimilarArtistInfo,
-    pub score: f64,
-    pub source: String,
-    pub relationship: String,
-}
-
-#[derive(SimpleObject)]
-#[graphql(name = "SimilarArtistInfo", complex)]
-pub(super) struct GqlSimilarArtistInfo {
-    #[graphql(skip)]
-    pub id: i64,
-    pub name: String,
-}
-
-#[ComplexObject]
-impl GqlSimilarArtistInfo {
-    async fn id(&self, ctx: &Context<'_>) -> async_graphql::Result<ID> {
-        uid(ctx, UidKind::Artist, self.id).await
-    }
-}
-
-#[derive(SimpleObject)]
 #[graphql(name = "PlayHistoryEntry", complex)]
 pub(super) struct GqlPlayHistoryEntry {
     #[graphql(skip)]
@@ -750,12 +723,6 @@ impl From<koan_core::db::queries::PlaylistRow> for GqlPlaylist {
             changed_at: p.changed_at,
         }
     }
-}
-
-#[derive(SimpleObject)]
-#[graphql(name = "RadioStatus")]
-pub(super) struct GqlRadioStatus {
-    pub enabled: bool,
 }
 
 #[derive(SimpleObject)]
@@ -961,42 +928,6 @@ impl GqlShareLink {
     }
 }
 
-pub(super) struct GqlSimilarTrack {
-    pub row: queries::TrackRow,
-    pub distance: f64,
-}
-
-#[Object(name = "SimilarTrack")]
-impl GqlSimilarTrack {
-    async fn track_id(&self, ctx: &Context<'_>) -> async_graphql::Result<ID> {
-        uid(ctx, UidKind::Track, self.row.id).await
-    }
-
-    async fn title(&self) -> &str {
-        &self.row.title
-    }
-
-    async fn artist(&self) -> &str {
-        &self.row.artist_name
-    }
-
-    async fn album(&self) -> &str {
-        &self.row.album_title
-    }
-
-    async fn distance(&self) -> f64 {
-        self.distance
-    }
-
-    async fn duration_ms(&self) -> Option<i64> {
-        self.row.duration_ms
-    }
-
-    async fn genre(&self) -> Option<&str> {
-        self.row.genre.as_deref()
-    }
-}
-
 /// Mutation/query result status.
 pub(super) struct GqlStatus {
     pub success: bool,
@@ -1130,7 +1061,6 @@ pub(super) struct GqlConfig {
     pub remote_username: String,
     pub cache_limit: Option<String>,
     pub visualizer_fps: i32,
-    pub radio_enabled: bool,
     pub graphql_port: i32,
     pub graphql_playground: bool,
 }

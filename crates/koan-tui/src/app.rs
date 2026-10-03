@@ -294,7 +294,6 @@ pub struct App {
     /// Last computed display FPS value.
     pub display_fps: u16,
 
-    pub radio_config: koan_core::config::RadioConfig,
     /// Album art width in terminal columns. Height = width/2 (square via halfblocks).
     pub art_size: u16,
 
@@ -369,7 +368,6 @@ impl App {
             fps_sample_time: std::time::Instant::now(),
             fps_sample_count: 0,
             display_fps: 0,
-            radio_config: cfg.radio,
             art_size: cfg.playback.art_size.clamp(4, 80),
             download_queue,
         }
@@ -782,18 +780,6 @@ impl App {
                 if self.lyrics_panel {
                     self.lyrics.track_path = None; // Force fetch on next tick
                 }
-            }
-            KeyCode::Char('R') => {
-                let new_val = !self.state.radio_mode();
-                self.state.set_radio_mode(new_val);
-                self.status_message = Some((
-                    if new_val {
-                        "radio mode on".into()
-                    } else {
-                        "radio mode off".into()
-                    },
-                    std::time::Instant::now(),
-                ));
             }
             KeyCode::Char('V') => {
                 self.viz_config.enabled = !self.viz_config.enabled;

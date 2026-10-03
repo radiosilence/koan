@@ -50,12 +50,9 @@ connection. Playback continues in the background and from the lock screen.
 IN SYNC WITH THE SERVER
 Favourites, playlists and play history are kept in step with your server, so the phone, the Mac app and the web agree.
 
-RADIO
-Turn on radio from Now Playing, and when the queue runs out kōan carries on with related music from your own library.
-
 PRIVATE
 kōan has no account of its own, no analytics and no advertising. It talks to your server, and to public music \
-databases for artist information, lyrics and radio suggestions.
+databases for artist information and lyrics.
 
 kōan is open source under the MIT licence. You need a Subsonic-compatible music server with your own music on it; \
 kōan does not provide music.\
@@ -94,7 +91,7 @@ Third-party material: kōan plays only what the user has on their own server. Th
 operated by the Navidrome project and holds only Creative Commons-licensed music.
 
 External services: the user's own music server (library, streams, artwork, favourites, playlists); MusicBrainz, \
-Wikidata, Wikipedia and Wikimedia Commons (artist biographies and photos); ListenBrainz (similar artists for radio); \
+Wikidata, Wikipedia and Wikimedia Commons (artist biographies and photos); \
 LRCLIB (lyrics); Apple Push Notification service (kōan servers only); Bonjour on the local network (finding other kōan \
 devices). No analytics, advertising, payments or AI services.
 

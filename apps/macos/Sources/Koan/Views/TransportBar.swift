@@ -81,9 +81,8 @@ struct TransportBar: View {
     /// keeps the centre centred — so one number answers for both.
     private var sideWidth: CGFloat { max(0, (available - Self.zoneGap * 2 - centreWidth) / 2) }
 
-    /// Below this the radio toggle is its icon alone. The word is the first
-    /// thing worth giving up: the button is lit when it is on, so it says what
-    /// it is either way.
+    /// Below this the device picker is its icon alone. The word is the first
+    /// thing worth giving up.
     private var compact: Bool { sideWidth < 190 }
 
     /// And below this the format badge goes too. It is the last thing dropped
@@ -230,24 +229,6 @@ struct TransportBar: View {
                     .background(.quaternary, in: Capsule())
                     .help(Format.outputExplanation(format))
             }
-
-            Toggle(isOn: Binding(
-                get: { player.radioEnabled },
-                set: { player.setRadio($0) }
-            )) {
-                if compact {
-                    Label("Radio", systemImage: Icon.radio)
-                        .labelStyle(.iconOnly)
-                        .font(.caption)
-                } else {
-                    Label("Radio", systemImage: Icon.radio)
-                        .labelStyle(.titleAndIcon)
-                        .font(.caption)
-                }
-            }
-            .toggleStyle(.button)
-            .buttonStyle(.glass)
-            .help("Radio (⌥⌘R) — when the queue runs low, keep it topped up with similar tracks")
 
             DevicePickerButton(open: $showingDevices, labelled: !compact)
                 .font(.caption)

@@ -38,7 +38,7 @@ struct SettingsView: View {
         Group {
             if let model {
                 #if os(macOS)
-                // Four panes side by side in a window sized to hold the largest
+                // The panes side by side in a window sized to hold the largest
                 // of them, which is what a settings window is on macOS.
                 TabView {
                     LibrarySettings(model: model)
@@ -47,8 +47,6 @@ struct SettingsView: View {
                         .tabItem { Label("Server", systemImage: "server.rack") }
                     PlaybackSettings(model: model)
                         .tabItem { Label("Playback", systemImage: "hifispeaker") }
-                    RadioSettings(model: model)
-                        .tabItem { Label("Radio", systemImage: "dot.radiowaves.left.and.right") }
                     DevicesSettings(model: model)
                         .tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
                     AppearanceSettings()
@@ -66,7 +64,6 @@ struct SettingsView: View {
                     // such disk, and koan is a Subsonic client and nothing else.
                     pane("Server", "server.rack") { RemoteSettings(model: model) }
                     pane("Playback", "hifispeaker") { PlaybackSettings(model: model) }
-                    pane("Radio", "dot.radiowaves.left.and.right") { RadioSettings(model: model) }
                     pane("Devices", "laptopcomputer.and.iphone") { DevicesSettings(model: model) }
                     Section {} footer: {
                         Text(AppVersion.text)
@@ -648,79 +645,6 @@ private struct AppearanceSettings: View {
                 Text("Graphics")
             } footer: {
                 Text("How much kōan spends on looking like itself. Every step down removes something that costs while the music plays — the colour drifting behind the window first, since it costs the most.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-// MARK: - Radio
-
-private struct RadioSettings: View {
-    @Bindable var model: SettingsModel
-    /// Held while the slider is dragged, so the drag commits once on release.
-    @State private var discovery: Double?
-
-    var body: some View {
-        Form {
-            Section {
-                Stepper(
-                    "Keep \(model.settings.radioLookahead) tracks queued ahead",
-                    value: Binding(
-                        get: { Int(model.settings.radioLookahead) },
-                        set: { v in model.edit { $0.radioLookahead = UInt32(v) } }
-                    ),
-                    in: 1...25
-                )
-                Stepper(
-                    "Add \(model.settings.radioBatchSize) at a time",
-                    value: Binding(
-                        get: { Int(model.settings.radioBatchSize) },
-                        set: { v in model.edit { $0.radioBatchSize = UInt32(v) } }
-                    ),
-                    in: 1...25
-                )
-            } header: {
-                Text("Topping up")
-            } footer: {
-                Text("Radio adds tracks when the queue runs shorter than this.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-
-            Section {
-                Slider(
-                    value: Binding(
-                        get: { discovery ?? model.settings.radioDiscoveryWeight },
-                        set: { v in
-                            if discovery != nil {
-                                discovery = v
-                            } else {
-                                model.edit { $0.radioDiscoveryWeight = v }
-                            }
-                        }
-                    ),
-                    in: 0...1
-                ) {
-                    Text("Discovery")
-                } minimumValueLabel: {
-                    Text("Familiar").font(.caption)
-                } maximumValueLabel: {
-                    Text("New").font(.caption)
-                } onEditingChanged: { editing in
-                    if editing {
-                        discovery = model.settings.radioDiscoveryWeight
-                    } else if let settled = discovery {
-                        discovery = nil
-                        model.edit { $0.radioDiscoveryWeight = settled }
-                    }
-                }
-            } header: {
-                Text("What it picks")
-            } footer: {
-                Text("Higher favours tracks you have not played, or have not played in a long time.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

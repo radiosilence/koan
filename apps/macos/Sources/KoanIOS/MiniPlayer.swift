@@ -4,8 +4,7 @@ import SwiftUI
 /// The transport, phone-sized.
 ///
 /// Not the Mac's `TransportBar` shrunk: that one carries a seek bar, a format
-/// badge, an output device picker and a radio toggle across the width of a Mac
-/// window. At 400 points there is room for the sleeve, what is
+/// badge and an output device picker across the width of a Mac window. At 400 points there is room for the sleeve, what is
 /// playing and one button, and everything else belongs on the page you get by
 /// tapping it.
 struct MiniPlayer: View {

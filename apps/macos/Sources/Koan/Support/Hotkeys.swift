@@ -184,9 +184,6 @@ extension Hotkeys {
                 guard let trackId = player.currentTrackId else { return }
                 library.toggleFavourite(track: trackId)
             },
-            Hotkey(keys: ["R"], label: "Radio mode", group: .playback) {
-                player.toggleRadio()
-            },
 
             Hotkey(keys: ["p"], label: "Add music", group: .navigation) {
                 ui.showingPicker = true

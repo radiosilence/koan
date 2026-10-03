@@ -87,9 +87,6 @@ extension MenuShortcut {
     static let favourite = Self(
         title: "Favourite Current Track", icon: Icon.favourite, key: "d", modifiers: .command,
         group: .playback)
-    static let radio = Self(
-        title: "Toggle Radio", icon: Icon.radio, key: "r", modifiers: [.command, .option],
-        group: .playback)
 
     static let lyrics = Self(
         title: "Toggle Lyrics", icon: Icon.lyrics, key: "l", modifiers: [.command, .option],
@@ -126,7 +123,7 @@ extension MenuShortcut {
         var all: [MenuShortcut] = [search, addMusic]
         all += NavigationCommand.all.map(\.shortcut)
         all += [back, forward]
-        all += [next, previous, skipForward, skipBack, favourite, radio]
+        all += [next, previous, skipForward, skipBack, favourite]
         all += [lyrics, shortcuts]
         all += [undo, redo, cut, copy, paste, delete, selectAll, find]
         all.append(rescan)

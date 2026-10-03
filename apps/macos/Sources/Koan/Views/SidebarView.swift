@@ -244,24 +244,10 @@ struct SidebarView: View {
 }
 
 /// Library size and what koan is doing. Its own view because it reads the
-/// queue and the cursor, and read in `SidebarView` those would re-run the
-/// sidebar on every track.
+/// running tasks, and read in `SidebarView` those would re-run the sidebar as
+/// each one moves.
 private struct SidebarFooter: View {
     @Environment(LibraryModel.self) private var library
-    @Environment(PlayerModel.self) private var player
-
-    /// What radio is about to do, rather than that it is switched on.
-    private var radioStatus: String {
-        guard let cursor = player.currentItemId,
-              let index = player.queue.firstIndex(where: { $0.queueItemId == cursor })
-        else {
-            return "Radio — waiting for something to play"
-        }
-        let ahead = player.queue.count - index - 1
-        return ahead == 0
-            ? "Radio — extending after this track"
-            : "Radio — \(Format.count(Int64(ahead), "track")) ahead"
-    }
 
     /// Library size and scan state. The counts are the quickest way to tell
     /// whether a scan picked anything up.
@@ -280,15 +266,6 @@ private struct SidebarFooter: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            }
-
-            if player.radioEnabled {
-                // "Radio on" only repeats what the lit button already says.
-                // What is worth knowing is whether it is about to do anything,
-                // which is a question about how much queue is left.
-                Label(radioStatus, systemImage: Icon.radio)
-                    .font(.caption)
-                    .foregroundStyle(.tint)
             }
         }
         .padding(.horizontal, 14)

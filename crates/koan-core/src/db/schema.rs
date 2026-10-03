@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 12;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -103,11 +103,8 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             WHERE remote_id IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_artists_remote_id ON artists(remote_id)
             WHERE remote_id IS NOT NULL;
-        -- Radio resolves the artists a recommender names back to local rows,
-        -- by MusicBrainz id and then by name. `UNIQUE(name)` is a binary index
-        -- and the name lookup is case-insensitive, so it could not use it.
-        CREATE INDEX IF NOT EXISTS idx_artists_mbid ON artists(mbid)
-            WHERE mbid IS NOT NULL;
+        -- An upsert finds an artist by name however it is capitalised.
+        -- `UNIQUE(name)` is a binary index, so that lookup could not use it.
         CREATE INDEX IF NOT EXISTS idx_artists_name_nocase
             ON artists(name COLLATE NOCASE);
         -- The genre list and the genre filter both match case-insensitively,
@@ -282,22 +279,8 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             cursor_id     TEXT,
             position_ms   INTEGER NOT NULL DEFAULT 0,
             was_playing   INTEGER NOT NULL DEFAULT 0,
-            radio_enabled INTEGER NOT NULL DEFAULT 0,
             updated_at    TEXT DEFAULT (datetime('now'))
         );
-
-        CREATE TABLE IF NOT EXISTS similar_artists (
-            artist_id       INTEGER NOT NULL REFERENCES artists(id),
-            similar_id      INTEGER NOT NULL REFERENCES artists(id),
-            score           REAL NOT NULL DEFAULT 0.0,
-            source          TEXT NOT NULL DEFAULT 'subsonic',
-            relationship    TEXT NOT NULL DEFAULT 'similar',
-            updated_at      TEXT DEFAULT (datetime('now')),
-            PRIMARY KEY (artist_id, similar_id, source)
-        );
-        -- The primary key serves `artist_id`; deleting an artist also looks
-        -- for it as someone else's similar artist.
-        CREATE INDEX IF NOT EXISTS idx_similar_artists_similar ON similar_artists(similar_id);
 
         CREATE TABLE IF NOT EXISTS play_history (
             id          INTEGER PRIMARY KEY,
@@ -345,12 +328,6 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(track_id);
-
-        CREATE TABLE IF NOT EXISTS track_vectors (
-            track_id    INTEGER PRIMARY KEY REFERENCES tracks(id),
-            embedding   BLOB NOT NULL,
-            updated_at  TEXT DEFAULT (datetime('now'))
-        );
 
         -- Auth tables
         CREATE TABLE IF NOT EXISTS users (
@@ -429,11 +406,6 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("users", "sealed_password", "BLOB"),
     ("tracks", "cache_size_bytes", "INTEGER"),
     ("tracks", "cache_download_date", "INTEGER"),
-    (
-        "similar_artists",
-        "relationship",
-        "TEXT NOT NULL DEFAULT 'similar'",
-    ),
     ("organize_log", "size_bytes", "INTEGER"),
     ("organize_log", "mtime", "INTEGER"),
     // When the album entered the library, so clients can offer a
@@ -445,13 +417,6 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     (
         "playback_state",
         "was_playing",
-        "INTEGER NOT NULL DEFAULT 0",
-    ),
-    // Radio is a mode you leave on, not a per-session choice: switching itself
-    // off every launch makes it a setting that will not stay set.
-    (
-        "playback_state",
-        "radio_enabled",
         "INTEGER NOT NULL DEFAULT 0",
     ),
     // MusicBrainz ids are the join key for anything that wants to look a
@@ -531,6 +496,24 @@ fn add_missing_columns(conn: &Connection) -> rusqlite::Result<()> {
 
 fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     add_missing_columns(conn)?;
+
+    // Left by the radio mode koan used to have: its similar-artist cache,
+    // acoustic vectors and saved toggle. Nothing reads them.
+    if found < 11 {
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS similar_artists;
+             DROP TABLE IF EXISTS track_vectors;
+             DROP INDEX IF EXISTS idx_artists_mbid;",
+        )?;
+        for table in ["playback_state", "playback_position"] {
+            if column_exists(conn, table, "radio_enabled")? {
+                conn.execute(
+                    &format!("ALTER TABLE {table} DROP COLUMN radio_enabled"),
+                    [],
+                )?;
+            }
+        }
+    }
 
     // Cross-source dedup looks tracks up by recording id.
     conn.execute(
@@ -620,8 +603,8 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     if found < 9 {
         conn.execute(
             "INSERT OR IGNORE INTO playback_position
-                 (id, cursor_id, position_ms, was_playing, radio_enabled)
-             SELECT 1, cursor_id, position_ms, was_playing, radio_enabled
+                 (id, cursor_id, position_ms, was_playing)
+             SELECT 1, cursor_id, position_ms, was_playing
                FROM playback_state WHERE id = 1",
             [],
         )?;
@@ -868,18 +851,6 @@ fn merge_case_duplicate_artists(conn: &Connection) -> rusqlite::Result<()> {
                 [keep, gone],
             )?;
             conn.execute("DELETE FROM artist_info WHERE artist_id = ?1", [gone])?;
-            conn.execute(
-                "UPDATE OR IGNORE similar_artists SET artist_id = ?1 WHERE artist_id = ?2",
-                [keep, gone],
-            )?;
-            conn.execute(
-                "UPDATE OR IGNORE similar_artists SET similar_id = ?1 WHERE similar_id = ?2",
-                [keep, gone],
-            )?;
-            conn.execute(
-                "DELETE FROM similar_artists WHERE artist_id = ?1 OR similar_id = ?1 OR artist_id = similar_id",
-                [gone],
-            )?;
             conn.execute("DELETE FROM artists WHERE id = ?1", [gone])?;
         }
     }
@@ -1172,10 +1143,6 @@ mod tests {
                 "SELECT id FROM artists WHERE remote_id = ?1",
             ),
             (
-                "an artist by MusicBrainz id",
-                "SELECT id FROM artists WHERE mbid = ?1",
-            ),
-            (
                 "an artist by name, however it is capitalised",
                 "SELECT id FROM artists WHERE name = ?1 COLLATE NOCASE",
             ),
@@ -1190,10 +1157,6 @@ mod tests {
             (
                 "the albums a genre spans",
                 "SELECT DISTINCT album_id FROM tracks WHERE genre = ?1 COLLATE NOCASE",
-            ),
-            (
-                "an artist's similar-artist links, either way round",
-                "DELETE FROM similar_artists WHERE artist_id = ?1 OR similar_id = ?1",
             ),
             (
                 "organize history repointed to a merged track",
@@ -1311,60 +1274,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn migrates_similar_artists_relationship_column() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE artists (
-                 id        INTEGER PRIMARY KEY,
-                 name      TEXT NOT NULL UNIQUE,
-                 sort_name TEXT,
-                 mbid      TEXT,
-                 remote_id TEXT
-             );
-             CREATE TABLE similar_artists (
-                 artist_id  INTEGER NOT NULL REFERENCES artists(id),
-                 similar_id INTEGER NOT NULL REFERENCES artists(id),
-                 score      REAL NOT NULL DEFAULT 0.0,
-                 source     TEXT NOT NULL DEFAULT 'subsonic',
-                 updated_at TEXT DEFAULT (datetime('now')),
-                 PRIMARY KEY (artist_id, similar_id, source)
-             );",
-        )
-        .unwrap();
-
-        create_tables(&conn).unwrap();
-
-        let has_relationship: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('similar_artists') WHERE name = 'relationship'",
-                [],
-                |row| row.get::<_, i64>(0).map(|n| n > 0),
-            )
-            .unwrap();
-        assert!(has_relationship, "relationship column was not added");
-
-        conn.execute(
-            "INSERT INTO artists (id, name) VALUES (1, 'A'), (2, 'B')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO similar_artists (artist_id, similar_id, score, source)
-             VALUES (1, 2, 0.9, 'subsonic')",
-            [],
-        )
-        .unwrap();
-        let rel: String = conn
-            .query_row(
-                "SELECT relationship FROM similar_artists WHERE artist_id = 1",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(rel, "similar");
-    }
-
     /// `create_tables` runs its ALTER TABLE migrations unconditionally and
     /// detects the already-migrated case from SQLite's "duplicate column" error
     /// text. On an existing database that is the *normal* path, taken on every
@@ -1441,23 +1350,57 @@ mod tests {
         conn.execute_batch(
             "DROP TABLE playback_position;
              INSERT INTO playback_state
-                 (id, queue_json, cursor_id, position_ms, was_playing, radio_enabled)
-             VALUES (1, '[]', '/music/a.flac', 61000, 1, 1);
+                 (id, queue_json, cursor_id, position_ms, was_playing)
+             VALUES (1, '[]', '/music/a.flac', 61000, 1);
              PRAGMA user_version = 8;",
         )
         .unwrap();
 
         create_tables(&conn).unwrap();
 
-        let moved: (String, i64, bool, bool) = conn
+        let moved: (String, i64, bool) = conn
             .query_row(
-                "SELECT cursor_id, position_ms, was_playing, radio_enabled
+                "SELECT cursor_id, position_ms, was_playing
                    FROM playback_position WHERE id = 1",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert_eq!(moved, ("/music/a.flac".into(), 61000, true, true));
+        assert_eq!(moved, ("/music/a.flac".into(), 61000, true));
+    }
+
+    #[test]
+    fn radio_leaves_nothing_behind() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE similar_artists (artist_id INTEGER, similar_id INTEGER);
+             CREATE TABLE track_vectors (track_id INTEGER PRIMARY KEY, embedding BLOB);
+             CREATE INDEX idx_artists_mbid ON artists(mbid) WHERE mbid IS NOT NULL;
+             ALTER TABLE playback_state ADD COLUMN radio_enabled INTEGER NOT NULL DEFAULT 0;
+             ALTER TABLE playback_position ADD COLUMN radio_enabled INTEGER NOT NULL DEFAULT 0;
+             PRAGMA user_version = 10;",
+        )
+        .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        for name in ["similar_artists", "track_vectors", "idx_artists_mbid"] {
+            let left: bool = conn
+                .query_row(
+                    "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = ?1)",
+                    [name],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(!left, "{name}");
+        }
+        for table in ["playback_state", "playback_position"] {
+            assert!(
+                !column_exists(&conn, table, "radio_enabled").unwrap(),
+                "{table}"
+            );
+        }
     }
 
     #[test]
@@ -1510,7 +1453,6 @@ mod tests {
                 .execute_batch(
                     "ALTER TABLE tracks DROP COLUMN cache_size_bytes;
                      ALTER TABLE tracks DROP COLUMN cache_download_date;
-                     ALTER TABLE similar_artists DROP COLUMN relationship;
                      ALTER TABLE shares DROP COLUMN kind;
                      ALTER TABLE shares DROP COLUMN subject_id;
                      ALTER TABLE shares DROP COLUMN start_track_id;",
@@ -1522,7 +1464,6 @@ mod tests {
         for (table, column) in [
             ("tracks", "cache_size_bytes"),
             ("tracks", "cache_download_date"),
-            ("similar_artists", "relationship"),
             ("shares", "kind"),
             ("shares", "subject_id"),
             ("shares", "start_track_id"),

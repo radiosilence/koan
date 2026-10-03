@@ -130,7 +130,6 @@ The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0
 # Queue management
 mutation { replaceQueue(trackIds: [42, 43, 44]) { ok, addedCount } }
 mutation { saveQueueAsPlaylist(name: "techno friday") { id, name, trackCount } }
-mutation { enableRadio { ok } }
 
 # Playlists
 { playlists { id, name, trackCount, durationMs, remoteId } }
@@ -204,7 +203,6 @@ every other client slow:
 | **State** | `nowPlaying`, `devices`, `setDevice`, `clearDevice` |
 | **Favourites** | `favourites`, `favourite`, `unfavourite`, `toggleFavourite` |
 | **Playlists** | `playlists`, `playlistTracks`, `createPlaylist`, `saveQueueAsPlaylist`, `addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist` |
-| **Radio** | `radioStatus`, `enableRadio`, `disableRadio` |
 
 ## Subsonic REST API
 

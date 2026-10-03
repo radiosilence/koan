@@ -744,19 +744,15 @@ fn merge_track_rows(conn: &Connection, loser: i64, winner: i64) -> rusqlite::Res
     }
 
     // One row per track: move the loser's across only into a gap, then drop the rest.
-    for table in ["lyrics_cache", "track_vectors"] {
-        conn.execute(
-            &format!(
-                "UPDATE {table} SET track_id = ?1 WHERE track_id = ?2
-                   AND NOT EXISTS (SELECT 1 FROM {table} WHERE track_id = ?1)"
-            ),
-            params![winner, loser],
-        )?;
-        conn.execute(
-            &format!("DELETE FROM {table} WHERE track_id = ?1"),
-            params![loser],
-        )?;
-    }
+    conn.execute(
+        "UPDATE lyrics_cache SET track_id = ?1 WHERE track_id = ?2
+           AND NOT EXISTS (SELECT 1 FROM lyrics_cache WHERE track_id = ?1)",
+        params![winner, loser],
+    )?;
+    conn.execute(
+        "DELETE FROM lyrics_cache WHERE track_id = ?1",
+        params![loser],
+    )?;
 
     conn.execute("DELETE FROM tracks WHERE id = ?1", params![loser])?;
     conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![loser])?;
@@ -894,7 +890,6 @@ pub fn remove_vanished_remote(
                 "tracks_fts WHERE rowid",
                 "lyrics_cache WHERE track_id",
                 "play_history WHERE track_id",
-                "track_vectors WHERE track_id",
                 "scan_cache WHERE track_id",
             ] {
                 conn.execute(&format!("DELETE FROM {table} = ?1"), params![id])?;
@@ -1130,10 +1125,6 @@ fn prune_if_empty(
             |row| row.get(0),
         )?;
         if stranded {
-            conn.execute(
-                "DELETE FROM similar_artists WHERE artist_id = ?1 OR similar_id = ?1",
-                params![artist_id],
-            )?;
             conn.execute("DELETE FROM artists WHERE id = ?1", params![artist_id])?;
         }
     }
@@ -1253,7 +1244,6 @@ pub fn remove_stale_tracks(
             conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![id])?;
             conn.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", params![id])?;
             conn.execute("DELETE FROM play_history WHERE track_id = ?1", params![id])?;
-            conn.execute("DELETE FROM track_vectors WHERE track_id = ?1", params![id])?;
             conn.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
             // An album moved or deleted on disk leaves its row behind otherwise,
             // listed with nothing in it and served to every client that syncs.
@@ -1286,51 +1276,6 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
     )?;
     let rows = stmt
         .query_map(params![artist_id], row_to_track_row)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
-}
-
-/// Up to `limit` tracks by the given artists, theirs or on their albums: the
-/// first artist's discography, then the next one's. A track two of them share
-/// comes once, with the earlier.
-///
-/// One query, cut at `limit`, rather than every discography in full for the
-/// sake of the first few.
-pub fn tracks_for_artists_in_order(
-    conn: &Connection,
-    artist_ids: &[i64],
-    limit: usize,
-) -> Result<Vec<TrackRow>, DbError> {
-    if artist_ids.is_empty() || limit == 0 {
-        return Ok(Vec::new());
-    }
-    let mut stmt = conn.prepare_cached(
-        "WITH s AS (SELECT key AS rank, value AS artist_id FROM json_each(?1)),
-              hits AS (
-                  SELECT t.id, s.rank FROM s JOIN tracks t ON t.artist_id = s.artist_id
-                  UNION ALL
-                  SELECT t.id, s.rank FROM s
-                  JOIN albums x ON x.artist_id = s.artist_id
-                  JOIN tracks t ON t.album_id = x.id
-              ),
-              best AS (SELECT id, MIN(rank) AS rank FROM hits GROUP BY id)
-         SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
-                t.disc, t.track_number, t.title, t.duration_ms, t.path,
-                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
-                t.genre, t.source, t.remote_id, t.cached_path
-         FROM best b
-         JOIN tracks t ON t.id = b.id
-         LEFT JOIN artists a ON t.artist_id = a.id
-         LEFT JOIN albums al ON t.album_id = al.id
-         LEFT JOIN artists aa ON al.artist_id = aa.id
-         ORDER BY b.rank, al.date, al.title COLLATE LIBRARY, t.disc, t.track_number
-         LIMIT ?2",
-    )?;
-    let rows = stmt
-        .query_map(
-            params![super::json_list(artist_ids), limit as i64],
-            row_to_track_row,
-        )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -3167,12 +3112,6 @@ mod tests {
         db.conn
             .execute(
                 "INSERT INTO play_history (track_id, played_at) VALUES (?1, 1)",
-                params![id],
-            )
-            .unwrap();
-        db.conn
-            .execute(
-                "INSERT INTO track_vectors (track_id, embedding) VALUES (?1, x'00')",
                 params![id],
             )
             .unwrap();

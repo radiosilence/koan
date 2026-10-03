@@ -1689,15 +1689,6 @@ struct RandomSongsParams {
     to_year: Option<i32>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SimilarSongs2Params {
-    #[serde(flatten)]
-    auth: SubsonicParams,
-    id: Option<String>,
-    count: Option<usize>,
-}
-
 // ===========================================================================
 // Endpoints — browsing
 // ===========================================================================
@@ -2827,38 +2818,6 @@ async fn get_random_songs(
             Ok(b.child(
                 XmlNode::new("randomSongs")
                     .list("song", tracks.iter().map(|t| track_to_xml_node(t, &extras))),
-            ))
-        })
-    })
-    .await
-}
-
-async fn get_similar_songs2(
-    State(state): State<Arc<AppState>>,
-    Query(params): Query<SimilarSongs2Params>,
-) -> Response {
-    offload_response(move || {
-        respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
-            let track_id = require_id(db, params.id.as_deref(), EntityKind::Song)?;
-            let count = params.count.unwrap_or(50);
-
-            let track = queries::get_track_row(&db.conn, track_id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?
-                .ok_or_else(|| SubsonicError::not_found("Track"))?;
-
-            let similar = match track.artist_id {
-                Some(artist_id) => queries::get_similar_artists(&db.conn, artist_id)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?,
-                None => Vec::new(),
-            };
-
-            let artist_ids: Vec<i64> = similar.iter().map(|(a, _)| a.id).collect();
-            let songs = queries::tracks_for_artists_in_order(&db.conn, &artist_ids, count)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            let extras = song_extras(db, user, &songs)?;
-            Ok(b.child(
-                XmlNode::new("similarSongs2")
-                    .list("song", songs.iter().map(|t| track_to_xml_node(t, &extras))),
             ))
         })
     })
@@ -3996,14 +3955,6 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route(
             "/rest/getRandomSongs.view",
             get(get_random_songs).post(get_random_songs),
-        )
-        .route(
-            "/rest/getSimilarSongs2",
-            get(get_similar_songs2).post(get_similar_songs2),
-        )
-        .route(
-            "/rest/getSimilarSongs2.view",
-            get(get_similar_songs2).post(get_similar_songs2),
         )
         // Server + user metadata
         .route(

@@ -101,7 +101,7 @@ export const KoanConfSchema = z.strictObject({
     .strictObject({
       /**
        * Restricts ingress to the API port and egress to DNS plus
-       * the public internet (artwork, lyrics, similar-artist lookups);
+       * the public internet (artwork, lyrics, artist-info lookups);
        * nothing inside the cluster is koan's business beyond the peers below.
        */
       enabled: z.boolean().default(true),

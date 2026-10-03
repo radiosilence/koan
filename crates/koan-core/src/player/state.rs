@@ -282,10 +282,6 @@ pub struct SharedPlayerState {
     /// to reach it. Everything past that — other clients, the volume stage — is
     /// the system's, and not ours to claim.
     output_sample_rate: AtomicU64,
-
-    /// Radio mode — automatically queue similar tracks when the queue runs low.
-    /// Shared so GQL/MCP can toggle it without going through the TUI.
-    radio_mode: AtomicBool,
 }
 
 impl SharedPlayerState {
@@ -301,7 +297,6 @@ impl SharedPlayerState {
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             output_sample_rate: AtomicU64::new(0),
-            radio_mode: AtomicBool::new(false),
         })
     }
 
@@ -490,17 +485,6 @@ impl SharedPlayerState {
         self.metadata_refresh_pending
             .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
-    }
-
-    // --- Radio mode ---
-
-    pub fn radio_mode(&self) -> bool {
-        self.radio_mode.load(Ordering::Acquire)
-    }
-
-    pub fn set_radio_mode(&self, enabled: bool) {
-        self.radio_mode.store(enabled, Ordering::Release);
-        self.changed();
     }
 
     // --- Output device rate ---

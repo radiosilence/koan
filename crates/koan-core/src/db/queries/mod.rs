@@ -8,14 +8,12 @@ pub mod history;
 pub mod lyrics;
 pub mod playback_state;
 pub mod playlists;
-pub mod radio;
 mod scan_cache;
 mod search;
 pub mod shares;
 mod stats;
 pub mod tracks;
 pub mod uids;
-pub mod vectors;
 
 use std::path::PathBuf;
 
@@ -29,13 +27,11 @@ pub use history::*;
 pub use lyrics::*;
 pub use playback_state::*;
 pub use playlists::*;
-pub use radio::*;
 pub use scan_cache::*;
 pub use search::*;
 pub use stats::*;
 pub use tracks::*;
 pub use uids::*;
-pub use vectors::*;
 
 /// A write transaction that holds the write lock from its first statement.
 ///
