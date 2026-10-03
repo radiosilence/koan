@@ -13,12 +13,16 @@
 //! that route sees it) for fresh cookies, or on to the sign-in form.
 
 mod browse;
+mod connect;
 mod keys;
+mod oauth;
 mod pages;
 mod session;
 #[cfg(test)]
 mod tests;
 mod users;
+
+pub use oauth::RESOURCE_METADATA;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,7 +38,7 @@ use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries;
 
 use crate::auth::AuthUser;
-use crate::auth::routes::{AuthRouteState, login_rate_limit};
+use crate::auth::routes::{AuthRouteState, RateLimiter, login_rate_limit, rate_limit};
 use crate::covers::Covers;
 use crate::share::{asset, blocking, not_found};
 
@@ -61,6 +65,10 @@ pub struct UiState {
     auth_enabled: bool,
     /// `sharing.public_url`, the address invites point clients at.
     public_url: Option<String>,
+    /// OAuth codes awaiting their token request.
+    codes: oauth::Codes,
+    /// `mcp.redirect_hosts`.
+    redirect_hosts: Arc<Vec<String>>,
 }
 
 pub fn router(
@@ -69,6 +77,7 @@ pub fn router(
     auth_enabled: bool,
     covers: Arc<Covers>,
     public_url: Option<String>,
+    redirect_hosts: Vec<String>,
 ) -> axum::Router {
     let state = UiState {
         pool,
@@ -77,6 +86,8 @@ pub fn router(
         auth,
         auth_enabled,
         public_url,
+        codes: oauth::Codes::default(),
+        redirect_hosts: Arc::new(redirect_hosts),
     };
     let gated = axum::Router::new()
         .route("/", get(pages::albums))
@@ -93,6 +104,7 @@ pub fn router(
         .route("/search", get(pages::search))
         .route("/search/results", get(pages::search_results))
         .route("/queue", get(pages::queue))
+        .route("/connect", get(connect::page))
         .route("/keys", get(keys::page).post(keys::create))
         .route("/keys/{id}/revoke", post(keys::revoke))
         .route("/users", get(users::page).post(users::create))
@@ -103,6 +115,14 @@ pub fn router(
         .route("/ui/cover/{id}", get(cover))
         .layer(from_fn(require_datastar_on_post))
         .layer(from_fn_with_state(state.clone(), gate));
+    // A plain form, since it answers with a redirect to the client: it proves
+    // its origin the way the sign-in form does.
+    let consent = axum::Router::new()
+        .route(
+            "/oauth/authorize",
+            get(oauth::authorize).post(oauth::approve),
+        )
+        .layer(from_fn_with_state(state.clone(), gate));
     // Checking a password is deliberately expensive, so the form shares the
     // JSON login's per-IP window.
     let sign_in = get(session::login_form).merge(
@@ -110,6 +130,36 @@ pub fn router(
     );
     axum::Router::new()
         .merge(gated)
+        .merge(consent)
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(oauth::protected_resource),
+        )
+        .route(oauth::RESOURCE_METADATA, get(oauth::protected_resource))
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(oauth::authorization_server),
+        )
+        // Unauthenticated, so capped per IP: registering stores nothing, but
+        // signs a client id each time.
+        .route(
+            "/oauth/register",
+            post(oauth::register)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    oauth::MAX_REGISTRATION_BODY,
+                ))
+                .layer(from_fn_with_state(
+                    Arc::new(RateLimiter::new(3600, 10)),
+                    rate_limit,
+                )),
+        )
+        .route(
+            "/oauth/token",
+            post(oauth::token).layer(from_fn_with_state(
+                Arc::new(RateLimiter::new(60, 60)),
+                rate_limit,
+            )),
+        )
         .route("/login", sign_in)
         .route("/auth/resume", get(session::resume))
         .route("/auth/renew", post(session::renew))

@@ -46,7 +46,7 @@ const SCRUB: &str = "<div class=scrub><span data-np=pos>0:00</span>\
 <input type=range data-ctl=seek min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span data-np=len>0:00</span></div>";
 
-fn head(title: &str) -> String {
+pub(super) fn head(title: &str) -> String {
     format!(
         "<!doctype html><html lang=en><head><meta charset=utf-8>\
 <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
@@ -66,7 +66,7 @@ fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> Str
         };
         format!(
             "<form class=account method=post action=\"/auth/signout\"><span>{}</span>\
-{users}<a href=\"/keys\" data-nav=keys>API keys</a><button class=quiet>Sign out</button></form>",
+{users}<a href=\"/keys\" data-nav=keys>API keys</a><a href=\"/connect\" data-nav=connect>Assistants</a><button class=quiet>Sign out</button></form>",
             escape(&user.username)
         )
     } else {

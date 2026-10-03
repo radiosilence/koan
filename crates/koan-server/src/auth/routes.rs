@@ -26,7 +26,7 @@ const REFRESH_COOKIE_PATH: &str = "/auth";
 /// the refresh cookie clears this one too.
 const STALE_REFRESH_COOKIE_PATH: &str = "/auth/refresh";
 
-/// Fixed-window per-IP cap on login attempts.
+/// Fixed-window per-IP cap on requests. By default, the cap on login attempts:
 ///
 /// Argon2 is tuned to cost ~19MiB and real CPU per verification, which is
 /// correct for resisting cracking and ruinous when anyone may trigger it at
@@ -35,29 +35,44 @@ const STALE_REFRESH_COOKIE_PATH: &str = "/auth/refresh";
 const LOGIN_WINDOW_SECS: u64 = 60;
 const LOGIN_MAX_PER_WINDOW: u32 = 10;
 /// Above this many tracked IPs, drop stale windows before inserting more.
-const LOGIN_TRACKED_IPS_MAX: usize = 4096;
+const TRACKED_IPS_MAX: usize = 4096;
 
-#[derive(Default)]
-pub struct LoginRateLimiter {
+pub struct RateLimiter {
     windows: Mutex<HashMap<IpAddr, (u64, u32)>>,
+    window_secs: u64,
+    max: u32,
 }
 
-impl LoginRateLimiter {
+impl Default for RateLimiter {
+    fn default() -> Self {
+        Self::new(LOGIN_WINDOW_SECS, LOGIN_MAX_PER_WINDOW)
+    }
+}
+
+impl RateLimiter {
+    pub fn new(window_secs: u64, max: u32) -> Self {
+        Self {
+            windows: Mutex::default(),
+            window_secs,
+            max,
+        }
+    }
+
     /// Returns false when `ip` has spent its allowance for the current window.
     fn allow(&self, ip: IpAddr) -> bool {
         let now = auth::now_unix();
         let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
 
-        if windows.len() > LOGIN_TRACKED_IPS_MAX {
-            windows.retain(|_, (start, _)| now.saturating_sub(*start) < LOGIN_WINDOW_SECS);
+        if windows.len() > TRACKED_IPS_MAX {
+            windows.retain(|_, (start, _)| now.saturating_sub(*start) < self.window_secs);
         }
 
         let entry = windows.entry(ip).or_insert((now, 0));
-        if now.saturating_sub(entry.0) >= LOGIN_WINDOW_SECS {
+        if now.saturating_sub(entry.0) >= self.window_secs {
             *entry = (now, 0);
         }
         entry.1 += 1;
-        entry.1 <= LOGIN_MAX_PER_WINDOW
+        entry.1 <= self.max
     }
 }
 
@@ -112,7 +127,7 @@ pub struct AuthRouteState {
     /// a browser discards a `Secure` cookie delivered over plain `http://`, so
     /// setting this on a LAN deployment silently breaks cookie auth entirely.
     pub cookie_secure: bool,
-    pub login_limiter: Arc<LoginRateLimiter>,
+    pub login_limiter: Arc<RateLimiter>,
 }
 
 impl AuthRouteState {
@@ -214,6 +229,18 @@ pub(crate) async fn login_rate_limit(
             }),
         )
             .into_response();
+    }
+    next.run(request).await
+}
+
+/// `RateLimiter` as a middleware, for routes other than sign-in.
+pub(crate) async fn rate_limit(
+    State(limiter): State<Arc<RateLimiter>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if !limiter.allow(client_ip(&request)) {
+        return (StatusCode::TOO_MANY_REQUESTS, "too many requests").into_response();
     }
     next.run(request).await
 }
@@ -467,6 +494,10 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
     (StatusCode::OK, cookies, Json(resp)).into_response()
 }
 
+/// How long after its refresh a spent OAuth refresh token may come back as a
+/// retry rather than a replay.
+const REPLAY_GRACE_SECS: i64 = 30;
+
 /// Spend a refresh token for a new access token and a new refresh token. The
 /// error is the response to send. Shared by the JSON refresh and the web UI's
 /// session resume.
@@ -484,6 +515,11 @@ pub(crate) fn rotate(
     let token = match auth_queries::consume_refresh_token(&db.conn, supplied) {
         Ok(Some(t)) => t,
         Ok(None) => {
+            match auth_queries::revoke_replayed_grant(&db.conn, supplied, REPLAY_GRACE_SECS) {
+                Ok(0) => {}
+                Ok(n) => log::warn!("a spent OAuth refresh token came back: revoked {n} tokens"),
+                Err(e) => log::error!("auth replay check error: {e}"),
+            }
             return Err(Box::new(
                 (
                     StatusCode::UNAUTHORIZED,
@@ -523,12 +559,14 @@ pub(crate) fn rotate(
         }
     };
 
-    let access_token = match auth::mint_access_token(
+    // A grant's tokens stay as narrow as the grant.
+    let access_token = match auth::mint_scoped_token(
         &state.private_pem,
         user.id,
         &user.username,
         user.role,
         state.access_ttl_secs,
+        token.grant.as_ref().map(|_| auth::MCP_SCOPE),
     ) {
         Ok(t) => t,
         Err(e) => {
@@ -549,9 +587,13 @@ pub(crate) fn rotate(
         }
     };
     let refresh_expires = auth::now_unix() as i64 + state.refresh_ttl_secs as i64;
-    if let Err(e) =
-        auth_queries::store_refresh_token(&db.conn, &new_refresh_id, user.id, refresh_expires)
-    {
+    if let Err(e) = auth_queries::store_grant_token(
+        &db.conn,
+        &new_refresh_id,
+        user.id,
+        refresh_expires,
+        token.grant.as_ref(),
+    ) {
         log::error!("auth store refresh token error: {}", e);
         return Err(Box::new(
             (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response(),
@@ -646,7 +688,7 @@ mod tests {
 
     #[test]
     fn login_limiter_caps_a_single_ip() {
-        let limiter = LoginRateLimiter::default();
+        let limiter = RateLimiter::default();
         let ip: IpAddr = "10.0.0.5".parse().unwrap();
         for _ in 0..LOGIN_MAX_PER_WINDOW {
             assert!(limiter.allow(ip));
@@ -759,7 +801,7 @@ mod tests {
             access_ttl_secs: 900,
             refresh_ttl_secs: 60,
             cookie_secure,
-            login_limiter: Arc::new(LoginRateLimiter::default()),
+            login_limiter: Arc::new(RateLimiter::default()),
         };
 
         let plain = state(false).access_cookie("tok");

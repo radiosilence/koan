@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 12;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -455,6 +455,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("playlists", "remote_changed", "TEXT"),
     ("playlists", "remote_account", "TEXT"),
     ("remote_servers", "library_version", "INTEGER"),
+    // OAuth grants, for reuse detection; see `queries::auth::revoke_replayed_grant`.
+    ("refresh_tokens", "grant_id", "TEXT"),
+    ("refresh_tokens", "client_name", "TEXT"),
+    ("refresh_tokens", "used_at", "INTEGER"),
 ];
 
 /// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a

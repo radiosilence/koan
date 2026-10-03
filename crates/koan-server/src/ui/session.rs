@@ -40,7 +40,7 @@ fn local_path(next: &str) -> &str {
 /// A form cannot carry Datastar's header, so these POSTs prove they came from
 /// this origin the way a browser does: `Sec-Fetch-Site`, or an `Origin` naming
 /// the host the request was sent to.
-fn same_origin(headers: &HeaderMap) -> bool {
+pub(super) fn same_origin(headers: &HeaderMap) -> bool {
     let get = |name| headers.get(name).and_then(|v| v.to_str().ok());
     if get(header::HeaderName::from_static("sec-fetch-site")) == Some("same-origin") {
         return true;
@@ -147,7 +147,11 @@ async fn rotate_from(s: &UiState, headers: &HeaderMap) -> Option<(String, String
         .flatten()
 }
 
-pub(super) async fn signout(State(s): State<UiState>, headers: HeaderMap) -> Response {
+pub(super) async fn signout(
+    State(s): State<UiState>,
+    headers: HeaderMap,
+    Form(q): Form<NextParam>,
+) -> Response {
     if !same_origin(&headers) {
         return cross_site();
     }
@@ -159,9 +163,15 @@ pub(super) async fn signout(State(s): State<UiState>, headers: HeaderMap) -> Res
         })
         .await;
     }
+    // Back to sign in, and then to where the user was: the consent page signs
+    // out to let another account approve.
+    let to = match local_path(&q.next) {
+        "/" => "/login".to_owned(),
+        next => format!("/login?next={}", encode(next)),
+    };
     (
         StatusCode::SEE_OTHER,
-        [(header::LOCATION, "/login")],
+        [(header::LOCATION, to)],
         s.auth.cleared_cookies(),
     )
         .into_response()

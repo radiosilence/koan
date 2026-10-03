@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use crate::auth::AuthUser;
-use crate::auth::password::Refused;
 use crossbeam_channel::Sender;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
@@ -44,19 +43,14 @@ pub struct GraphqlResponse {
 // MCP Server
 // ---------------------------------------------------------------------------
 
-/// A koan account, sent by the MCP gateway with every request once the
-/// gateway has signed its user in. Only the HTTP transport reads them, and it
-/// is reachable from the gateway alone.
-pub const USERNAME_HEADER: &str = "x-koan-username";
-pub const PASSWORD_HEADER: &str = "x-koan-password";
-
 #[derive(Clone)]
 pub struct KoanMcpServer {
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
     graphql_schema: crate::graphql::KoanSchema,
-    /// Checks account headers; `None` on stdio, which has no headers.
-    users: Option<Arc<crate::auth::password::PasswordVerifier>>,
+    /// A headless server: its own player is heard by nobody, and the music
+    /// plays on the devices linked to it.
+    headless: bool,
 }
 
 impl KoanMcpServer {
@@ -65,50 +59,29 @@ impl KoanMcpServer {
         cmd_tx: Sender<PlayerCommand>,
         pool: Arc<koan_core::db::pool::Pool>,
     ) -> Self {
-        let graphql_schema = crate::graphql::build_schema(state, cmd_tx, pool, None);
+        let graphql_schema = crate::graphql::build_schema_extended(state, cmd_tx, pool, Denylist);
         Self {
             tool_router: Self::tool_router(),
             graphql_schema,
-            users: None,
+            headless: false,
         }
     }
 
-    /// Who a request acts as: the account in its headers, or the local user at
-    /// `mcp_role()` when it names none. With `KOAN_MCP_REQUIRE_LOGIN=1`, a
-    /// request naming no account is refused.
-    fn caller(&self, extensions: &rmcp::model::Extensions) -> Result<AuthUser, String> {
-        let local = AuthUser {
-            user_id: koan_core::db::queries::LOCAL_USER,
-            role: mcp_role(),
-            ..AuthUser::anonymous_admin()
-        };
-        let Some(users) = &self.users else {
-            return Ok(local);
-        };
-        let parts = extensions.get::<axum::http::request::Parts>();
-        let get = |h: &str| {
-            parts
-                .and_then(|p| p.headers.get(h))
-                .and_then(|v| v.to_str().ok())
-                .map(str::trim)
-                .filter(|v| !v.is_empty())
-        };
-        match (get(USERNAME_HEADER), get(PASSWORD_HEADER)) {
-            (Some(u), Some(p)) => match users.verify(u, p) {
-                // The account's own name: linked devices are scoped by it.
-                Ok((user_id, role)) => Ok(AuthUser {
-                    user_id,
-                    username: u.to_owned(),
-                    role,
-                }),
-                Err(Refused::Wrong) => Err("kōan rejected that username and password".into()),
-                Err(Refused::Busy) => Err("kōan is busy checking passwords; try again".into()),
-            },
-            _ if std::env::var("KOAN_MCP_REQUIRE_LOGIN").is_ok_and(|v| v == "1") => Err(format!(
-                "this kōan needs an account: send {USERNAME_HEADER} and {PASSWORD_HEADER}"
-            )),
-            _ => Ok(local),
-        }
+    /// Who a request acts as: the account `bearer_gate` found its token for,
+    /// at most at `capped` role; on stdio, the local user at `mcp_role()`.
+    fn caller(&self, extensions: &rmcp::model::Extensions) -> AuthUser {
+        extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|p| p.extensions.get::<AuthUser>())
+            .map(|u| AuthUser {
+                role: capped(u.role),
+                ..u.clone()
+            })
+            .unwrap_or_else(|| AuthUser {
+                user_id: koan_core::db::queries::LOCAL_USER,
+                role: mcp_role(),
+                ..AuthUser::anonymous_admin()
+            })
     }
 }
 
@@ -127,6 +100,53 @@ fn mcp_role() -> koan_core::auth::Role {
         koan_core::auth::Role::Admin
     } else {
         koan_core::auth::Role::User
+    }
+}
+
+/// Mutations the MCP never runs, whoever is calling and at whatever role,
+/// `KOAN_MCP_ADMIN` included: everything that moves or rewrites files on disk,
+/// and the config that says where the library is. A model that has been
+/// misled, or is simply wrong, can then lose nobody any music. GraphQL itself
+/// still offers them to an admin.
+pub const DENIED_MUTATIONS: &[&str] = &["organizeExecute", "organizeUndo", "updateConfig"];
+
+/// Refuses `DENIED_MUTATIONS` as they resolve, so no alias, fragment or
+/// variable spelling of the query gets past it.
+struct Denylist;
+
+impl async_graphql::extensions::ExtensionFactory for Denylist {
+    fn create(&self) -> Arc<dyn async_graphql::extensions::Extension> {
+        Arc::new(Denylist)
+    }
+}
+
+#[async_trait::async_trait]
+impl async_graphql::extensions::Extension for Denylist {
+    async fn resolve(
+        &self,
+        ctx: &async_graphql::extensions::ExtensionContext<'_>,
+        info: async_graphql::extensions::ResolveInfo<'_>,
+        next: async_graphql::extensions::NextResolve<'_>,
+    ) -> async_graphql::ServerResult<Option<async_graphql::Value>> {
+        if info.parent_type == "MutationRoot" && DENIED_MUTATIONS.contains(&info.name) {
+            return Err(async_graphql::ServerError::new(
+                format!("{} is not available through MCP", info.name),
+                None,
+            ));
+        }
+        next.run(ctx, info).await
+    }
+}
+
+/// The role an account acts at through the MCP: its own, but no higher than
+/// `mcp_role()`. Track titles, tags and share descriptions reach the model, and
+/// any of them may carry an instruction; capped, an admin account's model
+/// cannot be talked into moving files or rewriting config.
+pub fn capped(role: koan_core::auth::Role) -> koan_core::auth::Role {
+    use koan_core::auth::Role;
+    match (role, mcp_role()) {
+        (Role::Admin, Role::User) => Role::User,
+        (role, _) => role,
     }
 }
 
@@ -160,24 +180,20 @@ impl KoanMcpServer {
         - Play it: mutation { playOnClient(trackIds: [\"42\", \"43\"]) { ok message } }\n\n\
         String filters are case-insensitive substrings."
     )]
-    fn graphql(
+    async fn graphql(
         &self,
         Parameters(params): Parameters<GraphqlParams>,
         extensions: rmcp::model::Extensions,
-    ) -> Result<Json<GraphqlResponse>, String> {
-        let schema = self.graphql_schema.clone();
-        let query = params.query;
-        let variables = params.variables;
-        let rt =
-            tokio::runtime::Handle::try_current().map_err(|_| "no tokio runtime".to_string())?;
-        // Inside block_in_place too: a first sign-in runs argon2.
-        let result = tokio::task::block_in_place(|| {
-            let caller = self.caller(&extensions)?;
-            Ok::<_, String>(rt.block_on(crate::graphql::execute_in_process(
-                &schema, &query, variables, caller,
-            )))
-        })?;
-        Ok(Json(GraphqlResponse { result }))
+    ) -> Json<GraphqlResponse> {
+        let caller = self.caller(&extensions);
+        let result = crate::graphql::execute_in_process(
+            &self.graphql_schema,
+            &params.query,
+            params.variables,
+            caller,
+        )
+        .await;
+        Json(GraphqlResponse { result })
     }
 }
 
@@ -187,7 +203,7 @@ impl ServerHandler for KoanMcpServer {
         // Over HTTP this is a server: its own player is headless and nobody
         // hears it, and what the user listens to is the apps linked to it. On
         // stdio it is the user's own machine, and its player is the music.
-        let instructions = if self.users.is_some() {
+        let instructions = if self.headless {
             SERVER_INSTRUCTIONS
         } else {
             LOCAL_INSTRUCTIONS
@@ -259,7 +275,8 @@ integers in queries; pass them to the client mutations as strings.
 account; confirm with the user first. `shares`, `updateShare`, `deleteShare` manage them.
 
 ## Not available
-`organize*` (moves files on disk), `updateConfig` and `triggerScan` are refused unless \
+`organizeExecute`, `organizeUndo` (move files on disk) and `updateConfig` are never run \
+through MCP. Other admin mutations (`triggerScan`, user management) are refused unless \
 `KOAN_MCP_ADMIN=1` is set.";
 
 const LOCAL_INSTRUCTIONS: &str = "kōan is the user's music player on this machine and their \
@@ -282,57 +299,130 @@ duration, favourites), `randomTracks`, `fuzzySearch`
 - Sharing: `createShare(trackIds, description)` makes a public link; confirm with the user first.
 
 ## Not available
-`organize*` (moves files on disk), `updateConfig`, `triggerScan` and `setDevice` are refused \
-unless `KOAN_MCP_ADMIN=1` is set.
+`organizeExecute`, `organizeUndo` (move files on disk) and `updateConfig` are never run \
+through MCP. `triggerScan` and `setDevice` are refused unless `KOAN_MCP_ADMIN=1` is set.
 
 ## IDs
 Track IDs are integers from the library; queue item IDs are UUIDs from the queue.";
 
-/// Serve MCP over streamable HTTP at `addr`/mcp, on a thread of its own.
-///
-/// The gateway authenticates its user and then forwards a koan account in
-/// `x-koan-username` / `x-koan-password`, which set the role each request acts
-/// with. The headers are trusted to come from the gateway, so this listener
-/// must not be reachable from anywhere else: bind it to an address only the
-/// gateway can reach, and keep it off the public GraphQL port.
-pub fn spawn_http(
-    addr: std::net::SocketAddr,
+const MAX_BODY: usize = 1024 * 1024;
+/// Open event streams count against it, so it allows a few clients each with
+/// a stream and requests in flight.
+const MAX_CONCURRENT: usize = 64;
+
+/// `/mcp` on the main port, for clients holding a token from koan's own OAuth
+/// (`ui::oauth`). Each request acts as the account its token names, at that
+/// account's role.
+pub fn router(
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
-    pool: Arc<koan_core::db::pool::Pool>,
-) -> std::io::Result<std::thread::JoinHandle<()>> {
+    auth: crate::auth::middleware::AuthState,
+    public_url: Option<String>,
+    headless: bool,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> axum::Router {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
-    let mut template = KoanMcpServer::new(state, cmd_tx, pool.clone());
-    template.users = Some(Arc::new(crate::auth::password::PasswordVerifier::new(pool)));
-    // Bound here rather than on the thread, so a taken port fails the start.
-    let listener = std::net::TcpListener::bind(addr)?;
-    listener.set_nonblocking(true)?;
-    std::thread::Builder::new()
-        .name("koan-mcp-http".into())
-        .spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .expect("failed to create tokio runtime");
-            rt.block_on(async move {
-                let service = StreamableHttpService::new(
-                    move || Ok(template.clone()),
-                    Arc::new(LocalSessionManager::default()),
-                    // The gateway forwards its own Host header, which rmcp's
-                    // DNS-rebinding allowlist would refuse; reachability is
-                    // what guards this listener.
-                    StreamableHttpServerConfig::default().disable_allowed_hosts(),
-                );
-                let app = axum::Router::new().nest_service("/mcp", service);
-                let listener =
-                    tokio::net::TcpListener::from_std(listener).expect("listener from std");
-                if let Err(e) = axum::serve(listener, app).await {
-                    log::error!("MCP HTTP server stopped: {e}");
-                }
+    let mut template = KoanMcpServer::new(state, cmd_tx, auth.pool.clone());
+    template.headless = headless;
+    let service = StreamableHttpService::new(
+        move || Ok(template.clone()),
+        Arc::new(LocalSessionManager::default()),
+        // The main app's Host guard has already checked the Host. Cancelled at
+        // shutdown, so open event streams end rather than hold it up.
+        StreamableHttpServerConfig::default()
+            .disable_allowed_hosts()
+            .with_cancellation_token(shutdown),
+    );
+    // No request timeout: a session's GET is an event stream that stays open.
+    axum::Router::new()
+        .nest_service("/mcp", service)
+        .layer(tower_http::catch_panic::CatchPanicLayer::new())
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(MAX_BODY))
+        .layer(axum::middleware::from_fn_with_state(
+            (auth, public_url),
+            bearer_gate,
+        ))
+        .layer(
+            tower::ServiceBuilder::new()
+                .layer(axum::error_handling::HandleErrorLayer::new(
+                    |_: tower::BoxError| async {
+                        (axum::http::StatusCode::SERVICE_UNAVAILABLE, "busy")
+                    },
+                ))
+                .load_shed()
+                .concurrency_limit(MAX_CONCURRENT),
+        )
+}
+
+/// Let a request with a valid access token through as its account. Without
+/// one, the 401 names the resource metadata, which is how a client finds where
+/// to sign in.
+async fn bearer_gate(
+    axum::extract::State((auth, public_url)): axum::extract::State<(
+        crate::auth::middleware::AuthState,
+        Option<String>,
+    )>,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{Method, StatusCode, header};
+    use axum::response::IntoResponse;
+    // Someone who pasted the address into a browser: show them what it is for.
+    let browser = req.method() == Method::GET
+        && !req.headers().contains_key(header::AUTHORIZATION)
+        && req
+            .headers()
+            .get(header::ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|a| a.contains("text/html"));
+    if browser {
+        return axum::response::Redirect::to("/connect").into_response();
+    }
+    let user = if auth.auth_enabled {
+        let token = req
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .and_then(|t| {
+                koan_core::auth::validate_scoped_token(
+                    &auth.public_pem,
+                    t,
+                    Some(koan_core::auth::MCP_SCOPE),
+                )
+                .ok()
             });
-        })
+        match token {
+            Some(claims) => crate::auth::current_user(&auth.pool, claims).await,
+            None => None,
+        }
+    } else {
+        Some(AuthUser::anonymous_admin())
+    };
+    match user {
+        Some(user) => {
+            req.extensions_mut().insert(user);
+            next.run(req).await
+        }
+        None => {
+            // Without `public_url` there is no OAuth to point the client at.
+            let challenge = match public_url.as_deref().map(|u| u.trim_end_matches('/')) {
+                Some(base) => format!(
+                    "Bearer resource_metadata=\"{base}{}\"",
+                    crate::ui::RESOURCE_METADATA
+                ),
+                None => "Bearer".to_owned(),
+            };
+            (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, challenge)],
+                "sign in to kōan",
+            )
+                .into_response()
+        }
+    }
 }
 
 /// Entry point for `koan mcp` — starts a headless player with an MCP server on stdio.
@@ -389,47 +479,88 @@ mod tests {
         (server, ch, tmp)
     }
 
-    fn with_headers(headers: &[(&str, &str)]) -> rmcp::model::Extensions {
-        let mut req = axum::http::Request::builder();
-        for (k, v) in headers {
-            req = req.header(*k, *v);
-        }
-        let (parts, ()) = req.body(()).unwrap().into_parts();
+    fn as_user(user: AuthUser) -> rmcp::model::Extensions {
+        let (mut parts, ()) = axum::http::Request::new(()).into_parts();
+        parts.extensions.insert(user);
         let mut ext = rmcp::model::Extensions::new();
         ext.insert(parts);
         ext
     }
 
     #[test]
-    fn gateway_headers_act_as_that_account() {
+    fn a_token_acts_as_its_account_with_admin_capped() {
         use koan_core::auth::Role;
-        let (mut server, _ch, tmp) = test_server();
-        let db_path = tmp.path().join("test.db");
-        let db = Database::open(&db_path).unwrap();
-        queries::auth::create_user(&db.conn, "owner", "sesame", Role::Admin).unwrap();
-        queries::auth::create_user(&db.conn, "mate", "hunter22", Role::Readonly).unwrap();
-        server.users = Some(Arc::new(crate::auth::password::PasswordVerifier::new(
-            Arc::new(koan_core::db::pool::Pool::new(db_path)),
-        )));
-
-        let as_ = |u: &str, p: &str| {
-            server
-                .caller(&with_headers(&[(USERNAME_HEADER, u), (PASSWORD_HEADER, p)]))
-                .map(|c| (c.user_id, c.username, c.role))
+        let (server, _ch, _tmp) = test_server();
+        let user = |role| AuthUser {
+            user_id: 7,
+            username: "mate".into(),
+            role,
         };
-        // The account's own name, which its linked devices are scoped by.
-        assert_eq!(as_("owner", "sesame"), Ok((1, "owner".into(), Role::Admin)));
+        let c = server.caller(&as_user(user(Role::Admin)));
+        assert_eq!((c.user_id, c.username.as_str()), (7, "mate"));
+        assert_eq!(c.role, capped(Role::Admin));
         assert_eq!(
-            as_("mate", "hunter22"),
-            Ok((2, "mate".into(), Role::Readonly))
+            server.caller(&as_user(user(Role::Readonly))).role,
+            Role::Readonly
         );
-        assert!(as_("owner", "wrong").is_err());
-        // No account named: the local user, at the transport's default role.
-        let local = server.caller(&with_headers(&[])).unwrap();
+        // stdio: the local user, at the transport's default role.
+        let local = server.caller(&Default::default());
         assert_eq!(
             (local.user_id, local.role),
             (queries::LOCAL_USER, mcp_role())
         );
+    }
+
+    #[tokio::test]
+    async fn a_browser_opening_mcp_is_shown_how_to_connect() {
+        use tower::ServiceExt as _;
+        let (_server, ch, tmp) = test_server();
+        let auth = crate::auth::middleware::AuthState {
+            public_pem: Arc::new(Vec::new()),
+            auth_enabled: true,
+            introspection_key: None,
+            pool: Arc::new(koan_core::db::pool::Pool::new(tmp.path().join("test.db"))),
+        };
+        let app = router(
+            SharedPlayerState::new(),
+            ch.tx.clone(),
+            auth,
+            None,
+            true,
+            Default::default(),
+        );
+        let req = |accept: &str| {
+            axum::http::Request::get("/mcp")
+                .header(axum::http::header::ACCEPT, accept)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let r = app.clone().oneshot(req("text/html,*/*")).await.unwrap();
+        assert_eq!(r.headers()[axum::http::header::LOCATION], "/connect");
+        let r = app.oneshot(req("text/event-stream")).await.unwrap();
+        assert_eq!(r.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mutations_that_touch_files_are_refused_whoever_asks() {
+        use koan_core::auth::Role;
+        let (server, _ch, _tmp) = test_server();
+        let admin = as_user(AuthUser {
+            user_id: 1,
+            username: "owner".into(),
+            role: Role::Admin,
+        });
+        let Json(resp) = server
+            .graphql(
+                Parameters(GraphqlParams {
+                    query: "mutation { undo: organizeUndo { ok } }".into(),
+                    variables: None,
+                }),
+                admin,
+            )
+            .await;
+        let errors = resp.result["errors"].to_string();
+        assert!(errors.contains("not available through MCP"), "{errors}");
     }
 
     fn insert_test_track(db_path: &std::path::Path, title: &str, artist: &str, album: &str) -> i64 {
@@ -485,15 +616,17 @@ mod tests {
         let db_path = tmp.path().join("test.db");
         insert_test_track(&db_path, "Windowlicker", "Aphex Twin", "Windowlicker EP");
 
-        let result = server.graphql(
-            Parameters(GraphqlParams {
-                query: r#"{ tracks(search: "aphex") { edges { node { title artist } } } }"#.into(),
-                variables: None,
-            }),
-            Default::default(),
-        );
-        assert!(result.is_ok());
-        let Json(resp) = result.unwrap();
+        let result = server
+            .graphql(
+                Parameters(GraphqlParams {
+                    query: r#"{ tracks(search: "aphex") { edges { node { title artist } } } }"#
+                        .into(),
+                    variables: None,
+                }),
+                Default::default(),
+            )
+            .await;
+        let Json(resp) = result;
         let data = &resp.result["data"]["tracks"]["edges"];
         assert_eq!(data.as_array().unwrap().len(), 1);
         assert_eq!(data[0]["node"]["title"], "Windowlicker");
@@ -502,30 +635,32 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn graphql_mutation_works() {
         let (server, _ch, _tmp) = test_server();
-        let result = server.graphql(
-            Parameters(GraphqlParams {
-                query: "mutation { pause { ok message } }".into(),
-                variables: None,
-            }),
-            Default::default(),
-        );
-        assert!(result.is_ok());
-        let Json(resp) = result.unwrap();
+        let result = server
+            .graphql(
+                Parameters(GraphqlParams {
+                    query: "mutation { pause { ok message } }".into(),
+                    variables: None,
+                }),
+                Default::default(),
+            )
+            .await;
+        let Json(resp) = result;
         assert_eq!(resp.result["data"]["pause"]["ok"], true);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn graphql_now_playing_stopped() {
         let (server, _ch, _tmp) = test_server();
-        let result = server.graphql(
-            Parameters(GraphqlParams {
-                query: "{ nowPlaying { state positionMs } }".into(),
-                variables: None,
-            }),
-            Default::default(),
-        );
-        assert!(result.is_ok());
-        let Json(resp) = result.unwrap();
+        let result = server
+            .graphql(
+                Parameters(GraphqlParams {
+                    query: "{ nowPlaying { state positionMs } }".into(),
+                    variables: None,
+                }),
+                Default::default(),
+            )
+            .await;
+        let Json(resp) = result;
         assert_eq!(resp.result["data"]["nowPlaying"]["state"], "STOPPED");
     }
 
@@ -535,15 +670,16 @@ mod tests {
         let db_path = tmp.path().join("test.db");
         insert_test_track(&db_path, "T1", "A1", "Album1");
 
-        let result = server.graphql(
-            Parameters(GraphqlParams {
-                query: "{ libraryStats { totalTracks totalArtists totalAlbums } }".into(),
-                variables: None,
-            }),
-            Default::default(),
-        );
-        assert!(result.is_ok());
-        let Json(resp) = result.unwrap();
+        let result = server
+            .graphql(
+                Parameters(GraphqlParams {
+                    query: "{ libraryStats { totalTracks totalArtists totalAlbums } }".into(),
+                    variables: None,
+                }),
+                Default::default(),
+            )
+            .await;
+        let Json(resp) = result;
         assert_eq!(resp.result["data"]["libraryStats"]["totalTracks"], 1);
     }
 }

@@ -34,6 +34,7 @@ pub struct Config {
     pub subsonic: SubsonicConfig,
     pub auth: AuthConfig,
     pub sharing: SharingConfig,
+    pub mcp: McpConfig,
     pub push: PushConfig,
     pub devices: DevicesConfig,
 }
@@ -47,6 +48,17 @@ pub struct SharingConfig {
     /// it cannot know which of its addresses a stranger can reach.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
+}
+
+/// MCP clients signing in through this server's OAuth.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct McpConfig {
+    /// The only hosts an MCP client may register a redirect to, besides this
+    /// machine. Empty allows any HTTPS host: each approval then rests on the
+    /// user recognising the host the consent page names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub redirect_hosts: Vec<String>,
 }
 
 /// Push notifications to koan's iOS app, which reach a phone iOS has

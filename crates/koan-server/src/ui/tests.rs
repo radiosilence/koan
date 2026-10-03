@@ -7,7 +7,7 @@ use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, TrackMeta};
 use tower::ServiceExt;
 
-use crate::auth::routes::{AuthRouteState, LoginRateLimiter};
+use crate::auth::routes::{AuthRouteState, RateLimiter};
 
 const HOST: &str = "koan.test";
 const ORIGIN: &str = "https://koan.test";
@@ -54,6 +54,11 @@ struct Fixture {
 /// A library of one album, a user `alice` with password `hunter2`, and the UI
 /// with auth on or off.
 fn setup(auth_enabled: bool) -> Fixture {
+    setup_at(auth_enabled, None)
+}
+
+/// `setup`, with `sharing.public_url` set when OAuth needs one.
+fn setup_at(auth_enabled: bool, public_url: Option<&str>) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("koan.db");
     let db = Database::open(&db_path).unwrap();
@@ -73,7 +78,7 @@ fn setup(auth_enabled: bool) -> Fixture {
         access_ttl_secs: 900,
         refresh_ttl_secs: 3600,
         cookie_secure: true,
-        login_limiter: Arc::new(LoginRateLimiter::default()),
+        login_limiter: Arc::new(RateLimiter::default()),
     };
     Fixture {
         app: super::router(
@@ -81,7 +86,8 @@ fn setup(auth_enabled: bool) -> Fixture {
             state.clone(),
             auth_enabled,
             Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
-            None,
+            public_url.map(str::to_owned),
+            Vec::new(),
         ),
         dir,
         state,
@@ -811,4 +817,336 @@ fn assert_closed(
         rx.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
     ));
+}
+
+mod oauth {
+    use super::*;
+    use base64::Engine as _;
+    use sha2::{Digest, Sha256};
+
+    const CALLBACK: &str = "https://claude.ai/api/mcp/auth_callback";
+    const VERIFIER: &str = "a-verifier-of-at-least-forty-three-characters-long";
+
+    fn challenge() -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(VERIFIER))
+    }
+
+    fn query(pairs: &[(&str, &str)]) -> String {
+        form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(pairs)
+            .finish()
+    }
+
+    fn json(r: &Reply) -> serde_json::Value {
+        serde_json::from_str(&r.body).unwrap_or_else(|_| panic!("not JSON: {}", r.body))
+    }
+
+    async fn register(f: &Fixture, redirect: &str) -> Reply {
+        send(
+            &f.app,
+            Request::post("/oauth/register")
+                .header(header::HOST, HOST)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({ "redirect_uris": [redirect], "client_name": "Claude" })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+    }
+
+    fn authorize_params<'a>(client_id: &'a str, challenge: &'a str) -> Vec<(&'a str, &'a str)> {
+        vec![
+            ("response_type", "code"),
+            ("client_id", client_id),
+            ("redirect_uri", CALLBACK),
+            ("code_challenge", challenge),
+            ("code_challenge_method", "S256"),
+            ("state", "xyz"),
+            ("resource", "https://koan.test/mcp"),
+        ]
+    }
+
+    /// Approve as alice; the reply is the redirect to the client.
+    async fn approve(f: &Fixture, params: &[(&str, &str)], origin: &str) -> Reply {
+        let mut params = params.to_vec();
+        params.push(("decision", "allow"));
+        send(
+            &f.app,
+            Request::post("/oauth/authorize")
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, origin)
+                .header(
+                    header::COOKIE,
+                    format!("koan_access={}", access_token(&f.state)),
+                )
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(query(&params)))
+                .unwrap(),
+        )
+        .await
+    }
+
+    fn code_of(location: &str) -> String {
+        let url = reqwest::Url::parse(location).unwrap();
+        let get = |k: &str| {
+            url.query_pairs()
+                .find(|(n, _)| n == k)
+                .map(|(_, v)| v.into_owned())
+        };
+        assert_eq!(get("state").as_deref(), Some("xyz"));
+        assert_eq!(get("iss").as_deref(), Some(ORIGIN));
+        get("code").expect("a code")
+    }
+
+    async fn token(f: &Fixture, pairs: &[(&str, &str)]) -> Reply {
+        let mut req = form("/oauth/token", &query(pairs));
+        req.headers_mut().remove(header::ORIGIN);
+        send(&f.app, req).await
+    }
+
+    #[tokio::test]
+    async fn an_mcp_client_signs_in_and_refreshes() {
+        let f = setup_at(true, Some("https://koan.test/"));
+        let meta = send(
+            &f.app,
+            get("/.well-known/oauth-authorization-server")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(json(&meta)["issuer"], ORIGIN);
+        let resource = send(
+            &f.app,
+            get(crate::ui::RESOURCE_METADATA)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(json(&resource)["resource"], "https://koan.test/mcp");
+
+        let reg = register(&f, CALLBACK).await;
+        assert_eq!(reg.status, StatusCode::CREATED);
+        let client_id = json(&reg)["client_id"].as_str().unwrap().to_owned();
+        let challenge = challenge();
+        let params = authorize_params(&client_id, &challenge);
+        let uri = format!("/oauth/authorize?{}", query(&params));
+
+        // Signed out: through sign-in and back.
+        let r = send(&f.app, get(&uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::SEE_OTHER);
+        assert!(
+            r.location()
+                .starts_with("/auth/resume?next=%2Foauth%2Fauthorize")
+        );
+
+        let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(r.body.contains("Connect kōan to claude.ai?"), "{}", r.body);
+        let csp = r.headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
+        assert!(csp.contains("form-action 'self' https://claude.ai"));
+        assert!(csp.contains("frame-ancestors 'none'"));
+
+        let r = approve(&f, &params, ORIGIN).await;
+        assert_eq!(r.status, StatusCode::SEE_OTHER);
+        assert!(r.location().starts_with(CALLBACK));
+        let code = code_of(r.location());
+
+        let exchange = [
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("redirect_uri", CALLBACK),
+            ("client_id", client_id.as_str()),
+            ("code_verifier", VERIFIER),
+            ("resource", "https://koan.test/mcp"),
+        ];
+        let r = token(&f, &exchange).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        let t = json(&r);
+        // Good at /mcp and nowhere else.
+        let access = t["access_token"].as_str().unwrap();
+        let claims =
+            auth::validate_scoped_token(&f.state.public_pem, access, Some(auth::MCP_SCOPE))
+                .unwrap();
+        assert_eq!(claims.username, "alice");
+        assert!(auth::validate_access_token(&f.state.public_pem, access).is_err());
+        let r = send(
+            &f.app,
+            get("/albums")
+                .header(header::COOKIE, format!("koan_access={access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_ne!(r.status, StatusCode::OK);
+        let refresh = t["refresh_token"].as_str().unwrap().to_owned();
+
+        let r = token(
+            &f,
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", refresh.as_str()),
+                ("client_id", client_id.as_str()),
+            ],
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+        let refreshed = json(&r)["access_token"].as_str().unwrap().to_owned();
+        assert!(auth::validate_access_token(&f.state.public_pem, &refreshed).is_err());
+        let rotated = json(&r)["refresh_token"].as_str().unwrap().to_owned();
+
+        // The code again: refused, and the grant it made is revoked.
+        let r = token(&f, &exchange).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        let r = token(
+            &f,
+            &[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", rotated.as_str()),
+            ],
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn a_redirect_uri_is_matched_as_registered_and_may_be_left_out() {
+        let f = setup_at(true, Some(ORIGIN));
+        // Re-serialised, this gains a trailing slash.
+        let registered = "http://localhost:33418";
+        let reg = register(&f, registered).await;
+        let client_id = json(&reg)["client_id"].as_str().unwrap().to_owned();
+        let challenge = challenge();
+        for given in ["", registered] {
+            let mut params = authorize_params(&client_id, &challenge);
+            params[2] = ("redirect_uri", given);
+            let uri = format!("/oauth/authorize?{}", query(&params));
+            let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.body);
+            let r = approve(&f, &params, ORIGIN).await;
+            assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.body);
+            let code = code_of(r.location());
+            let r = token(
+                &f,
+                &[
+                    ("grant_type", "authorization_code"),
+                    ("code", code.as_str()),
+                    ("redirect_uri", given),
+                    ("client_id", client_id.as_str()),
+                    ("code_verifier", VERIFIER),
+                ],
+            )
+            .await;
+            assert_eq!(r.status, StatusCode::OK, "{given:?}: {}", r.body);
+        }
+    }
+
+    #[tokio::test]
+    async fn requests_that_do_not_hold_are_refused() {
+        let f = setup_at(true, Some(ORIGIN));
+        assert_eq!(
+            register(&f, "http://evil.example/cb").await.status,
+            StatusCode::BAD_REQUEST
+        );
+        let client_id = json(&register(&f, CALLBACK).await)["client_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let challenge = challenge();
+
+        // Not this client's redirect, or not a client: a page, never a redirect.
+        let mut params = authorize_params(&client_id, &challenge);
+        params[2] = ("redirect_uri", "https://evil.example/cb");
+        let uri = format!("/oauth/authorize?{}", query(&params));
+        let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+        assert!(!r.headers.contains_key(header::LOCATION));
+        let uri = format!(
+            "/oauth/authorize?{}",
+            query(&authorize_params("forged", &challenge))
+        );
+        let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+        // No PKCE: back to the client with an error.
+        let mut params = authorize_params(&client_id, &challenge);
+        params[4] = ("code_challenge_method", "plain");
+        let uri = format!("/oauth/authorize?{}", query(&params));
+        let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+        assert!(r.location().contains("error=invalid_request"));
+
+        // Another site's form.
+        let params = authorize_params(&client_id, &challenge);
+        let r = approve(&f, &params, "https://evil.example").await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+        // A wrong verifier.
+        let code = code_of(approve(&f, &params, ORIGIN).await.location());
+        let r = token(
+            &f,
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", code.as_str()),
+                ("redirect_uri", CALLBACK),
+                ("client_id", client_id.as_str()),
+                ("code_verifier", "not-the-verifier"),
+            ],
+        )
+        .await;
+        assert_eq!(json(&r)["error"], "invalid_grant");
+
+        // An unknown client is told to register again.
+        let r = token(
+            &f,
+            &[
+                ("grant_type", "authorization_code"),
+                ("code", code.as_str()),
+                ("client_id", "forged"),
+            ],
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+        assert_eq!(json(&r)["error"], "invalid_client");
+    }
+
+    #[tokio::test]
+    async fn the_assistants_page_gives_the_address_once_there_is_one() {
+        let f = setup_at(true, Some(ORIGIN));
+        let r = send(
+            &f.app,
+            authed(&f.state, "/connect").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(
+            r.body.contains("value=\"https://koan.test/mcp\""),
+            "{}",
+            r.body
+        );
+        let f = setup(true);
+        let r = send(
+            &f.app,
+            authed(&f.state, "/connect").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert!(
+            r.body.contains("needs to know its own address"),
+            "{}",
+            r.body
+        );
+    }
+
+    #[tokio::test]
+    async fn without_a_public_url_there_is_no_oauth() {
+        let f = setup(true);
+        for uri in [
+            "/.well-known/oauth-authorization-server",
+            crate::ui::RESOURCE_METADATA,
+        ] {
+            let r = send(&f.app, get(uri).body(Body::empty()).unwrap()).await;
+            assert_eq!(r.status, StatusCode::NOT_FOUND);
+        }
+        assert_eq!(register(&f, CALLBACK).await.status, StatusCode::NOT_FOUND);
+    }
 }

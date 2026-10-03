@@ -338,12 +338,33 @@ pub fn build_schema(
     build_schema_with(DbHandle::new(pool), state, cmd_tx, viz)
 }
 
+/// `build_schema` with `extension` running on every request.
+pub(crate) fn build_schema_extended(
+    state: Arc<SharedPlayerState>,
+    cmd_tx: Sender<PlayerCommand>,
+    pool: Arc<Pool>,
+    extension: impl async_graphql::extensions::ExtensionFactory,
+) -> KoanSchema {
+    builder_with(DbHandle::new(pool), state, cmd_tx, None)
+        .extension(extension)
+        .finish()
+}
+
 fn build_schema_with(
     handle: DbHandle,
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
     viz: Option<Arc<VizSnapshot>>,
 ) -> KoanSchema {
+    builder_with(handle, state, cmd_tx, viz).finish()
+}
+
+fn builder_with(
+    handle: DbHandle,
+    state: Arc<SharedPlayerState>,
+    cmd_tx: Sender<PlayerCommand>,
+    viz: Option<Arc<VizSnapshot>>,
+) -> async_graphql::SchemaBuilder<QueryRoot, MutationRoot, SubscriptionRoot> {
     // Batching only, no caching: a schema-wide loader outlives the request, and
     // favourites and library contents change under it.
     let loader = DataLoader::new(DbLoader::new(handle.clone()), tokio::spawn).delay(BATCH_WINDOW);
@@ -361,7 +382,7 @@ fn build_schema_with(
     }
     // A single nested query can otherwise fan out across the whole library and
     // pin the process for minutes.
-    builder.limit_depth(12).limit_complexity(2000).finish()
+    builder.limit_depth(12).limit_complexity(2000)
 }
 
 // ---------------------------------------------------------------------------

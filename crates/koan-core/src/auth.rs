@@ -106,7 +106,16 @@ pub struct Claims {
     pub iat: u64,
     /// Expiration (unix timestamp).
     pub exp: u64,
+    /// The one resource a scoped token is good for; see `MCP_SCOPE`. An
+    /// unscoped token is a session and goes anywhere a session does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 }
+
+/// The scope of a token granted to an MCP client through OAuth: valid at
+/// `/mcp` and nowhere else, so the limits the MCP sets on what a client may do
+/// cannot be stepped round by presenting the same token to GraphQL.
+pub const MCP_SCOPE: &str = "mcp";
 
 // ---------------------------------------------------------------------------
 // Password hashing (Argon2id)
@@ -405,6 +414,18 @@ pub fn mint_access_token(
     role: Role,
     ttl_secs: u64,
 ) -> Result<String, AuthError> {
+    mint_scoped_token(private_pem, user_id, username, role, ttl_secs, None)
+}
+
+/// Mint an access token, limited to `scope` when there is one.
+pub fn mint_scoped_token(
+    private_pem: &[u8],
+    user_id: i64,
+    username: &str,
+    role: Role,
+    ttl_secs: u64,
+    scope: Option<&str>,
+) -> Result<String, AuthError> {
     let now = now_unix();
 
     let claims = Claims {
@@ -413,6 +434,7 @@ pub fn mint_access_token(
         role: role.as_str().to_string(),
         iat: now,
         exp: now + ttl_secs,
+        scope: scope.map(str::to_owned),
     };
 
     let key = EncodingKey::from_ed_pem(private_pem)?;
@@ -421,15 +443,28 @@ pub fn mint_access_token(
     Ok(token)
 }
 
-/// Validate an access token and return its claims.
+/// Validate a session's access token and return its claims. A scoped token is
+/// refused: it is good only where its scope is checked for.
 pub fn validate_access_token(public_pem: &[u8], token: &str) -> Result<Claims, AuthError> {
+    validate_scoped_token(public_pem, token, None)
+}
+
+/// Validate an access token whose scope is exactly `scope`.
+pub fn validate_scoped_token(
+    public_pem: &[u8],
+    token: &str,
+    scope: Option<&str>,
+) -> Result<Claims, AuthError> {
     let key = DecodingKey::from_ed_pem(public_pem)?;
     let mut validation = Validation::new(Algorithm::EdDSA);
     // Only require exp (expiry). sub and iat are custom fields, not JWT spec strings.
     validation.set_required_spec_claims(&["exp"]);
 
-    let data = jsonwebtoken::decode::<Claims>(token, &key, &validation)?;
-    Ok(data.claims)
+    let claims = jsonwebtoken::decode::<Claims>(token, &key, &validation)?.claims;
+    if claims.scope.as_deref() != scope {
+        return Err(AuthError::Other("token not valid here".into()));
+    }
+    Ok(claims)
 }
 
 // ---------------------------------------------------------------------------
@@ -473,6 +508,24 @@ pub fn parse_duration_secs(s: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scoped_token_is_good_only_where_its_scope_is_asked_for() {
+        let (private, public) = generate_keypair_pem().unwrap();
+        let scoped = mint_scoped_token(
+            private.as_bytes(),
+            1,
+            "user",
+            Role::Admin,
+            900,
+            Some(MCP_SCOPE),
+        )
+        .unwrap();
+        assert!(validate_access_token(public.as_bytes(), &scoped).is_err());
+        assert!(validate_scoped_token(public.as_bytes(), &scoped, Some(MCP_SCOPE)).is_ok());
+        let session = mint_access_token(private.as_bytes(), 1, "user", Role::Admin, 900).unwrap();
+        assert!(validate_scoped_token(public.as_bytes(), &session, Some(MCP_SCOPE)).is_err());
+    }
 
     #[test]
     fn password_hash_and_verify() {
@@ -528,6 +581,7 @@ mod tests {
             role: "user".into(),
             iat: now - 1200,
             exp: now - 600, // expired 10 min ago
+            scope: None,
         };
         let key = jsonwebtoken::EncodingKey::from_ed_pem(priv_pem.as_bytes()).unwrap();
         let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::EdDSA);
