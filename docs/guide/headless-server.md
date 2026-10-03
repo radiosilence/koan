@@ -122,4 +122,16 @@ The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, 
 
 Set `sharing.public_url` to the public address (`KOAN_SHARING__PUBLIC_URL`) for share links and for MCP clients to sign in at `/mcp`.
 
+### Docker Compose
+
+[`deploy/compose/compose.yaml`](https://github.com/radiosilence/koan/blob/main/deploy/compose/compose.yaml) runs kōan behind Caddy, which obtains and renews the TLS certificate. On a machine whose hostname resolves to it, with ports 80 and 443 open:
+
+```bash
+curl -O https://raw.githubusercontent.com/radiosilence/koan/main/deploy/compose/compose.yaml
+KOAN_HOST=music.example.com MUSIC=/mnt/music docker compose up -d
+docker compose exec koan koan auth setup   # the admin account
+```
+
+Then open `https://music.example.com` and sign in. The Subsonic API is on for kōan accounts; `koan subsonic setup` adds a shared secret for clients that have none. Config, the database and keys live in the `koan-config` volume. The image runs as uid 1000, so a bind mount in its place has to be writable by that uid.
+
 On Kubernetes, a versioned Pulumi component package, [`@radiosilence/koan-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi), is published to GitHub Packages alongside each release. It exports `createKoan`, which builds the Deployment, its init container, Services and NetworkPolicy from a config object validated against `KoanConfSchema`.

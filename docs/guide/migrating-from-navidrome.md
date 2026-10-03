@@ -55,21 +55,23 @@ services:
       KOAN_LIBRARY__FOLDERS: '["/music"]'
       KOAN_GRAPHQL__ALLOWED_HOSTS: '["music.example.com"]'
       KOAN_SHARING__PUBLIC_URL: https://music.example.com
+      KOAN_SUBSONIC__ENABLED: "true"
     volumes:
-      - ./koan:/config
+      - koan-config:/config
       - /mnt/music:/music:ro
 ```
 
-Then create the admin account and turn on the Subsonic API:
+with `koan-config` declared under `volumes:`. Then create the admin account:
 
 ```bash
 docker compose exec koan koan auth setup
-docker compose exec koan koan subsonic setup
 ```
+
+[Docker Compose](headless-server.md#docker-compose) has a complete file with Caddy in front for TLS.
 
 | Navidrome | kōan |
 |-----------|------|
-| `/data` | `/config`: config, database, signing keys and the cover cache |
+| `/data` | `/config`: config, database, signing keys and the cover cache. The image runs as uid 1000, so a bind mount must be writable by it |
 | `ND_MUSICFOLDER` | `KOAN_LIBRARY__FOLDERS`, a list; several folders form one library |
 | `ND_SCANSCHEDULE`, `ND_SCANNER_WATCHERWAIT` | Nothing to set. The server scans at start and watches the folders for changes |
 | `ND_ENABLESHARING` | Always on; `sharing.public_url` sets the address links are built on |

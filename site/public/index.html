@@ -144,11 +144,11 @@ koan               <span class="c"># launch the TUI</span></code></pre>
   -e 'KOAN_LIBRARY__FOLDERS=["/music"]' \
   -e 'KOAN_GRAPHQL__ALLOWED_HOSTS=["music.example.com"]' \
   -e KOAN_SHARING__PUBLIC_URL=https://music.example.com \
+  -e KOAN_SUBSONIC__ENABLED=true \
   ghcr.io/radiosilence/koan:latest
 
-docker exec -it koan koan auth setup       <span class="c"># signing keys and the admin account</span>
-docker exec -it koan koan subsonic setup   <span class="c"># turn on the Subsonic API</span></code></pre>
-      <p>Put it behind a reverse proxy with TLS at the hostname you listed. The server refuses any <code>Host</code> it was not given, and share links are built on <code>public_url</code>. Add accounts for other people with <code>koan auth create-user</code>. Without a container, <code>koan --headless --bind 0.0.0.0</code> does the same with the config in <code>~/.config/koan</code>; <a href="/docs/headless-server/">Running a server</a> has the details, and <a href="/docs/migrating-from-navidrome/">Migrating from Navidrome</a> translates a Navidrome setup.</p>
+docker exec -it koan koan auth setup   <span class="c"># the admin account</span></code></pre>
+      <p>Put it behind a reverse proxy with TLS at the hostname you listed, or use the <a href="/docs/headless-server/#docker-compose">Docker Compose file</a>, which runs Caddy in front and gets the certificate itself. The server refuses any <code>Host</code> it was not given, and share links are built on <code>public_url</code>. Add accounts for other people with <code>koan auth create-user</code>. Without a container, <code>koan --headless --bind 0.0.0.0</code> does the same with the config in <code>~/.config/koan</code>; <a href="/docs/headless-server/">Running a server</a> has the details, and <a href="/docs/migrating-from-navidrome/">Migrating from Navidrome</a> translates a Navidrome setup.</p>
       <p>Then sign in from each client with a kōan account:</p>
       <ul>
         <li><strong>Browser:</strong> open the hostname.</li>
