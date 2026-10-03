@@ -517,6 +517,7 @@ fn command_loop(
             | PlayerCommand::TrackStreamReady(_)
             | PlayerCommand::StreamProbed { .. }
             | PlayerCommand::Cue { .. }
+            | PlayerCommand::PauseAndReport(_)
             | PlayerCommand::TrackFailed(_)
             | PlayerCommand::BeginUndoBatch
             | PlayerCommand::EndUndoBatch

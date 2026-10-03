@@ -19,6 +19,9 @@ pub enum PlayerCommand {
         play: bool,
     },
     Pause,
+    /// Pause, and answer with the playhead once the output has gone silent:
+    /// after the fade, where one runs. What a hand-off resumes from.
+    PauseAndReport(Sender<u64>),
     Resume,
     Stop,
     Seek(u64), // position in ms

@@ -29,7 +29,7 @@ use crate::remote::wire::{self, Waker};
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum LinkCommand {
     /// Replace the queue with these tracks and play from `start_at`,
-    /// `position_ms` into it.
+    /// `position_ms` into it — or load it there paused, when `paused`.
     #[serde(rename_all = "camelCase")]
     Play {
         track_ids: Vec<String>,
@@ -37,6 +37,8 @@ pub enum LinkCommand {
         start_at: u32,
         #[serde(default, skip_serializing_if = "is_zero")]
         position_ms: u64,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        paused: bool,
     },
     /// Append these tracks to the queue.
     #[serde(rename_all = "camelCase")]
@@ -796,6 +798,7 @@ mod tests {
             track_ids: vec!["12".into(), "34".into()],
             start_at: 1,
             position_ms: 0,
+            paused: false,
         };
         let json = serde_json::to_string(&play).unwrap();
         assert_eq!(
@@ -803,6 +806,18 @@ mod tests {
             r#"{"type":"play","trackIds":["12","34"],"startAt":1}"#
         );
         assert_eq!(serde_json::from_str::<LinkCommand>(&json).unwrap(), play);
+        let held = LinkCommand::Play {
+            track_ids: vec!["12".into()],
+            start_at: 0,
+            position_ms: 61_250,
+            paused: true,
+        };
+        let json = serde_json::to_string(&held).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"play","trackIds":["12"],"startAt":0,"positionMs":61250,"paused":true}"#
+        );
+        assert_eq!(serde_json::from_str::<LinkCommand>(&json).unwrap(), held);
         assert_eq!(
             serde_json::from_str::<LinkCommand>(r#"{"type":"pause"}"#).unwrap(),
             LinkCommand::Pause

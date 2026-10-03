@@ -123,6 +123,11 @@ pub struct Player {
     in_flight: Option<InFlight>,
     /// When the silence after a rate switch runs out and the track is heard.
     lead_in_ends: Option<std::time::Instant>,
+    /// A cue on a track still downloading: where, and how, it opens once the
+    /// whole file is on disk.
+    pending_cue: Option<(QueueItemId, u64, Start)>,
+    /// Waiting for a pause's fade to reach silence, to hear where it did.
+    silence_waiters: Vec<crossbeam_channel::Sender<u64>>,
     /// Playback sessions started — lets tests assert how many engine restarts
     /// an operation costs.
     #[cfg(test)]
@@ -195,6 +200,8 @@ impl Player {
             commands,
             active_playback: None,
             lead_in_ends: None,
+            pending_cue: None,
+            silence_waiters: Vec::new(),
             timeline,
             viz_buffer,
             viz_snapshot,
@@ -409,6 +416,7 @@ impl Player {
     /// Play a specific item in the playlist by ID.
     /// Sets cursor, starts playback if Ready or streaming-ready, otherwise waits for TrackReady.
     pub fn play(&mut self, id: QueueItemId) {
+        self.pending_cue = None;
         self.shared_state.set_cursor(Some(id));
 
         match self.shared_state.item_playback_source(id) {
@@ -441,14 +449,26 @@ impl Player {
     }
 
     /// Load a track at `position_ms`, playing or paused — where a restored
-    /// session picks up. Only a track already on disk can be cued; one that is
-    /// not plays the ordinary way, if it was to play at all.
+    /// session or a hand-off picks up.
+    ///
+    /// A track still downloading waits, stopped, until the whole of it is on
+    /// disk. Streaming it would start it before the position can be reached,
+    /// and a seek once it can would let the part before it be heard.
     fn cue(&mut self, id: QueueItemId, position_ms: u64, start: Start) {
+        self.pending_cue = None;
         self.shared_state.set_cursor(Some(id));
         let Some(PlaybackSource::Ready(path)) = self.shared_state.item_playback_source(id) else {
-            if start == Start::Playing {
-                self.play(id);
+            if position_ms == 0 {
+                if start == Start::Playing {
+                    self.play(id);
+                }
+                return;
             }
+            self.report(PlaybackReportState::Stopped);
+            self.stop_engine();
+            self.shared_state.set_playback_state(PlaybackState::Stopped);
+            self.pending_cue = Some((id, position_ms, start));
+            log::info!("cue: {id:?} not on disk yet, opening at {position_ms}ms once it is");
             return;
         };
         if let Err(e) = self.start_playback(id, &path, position_ms, start) {
@@ -1083,6 +1103,7 @@ impl Player {
     /// failed — there is nothing to resume, and play starts the track under
     /// the cursor instead of doing nothing.
     pub fn resume(&mut self) {
+        self.answer_silence();
         if self.active_playback.is_none() {
             if let Some(id) = self.shared_state.cursor() {
                 self.play(id);
@@ -1149,10 +1170,20 @@ impl Player {
         }
         decode_handle.stop();
         drop(engine);
+        self.answer_silence();
+    }
+
+    /// Tell whoever waited for the pause where the playhead came to rest.
+    fn answer_silence(&mut self) {
+        let position_ms = self.shared_state.position_ms();
+        for reply in self.silence_waiters.drain(..) {
+            let _ = reply.send(position_ms);
+        }
     }
 
     /// Full stop: tear down engine + clear all display state.
     fn stop_playback_and_clear_state(&mut self) {
+        self.pending_cue = None;
         self.report(PlaybackReportState::Stopped);
         self.finish_play();
         self.stop_engine();
@@ -1190,6 +1221,13 @@ impl Player {
             return;
         }
 
+        if let Some((cued, position_ms, start)) = self.pending_cue
+            && cued == id
+        {
+            self.cue(id, position_ms, start);
+            return;
+        }
+
         let is_playing = self.shared_state.playback_state() == PlaybackState::Playing;
         let current_track_id = self.shared_state.track_info().map(|t| t.id);
 
@@ -1216,7 +1254,7 @@ impl Player {
     /// Called when enough data has been buffered for streaming playback.
     /// If the cursor is waiting on this track and nothing is playing, start streaming.
     pub fn track_stream_ready(&mut self, id: QueueItemId) {
-        if !self.shared_state.is_cursor(id) {
+        if !self.shared_state.is_cursor(id) || self.pending_cue.is_some_and(|(c, ..)| c == id) {
             return;
         }
 
@@ -1396,9 +1434,11 @@ impl Player {
         if self.shared_state.playback_state() == PlaybackState::Paused
             && playback.engine.is_running()
             && playback.engine.is_silent()
-            && let Err(e) = playback.engine.stop()
         {
-            log::error!("stopping after fade failed: {}", e);
+            if let Err(e) = playback.engine.stop() {
+                log::error!("stopping after fade failed: {}", e);
+            }
+            self.answer_silence();
         }
 
         // A gapless transition moves the needle without anything on this
@@ -1505,6 +1545,17 @@ impl Player {
                 if play { Start::Playing } else { Start::Paused },
             ),
             PlayerCommand::Pause => self.pause(),
+            PlayerCommand::PauseAndReport(reply) => {
+                self.pause();
+                self.silence_waiters.push(reply);
+                if self
+                    .active_playback
+                    .as_ref()
+                    .is_none_or(|p| !p.engine.is_running())
+                {
+                    self.answer_silence();
+                }
+            }
             PlayerCommand::Resume => self.resume(),
             PlayerCommand::Stop => self.stop(),
             PlayerCommand::Seek(pos) => self.seek(pos),
@@ -2173,6 +2224,169 @@ mod tests {
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
         assert_eq!(starts.load(Ordering::Relaxed), 1);
         player.process_command(PlayerCommand::Stop);
+    }
+
+    /// Load `t.wav` as an item whose download has not landed, under a player
+    /// on the fake output.
+    fn downloading_wav(dir: &Path) -> (Player, QueueItemId, Arc<std::sync::atomic::AtomicUsize>) {
+        let path = dir.join("t.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+            starts: starts.clone(),
+        });
+        let item = PlaylistItem {
+            path,
+            state: ItemState::Pending,
+            ..make_item("t")
+        };
+        let id = item.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
+        (player, id, starts)
+    }
+
+    fn await_queued(player: &Player) {
+        loop {
+            match player
+                .commands
+                .rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+            {
+                Ok(PlayerCommand::TrackQueued) => return,
+                Ok(_) => {}
+                Err(e) => panic!("the decoder never queued the track: {e}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_cue_on_a_downloading_track_opens_at_its_position_once_it_lands() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, id, starts) = downloading_wav(dir.path());
+
+        player.process_command(PlayerCommand::Cue {
+            id,
+            position_ms: 6_000,
+            play: true,
+        });
+        assert!(player.active_playback.is_none(), "nothing opened early");
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Stopped);
+        assert_eq!(starts.load(Ordering::Relaxed), 0);
+
+        player.process_command(PlayerCommand::TrackReady(id));
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
+        assert_eq!(player.playback_starts, 1, "opened once, at the position");
+        assert_eq!(starts.load(Ordering::Relaxed), 1);
+        await_queued(&player);
+        let at = player.shared_state.position_ms();
+        assert!((5_750..=6_000).contains(&at), "opened at {at}ms");
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn a_paused_cue_on_a_downloading_track_lands_paused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, id, starts) = downloading_wav(dir.path());
+
+        player.process_command(PlayerCommand::Cue {
+            id,
+            position_ms: 3_000,
+            play: false,
+        });
+        player.process_command(PlayerCommand::TrackReady(id));
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
+        assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
+        await_queued(&player);
+        let at = player.shared_state.position_ms();
+        assert!((2_750..=3_000).contains(&at), "cued at {at}ms");
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn playing_something_else_forgets_a_waiting_cue() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, id, _) = downloading_wav(dir.path());
+        let other = seed(&mut player, 1)[0];
+
+        player.process_command(PlayerCommand::Cue {
+            id,
+            position_ms: 6_000,
+            play: true,
+        });
+        player.process_command(PlayerCommand::Play(other));
+        player.process_command(PlayerCommand::Play(id));
+        assert!(player.pending_cue.is_none());
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn a_pause_reports_where_the_fade_went_silent() {
+        use std::sync::atomic::AtomicBool;
+
+        struct FadingEngine {
+            running: Arc<AtomicBool>,
+            silent: Arc<AtomicBool>,
+        }
+        impl AudioEngineHandle for FadingEngine {
+            fn start(&self) -> Result<(), BackendError> {
+                self.running.store(true, Ordering::Relaxed);
+                Ok(())
+            }
+            fn stop(&self) -> Result<(), BackendError> {
+                self.running.store(false, Ordering::Relaxed);
+                Ok(())
+            }
+            fn is_running(&self) -> bool {
+                self.running.load(Ordering::Relaxed)
+            }
+            fn fade_out(&self) {}
+            fn fade_in(&self) -> Result<(), BackendError> {
+                Ok(())
+            }
+            fn is_silent(&self) -> bool {
+                self.silent.load(Ordering::Relaxed)
+            }
+        }
+
+        let running = Arc::new(AtomicBool::new(true));
+        let silent = Arc::new(AtomicBool::new(false));
+        let mut player = Player::new();
+        player.active_playback = Some(ActivePlayback {
+            engine: Box::new(FadingEngine {
+                running: running.clone(),
+                silent: silent.clone(),
+            }),
+            decode_handle: buffer::DecodeHandle::new_for_test(Default::default()),
+            stream: None,
+            _rate_watch: None,
+        });
+        player
+            .shared_state
+            .set_playback_state(PlaybackState::Playing);
+        player.shared_state.set_position_ms(5_000);
+
+        let (reply, answer) = crossbeam_channel::bounded(1);
+        player.process_command(PlayerCommand::PauseAndReport(reply));
+
+        if crate::config::Config::load_or_default()
+            .playback
+            .fade_on_pause
+        {
+            assert!(answer.try_recv().is_err(), "not while the fade is audible");
+            // The fade plays on, and the playhead with it.
+            player.shared_state.set_position_ms(5_150);
+            player.update_playback_state();
+            assert!(answer.try_recv().is_err());
+            silent.store(true, Ordering::Relaxed);
+            player.update_playback_state();
+            assert!(!running.load(Ordering::Relaxed));
+            assert_eq!(answer.try_recv().unwrap(), 5_150);
+        } else {
+            assert_eq!(answer.try_recv().unwrap(), 5_000);
+        }
     }
 
     #[test]

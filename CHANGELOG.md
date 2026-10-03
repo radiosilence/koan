@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Move here resumes where the source stopped.** The source read its playhead before sending and paused afterwards, so whatever played during the send and the fade was heard again on the destination; the destination then started the track from the top and seeked, letting its opening through. The source now pauses first and reports where the fade went silent, and the destination opens the track at that point. A track the destination has to download waits for the whole file rather than starting early, and a paused source arrives paused.
+
 ### Changed
 
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
