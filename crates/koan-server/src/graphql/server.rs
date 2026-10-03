@@ -193,6 +193,10 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         auth::load_or_generate_keypair().unwrap_or_default()
     };
 
+    // What once encrypted account passwords for Subsonic token auth. Nothing
+    // is encrypted with it any more; a copy left on disk is a liability.
+    let _ = std::fs::remove_file(auth::keypair_dir().join("subsonic.key"));
+
     let access_ttl = parse_duration_secs(&cfg.graphql.access_token_ttl).unwrap_or(900);
     let refresh_ttl = parse_duration_secs(&cfg.graphql.refresh_token_ttl).unwrap_or(2_592_000);
 

@@ -105,12 +105,6 @@ pub fn cmd_auth_create_user(username: &str, role_str: &str) {
                 id,
                 role
             );
-            if let Err(e) = auth_queries::remember_password(&db.conn, username, &password) {
-                eprintln!(
-                    "{} Subsonic token auth not set up: {e}",
-                    "!".yellow().bold()
-                );
-            }
             // Offer to save credentials to 1Password if `op` CLI is available.
             offer_save_to_1password(username, &password);
         }
@@ -133,12 +127,6 @@ pub fn cmd_auth_reset_password(username: &str) {
                 "✓".green().bold(),
                 username
             );
-            if let Err(e) = auth_queries::remember_password(&db.conn, username, &password) {
-                eprintln!(
-                    "{} Subsonic token auth not set up: {e}",
-                    "!".yellow().bold()
-                );
-            }
             offer_save_to_1password(username, &password);
         }
         Ok(false) => {
@@ -729,17 +717,26 @@ pub fn cmd_auth_invite(username: &str, server: Option<&str>, reset: bool) {
         std::process::exit(1);
     };
     let db = open_db();
-    let password = auth::subsonic_key()
-        .map_err(|e| e.to_string())
-        .and_then(|key| {
-            koan_core::invite::account_password(&db.conn, &key, username, reset)
-                .map_err(|e| e.to_string())
-        })
-        .unwrap_or_else(|e| {
-            eprintln!("{} {e}", "✗".red().bold());
-            std::process::exit(1);
-        });
-    let invite = koan_core::invite::Invite::new(&server, username, &password);
+    let made = (|| -> Result<_, Box<dyn std::error::Error>> {
+        let user = koan_core::invite::account(&db.conn, username)?;
+        let password = if reset {
+            Some(koan_core::invite::set_password(&db.conn, username, None)?)
+        } else {
+            None
+        };
+        let (private, _) = auth::load_or_generate_keypair()?;
+        let token = koan_core::invite::mint_token(&private, user.id, username)?;
+        Ok(koan_core::invite::Invite::with_token(
+            &server,
+            username,
+            &token,
+            password.as_deref(),
+        ))
+    })();
+    let invite = made.unwrap_or_else(|e| {
+        eprintln!("{} {e}", "✗".red().bold());
+        std::process::exit(1);
+    });
     println!("{}\n", invite.link());
     println!("{} {}\n", "Subject:".dimmed(), invite.email_subject());
     print!("{}", invite.email_text());

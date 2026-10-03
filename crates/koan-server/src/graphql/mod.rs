@@ -1433,18 +1433,25 @@ mod tests {
         let link = v["createUser"]["link"].as_str().unwrap();
         let invite = koan_core::invite::Invite::parse(link).unwrap();
         assert_eq!(invite.server, "https://music.example.com");
-        assert_eq!(
-            invite.password,
-            v["createUser"]["password"].as_str().unwrap()
+        assert!(invite.token.is_some() && invite.password.is_none());
+        let password = v["createUser"]["password"].as_str().unwrap();
+        assert!(
+            v["createUser"]["emailText"]
+                .as_str()
+                .unwrap()
+                .contains(password)
         );
 
         let r = run(r#"mutation { inviteUser(username: "sarita", server: "https://other.example.com") { server password } }"#).await;
         let v = r.data.into_json().unwrap();
         assert_eq!(v["inviteUser"]["server"], "https://other.example.com");
-        assert_eq!(
-            v["inviteUser"]["password"].as_str().unwrap(),
-            invite.password
-        );
+        assert!(v["inviteUser"]["password"].is_null());
+
+        let r = run(
+            r#"mutation { setUserPassword(username: "sarita", password: "correct horse") { ok } }"#,
+        )
+        .await;
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
 
         let r = run(r#"mutation { setUserRole(username: "sarita", role: USER) { ok } }"#).await;
         assert!(r.errors.is_empty(), "{:?}", r.errors);

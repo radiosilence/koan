@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Invites carry a token, not the password.** The link holds a JWT signed with the server's key, good for a week on any number of devices. The app trades it for an API key of its own (`/rest/koanJoin`, the `koanInvite` extension), so each invited device appears under API keys and can be revoked alone. Creating an account still generates a password and shows it once in the email, for the web UI and other Subsonic apps; inviting an existing account sends only the link. Links from older servers carry the password and still work. An app older than this cannot read the new links.
+- **Admins set passwords.** The Users page and GraphQL (`setUserPassword`) set a chosen password; inviting with a reset generates one. Either signs the account out everywhere.
+- **The apps can sign in with an API key** (`remote.api_key` in `config.local.toml`), which is what an invite stores.
+
+### Removed
+
+- **Recoverable passwords.** The server no longer keeps each account's password encrypted beside its hash, which let an admin read it back through an invite. Schema version 13 drops `users.sealed_password`; a database opened by this version is refused by older ones. The key they were encrypted with, `subsonic.key` in the auth directory, is deleted when the server starts.
+- **Subsonic token auth (`t`/`s`) for accounts.** It needed that readable copy. Clients get error 41 and should send the password (`p=`, over HTTPS) or an API key; the `[subsonic]` shared secret still accepts it. A koan app signed in to a koan server over plain HTTP needs signing in again, or an invite.
+
 ## 0.50.0
 
 ### Added

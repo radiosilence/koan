@@ -1220,7 +1220,8 @@ impl MutationRoot {
 
     // -- Accounts --
 
-    /// Make an account with a generated password and return its invite.
+    /// Make an account with a generated password and return its invite, which
+    /// carries the password this once.
     /// `server` is the address the invite points at; without it, the
     /// configured `sharing.public_url`, then the address this request came in
     /// on (which an in-process caller such as MCP does not have).
@@ -1234,18 +1235,22 @@ impl MutationRoot {
         require_role(ctx, Role::Admin)?;
         let server = invite_server(ctx, server)?;
         with_db(ctx, move |db| {
-            let key = koan_core::auth::subsonic_key()?;
-            let password =
-                koan_core::invite::create_account(&db.conn, &key, &username, role.into())?;
-            Ok(koan_core::invite::Invite::new(&server, &username, &password).into())
+            let made = koan_core::invite::create_account(&db.conn, &username, role.into())?;
+            let token = invite_token(made.id, username.trim())?;
+            Ok(koan_core::invite::Invite::with_token(
+                &server,
+                username.trim(),
+                &token,
+                Some(&made.password),
+            )
+            .into())
         })
         .await
     }
 
-    /// An invite for an existing account. Its password is reused so its other
-    /// devices keep working; `resetPassword` replaces it instead, which signs
-    /// those devices out and is the only way to invite an account whose
-    /// password koan cannot recover.
+    /// An invite for an existing account. Its devices keep working;
+    /// `resetPassword` also gives it a new password, returned this once, which
+    /// signs every device out.
     async fn invite_user(
         &self,
         ctx: &Context<'_>,
@@ -1256,13 +1261,39 @@ impl MutationRoot {
         require_role(ctx, Role::Admin)?;
         let server = invite_server(ctx, server)?;
         with_db(ctx, move |db| {
-            let key = koan_core::auth::subsonic_key()?;
-            let password =
-                koan_core::invite::account_password(&db.conn, &key, &username, reset_password)?;
-            if reset_password {
+            let user = koan_core::invite::account(&db.conn, &username)?;
+            let password = if reset_password {
+                let p = koan_core::invite::set_password(&db.conn, &username, None)?;
                 crate::clients::registry().disconnect(&username);
-            }
-            Ok(koan_core::invite::Invite::new(&server, &username, &password).into())
+                Some(p)
+            } else {
+                None
+            };
+            let token = invite_token(user.id, &username)?;
+            Ok(koan_core::invite::Invite::with_token(
+                &server,
+                &username,
+                &token,
+                password.as_deref(),
+            )
+            .into())
+        })
+        .await
+    }
+
+    /// Give an account a password of the admin's choosing. Signs every device
+    /// out, as any password change does.
+    async fn set_user_password(
+        &self,
+        ctx: &Context<'_>,
+        username: String,
+        password: String,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::Admin)?;
+        with_db(ctx, move |db| {
+            koan_core::invite::set_password(&db.conn, &username, Some(&password))?;
+            crate::clients::registry().disconnect(&username);
+            Ok(GqlStatus::success(format!("{username}'s password changed")))
         })
         .await
     }
@@ -1471,6 +1502,12 @@ fn reach(sent: &[String], queued: &[String]) -> String {
 
 /// Where an invite points: the caller's choice, `sharing.public_url`, or the
 /// address the request came in on.
+/// A token for an invite, signed with the server's key.
+fn invite_token(user_id: i64, username: &str) -> Result<String, koan_core::auth::AuthError> {
+    let (private, _) = koan_core::auth::load_or_generate_keypair()?;
+    koan_core::invite::mint_token(&private, user_id, username)
+}
+
 fn invite_server(ctx: &Context<'_>, server: Option<String>) -> async_graphql::Result<String> {
     let configured = Config::load().ok().and_then(|c| c.sharing.public_url);
     server

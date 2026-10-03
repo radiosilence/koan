@@ -930,12 +930,15 @@ pub struct ArtEvictions {
 }
 
 /// An account on a server, as one link. What a tapped invite carries and what
-/// an admin sends: `link` for koan, the details for any other Subsonic app.
+/// an admin sends: `link` for koan, and the password for any other Subsonic
+/// app when the account was just made or given a new one.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct Invite {
     pub server: String,
     pub username: String,
-    pub password: String,
+    /// What koan trades for an API key; absent from links made before tokens.
+    pub token: Option<String>,
+    pub password: Option<String>,
     pub link: String,
     pub email_subject: String,
     pub email_text: String,
@@ -953,6 +956,7 @@ impl From<koan_core::invite::Invite> for Invite {
             mailto: i.mailto(),
             server: i.server,
             username: i.username,
+            token: i.token,
             password: i.password,
         }
     }

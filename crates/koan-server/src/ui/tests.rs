@@ -740,28 +740,71 @@ async fn admins_create_invite_and_remove_accounts() {
     let invite = koan_core::invite::Invite::parse(&link).unwrap();
     assert_eq!(invite.server, format!("http://{HOST}"));
     assert_eq!(invite.username, "sarita");
-    assert!(r.body.contains("Server URL") && r.body.contains(&invite.password));
+    assert_eq!(invite.password, None);
+    let password = r
+        .body
+        .split("<dt>Password</dt><dd><code>")
+        .nth(1)
+        .and_then(|rest| rest.split('<').next())
+        .unwrap_or_else(|| panic!("no password in {}", r.body))
+        .to_owned();
     let row = queries::auth::get_user_by_username(&db.conn, "sarita")
         .unwrap()
         .unwrap();
     assert_eq!(row.role, Role::Readonly);
-    auth::verify_password(&invite.password, &row.password_hash).unwrap();
+    auth::verify_password(&password, &row.password_hash).unwrap();
 
-    // Inviting again hands out the same password, so other devices keep working.
+    // The link's token is signed with this server's key and redeems for a key.
+    let joined = koan_core::invite::redeem(
+        &db.conn,
+        &f.state.public_pem,
+        invite.token.as_deref().unwrap(),
+        "phone",
+    )
+    .unwrap();
+    assert_eq!(joined.username, "sarita");
+
+    // Inviting again shows no password: the server cannot read one back.
     let r = send(
         &f.app,
         post(&format!("/users/{}/invite", row.id), "{}", &admin),
     )
     .await;
-    assert!(r.body.contains(&invite.password), "{}", r.body);
+    assert!(r.body.contains("id=invite-link"), "{}", r.body);
+    assert!(!r.body.contains("<dt>Password</dt>"), "{}", r.body);
 
-    // An account made before passwords were sealed needs a reset.
-    let r = send(&f.app, post("/users/1/invite", "{}", &admin)).await;
-    assert!(r.body.contains("not recoverable"), "{}", r.body);
+    // A reset does show one, and signs the account's devices out.
     let alice_link = open_link("alice");
     let r = send(&f.app, post("/users/1/invite?reset=true", "{}", &admin)).await;
-    assert!(r.body.contains("id=invite-link"), "{}", r.body);
+    assert!(r.body.contains("<dt>Password</dt>"), "{}", r.body);
     assert_closed(alice_link);
+
+    // So does a password the admin chooses; without one, the form asking.
+    let r = send(&f.app, post("/users/1/password", "{}", &admin)).await;
+    assert!(r.body.contains("data-bind:setpassword"), "{}", r.body);
+    let r = send(
+        &f.app,
+        post("/users/1/password", r#"{"setpassword":"short"}"#, &admin),
+    )
+    .await;
+    assert!(r.body.contains("at least 8"), "{}", r.body);
+    let r = send(
+        &f.app,
+        post(
+            "/users/1/password",
+            r#"{"setpassword":"correct horse"}"#,
+            &admin,
+        ),
+    )
+    .await;
+    assert!(r.body.contains("password is changed"), "{}", r.body);
+    let alice = queries::auth::get_user_by_id(&db.conn, 1).unwrap().unwrap();
+    auth::verify_password("correct horse", &alice.password_hash).unwrap();
+    assert!(
+        queries::api_keys::authenticate_api_key(&db.conn, &joined.api_key)
+            .unwrap()
+            .is_some()
+    );
 
     let r = send(
         &f.app,
