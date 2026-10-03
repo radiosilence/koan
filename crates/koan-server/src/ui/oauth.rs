@@ -67,7 +67,7 @@ pub(super) struct Code {
 pub(super) type Codes = Arc<parking_lot::Mutex<HashMap<String, Code>>>;
 
 /// This server's address, which OAuth needs a fixed one of.
-fn base(s: &UiState) -> Option<String> {
+pub(super) fn public_base(s: &UiState) -> Option<String> {
     s.public_url
         .as_deref()
         .map(|u| u.trim().trim_end_matches('/'))
@@ -76,7 +76,7 @@ fn base(s: &UiState) -> Option<String> {
 }
 
 pub(super) async fn protected_resource(State(s): State<UiState>) -> Response {
-    let Some(base) = base(&s) else {
+    let Some(base) = public_base(&s) else {
         return not_found();
     };
     Json(json!({
@@ -89,7 +89,7 @@ pub(super) async fn protected_resource(State(s): State<UiState>) -> Response {
 }
 
 pub(super) async fn authorization_server(State(s): State<UiState>) -> Response {
-    let Some(base) = base(&s) else {
+    let Some(base) = public_base(&s) else {
         return not_found();
     };
     Json(json!({
@@ -167,7 +167,7 @@ pub(super) struct Registration {
 }
 
 pub(super) async fn register(State(s): State<UiState>, Json(r): Json<Registration>) -> Response {
-    if base(&s).is_none() {
+    if public_base(&s).is_none() {
         return not_found();
     }
     if r.redirect_uris.is_empty()
@@ -249,7 +249,7 @@ fn check(s: &UiState, q: &AuthorizeParams) -> Result<(String, Client, Url), Box<
             page("Cannot connect", &format!("<p>{}</p>", escape(why))),
         ))
     };
-    let base = base(s).ok_or_else(|| Box::new(not_found()))?;
+    let base = public_base(s).ok_or_else(|| Box::new(not_found()))?;
     let c = client(s, &q.client_id).ok_or_else(|| refuse("This app is not registered here."))?;
     let uri = if q.redirect_uri.is_empty() && c.redirect_uris.len() == 1 {
         c.redirect_uris[0].clone()
@@ -308,7 +308,7 @@ fn page(title: &str, body: &str) -> String {
 }
 
 /// What a grant lets the client do, at the role `/mcp` caps it to.
-fn abilities(user: &AuthUser) -> &'static str {
+pub(super) fn abilities(user: &AuthUser) -> &'static str {
     match crate::mcp::capped(user.role) {
         auth::Role::Readonly => "browse and search your library, and see what is playing",
         auth::Role::User => {
@@ -515,7 +515,7 @@ fn exchange(s: &UiState, t: &TokenRequest) -> Exchange {
 }
 
 pub(super) async fn token(State(s): State<UiState>, Form(t): Form<TokenRequest>) -> Response {
-    let Some(base) = base(&s) else {
+    let Some(base) = public_base(&s) else {
         return not_found();
     };
     let invalid = |why: &str| oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", why);

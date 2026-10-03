@@ -1031,6 +1031,33 @@ mod oauth {
     }
 
     #[tokio::test]
+    async fn the_assistants_page_gives_the_address_once_there_is_one() {
+        let f = setup_at(true, Some(ORIGIN));
+        let r = send(
+            &f.app,
+            authed(&f.state, "/connect").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::OK);
+        assert!(
+            r.body.contains("value=\"https://koan.test/mcp\""),
+            "{}",
+            r.body
+        );
+        let f = setup(true);
+        let r = send(
+            &f.app,
+            authed(&f.state, "/connect").body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert!(
+            r.body.contains("needs to know its own address"),
+            "{}",
+            r.body
+        );
+    }
+
+    #[tokio::test]
     async fn without_a_public_url_there_is_no_oauth() {
         let f = setup(true);
         for uri in [

@@ -13,6 +13,7 @@
 //! that route sees it) for fresh cookies, or on to the sign-in form.
 
 mod browse;
+mod connect;
 mod keys;
 mod oauth;
 mod pages;
@@ -101,6 +102,7 @@ pub fn router(
         .route("/search", get(pages::search))
         .route("/search/results", get(pages::search_results))
         .route("/queue", get(pages::queue))
+        .route("/connect", get(connect::page))
         .route("/keys", get(keys::page).post(keys::create))
         .route("/keys/{id}/revoke", post(keys::revoke))
         .route("/users", get(users::page).post(users::create))

@@ -66,7 +66,7 @@ fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> Str
         };
         format!(
             "<form class=account method=post action=\"/auth/signout\"><span>{}</span>\
-{users}<a href=\"/keys\" data-nav=keys>API keys</a><button class=quiet>Sign out</button></form>",
+{users}<a href=\"/keys\" data-nav=keys>API keys</a><a href=\"/connect\" data-nav=connect>Assistants</a><button class=quiet>Sign out</button></form>",
             escape(&user.username)
         )
     } else {

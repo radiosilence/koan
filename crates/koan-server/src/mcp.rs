@@ -325,8 +325,19 @@ async fn bearer_gate(
     mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    use axum::http::{StatusCode, header};
+    use axum::http::{Method, StatusCode, header};
     use axum::response::IntoResponse;
+    // Someone who pasted the address into a browser: show them what it is for.
+    let browser = req.method() == Method::GET
+        && !req.headers().contains_key(header::AUTHORIZATION)
+        && req
+            .headers()
+            .get(header::ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|a| a.contains("text/html"));
+    if browser {
+        return axum::response::Redirect::to("/connect").into_response();
+    }
     let user = if auth.auth_enabled {
         let token = req
             .headers()
@@ -449,6 +460,29 @@ mod tests {
             (local.user_id, local.role),
             (queries::LOCAL_USER, mcp_role())
         );
+    }
+
+    #[tokio::test]
+    async fn a_browser_opening_mcp_is_shown_how_to_connect() {
+        use tower::ServiceExt as _;
+        let (_server, ch, tmp) = test_server();
+        let auth = crate::auth::middleware::AuthState {
+            public_pem: Arc::new(Vec::new()),
+            auth_enabled: true,
+            introspection_key: None,
+            pool: Arc::new(koan_core::db::pool::Pool::new(tmp.path().join("test.db"))),
+        };
+        let app = router(SharedPlayerState::new(), ch.tx.clone(), auth, None);
+        let req = |accept: &str| {
+            axum::http::Request::get("/mcp")
+                .header(axum::http::header::ACCEPT, accept)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let r = app.clone().oneshot(req("text/html,*/*")).await.unwrap();
+        assert_eq!(r.headers()[axum::http::header::LOCATION], "/connect");
+        let r = app.oneshot(req("text/event-stream")).await.unwrap();
+        assert_eq!(r.status(), axum::http::StatusCode::UNAUTHORIZED);
     }
 
     fn insert_test_track(db_path: &std::path::Path, title: &str, artist: &str, album: &str) -> i64 {
