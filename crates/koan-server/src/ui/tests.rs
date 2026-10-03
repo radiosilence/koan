@@ -1150,3 +1150,13 @@ mod oauth {
         assert_eq!(register(&f, CALLBACK).await.status, StatusCode::NOT_FOUND);
     }
 }
+
+#[tokio::test]
+async fn the_icon_is_where_favicon_fetchers_look() {
+    let f = setup(true);
+    for uri in ["/favicon.ico", "/apple-touch-icon.png"] {
+        let r = send(&f.app, get(uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::OK, "{uri}");
+        assert_eq!(r.headers[header::CONTENT_TYPE], "image/png");
+    }
+}

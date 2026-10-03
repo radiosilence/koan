@@ -165,6 +165,17 @@ pub fn router(
         .route("/auth/renew", post(session::renew))
         .route("/auth/signout", post(session::signout))
         .route("/ui/assets/{name}", get(ui_asset))
+        // Where anything that wants an icon for this host looks first, before
+        // reading a page: without it, a favicon service settles for the parent
+        // domain's.
+        .route(
+            "/favicon.ico",
+            get(|| ui_asset(Path("icon-192.png".into()))),
+        )
+        .route(
+            "/apple-touch-icon.png",
+            get(|| ui_asset(Path("apple-touch-icon.png".into()))),
+        )
         .with_state(state)
 }
 
