@@ -44,7 +44,7 @@ use crate::share::{asset, blocking, not_found};
 
 /// `'unsafe-eval'` because Datastar compiles its attribute expressions.
 /// Everything else is this server's own, and nothing is inline.
-const PAGE_CSP: &str = "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self'; \
+const PAGE_CSP: &str = "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self'; font-src 'self'; \
      img-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; \
      frame-ancestors 'none'";
 
@@ -186,7 +186,7 @@ async fn ui_asset(Path(name): Path<String>) -> Response {
         "ui.js" => asset(UI_JS, JS),
         "player.js" => asset(crate::share::ENGINE_JS, JS),
         "datastar.js" => asset(DATASTAR_JS, JS),
-        other => crate::share::icon(other).unwrap_or_else(not_found),
+        other => crate::share::binary_asset(other).unwrap_or_else(not_found),
     }
 }
 

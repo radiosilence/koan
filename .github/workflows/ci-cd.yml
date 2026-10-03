@@ -41,7 +41,7 @@ jobs:
             # parent is the base branch, so this is exactly the PR's diff. If it
             # cannot be worked out, code stays true and everything runs.
             if files=$(git diff --name-only HEAD^1 HEAD); then
-              src='^crates/|^apps/|^Cargo\.(toml|lock)$|^\.cargo/|^\.github/workflows/|^justfile$|^mise\.toml$|^rust-toolchain'
+              src='^crates/|^apps/|^Cargo\.(toml|lock)$|^\.cargo/|^\.github/workflows/|^justfile$|^mise\.toml$|^rust-toolchain|^site/src/theme\.css$'
               # Steps run under `bash -e`, where grep finding nothing is a failing
               # command rather than an answer -- so the question is asked in a
               # condition, which is the form that survives it. Markdown is
@@ -87,6 +87,23 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
+
+  # The web UI's stylesheets are compiled by Tailwind and committed, since the
+  # server embeds them. A source edited without a rebuild would ship the old CSS.
+  css:
+    name: Stylesheets
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
+        with:
+          install_args: just github:tailwindlabs/tailwindcss
+      - run: just css
+      - name: Compiled stylesheets match their sources
+        run: git diff --exit-code crates/koan-server/assets
 
   clippy:
     name: Clippy (${{ matrix.os }})

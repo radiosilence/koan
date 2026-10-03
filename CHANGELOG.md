@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **The web UI, share pages, koan.rocks and the documentation share one look.** The server's pages take the site's typeface (Geist Mono) and greys, the site takes the web UI's green, and the server's pages follow the system's light or dark setting as the site already did. Both are built with Tailwind from one theme, `site/src/theme.css`, so a colour or the font changes in one place.
+
 ### Fixed
 
 - **The Mac no longer claims the local network is blocked by iOS.** A connection to a nearby device that failed with "no route to host" was taken to mean the system had refused koan the local network, which is how iOS reports it. On macOS it means only that the address is unreachable, such as a phone asleep or a stale link-local address, and one such device kept the warning up. The Mac now trusts only the Bonjour responder's refusal, and the warning names System Settings there.

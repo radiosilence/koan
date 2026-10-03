@@ -2,51 +2,21 @@
 @source "../public/**/*.html";
 @source "./docs.html";
 
-@font-face {
-  font-family: "Geist Mono";
-  src: url("/geist-mono.woff2") format("woff2-variations");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
+@import "./theme.css";
 
-/* Dark is the default; the light values apply only when the reader asks for them. */
+/* Syntax colours for the documentation's code, which the web UI has no use for. */
 :root {
-  color-scheme: dark light;
-  --bg: #1e1e1e;
-  --surface: #2a2a2a;
-  --ink: #cccccc;
-  --muted: #8c8c8c;
-  --rule: #383838;
-  --brand: #e65e5e;
-  --code-string: #a3c38b;
+  --code-string: #d99a9a;
   --code-number: #d9a866;
   --code-name: #7fb4d9;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #ffffff;
-    --surface: #f2f2f2;
-    --ink: #333333;
-    --muted: #666666;
-    --rule: #e0e0e0;
-    /* blit's red is under 4.5:1 on white; this is the same hue, darker. */
-    --brand: #c43f3f;
-    --code-string: #3d7a2a;
+    --code-string: #a33a3a;
     --code-number: #9a5b00;
     --code-name: #1f6a9a;
   }
-}
-
-@theme inline {
-  --color-bg: var(--bg);
-  --color-surface: var(--surface);
-  --color-ink: var(--ink);
-  --color-muted: var(--muted);
-  --color-rule: var(--rule);
-  --color-brand: var(--brand);
-  --default-font-family: "Geist Mono", ui-monospace, monospace;
 }
 
 /*
@@ -193,7 +163,7 @@
 
 /*
  * Code in the documentation, highlighted by pandoc. It marks tokens with short classes; four colours cover them:
- * keywords in the brand red, strings, literals and names, with comments muted as on the homepage.
+ * keywords in the brand green, strings, literals and names, with comments muted as on the homepage.
  */
 @layer components {
   .sourceCode a {
