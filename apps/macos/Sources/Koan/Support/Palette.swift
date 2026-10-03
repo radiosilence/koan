@@ -6,30 +6,29 @@ import UIKit
 import ImageIO
 import SwiftUI
 
-/// koan's accent, read from the asset catalog.
+/// koan's accent: the green koan.rocks and the web UI use, darker in light
+/// mode, where the mint would not read as text. What the room wears when the
+/// record playing gives no colour — no artwork, a sleeve with none in it, or
+/// nothing playing — and the app's tint outside it.
 ///
-/// The catalog is the source of truth rather than a literal here, because
-/// AppKit needs it there: list selection, focus rings and control tints come
-/// from the app's declared accent colour, and nothing in SwiftUI can override
-/// them. `.tint` reaches SwiftUI's own drawing and stops at the edge of every
-/// AppKit-backed control, so a tint alone leaves the sidebar blue.
-///
-/// `NSAccentColorName` in the bundle's Info.plist points at this colour set;
-/// see the `macos-bundle` recipe.
-/// Falls back to the system accent when the catalog is not in the bundle.
-/// Compiling it needs `actool`, which ships with Xcode proper rather than the
-/// command line tools, so a build made without Xcode has no colour to find.
-/// Resolving to nothing tints the app with nothing, which does not merely lose
-/// the colour — every borderless control and the playing row's title are drawn
-/// in `.tint`, and they become invisible rather than uncoloured.
+/// Not the asset catalog's `AccentColor`, which `NSAccentColorName` points
+/// AppKit at for list selection and focus rings. That one is a neutral grey so
+/// a selected row never argues with the tint, and as a tint it fails: the
+/// playing row's title and every borderless control are drawn in the tint,
+/// and in grey they read as disabled.
 extension Color {
     #if canImport(AppKit)
-    static let koanAccent = NSColor(named: "AccentColor").map(Color.init) ?? .accentColor
+    static let koanAccent = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? mint : forest
+    })
+    private static let mint = NSColor(srgbRed: 0x7D / 255, green: 0xD3 / 255, blue: 0xA7 / 255, alpha: 1)
+    private static let forest = NSColor(srgbRed: 0x1F / 255, green: 0x7A / 255, blue: 0x50 / 255, alpha: 1)
     #else
-    // Not the catalog's colour. That one is a neutral grey chosen to sit under
-    // AppKit's list selection; UIKit draws glyphs in the tint instead — the
-    // selected tab, borderless buttons — and grey on the dark ground is gone.
-    static let koanAccent = Color.primary
+    static let koanAccent = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark ? mint : forest
+    })
+    private static let mint = UIColor(red: 0x7D / 255, green: 0xD3 / 255, blue: 0xA7 / 255, alpha: 1)
+    private static let forest = UIColor(red: 0x1F / 255, green: 0x7A / 255, blue: 0x50 / 255, alpha: 1)
     #endif
 }
 
