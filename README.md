@@ -201,7 +201,7 @@ Requires iOS 26+.
 
 ## Playing on another device
 
-Any kōan app can control another, and hand its queue to it. See [Playing on another device](https://koan.rocks/docs/devices/).
+Any kōan app can control another, and hand its queue to it. The Mac app and the TUI also play to UPnP/DLNA amplifiers and streamers, sending the original files. See [Playing on another device](https://koan.rocks/docs/devices/).
 
 ## Planned
 

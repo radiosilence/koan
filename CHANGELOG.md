@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- **Play to UPnP/DLNA amplifiers and streamers.** Renderers on the network are listed under Play on in the Mac app and in the TUI's output device list. Picking one makes it this device's output, as a DAC would be: the queue, transport and history stay here, and each track goes to the amplifier as the original file, so playback is bit-perfect up to its DAC. Gapless where the renderer takes the next track in advance; its own volume from the picker; formats it does not list are skipped with the reason shown in the queue. The progress bar follows the renderer's own position. Tracks are served from a port opened only while a renderer plays, each under a random URL, so nothing else is reachable through it. See [Playing on another device](docs/guide/devices.md#amplifiers-and-streamers-upnp).
+- **One Play on menu on the Mac.** This Mac's outputs (audio devices, shown by how they are connected, and UPnP amplifiers) and other kōan devices to control are listed together, each row marked with what picking it does. The separate output menu in the transport bar is gone; the menu's button is a speaker, with the name of wherever the music is going when that is not this Mac. Beside it, the system's AirPlay button; playing to the system default, the music follows the output it picks, from where it was.
+
+### Changed
+
+- **Devices that cannot be reached are no longer listed** under Play on. A phone that left the network, or another person's app that is not discoverable, showed as a row with only a reason.
+- **Music moved back to a device that was controlling another takes control back.** Moving music from the Mac to a phone leaves the Mac controlling the phone; moving it back now returns the Mac to its own playback, on the renderer it was playing to if there was one, instead of it going on showing the phone. Only a hand-off does this: a device told to play something by another keeps whatever it was controlling, so two devices can still control each other on purpose.
+- **Hand-off is one player command.** `ReplacePlaylist` takes the position and whether to play, so a device receiving the music no longer issues clear, add and cue separately, and undo sees one step. Session restore in the apps and the TUI sends its cue at once instead of waiting on a thread for the track to download; the player already waits.
+- **The web UI lists every album and artist on one page, as the apps do.** Pages of 60 albums and 100 artists behind a Load more button made a large library tedious to scroll and broke find-in-page. Covers load lazily, so the whole listing costs markup rather than images.
+- **The web UI's name and year filters apply as you type.** A pause in typing replaces the listing under the toolbar and leaves the field focused; the URL is replaced rather than pushed, so back does not step through each keystroke. A year applies once it has four digits. On a phone the sheet's Apply still applies everything.
+- **Downloads follow the playlist.** The player starts the download queue, and it fetches whatever the playlist is waiting for. Front ends no longer request downloads alongside adding tracks, which removes the race between the two and the five-second wait that covered it. Each player has one table of transfers, keyed by track; in the app bindings, `Transfer` and `TransferFigure` are identified by `trackId` and no longer carry a `queueItemId`.
+
 ### Fixed
 
 - **Track identity is rebuilt on source rows.** Each file and each server entry now keeps its own tags in a row of its own, and a track's names, path and server id are derived from them, the file's first. One function decides which file and which server entry are the same track, and it runs whenever either's tags change. This replaces eight separate matching and repair passes, and fixes the problems they shared:
@@ -44,14 +58,6 @@
 ### Removed
 
 - **`koan play --server` no longer plays audio locally.** It is a remote control for the server, which plays the audio, as `--jukebox` did; `--jukebox` is still accepted and changes nothing. The local mode streamed one track at a time into a cache of its own, outside the download queue, and the queue mirror it shared the TUI with overwrote what it had fetched every 100 ms, so it rarely played. To listen to a koan server's library on this machine, sign in to it as a remote library (`koan remote login`, or Settings in the apps): its tracks then play through the local engine and download into the cache like any other remote library's.
-
-### Changed
-
-- **Hand-off is one player command.** `ReplacePlaylist` takes the position and whether to play, so a device receiving the music no longer issues clear, add and cue separately, and undo sees one step. Session restore in the apps and the TUI sends its cue at once instead of waiting on a thread for the track to download; the player already waits.
-- **The web UI lists every album and artist on one page, as the apps do.** Pages of 60 albums and 100 artists behind a Load more button made a large library tedious to scroll and broke find-in-page. Covers load lazily, so the whole listing costs markup rather than images.
-- **The web UI's name and year filters apply as you type.** A pause in typing replaces the listing under the toolbar and leaves the field focused; the URL is replaced rather than pushed, so back does not step through each keystroke. A year applies once it has four digits. On a phone the sheet's Apply still applies everything.
-- **Downloads follow the playlist.** The player starts the download queue, and it fetches whatever the playlist is waiting for. Front ends no longer request downloads alongside adding tracks, which removes the race between the two and the five-second wait that covered it. Each player has one table of transfers, keyed by track; in the app bindings, `Transfer` and `TransferFigure` are identified by `trackId` and no longer carry a `queueItemId`.
-
 
 ## 0.50.3
 
