@@ -535,49 +535,51 @@ impl Codec {
     }
 }
 
+/// Decode a whole stream, for tests that check what a renderer was sent.
+#[cfg(test)]
+pub(crate) fn decode(bytes: &[u8], extension: &str) -> (u32, Vec<f32>) {
+    use symphonia::core::codecs::audio::AudioDecoderOptions;
+    use symphonia::core::formats::probe::Hint;
+    use symphonia::core::formats::{FormatOptions, TrackType};
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    let mss = MediaSourceStream::new(
+        Box::new(std::io::Cursor::new(bytes.to_vec())),
+        Default::default(),
+    );
+    let mut hint = Hint::new();
+    hint.with_extension(extension);
+    let mut reader = symphonia::default::get_probe()
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
+        .unwrap();
+    let track = reader.default_track(TrackType::Audio).unwrap();
+    let id = track.id;
+    let params = track.codec_params.as_ref().unwrap().audio().unwrap();
+    let rate = params.sample_rate.unwrap();
+    let mut decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(params, &AudioDecoderOptions::default())
+        .unwrap();
+    let mut out = Vec::new();
+    while let Ok(Some(packet)) = reader.next_packet() {
+        if packet.track_id != id {
+            continue;
+        }
+        let decoded = decoder.decode(&packet).unwrap();
+        let mut samples = vec![0f32; decoded.samples_interleaved()];
+        decoded.copy_to_slice_interleaved(&mut samples);
+        out.extend(samples);
+    }
+    (rate, out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn decode(bytes: &[u8], extension: &str) -> (u32, Vec<f32>) {
-        use symphonia::core::codecs::audio::AudioDecoderOptions;
-        use symphonia::core::formats::probe::Hint;
-        use symphonia::core::formats::{FormatOptions, TrackType};
-        use symphonia::core::io::MediaSourceStream;
-        use symphonia::core::meta::MetadataOptions;
-        let mss = MediaSourceStream::new(
-            Box::new(std::io::Cursor::new(bytes.to_vec())),
-            Default::default(),
-        );
-        let mut hint = Hint::new();
-        hint.with_extension(extension);
-        let mut reader = symphonia::default::get_probe()
-            .probe(
-                &hint,
-                mss,
-                FormatOptions::default(),
-                MetadataOptions::default(),
-            )
-            .unwrap();
-        let track = reader.default_track(TrackType::Audio).unwrap();
-        let id = track.id;
-        let params = track.codec_params.as_ref().unwrap().audio().unwrap();
-        let rate = params.sample_rate.unwrap();
-        let mut decoder = symphonia::default::get_codecs()
-            .make_audio_decoder(params, &AudioDecoderOptions::default())
-            .unwrap();
-        let mut out = Vec::new();
-        while let Ok(Some(packet)) = reader.next_packet() {
-            if packet.track_id() != id {
-                continue;
-            }
-            let decoded = decoder.decode(&packet).unwrap();
-            let mut samples = vec![0f32; decoded.samples_interleaved()];
-            decoded.copy_to_slice_interleaved(&mut samples);
-            out.extend(samples);
-        }
-        (rate, out)
-    }
 
     /// A stereo sine through the encoder, as the renderer would read it.
     fn round_trip(encoding: Encoding, bits: u8) -> (Vec<f32>, Vec<f32>, u32) {

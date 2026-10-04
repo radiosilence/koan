@@ -1178,7 +1178,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use super::*;
-    use crate::player::state::{QueueItemId, RendererClock};
+    use crate::player::state::QueueItemId;
 
     fn make_info(sample_rate: u32, channels: u16) -> StreamInfo {
         StreamInfo {

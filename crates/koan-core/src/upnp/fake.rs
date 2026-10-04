@@ -22,8 +22,11 @@ pub struct State {
     pub volume: u8,
     /// Every action, in order, with its arguments.
     pub actions: Vec<(String, Vec<(String, String)>)>,
-    /// URLs it fetched, and how many bytes came back.
+    /// URLs it fetched, and how many bytes came back. A stream is counted
+    /// once it ends.
     pub fetched: Vec<(String, usize)>,
+    /// The body of the last stream it was sent, as far as it has read.
+    pub streamed: Vec<u8>,
     callbacks: Vec<String>,
 }
 
@@ -380,7 +383,8 @@ impl FakeRenderer {
         out
     }
 
-    /// Fetch what it was given, as a renderer starts to.
+    /// Fetch what it was given, as a renderer starts to. A file is read
+    /// whole; a stream, which has no length, is read on as it is made.
     fn fetch(&self, uri: &str) {
         let Ok(url) = Url::parse(uri) else { return };
         let Ok(mut stream) = TcpStream::connect((url.host_str().unwrap(), url.port().unwrap()))
@@ -389,11 +393,42 @@ impl FakeRenderer {
         };
         let _ = write!(stream, "GET {} HTTP/1.1\r\nHost: x\r\n\r\n", url.path());
         let mut out = Vec::new();
-        let _ = stream.read_to_end(&mut out);
-        let body = out
-            .windows(4)
-            .position(|w| w == b"\r\n\r\n")
-            .map_or(0, |at| out.len() - at - 4);
-        self.state.lock().fetched.push((uri.to_string(), body));
+        let mut buf = [0u8; 4096];
+        let head = loop {
+            match stream.read(&mut buf) {
+                Ok(0) | Err(_) => break None,
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+            }
+            if let Some(at) = out.windows(4).position(|w| w == b"\r\n\r\n") {
+                break Some(at);
+            }
+        };
+        let Some(at) = head else { return };
+        let is_stream = !String::from_utf8_lossy(&out[..at])
+            .to_ascii_lowercase()
+            .contains("content-length");
+        let mut body = out.split_off(at + 4);
+        if !is_stream {
+            let _ = stream.read_to_end(&mut body);
+            self.state
+                .lock()
+                .fetched
+                .push((uri.to_string(), body.len()));
+            return;
+        }
+        self.state.lock().streamed = body;
+        let state = self.state.clone();
+        let uri = uri.to_string();
+        thread::spawn(move || {
+            loop {
+                match stream.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => state.lock().streamed.extend_from_slice(&buf[..n]),
+                }
+            }
+            let mut s = state.lock();
+            let len = s.streamed.len();
+            s.fetched.push((uri, len));
+        });
     }
 }
