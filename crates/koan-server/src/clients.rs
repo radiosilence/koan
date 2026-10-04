@@ -140,7 +140,8 @@ impl Registry {
         let id = uuid::Uuid::now_v7().to_string();
         // What waited for this device while it was away goes down the new
         // link first.
-        for cmd in outbox::take_and_remember(username, device, name, platform) {
+        let live = self.live();
+        for cmd in outbox::take_and_remember(username, device, name, platform, &live) {
             let _ = tx.send(cmd);
         }
         let mut entries = self.entries.lock();
@@ -198,13 +199,14 @@ impl Registry {
 
     pub fn unregister(&self, id: &str) {
         let mut entries = self.entries.lock();
-        let username = entries
+        let gone = entries
             .iter()
             .find(|e| e.info.id == id)
-            .map(|e| e.info.username.clone());
+            .map(|e| (e.device.clone(), e.info.username.clone()));
         entries.retain(|e| e.info.id != id);
         drop(entries);
-        if let Some(username) = username {
+        if let Some((device, username)) = gone {
+            outbox::touch(&[(device, username.clone())]);
             self.announce(&username);
         }
     }
@@ -910,6 +912,7 @@ mod outbox {
         device: &str,
         name: &str,
         platform: &str,
+        live: &[(String, String)],
     ) -> Vec<LinkCommand> {
         let Some(db) = db() else { return Vec::new() };
         let now = chrono::Utc::now().timestamp();
@@ -918,19 +921,7 @@ mod outbox {
              ON CONFLICT (device, username) DO UPDATE SET name = ?3, platform = ?4, last_seen = ?5",
             rusqlite::params![device, username, name, platform, now],
         );
-        let _ = db.conn.execute(
-            "DELETE FROM link_outbox WHERE created_at < ?1",
-            [now - KEEP_SECS],
-        );
-        let _ = db.conn.execute(
-            "DELETE FROM link_push WHERE (device, username) IN
-               (SELECT device, username FROM link_devices WHERE last_seen < ?1)",
-            [now - KEEP_SECS],
-        );
-        let _ = db.conn.execute(
-            "DELETE FROM link_devices WHERE last_seen < ?1",
-            [now - KEEP_SECS],
-        );
+        forget_stale(&db.conn, live, now);
         let waiting: Vec<(i64, String)> = db
             .conn
             .prepare("SELECT id, command FROM link_outbox WHERE device = ?1 AND username = ?2 ORDER BY id")
@@ -950,6 +941,41 @@ mod outbox {
             .into_iter()
             .filter_map(|(_, c)| serde_json::from_str(&c).ok())
             .collect()
+    }
+
+    /// Drop undelivered commands, devices and push tokens older than
+    /// `KEEP_SECS`. A link held open that long is seen, not stale.
+    pub(super) fn forget_stale(conn: &rusqlite::Connection, live: &[(String, String)], now: i64) {
+        touch_with(conn, live, now);
+        let _ = conn.execute(
+            "DELETE FROM link_outbox WHERE created_at < ?1",
+            [now - KEEP_SECS],
+        );
+        let _ = conn.execute(
+            "DELETE FROM link_push WHERE (device, username) IN
+               (SELECT device, username FROM link_devices WHERE last_seen < ?1)",
+            [now - KEEP_SECS],
+        );
+        let _ = conn.execute(
+            "DELETE FROM link_devices WHERE last_seen < ?1",
+            [now - KEEP_SECS],
+        );
+    }
+
+    /// Mark `(device, username)` pairs seen now.
+    pub fn touch(devices: &[(String, String)]) {
+        if let Some(db) = db() {
+            touch_with(&db.conn, devices, chrono::Utc::now().timestamp());
+        }
+    }
+
+    fn touch_with(conn: &rusqlite::Connection, devices: &[(String, String)], now: i64) {
+        for (device, username) in devices {
+            let _ = conn.execute(
+                "UPDATE link_devices SET last_seen = ?1 WHERE device = ?2 AND username = ?3",
+                rusqlite::params![now, device, username],
+            );
+        }
     }
 
     /// A known device that was not linked when something was queued for it.
@@ -1414,5 +1440,36 @@ mod tests {
             reg.relay("j", "dev-phone", LinkCommand::Devices { devices: vec![] })
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_device_linked_for_a_month_is_not_forgotten() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        koan_core::db::schema::create_tables(&conn).unwrap();
+        let now = 100 * 24 * 60 * 60;
+        let long_ago = now - 40 * 24 * 60 * 60;
+        for device in ["mac", "old-phone"] {
+            conn.execute(
+                "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES (?1, 'j', ?1, 'ios', ?2)",
+                rusqlite::params![device, long_ago],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO link_push (device, username, token, sandbox, updated_at) VALUES (?1, 'j', 't', 0, ?2)",
+                rusqlite::params![device, long_ago],
+            )
+            .unwrap();
+        }
+        outbox::forget_stale(&conn, &[("mac".into(), "j".into())], now);
+        let left = |table: &str| -> Vec<String> {
+            conn.prepare(&format!("SELECT device FROM {table} ORDER BY device"))
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(left("link_devices"), ["mac"]);
+        assert_eq!(left("link_push"), ["mac"]);
     }
 }
