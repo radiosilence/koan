@@ -792,15 +792,26 @@ private struct DevicesSettings: View {
                     HStack {
                         TextField("Account", text: $grantee, prompt: Text("Their username on this server"))
                             .verbatimEntry()
+                            #if os(macOS)
                             .textInputSuggestions {
                                 ForEach(suggestions, id: \.self) { account in
                                     Text(account).textInputCompletion(account)
                                 }
                             }
+                            #endif
                             .onSubmit { share(grantee, allow: true) }
                         Button("Share") { share(grantee, allow: true) }
                             .disabled(grantee.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
+                    #if !os(macOS)
+                    // iOS has no suggestions on a text field: the accounts
+                    // matching what is typed, as rows to tap.
+                    if !grantee.trimmingCharacters(in: .whitespaces).isEmpty {
+                        ForEach(suggestions.filter { $0 != grantee }.prefix(5), id: \.self) { account in
+                            Button(account) { grantee = account }
+                        }
+                    }
+                    #endif
                     // Ours if it could not be sent; the server's if it refused.
                     if let error = shareError ?? mirror.connection?.shareError {
                         Text(error).font(.caption).foregroundStyle(.orange)
