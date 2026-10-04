@@ -270,10 +270,34 @@ impl Session {
         mime: &str,
         extension: &str,
     ) -> (String, String, String) {
-        let token = self.listener.add(Served {
-            path: path.to_path_buf(),
-            mime: mime.to_string(),
-        });
+        self.offer(
+            Served::File {
+                path: path.to_path_buf(),
+                mime: mime.to_string(),
+            },
+            extension,
+        )
+    }
+
+    /// Serve a processed stream, its cover read from `art`. Returns as
+    /// `serve` does.
+    pub fn serve_stream(
+        &self,
+        pipe: Arc<super::stream::Pipe>,
+        art: &std::path::Path,
+        extension: &str,
+    ) -> (String, String, String) {
+        self.offer(
+            Served::Stream {
+                pipe,
+                art: art.to_path_buf(),
+            },
+            extension,
+        )
+    }
+
+    fn offer(&self, served: Served, extension: &str) -> (String, String, String) {
+        let token = self.listener.add(served);
         let url = format!("{}/t/{token}.{extension}", self.base);
         let art = format!("{}/art/{token}", self.base);
         (token, url, art)

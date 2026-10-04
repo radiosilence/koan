@@ -20,7 +20,7 @@ use crate::audio::dsp::{Chain, Setup};
 use crate::audio::opus::OpusBridge;
 use crate::audio::viz::VizBuffer;
 use crate::config::ReplayGainMode;
-use crate::player::state::QueueItemId;
+use crate::player::state::{QueueItemId, RendererClock};
 
 #[derive(Debug, Error)]
 pub enum DecodeError {
@@ -142,6 +142,10 @@ pub struct PlaybackTimeline {
     /// Told when the decoder queues another track, which is when the moment
     /// the playhead reaches it becomes known.
     queued: parking_lot::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+    /// Where a renderer playing this session's stream is, in milliseconds
+    /// of the stream. Set, it is the playhead in place of `samples_played`:
+    /// what has been encoded runs seconds ahead of what is heard.
+    clock: parking_lot::Mutex<Option<RendererClock>>,
 }
 
 impl std::fmt::Debug for PlaybackTimeline {
@@ -159,7 +163,57 @@ impl PlaybackTimeline {
             samples_written: AtomicU64::new(0),
             samples_played: Arc::new(AtomicU64::new(0)),
             queued: parking_lot::Mutex::new(None),
+            clock: parking_lot::Mutex::new(None),
         })
+    }
+
+    /// Samples played: the engine's count, or the renderer's clock.
+    fn played(&self, bounds: &[TrackBoundary]) -> u64 {
+        let Some(clock) = *self.clock.lock() else {
+            return self.samples_played.load(Ordering::Acquire);
+        };
+        let Some(first) = bounds.first() else {
+            return 0;
+        };
+        let per_second = first.output_rate as u64 * first.info.channels as u64;
+        let at = clock.now_ms() * per_second / 1000;
+        // Rounded down to a whole frame, and never past what was written.
+        (at - at % (first.info.channels as u64).max(1))
+            .min(self.samples_written.load(Ordering::Acquire))
+    }
+
+    /// The renderer's clock, in milliseconds of the stream.
+    pub fn clock(&self) -> Option<RendererClock> {
+        *self.clock.lock()
+    }
+
+    pub fn set_clock(&self, clock: Option<RendererClock>) {
+        *self.clock.lock() = clock;
+    }
+
+    /// The track at `samples` into the session.
+    pub fn track_at(&self, samples: u64) -> Option<QueueItemId> {
+        let bounds = self.boundaries.read();
+        let idx = bounds.partition_point(|b| b.sample_offset <= samples);
+        Some(bounds.get(idx.checked_sub(1)?)?.id)
+    }
+
+    /// How long until the playhead reaches the end of what has been written.
+    pub fn until_end(&self) -> Option<std::time::Duration> {
+        let bounds = self.boundaries.read();
+        let played = self.played(&bounds);
+        let last = bounds.last()?;
+        let per_second = last.output_rate as u64 * last.info.channels as u64;
+        if per_second == 0 {
+            return None;
+        }
+        let left = self
+            .samples_written
+            .load(Ordering::Acquire)
+            .saturating_sub(played);
+        Some(std::time::Duration::from_micros(
+            left.saturating_mul(1_000_000) / per_second,
+        ))
     }
 
     /// Call `f` whenever the decoder queues another track.
@@ -171,7 +225,7 @@ impl PlaybackTimeline {
     /// `current_playback` makes.
     pub fn playhead(&self) -> Option<(QueueItemId, u64)> {
         let bounds = self.boundaries.read();
-        let played = self.samples_played.load(Ordering::Acquire);
+        let played = self.played(&bounds);
         let idx = bounds.partition_point(|b| b.sample_offset <= played);
         let current = bounds.get(idx.checked_sub(1)?)?;
         Some((current.id, current.position_ms(played)?))
@@ -181,7 +235,7 @@ impl PlaybackTimeline {
     /// playhead has moved on to the next track.
     pub fn position_of(&self, id: QueueItemId) -> Option<u64> {
         let bounds = self.boundaries.read();
-        let played = self.samples_played.load(Ordering::Acquire);
+        let played = self.played(&bounds);
         let idx = bounds.iter().rposition(|b| b.id == id)?;
         let at = bounds
             .get(idx + 1)
@@ -193,7 +247,7 @@ impl PlaybackTimeline {
     /// playing, at the rate this one plays. None with nothing queued.
     pub fn until_next_track(&self) -> Option<std::time::Duration> {
         let bounds = self.boundaries.read();
-        let played = self.samples_played.load(Ordering::Acquire);
+        let played = self.played(&bounds);
         let idx = bounds.partition_point(|b| b.sample_offset <= played);
         let next = bounds.get(idx)?;
         let current = bounds.get(idx.checked_sub(1)?)?;
@@ -212,7 +266,7 @@ impl PlaybackTimeline {
     /// takes them back.
     pub fn queued_after_playhead(&self) -> Vec<QueueItemId> {
         let bounds = self.boundaries.read();
-        let played = self.samples_played.load(Ordering::Acquire);
+        let played = self.played(&bounds);
         let idx = bounds.partition_point(|b| b.sample_offset <= played);
         bounds[idx..].iter().map(|b| b.id).collect()
     }
@@ -227,6 +281,7 @@ impl PlaybackTimeline {
         self.boundaries.write().clear();
         self.samples_written.store(0, Ordering::Relaxed);
         self.samples_played.store(0, Ordering::Relaxed);
+        *self.clock.lock() = None;
     }
 
     /// Get a clone of the samples_played Arc for the audio engine.
@@ -252,7 +307,7 @@ impl PlaybackTimeline {
         // Read samples_played while holding the lock. This guarantees we
         // never observe a stale boundary list with a newer samples_played
         // (or vice versa).
-        let played = self.samples_played.load(Ordering::Acquire);
+        let played = self.played(&bounds);
 
         // Find which track the playback head is in via binary search.
         // partition_point returns first index where offset > played;
@@ -1123,7 +1178,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use super::*;
-    use crate::player::state::QueueItemId;
+    use crate::player::state::{QueueItemId, RendererClock};
 
     fn make_info(sample_rate: u32, channels: u16) -> StreamInfo {
         StreamInfo {
