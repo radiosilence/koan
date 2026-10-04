@@ -29,9 +29,7 @@ use koan_core::db::queries::{self, PersistedQueueItem};
 use koan_core::helpers::spawn_downloads;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{
-    LoadState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState,
-};
+use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState};
 use koan_core::remote::client::SubsonicError;
 use uuid::Uuid;
 
@@ -363,7 +361,7 @@ impl KoanEngine {
         offload::sequenced(move || {
             let playing = match koan_core::remote::devices::target_device() {
                 Some(d) => d.state.is_some_and(|s| s.playing),
-                None => self.state.playback_state() == PlaybackState::Playing,
+                None => self.state.wants_to_play(),
             };
             if playing {
                 self.send(PlayerCommand::Pause)
@@ -464,7 +462,7 @@ impl KoanEngine {
 
             let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
             let first = items[0].id;
-            let was_stopped = self.state.playback_state() == PlaybackState::Stopped;
+            let was_stopped = self.state.is_idle();
 
             self.send(PlayerCommand::AddToPlaylist(items))?;
             // Another device starts what it was sent by itself when stopped.
@@ -501,6 +499,8 @@ impl KoanEngine {
             self.send(PlayerCommand::ReplacePlaylist {
                 items,
                 start: start_at.unwrap_or(0) as usize,
+                position_ms: 0,
+                play: true,
             })?;
             self.start_downloads(pending);
 
@@ -1571,7 +1571,12 @@ impl KoanEngine {
                 None => 0,
             };
             let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
-            self.send(PlayerCommand::ReplacePlaylist { items, start })?;
+            self.send(PlayerCommand::ReplacePlaylist {
+                items,
+                start,
+                position_ms: 0,
+                play: true,
+            })?;
             self.start_downloads(pending);
 
             Ok(ids)
@@ -1695,8 +1700,17 @@ impl KoanEngine {
             self.download_now(pending);
 
             if let Some(id) = cursor {
-                self.state.set_cursor(Some(id));
-                self.park_at(id, saved.position_ms, resume);
+                // The player waits for a track still downloading, and opens it
+                // at the position once it can.
+                if saved.position_ms > 0 || resume {
+                    self.send_local(PlayerCommand::Cue {
+                        id,
+                        position_ms: saved.position_ms,
+                        play: resume,
+                    })?;
+                } else {
+                    self.state.set_cursor(Some(id));
+                }
             }
 
             Ok(count)
@@ -2903,6 +2917,7 @@ impl KoanEngine {
         out.publish(StateSlice::Playback {
             now_playing: NowPlaying {
                 state: play_state(&st),
+                waiting: false,
                 position_ms: 0,
                 duration_ms: st.duration_ms,
                 queue_item_id: entry.as_ref().map(|e| e.queue_item_id.clone()),
@@ -3288,6 +3303,7 @@ impl KoanEngine {
 
         NowPlaying {
             state: play_state.into(),
+            waiting: self.state.is_waiting(),
             position_ms: self.state.position_ms(),
             duration_ms: self.state.duration_ms(),
             queue_item_id: cursor.map(|c| c.0.to_string()),
@@ -3375,7 +3391,12 @@ impl KoanEngine {
                 track_ids: tracks(&items)?,
                 after: entry(after),
             },
-            PlayerCommand::ReplacePlaylist { items, start } => {
+            PlayerCommand::ReplacePlaylist {
+                items,
+                start,
+                position_ms,
+                play,
+            } => {
                 // Where `start` lands once the tracks the server lacks are
                 // left out: on it, or on the next one that remains.
                 let track_ids = tracks(&items)?;
@@ -3389,8 +3410,8 @@ impl KoanEngine {
                 LinkCommand::Play {
                     start_at: start_at.min(track_ids.len().saturating_sub(1)) as u32,
                     track_ids,
-                    position_ms: 0,
-                    paused: false,
+                    position_ms,
+                    paused: !play,
                 }
             }
             PlayerCommand::RemoveFromPlaylist(id) => LinkCommand::RemoveItems {
@@ -3460,61 +3481,6 @@ impl KoanEngine {
             .filter_map(|item| item.db_id.map(|id| (id, item.id)))
             .collect();
         (items, pending)
-    }
-
-    /// Load the cursor's track, seek to `position_ms`, and stop there.
-    ///
-    /// Setting the position atomic alone achieves nothing — the engine has not
-    /// opened the file, so the first play starts from zero. The track is cued
-    /// there instead, loaded and left paused unless it was playing. It waits for the
-    /// track to be Ready first, because a remote track is still downloading at
-    /// this point, and gives up rather than waiting forever on one that fails.
-    fn park_at(&self, id: QueueItemId, position_ms: u64, resume: bool) {
-        if position_ms == 0 && !resume {
-            return;
-        }
-        let state = self.state.clone();
-        let tx = self.tx.clone();
-        std::thread::Builder::new()
-            .name("koan-session-restore".into())
-            .spawn(move || {
-                let wake = koan_core::signal::engine_changed();
-                let mut seen = wake.generation();
-                let deadline = Instant::now() + std::time::Duration::from_secs(60);
-                loop {
-                    // The user may have started playing something in the
-                    // meantime; restoring a position over that would be rude.
-                    if state.playback_state() != PlaybackState::Stopped
-                        || state.cursor() != Some(id)
-                    {
-                        return;
-                    }
-                    if state
-                        .item_load_state(id)
-                        .is_some_and(|s| matches!(s, LoadState::Ready))
-                    {
-                        // Whether to stay parked is decided here, not by the
-                        // caller: this runs on a thread that waits for the
-                        // track to become ready, so a Resume sent alongside
-                        // would land long before the cue and be undone.
-                        let _ = tx.send(PlayerCommand::Cue {
-                            id,
-                            position_ms,
-                            play: resume,
-                        });
-                        return;
-                    }
-                    let Some(left) = deadline.checked_duration_since(Instant::now()) else {
-                        break;
-                    };
-                    // A track becoming ready moves the queue, which is a change
-                    // like any other. The timeout is the giving-up clock rather
-                    // than a look-again one: this wakes when the item does.
-                    seen = wake.wait_until(seen, left);
-                }
-                log::info!("session restore: track never became ready, leaving position at 0");
-            })
-            .ok();
     }
 
     /// Undo or redo a playlist edit: put it back, follow it from the queue if
@@ -3641,22 +3607,12 @@ impl KoanEngine {
                     return Ok(());
                 }
                 let start = (start_at as usize).min(items.len() - 1);
-                let first = items[start].id;
-                if position_ms == 0 && !paused {
-                    self.send_local(PlayerCommand::ReplacePlaylist { items, start })?;
-                } else {
-                    // Opened at the position rather than started and seeked,
-                    // which would let the top of the track be heard first.
-                    self.send_local(PlayerCommand::BeginUndoBatch)?;
-                    self.send_local(PlayerCommand::ClearPlaylist)?;
-                    self.send_local(PlayerCommand::AddToPlaylist(items))?;
-                    self.send_local(PlayerCommand::EndUndoBatch)?;
-                    self.send_local(PlayerCommand::Cue {
-                        id: first,
-                        position_ms,
-                        play: !paused,
-                    })?;
-                }
+                self.send_local(PlayerCommand::ReplacePlaylist {
+                    items,
+                    start,
+                    position_ms,
+                    play: !paused,
+                })?;
                 self.download_now(pending);
                 Ok(())
             }),
@@ -3698,7 +3654,7 @@ impl KoanEngine {
                 let Some(first) = items.first().map(|i| i.id) else {
                     return Ok(());
                 };
-                let was_stopped = self.state.playback_state() == PlaybackState::Stopped;
+                let was_stopped = self.state.is_idle();
                 self.send_local(PlayerCommand::AddToPlaylist(items))?;
                 if was_stopped {
                     self.send_local(PlayerCommand::Play(first))?;

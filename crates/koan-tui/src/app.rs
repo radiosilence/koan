@@ -163,6 +163,8 @@ pub struct App {
     pub state: Arc<SharedPlayerState>,
     pub tx: Sender<PlayerCommand>,
     pub quit: bool,
+    /// When a skip key last acted, to swallow the terminal's key repeat.
+    last_skip: Option<std::time::Instant>,
 
     /// Queue cursor, selection, scroll, and cached snapshot.
     pub queue: QueueState,
@@ -320,6 +322,7 @@ impl App {
             state,
             tx,
             quit: false,
+            last_skip: None,
             queue: QueueState::default(),
             picker: None,
             spinner_tick: 0,
@@ -740,12 +743,8 @@ impl App {
                 self.quit = true;
             }
             KeyCode::Char(' ') => self.toggle_pause(),
-            KeyCode::Char('>') | KeyCode::Char('n') => {
-                self.tx.send(PlayerCommand::NextTrack).ok();
-            }
-            KeyCode::Char('<') => {
-                self.tx.send(PlayerCommand::PrevTrack).ok();
-            }
+            KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
+            KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
             KeyCode::Char('.') | KeyCode::Right => {
                 self.seek_to(self.state.position_ms().saturating_add(10_000));
             }
@@ -2494,8 +2493,23 @@ impl App {
         };
     }
 
+    /// Next or previous, at most once per 150 ms. A held key repeats faster
+    /// than anyone means to skip, and the player acts on every command it is
+    /// sent.
+    fn skip(&mut self, cmd: PlayerCommand) {
+        let now = std::time::Instant::now();
+        if self
+            .last_skip
+            .is_some_and(|at| now.duration_since(at) < std::time::Duration::from_millis(150))
+        {
+            return;
+        }
+        self.last_skip = Some(now);
+        self.tx.send(cmd).ok();
+    }
+
     fn toggle_pause(&self) {
-        let cmd = if self.state.playback_state() == PlaybackState::Playing {
+        let cmd = if self.state.wants_to_play() {
             PlayerCommand::Pause
         } else {
             PlayerCommand::Resume
@@ -2552,12 +2566,8 @@ impl App {
                 };
             }
             KeyCode::Char(' ') => self.toggle_pause(),
-            KeyCode::Char('>') | KeyCode::Char('n') => {
-                self.tx.send(PlayerCommand::NextTrack).ok();
-            }
-            KeyCode::Char('<') => {
-                self.tx.send(PlayerCommand::PrevTrack).ok();
-            }
+            KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
+            KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
             _ => {
                 if self.library_focus == LibraryFocus::Library {
                     self.handle_library_browse_key(key);
