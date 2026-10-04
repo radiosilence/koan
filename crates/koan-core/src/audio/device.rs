@@ -34,6 +34,7 @@ pub struct AudioDevice {
     pub id: AudioDeviceID,
     pub name: String,
     pub sample_rates: Vec<f64>,
+    pub kind: super::backend::OutputKind,
 }
 
 /// Get the default output device ID.
@@ -114,10 +115,51 @@ pub fn list_output_devices() -> Result<Vec<AudioDevice>> {
             id,
             name,
             sample_rates,
+            kind: transport_kind(id),
         });
     }
 
     Ok(devices)
+}
+
+/// How a device is connected.
+fn transport_kind(device_id: AudioDeviceID) -> super::backend::OutputKind {
+    use super::backend::OutputKind;
+    let property = AudioObjectPropertyAddress {
+        mSelector: kAudioDevicePropertyTransportType,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain,
+    };
+    let mut transport: u32 = 0;
+    let mut size = mem::size_of::<u32>() as u32;
+    // SAFETY: Standard CoreAudio property query into a correctly sized u32.
+    let status = unsafe {
+        AudioObjectGetPropertyData(
+            device_id,
+            &property,
+            0,
+            ptr::null(),
+            &mut size,
+            &mut transport as *mut u32 as *mut _,
+        )
+    };
+    if status != 0 {
+        return OutputKind::Other;
+    }
+    #[allow(non_upper_case_globals)]
+    match transport {
+        kAudioDeviceTransportTypeBuiltIn => OutputKind::BuiltIn,
+        kAudioDeviceTransportTypeUSB => OutputKind::Usb,
+        kAudioDeviceTransportTypeBluetooth | kAudioDeviceTransportTypeBluetoothLE => {
+            OutputKind::Bluetooth
+        }
+        kAudioDeviceTransportTypeAirPlay => OutputKind::AirPlay,
+        kAudioDeviceTransportTypeHDMI | kAudioDeviceTransportTypeDisplayPort => OutputKind::Display,
+        kAudioDeviceTransportTypeVirtual | kAudioDeviceTransportTypeAggregate => {
+            OutputKind::Virtual
+        }
+        _ => OutputKind::Other,
+    }
 }
 
 /// Check if a device has output streams.

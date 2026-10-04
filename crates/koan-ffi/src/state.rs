@@ -19,8 +19,8 @@ use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use crate::types::{
-    ConnectionInfo, DeviceInfo, NowPlaying, QueueItem, QueueLock, SyncProgress, Transfer,
-    TransferFigure,
+    ConnectionInfo, DeviceInfo, NowPlaying, QueueItem, QueueLock, RendererInfo, RendererOutput,
+    SyncProgress, Transfer, TransferFigure,
 };
 
 /// One slice of engine state, whole.
@@ -100,6 +100,13 @@ pub enum StateSlice {
     },
     /// The server and the network, as far as devices are concerned.
     Connection { connection: ConnectionInfo },
+    /// UPnP renderers on the network, and the one this koan is playing to.
+    /// Unlike `Devices`, a renderer is this device's output: the transport and
+    /// queue stay this device's own while one plays.
+    Renderers {
+        renderers: Vec<RendererInfo>,
+        output: Option<RendererOutput>,
+    },
 }
 
 /// Which slot a slice occupies. One per variant, in apply order.
@@ -117,9 +124,10 @@ enum Slot {
     Tasks,
     Sync,
     Connection,
+    Renderers,
 }
 
-const SLOTS: usize = 11;
+const SLOTS: usize = 12;
 
 impl StateSlice {
     fn slot(&self) -> Slot {
@@ -135,6 +143,7 @@ impl StateSlice {
             Self::Sync { .. } => Slot::Sync,
             Self::Devices { .. } => Slot::Devices,
             Self::Connection { .. } => Slot::Connection,
+            Self::Renderers { .. } => Slot::Renderers,
         }
     }
 }

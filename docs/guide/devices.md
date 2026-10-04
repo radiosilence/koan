@@ -2,9 +2,22 @@
 
 Any kōan app can control another: a phone as the remote for the Mac, the Mac's
 queue carried out of the door on the phone, a heart on the phone for what the
-Mac is playing. The **Play on** button (the laptop-and-phone icon, in the Mac's
-transport bar and on the phone's mini player and Now Playing) lists the devices
-this one can reach.
+Mac is playing. The **Play on** button (in the Mac's transport bar and on the
+phone's mini player and Now Playing) lists everywhere music can go, in two
+kinds:
+
+- **Play from this device**: its own outputs. On the Mac that is each audio
+  device (built-in speakers, a USB DAC, a display) and UPnP amplifiers on the
+  network. Picking one keeps the queue and transport here and moves only the
+  sound. AirPlay has its own button beside Play on: the system's picker,
+  since macOS lets no app pick a speaker itself. Playing to the system default,
+  the music moves to the speaker chosen there, from where it was.
+- **Control another kōan**: the other kōan apps this one can reach. Picking
+  one makes the transport and queue that device's.
+
+Each row ends in the glyph of what picking it does, a speaker or a remote. The
+button, a speaker, carries the name of the amplifier or device the music is
+going to when it is not this one.
 
 ## Which devices are listed
 
@@ -20,13 +33,56 @@ this one can reach.
 - **Devices by address.** A tailnet carries no Bonjour; add the other device's
   name and port (`mac-mini:5626`) under Settings → Devices.
 
-A device that is found but cannot be reached is listed with the reason. On
-iOS, finding anything on the network needs **Local Network** allowed for kōan
-(Settings → Privacy & Security); the picker says so when it is not.
+A device that is found but cannot be reached is not listed: there is nothing
+to do with it. On iOS, finding anything on the network needs **Local Network**
+allowed for kōan (Settings → Privacy & Security); the picker says so when it
+is not.
 
 The device being controlled and the devices last seen are kept between runs,
 so reopening the app shows them at once, still controlling the same device;
 each is checked as the app comes to the front.
+
+## Amplifiers and streamers (UPnP)
+
+Network amplifiers and streamers that act as UPnP/DLNA renderers (WiiM,
+Yamaha MusicCast, Denon and Marantz HEOS, Cambridge, Arcam and most "network
+player" amps) are listed under **Play on** on the Mac, and in the output
+device list (`o`) in the TUI, where they are marked `· UPnP`. Kodi with
+"Allow remote control via UPnP" turned on, gmrender-resurrect and upmpdcli
+are renderers too.
+
+Picking one makes it this device's output, in the same way a USB DAC is. The
+queue, the transport and history stay on this device, and only the audio goes
+to the amplifier. Each track is sent as the original file, so playback is
+bit-perfect up to the amplifier's own DAC. Room correction built into the
+amplifier, such as Dirac Live, still applies. ReplayGain and fades do not,
+since kōan never touches the samples. The volume control in the picker drives
+the amplifier's own volume.
+
+- **Gapless** where the renderer accepts the next track in advance
+  (`SetNextAVTransportURI`). Otherwise there is a short gap between tracks.
+- **Formats the renderer does not list** (often Opus or APE) are skipped and
+  marked in the queue with the reason. They play again when you switch back to
+  this device.
+- **Tracks from a server** play once their download has finished; the next one
+  downloads while the current one plays.
+- **Controls on the amplifier work.** Pausing or resuming there shows in kōan.
+  Stopping there mid-track pauses kōan at that point, and play loads the track
+  again from where it stopped.
+- **In use by something else**: a renderer already playing for another app is
+  marked as such. Picking it takes it over.
+- **The progress bar follows the renderer**, which reports its position in
+  whole seconds: kōan keeps its own count between readings and corrects it when
+  the renderer says otherwise. The bar waits at the start of a track until the
+  renderer says it is playing, since some take a second or more to begin.
+
+
+kōan finds renderers over SSDP and serves each track from a port it opens
+only while a renderer is the output. Each track has a random URL of its own,
+so nothing else in the library can be fetched from it. On a Mac the first
+connection from the amplifier may bring up the firewall prompt. The iOS app
+cannot search for renderers yet, because Apple requires a multicast entitlement
+for it.
 
 ## Controlling and moving
 
@@ -45,6 +101,13 @@ track the destination has to download waits until the whole file has arrived. A
 paused source arrives paused. On a phone, **Move here** on *This iPhone* brings
 the Mac's music to the phone. Tracks only on the source device, with no server
 id, stay behind, and the app says how many.
+
+A device that receives music moved to it while it was controlling another
+stops controlling it: the music is here now. Move the Mac's music to the phone,
+then later move it back from the phone, and the Mac is playing its own music
+again, through the amplifier if that was its output. A device told to play
+something by another, without a move, keeps controlling whatever it was, so
+two devices can still control each other on purpose.
 
 ## The lock screen
 

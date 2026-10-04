@@ -1265,6 +1265,7 @@ mod tests {
             start_at: 1,
             position_ms: 0,
             paused: false,
+            handoff: false,
         };
         assert_eq!(cover_track(&play), Some(uid.as_str()));
     }

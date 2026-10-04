@@ -14,6 +14,7 @@ pub mod playlists;
 pub mod quiet;
 pub mod remote;
 pub mod signal;
+pub mod upnp;
 
 pub use sift::format;
 

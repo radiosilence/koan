@@ -66,6 +66,11 @@ walkdir = { workspace = true }
 # (FSEvents on macOS, inotify on Linux).
 notify = "8"
 tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+# UPnP renderers: device descriptions, SOAP and DIDL-Lite are XML.
+quick-xml = "0.42.0"
+# SSDP announcements arrive on port 1900, which other processes hold too:
+# sharing it takes SO_REUSEADDR/SO_REUSEPORT before the bind.
+socket2 = { version = "0.6.5", features = ["all"] }
 
 [target.'cfg(unix)'.dependencies]
 # statvfs, for the free-space check before an organize run

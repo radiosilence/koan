@@ -126,6 +126,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `player/commands.rs` | `PlayerCommand` enum, `CommandChannel` (bounded crossbeam) |
 | `player/state.rs` | `SharedPlayerState`, `Playlist`, `PlaylistItem`, `QueueItemId`, `LoadState`, `PlaybackState`, `derive_visible_queue()` |
 | `player/undo.rs` | Undo/redo stack for playlist operations (100-deep) |
+| `player/renderer.rs` | A UPnP renderer as a session's output: `RendererLink` (the chosen renderer, kept across sessions) and `Output::Passthrough` (the original file handed over, gapless via `SetNextAVTransportURI`, playhead from the renderer's clock). Renderer events return as session-tagged `PlayerCommand::Renderer` |
 | `player/history.rs` | Play history recording — writes an entry when a track starts, fills in listening time when it ends. Owns the `koan-history` writer thread |
 | `db/schema.rs` | DDL: artists, albums, tracks, scan_cache, remote_servers, organize_log, tracks_fts (FTS5) |
 | `db/connection.rs` | `Database::open()`, WAL mode, pragmas |
@@ -147,6 +148,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/wikimedia.rs` | Wikidata items, Wikipedia lead sections and Commons images — where artist bios and photos come from |
 | `remote/queue.rs` | The download queue: what to fetch when. Follows the playlist (started by `Player::spawn`; front ends never enqueue), worker pool, a priority lane for the track under the cursor, cursor-aware reordering. With a cache limit, fetches only as far ahead of the cursor as the limit allows (the playback window), and trims the cache |
 | `remote/downloads.rs` | The download store, owned by `SharedPlayerState`: the one table of transfers, keyed by track, with every queue entry waiting on each. `settle` is the one way a transfer's end is told |
+| `upnp/` | Playing to UPnP/DLNA MediaRenderers. SSDP discovery, SOAP, GENA, DIDL-Lite, and the tokenised HTTP listener renderers fetch from. Hand-rolled on std threads; an event is a reason to ask the renderer where it is, never a reading |
 | `quiet.rs` | What runs in the background on iOS: nothing nobody asked for. Link, nearby browse and dial, sync and rescans wait here; a phone playing stays findable. Lifted by controlling another device or a push |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
 | `helpers.rs` | Shared by every front end: sign-in, favourite reconciliation, sharing, auto-sync and folder watching, forget-folder/forget-remote, cache and index maintenance |

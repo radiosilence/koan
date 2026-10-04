@@ -39,6 +39,13 @@ pub enum LinkCommand {
         position_ms: u64,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         paused: bool,
+        /// Sent by a device handing its music over. One that receives it
+        /// while controlling another device takes control back: the music
+        /// is here now, so this device is what the person is listening to.
+        /// A plain play leaves control alone, so two devices can still
+        /// control each other on purpose.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        handoff: bool,
     },
     /// Append these tracks to the queue.
     #[serde(rename_all = "camelCase")]
@@ -821,6 +828,7 @@ mod tests {
             start_at: 1,
             position_ms: 0,
             paused: false,
+            handoff: false,
         };
         let json = serde_json::to_string(&play).unwrap();
         assert_eq!(
@@ -833,6 +841,7 @@ mod tests {
             start_at: 0,
             position_ms: 61_250,
             paused: true,
+            handoff: false,
         };
         let json = serde_json::to_string(&held).unwrap();
         assert_eq!(

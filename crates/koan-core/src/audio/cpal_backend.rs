@@ -126,6 +126,7 @@ impl CpalBackend {
             name,
             sample_rates: rates,
             platform_id: index,
+            kind: Default::default(),
         })
     }
 }
@@ -323,6 +324,7 @@ mod tests {
             name: "nonexistent".into(),
             sample_rates: vec![44100.0],
             platform_id: 0,
+            kind: Default::default(),
         };
         let result = backend.set_device_sample_rate(&dummy, 96000.0);
         assert!(result.is_ok());
@@ -348,6 +350,7 @@ mod tests {
             name: "this device does not exist xyzzy".into(),
             sample_rates: vec![],
             platform_id: 9999,
+            kind: Default::default(),
         };
         assert!(backend.resolve_device(&dummy).is_err());
     }

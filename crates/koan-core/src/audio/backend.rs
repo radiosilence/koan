@@ -24,6 +24,36 @@ pub struct DeviceInfo {
     pub sample_rates: Vec<f64>,
     /// Opaque platform-specific ID. CoreAudio: AudioDeviceID, cpal: index.
     pub platform_id: u64,
+    pub kind: OutputKind,
+}
+
+/// How a device is connected, so a picker can show it for what it is.
+/// CoreAudio says; other platforms answer `Other`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputKind {
+    BuiltIn,
+    Usb,
+    Bluetooth,
+    AirPlay,
+    /// HDMI or DisplayPort: a display's speakers, or what it passes on.
+    Display,
+    Virtual,
+    #[default]
+    Other,
+}
+
+impl OutputKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::BuiltIn => "builtin",
+            Self::Usb => "usb",
+            Self::Bluetooth => "bluetooth",
+            Self::AirPlay => "airplay",
+            Self::Display => "display",
+            Self::Virtual => "virtual",
+            Self::Other => "other",
+        }
+    }
 }
 
 /// Trait abstracting platform audio output.
@@ -110,6 +140,7 @@ mod tests {
             name: "Test DAC".into(),
             sample_rates: vec![44100.0, 48000.0, 96000.0],
             platform_id: 42,
+            kind: Default::default(),
         };
         assert_eq!(info.name, "Test DAC");
         assert_eq!(info.sample_rates.len(), 3);

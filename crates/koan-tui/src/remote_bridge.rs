@@ -239,6 +239,12 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             | PlayerCommand::TrackQueued => {
                 log::debug!("ignoring {:?} in remote mode", cmd);
             }
+            // The output is the server's in remote mode, renderer or not.
+            PlayerCommand::UseRenderer(_)
+            | PlayerCommand::SetRendererVolume(_)
+            | PlayerCommand::Renderer { .. } => {
+                log::debug!("ignoring {:?} in remote mode", cmd);
+            }
         }
     }
 }
