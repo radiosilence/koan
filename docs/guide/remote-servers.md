@@ -14,7 +14,11 @@ This prompts for your password and saves credentials to `config.local.toml` (git
 koan remote sync
 ```
 
-The first sync takes minutes for a library of tens of thousands of tracks.
+A full sync lists songs a page at a time, about a hundred requests for fifty
+thousand tracks; between an iPhone and a kōan server that is about a second
+per 10,000 tracks. A server that does
+not answer an empty `search3` query is walked an album at a time instead, which
+for a library that size takes minutes.
 
 ## Staying in sync
 

@@ -67,9 +67,22 @@
         <li><strong>Room and headphone correction per output.</strong> Roon filter packs, REW and rePhase impulses, CamillaDSP and Equalizer APO configs and AutoEQ import as they are, and a device without a profile runs nothing at all. <a href="/docs/dsp/">Equalisation and convolution</a></li>
         <li><strong>Network amplifiers get the original file.</strong> A UPnP/DLNA renderer is handed the file itself, or, with a correction profile, one FLAC stream for the whole queue, gapless whether or not the amplifier can do gapless. <a href="/docs/devices/#amplifiers-and-streamers-upnp">Amplifiers and streamers</a></li>
         <li><strong>Music moves between devices mid-track.</strong> Move the Mac's queue to the phone and it starts where the Mac went silent, opened at that point rather than seeked to, and paused if it was paused. <a href="/docs/devices/#controlling-and-moving">Controlling and moving</a></li>
-        <li><strong>A cache limit that a long queue cannot break.</strong> Local folders and a Subsonic server are one library; remote tracks play while they download, and only as much of the queue is fetched ahead as the limit allows. <a href="/docs/cache-management/">Cache management</a></li>
-        <li><strong>An assistant as a remote.</strong> Over MCP it plays on the phone or the Mac you name, and builds playlists that hold places for albums still downloading, filled when they reach the library. <a href="#assistants">With an assistant</a></li>
+        <li><strong>Built for losing signal on the Tube.</strong> While there is signal, the queue is fetched ahead of the playhead, the current track first, as far as the cache limit allows, so it keeps playing underground; anything played once plays again offline. A long queue cannot push the cache past its limit. <a href="/docs/cache-management/">Cache management</a></li>
+        <li><strong>Fast sync.</strong> A full sync runs at about a second per 10,000 tracks on an iPhone against a kōan server: songs are listed a page at a time, about a hundred requests for fifty thousand tracks rather than one per album. A server whose library has not changed is not walked at all. <a href="/docs/remote-servers/">Remote servers</a></li>
+        <li><strong>A whole ecosystem that is still plain OpenSubsonic.</strong> Apps, terminal UI, web UI, share links and server all come from kōan, but the apps play from Navidrome too, and Play:Sub or any other Subsonic app plays from a kōan server. <a href="#server">As a server</a></li>
+        <li><strong>Light on the machine.</strong> Nothing polls: the player sleeps until something happens, and the analyser stops when nothing draws it. Playing, with a 51,000-track library loaded, the Mac app uses about 200 MB and 1% of one core; the server holding that library idles at 30 MB and a thousandth of a core. The app is 33 MB installed; the command line is a single 45 MB binary. <a href="#pieces">The pieces</a></li>
+        <li><strong>An assistant as a remote.</strong> Add the server to Claude as a connector and sign in with your kōan account; there is no gateway or identity provider. It plays on the phone or the Mac you name, and builds playlists that reach every device and hold places for albums still downloading, filled when they land. It can never move, rename or delete a file, whatever the account. <a href="#assistants">With an assistant</a></li>
+        <li><strong>Inviting someone is one link.</strong> Opened on a phone or Mac with kōan, it signs that device in with a key of its own and syncs the library, with nothing to type. Each device's key can be revoked on its own, and changing the password withdraws every link already sent. <a href="/docs/authentication/#invites">Invites</a></li>
         <li><strong>One Rust core, linked in.</strong> The SwiftUI apps on macOS and iOS call the audio engine in-process: no Electron, and no daemon or port between the interface and the sound. <a href="#pieces">The pieces</a></li>
+      </ul>
+
+      <h2 class="mt-12">The basics, done properly</h2>
+      <ul>
+        <li><strong>Compilations stay one album.</strong> Albums are grouped by album artist, so a various-artists record does not split into one album per track artist, and two editions with different MusicBrainz releases stay two.</li>
+        <li><strong>The queue comes back as you left it.</strong> After a restart it is all there, at the point in the track where you stopped, and it plays only if it was playing.</li>
+        <li><strong>A track can be queued twice.</strong> Every entry has its own id, so removing or moving one copy leaves the other alone, and the last 100 queue edits can be undone.</li>
+        <li><strong>One artist is one artist.</strong> <code>SIGUR RÓS</code> on a server and <code>Sigur Rós</code> on disk are the same act, whatever the case or Unicode form.</li>
+        <li><strong>Your tags are left alone.</strong> kōan reads them and never writes them back; favourites belong to the track, so they follow it when the file moves.</li>
       </ul>
     </section>
 
@@ -222,7 +235,7 @@ sift import ~/Downloads/some-album</code></pre>
         <li><strong>Queue</strong> grouped by album, with drag reordering, multi-select, 100 levels of undo, and Finder drag and drop. It survives restarts.</li>
         <li><strong>Playlists</strong>, ordered and named, exportable as M3U8.</li>
         <li><strong>Synced lyrics</strong> from LRCLIB, with the current line highlighted.</li>
-        <li><strong>File organisation</strong> with foobar2000-compatible format strings (<code>%field%</code>, <code>[conditionals]</code> and 59 <code>$functions()</code>). Every move is previewed, collisions included, before anything is touched.</li>
+        <li><strong>File organisation</strong> using <a href="https://github.com/radiosilence/sift">sift</a>'s foobar2000-compatible format strings (<code>%field%</code>, <code>[conditionals]</code> and 59 <code>$functions()</code>). Every move is previewed, collisions included, before anything is touched.</li>
       </ul>
 
       <h3>Automation</h3>
