@@ -5,15 +5,13 @@
 ### Fixed
 
 - **Move here resumes where the source stopped.** The source read its playhead before sending and paused afterwards, so whatever played during the send and the fade was heard again on the destination; the destination then started the track from the top and seeked, letting its opening through. The source now pauses first and reports where the fade went silent, and the destination opens the track at that point. A track the destination has to download waits for the whole file rather than starting early, and a paused source arrives paused.
+- **A command reaches a suspended iPhone after the app has been reinstalled.** A reinstall gives the app a new device id and leaves the old one's push token behind under the same name, so the server answered "several can be reached: iPhone, iPhone" and sent no push. It now wakes the device seen most recently.
+- **ALAC tracks from a koan server no longer show as "BIN".** The server had no suffix or content type for ALAC, PCM or `.aif`, so it published those tracks as `bin`, `application/octet-stream`, and an app syncing from it stored `bin` as the codec. Every codec the indexer records now has its suffix and content type. Since a suffix cannot tell ALAC from AAC (both are `m4a`), a koan server also sends the stored codec in a `codec` attribute, which koan clients prefer over the suffix. Tracks already synced pick up the correct codec on the next full library sync.
 
 ### Changed
 
 - **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
-
-### Fixed
-
-- **A command reaches a suspended iPhone after the app has been reinstalled.** A reinstall gives the app a new device id and leaves the old one's push token behind under the same name, so the server answered "several can be reached: iPhone, iPhone" and sent no push. It now wakes the device seen most recently.
 
 ## 0.50.2
 
