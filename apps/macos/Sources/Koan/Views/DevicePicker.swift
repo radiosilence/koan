@@ -398,12 +398,15 @@ private struct DeviceChoiceRow: View {
                                     .accessibilityLabel(reachHelp ?? "")
                             }
                         }
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(
-                                unreachable || warning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
-                            )
-                            .lineLimit(2)
+                        // A row with nothing to add is one line, centred.
+                        if !detail.isEmpty {
+                            Text(detail)
+                                .font(.caption)
+                                .foregroundStyle(
+                                    unreachable || warning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
+                                )
+                                .lineLimit(2)
+                        }
                     }
                     Spacer(minLength: 0)
                     if selected {
