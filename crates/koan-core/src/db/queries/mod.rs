@@ -11,6 +11,7 @@ pub mod playlists;
 mod scan_cache;
 mod search;
 pub mod shares;
+pub(crate) mod sources;
 mod stats;
 pub mod tracks;
 pub mod uids;
@@ -183,7 +184,7 @@ pub struct LibraryStats {
 }
 
 /// Metadata for inserting/updating a track.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TrackMeta {
     pub title: String,
     pub artist: String,

@@ -279,12 +279,13 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 | `queries/mod.rs` | Row types (`ArtistRow`, `AlbumRow`, `TrackRow`, `PlaybackSource`, `LibraryStats`, `TrackMeta`), re-exports |
 | `queries/artists.rs` | Artist upsert/query |
 | `queries/albums.rs` | Album upsert/query |
-| `queries/tracks.rs` | Track upsert (dedup: path → remote_id → content match, then a re-merge pass), removal, playback source resolution, `track_id_by_path()` |
+| `queries/sources.rs` | Track identity: the `local_files` and `remote_entries` source rows, `link()` (which track a source is), `derive()` (a track's columns from its sources), merge, split and removal |
+| `queries/tracks.rs` | `upsert_track` and the removal entry points over `sources`, track reads, playback source resolution, `track_id_by_path()` |
 | `queries/search.rs` | FTS5 full-text search |
 | `queries/scan_cache.rs` | Mtime+size change detection to skip unchanged files |
 | `queries/stats.rs` | Library statistics |
 | `queries/lyrics.rs` | Lyrics caching (synced + plain, per-track) |
-| `queries/favourites.rs` | Favourite/star status (syncs with Navidrome). Favourites, playlists, play history and shares carry a `user_id`: each account on a server has its own, as Navidrome keeps them. `LOCAL_USER` (0) is the caller with no account — the apps, the TUI, auth-disabled mode, the Subsonic shared secret — and resolves to the first admin once one exists, so a local library and a single-user server behave the same (`queries/auth.rs`) |
+| `queries/favourites.rs` | Favourite/star status by row id (syncs with Navidrome). Favourites, playlists, play history and shares carry a `user_id`: each account on a server has its own, as Navidrome keeps them. `LOCAL_USER` (0) is the caller with no account — the apps, the TUI, auth-disabled mode, the Subsonic shared secret — and resolves to the first admin once one exists, so a local library and a single-user server behave the same (`queries/auth.rs`) |
 | `queries/history.rs` | Play history — one row per play, written when a track starts |
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |
 
@@ -296,11 +297,13 @@ Statistics matter as much as the indexes: with none, the planner guesses the sam
 
 **Ids:** every artist, album, track and playlist has a `uid`, a UUIDv7 written by an insert trigger, and that is the id every surface publishes: Subsonic, GraphQL, the link. Row ids stay internal join keys, because they are numbered per table (album 5 and song 5 collide at an endpoint that takes either) and per database. A client syncing from a koan server adopts the server's uid for each row it writes a remote id to (`queries::adopt_uid`), so ids pass between server and devices untranslated; a uid another row already holds is left to it, so the unique index cannot be broken by a duplicate. Ids from servers that are not koan are not UUIDv7 and are never adopted. Arguments accept a uid or a bare row id, which clients from before uids still send; Subsonic also takes `ar-`/`al-`/`mf-` prefixes. Share ids are not uids: they are 128 random bits, since a share link must not be guessable and a UUIDv7 carries its creation time.
 
-**Track dedup:** `upsert_track` tries its match strategies in order: (1) exact path match, (2) remote_id match, (2b) during a sync only, a row in the same album/disc/track/title slot whose remote_id the sync has not seen, which is the same track after the server renumbered it, (3) content match (artist + album + disc + track# + title, then the same without the artist), (4) MusicBrainz recording + release ids, which match however each source names the album. Every cross-source step applies only where one side has no local path and one side has no remote_id. First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows, while keeping two files on disk as two tracks however identical their tags: multi-disc releases repeat title and track number across discs. A merge fills gaps only — it never overwrites a populated column with NULL, so a remote sync that knows nothing about sample rate cannot erase what the local scan measured.
+**Track identity:** each file on disk is a row of `local_files` and each server entry a row of `remote_entries`, holding that source's tags as it gave them; nothing else writes to them. A track holds at most one source of each kind, and its own columns (names, audio properties, path, server id) are derived from its sources by `sources::derive`, the file's first. The names come whole from one source, because mixing one source's title with the other's album names a track neither has; genre, MusicBrainz ids, audio properties and position fall back to the server's where the file has none.
 
-A row matched by path or remote_id is then asked the content-match question a second time, against the corrected metadata. Strategies 1 and 2 pin a row to the source it was first seen from, so a file indexed with bad tags could never merge with its remote copy however good the tags later became — the path kept matching, and the merge that should have happened never got asked. If the counterpart turns up, `merge_track_rows` folds it in: play history concatenates, lyrics fill a gap or are dropped, favourites need no move because they are keyed by path. An album left with nothing in it goes too, since a corrected tag usually strands a misreading nobody wants in the browser.
+Which track a source belongs to is decided only by `sources::link`, on one normalised key (NFC, lowercased, whitespace collapsed, disc 0 as none): the same album, album artist, disc, number and title with the track artist as a tie-break, or the same MusicBrainz recording on the same release. Two sources of the same kind are never one track, and a match with two candidates is declined rather than guessed. `link` runs when a source arrives, when its tags change and when its partner goes, so a corrected tag can pair a track or split it, a moved file takes over its server copy, and a server that renumbered hands its tracks to the new ids. A merge keeps the older row, with its id and history; the track's uid is the koan server's when it has one.
 
-Only a single-sourced row is asked — one already carrying both a path and a remote id has nothing left to absorb. Unchanged files never reach `upsert_track` at all, so repairing a library that already holds duplicates from this means `koan scan --force`.
+**Album and artist identity:** an artist is its folded name (`artists.name_key`). An album is its folded title (`albums.title_key`), its album artist and its MusicBrainz release when one is known, so two editions with their own release ids are two albums; a track naming no release joins the album of its names that has none either. A release id is filled once and never overwritten, so files of two editions cannot trade it. A track only the server has joins the album holding the server's id for its record, and an album's server id is the one most of its entries give. When an album of files takes a server id that a server-only album already holds, that album is folded into the one with files, which is how a record the server names one way and the files another becomes one album.
+
+**Favourites** name rows by id (`favourites.track_id`, `favourite_albums.album_id`, `favourite_artists.artist_id`) and follow them through merges. `rebuild_index` forgets what the sources said and keeps the rows: the next scan and sync read every source again and each reclaims its row by path or server id, so favourites, history and playlists survive it.
 
 ### `index/`
 
@@ -416,7 +419,7 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **TUI:** `koan-tui/src/app.rs` is the state machine. Follow `handle_normal_key()` for the main mode, `handle_tick()` for the per-frame update cycle. `ui.rs` is the render pipeline.
 
-**Database:** Start at `db/schema.rs` for the table definitions, then `db/queries/tracks.rs` for the dedup logic in `upsert_track`.
+**Database:** Start at `db/schema.rs` for the table definitions, then `db/queries/sources.rs` for how sources become tracks.
 
 ## Key design decisions
 
@@ -432,7 +435,7 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **Controlling another device is a mode of the engine, not of the UI:** while the app controls another device, `koan-ffi` publishes that device's playback, playhead and queue in the slices its own would go in, and translates each `PlayerCommand` into a `LinkCommand` for it (queue entries by the ids that device reported, tracks by server id). Every page, Control Center and the media keys follow without knowing. A handoff is always carried out by the device that holds the queue, so taking music and sending it are the same command (`handOff { to }`).
 
-**Track dedup across sources:** Local file + Subsonic remote entry for the same song = one DB row. Local path always wins for playback.
+**Track identity across sources:** a local file and a Subsonic entry for the same song are two source rows under one track. The file's tags and path win.
 
 **Stale removal is guarded, not eager:** deleting a track takes its play history and lyrics with it, so an unmounted volume must never look like a deletion. A folder that yields zero audio files is skipped entirely; an IO error while stat-ing a path counts as "cannot tell", not "gone"; and a run that would clear more than 20% of a folder holding at least 100 tracks is refused outright. `koan scan --force-remove` lifts that last brake and only that one.
 

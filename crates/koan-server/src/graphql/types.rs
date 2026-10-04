@@ -9,7 +9,7 @@ use koan_core::player::state::{PlaybackState, QueueEntryStatus, SharedPlayerStat
 use super::helpers::paginate;
 use super::jobs::{Job, JobState};
 use super::loaders::{
-    AlbumStatsOf, AlbumTracks, ArtistAlbums, ArtistStatsOf, ArtistTracks, DbLoader, FavouritePath,
+    AlbumStatsOf, AlbumTracks, ArtistAlbums, ArtistStatsOf, ArtistTracks, DbLoader, FavouriteTrack,
 };
 use super::{opt_uid, uid, uids};
 
@@ -340,11 +340,8 @@ impl GqlTrack {
     }
 
     async fn is_favourite(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
-        let Some(path) = self.row.path.as_ref().or(self.row.cached_path.as_ref()) else {
-            return Ok(false);
-        };
         Ok(loader(ctx)?
-            .load_one(FavouritePath(super::user_id(ctx), path.clone()))
+            .load_one(FavouriteTrack(super::user_id(ctx), self.row.id))
             .await?
             .unwrap_or(false))
     }

@@ -276,7 +276,7 @@ pub struct App {
     frame_count: u32,
 
     /// Set of favourite track paths, loaded from DB on startup.
-    pub favourites: std::collections::HashSet<PathBuf>,
+    pub favourites: std::collections::HashSet<i64>,
 
     /// Visualizer config (enabled flag, fps).
     pub viz_config: koan_core::config::VisualizerConfig,
@@ -399,26 +399,21 @@ impl App {
         }
     }
 
-    /// Toggle favourite status for a track path. Returns true if now favourite.
-    ///
-    /// A track mid-download sits at its `.part` path, which matches no track row
-    /// and stops existing the moment the download finishes; favourites are keyed
-    /// on the final path so the star survives.
-    pub fn toggle_favourite(&mut self, path: &std::path::Path) -> bool {
-        let path = &koan_core::remote::download::strip_part_suffix(path);
+    /// Toggle favourite status for a track. Returns true if now favourite.
+    pub fn toggle_favourite(&mut self, track_id: i64) -> bool {
         if let Ok(db) = koan_core::db::pool::shared().get()
             && let Ok(is_fav) = koan_core::db::queries::toggle_favourite(
                 &db.conn,
                 koan_core::db::queries::LOCAL_USER,
-                path,
+                track_id,
             )
         {
             if is_fav {
-                self.favourites.insert(path.to_path_buf());
+                self.favourites.insert(track_id);
             } else {
-                self.favourites.remove(path);
+                self.favourites.remove(&track_id);
             }
-            koan_core::helpers::sync_favourite_to_remote(&db, path, is_fav);
+            koan_core::helpers::sync_favourite_to_remote(&db, track_id, is_fav);
             return is_fav;
         }
         false
@@ -895,9 +890,8 @@ impl App {
             KeyCode::Char('f') => {
                 // Toggle favourite for the track at cursor.
                 let visible = self.visible_queue();
-                if let Some(entry) = visible.get(self.queue.cursor) {
-                    let path = entry.path.clone();
-                    self.toggle_favourite(&path);
+                if let Some(id) = visible.get(self.queue.cursor).and_then(|e| e.db_id) {
+                    self.toggle_favourite(id);
                 }
             }
             KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1349,7 +1343,7 @@ impl App {
         let visible = self.visible_queue();
         let is_fav = visible
             .get(self.queue.cursor)
-            .is_some_and(|e| self.favourites.contains(&e.path));
+            .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)));
         let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
         let actions = self.build_context_actions(fav_label);
         self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
@@ -1367,9 +1361,8 @@ impl App {
             }
             ContextAction::ToggleFavourite => {
                 let visible = self.visible_queue();
-                if let Some(entry) = visible.get(self.queue.cursor) {
-                    let path = entry.path.clone();
-                    self.toggle_favourite(&path);
+                if let Some(id) = visible.get(self.queue.cursor).and_then(|e| e.db_id) {
+                    self.toggle_favourite(id);
                 }
             }
             ContextAction::TrackInfo => {
@@ -2164,7 +2157,7 @@ impl App {
 
                         let is_fav = visible
                             .get(idx)
-                            .is_some_and(|e| self.favourites.contains(&e.path));
+                            .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)));
                         let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
                         let actions = self.build_context_actions(fav_label);
                         self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
@@ -2194,7 +2187,7 @@ impl App {
                         let all_fav = (first..=last).all(|i| {
                             visible
                                 .get(i)
-                                .is_some_and(|e| self.favourites.contains(&e.path))
+                                .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)))
                         });
                         let fav_label = if all_fav { "Unfavourite" } else { "Favourite" };
                         let actions = self.build_context_actions(fav_label);

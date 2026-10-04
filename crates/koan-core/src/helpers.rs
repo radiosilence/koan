@@ -295,7 +295,7 @@ pub fn spawn_auto_sync(
         .ok()
 }
 
-/// What a library rebuild removed.
+/// What a library rebuild re-reads.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RebuildSummary {
     pub tracks: u64,
@@ -303,16 +303,15 @@ pub struct RebuildSummary {
     pub artists: u64,
 }
 
-/// Drop the index so the next scan rebuilds it from the files.
+/// Read the whole library again from its sources.
 ///
-/// Favourites are keyed on the file path rather than a row id, so they survive
-/// this and re-attach when the paths come back. Everything keyed on a track id
-/// cannot: lyrics, play history and acoustic embeddings go, and the foreign keys
-/// would refuse the delete otherwise. Lyrics and embeddings are re-derivable;
-/// play counts are not, which is worth saying out loud wherever this is offered.
-///
-/// The remote half of the library comes back on the next sync, the local half on
-/// the next scan.
+/// What each file and server entry said is forgotten, so the next scan reads
+/// every file and the next sync walks the whole server, and every track,
+/// album and artist takes what its sources say now. The rows themselves stay,
+/// and each source takes its own back by path or server id, so play history,
+/// playlists, favourites and lyrics are kept. A row nothing claims again goes:
+/// a file's when the scan of its folder finds it missing, a server entry's
+/// when a complete sync does not list it.
 pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connection::DbError> {
     let count = |sql: &str| -> u64 {
         db.conn
@@ -325,20 +324,14 @@ pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connect
         artists: count("SELECT COUNT(*) FROM artists"),
     };
 
-    // Children before parents; the FTS index has no foreign keys but is derived
-    // from tracks and would otherwise keep answering for rows that are gone.
     db.conn.execute_batch(
         "BEGIN;
-         DELETE FROM lyrics_cache;
-         DELETE FROM play_history;
+         DELETE FROM local_files;
+         DELETE FROM remote_entries;
          DELETE FROM scan_cache;
-         DELETE FROM tracks_fts;
-         DELETE FROM tracks;
-         DELETE FROM albums;
-         DELETE FROM artists;
+         UPDATE remote_servers SET library_version = NULL;
          COMMIT;",
     )?;
-    let _ = db.conn.execute_batch("VACUUM");
     Ok(summary)
 }
 
@@ -479,78 +472,48 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
     let (lower, upper) = queries::folder_prefix_range(folder);
 
     let tx = crate::db::queries::write_transaction(&db.conn)?;
-    // Still on the server: keep the row, drop the local file.
-    tx.execute(
-        "UPDATE tracks SET path = NULL, source = 'remote'
-          WHERE path >= ?1 AND path < ?2 AND remote_id IS NOT NULL",
-        [&lower, &upper],
-    )?;
-
-    let ids: Vec<i64> = {
-        let mut stmt = tx.prepare("SELECT id FROM tracks WHERE path >= ?1 AND path < ?2")?;
+    let paths: Vec<String> = {
+        let mut stmt = tx.prepare("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?;
         let rows = stmt.query_map([&lower, &upper], |r| r.get(0))?;
-        rows.filter_map(Result::ok).collect()
+        rows.collect::<rusqlite::Result<_>>()?
     };
-    delete_track_rows(&tx, &ids)?;
-    prune_empty_albums_and_artists(&tx)?;
-    tx.commit()?;
-    Ok(ids.len() as u64)
-}
-
-fn delete_track_rows(conn: &rusqlite::Connection, ids: &[i64]) -> rusqlite::Result<()> {
-    for id in ids {
-        conn.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", [id])?;
-        conn.execute("DELETE FROM play_history WHERE track_id = ?1", [id])?;
-        conn.execute("DELETE FROM scan_cache WHERE track_id = ?1", [id])?;
-        conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", [id])?;
-        conn.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+    // A track also on the server keeps its row, minus the file.
+    for path in &paths {
+        queries::sources::remove(&tx, queries::sources::Kind::Local, path)?;
     }
-    Ok(())
+    tx.commit()?;
+    Ok(paths.len() as u64)
 }
 
 /// Forget everything that only existed on the server.
 ///
 /// Signing out should leave the library with what is actually on this machine.
-/// A track held both locally and remotely keeps its row and loses its remote id;
-/// one that only ever came from the server goes.
+/// A track held both locally and remotely keeps its row and loses the server's
+/// copy; one that only ever came from the server goes.
 pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbError> {
     let tx = crate::db::queries::write_transaction(&db.conn)?;
-
-    let ids: Vec<i64> = {
-        let mut stmt =
-            tx.prepare("SELECT id FROM tracks WHERE remote_id IS NOT NULL AND path IS NULL")?;
+    let ids: Vec<String> = {
+        let mut stmt = tx.prepare("SELECT remote_id FROM remote_entries")?;
         let rows = stmt.query_map([], |r| r.get(0))?;
-        rows.filter_map(Result::ok).collect()
+        rows.collect::<rusqlite::Result<_>>()?
     };
-    delete_track_rows(&tx, &ids)?;
-    // Local copies stay, minus the server they were also on.
-    tx.execute(
-        "UPDATE tracks SET remote_id = NULL, remote_url = NULL, source = 'local'
-          WHERE remote_id IS NOT NULL",
-        [],
-    )?;
-    prune_empty_albums_and_artists(&tx)?;
+    let mut removed = 0;
+    for id in &ids {
+        let track: i64 = tx.query_row(
+            "SELECT track_id FROM remote_entries WHERE remote_id = ?1",
+            [id],
+            |r| r.get(0),
+        )?;
+        queries::sources::remove(&tx, queries::sources::Kind::Remote, id)?;
+        let kept: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM tracks WHERE id = ?1)",
+            [track],
+            |r| r.get(0),
+        )?;
+        removed += u64::from(!kept);
+    }
     tx.commit()?;
-    Ok(ids.len() as u64)
-}
-
-/// Albums and artists with nothing left in them.
-fn prune_empty_albums_and_artists(
-    tx: &rusqlite::Transaction<'_>,
-) -> Result<(), crate::db::connection::DbError> {
-    tx.execute(
-        "DELETE FROM albums WHERE NOT EXISTS
-           (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)",
-        [],
-    )?;
-    tx.execute(
-        "DELETE FROM artists WHERE NOT EXISTS
-             (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)
-           AND NOT EXISTS
-             (SELECT 1 FROM tracks WHERE tracks.artist_id = artists.id)",
-        [],
-    )?;
-    Ok(())
+    Ok(removed)
 }
 
 /// What clearing the download cache removed.
@@ -742,13 +705,13 @@ pub fn requeue_cleared_downloads(state: &SharedPlayerState) {
 /// one case where the silence is wrong.
 ///
 /// Shared by the TUI, the server and the app.
-pub fn sync_favourite_to_remote(db: &Database, path: &Path, star: bool) {
+pub fn sync_favourite_to_remote(db: &Database, track_id: i64, star: bool) {
     let cfg = Config::load().unwrap_or_default();
     if !cfg.remote.enabled {
         return;
     }
-    let Ok(Some(remote_id)) = queries::remote_id_for_path(&db.conn, path) else {
-        log::warn!("not syncing favourite: {} has no remote id", path.display());
+    let Ok(Some(remote_id)) = queries::track_remote_id(&db.conn, track_id) else {
+        log::warn!("not syncing favourite: track {track_id} has no remote id");
         return;
     };
     let Some(client) = subsonic_client(&cfg) else {
@@ -1981,19 +1944,13 @@ mod rebuild_tests {
     }
 
     #[test]
-    fn rebuild_drops_the_index_and_keeps_favourites() {
+    fn a_rebuild_re_reads_the_library_into_the_rows_it_has() {
         let db = test_db();
         let mut meta = sample_meta("Windowlicker", "Aphex Twin", "Windowlicker EP");
         meta.path = Some("/music/windowlicker.flac".into());
         let track_id = queries::upsert_track(&db.conn, &meta).unwrap();
 
-        // Favourites key on the path; lyrics key on the row id.
-        queries::toggle_favourite(
-            &db.conn,
-            crate::db::queries::LOCAL_USER,
-            Path::new("/music/windowlicker.flac"),
-        )
-        .unwrap();
+        queries::toggle_favourite(&db.conn, crate::db::queries::LOCAL_USER, track_id).unwrap();
         db.conn
             .execute(
                 "INSERT INTO lyrics_cache (track_id, source, content, fetched_at)
@@ -2005,24 +1962,35 @@ mod rebuild_tests {
         let summary = rebuild_index(&db).unwrap();
         assert_eq!(summary.tracks, 1);
         assert_eq!(summary.albums, 1);
+        let count = |sql: &str| -> i64 { db.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(
+            count("SELECT COUNT(*) FROM local_files"),
+            0,
+            "every file is read again"
+        );
 
+        // The scan reads the file again and takes its row back.
+        assert_eq!(queries::upsert_track(&db.conn, &meta).unwrap(), track_id);
+        assert_eq!(count("SELECT COUNT(*) FROM tracks"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM favourites"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM lyrics_cache"), 1);
+    }
+
+    #[test]
+    fn a_rebuilt_file_that_is_gone_goes_with_its_folder_scan() {
+        let db = test_db();
+        let tmp = tempfile::tempdir().unwrap();
+        let mut meta = sample_meta("Windowlicker", "Aphex Twin", "Windowlicker");
+        meta.path = Some(tmp.path().join("gone.flac").to_string_lossy().into_owned());
+        queries::upsert_track(&db.conn, &meta).unwrap();
+        rebuild_index(&db).unwrap();
+
+        queries::remove_stale_tracks(&db.conn, tmp.path(), false).unwrap();
         let tracks: i64 = db
             .conn
             .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(tracks, 0, "the index is gone");
-
-        let favourites: i64 = db
-            .conn
-            .query_row("SELECT COUNT(*) FROM favourites", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(favourites, 1, "favourites survive — they key on the path");
-
-        let lyrics: i64 = db
-            .conn
-            .query_row("SELECT COUNT(*) FROM lyrics_cache", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(lyrics, 0, "anything keyed on a track id cannot survive");
+        assert_eq!(tracks, 0);
     }
 
     #[test]
@@ -2424,13 +2392,8 @@ mod favourite_sync_tests {
             let mut meta = sample_meta(title, "Artist", "Album");
             meta.path = Some(format!("/music/{title}.flac"));
             meta.remote_id = Some(remote_id.into());
-            queries::upsert_track(&db.conn, &meta).unwrap();
-            queries::add_favourite(
-                &db.conn,
-                queries::LOCAL_USER,
-                Path::new(&format!("/music/{title}.flac")),
-            )
-            .unwrap();
+            let id = queries::upsert_track(&db.conn, &meta).unwrap();
+            queries::add_favourite(&db.conn, queries::LOCAL_USER, id).unwrap();
         }
 
         let stars = Arc::new(Mutex::new(Vec::new()));
