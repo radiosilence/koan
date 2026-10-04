@@ -10,6 +10,7 @@
 
 ### Changed
 
+- **Download rings and bars in the macOS and iOS apps move smoothly.** They were fed from the engine's transfer figures, which change a few times a second when the download rate is sampled, so they moved in visible steps, and every step reconfigured the rows of the list showing them. They now read the byte counts on each display frame, at up to 60 Hz, while a transfer is running and something on screen shows it, and draw them as layer geometry without SwiftUI or the table redrawing anything. Rings on playlist pages and in search results, which previously did not move at all until something else changed on the row, move too.
 - **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
 

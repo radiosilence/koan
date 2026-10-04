@@ -39,6 +39,7 @@ struct QueueView: View {
     #if os(macOS)
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
+    @Environment(TransferMeter.self) private var meter
     @Environment(\.roomTint) private var tint
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("graphics") private var graphics = Graphics.full
@@ -127,10 +128,6 @@ struct QueueView: View {
         let key: [AnyHashable] = [
             AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds),
-            AnyHashable(rows.compactMap { row -> String? in
-                guard case .track(let item) = row, let transfer = SourceBadges.transfer(of: item) else { return nil }
-                return "\(transfer):\(mirror.progress(for: transfer) ?? -1)"
-            }),
         ]
         return SafeAreaReader { insets in
             KoanTable(
@@ -141,7 +138,7 @@ struct QueueView: View {
                     barsLive: live,
                     tint: NSColor(tint),
                     favourites: library.favouriteTrackIds,
-                    progress: { mirror.progress(for: $0) },
+                    meter: meter,
                     art: art,
                     levels: levels,
                     toggleFavourite: { library.toggleFavourite(track: $0) }

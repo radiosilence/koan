@@ -54,6 +54,8 @@ GraphQL is for clients that *cannot* link the core -- a browser, or a jukebox re
 
 Slices are cut by **rate of change, not by subject**. The playhead and the transfer figures move ten times a second; the queue and the set of transfers move when someone does something. A client subscribes per slice, so a fast field sitting next to a slow one wakes every reader of the slow one at the fast one's rate — which is why a transfer's byte count is not a field on a queue row, and the seekable extent is not a field beside a track's title. See `koan-ffi/src/state.rs`.
 
+Download progress that is drawn, rather than read as text, does not go through the slices at all. The `Figures` slice moves when a rate sample is taken, which is too coarse for a ring to look continuous; `TransferMeter` in the app runs a display link while a transfer is running and something on screen shows it, reads `transfer_readings()` each frame and hands the numbers to the rings and bars as layer geometry. It is the same arrangement `PlayingLevels` has with the analyser.
+
 Nothing is dropped. Each slice carries a sequence number and each client keeps a cursor, so falling behind costs the intermediate values of a slice and never the fact that it changed. A cursor that has seen nothing reads the whole state, which is how a client seeds itself — there is no separate call for that.
 
 When you add a capability, ask whether both doors need it. `koan-ffi` returns cover art as raw bytes where GraphQL has to base64 it, and hands out changes as state slices where GraphQL subscribes; otherwise the two mirror each other closely enough that a gap in one is usually a gap in both.

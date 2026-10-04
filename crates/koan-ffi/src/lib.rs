@@ -9,8 +9,8 @@
 //!
 //! Threading: anything that can block is `async` and runs on a worker thread,
 //! so no caller ever holds a thread while koan-core reads a file or waits on a
-//! socket. The few methods that stay synchronous read one atomic and nothing
-//! else. See `offload` for where the work goes, and why ordering has a lane of
+//! socket. The few methods that stay synchronous read an atomic or two, or
+//! hold an in-memory lock for one short pass. See `offload` for where the work goes, and why ordering has a lane of
 //! its own.
 //!
 //! DB connections are borrowed from `koan_core::db::pool`, not opened per call:
@@ -400,6 +400,21 @@ impl KoanEngine {
     /// alone — stopping one is a different verb.
     pub fn clear_settled_downloads(&self) {
         koan_core::remote::downloads::store().clear_settled();
+    }
+
+    /// The byte counts of every transfer still going, read now.
+    ///
+    /// For a client drawing progress at its display's rate, which the `Figures`
+    /// slice is not: it moves when a rate sample is taken, a few times a
+    /// second. Synchronous because a display link has a frame to fill and no
+    /// time to await one; it holds the download list's read lock for one pass
+    /// over a few dozen entries and touches nothing else.
+    pub fn transfer_readings(&self) -> Vec<TransferFigure> {
+        koan_core::remote::downloads::store()
+            .readings()
+            .iter()
+            .map(TransferFigure::from)
+            .collect()
     }
 
     /// Whether the player is playing, read from the engine now. For code that

@@ -20,6 +20,7 @@ final class AppState {
     let playlists: PlaylistsModel
     let activity: ActivityModel
     let levels: PlayingLevels
+    let meter: TransferMeter
     let ui = UIState()
     /// Menu enablement and single-key shortcuts — both are the menu bar's, and
     /// there isn't one on iOS.
@@ -52,6 +53,7 @@ final class AppState {
         let activity = ActivityModel()
         self.activity = activity
         self.levels = PlayingLevels(engine: engine)
+        self.meter = TransferMeter(engine: engine, mirror: mirror)
         library.activity = activity
         library.art = art
         library.mirror = mirror

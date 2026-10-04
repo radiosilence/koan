@@ -42,7 +42,7 @@ final class QueueTableRow: NSTableCellView, TableRow {
         let barsLive: Bool
         let tint: NSColor
         let favourites: Set<Int64>
-        let progress: (String) -> Double?
+        let meter: TransferMeter
         let art: CoverArtCache
         let levels: PlayingLevels
         let toggleFavourite: (Int64) -> Void
@@ -178,6 +178,7 @@ final class QueueTableRow: NSTableCellView, TableRow {
             CATransaction.setDisableActions(true)
             status.isHidden = true
             availability.isHidden = true
+            context.meter.follow(availability, transfer: nil)
             heart.isHidden = true
             sleeve.opacity = 1
             CATransaction.commit()
@@ -209,9 +210,10 @@ final class QueueTableRow: NSTableCellView, TableRow {
         // The one thing a colour cannot dim.
         sleeve.opacity = artwork && played ? 0.5 : 1
         availability.isHidden = false
-        let state: AvailabilityMark.State = content.transferring.map { .transferring(context.progress($0)) }
+        let state: AvailabilityMark.State = content.transferring.map { .transferring(context.meter.figure(for: $0)?.progress) }
             ?? (content.onServer || content.onDisk ? .stored(onServer: content.onServer, onDisk: content.onDisk) : .nothing)
         availability.show(state, tint: context.tint, selected: selected, appearance: appearance)
+        context.meter.follow(availability, transfer: content.transferring)
         let favourite = content.trackId.map(context.favourites.contains) ?? false
         heart.isHidden = content.trackId == nil || !(favourite || hovered)
         heartImage = Symbol.image(

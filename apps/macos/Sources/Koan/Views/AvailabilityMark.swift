@@ -14,6 +14,10 @@ final class AvailabilityMark: CALayer {
         /// Downloading: how far, when the server said how big.
         case transferring(Double?)
         case stored(onServer: Bool, onDisk: Bool)
+
+        var isTransferring: Bool {
+            if case .transferring = self { true } else { false }
+        }
     }
 
     private let badge = CALayer()
@@ -36,10 +40,11 @@ final class AvailabilityMark: CALayer {
     required init?(coder: NSCoder) { fatalError("not decoded") }
 
     /// What a row should say, from what the library and the queue know.
-    static func state(onServer: Bool, onDisk: Bool, queued: QueueItem?, progress: (String) -> Double?) -> State {
+    @MainActor
+    static func state(onServer: Bool, onDisk: Bool, queued: QueueItem?, meter: TransferMeter) -> State {
         if let queued, queued.status == .priorityPending { return .pending }
         if let queued, queued.status == .failed { return .failed }
-        if let transfer = SourceBadges.transfer(of: queued) { return .transferring(progress(transfer)) }
+        if let transfer = SourceBadges.transfer(of: queued) { return .transferring(meter.figure(for: transfer)?.progress) }
         return .stored(onServer: onServer, onDisk: onDisk)
     }
 
@@ -99,6 +104,19 @@ final class AvailabilityMark: CALayer {
         CATransaction.commit()
     }
 
+    /// A frame's figure, between the row's own redraws. Only a ring with a
+    /// length to measure against moves; one that is spinning learns it has
+    /// one and stops.
+    @MainActor
+    func take(_ figure: TransferFigure) {
+        guard !ring.isHidden, let fraction = figure.progress else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ring.removeAnimation(forKey: "spin")
+        ring.strokeEnd = max(0.02, fraction)
+        CATransaction.commit()
+    }
+
     /// What the mark means, for the row's tooltip, where it needs saying.
     static func help(_ state: State, failure: String?) -> String? {
         switch state {
@@ -108,4 +126,5 @@ final class AvailabilityMark: CALayer {
         }
     }
 }
+extension AvailabilityMark: TransferGauge {}
 #endif

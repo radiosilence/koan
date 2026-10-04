@@ -98,6 +98,24 @@ impl Phase {
     }
 }
 
+/// One transfer's figures at the moment they were read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Reading {
+    pub id: QueueItemId,
+    pub written: u64,
+    /// 0 when the server sent no Content-Length.
+    pub total: u64,
+    /// As of the last rate sample, which is taken less often than this is read.
+    pub bytes_per_second: u64,
+}
+
+impl Reading {
+    /// 0–1, or `None` when there is no total to measure against.
+    pub fn fraction(&self) -> Option<f64> {
+        (self.total > 0).then(|| (self.written as f64 / self.total as f64).clamp(0.0, 1.0))
+    }
+}
+
 /// A byte count that can be waited on.
 ///
 /// The downloader publishes it as chunks land. A read is a plain atomic load;
@@ -246,6 +264,25 @@ impl DownloadStore {
                 written: d.bytes_written(),
                 total: d.total,
             })
+    }
+
+    /// The byte counts of every transfer still going, read now — for a client
+    /// drawing progress at its display's rate rather than at `figures`'.
+    ///
+    /// Clones no paths or titles, and holds the list's read lock for one pass
+    /// over it, which is bounded by the download workers.
+    pub fn readings(&self) -> Vec<Reading> {
+        self.entries
+            .read()
+            .iter()
+            .filter(|d| !d.state.is_settled())
+            .map(|d| Reading {
+                id: d.id,
+                written: d.bytes_written(),
+                total: d.total,
+                bytes_per_second: d.bytes_per_second,
+            })
+            .collect()
     }
 
     /// How many transfers are actually moving.
@@ -487,6 +524,28 @@ mod tests {
         store.finished(id);
         assert_eq!(store.active(), 0);
         assert_eq!(store.all()[0].state, DownloadState::Done);
+    }
+
+    #[test]
+    fn readings_are_live_and_leave_settled_transfers_out() {
+        let store = DownloadStore::new();
+        let (going, landed) = (download("going"), download("landed"));
+        let (going_id, landed_id) = (going.id, landed.id);
+        store.queued(going);
+        store.queued(landed);
+        let written = ByteFeed::new();
+        store.started(going_id, 400, written.clone());
+        store.finished(landed_id);
+
+        written.set(100);
+        let readings = store.readings();
+        assert_eq!(readings.len(), 1);
+        assert_eq!(readings[0].id, going_id);
+        assert_eq!(readings[0].fraction(), Some(0.25));
+
+        // No sample taken in between: a reading sees the bytes as they land.
+        written.set(300);
+        assert_eq!(store.readings()[0].fraction(), Some(0.75));
     }
 
     #[test]

@@ -25,6 +25,7 @@ struct PlaylistView: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
+    @Environment(TransferMeter.self) private var meter
     @Environment(\.roomTint) private var tint
     @Environment(\.onStage) private var onStage
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -168,7 +169,7 @@ struct PlaylistView: View {
                     barsLive: live,
                     tint: NSColor(tint),
                     favourites: library.favouriteTrackIds,
-                    progress: { mirror.progress(for: $0) },
+                    meter: meter,
                     art: art,
                     levels: levels,
                     toggleFavourite: { library.toggleFavourite(track: $0) }

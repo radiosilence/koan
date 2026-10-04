@@ -339,6 +339,18 @@ impl From<&koan_core::remote::downloads::Download> for TransferFigure {
     }
 }
 
+impl From<&koan_core::remote::downloads::Reading> for TransferFigure {
+    fn from(r: &koan_core::remote::downloads::Reading) -> Self {
+        Self {
+            queue_item_id: r.id.0.to_string(),
+            progress: r.fraction(),
+            bytes_written: r.written,
+            total_bytes: r.total,
+            bytes_per_second: r.bytes_per_second,
+        }
+    }
+}
+
 impl QueueItem {
     /// Build directly from a playlist item, skipping `derive_visible_queue()`.
     /// The state watcher builds this on every wake and only ever wants the

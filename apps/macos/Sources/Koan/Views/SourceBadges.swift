@@ -20,18 +20,18 @@ struct SourceBadges: View {
     let onDisk: Bool
     /// The transfer this row is waiting on, when it is waiting on one.
     ///
-    /// An id rather than a figure, deliberately. Reading the figure is what
-    /// subscribes a view to a number that moves ten times a second while
-    /// anything is downloading — so only the handful of rows drawing a
-    /// ring do it, and the rest of the list sits still.
+    /// An id rather than a figure, deliberately. The figure moves at the
+    /// display's rate while the transfer runs, and `TransferMeter` hands it to
+    /// the ring's layer; no view body reads it.
     var transferring: String?
 
-    @Environment(EngineMirror.self) private var mirror
+    @Environment(TransferMeter.self) private var meter
 
     var body: some View {
         Group {
             if let transferring {
-                ring(mirror.progress(for: transferring))
+                TransferRing(transfer: transferring, meter: meter)
+                    .help("Downloading")
             } else if onServer {
                 // Visible enough to be read at a glance down a list.
                 Image(systemName: onDisk ? "cloud.fill" : "cloud")
@@ -49,23 +49,71 @@ struct SourceBadges: View {
         // state has to occupy the same space as every other.
         .frame(width: 14, height: 14)
     }
+}
 
-    /// A transfer whose length the server never gave has no fraction to show
-    /// and spins.
-    @ViewBuilder
-    private func ring(_ fraction: Double?) -> some View {
-        if let fraction {
-            ProgressView(value: fraction)
-                .progressViewStyle(.circular)
-                .controlSize(.mini)
-                .help("Downloading — \(Int(fraction * 100))%")
-        } else {
-            ProgressView()
-                .progressViewStyle(.circular)
-                .controlSize(.mini)
-                .help("Downloading")
-        }
+/// The ring a transfer draws, fed by `TransferMeter` as layer geometry.
+private struct TransferRing: PlatformViewRepresentable {
+    let transfer: String
+    let meter: TransferMeter
+
+    typealias PlatformViewType = TransferRingView
+
+    func makeView(context: Context) -> TransferRingView { TransferRingView() }
+
+    func updateView(_ view: TransferRingView, context: Context) {
+        view.meter = meter
+        meter.follow(view, transfer: transfer)
     }
+
+    static func dismantleView(_ view: TransferRingView, coordinator: ()) {
+        view.meter?.follow(view, transfer: nil)
+    }
+}
+
+/// A ring that fills as the bytes land. A transfer whose length the server
+/// never gave has no fraction to show and spins.
+final class TransferRingView: LayerView, TransferGauge {
+    private let ring = CAShapeLayer()
+    weak var meter: TransferMeter?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        ring.fillColor = nil
+        ring.lineWidth = 1.5
+        ring.lineCap = .round
+        ring.strokeEnd = 0.7
+        ring.actions = ["strokeEnd": NSNull(), "path": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        hostLayer.addSublayer(ring)
+        appearanceChanged()
+        spin()
+    }
+
+    func take(_ figure: TransferFigure) {
+        guard let fraction = figure.progress else { return spin() }
+        ring.removeAnimation(forKey: "spin")
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ring.strokeEnd = max(0.02, fraction)
+        CATransaction.commit()
+    }
+
+    private func spin() {
+        guard ring.animation(forKey: "spin") == nil else { return }
+        ring.strokeEnd = 0.7
+        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+        spin.toValue = Double.pi * 2
+        spin.duration = 1
+        spin.repeatCount = .infinity
+        ring.add(spin, forKey: "spin")
+    }
+
+    override func layoutLayers() {
+        let side = min(bounds.width, bounds.height, 12)
+        ring.frame = CGRect(x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side)
+        ring.path = CGPath(ellipseIn: ring.bounds.insetBy(dx: 1, dy: 1), transform: nil)
+    }
+
+    override func appearanceChanged() { ring.strokeColor = resolved(.secondaryLabel) }
 }
 
 extension SourceBadges {
