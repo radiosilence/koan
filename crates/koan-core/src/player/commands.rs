@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 
-use super::state::{PlaylistItem, QueueItemId};
+use super::state::{PlayMode, PlaylistItem, QueueItemId, Repeat};
 
 /// Commands from the UI layer to the audio engine.
 #[derive(Debug)]
@@ -140,6 +140,15 @@ pub enum PlayerCommand {
     UseRenderer(Option<Box<crate::upnp::Connection>>),
     /// Set the volume of the renderer being played to, 0–100.
     SetRendererVolume(u8),
+    /// Turn shuffle on or off: the items after the cursor reordered at
+    /// random, or put back as they were. One undo step.
+    SetShuffle(bool),
+    /// What follows a track at its end: the queue's next, the first again
+    /// after the last, or the same item.
+    SetRepeat(Repeat),
+    /// Take the mode a saved session had, its queue already restored in the
+    /// order it was saved. Shuffle reorders nothing here.
+    RestorePlayMode(PlayMode),
     /// What the renderer was heard to do, during the session numbered
     /// `session`. Dropped once that session is over, like `DecodeFinished`.
     Renderer {

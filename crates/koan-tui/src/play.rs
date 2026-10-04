@@ -38,6 +38,14 @@ fn save_playback_state_from_app(app: &app::App) {
     if items.is_empty() {
         if let Ok(db) = koan_core::db::pool::shared().get() {
             let _ = koan_core::db::queries::clear_playback_state(&db.conn);
+            // The mode outlives the queue, and may be what changed.
+            let _ = koan_core::db::queries::save_playback_position(
+                &db.conn,
+                app.state.play_mode(),
+                None,
+                0,
+                false,
+            );
         }
         return;
     }
@@ -56,6 +64,7 @@ fn save_playback_state_from_app(app: &app::App) {
             if let Err(e) = koan_core::db::queries::save_playback_state(
                 &db.conn,
                 &persisted,
+                app.state.play_mode(),
                 cursor_path.as_deref(),
                 position_ms,
                 app.state.playback_state() == koan_core::player::state::PlaybackState::Playing,
@@ -79,6 +88,7 @@ fn save_playback_position_from_app(app: &app::App) {
         Ok(db) => {
             if let Err(e) = koan_core::db::queries::save_playback_position(
                 &db.conn,
+                app.state.play_mode(),
                 cursor_path.as_deref(),
                 app.state.position_ms(),
                 app.state.playback_state() == PlaybackState::Playing,

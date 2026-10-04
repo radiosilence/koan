@@ -950,6 +950,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             state: ItemState::Pending,
+            pre_shuffle: None,
         };
         let items: Vec<_> = tracks.iter().map(|&db_id| item(db_id)).collect();
         let ids: Vec<_> = items.iter().map(|i| (i.db_id.unwrap(), i.id)).collect();

@@ -33,28 +33,127 @@ impl fmt::Debug for QueueItemId {
 }
 
 /// A step the decoder took through the queue from `after`, to `next`: the
-/// first item after it that has not failed, or the end of the queue. The
-/// decoder queues `next` as `chosen` when it is Ready, and stops at it when it
-/// is still arriving.
+/// item the play mode says follows it, or the end of the queue. The decoder
+/// queues `next` as `chosen` when it is Ready, and stops at it when it is
+/// still arriving.
 #[derive(Debug, Clone)]
 pub struct Lookahead {
     pub after: QueueItemId,
     pub next: Option<QueueItemId>,
     pub chosen: Option<(QueueItemId, PathBuf)>,
+    /// `next` was found by going back to the top of the queue, which only
+    /// repeating the queue does.
+    pub wrapped: bool,
+    /// The timeline boundary `chosen` opens as, if it opens: the session's
+    /// boundary count when the step was taken. A step whose file fails to
+    /// open leaves no boundary, and the decoder steps again for the same one,
+    /// so this rather than a step's index is what places it against the
+    /// playhead. Set by the decoder's cursor; 0 elsewhere.
+    pub boundary: usize,
 }
 
-/// The first item after `after` that has not failed: `Some(None)` at the end
-/// of the queue, `None` when `after` is not in it.
-fn first_unfailed_after(
+/// What follows a track once it ends, beyond the queue's own order.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum Repeat {
+    /// The queue ends at its last item.
+    #[default]
+    Off,
+    /// The last item runs on into the first.
+    Queue,
+    /// The item plays again. An explicit next or previous still moves on.
+    One,
+}
+
+impl Repeat {
+    pub fn is_off(&self) -> bool {
+        *self == Repeat::Off
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Repeat::Off => "off",
+            Repeat::Queue => "queue",
+            Repeat::One => "one",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "off" => Some(Repeat::Off),
+            "queue" => Some(Repeat::Queue),
+            "one" => Some(Repeat::One),
+            _ => None,
+        }
+    }
+
+    /// The next mode a single repeat button steps to: off, the queue, one.
+    pub fn cycled(self) -> Self {
+        match self {
+            Repeat::Off => Repeat::Queue,
+            Repeat::Queue => Repeat::One,
+            Repeat::One => Repeat::Off,
+        }
+    }
+}
+
+/// The transport's play mode. Shuffle is not an order kept beside the queue:
+/// turning it on reorders the queue itself, so what is listed is what plays.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct PlayMode {
+    pub shuffle: bool,
+    pub repeat: Repeat,
+}
+
+impl PlayMode {
+    fn to_bits(self) -> u8 {
+        let repeat = match self.repeat {
+            Repeat::Off => 0,
+            Repeat::Queue => 1,
+            Repeat::One => 2,
+        };
+        repeat << 1 | self.shuffle as u8
+    }
+
+    fn from_bits(bits: u8) -> Self {
+        Self {
+            shuffle: bits & 1 != 0,
+            repeat: match bits >> 1 {
+                1 => Repeat::Queue,
+                2 => Repeat::One,
+                _ => Repeat::Off,
+            },
+        }
+    }
+}
+
+/// What follows `after` under `repeat`: `Some(None)` at the end of the queue,
+/// `None` when `after` is not in it — a removed item has nothing following it,
+/// whatever the mode, since wrapping from it would replay the queue from a
+/// place nobody is at. The flag says the step went back to the top.
+///
+/// Failed items are passed over. Repeating one item plays it again unless it
+/// has failed, in which case the queue carries on as it would when repeating
+/// the queue.
+fn follows(
     items: &[PlaylistItem],
     after: QueueItemId,
-) -> Option<Option<&PlaylistItem>> {
+    repeat: Repeat,
+) -> Option<(Option<&PlaylistItem>, bool)> {
     let at = items.iter().position(|item| item.id == after)?;
-    Some(
-        items[at + 1..]
-            .iter()
-            .find(|item| !matches!(item.state, ItemState::Failed(_))),
-    )
+    let playable = |item: &&PlaylistItem| !matches!(item.state, ItemState::Failed(_));
+    if repeat == Repeat::One && playable(&&items[at]) {
+        return Some((Some(&items[at]), false));
+    }
+    if let Some(next) = items[at + 1..].iter().find(playable) {
+        return Some((Some(next), false));
+    }
+    if repeat == Repeat::Off {
+        return Some((None, false));
+    }
+    Some((items[..=at].iter().find(playable), true))
 }
 
 /// Set in `SharedPlayerState::state` beside the playback state while the
@@ -212,6 +311,10 @@ pub struct PlaylistItem {
     /// What the item can say about itself. Ask [`SharedPlayerState::load_state`]
     /// for this together with any transfer against it.
     pub state: ItemState,
+    /// Where the item stood in the queue before shuffle was turned on, which
+    /// is where turning it off puts it back. `None` while shuffle is off, and
+    /// for an item added since it was turned on, which stays where it was put.
+    pub pre_shuffle: Option<u32>,
 }
 
 /// The playlist — one flat array, one cursor. Everything else derived.
@@ -344,6 +447,11 @@ pub struct SharedPlayerState {
 
     /// The UPnP renderer playing in place of the local output, if one is.
     renderer: parking_lot::RwLock<Option<crate::upnp::Output>>,
+
+    /// The play mode, as `PlayMode::to_bits`. Written by the player's
+    /// `publish` alone; the queue's own reads (the lookahead, advancing)
+    /// follow it.
+    play_mode: AtomicU8,
 }
 
 /// A renderer's playhead: `position_ms`, plus the time since `running` if it
@@ -378,6 +486,7 @@ impl SharedPlayerState {
             dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
             renderer: parking_lot::RwLock::new(None),
+            play_mode: AtomicU8::new(0),
         })
     }
 
@@ -434,9 +543,9 @@ impl SharedPlayerState {
             return if duration > 0 { at.min(duration) } else { at };
         }
         if self.playback_state() != PlaybackState::Stopped
-            && let Some((_, at)) = self.timeline.get().and_then(|t| t.playhead())
+            && let Some(playhead) = self.timeline.get().and_then(|t| t.playhead())
         {
-            return at;
+            return playhead.position_ms;
         }
         self.position_ms.load(Ordering::Acquire)
     }
@@ -700,6 +809,23 @@ impl SharedPlayerState {
         }
     }
 
+    // --- Play mode ---
+
+    pub fn play_mode(&self) -> PlayMode {
+        PlayMode::from_bits(self.play_mode.load(Ordering::Acquire))
+    }
+
+    /// The player's `publish`, and nothing else — but for a front end that
+    /// mirrors another process's player into a state of its own, as it
+    /// mirrors the playback state. The mode is saved with the queue, so a
+    /// change moves the content version.
+    pub fn set_play_mode(&self, mode: PlayMode) {
+        if self.play_mode.swap(mode.to_bits(), Ordering::AcqRel) != mode.to_bits() {
+            self.content_version.fetch_add(1, Ordering::AcqRel);
+            self.bump_version();
+        }
+    }
+
     // --- Playlist version ---
 
     pub fn playlist_version(&self) -> u64 {
@@ -862,6 +988,10 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.playlist.read().items.is_empty()
+    }
+
     pub fn cursor(&self) -> Option<QueueItemId> {
         self.playlist.read().cursor
     }
@@ -908,7 +1038,10 @@ impl SharedPlayerState {
     // --- Called from decode thread (gapless) ---
 
     /// Move the cursor to the next item that can still play — the first item
-    /// after the cursor that is not `Failed` — and return its ID.
+    /// after the cursor that is not `Failed`, from the top again when the
+    /// queue repeats — and return its ID. An advance is a move on, so
+    /// repeating one item wraps the queue here as repeating the queue does;
+    /// playing the item again at its end is the player's call.
     ///
     /// An item that is still downloading parks the cursor rather than being
     /// skipped, so playback resumes from it when its data lands. Skipping it
@@ -918,18 +1051,20 @@ impl SharedPlayerState {
     /// that is no longer in the playlist yields `None` — restarting from the
     /// top would silently replay the queue.
     pub fn advance_cursor_loadable(&self) -> Option<QueueItemId> {
-        let mut pl = self.playlist.write();
-        let start = match pl.cursor {
-            Some(cid) => pl.items.iter().position(|item| item.id == cid)? + 1,
-            None => 0,
+        let repeat = match self.play_mode().repeat {
+            Repeat::Off => Repeat::Off,
+            Repeat::Queue | Repeat::One => Repeat::Queue,
         };
-
-        let next = pl
-            .items
-            .get(start..)?
-            .iter()
-            .find(|item| !matches!(item.state, ItemState::Failed(_)))
-            .map(|item| item.id)?;
+        let mut pl = self.playlist.write();
+        let next = match pl.cursor {
+            Some(cid) => follows(&pl.items, cid, repeat)?.0?.id,
+            None => {
+                pl.items
+                    .iter()
+                    .find(|item| !matches!(item.state, ItemState::Failed(_)))?
+                    .id
+            }
+        };
 
         pl.cursor = Some(next);
         drop(pl);
@@ -947,32 +1082,43 @@ impl SharedPlayerState {
     /// it would play the track after it and move the cursor beyond it, so it
     /// would never be heard.
     ///
+    /// The play mode decides what follows: the queue's next item, the first
+    /// again at its end when the queue repeats, or the same item when one
+    /// repeats — gapless all three.
+    ///
     /// None when `after_id` has been removed: the lookahead then has nothing
     /// to follow, and starting from the top would gaplessly replay the queue.
     pub fn lookahead_after(&self, after_id: QueueItemId) -> Option<Lookahead> {
+        let repeat = self.play_mode().repeat;
         let pl = self.playlist.read();
-        let next = first_unfailed_after(&pl.items, after_id)?;
+        let (next, wrapped) = follows(&pl.items, after_id, repeat)?;
         Some(Lookahead {
             after: after_id,
             next: next.map(|item| item.id),
             chosen: next
                 .filter(|item| matches!(item.state, ItemState::Ready))
                 .map(|item| (item.id, item.path.clone())),
+            wrapped,
+            boundary: 0,
         })
     }
 
-    /// Whether the decoder would still take `step`: the first item after
-    /// `after` that has not failed is still `next`. A track it stopped at
-    /// landing since is not a change, since the advance at the end of the
-    /// session plays it in order; an edit that puts another track first is.
+    /// Whether the decoder would still take `step`: under the play mode now,
+    /// `next` still follows `after`. A track it stopped at landing since is
+    /// not a change, since the advance at the end of the session plays it in
+    /// order; an edit that puts another track first is, and so is a change of
+    /// mode that sends the queue elsewhere — a wrap once repeat is off, or a
+    /// track appended after the one a wrap left from.
     pub fn still_follows(&self, step: &Lookahead) -> bool {
+        let repeat = self.play_mode().repeat;
         let pl = self.playlist.read();
-        first_unfailed_after(&pl.items, step.after)
-            .is_some_and(|next| next.map(|item| item.id) == step.next)
+        follows(&pl.items, step.after, repeat)
+            .is_some_and(|(next, _)| next.map(|item| item.id) == step.next)
     }
 
     /// Retreat cursor to the previous item. Returns (id, path) if found.
-    /// For prev_track — goes to the item before cursor regardless of load state.
+    /// For prev_track — goes to the item before cursor regardless of load state,
+    /// and from the first to the last while repeat is on.
     pub fn retreat_cursor(&self) -> Option<(QueueItemId, PathBuf)> {
         let mut pl = self.playlist.write();
         let cursor_pos = match pl.cursor {
@@ -980,7 +1126,13 @@ impl SharedPlayerState {
             None => None,
         };
 
-        let prev_pos = cursor_pos.and_then(|p| p.checked_sub(1));
+        // From the first item, round to the last while the queue repeats. A
+        // queue of one has nothing to go back to: the caller restarts it.
+        let wraps = self.play_mode().repeat != Repeat::Off && pl.items.len() > 1;
+        let prev_pos = cursor_pos.and_then(|p| match p.checked_sub(1) {
+            None if wraps => Some(pl.items.len() - 1),
+            prev => prev,
+        });
 
         match prev_pos {
             Some(pos) => {
@@ -1250,6 +1402,88 @@ impl SharedPlayerState {
         self.bump_content();
     }
 
+    /// Every item's id and where it stood before shuffling, in queue order:
+    /// what undoing a shuffle puts back.
+    pub fn shuffle_order(&self) -> Vec<(QueueItemId, Option<u32>)> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .map(|item| (item.id, item.pre_shuffle))
+            .collect()
+    }
+
+    /// Put back an order `shuffle_order` read, positions before shuffling
+    /// included. Items not named keep theirs and follow, as in `reorder_to`.
+    pub fn restore_shuffle_order(&self, order: &[(QueueItemId, Option<u32>)]) {
+        let ids: Vec<QueueItemId> = order.iter().map(|(id, _)| *id).collect();
+        self.reorder_to(&ids);
+        let was: HashMap<QueueItemId, Option<u32>> = order.iter().copied().collect();
+        let mut pl = self.playlist.write();
+        for item in pl.items.iter_mut() {
+            if let Some(pre) = was.get(&item.id) {
+                item.pre_shuffle = *pre;
+            }
+        }
+        drop(pl);
+        self.bump_content();
+    }
+
+    /// Note where every item stands, then put the items after the cursor in a
+    /// random order — all of them with no cursor. The playing item stays
+    /// where it is, so nothing that is heard changes.
+    pub fn shuffle_after_cursor(&self) {
+        let mut pl = self.playlist.write();
+        for (at, item) in pl.items.iter_mut().enumerate() {
+            item.pre_shuffle = Some(at as u32);
+        }
+        let from = pl
+            .cursor
+            .and_then(|c| pl.items.iter().position(|item| item.id == c))
+            .map_or(0, |at| at + 1);
+        crate::helpers::shuffle(&mut pl.items[from..]);
+        drop(pl);
+        self.bump_content();
+    }
+
+    /// A queue arriving whole while shuffle is on — replaced, or added to an
+    /// empty one — plays shuffled: `start` first, the rest in a random order
+    /// after it, each item noting where it was given so turning shuffle off
+    /// puts the queue back as it came. A queue that already carries those
+    /// notes, a shuffled session restored, is left as it was saved.
+    pub fn shuffle_from(&self, start: QueueItemId) {
+        let mut pl = self.playlist.write();
+        if pl.items.iter().any(|item| item.pre_shuffle.is_some()) {
+            return;
+        }
+        for (at, item) in pl.items.iter_mut().enumerate() {
+            item.pre_shuffle = Some(at as u32);
+        }
+        if let Some(at) = pl.items.iter().position(|item| item.id == start) {
+            let item = pl.items.remove(at);
+            pl.items.insert(0, item);
+        }
+        crate::helpers::shuffle(&mut pl.items[1..]);
+        drop(pl);
+        self.bump_content();
+    }
+
+    /// Put the items shuffle moved back in the order they had before it, in
+    /// the places such items occupy now. An item added since keeps its place.
+    pub fn unshuffle(&self) {
+        let mut pl = self.playlist.write();
+        let slots: Vec<usize> = (0..pl.items.len())
+            .filter(|&at| pl.items[at].pre_shuffle.is_some())
+            .collect();
+        let mut moved: Vec<PlaylistItem> = slots.iter().map(|&at| pl.items[at].clone()).collect();
+        moved.sort_by_key(|item| item.pre_shuffle);
+        for (at, mut item) in slots.into_iter().zip(moved) {
+            item.pre_shuffle = None;
+            pl.items[at] = item;
+        }
+        drop(pl);
+        self.bump_content();
+    }
+
     /// For each ID, the ID of the item before it (or None if first), returned in
     /// playlist order regardless of the order `ids` arrives in.
     ///
@@ -1491,6 +1725,7 @@ mod tests {
             disc: None,
             duration_ms: Some(200_000),
             state,
+            pre_shuffle: None,
         }
     }
 
@@ -1904,6 +2139,99 @@ mod tests {
 
     // --- surviving_item_before ---
 
+    fn repeating(state: &SharedPlayerState, repeat: Repeat) {
+        state.set_play_mode(PlayMode {
+            shuffle: false,
+            repeat,
+        });
+    }
+
+    #[test]
+    fn a_step_from_the_last_item_wraps_only_when_the_queue_repeats() {
+        let state = SharedPlayerState::new();
+        let items: Vec<_> = ["a", "b"].map(ready_item).into();
+        let (a, b) = (items[0].id, items[1].id);
+        state.add_items(items);
+
+        assert_eq!(state.lookahead_after(b).unwrap().next, None);
+        repeating(&state, Repeat::Queue);
+        let step = state.lookahead_after(b).unwrap();
+        assert_eq!((step.next, step.wrapped), (Some(a), true));
+        assert!(state.still_follows(&step));
+
+        let later = ready_item("later");
+        state.add_items(vec![later.clone()]);
+        assert!(!state.still_follows(&step), "something follows b now");
+        state.remove_items(&[later.id]);
+        repeating(&state, Repeat::Off);
+        assert!(!state.still_follows(&step), "nor does repeat off wrap");
+    }
+
+    #[test]
+    fn repeating_one_steps_to_the_same_item_but_an_advance_moves_on() {
+        let state = SharedPlayerState::new();
+        let items: Vec<_> = ["a", "b"].map(ready_item).into();
+        let (a, b) = (items[0].id, items[1].id);
+        state.add_items(items);
+        repeating(&state, Repeat::One);
+
+        let step = state.lookahead_after(a).unwrap();
+        assert_eq!((step.next, step.wrapped), (Some(a), false));
+        state.set_cursor(Some(a));
+        assert_eq!(state.advance_cursor_loadable(), Some(b));
+        assert_eq!(
+            state.advance_cursor_loadable(),
+            Some(a),
+            "round, as repeating"
+        );
+    }
+
+    #[test]
+    fn previous_from_the_first_item_wraps_only_while_repeating() {
+        let state = SharedPlayerState::new();
+        let items: Vec<_> = ["a", "b", "c"].map(ready_item).into();
+        let (a, c) = (items[0].id, items[2].id);
+        state.add_items(items);
+
+        state.set_cursor(Some(a));
+        assert!(state.retreat_cursor().is_none());
+        for repeat in [Repeat::Queue, Repeat::One] {
+            repeating(&state, repeat);
+            state.set_cursor(Some(a));
+            assert_eq!(
+                state.retreat_cursor().map(|(id, _)| id),
+                Some(c),
+                "{repeat:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_removed_item_has_nothing_after_it_even_when_the_queue_repeats() {
+        let state = SharedPlayerState::new();
+        let items: Vec<_> = ["a", "b"].map(ready_item).into();
+        let b = items[1].id;
+        state.add_items(items);
+        repeating(&state, Repeat::Queue);
+
+        state.set_cursor(Some(b));
+        state.remove_item(b);
+        assert!(state.lookahead_after(b).is_none());
+        state.set_cursor(Some(b));
+        assert_eq!(state.advance_cursor_loadable(), None);
+    }
+
+    #[test]
+    fn a_wrap_passes_over_failed_items() {
+        let state = SharedPlayerState::new();
+        let items = vec![failed_item("a"), ready_item("b"), ready_item("c")];
+        let (b, c) = (items[1].id, items[2].id);
+        state.add_items(items);
+        repeating(&state, Repeat::Queue);
+
+        assert_eq!(state.lookahead_after(c).unwrap().next, Some(b));
+    }
+
     #[test]
     fn surviving_predecessor_skips_items_being_removed() {
         let state = SharedPlayerState::new();
@@ -2124,6 +2452,7 @@ mod tests {
             disc: None,
             duration_ms: Some(200_000),
             state: ItemState::Ready,
+            pre_shuffle: None,
         }
     }
 

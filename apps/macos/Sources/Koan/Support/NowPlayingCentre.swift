@@ -34,6 +34,9 @@ final class NowPlayingCentre {
     /// without this nothing would ever publish it: the guard below sees an
     /// unchanged track, an unchanged state and no seek, and returns.
     private var publishedArtwork: AlbumArtwork.Source?
+    /// The modes last shown on the shuffle and repeat commands.
+    private var publishedShuffle: Bool?
+    private var publishedRepeat: RepeatMode?
     /// The sleeve a fetch has already been started for, so a record with no art
     /// doesn't start one on every tick.
     private var requestedArtwork: AlbumArtwork.Source?
@@ -73,6 +76,29 @@ final class NowPlayingCentre {
         centre.nextTrackCommand.addTarget(handler: onMain { $0.next() })
         centre.previousTrackCommand.addTarget(handler: onMain { $0.previous() })
 
+        centre.changeShuffleModeCommand.isEnabled = true
+        centre.changeShuffleModeCommand.addTarget { [weak self] event in
+            guard let event = event as? MPChangeShuffleModeCommandEvent else {
+                return .commandFailed
+            }
+            let on = event.shuffleType != .off
+            Task { @MainActor in self?.player?.setShuffle(on) }
+            return .success
+        }
+        centre.changeRepeatModeCommand.isEnabled = true
+        centre.changeRepeatModeCommand.addTarget { [weak self] event in
+            guard let event = event as? MPChangeRepeatModeCommandEvent else {
+                return .commandFailed
+            }
+            let mode: RepeatMode = switch event.repeatType {
+            case .one: .one
+            case .all: .queue
+            default: .off
+            }
+            Task { @MainActor in self?.player?.setRepeat(mode) }
+            return .success
+        }
+
         centre.changePlaybackPositionCommand.isEnabled = true
         centre.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangePlaybackPositionCommandEvent else {
@@ -103,6 +129,7 @@ final class NowPlayingCentre {
     func refresh() {
         guard let player else { return }
         let now = mirror.playback
+        publishModes(shuffle: now.shuffle, repeat: now.repeatMode)
         let positionMs = mirror.playhead.at(within: now.durationMs)
 
         guard let entry = now.entry else {
@@ -157,6 +184,21 @@ final class NowPlayingCentre {
         if artwork == nil, let source {
             fetchArtwork(source)
         }
+    }
+
+    /// Show the play mode on the system's shuffle and repeat controls, when it
+    /// moved.
+    private func publishModes(shuffle: Bool, repeat mode: RepeatMode) {
+        guard shuffle != publishedShuffle || mode != publishedRepeat else { return }
+        let centre = MPRemoteCommandCenter.shared()
+        centre.changeShuffleModeCommand.currentShuffleType = shuffle ? .items : .off
+        centre.changeRepeatModeCommand.currentRepeatType = switch mode {
+        case .off: .off
+        case .queue: .all
+        case .one: .one
+        }
+        publishedShuffle = shuffle
+        publishedRepeat = mode
     }
 
     /// Load the cover so a later `refresh` finds it.

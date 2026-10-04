@@ -17,6 +17,8 @@ const SECTIONS: &[Section] = &[
         bindings: &[
             ("space", "Play / Pause"),
             ("< >", "Previous / Next track"),
+            ("s", "Shuffle on / off"),
+            ("R", "Repeat: off / queue / one"),
             (", .", "Seek backward / forward"),
             ("+ -", "Volume up / down"),
         ],

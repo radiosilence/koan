@@ -19,6 +19,10 @@ pub struct GraphQLClient {
     url: String,
     http: reqwest::blocking::Client,
     session: Option<Arc<Session>>,
+    /// Cleared once the server turns out to predate play modes, after which
+    /// `nowPlaying` is asked for without them. Shared by clones, like the
+    /// session.
+    play_modes: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// A sign-in to a server with auth enabled: the refresh token `koan auth login`
@@ -48,6 +52,7 @@ impl GraphQLClient {
                 .build()
                 .expect("failed to build HTTP client"),
             session: None,
+            play_modes: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
 
@@ -205,18 +210,47 @@ impl GraphQLClient {
     // Typed helpers
     // -----------------------------------------------------------------------
 
+    /// What the server is playing. A server older than play modes rejects a
+    /// query naming them, so on that refusal the query is asked again without
+    /// them, and from then on, and the mode reads as off.
     pub fn now_playing(&self) -> Result<NowPlaying, GraphQLError> {
-        let data = self.execute(
-            "{ nowPlaying { state positionMs durationMs queueItemId \
-             track { trackId title artist album codec sampleRate bitDepth bitrateKbps channels durationMs } } }",
-            None,
-        )?;
+        use std::sync::atomic::Ordering;
+        const TRACK: &str = "track { trackId title artist album codec sampleRate bitDepth \
+                             bitrateKbps channels durationMs }";
+        let ask = |modes: bool| {
+            let modes = if modes { "shuffle repeat " } else { "" };
+            self.execute(
+                &format!(
+                    "{{ nowPlaying {{ state positionMs durationMs queueItemId {modes}{TRACK} }} }}"
+                ),
+                None,
+            )
+        };
+        let data = if self.play_modes.load(Ordering::Relaxed) {
+            match ask(true) {
+                Err(GraphQLError::Query(e)) if e.contains("shuffle") || e.contains("repeat") => {
+                    log::info!("server predates play modes: {e}");
+                    self.play_modes.store(false, Ordering::Relaxed);
+                    ask(false)?
+                }
+                other => other?,
+            }
+        } else {
+            ask(false)?
+        };
         let np = &data["nowPlaying"];
         Ok(NowPlaying {
             state: np["state"].as_str().unwrap_or("STOPPED").to_string(),
             position_ms: np["positionMs"].as_u64().unwrap_or(0),
             duration_ms: np["durationMs"].as_u64(),
             queue_item_id: np["queueItemId"].as_str().map(String::from),
+            mode: crate::player::state::PlayMode {
+                shuffle: np["shuffle"].as_bool().unwrap_or(false),
+                repeat: np["repeat"]
+                    .as_str()
+                    .and_then(|r| crate::player::state::Repeat::parse(&r.to_lowercase()))
+                    .unwrap_or_default(),
+            },
             track: np.get("track").and_then(|t| {
                 if t.is_null() {
                     return None;
@@ -291,6 +325,22 @@ impl GraphQLClient {
         Ok(())
     }
 
+    pub fn set_shuffle(&self, on: bool) -> Result<(), GraphQLError> {
+        self.execute(
+            "mutation($on: Boolean!) { setPlayMode(shuffle: $on) { ok } }",
+            Some(serde_json::json!({ "on": on })),
+        )?;
+        Ok(())
+    }
+
+    pub fn set_repeat(&self, repeat: crate::player::state::Repeat) -> Result<(), GraphQLError> {
+        self.execute(
+            "mutation($repeat: Repeat!) { setPlayMode(repeat: $repeat) { ok } }",
+            Some(serde_json::json!({ "repeat": repeat.as_str().to_uppercase() })),
+        )?;
+        Ok(())
+    }
+
     pub fn seek(&self, position_ms: u64) -> Result<(), GraphQLError> {
         self.execute(
             "mutation($positionMs: Int!) { seek(positionMs: $positionMs) { ok } }",
@@ -361,6 +411,7 @@ pub struct NowPlaying {
     pub position_ms: u64,
     pub duration_ms: Option<u64>,
     pub queue_item_id: Option<String>,
+    pub mode: crate::player::state::PlayMode,
     pub track: Option<NowPlayingTrack>,
 }
 

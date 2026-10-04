@@ -11,6 +11,8 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | `space` | Pause / resume |
 | `<` | Previous track |
 | `>` | Next track |
+| `s` | Shuffle on / off (reorders the rest of the queue; off puts it back) |
+| `R` | Repeat: off, the queue, one track |
 | `,` or `<-` | Seek -10 seconds |
 | `.` or `->` | Seek +10 seconds |
 | `Shift+D` | Device selector (switch audio output) |

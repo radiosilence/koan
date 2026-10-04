@@ -116,9 +116,16 @@ The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0
     positionMs
     durationMs
     seekableMs
+    shuffle
+    repeat
     track { title, artist, codec, sampleRate, bitDepth }
   }
 }
+
+# Shuffle reorders the rest of the queue itself; off puts it back in its
+# original order. Repeat is OFF, QUEUE or ONE. `setPlayModeOnClient` does the
+# same on a linked app, whose modes `clients { shuffle repeat }` reports.
+mutation { setPlayMode(shuffle: true, repeat: QUEUE) { ok } }
 
 # Queue management
 mutation { replaceQueue(trackIds: [42, 43, 44]) { ok, addedCount } }

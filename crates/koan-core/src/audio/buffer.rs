@@ -136,6 +136,16 @@ impl TrackBoundary {
     }
 }
 
+/// Where the playhead is. A play is its boundary, not its item: an item
+/// repeated gaplessly has a boundary per pass, and each is a play of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Playhead {
+    /// The index of the boundary the playhead is past, in this session.
+    pub boundary: usize,
+    pub id: QueueItemId,
+    pub position_ms: u64,
+}
+
 /// Shared timeline that the decode thread writes and the UI reads.
 /// The decode thread appends boundaries; the UI reads them + samples_played
 /// to derive current track and position.
@@ -228,26 +238,36 @@ impl PlaybackTimeline {
         *self.queued.lock() = Some(Box::new(f));
     }
 
-    /// The track under the playhead and how far into it, without the clones
+    /// The play under the playhead and how far into it, without the clones
     /// `current_playback` makes.
-    pub fn playhead(&self) -> Option<(QueueItemId, u64)> {
+    pub fn playhead(&self) -> Option<Playhead> {
         let bounds = self.boundaries.read();
         let played = self.played(&bounds);
-        let idx = bounds.partition_point(|b| b.sample_offset <= played);
-        let current = bounds.get(idx.checked_sub(1)?)?;
-        Some((current.id, current.position_ms(played)?))
+        let boundary = bounds
+            .partition_point(|b| b.sample_offset <= played)
+            .checked_sub(1)?;
+        let current = bounds.get(boundary)?;
+        Some(Playhead {
+            boundary,
+            id: current.id,
+            position_ms: current.position_ms(played)?,
+        })
     }
 
-    /// How far into `id` playback has got, stopping at its end once the
-    /// playhead has moved on to the next track.
-    pub fn position_of(&self, id: QueueItemId) -> Option<u64> {
+    /// How many boundaries the session has: the index the next one takes.
+    pub fn boundary_count(&self) -> usize {
+        self.boundaries.read().len()
+    }
+
+    /// How far into the play at `boundary` playback has got, stopping at its
+    /// end once the playhead has moved on to the next.
+    pub fn position_in(&self, boundary: usize) -> Option<u64> {
         let bounds = self.boundaries.read();
         let played = self.played(&bounds);
-        let idx = bounds.iter().rposition(|b| b.id == id)?;
         let at = bounds
-            .get(idx + 1)
+            .get(boundary + 1)
             .map_or(played, |next| played.min(next.sample_offset));
-        bounds[idx].position_ms(at)
+        bounds.get(boundary)?.position_ms(at)
     }
 
     /// How long until the playhead reaches the track queued after the one
@@ -1399,9 +1419,32 @@ mod tests {
             .samples_played
             .store(88200 + 44100, Ordering::Relaxed);
 
-        assert_eq!(timeline.position_of(a), Some(1000));
-        assert_eq!(timeline.position_of(b), Some(500));
-        assert_eq!(timeline.playhead(), Some((b, 500)));
+        assert_eq!(timeline.position_in(0), Some(1000));
+        assert_eq!(timeline.position_in(1), Some(500));
+        assert_eq!(
+            timeline.playhead(),
+            Some(Playhead {
+                boundary: 1,
+                id: b,
+                position_ms: 500
+            })
+        );
+    }
+
+    #[test]
+    fn an_item_queued_twice_is_two_plays() {
+        let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
+        let a = QueueItemId::new();
+        tl.push_boundary(make_boundary(a, 0, 0, 2, 44100));
+        tl.push_boundary(make_boundary(a, 88200, 0, 2, 44100));
+        timeline
+            .samples_played
+            .store(88200 + 44100, Ordering::Relaxed);
+
+        assert_eq!(timeline.position_in(0), Some(1000), "the first pass ended");
+        assert_eq!(timeline.position_in(1), Some(500));
+        assert_eq!(timeline.playhead().map(|p| p.boundary), Some(1));
     }
 
     #[test]

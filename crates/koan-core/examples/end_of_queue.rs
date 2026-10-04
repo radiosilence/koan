@@ -32,6 +32,7 @@ fn main() {
         disc: Some(1),
         duration_ms: None,
         state: ItemState::Ready,
+        pre_shuffle: None,
     };
     let id = item.id;
     tx.send(PlayerCommand::AddToPlaylist(vec![item])).unwrap();

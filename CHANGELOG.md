@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Shuffle and repeat.** The transport has a shuffle button and a repeat button that steps through off, the whole queue and one track: on the Mac's transport bar, in Now Playing on iOS, under `s` and `R` in the TUI, through Control Center's shuffle and repeat controls, and through GraphQL (`nowPlaying { shuffle repeat }`, `setPlayMode`, `setPlayModeOnClient`). Repeating the queue runs the last track into the first without a gap, and the first is downloaded ahead of time like any other upcoming track. Repeating one track plays it again without a gap; each pass is its own entry in history, and Next and Previous still move on. Shuffle reorders the rest of the queue itself, so what the queue shows is what plays; turning it off puts the queue back in its original order, with anything added in the meantime left where it was put, and ⌘Z undoes it as one step. While shuffle is on, a new queue (an album played, a hand-off) starts with the track asked for and plays the rest shuffled. Controlling another device shows and sets that device's modes. The modes are saved with the session. MPRIS `LoopStatus` and `Shuffle` on Linux are not wired yet: souvlaki has no events for them.
 - **The route's preset in iOS Now Playing.** Beside the AirPlay button, the preset of the route playing (AirPods, headphones, the speaker), or "Off"; tapping it picks another for that route. It follows the route as it changes, shows a UPnP renderer's preset while the phone plays to one, and is tinted while what is heard is processed.
 
 ### Changed
