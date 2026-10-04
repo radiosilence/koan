@@ -39,7 +39,8 @@ pub struct Device {
     /// Reachable at once. An account device that is not is one iOS has
     /// suspended: a command wakes it, and music reaches it as a notification.
     pub awake: bool,
-    /// Not heard from for longer than a heartbeat. `awake` is false too.
+    /// Not reachable for longer than a heartbeat. Not reachable for less, it
+    /// is neither awake nor asleep: reconnecting, as far as anyone can tell.
     pub asleep: bool,
     /// Can be woken from asleep: the server holds a push token for it.
     /// An asleep device that cannot be is shown, and cannot be chosen.
@@ -87,6 +88,9 @@ struct Store {
     live: HashMap<String, i64>,
     /// Devices no list carries any more, kept until the grace period ends.
     departed: Vec<Departed>,
+    /// `account` came down the link that is up now. One held from before the
+    /// link last dropped says nothing about who is reachable at this moment.
+    fresh: bool,
     /// Devices being woken, or that did not wake, by id.
     waking: HashMap<String, Waking>,
 }
@@ -113,9 +117,7 @@ struct Departed {
     name: String,
     platform: String,
     account: bool,
-    nearby: bool,
     same_library: bool,
-    state: Option<LinkState>,
 }
 
 /// One heartbeat: a link that hears nothing for this long pings, and one that
@@ -130,6 +132,10 @@ struct Saved {
     account: Vec<LinkDevice>,
     #[serde(default)]
     nearby: Vec<SeenNearby>,
+    /// When each device was last reachable, Unix seconds: kept so a device
+    /// the server no longer lists is not taken for one seen just now.
+    #[serde(default)]
+    live: HashMap<String, i64>,
 }
 
 /// A device reached on the local network, and where: dialled there at once
@@ -233,6 +239,7 @@ impl Store {
             target: self.target.clone(),
             account: self.account.iter().map(|(d, _)| d.clone()).collect(),
             nearby: self.seen.clone(),
+            live: self.live.clone(),
         };
         if let Ok(json) = serde_json::to_string(&saved) {
             let _ = std::fs::write(saved_path(), json);
@@ -261,11 +268,22 @@ fn restore() {
             .into_iter()
             .filter(|n| n.at >= cutoff)
             .collect();
-        // Not linked until the server says so: shown as last heard of.
+        s.live = saved.live;
+        // Not linked until the server says so, and doing nothing anyone
+        // knows of: what it was playing then is not what it is playing now.
         s.account = saved
             .account
             .into_iter()
-            .map(|d| (LinkDevice { linked: false, ..d }, now))
+            .map(|d| {
+                (
+                    LinkDevice {
+                        linked: false,
+                        state: None,
+                        ..d
+                    },
+                    now,
+                )
+            })
             .collect();
     });
 }
@@ -295,18 +313,26 @@ pub fn local() -> Option<&'static Local> {
 /// (a Mac asleep, a server restarting) is still the one the person picked,
 /// and the app shows it as out of reach until it is back or another is.
 pub fn set_linked(linked: bool) {
-    changed(|s| s.linked = linked);
+    changed(|s| {
+        s.linked = linked;
+        if !linked {
+            s.fresh = false;
+        }
+    });
 }
 
 pub fn set_account(devices: Vec<LinkDevice>) {
     let now = Instant::now();
     let unix = chrono::Utc::now().timestamp();
     changed(|s| {
-        // Reachable up to this message: the hysteresis runs from here, not
-        // from whenever it was last reported.
-        for (old, _) in &s.account {
-            if old.linked {
-                s.live.insert(old.id.clone(), unix);
+        // Reachable up to this message, if the list saying so came down this
+        // same link: the hysteresis runs from here, not from whenever it was
+        // last reported. A list held across a gap in the link proves nothing.
+        if s.fresh {
+            for (old, _) in &s.account {
+                if old.linked {
+                    s.live.insert(old.id.clone(), unix);
+                }
             }
         }
         for d in &devices {
@@ -330,19 +356,20 @@ pub fn set_account(devices: Vec<LinkDevice>) {
                 name: old.name.clone(),
                 platform: old.platform.clone(),
                 account: true,
-                nearby: false,
                 same_library: true,
-                state: old.state.clone(),
             })
             .collect();
         for d in leaving {
-            // Listed until now, so last seen now if not since: a departed
-            // device always has a time to expire from.
-            s.live.entry(d.id.clone()).or_insert(unix);
+            // Never seen reachable as far as this device knows: gone, rather
+            // than taken for a device seen just now.
+            if !s.live.contains_key(&d.id) {
+                continue;
+            }
             s.departed.retain(|g| g.id != d.id);
             s.departed.push(d);
         }
         s.account = devices.into_iter().map(|d| (d, now)).collect();
+        s.fresh = s.linked;
         s.save();
     });
 }
@@ -408,9 +435,7 @@ pub fn nearby_gone(id: &str) {
             name: gone.hello.name.clone(),
             platform: gone.hello.platform.clone(),
             account: false,
-            nearby: true,
             same_library: ours.is_some() && gone.hello.library == ours,
-            state: gone.state,
         });
     });
 }
@@ -447,14 +472,14 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
     let ours = link::library_fingerprint(&cfg);
     with(|s| {
         let live = |id: &str| s.live.get(id).copied();
-        // Reachable, or missed for less than a heartbeat.
+        // Missed for less than a heartbeat.
         let fresh = |id: &str| live(id).is_some_and(|at| now - at <= STALE_SECS);
         let mut out: Vec<Device> = s
             .account
             .iter()
             .map(|(d, at)| {
                 let near = s.nearby.iter().find(|n| n.hello.id == d.id);
-                let awake = d.linked || near.is_some() || fresh(&d.id);
+                let awake = d.linked || near.is_some();
                 Device {
                     id: d.id.clone(),
                     name: d.name.clone(),
@@ -462,10 +487,10 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                     account: true,
                     nearby: near.is_some(),
                     awake,
-                    asleep: !awake,
-                    // The server lists an unlinked device only when a push
-                    // can wake it.
-                    wakeable: true,
+                    asleep: !awake && !fresh(&d.id),
+                    // As the server says: a push token, and a push key to
+                    // send with. One that says nothing lists only those.
+                    wakeable: d.wakeable.unwrap_or(true),
                     last_seen: live(&d.id),
                     waking: None,
                     same_library: true,
@@ -513,21 +538,22 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
             if last.is_some_and(|at| now - at > STALE_SECS + grace) {
                 continue;
             }
-            let awake = fresh(&g.id);
+            // Nothing routes to it now, whatever the label: reconnecting for
+            // a heartbeat, then asleep.
             out.push(Device {
                 id: g.id.clone(),
                 name: g.name.clone(),
                 platform: g.platform.clone(),
                 account: g.account,
-                nearby: g.nearby && awake,
-                awake,
-                asleep: !awake,
+                nearby: false,
+                awake: false,
+                asleep: !fresh(&g.id),
                 wakeable: false,
                 last_seen: last,
                 waking: None,
                 same_library: g.same_library,
                 // What it was doing is not what it is doing now.
-                state: awake.then(|| g.state.clone()).flatten(),
+                state: None,
                 heard: Instant::now(),
                 problem: None,
             });
@@ -589,14 +615,15 @@ fn next_change(now: i64, grace: i64) -> Option<i64> {
     })
 }
 
-/// Whether the app may choose `id`: not when it is asleep with no way to wake
-/// it, where a command would go nowhere.
+/// Whether the app may choose `id`: not when nothing reaches it now and
+/// nothing can wake it, where a command would go nowhere.
 pub fn choosable(id: &str) -> Result<(), String> {
     match list().into_iter().find(|d| d.id == id) {
-        Some(d) if d.asleep && !d.wakeable && d.problem.is_none() => Err(format!(
-            "{} is asleep and cannot be woken from here.",
-            d.name
-        )),
+        Some(d) if !d.awake && !d.wakeable && d.problem.is_none() => Err(if d.asleep {
+            format!("{} is asleep and cannot be woken from here.", d.name)
+        } else {
+            format!("{} is reconnecting.", d.name)
+        }),
         _ => Ok(()),
     }
 }
@@ -832,6 +859,7 @@ mod tests {
                 ..Default::default()
             }),
             last_seen: None,
+            wakeable: None,
         }
     }
 
@@ -862,8 +890,12 @@ mod tests {
 
         let missed_one = at(now + STALE_SECS - 1).expect("still listed");
         assert!(
-            missed_one.awake && !missed_one.asleep,
-            "one missed heartbeat changes nothing"
+            !missed_one.asleep,
+            "one missed heartbeat does not make it asleep"
+        );
+        assert!(
+            !missed_one.awake && !missed_one.nearby,
+            "nor does it pretend to be reachable"
         );
         let asleep = at(now + STALE_SECS + 1).expect("listed asleep");
         assert!(asleep.asleep && !asleep.awake && !asleep.wakeable);
@@ -885,7 +917,7 @@ mod tests {
         let back = at(now + STALE_SECS + 5).unwrap();
         assert!(back.awake && back.nearby && !back.asleep);
 
-        // An asleep stranger cannot be chosen or sent to.
+        // Asleep, a stranger cannot be chosen or sent to.
         nearby_gone("stranger");
         with(|s| *s.live.get_mut("stranger").unwrap() -= STALE_SECS + 10);
         assert!(choosable("stranger").is_err());
@@ -895,6 +927,7 @@ mod tests {
         let mut phone = device("phone", false);
         phone.linked = false;
         phone.last_seen = Some(now - 10 * grace);
+        phone.wakeable = Some(true);
         set_account(vec![phone]);
         let phone = list_at(now, grace)
             .into_iter()
@@ -904,13 +937,15 @@ mod tests {
         assert_eq!(phone.last_seen, Some(now - 10 * grace));
         assert!(choosable("phone").is_ok());
 
-        // An account device that unlinks without a push token: kept as it
-        // was for a heartbeat, then asleep, then dropped.
+        // An account device that unlinks without a push token: reconnecting
+        // for a heartbeat, then asleep, then dropped.
+        set_linked(true);
         set_account(vec![device("mac", false)]);
         set_account(Vec::new());
         let left = with(|s| s.live["mac"]);
         let mac = |t: i64| list_at(t, grace).into_iter().find(|d| d.id == "mac");
-        assert!(mac(left + 1).unwrap().awake);
+        let reconnecting = mac(left + 1).unwrap();
+        assert!(!reconnecting.awake && !reconnecting.asleep);
         let asleep = mac(left + STALE_SECS + 1).unwrap();
         assert!(asleep.asleep && !asleep.wakeable && asleep.account);
         assert!(mac(left + STALE_SECS + grace + 1).is_none());
@@ -986,6 +1021,100 @@ mod tests {
             with(|s| s.waking.is_empty()),
             "not wakeable: no stage starts"
         );
+        with(|s| *s = Store::default());
+    }
+
+    /// A stranger whose connection just closed reads as reconnecting, and is
+    /// not offered: nothing would carry a command to it.
+    #[test]
+    fn a_stranger_that_just_left_cannot_be_chosen() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        nearby_hello(hello("stranger"), "10.0.0.5:5626");
+        nearby_gone("stranger");
+        let listed = list().into_iter().find(|d| d.id == "stranger").unwrap();
+        assert!(!listed.awake && !listed.asleep && !listed.nearby);
+        assert!(choosable("stranger").is_err());
+        assert!(send("stranger", LinkCommand::Pause).is_err());
+        with(|s| *s = Store::default());
+    }
+
+    /// A list held while this app's own link was down says nothing about
+    /// when anyone was seen: the server's `last_seen` stands.
+    #[test]
+    fn a_list_held_across_a_gap_in_the_link_does_not_stamp_now() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        set_linked(true);
+        set_account(vec![device("phone", true)]);
+        // Suspended for hours; the phone left meanwhile.
+        with(|s| *s.live.get_mut("phone").unwrap() -= 4 * 60 * 60);
+        set_linked(false);
+        let hours_ago = chrono::Utc::now().timestamp() - 3 * 60 * 60;
+        set_linked(true);
+        let mut phone = device("phone", false);
+        phone.linked = false;
+        phone.last_seen = Some(hours_ago);
+        set_account(vec![phone]);
+        let phone = list().into_iter().find(|d| d.id == "phone").unwrap();
+        assert!(phone.asleep, "not reconnecting: it went hours ago");
+        // The stamp from when it was linked is earlier than the server's, so
+        // the server's stands.
+        assert!(phone.last_seen.unwrap() >= hours_ago);
+        assert!(
+            phone.last_seen.unwrap() < chrono::Utc::now().timestamp() - STALE_SECS,
+            "not seen just now"
+        );
+        with(|s| *s = Store::default());
+    }
+
+    /// Relaunched, a device the server no longer lists is gone, not a device
+    /// seen just now; and one it does list shows nothing it was doing.
+    #[test]
+    fn a_restored_device_the_server_drops_is_gone() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        // What an older run left: no times for these.
+        let saved = Saved {
+            target: None,
+            account: vec![device("mac", true), device("phone", true)],
+            nearby: Vec::new(),
+            live: HashMap::new(),
+        };
+        std::fs::write(saved_path(), serde_json::to_string(&saved).unwrap()).unwrap();
+        restore();
+        let listed = list();
+        assert!(listed.iter().all(|d| d.state.is_none() && !d.awake));
+        set_linked(true);
+        let mut phone = device("phone", false);
+        phone.linked = false;
+        phone.wakeable = Some(true);
+        set_account(vec![phone]);
+        assert!(
+            !list().iter().any(|d| d.id == "mac"),
+            "never seen here, and not listed: dropped"
+        );
+        with(|s| *s = Store::default());
+    }
+
+    /// A server with no push key cannot wake anything, whatever tokens it
+    /// holds: such a device is shown asleep and cannot be chosen.
+    #[test]
+    fn a_device_the_server_cannot_push_is_not_wakeable() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        let mut phone = device("phone", false);
+        phone.linked = false;
+        phone.wakeable = Some(false);
+        phone.last_seen = Some(chrono::Utc::now().timestamp() - 3600);
+        set_account(vec![phone]);
+        let phone = list().into_iter().find(|d| d.id == "phone").unwrap();
+        assert!(phone.asleep && !phone.wakeable);
+        assert!(choosable("phone").is_err());
         with(|s| *s = Store::default());
     }
 
