@@ -134,6 +134,22 @@ pub enum LinkCommand {
     Devices {
         devices: Vec<LinkDevice>,
     },
+    /// The accounts this device lets control it. News, as `Devices` is: sent
+    /// when it links and whenever the list changes.
+    Shares {
+        grantees: Vec<String>,
+        /// Why the last request to share or stop sharing was refused.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        /// Every account on the server, to choose from.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        accounts: Vec<String>,
+    },
+    /// `command`, sent by another account this device is shared with: run as
+    /// that account's request, from the playback set (`allowed_playback`).
+    Shared {
+        command: Box<LinkCommand>,
+    },
     /// `device` was forgotten: drop it, however it was last heard of. News,
     /// as `Devices` is.
     Forgotten {
@@ -173,8 +189,65 @@ fn is_zero(n: &u64) -> bool {
 }
 
 impl LinkCommand {
+    /// What a device that is not this account's may have it do: play, pause,
+    /// skip and seek, change the queue, jump, set the volume, choose the
+    /// output and the preset, and move the music here or away. What it asks
+    /// for runs as the asker's request, never with this account's powers:
+    /// nothing here changes the library, the config beyond the output in
+    /// use, or the account's favourites, playlists or history, and a track it
+    /// names that the library lacks is not synced for (see `CommandSource`).
+    /// For a device shared with another account, and one on the local network
+    /// under Full control.
+    pub fn allowed_playback(&self) -> bool {
+        match self {
+            Self::Play { .. }
+            | Self::Enqueue { .. }
+            | Self::PlayNext { .. }
+            | Self::Remove { .. }
+            | Self::Clear
+            | Self::JumpTo { .. }
+            | Self::Seek { .. }
+            | Self::Pause
+            | Self::Resume
+            | Self::Next
+            | Self::Previous
+            | Self::PlayItem { .. }
+            | Self::RemoveItems { .. }
+            | Self::MoveItems { .. }
+            | Self::Insert { .. }
+            | Self::Undo
+            | Self::Redo
+            | Self::Shuffle { .. }
+            | Self::Repeat { .. }
+            | Self::HandOff { .. }
+            | Self::SetOutput { .. }
+            | Self::SetRendererVolume { .. }
+            | Self::SetPreset { .. }
+            | Self::WatchLevels { .. } => true,
+            // The library, and the server's own news.
+            Self::Sync { .. }
+            | Self::Evict { .. }
+            | Self::Devices { .. }
+            | Self::Shares { .. }
+            | Self::Shared { .. }
+            | Self::Forgotten { .. }
+            | Self::Levels { .. } => false,
+        }
+    }
+
+    /// How a command from a device on the local network runs here, if at
+    /// all: with `full` control (this device's setting) the playback set, as
+    /// `Nearby`; without, a stranger's narrower set, as `Stranger`.
+    pub fn from_the_network(&self, full: bool) -> Option<CommandSource> {
+        if full {
+            self.allowed_playback().then_some(CommandSource::Nearby)
+        } else {
+            self.allowed_nearby().then_some(CommandSource::Stranger)
+        }
+    }
+
     /// Whether a device on the same network, which may belong to anyone, may
-    /// send this. Playback and the queue; nothing that touches the library or
+    /// send this under Playback only. Playback and the queue; nothing that touches the library or
     /// the files on disk.
     ///
     /// Where the sound goes is not playback: an output switch reaches into
@@ -190,6 +263,8 @@ impl LinkCommand {
                 | Self::SetOutput { .. }
                 | Self::SetRendererVolume { .. }
                 | Self::SetPreset { .. }
+                | Self::Shares { .. }
+                | Self::Shared { .. }
         )
     }
 
@@ -203,6 +278,7 @@ impl LinkCommand {
             | Self::Evict { track_ids }
             | Self::Insert { track_ids, .. } => track_ids,
             Self::JumpTo { track_id } => std::slice::from_ref(track_id),
+            Self::Shared { command } => command.track_ids(),
             _ => &[],
         }
     }
@@ -211,10 +287,19 @@ impl LinkCommand {
 /// Where a command came from, which decides what it may cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandSource {
-    /// The signed-in server, or this person's own devices through it.
+    /// The signed-in server, or this person's own devices through it. The
+    /// only source that may cost a sync.
     Account,
-    /// A device on the same network, which may belong to anyone.
+    /// Another account this device is shared with, through the server: the
+    /// playback set (`allowed_playback`), as that account.
+    Shared,
+    /// A device on the local network, with this device set to Full control:
+    /// the playback set, whoever is signed in there.
     Nearby,
+    /// A device on the local network, with this device set to Playback only:
+    /// a stranger's set (`allowed_nearby`), and a hand-off that stays on the
+    /// network.
+    Stranger,
 }
 
 /// Another device on the same account, as the server sends it.
@@ -239,6 +324,10 @@ pub struct LinkDevice {
     /// this, which listed an absent device only when it had a token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wakeable: Option<bool>,
+    /// The account it belongs to, for a device another account shares: `None`
+    /// for the account's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
 }
 
 impl LinkCommand {
@@ -253,6 +342,7 @@ impl LinkCommand {
             | Self::Evict { track_ids }
             | Self::Insert { track_ids, .. } => track_ids.iter_mut().collect(),
             Self::JumpTo { track_id } => vec![track_id],
+            Self::Shared { command } => command.track_ids_mut(),
             Self::PlayItem { .. }
             | Self::RemoveItems { .. }
             | Self::MoveItems { .. }
@@ -262,6 +352,7 @@ impl LinkCommand {
             | Self::Repeat { .. }
             | Self::HandOff { .. }
             | Self::Devices { .. }
+            | Self::Shares { .. }
             | Self::Forgotten { .. }
             | Self::WatchLevels { .. }
             | Self::Levels { .. }
@@ -376,6 +467,12 @@ pub enum LinkReport {
         to: String,
         #[serde(default)]
         notify: bool,
+    },
+    /// Let the account `grantee` control this device, or with `allow` false
+    /// stop letting it. Only ever about the device sending it.
+    Share {
+        grantee: String,
+        allow: bool,
     },
     /// Forget `device`, one of this account's that is not linked: its record
     /// and its push token. It is listed again if it links again.
@@ -723,6 +820,22 @@ impl wire::Session for LinkSession<'_> {
             Ok(LinkCommand::Devices { devices }) => {
                 crate::remote::devices::set_account(devices);
             }
+            Ok(LinkCommand::Shares {
+                grantees,
+                error,
+                accounts,
+            }) => {
+                crate::remote::devices::set_shares(grantees, error, accounts);
+            }
+            Ok(LinkCommand::Shared { command }) => {
+                // Checked by the server, and again here: this device decides
+                // what another account may have it do.
+                if command.allowed_playback() {
+                    (self.local.on_command)(*command, CommandSource::Shared);
+                } else {
+                    log::warn!("link: refused from a shared account: {command:?}");
+                }
+            }
             Ok(LinkCommand::Forgotten { device }) => {
                 crate::remote::devices::forgotten(&device);
             }
@@ -916,6 +1029,56 @@ mod tests {
         assert!(!relayed.allowed_nearby(), "only the server relays frames");
     }
     use super::*;
+
+    /// Another account, or a device on the network under Full control, gets
+    /// the playback set: more than a stranger (outputs, presets, volume,
+    /// hand-off), and nothing of the library or the server's news.
+    #[test]
+    fn the_playback_set_is_playback_and_nothing_of_the_library() {
+        let ids = vec!["t".to_string()];
+        for cmd in [
+            LinkCommand::Pause,
+            LinkCommand::JumpTo {
+                track_id: "t".into(),
+            },
+            LinkCommand::Enqueue {
+                track_ids: ids.clone(),
+            },
+            LinkCommand::HandOff { to: "x".into() },
+            LinkCommand::SetRendererVolume { volume: 1 },
+        ] {
+            assert!(cmd.allowed_playback(), "{cmd:?}");
+            assert_eq!(cmd.from_the_network(true), Some(CommandSource::Nearby));
+        }
+        for cmd in [
+            LinkCommand::Sync { full: false },
+            LinkCommand::Evict {
+                track_ids: ids.clone(),
+            },
+            LinkCommand::Devices { devices: vec![] },
+            LinkCommand::Shares {
+                grantees: vec![],
+                error: None,
+                accounts: vec![],
+            },
+            LinkCommand::Shared {
+                command: Box::new(LinkCommand::Pause),
+            },
+        ] {
+            assert!(!cmd.allowed_playback(), "{cmd:?}");
+            assert_eq!(cmd.from_the_network(true), None, "{cmd:?}");
+            assert_eq!(cmd.from_the_network(false), None, "{cmd:?}");
+        }
+        // Playback only: a stranger's set, run as a stranger.
+        assert_eq!(
+            LinkCommand::Pause.from_the_network(false),
+            Some(CommandSource::Stranger)
+        );
+        assert_eq!(
+            LinkCommand::SetRendererVolume { volume: 1 }.from_the_network(false),
+            None
+        );
+    }
 
     // Neither case may reach `sync`: a test has no business reading the
     // machine's config and syncing against the server it names.

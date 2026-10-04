@@ -493,7 +493,7 @@ impl wire::Session for Serving<'_> {
             }));
             self.greeted = true;
         }
-        let now = for_the_network((self.local.state)());
+        let now = for_the_network((self.local.state)(), full_control());
         if self
             .sent
             .as_ref()
@@ -515,10 +515,10 @@ impl wire::Session for Serving<'_> {
             Ok(LinkCommand::WatchLevels { on }) => {
                 self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
             }
-            Ok(cmd) if cmd.allowed_nearby() => {
-                (self.local.on_command)(cmd, crate::remote::link::CommandSource::Nearby)
-            }
-            Ok(cmd) => log::warn!("nearby: refused {cmd:?}"),
+            Ok(cmd) => match cmd.from_the_network(full_control()) {
+                Some(source) => (self.local.on_command)(cmd, source),
+                None => log::warn!("nearby: refused {cmd:?}"),
+            },
             Err(e) => log::warn!("nearby: not a command ({e}): {text}"),
         }
     }
@@ -528,10 +528,20 @@ impl wire::Session for Serving<'_> {
     }
 }
 
+/// Whether devices on the network may choose this one's output, preset and
+/// volume and move its music anywhere, rather than only play: this device's
+/// setting, Full control unless set otherwise.
+fn full_control() -> bool {
+    crate::config::Config::cached().devices.nearby_control == crate::config::NearbyControl::Full
+}
+
 /// What a device on the network, which may belong to anyone, is told: what is
-/// playing and the queue, not the outputs. Those name the amplifiers in the
-/// room and the presets, and only the account may change them.
-fn for_the_network(state: LinkState) -> LinkState {
+/// playing and the queue, and under `full` control the outputs too, which it
+/// may then choose from.
+fn for_the_network(state: LinkState, full: bool) -> LinkState {
+    if full {
+        return state;
+    }
     LinkState {
         outputs: None,
         ..state
@@ -1299,14 +1309,16 @@ mod dial_tests {
 mod tests {
     /// A device on the network sees what is playing, never where it plays.
     #[test]
-    fn a_device_on_the_network_is_not_told_the_outputs() {
+    fn a_device_on_the_network_is_told_the_outputs_only_under_full_control() {
         let state = crate::remote::link::LinkState {
             playing: true,
             outputs: Some(Default::default()),
             ..Default::default()
         };
-        let told = super::for_the_network(state);
-        assert!(told.playing);
-        assert_eq!(told.outputs, None);
+        let full = super::for_the_network(state.clone(), true);
+        assert!(full.playing && full.outputs.is_some());
+        let playback = super::for_the_network(state, false);
+        assert!(playback.playing);
+        assert_eq!(playback.outputs, None);
     }
 }

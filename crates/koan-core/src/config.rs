@@ -468,6 +468,22 @@ pub struct DevicesConfig {
     /// Devices to connect to by address, `host:port`: for networks that do
     /// not carry Bonjour, such as a tailnet.
     pub addresses: Vec<String>,
+    /// What a kōan on the local network may have this device do, whoever is
+    /// signed in there.
+    pub nearby_control: NearbyControl,
+}
+
+/// What devices on the local network may do with this one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NearbyControl {
+    /// Play, the queue, the output, the preset and the volume, and moving the
+    /// music here or away: what a household network wants.
+    #[default]
+    Full,
+    /// Play and the queue only, and a hand-off that stays on the network: for
+    /// a network shared with strangers.
+    Playback,
 }
 
 impl Default for DevicesConfig {
@@ -476,6 +492,7 @@ impl Default for DevicesConfig {
             discoverable: true,
             port: DEVICES_PORT,
             addresses: Vec::new(),
+            nearby_control: NearbyControl::Full,
         }
     }
 }
@@ -731,6 +748,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "devices.discoverable"
         | "devices.port"
         | "devices.addresses"
+        | "devices.nearby_control"
         // Which koan server this machine signs in to.
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.
