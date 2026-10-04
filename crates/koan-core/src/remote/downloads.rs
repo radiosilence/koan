@@ -395,6 +395,15 @@ impl DownloadStore {
             .unwrap_or_default()
     }
 
+    /// Whether the live transfer for `track_id` is wanted in the cache for its
+    /// own sake, as well as by whatever queue entries wait on it.
+    pub fn kept(&self, track_id: i64) -> bool {
+        self.entries
+            .read()
+            .iter()
+            .any(|e| e.download.track_id == track_id && e.is_live() && e.keep)
+    }
+
     /// Whether nothing wants the transfer for `track_id` any more, or there
     /// is no live transfer for it at all.
     pub fn abandoned(&self, track_id: i64) -> bool {

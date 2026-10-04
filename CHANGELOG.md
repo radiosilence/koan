@@ -19,6 +19,8 @@
 
 ### Fixed
 
+- **The cache limit holds with a long queue.** Eviction skipped every album with a track in the queue, and the queue was downloaded in full, so a queue larger than the limit filled the cache past it and kept it there: 38 GB against a 10 GB limit. The queue is now fetched only as far ahead of the cursor as the limit allows, and eviction keeps just that window; played tracks and anything past the window are evicted file by file, least recently used first.
+- **Tracks downloaded to the cache are evicted last.** Downloads made with "Download to Cache" rather than to play are pinned: eviction takes them only once nothing fetched for playback is left to remove.
 - **Track identity is rebuilt on source rows.** Each file and each server entry now keeps its own tags in a row of its own, and a track's names, path and server id are derived from them, the file's first. One function decides which file and which server entry are the same track, and it runs whenever either's tags change. This replaces eight separate matching and repair passes, and fixes the problems they shared:
   - A track held both on disk and on a server no longer changes between the file's names and the server's on every sync and rescan. A tag corrected in the file is no longer put back by the next sync.
   - Correcting a file's tags pairs it with its server copy, or splits it from one it no longer matches, whatever the artist credit says.

@@ -2060,6 +2060,7 @@ impl KoanEngine {
     /// `sign_in_remote`.
     pub async fn update_settings(self: Arc<Self>, s: Settings) -> Result<(), KoanError> {
         offload::offload(move || {
+            let limit_before = Config::cached().remote.cache_limit.clone();
             Config::persist(|cfg| {
                 cfg.library.folders = s
                     .library_folders
@@ -2095,6 +2096,9 @@ impl KoanEngine {
                 message: e.to_string(),
             })?;
             koan_core::remote::nearby::reconfigure();
+            if Config::cached().remote.cache_limit != limit_before {
+                koan_core::remote::queue::cache_limit_changed();
+            }
             Ok(())
         })
         .await
