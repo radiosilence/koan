@@ -360,12 +360,20 @@ final class PlayerModel {
 
     // MARK: - Devices & modes
 
+    /// The latest device read. CoreAudio posts several changes for one plug,
+    /// and the reads are offloaded, so an older one can finish last.
+    @ObservationIgnored private var deviceRead = 0
+
     func refreshDevices() {
         let engine = self.engine
+        deviceRead += 1
+        let read = deviceRead
         Task {
             let found = (try? await engine.devices()) ?? []
+            let current = await engine.currentDevice()
+            guard read == self.deviceRead else { return }
             self.devices = found
-            self.currentDevice = await engine.currentDevice()
+            self.currentDevice = current
         }
     }
 
