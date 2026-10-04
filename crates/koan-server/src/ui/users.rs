@@ -14,7 +14,7 @@ use koan_core::auth::{self, Role};
 use koan_core::db::queries::auth::{self as users, UserRow};
 use koan_core::invite::{self, AccountError, Invite};
 
-use super::pages::respond;
+use super::pages::{COPY_ERROR, COPY_INPUT, COPY_ROW, EMPTY, SUB, respond};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, escape};
@@ -27,7 +27,7 @@ const ROLES: [(Role, &str); 3] = [
 
 fn role_select(id: i64, current: Role) -> String {
     let mut out = format!(
-        "<select aria-label=Access data-on:change=\"@post('/users/{id}/role?role=' + el.value)\">"
+        "<select class=\"px-2 py-1.5\" aria-label=Access data-on:change=\"@post('/users/{id}/role?role=' + el.value)\">"
     );
     for (role, label) in ROLES {
         let sel = if role == current { " selected" } else { "" };
@@ -38,13 +38,13 @@ fn role_select(id: i64, current: Role) -> String {
 }
 
 fn user_list(rows: &[UserRow], me: i64) -> String {
-    let mut out = String::from("<ul class=\"list users\" id=users>");
+    let mut out = String::from("<ul id=users>");
     for u in rows {
         let delete = if u.id == me {
             String::new()
         } else {
             format!(
-                "<button class=quiet data-on:click=\"confirm('Delete {name}? Their devices stop \
+                "<button class=\"quiet\" data-on:click=\"confirm('Delete {name}? Their devices stop \
 working and their playlists and favourites go.') && @post('/users/{id}/delete')\">Delete</button>",
                 name = escape(&u.username),
                 id = u.id,
@@ -52,10 +52,15 @@ working and their playlists and favourites go.') && @post('/users/{id}/delete')\
         };
         let _ = write!(
             out,
-            "<li><span class=t>{name}{you}</span>{select}\
+            "<li class=\"flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-1 py-2.5\">\
+<span class=\"min-w-[8em] flex-1 truncate wrap-anywhere\">{name}{you}</span>{select}\
 <button data-on:click=\"@post('/users/{id}/invite')\">Invite</button>{delete}</li>",
             name = escape(&u.username),
-            you = if u.id == me { "<small>you</small>" } else { "" },
+            you = if u.id == me {
+                "<small class=\"ml-2 text-[13px] text-muted\">you</small>"
+            } else {
+                ""
+            },
             select = role_select(u.id, u.role),
             id = u.id,
         );
@@ -70,7 +75,7 @@ fn result(html: &str) -> Event {
 
 fn failure(message: &str) -> Event {
     result(&format!(
-        "<p class=\"share error\" role=alert>{}</p>",
+        "<p class=\"{COPY_ERROR}\" role=alert>{}</p>",
         escape(message)
     ))
 }
@@ -78,15 +83,18 @@ fn failure(message: &str) -> Event {
 fn invite_panel(i: &Invite) -> String {
     let e = escape;
     format!(
-        "<div class=invite><h2>Invite for {user}</h2>\
-<p class=sub>Send this from your own mail. Opening the link on a phone, tablet or Mac with koan \
+        "<div class=\"mt-2 mb-4 max-w-[560px] rounded-lg border border-rule bg-surface px-4 pt-1 pb-4\">\
+<h2>Invite for {user}</h2><p class=\"{SUB}\">Send this from your own mail. Opening the link on a phone, tablet or Mac with koan \
 installed signs in and loads the library; the details work in any Subsonic app.</p>\
-<div class=share><input id=invite-link readonly value=\"{link}\" aria-label=\"Invite link\">\
+<div class=\"{COPY_ROW}\"><input id=invite-link readonly value=\"{link}\" \
+aria-label=\"Invite link\" class=\"{COPY_INPUT}\">\
 <button data-copy=invite-link>Copy link</button></div>\
-<div class=invite-actions><a class=button href=\"{mailto}\">Open in Mail</a>\
+<div class=\"mt-2.5 flex flex-wrap gap-2\"><a class=\"inline-block rounded-md border border-rule bg-rule px-3.5 py-2 \
+text-ink hover:border-hover hover:no-underline\" href=\"{mailto}\">Open in Mail</a>\
 <button data-copy-email>Copy email</button>\
 <button data-share-email data-show=\"'share' in navigator\">Share…</button></div>\
-<dl class=details><dt>Server URL</dt><dd>{server}</dd><dt>Username</dt><dd>{user}</dd>\
+<dl class=\"mt-3.5 grid grid-cols-[max-content_1fr] gap-x-3.5 gap-y-1 text-[14px] [&_dd]:wrap-anywhere \
+[&_dd]:select-all [&_dt]:text-muted\"><dt>Server URL</dt><dd>{server}</dd><dt>Username</dt><dd>{user}</dd>\
 <dt>Password</dt><dd><code>{password}</code></dd></dl>\
 <textarea id=invite-text hidden readonly data-subject=\"{subject}\">{text}</textarea>\
 <template id=invite-html>{html}</template></div>",
@@ -124,13 +132,15 @@ pub(super) async fn page(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let intro = "<h1>Users</h1><p class=sub>Everyone who can sign in to this server. \
-An invite is a link that sets koan up with the account in one tap.</p>";
+    let intro = format!(
+        "<h1>Users</h1><p class=\"{SUB}\">Everyone who can sign in to this server. \
+An invite is a link that sets koan up with the account in one tap.</p>"
+    );
     if !s.auth_enabled {
         let inner = format!(
-            "{intro}<p class=empty>This server runs without sign-in, so it has no accounts.</p>"
+            "{intro}<p class=\"{EMPTY}\">This server runs without sign-in, so it has no accounts.</p>"
         );
-        return respond(&s, &headers, &user, "Users", "users", &inner);
+        return respond(&s, &headers, &user, "Users", &inner);
     }
     if user.role != Role::Admin {
         return forbidden();
@@ -151,15 +161,15 @@ An invite is a link that sets koan up with the account in one tap.</p>";
         );
     }
     let inner = format!(
-        "{intro}<form class=keyform data-on:submit__prevent=\"@post('/users')\">\
-<input name=username data-bind:newuser placeholder=Username maxlength=64 required \
+        "{intro}<form class=\"mb-2 flex max-w-[520px] gap-2\" data-on:submit__prevent=\"@post('/users')\">\
+<input class=\"flex-1\" name=username data-bind:newuser placeholder=Username maxlength=64 required \
 autocomplete=off autocapitalize=none spellcheck=false aria-label=Username>\
-<select data-bind:newrole aria-label=Access>{options}</select>\
-<button class=primary>Create and invite</button></form>\
+<select class=\"px-2 py-1.5\" data-bind:newrole aria-label=Access>{options}</select>\
+<button class=\"primary\">Create and invite</button></form>\
 <div id=user-result></div>{}",
         user_list(&rows, user.user_id)
     );
-    respond(&s, &headers, &user, "Users", "users", &inner)
+    respond(&s, &headers, &user, "Users", &inner)
 }
 
 /// Datastar posts its signals as JSON: `newuser` and `newrole`.
@@ -250,7 +260,7 @@ pub(super) async fn invite(
     match made {
         Some((_, Ok(i))) => events(vec![result(&invite_panel(&i))]),
         Some((row, Err(AccountError::NotRecoverable(_)))) => events(vec![result(&format!(
-            "<p class=share role=alert>{name}'s password is not recoverable: the account \
+            "<p class=\"{COPY_ROW}\" role=alert>{name}'s password is not recoverable: the account \
 predates koan keeping it. An invite needs a new password, which signs {name}'s existing \
 devices out.</p><button data-on:click=\"@post('/users/{id}/invite?reset=true')\">\
 New password and invite</button>",

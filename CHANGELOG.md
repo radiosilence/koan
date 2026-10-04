@@ -10,6 +10,7 @@
 
 ### Changed
 
+- **The web UI and share pages are styled with Tailwind utilities in their markup**, as koan.rocks is, rather than by hand-written rules addressed by class name. The stylesheets keep the element defaults and the states the pages' scripts set. Pages look as they did.
 - **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
 

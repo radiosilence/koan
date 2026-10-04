@@ -145,8 +145,16 @@ impl Browse {
     }
 }
 
+/// A labelled control in the toolbar; on a phone, label and control at either
+/// end of a row of the sheet.
+const LABEL: &str = "inline-flex items-center gap-1.5 max-wide:justify-between";
+/// The toolbar's selects and year fields, smaller than a form's.
+const FIELD: &str = "bg-surface px-2 py-[5px] text-[13px] max-wide:text-[16px]";
+
 fn select(name: &str, label: &str, options: &[(String, String)], current: &str) -> String {
-    let mut out = format!("<label>{label}<select name={name}>");
+    let mut out = format!(
+        "<label class=\"{LABEL}\">{label}<select class=\"max-w-[12em] {FIELD}\" name={name}>"
+    );
     for (value, text) in options {
         let _ = write!(
             out,
@@ -162,7 +170,8 @@ fn select(name: &str, label: &str, options: &[(String, String)], current: &str) 
 
 fn check(name: &str, label: &str, on: &str) -> String {
     format!(
-        "<label class=check><input type=checkbox name={name} value=1{}>{label}</label>",
+        "<label class=\"inline-flex items-center gap-1.5\"><input class=\"accent-brand\" type=checkbox name={name} \
+value=1{}>{label}</label>",
         if set(on).is_some() { " checked" } else { "" }
     )
 }
@@ -216,7 +225,7 @@ pub(super) fn toolbar(
             ..b.clone()
         };
         format!(
-            "<a class=reshuffle href=\"{path}?{}\">Reshuffle</a>",
+            "<a class=\"text-muted\" href=\"{path}?{}\">Reshuffle</a>",
             fresh.query(0)
         )
     } else {
@@ -224,17 +233,27 @@ pub(super) fn toolbar(
     };
     let active = b.active();
     let label = if active > 0 {
-        format!("Sort · Filter <span class=badge>{active}</span>")
+        format!(
+            "Sort · Filter <span class=\"inline-block min-w-[1.5em] rounded-full bg-brand px-[5px] text-center \
+text-[11px] font-bold text-bg\">{active}</span>"
+        )
     } else {
         "Sort · Filter".into()
     };
     format!(
-        "<details class=browse><summary>{label}</summary>\
-<form class=toolbar method=get action=\"{path}\">{sort_select}{seed}{reshuffle}{fav}{lossless}{codec}\
-<label class=years>Years<input name=from inputmode=numeric maxlength=4 placeholder=From value=\"{from}\" aria-label=\"From year\">\
-<span>–</span><input name=to inputmode=numeric maxlength=4 placeholder=To value=\"{to}\" aria-label=\"To year\"></label>\
-{genre}<div class=toolbar-actions><button class=\"primary apply\">Apply</button><a class=reset href=\"{path}\">Reset</a></div>\
-</form></details>",
+        "<details class=\"browse group -mt-1 mb-5\"><summary class=\"hidden cursor-pointer list-none items-center gap-1.5 \
+rounded-md border border-rule bg-surface px-3 py-[7px] text-[14px] text-ink group-open:border-brand \
+max-wide:inline-flex [&::-webkit-details-marker]:hidden\">{label}</summary>\
+<form class=\"toolbar flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-muted max-wide:mt-2.5 \
+max-wide:flex-col max-wide:items-stretch max-wide:gap-3 max-wide:rounded-[10px] max-wide:border \
+max-wide:border-rule max-wide:bg-surface max-wide:p-3.5 max-wide:text-[15px]\" method=get action=\"{path}\">\
+{sort_select}{seed}{reshuffle}{fav}{lossless}{codec}\
+<label class=\"{LABEL}\">Years<input class=\"w-[4.5em] {FIELD}\" name=from inputmode=numeric maxlength=4 \
+placeholder=From value=\"{from}\" aria-label=\"From year\"><span>–</span><input class=\"w-[4.5em] {FIELD}\" \
+name=to inputmode=numeric maxlength=4 placeholder=To value=\"{to}\" aria-label=\"To year\"></label>\
+{genre}<div class=\"inline-flex items-center gap-2.5 max-wide:justify-between\">\
+<button class=\"primary px-3 py-[5px] in-[.js]:hidden max-wide:in-[.js]:inline-block\">Apply</button>\
+<a class=\"text-muted\" href=\"{path}\">Reset</a></div></form></details>",
         sort_select = select("sort", "Sort", &sorts, &sort),
         fav = check("fav", "Favourites", &b.fav),
         lossless = check("lossless", "Lossless", &b.lossless),

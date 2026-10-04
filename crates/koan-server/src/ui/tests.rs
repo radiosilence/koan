@@ -386,7 +386,7 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
     assert_eq!(full.status, StatusCode::OK);
     assert!(full.body.starts_with("<!doctype html>"));
     assert!(full.body.contains("rel=icon"), "pages carry the favicon");
-    assert!(full.body.contains("<nav class=side"));
+    assert!(full.body.contains("aria-label=Library>"));
     assert!(full.body.contains("Wet &lt;Moss&gt; &amp; Stone"));
     assert!(full.body.contains("Hymn &lt;to&gt; Moisture"));
     assert!(!full.body.contains("<Moss>") && !full.body.contains("<to>"));
@@ -404,7 +404,7 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
             .unwrap(),
     )
     .await;
-    assert!(partial.body.starts_with("<section class=\"page album\""));
+    assert!(partial.body.starts_with("<section class=\"page\" "));
     assert!(
         partial
             .body
@@ -526,7 +526,7 @@ async fn sorting_and_filtering_live_in_the_query_string() {
     );
     assert!(r.body.contains("<option value=\"title\" selected>"));
     assert!(r.body.contains("name=lossless value=1 checked"));
-    assert!(r.body.contains("<span class=badge>1</span>"));
+    assert!(r.body.contains(">1</span></summary>"));
 
     let r = page("/albums?codec=MP3").await;
     assert!(r.body.contains("No albums match."));

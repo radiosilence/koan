@@ -11,7 +11,7 @@ use axum::response::Response;
 use axum::response::sse::Event;
 use koan_core::db::queries::api_keys::{self, ApiKeyRow};
 
-use super::pages::respond;
+use super::pages::{COPY_ERROR, COPY_INPUT, COPY_ROW, EMPTY, SUB, respond};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, escape};
@@ -26,10 +26,12 @@ fn day(secs: i64) -> String {
         .unwrap_or_default()
 }
 
+const ROW: &str = "flex min-w-0 items-center gap-3 border-b border-rule px-1 py-2.5";
+
 fn key_list(keys: &[ApiKeyRow]) -> String {
-    let mut out = String::from("<ul class=\"list keys\" id=keys>");
+    let mut out = String::from("<ul class=\"mt-4\" id=keys>");
     if keys.is_empty() {
-        out.push_str("<li class=empty>No keys yet.</li>");
+        let _ = write!(out, "<li class=\"{ROW} {EMPTY}\">No keys yet.</li>");
     }
     for k in keys {
         let used = k.last_used_at.map_or_else(
@@ -38,8 +40,9 @@ fn key_list(keys: &[ApiKeyRow]) -> String {
         );
         let _ = write!(
             out,
-            "<li><span class=t>{name}<small>Created {created} · {used}</small></span>\
-<button class=quiet data-on:click=\"confirm('{REVOKE_CONFIRM}') && @post('/keys/{id}/revoke')\">Revoke</button></li>",
+            "<li class=\"{ROW}\"><span class=\"min-w-0 flex-1 overflow-hidden text-ellipsis wrap-anywhere\">{name}\
+<small class=\"block text-[13px] text-muted\">Created {created} · {used}</small></span>\
+<button class=\"quiet\" data-on:click=\"confirm('{REVOKE_CONFIRM}') && @post('/keys/{id}/revoke')\">Revoke</button></li>",
             name = escape(&k.name),
             created = day(k.created_at),
             id = k.id,
@@ -59,11 +62,13 @@ pub(super) async fn page(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let intro = "<h1>API keys</h1><p class=sub>A Subsonic client can sign in with a key instead of \
-your password. It acts as you, with your permissions, until you revoke it.</p>";
+    let intro = format!(
+        "<h1>API keys</h1><p class=\"{SUB}\">A Subsonic client can sign in with a key instead of \
+your password. It acts as you, with your permissions, until you revoke it.</p>"
+    );
     let inner = if !s.auth_enabled {
         format!(
-            "{intro}<p class=empty>Keys belong to accounts, and this server runs without sign-in.</p>"
+            "{intro}<p class=\"{EMPTY}\">Keys belong to accounts, and this server runs without sign-in.</p>"
         )
     } else {
         let st = s.clone();
@@ -71,14 +76,14 @@ your password. It acts as you, with your permissions, until you revoke it.</p>";
             .await
             .unwrap_or_default();
         format!(
-            "{intro}<form class=keyform data-on:submit__prevent=\"@post('/keys')\">\
-<input name=name data-bind:keyname placeholder=\"Name, e.g. phone\" maxlength={MAX_NAME} required \
-autocomplete=off aria-label=\"Key name\"><button class=primary>Create key</button></form>\
+            "{intro}<form class=\"mb-2 flex max-w-[520px] gap-2\" data-on:submit__prevent=\"@post('/keys')\">\
+<input class=\"flex-1\" name=name data-bind:keyname placeholder=\"Name, e.g. phone\" maxlength={MAX_NAME} required \
+autocomplete=off aria-label=\"Key name\"><button class=\"primary\">Create key</button></form>\
 <div id=key-result></div>{}",
             key_list(&keys)
         )
     };
-    respond(&s, &headers, &user, "API keys", "keys", &inner)
+    respond(&s, &headers, &user, "API keys", &inner)
 }
 
 /// Datastar posts its signals as JSON; the name is `keyname`.
@@ -98,7 +103,7 @@ pub(super) async fn create(
             "Keys belong to accounts, and this server runs without sign-in."
         };
         return events(vec![patch(
-            &format!("<div id=key-result class=\"share error\" role=alert>{message}</div>"),
+            &format!("<div id=key-result class=\"{COPY_ERROR}\" role=alert>{message}</div>"),
             None,
         )]);
     }
@@ -111,15 +116,18 @@ pub(super) async fn create(
     .await;
     let Some((key, keys)) = made else {
         return events(vec![patch(
-            "<div id=key-result class=\"share error\" role=alert>The key could not be made.</div>",
+            &format!(
+                "<div id=key-result class=\"{COPY_ERROR}\" role=alert>The key could not be made.</div>"
+            ),
             None,
         )]);
     };
     events(vec![
         patch(
             &format!(
-                "<div id=key-result class=new-key><p>Copy the key now: it is not shown again.</p>\
-<div class=share><input id=new-key readonly value=\"{key}\" aria-label=\"New API key\">\
+                "<div id=key-result><p class=\"mt-3 mb-0\">Copy the key now: it is not shown again.</p>\
+<div class=\"{COPY_ROW}\"><input id=new-key readonly value=\"{key}\" \
+aria-label=\"New API key\" class=\"{COPY_INPUT}\">\
 <button data-on:click=\"navigator.clipboard.writeText(document.getElementById('new-key').value)\">Copy</button>\
 </div></div>",
                 key = escape(&key)

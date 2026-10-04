@@ -228,6 +228,8 @@ fn meta(attr: &str, key: &str, content: &str) -> String {
 /// Each row carries what the player needs in data attributes; without script,
 /// each row is a link. The link-preview tags need absolute URLs, so they are
 /// only complete when `sharing.public_url` is set.
+const TRACKS: &str = "grid gap-1.5";
+
 fn render(
     id: &str,
     share: &ShareRow,
@@ -310,7 +312,12 @@ fn render(
     // A loose list is titled by its note; a slice keeps the note beside it.
     let note = note
         .filter(|n| (album.is_some() || artist.is_some()) && *n != title)
-        .map(|n| format!("<p class=note>{}</p>", escape(&n)))
+        .map(|n| {
+            format!(
+                "<p class=\"-mt-1.5 mb-3.5 text-ink italic wrap-anywhere\">{}</p>",
+                escape(&n)
+            )
+        })
         .unwrap_or_default();
 
     let mut preview = vec![
@@ -343,7 +350,10 @@ fn render(
             true
         };
         let small = if credited {
-            format!("<small>{}</small>", escape(&t.artist_name))
+            format!(
+                "<small class=\"block truncate text-[13px] text-muted\">{}</small>",
+                escape(&t.artist_name)
+            )
         } else {
             String::new()
         };
@@ -351,10 +361,14 @@ fn render(
             (true, Some(n)) => n as usize,
             _ => i + 1,
         };
+        // share.js marks the row playing.
         format!(
-            "<li tabindex=0 data-src=\"/share/{id}/{pos}\" data-dur=\"{secs}\" data-title=\"{title}\" \
-             data-artist=\"{art}\" data-album=\"{alb}\"><span class=n>{n}</span><span class=t>{title}{small}</span>\
-             <span class=d>{dur}</span></li>",
+            "<li class=\"group flex cursor-pointer items-center gap-3 rounded-lg border border-rule bg-surface px-3 \
+             py-2.5 hover:border-hover [&.playing]:border-l-3 [&.playing]:border-l-brand\" tabindex=0 \
+             data-src=\"/share/{id}/{pos}\" data-dur=\"{secs}\" data-title=\"{title}\" data-artist=\"{art}\" \
+             data-album=\"{alb}\"><span class=\"w-[1.5em] text-right text-muted tabular-nums\">{n}</span>\
+             <span class=\"min-w-0 flex-1 truncate group-[.playing]:text-brand\">{title}{small}</span>\
+             <span class=\"text-[13px] text-muted tabular-nums\">{dur}</span></li>",
             pos = i + 1,
             secs = t.duration_ms.unwrap_or(0) / 1000,
             title = escape(&t.title),
@@ -382,8 +396,12 @@ fn render(
             sub.push(plural(end - i, "track"));
             let rows: String = (i..end).map(|k| row(k, &tracks[k])).collect();
             out.push_str(&format!(
-                "<section class=album><header><img class=art src=\"/share/{id}/{first}/cover\" alt=\"\" loading=lazy>\
-                 <div><h2>{title}</h2><p class=sub>{sub}</p></div></header><ol class=tracks>{rows}</ol></section>",
+                "<section class=\"mt-7\"><header class=\"mb-2.5 flex items-center gap-3.5\">\
+                 <img class=\"art size-16 flex-none rounded-md border border-rule bg-surface object-cover \
+                 [&.missing]:invisible\" src=\"/share/{id}/{first}/cover\" alt=\"\" loading=lazy>\
+                 <div><h2 class=\"m-0 text-[17px] font-bold wrap-anywhere\">{title}</h2>\
+                 <p class=\"mt-0.5 mb-0 text-[13px] text-muted\">{sub}</p></div></header>\
+                 <ol class=\"{TRACKS}\">{rows}</ol></section>",
                 first = i + 1,
                 title = escape(&tracks[i].album_title),
                 sub = escape(&sub.join(" · ")),
@@ -393,7 +411,7 @@ fn render(
         out
     } else {
         let rows: String = tracks.iter().enumerate().map(|(i, t)| row(i, t)).collect();
-        format!("<ol class=tracks>{rows}</ol>")
+        format!("<ol class=\"{TRACKS}\">{rows}</ol>")
     };
     let links: String = tracks
         .iter()
@@ -415,12 +433,18 @@ fn render(
         "<!doctype html><html lang=en><head><meta charset=utf-8>\
 <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
 <meta name=robots content=\"noindex,nofollow\"><title>{title}</title>{preview}\
-{icons}<link rel=stylesheet href=\"/share/assets/share.css\"></head><body><main>\
-<header class=hero><img id=cover class=cover src=\"/share/{id}/cover\" alt=\"\">\
-<div class=info><p class=kicker>{kicker}</p><h1>{title}</h1><p class=sub>{sub}</p>{note}\
-<div class=controls><button id=prev class=quiet aria-label=Previous>&#9198;</button>\
-<button id=play class=primary>Play</button><button id=next class=quiet aria-label=Next>&#9197;</button></div>\
-<div class=scrub><span id=pos>0:00</span><input id=seek type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
+{icons}<link rel=stylesheet href=\"/share/assets/share.css\"></head><body>\
+<main class=\"mx-auto max-w-[760px] px-4 pt-[max(24px,env(safe-area-inset-top))] pb-12\">\
+<header class=\"mb-5 flex items-end gap-5 max-wide:flex-col max-wide:items-stretch\">\
+<img id=cover class=\"size-[200px] flex-none rounded-lg border border-rule bg-surface object-cover \
+max-wide:aspect-square max-wide:h-auto max-wide:w-full\" src=\"/share/{id}/cover\" alt=\"\">\
+<div class=\"min-w-0 flex-1\"><p class=\"m-0 text-[12px] tracking-[.08em] text-muted uppercase\">{kicker}</p>\
+<h1>{title}</h1><p class=\"mt-0 mb-3.5 text-muted\">{sub}</p>{note}\
+<div class=\"flex items-center gap-2\"><button id=prev class=\"bg-transparent text-muted\" aria-label=Previous>&#9198;</button>\
+<button id=play class=\"min-w-24 border-brand bg-brand font-semibold text-bg\">Play</button>\
+<button id=next class=\"bg-transparent text-muted\" aria-label=Next>&#9197;</button></div>\
+<div class=\"mt-3 flex items-center gap-2.5 text-[13px] text-muted tabular-nums\"><span id=pos>0:00</span>\
+<input id=seek class=\"min-w-0 flex-1 accent-brand\" type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span id=len>0:00</span></div></div></header>\
 <div id=tracks data-start=\"{start}\">{body}</div><noscript><p>{links}</p></noscript></main>\
 <script src=\"/share/assets/player.js\" defer></script>\
@@ -864,9 +888,9 @@ mod tests {
         assert_eq!(og(&html, "og:type"), "profile");
         assert_eq!(og(&html, "og:title"), "Rrose");
         assert_eq!(og(&html, "og:description"), "2 albums · 3 tracks · 6:15");
-        assert_eq!(html.matches("<section class=album>").count(), 2);
+        assert_eq!(html.matches("<section ").count(), 2);
         let first = html.find("Hymn &lt;to&gt;").unwrap();
-        assert!(first < html.find("<h2>Later</h2>").unwrap());
+        assert!(first < html.find(">Later</h2>").unwrap());
         // Each album heading's art is addressed through the share, by position.
         assert!(html.contains(&format!("src=\"/share/{id}/3/cover\"")));
         for n in ["3", "4"] {
