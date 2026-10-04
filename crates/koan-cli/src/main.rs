@@ -459,7 +459,17 @@ pub fn sigint_received() -> bool {
     SIGINT_RECEIVED.load(Ordering::Relaxed)
 }
 
+/// `mi_option_purge_delay`, which the bindings do not name. Its number is
+/// fixed: mimalloc keeps retired options' slots so later ones do not move.
+const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
+
 fn main() {
+    // mimalloc returns freed pages to the system 10 ms after they are freed.
+    // A cover is tens of megabytes of pixels, so in a burst of them each one
+    // faulted its buffers back in from scratch, which halved decoding speed.
+    // At 100 ms a burst reuses its pages, and they still go back once it ends.
+    // SAFETY: setting an option takes no pointers and is valid at any time.
+    unsafe { libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, 100) };
     // Graceful SIGINT: set a flag instead of killing immediately so we can
     // persist queue state. In raw mode crossterm delivers Ctrl+C as a key
     // event, but outside raw mode (e.g. during scan) we need this handler.

@@ -14,7 +14,7 @@
 
 ### Fixed
 
-- **The server no longer grows with use.** Opening an album grid on a fresh server took it from about 170 MB to over 1 GB, which it then kept. Two things held it. Covers were also kept in memory, 512 of them, alongside the copies on disk; they are now read from disk, where the kernel caches them without counting against koan. And each cover was decoded on whichever thread served the request, so a grid of hundreds decoded in parallel, and glibc's allocator kept every thread's share. Decoding now runs on at most four threads, and koan uses mimalloc, which returns freed memory to the system.
+- **The server no longer grows with use.** Opening an album grid on a fresh server took it from about 170 MB to over 1 GB, which it then kept. Two things held it. Covers were also kept in memory, 512 of them, alongside the copies on disk; they are now read from disk, where the kernel caches them without counting against koan. And each cover was decoded on whichever thread served the request, so a grid of hundreds decoded in parallel, and glibc's allocator kept every thread's share. Decoding now runs on at most four threads, and koan uses mimalloc, which returns freed memory to the system a tenth of a second after a burst ends, so a burst reuses its own memory and covers decode as fast as before.
 - **A cover two clients asked for at once is cached whole.** Both wrote the same temporary file, so the cache could keep a truncated cover, shown as missing or broken until the file changed. Each write now has a file of its own.
 
 ## 0.52.0
