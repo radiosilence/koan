@@ -109,6 +109,8 @@ pub fn router(
         .route("/keys/{id}/revoke", post(keys::revoke))
         .route("/users", get(users::page).post(users::create))
         .route("/users/{id}/invite", post(users::invite))
+        .route("/users/{id}/password", post(users::set_password))
+        .route("/users/{id}/password/form", post(users::password_form))
         .route("/users/{id}/role", post(users::set_role))
         .route("/users/{id}/delete", post(users::delete))
         .route("/ui/stream/{id}", get(stream))

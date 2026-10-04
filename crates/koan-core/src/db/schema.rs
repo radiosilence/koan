@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -401,9 +401,6 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 /// `organize_log.size_bytes`/`mtime` are checked against the file before undo
 /// moves it back, so a file replaced since the organize is left alone.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
-    // The password sealed under the server's Subsonic key, since token auth
-    // needs the plaintext and `password_hash` cannot give it back.
-    ("users", "sealed_password", "BLOB"),
     ("tracks", "cache_size_bytes", "INTEGER"),
     ("tracks", "cache_download_date", "INTEGER"),
     ("organize_log", "size_bytes", "INTEGER"),
@@ -569,6 +566,11 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     )?;
 
     autoincrement_user_ids(conn)?;
+    // Passwords were once also kept encrypted, for Subsonic token auth. A
+    // password the server can read back is one an admin can read too.
+    if column_exists(conn, "users", "sealed_password")? {
+        conn.execute("ALTER TABLE users DROP COLUMN sealed_password", [])?;
+    }
     merge_case_duplicate_artists(conn)?;
     // A client more than this far behind purges its whole cache instead.
     conn.execute(
@@ -928,11 +930,10 @@ fn autoincrement_user_ids(conn: &Connection) -> rusqlite::Result<()> {
              username        TEXT NOT NULL UNIQUE,
              password_hash   TEXT NOT NULL,
              role            TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user', 'readonly')),
-             created_at      TEXT DEFAULT (datetime('now')),
-             sealed_password BLOB
+             created_at      TEXT DEFAULT (datetime('now'))
          );
-         INSERT INTO users_new (id, username, password_hash, role, created_at, sealed_password)
-             SELECT id, username, password_hash, role, created_at, sealed_password FROM users;
+         INSERT INTO users_new (id, username, password_hash, role, created_at)
+             SELECT id, username, password_hash, role, created_at FROM users;
          DROP TABLE users;
          ALTER TABLE users_new RENAME TO users;
          COMMIT;",
@@ -1581,12 +1582,7 @@ mod tests {
             )
             .unwrap();
         assert!(sql.contains("AUTOINCREMENT"), "{sql}");
-        let sealed: Vec<u8> = conn
-            .query_row("SELECT sealed_password FROM users WHERE id = 3", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(sealed, [1]);
+        assert!(!column_exists(&conn, "users", "sealed_password").unwrap());
         let fk: i64 = conn
             .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
             .unwrap();

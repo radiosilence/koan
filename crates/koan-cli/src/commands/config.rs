@@ -49,6 +49,7 @@ pub fn cmd_config() {
     let mut cfg = config::Config::load().unwrap_or_default();
     for secret in [
         &mut cfg.remote.password,
+        &mut cfg.remote.api_key,
         &mut cfg.subsonic.password,
         &mut cfg.auth.refresh_token,
     ] {

@@ -130,11 +130,12 @@ pub fn cmd_remote_status() {
     // Asked the way everything else asks, rather than by reading the field
     // directly: a status that consults a different source from the code doing
     // the work will eventually disagree with it.
-    let described = match koan_core::helpers::get_remote_password(&cfg) {
-        Some(_) => "set".green().to_string(),
+    let described = match koan_core::helpers::remote_credential(&cfg) {
+        Some(koan_core::remote::client::Credential::Password(_)) => "password".green().to_string(),
+        Some(koan_core::remote::client::Credential::ApiKey(_)) => "API key".green().to_string(),
         None => "not set".red().to_string(),
     };
-    println!("{} {}", "password:".cyan(), described);
+    println!("{} {}", "signs in with:".cyan(), described);
 
     // Attempted whenever credentials resolve, rather than gated on a guess
     // about whether they would: only reaching the server proves anything.
