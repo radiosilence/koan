@@ -4021,7 +4021,6 @@ mod tests {
     #[test]
     fn the_server_hears_each_turn_playback_takes() {
         use PlaybackReportState::{Paused, Playing, Stopped};
-        use history::PlaybackReport;
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.wav");
