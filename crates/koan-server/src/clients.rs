@@ -229,6 +229,8 @@ impl Registry {
             return;
         }
         let asleep = outbox::push_targets(Some(username));
+        // Waking takes a push key as well as the device's token.
+        let can_push = crate::push::pusher().is_some();
         let entries = self.entries.lock();
         let ours: Vec<&Entry> = entries
             .iter()
@@ -249,6 +251,7 @@ impl Registry {
                     ..e.info.state.clone()
                 }),
                 last_seen: None,
+                wakeable: Some(can_push && asleep.iter().any(|t| t.device == e.device)),
             })
             .collect();
         for t in asleep {
@@ -260,6 +263,7 @@ impl Registry {
                     linked: false,
                     state: None,
                     last_seen: Some(t.last_seen),
+                    wakeable: Some(can_push),
                 });
             }
         }
@@ -799,9 +803,9 @@ fn deliver_push(
 /// Wakes sent and not yet answered by a link, by `(device, username)`: when,
 /// and which kind. A device that does not link is never answered; the map
 /// is bounded by the devices that have pushed tokens.
-static WOKEN: LazyLock<
-    Mutex<std::collections::HashMap<(String, String), (std::time::Instant, &'static str)>>,
-> = LazyLock::new(Default::default);
+type Woken = std::collections::HashMap<(String, String), (std::time::Instant, &'static str)>;
+
+static WOKEN: LazyLock<Mutex<Woken>> = LazyLock::new(Default::default);
 
 /// Have every device pull what the server just changed (a playlist edited,
 /// albums added): at once where linked, on next link where not. Syncs waiting
