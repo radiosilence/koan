@@ -37,9 +37,9 @@ pub(super) struct UidOf(pub UidKind, pub i64);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct RowOf(pub UidKind, pub String);
 
-/// Favourite lookup keyed by whose favourites and the track's playback path.
+/// Favourite lookup keyed by whose favourites and the track.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) struct FavouritePath(pub i64, pub String);
+pub(super) struct FavouriteTrack(pub i64, pub i64);
 
 pub(super) struct DbLoader {
     handle: DbHandle,
@@ -195,32 +195,32 @@ impl Loader<AlbumStatsOf> for DbLoader {
     }
 }
 
-impl Loader<FavouritePath> for DbLoader {
+impl Loader<FavouriteTrack> for DbLoader {
     type Value = bool;
     type Error = async_graphql::Error;
 
     async fn load(
         &self,
-        keys: &[FavouritePath],
-    ) -> Result<HashMap<FavouritePath, Self::Value>, Self::Error> {
+        keys: &[FavouriteTrack],
+    ) -> Result<HashMap<FavouriteTrack, Self::Value>, Self::Error> {
         self.batch(keys, |db, keys| {
             // One request is one user, so this is one query in practice.
-            let mut by_user: HashMap<i64, Vec<String>> = HashMap::new();
+            let mut by_user: HashMap<i64, Vec<i64>> = HashMap::new();
             for k in &keys {
-                by_user.entry(k.0).or_default().push(k.1.clone());
+                by_user.entry(k.0).or_default().push(k.1);
             }
             let mut starred = std::collections::HashSet::new();
-            for (user, paths) in by_user {
-                for path in queries::batch::favourite_paths(&db.conn, user, &paths)
+            for (user, ids) in by_user {
+                for id in queries::batch::favourite_track_ids(&db.conn, user, &ids)
                     .map_err(|e| internal_error("db", e))?
                 {
-                    starred.insert((user, path));
+                    starred.insert((user, id));
                 }
             }
             Ok(keys
                 .into_iter()
                 .map(|k| {
-                    let hit = starred.contains(&(k.0, k.1.clone()));
+                    let hit = starred.contains(&(k.0, k.1));
                     (k, hit)
                 })
                 .collect())

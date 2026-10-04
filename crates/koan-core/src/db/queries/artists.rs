@@ -21,12 +21,10 @@ pub fn get_or_create_artist(
     name: &str,
     remote_id: Option<&str>,
 ) -> Result<i64, DbError> {
+    let key = super::sources::fold(name);
     let existing: Option<(i64, Option<String>)> = conn
-        .prepare_cached(
-            "SELECT id, remote_id FROM artists WHERE name = ?1 COLLATE NOCASE
-             ORDER BY name = ?1 DESC, id LIMIT 1",
-        )?
-        .query_row(params![name], |row| Ok((row.get(0)?, row.get(1)?)))
+        .prepare_cached("SELECT id, remote_id FROM artists WHERE name_key = ?1")?
+        .query_row(params![key], |row| Ok((row.get(0)?, row.get(1)?)))
         .optional()?;
 
     if let Some((id, stored)) = existing {
@@ -43,8 +41,10 @@ pub fn get_or_create_artist(
     }
 
     let uid = super::free_uid(conn, super::UidKind::Artist, remote_id)?;
-    conn.prepare_cached("INSERT INTO artists (name, remote_id, uid) VALUES (?1, ?2, ?3)")?
-        .execute(params![name, remote_id, uid])?;
+    conn.prepare_cached(
+        "INSERT INTO artists (name, name_key, remote_id, uid) VALUES (?1, ?2, ?3, ?4)",
+    )?
+    .execute(params![name, key, remote_id, uid])?;
     let id = conn.last_insert_rowid();
     if let Some(rid) = remote_id {
         super::adopt_uid(conn, super::UidKind::Artist, id, rid)?;
@@ -116,7 +116,7 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(user) = q.favourites_of {
         params.push(Box::new(super::auth::resolve_user(conn, user)?));
-        sql.push_str(" JOIN favourite_artists f ON f.artist_name = a.name AND f.user_id = ?");
+        sql.push_str(" JOIN favourite_artists f ON f.artist_id = a.id AND f.user_id = ?");
     }
     let mut wheres: Vec<String> = Vec::new();
     if let Some(ids) = q.ids {
@@ -268,7 +268,13 @@ mod tests {
     fn favourites_only_lists_what_was_hearted() {
         use crate::db::queries::toggle_favourite_artist;
         let db = stocked_db();
-        toggle_favourite_artist(&db.conn, crate::db::queries::LOCAL_USER, "Coil").unwrap();
+        let coil: i64 = db
+            .conn
+            .query_row("SELECT id FROM artists WHERE name = 'Coil'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        toggle_favourite_artist(&db.conn, crate::db::queries::LOCAL_USER, coil).unwrap();
         let rows = list_artists(
             &db.conn,
             &ArtistQuery {

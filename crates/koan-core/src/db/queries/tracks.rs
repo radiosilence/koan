@@ -156,7 +156,22 @@ pub fn remove_vanished_remote(
             ))?
             .query_map([], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
-        let downloads = sources::remove_vanished(conn, &gone, live_tracks.is_some())?;
+        let mut downloads = sources::remove_vanished(conn, &gone, live_tracks.is_some())?;
+        // Tracks a rebuilt index has not yet re-read, whose entry this sync
+        // did not claim again.
+        if live_tracks.is_some() {
+            let unread: Vec<String> = conn
+                .prepare(
+                    "SELECT t.remote_id FROM tracks t WHERE t.remote_id IS NOT NULL
+                        AND NOT EXISTS (SELECT 1 FROM remote_entries r WHERE r.track_id = t.id)
+                        AND t.remote_id NOT IN (SELECT id FROM temp.live_ids WHERE kind = 'track')",
+                )?
+                .query_map([], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            for key in &unread {
+                downloads.extend(sources::forget_unread(conn, sources::Kind::Remote, key)?);
+            }
+        }
         Ok::<_, DbError>((gone.len(), downloads))
     })();
     match removed {
@@ -189,8 +204,8 @@ pub fn remove_vanished_remote(
 /// server has the recording. It takes the decomposed spelling, which is the one
 /// a scan wrote — Foundation never produces a decomposed path, so that row is
 /// the one that came from the directory. A pair with no such spelling, or a
-/// path with more than two, is left visible rather than guessed at. Favourites
-/// and the scan cache are keyed by path, so they move by name.
+/// path with more than two, is left visible rather than guessed at. The scan
+/// cache is keyed by path, so it moves by name.
 pub(crate) fn merge_spelling_twins(conn: &Connection) -> rusqlite::Result<()> {
     use unicode_normalization::{UnicodeNormalization, is_nfd};
 
@@ -243,10 +258,6 @@ pub(crate) fn merge_spelling_twins(conn: &Connection) -> rusqlite::Result<()> {
             "UPDATE tracks SET path = ?1 WHERE id = ?2",
             params![disk, winner],
         )?;
-        conn.execute(
-            "UPDATE OR REPLACE favourites SET track_path = ?1 WHERE track_path = ?2",
-            params![disk, stale],
-        )?;
     }
 
     Ok(())
@@ -261,11 +272,17 @@ pub(crate) fn prune_if_empty(
     artist_id: Option<i64>,
 ) -> rusqlite::Result<()> {
     if let Some(album_id) = album_id {
-        conn.execute(
+        let emptied = conn.execute(
             "DELETE FROM albums WHERE id = ?1
                AND NOT EXISTS (SELECT 1 FROM tracks WHERE album_id = ?1)",
             params![album_id],
         )?;
+        if emptied > 0 {
+            conn.execute(
+                "DELETE FROM favourite_albums WHERE album_id = ?1",
+                params![album_id],
+            )?;
+        }
     }
 
     if let Some(artist_id) = artist_id {
@@ -276,6 +293,10 @@ pub(crate) fn prune_if_empty(
             |row| row.get(0),
         )?;
         if stranded {
+            conn.execute(
+                "DELETE FROM favourite_artists WHERE artist_id = ?1",
+                params![artist_id],
+            )?;
             conn.execute("DELETE FROM artists WHERE id = ?1", params![artist_id])?;
         }
     }
@@ -314,8 +335,15 @@ pub fn remove_stale_tracks(
 ) -> Result<Vec<String>, DbError> {
     let (lower, upper) = super::folder_prefix_range(folder);
 
+    // Files, and the tracks a rebuilt index has not yet re-read: a track
+    // whose file the scan did not claim again.
     let paths: Vec<String> = conn
-        .prepare("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?
+        .prepare(
+            "SELECT path FROM local_files WHERE path >= ?1 AND path < ?2
+             UNION
+             SELECT t.path FROM tracks t WHERE t.path >= ?1 AND t.path < ?2
+                AND NOT EXISTS (SELECT 1 FROM local_files f WHERE f.track_id = t.id)",
+        )?
         .query_map(params![lower, upper], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let total = paths.len() as i64;
@@ -354,6 +382,7 @@ pub fn remove_stale_tracks(
     for path in &stale {
         conn.execute("DELETE FROM scan_cache WHERE path = ?1", params![path])?;
         sources::remove(conn, sources::Kind::Local, path)?;
+        sources::forget_unread(conn, sources::Kind::Local, path)?;
     }
 
     Ok(stale)
@@ -756,10 +785,7 @@ pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbEr
         "SELECT t.id, t.album_id, COALESCE(al.title, 'Unknown'), COALESCE(a.name, 'Unknown'),
                 t.cached_path, COALESCE(t.cache_size_bytes, 0),
                 NULLIF(MAX(COALESCE(ph_max.last_play, 0), COALESCE(t.cache_download_date, 0)), 0),
-                EXISTS(SELECT 1 FROM favourites f
-                       WHERE f.track_path = t.cached_path
-                          OR f.track_path = t.path
-                          OR f.track_path = t.remote_url) as is_fav
+                EXISTS(SELECT 1 FROM favourites f WHERE f.track_id = t.id) as is_fav
          FROM tracks t
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists a ON al.artist_id = a.id
@@ -1067,13 +1093,7 @@ pub fn genres_by_album_ids(
 /// that `OR`, so it read every track in the library and probed favourites for
 /// each — fifty milliseconds to find a hundred rows.
 pub(crate) fn favourite_track_ids_sql(user: &str) -> String {
-    format!(
-        "SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites WHERE user_id = {user})
-         UNION
-         SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites WHERE user_id = {user})
-         UNION
-         SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites WHERE user_id = {user})"
-    )
+    format!("SELECT track_id FROM favourites WHERE user_id = {user}")
 }
 
 /// Get all artist IDs that have at least one favourited track, in a single query.
@@ -1093,30 +1113,7 @@ pub fn favourite_artist_ids_batch(conn: &Connection, user: i64) -> Result<HashSe
     Ok(ids)
 }
 
-/// The path a track is favourited under.
-///
-/// Favourites are keyed by path, but which path depends on the track: a local
-/// file has one, a cached remote track has a cache path, and a remote track
-/// that has never been downloaded only has its URL. Without this, remote
-/// tracks can't be favourited at all.
-pub fn track_favourite_key(conn: &Connection, track_id: i64) -> Result<Option<String>, DbError> {
-    let result = conn.query_row(
-        "SELECT COALESCE(path, cached_path, remote_url) FROM tracks WHERE id = ?1",
-        params![track_id],
-        |row| row.get::<_, Option<String>>(0),
-    );
-    match result {
-        Ok(key) => Ok(key),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.into()),
-    }
-}
-
 /// Get all favourited track IDs in a single query.
-///
-/// Matches the same three columns as [`track_id_by_path`], `remote_url`
-/// included — a remote track that has never been cached is favourited by its
-/// remote URL, and comparing only local paths misses every one of them.
 pub fn favourite_track_ids_batch(conn: &Connection, user: i64) -> Result<HashSet<i64>, DbError> {
     let mut stmt = conn.prepare_cached(&favourite_track_ids_sql("?1"))?;
     let rows = stmt.query_map([super::auth::resolve_user(conn, user)?], |row| {
@@ -1303,8 +1300,10 @@ mod tests {
     fn favourite_tracks_come_back_as_rows_narrowed_by_search() {
         use crate::db::queries::toggle_favourite;
         let db = test_db();
-        upsert_track(&db.conn, &sample_meta("Amber", "Autechre", "Amber")).unwrap();
-        upsert_track(&db.conn, &sample_meta("Foil", "Autechre", "Amber")).unwrap();
+        let amber = upsert_track(&db.conn, &sample_meta("Amber", "Autechre", "Amber")).unwrap();
+        let mut foil = sample_meta("Foil", "Autechre", "Amber");
+        foil.track_number = Some(2);
+        let foil = upsert_track(&db.conn, &foil).unwrap();
 
         let titles = |q| {
             favourite_tracks(&db.conn, crate::db::queries::LOCAL_USER, q)
@@ -1315,18 +1314,8 @@ mod tests {
         };
         assert!(titles(None).is_empty(), "nothing is favourite until it is");
 
-        toggle_favourite(
-            &db.conn,
-            crate::db::queries::LOCAL_USER,
-            Path::new("/music/Amber/Amber.flac"),
-        )
-        .unwrap();
-        toggle_favourite(
-            &db.conn,
-            crate::db::queries::LOCAL_USER,
-            Path::new("/music/Amber/Foil.flac"),
-        )
-        .unwrap();
+        toggle_favourite(&db.conn, crate::db::queries::LOCAL_USER, amber).unwrap();
+        toggle_favourite(&db.conn, crate::db::queries::LOCAL_USER, foil).unwrap();
         assert_eq!(titles(None), ["Amber", "Foil"]);
         assert_eq!(titles(Some("foil")), ["Foil"]);
         assert_eq!(
@@ -1334,46 +1323,6 @@ mod tests {
             2,
             "matched on the artist name"
         );
-    }
-
-    /// A track is favourited by whichever of its three paths the user was
-    /// looking at, and all three have to find it.
-    #[test]
-    fn favourite_tracks_finds_a_track_by_any_of_its_paths() {
-        let db = test_db();
-        db.conn
-            .execute_batch(
-                "INSERT INTO artists (id, name) VALUES (1, 'Boards of Canada');
-                 INSERT INTO albums (id, title, artist_id) VALUES (1, 'Geogaddi', 1);
-                 INSERT INTO tracks (id, title, artist_id, album_id, source, path)
-                   VALUES (1, 'Music Is Math', 1, 1, 'local', '/music/math.flac');
-                 INSERT INTO tracks (id, title, artist_id, album_id, source, cached_path)
-                   VALUES (2, 'Sixtyten', 1, 1, 'cached', '/cache/sixtyten.flac');
-                 INSERT INTO tracks (id, title, artist_id, album_id, source, remote_url)
-                   VALUES (3, 'Dawn Chorus', 1, 1, 'remote', 'http://server/dawn');
-                 INSERT INTO tracks (id, title, artist_id, album_id, source, path)
-                   VALUES (4, 'Alpha and Omega', 1, 1, 'local', '/music/alpha.flac');
-                 INSERT INTO favourites (track_path) VALUES
-                   ('/music/math.flac'), ('/cache/sixtyten.flac'), ('http://server/dawn');",
-            )
-            .unwrap();
-
-        let mut ids = favourite_tracks(&db.conn, crate::db::queries::LOCAL_USER, None)
-            .unwrap()
-            .into_iter()
-            .map(|t| t.id)
-            .collect::<Vec<_>>();
-        ids.sort();
-        assert_eq!(ids, [1, 2, 3], "the unfavourited fourth track stays out");
-
-        let narrowed =
-            favourite_tracks(&db.conn, crate::db::queries::LOCAL_USER, Some("dawn")).unwrap();
-        assert_eq!(
-            narrowed.len(),
-            1,
-            "search narrows the favourites, not all of them"
-        );
-        assert_eq!(narrowed[0].id, 3);
     }
 
     /// A track belongs to an artist by its own credit or its album's, and a
@@ -2753,15 +2702,8 @@ mod tests {
     fn test_favourite_artist_ids_batch() {
         let db = test_db();
         let meta = sample_meta("FavTrack", "FavArtist", "FavAlbum");
-        upsert_track(&db.conn, &meta).unwrap();
-
-        // Add to favourites.
-        crate::db::queries::add_favourite(
-            &db.conn,
-            crate::db::queries::LOCAL_USER,
-            std::path::Path::new("/music/FavAlbum/FavTrack.flac"),
-        )
-        .unwrap();
+        let id = upsert_track(&db.conn, &meta).unwrap();
+        crate::db::queries::add_favourite(&db.conn, crate::db::queries::LOCAL_USER, id).unwrap();
 
         let artist_id: i64 = db
             .conn
@@ -2787,14 +2729,8 @@ mod tests {
     fn test_favourite_album_ids_batch() {
         let db = test_db();
         let meta = sample_meta("FavTrack", "FavArtist", "FavAlbum");
-        upsert_track(&db.conn, &meta).unwrap();
-
-        crate::db::queries::add_favourite(
-            &db.conn,
-            crate::db::queries::LOCAL_USER,
-            std::path::Path::new("/music/FavAlbum/FavTrack.flac"),
-        )
-        .unwrap();
+        let id = upsert_track(&db.conn, &meta).unwrap();
+        crate::db::queries::add_favourite(&db.conn, crate::db::queries::LOCAL_USER, id).unwrap();
 
         let album_id: i64 = db
             .conn
@@ -2930,12 +2866,15 @@ mod tests {
         }
 
         // Favourite a track from AlbumB.
-        crate::db::queries::add_favourite(
-            &db.conn,
-            crate::db::queries::LOCAL_USER,
-            std::path::Path::new("/cache/AlbumB/T3.flac"),
-        )
-        .unwrap();
+        let t3: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM tracks WHERE cached_path = '/cache/AlbumB/T3.flac'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        crate::db::queries::add_favourite(&db.conn, crate::db::queries::LOCAL_USER, t3).unwrap();
 
         let albums = cached_albums_lru(&db.conn).unwrap();
 
@@ -3117,12 +3056,7 @@ mod tests {
             winner, loser,
             "the bytes differ, so the old key made two rows"
         );
-        db.conn
-            .execute(
-                "INSERT INTO favourites (track_path) VALUES (?1)",
-                params![nfc],
-            )
-            .unwrap();
+        crate::db::queries::add_favourite(&db.conn, crate::db::queries::LOCAL_USER, loser).unwrap();
         for (path, id) in [(&nfc, winner), (&nfd, loser)] {
             db.conn
                 .execute(
@@ -3150,11 +3084,11 @@ mod tests {
         assert_eq!(rows[0].0, winner, "the older row keeps its identity");
         assert_eq!(rows[0].1, nfd, "and takes the disk's spelling");
         assert_eq!(rows[0].2.as_deref(), Some("sub-7"), "and its sync link");
-        let starred: String = db
+        let starred: i64 = db
             .conn
-            .query_row("SELECT track_path FROM favourites", [], |r| r.get(0))
+            .query_row("SELECT track_id FROM favourites", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(starred, nfd, "the favourite follows the path");
+        assert_eq!(starred, winner, "the favourite follows the row");
         let cached: Vec<(String, i64)> = db
             .conn
             .prepare("SELECT path, track_id FROM scan_cache")
@@ -3574,12 +3508,7 @@ mod tests {
             &remote_meta("Archangel", "Burial", "Untrue", "sub-1"),
         )
         .unwrap();
-        db.conn
-            .execute(
-                "INSERT INTO favourites (track_path) VALUES (?1)",
-                params![local.path],
-            )
-            .unwrap();
+        crate::db::queries::add_favourite(&db.conn, crate::db::queries::LOCAL_USER, id).unwrap();
 
         remove_stale_tracks(&db.conn, tmp.path(), false).unwrap();
 
@@ -3660,45 +3589,160 @@ mod tests {
     }
 
     #[test]
-    fn two_editions_held_as_one_album_settle_on_one_release() {
+    fn two_editions_with_their_own_release_ids_are_two_albums() {
         let db = test_db();
-        let release = |db: &Database| -> Option<String> {
+        let edition = |title: &str, number: i32, release: &str| {
+            let mut m = with_ids(
+                sample_meta(title, "Paul Kalkbrenner", "Album"),
+                title,
+                release,
+            );
+            m.track_number = Some(number);
+            m
+        };
+        let mut original = edition("Azure", 1, "rel-original");
+        let remaster = edition("Azure", 1, "rel-remaster");
+        let mut remaster = TrackMeta {
+            path: Some("/music/Album (Remaster)/Azure.flac".into()),
+            ..remaster
+        };
+        let a = upsert_track(&db.conn, &original).unwrap();
+        let b = upsert_track(&db.conn, &remaster).unwrap();
+        let albums = |db: &Database| -> Vec<(i64, String)> {
             db.conn
-                .query_row("SELECT mbid FROM albums", [], |r| r.get(0))
+                .prepare("SELECT id, mbid FROM albums ORDER BY id")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
                 .unwrap()
         };
-        let mut a = with_ids(
-            sample_meta("Azure", "Paul Kalkbrenner", "Album"),
-            "rec-1",
-            "rel-original",
-        );
-        let mut b = with_ids(
-            sample_meta("Gebrünn", "Paul Kalkbrenner", "Album"),
-            "rec-2",
-            "rel-remaster",
-        );
-        b.track_number = Some(2);
-        let mut c = with_ids(
-            sample_meta("Altes Kamuffel", "Paul Kalkbrenner", "Album"),
-            "rec-3",
-            "rel-remaster",
-        );
-        c.track_number = Some(3);
-        for m in [&a, &b, &c] {
-            upsert_track(&db.conn, m).unwrap();
-        }
-        assert_eq!(
-            release(&db).as_deref(),
-            Some("rel-remaster"),
-            "most of the files"
-        );
+        let before = albums(&db);
+        assert_eq!(before.len(), 2);
+        let album_of = |id| get_track_row(&db.conn, id).unwrap().unwrap().album_id;
+        assert_ne!(album_of(a), album_of(b));
+
+        // Rescans of either edition leave both where they are.
         for _ in 0..2 {
-            a.mtime = a.mtime.map(|t| t + 1);
-            upsert_track(&db.conn, &a).unwrap();
-            assert_eq!(release(&db).as_deref(), Some("rel-remaster"));
-            c.mtime = c.mtime.map(|t| t + 1);
-            upsert_track(&db.conn, &c).unwrap();
-            assert_eq!(release(&db).as_deref(), Some("rel-remaster"));
+            original.mtime = original.mtime.map(|t| t + 1);
+            upsert_track(&db.conn, &original).unwrap();
+            remaster.mtime = remaster.mtime.map(|t| t + 1);
+            upsert_track(&db.conn, &remaster).unwrap();
+            assert_eq!(albums(&db), before);
         }
+    }
+
+    #[test]
+    fn a_server_album_named_differently_joins_the_files_album() {
+        let db = test_db();
+        let file = with_ids(
+            sample_meta("Hypnotized", "Oliver Koletzki", "Renaissance"),
+            "rec-1",
+            "rel-1",
+        );
+        let held = upsert_track(&db.conn, &file).unwrap();
+        let entry = |title: &str, number: i32, id: &str, rec: &str| {
+            let mut m = with_ids(
+                remote_meta(title, "Oliver Koletzki", "Renaissance (Unmixed)", id),
+                rec,
+                "rel-1",
+            );
+            m.track_number = Some(number);
+            m.album_remote_id = Some("al-1".into());
+            m
+        };
+        // The server's copy of the file, and a track only the server has.
+        upsert_track(&db.conn, &entry("Hypnotized", 1, "s-1", "rec-1")).unwrap();
+        let streamed = upsert_track(&db.conn, &entry("Dance Tonight", 2, "s-2", "rec-2")).unwrap();
+
+        let album_of = |id| {
+            get_track_row(&db.conn, id)
+                .unwrap()
+                .unwrap()
+                .album_id
+                .unwrap()
+        };
+        assert_eq!(album_of(held), album_of(streamed), "one record, one album");
+        let (title, rid): (String, String) = db
+            .conn
+            .query_row(
+                "SELECT title, remote_id FROM albums WHERE id = ?1",
+                [album_of(held)],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((title.as_str(), rid.as_str()), ("Renaissance", "al-1"));
+        let albums: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM albums", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(albums, 1);
+    }
+
+    #[test]
+    fn an_artist_is_one_row_whatever_its_case_or_normal_form() {
+        use unicode_normalization::UnicodeNormalization;
+        let db = test_db();
+        upsert_track(&db.conn, &sample_meta("Hoppípolla", "Sigur Rós", "Takk...")).unwrap();
+        let mut other = sample_meta(
+            "Svefn-g-englar",
+            &"SIGUR RÓS".nfd().collect::<String>(),
+            "Ágætis byrjun",
+        );
+        other.path = Some("/music/agaetis/01.flac".into());
+        upsert_track(&db.conn, &other).unwrap();
+        let artists: Vec<String> = db
+            .conn
+            .prepare("SELECT name FROM artists")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(artists, ["Sigur Rós"], "the first spelling seen names it");
+    }
+
+    #[test]
+    fn a_server_album_synced_before_the_files_folds_into_theirs() {
+        let db = test_db();
+        let entry = |title: &str, number: i32, id: &str, rec: &str| {
+            let mut m = with_ids(
+                remote_meta(title, "Oliver Koletzki", "Renaissance (Unmixed)", id),
+                rec,
+                "rel-1",
+            );
+            m.track_number = Some(number);
+            m.album_remote_id = Some("al-1".into());
+            m
+        };
+        upsert_track(&db.conn, &entry("Hypnotized", 1, "s-1", "rec-1")).unwrap();
+        let streamed = upsert_track(&db.conn, &entry("Dance Tonight", 2, "s-2", "rec-2")).unwrap();
+        let held = upsert_track(
+            &db.conn,
+            &with_ids(
+                sample_meta("Hypnotized", "Oliver Koletzki", "Renaissance"),
+                "rec-1",
+                "rel-1",
+            ),
+        )
+        .unwrap();
+
+        let album_of = |id| {
+            get_track_row(&db.conn, id)
+                .unwrap()
+                .unwrap()
+                .album_id
+                .unwrap()
+        };
+        assert_eq!(album_of(held), album_of(streamed));
+        let titles: Vec<String> = db
+            .conn
+            .prepare("SELECT title FROM albums")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(titles, ["Renaissance"], "named as the files name it");
     }
 }

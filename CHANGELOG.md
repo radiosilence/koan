@@ -10,13 +10,17 @@
   - Names match whatever their case or Unicode form, so `SIGUR RÓS` on a server is `Sigur Rós` on disk.
   - A file and its server copy are not paired when the server has two candidates; they used to be paired with whichever came first.
   - A moved file takes over the server copy its old path held, along with its history.
-  - A favourite follows its track when the file goes and the track streams from the server.
   - Merging two rows keeps the older one's id and history, and the koan server's uid.
-  - An album's server id and release id are what most of its tracks say, so two editions held as one album no longer trade the release id on every scan, and a corrected release id is stored.
+  - Two editions of a record with the same title are two albums when their MusicBrainz release ids differ, and a release id is no longer rewritten by whichever file was scanned last.
+  - A record the server names differently from the files is one album, holding the server's album id, with the tracks only the server has listed alongside the files.
+  - Artist names match whatever their case or Unicode form, so one act no longer appears twice.
   - A server's track number fills in one the file lacks.
   - A database error while matching is reported rather than adding a duplicate.
 
   Upgrading builds the source rows from the existing library, so the first scan afterwards reads every file again and the first sync walks the whole server.
+
+- **Favourites belong to the track, album or artist, not to a path or a name.** They follow a track through a merge, a moved file and a file that goes while the server still streams it. A favourite of something no longer in the library is dropped on upgrade.
+- **Rebuilding the index keeps play history, playlists, favourites and lyrics.** It now forgets only what each file and server entry said, and the next scan and sync read them all again into the rows they had.
 
 ## 0.50.3
 

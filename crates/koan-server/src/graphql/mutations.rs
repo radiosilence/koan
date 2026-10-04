@@ -1345,23 +1345,18 @@ async fn set_favourite(
         let track = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| super::internal_error("db", e))?
             .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
-        let path = queries::track_favourite_key(&db.conn, track_id)
-            .map_err(|e| super::internal_error("db", e))?
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
-        let fs_path = std::path::Path::new(&path);
-
         let now_starred = match star {
             Some(true) => {
-                queries::add_favourite(&db.conn, user, fs_path)
+                queries::add_favourite(&db.conn, user, track_id)
                     .map_err(|e| super::internal_error("db", e))?;
                 true
             }
             Some(false) => {
-                queries::remove_favourite(&db.conn, user, fs_path)
+                queries::remove_favourite(&db.conn, user, track_id)
                     .map_err(|e| super::internal_error("db", e))?;
                 false
             }
-            None => queries::toggle_favourite(&db.conn, user, fs_path)
+            None => queries::toggle_favourite(&db.conn, user, track_id)
                 .map_err(|e| super::internal_error("db", e))?,
         };
 
@@ -1369,7 +1364,7 @@ async fn set_favourite(
         if queries::auth::is_local_user(&db.conn, user)
             .map_err(|e| super::internal_error("db", e))?
         {
-            sync_favourite_to_remote(db, &path, now_starred);
+            sync_favourite_to_remote(db, track_id, now_starred);
         }
         Ok(GqlTrack { row: track })
     })

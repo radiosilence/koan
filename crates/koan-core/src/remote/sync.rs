@@ -1325,13 +1325,7 @@ mod tests {
             ..remote_track_meta("s-before-rescan", "Song a0000", "Stub Artist", "Album 0000")
         };
         let ghost_id = queries::upsert_track(&db.conn, &ghost).unwrap();
-        let ghost_url = ghost.remote_url.clone().unwrap();
-        db.conn
-            .execute(
-                "INSERT INTO favourites (track_path) VALUES (?1)",
-                params![ghost_url],
-            )
-            .unwrap();
+        queries::add_favourite(&db.conn, queries::LOCAL_USER, ghost_id).unwrap();
 
         let state = Arc::new(StubState {
             albums: Mutex::new(stub_albums(1)),
@@ -1341,29 +1335,22 @@ mod tests {
         let client = SubsonicClient::new(&server.url(), "u", "p");
         sync_library(&db, &client, &server.url(), "u", &|_| {}).unwrap();
 
-        let rows: Vec<(i64, String, String)> = db
+        let rows: Vec<(i64, String)> = db
             .conn
-            .prepare("SELECT id, remote_id, remote_url FROM tracks WHERE title = 'Song a0000'")
+            .prepare("SELECT id, remote_id FROM tracks WHERE title = 'Song a0000'")
             .unwrap()
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(rows.len(), 1, "the dead row takes the live id");
-        let (id, remote_id, remote_url) = &rows[0];
-        assert_eq!(*id, ghost_id);
-        assert_eq!(remote_id, "sa0000");
-        let favourites: Vec<String> = db
-            .conn
-            .prepare("SELECT track_path FROM favourites")
-            .unwrap()
-            .query_map([], |row| row.get(0))
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(
-            favourites,
-            vec![remote_url.clone()],
+            rows,
+            vec![(ghost_id, "sa0000".to_string())],
+            "the dead row takes the live id"
+        );
+        assert_eq!(
+            queries::load_favourites(&db.conn, queries::LOCAL_USER).unwrap(),
+            HashSet::from([ghost_id]),
             "the favourite follows"
         );
     }
@@ -1587,12 +1574,7 @@ mod tests {
         let before = remote_track_meta("46215", "Archangel", "Burial", "Untrue");
         let row = queries::upsert_synced_track(&db.conn, &before, &HashSet::from(["46215".into()]))
             .unwrap();
-        queries::add_favourite(
-            &db.conn,
-            queries::LOCAL_USER,
-            std::path::Path::new(before.remote_url.as_deref().unwrap()),
-        )
-        .unwrap();
+        queries::add_favourite(&db.conn, queries::LOCAL_USER, row).unwrap();
 
         let uid = "0199a0b2-7c4e-7d3a-9f1b-2c3d4e5f6a7b";
         let after = remote_track_meta(uid, "Archangel", "Burial", "Untrue");
@@ -1621,8 +1603,8 @@ mod tests {
         let favourites = queries::load_favourites(&db.conn, queries::LOCAL_USER).unwrap();
         assert_eq!(
             favourites,
-            HashSet::from([std::path::PathBuf::from(after.remote_url.unwrap())]),
-            "the favourite follows the new stream address"
+            HashSet::from([row]),
+            "the favourite stays with the row"
         );
     }
 

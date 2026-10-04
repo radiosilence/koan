@@ -172,7 +172,7 @@ fn read_meta(row: &rusqlite::Row, at: usize, kind: Kind) -> rusqlite::Result<Tra
 
 /// A name as matching sees it: NFC, lowercased, whitespace collapsed. Paths
 /// arrive decomposed and tags precomposed, and sources disagree about case.
-fn fold(s: &str) -> String {
+pub(crate) fn fold(s: &str) -> String {
     let lower = s.nfc().collect::<String>().to_lowercase();
     lower.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -476,39 +476,36 @@ struct Derived {
     mbid: Option<String>,
 }
 
-fn stored(conn: &Connection, track: i64) -> Result<Option<(Derived, Option<String>)>, DbError> {
+fn stored(conn: &Connection, track: i64) -> Result<Option<Derived>, DbError> {
     Ok(conn
         .prepare_cached(
             "SELECT album_id, artist_id, disc, track_number, title, duration_ms, codec,
                     sample_rate, bit_depth, channels, bitrate, size_bytes, mtime, genre,
-                    source, path, remote_id, remote_url, mbid, cached_path
+                    source, path, remote_id, remote_url, mbid
                FROM tracks WHERE id = ?1",
         )?
         .query_row(params![track], |r| {
-            Ok((
-                Derived {
-                    album_id: r.get(0)?,
-                    artist_id: r.get(1)?,
-                    disc: r.get(2)?,
-                    track_number: r.get(3)?,
-                    title: r.get(4)?,
-                    duration_ms: r.get(5)?,
-                    codec: r.get(6)?,
-                    sample_rate: r.get(7)?,
-                    bit_depth: r.get(8)?,
-                    channels: r.get(9)?,
-                    bitrate: r.get(10)?,
-                    size_bytes: r.get(11)?,
-                    mtime: r.get(12)?,
-                    genre: r.get(13)?,
-                    source: r.get(14)?,
-                    path: r.get(15)?,
-                    remote_id: r.get(16)?,
-                    remote_url: r.get(17)?,
-                    mbid: r.get(18)?,
-                },
-                r.get(19)?,
-            ))
+            Ok(Derived {
+                album_id: r.get(0)?,
+                artist_id: r.get(1)?,
+                disc: r.get(2)?,
+                track_number: r.get(3)?,
+                title: r.get(4)?,
+                duration_ms: r.get(5)?,
+                codec: r.get(6)?,
+                sample_rate: r.get(7)?,
+                bit_depth: r.get(8)?,
+                channels: r.get(9)?,
+                bitrate: r.get(10)?,
+                size_bytes: r.get(11)?,
+                mtime: r.get(12)?,
+                genre: r.get(13)?,
+                source: r.get(14)?,
+                path: r.get(15)?,
+                remote_id: r.get(16)?,
+                remote_url: r.get(17)?,
+                mbid: r.get(18)?,
+            })
         })
         .optional()?)
 }
@@ -521,17 +518,13 @@ fn stored(conn: &Connection, track: i64) -> Result<Option<(Derived, Option<Strin
 /// whole from one source, the file while there is one: mixing one source's
 /// title with the other's album names a track neither has. Genre, the
 /// MusicBrainz ids, the date and the label fall back to the server's where the
-/// file has none, and the audio properties likewise. The server's ids for the
-/// album and its artist apply only when the server files the track under the
-/// same names; otherwise they belong to a record this library does not show.
-///
-/// `gone` are favourite keys — paths and stream addresses — of rows merged
-/// into this one; favourites under them, or under a key this row has just
-/// lost, move to the key it is reached by now.
-fn derive(conn: &Connection, track: i64, gone: &[String]) -> Result<Option<String>, DbError> {
+/// file has none, and the audio properties and position likewise. The album is
+/// the one its names and release name, or for a track only the server has,
+/// the one holding the server's id for its record.
+fn derive(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
     let local = on_track(conn, Kind::Local, track)?.map(|(_, m)| m);
     let remote = on_track(conn, Kind::Remote, track)?.map(|(_, m)| m);
-    let Some((before, cached_path)) = stored(conn, track)? else {
+    let Some(before) = stored(conn, track)? else {
         return Ok(None);
     };
     let Some(primary) = local.as_ref().or(remote.as_ref()) else {
@@ -560,18 +553,43 @@ fn derive(conn: &Connection, track: i64, gone: &[String]) -> Result<Option<Strin
         .flatten()
         .filter_map(|m| m.album_added_at.as_deref())
         .min();
-    let album_id = get_or_create_album(
-        conn,
-        &primary.album,
-        album_artist_id,
-        date.as_deref(),
-        None,
-        None,
-        codec.as_deref(),
-        label.as_deref(),
-        None,
-        added_at,
-    )?;
+    // A track only the server has belongs to the album holding the server's
+    // id for its record, which may be named as the files name it. Otherwise
+    // the album is its names and release.
+    let by_server_id: Option<(i64, i64)> = match (
+        &local,
+        remote.as_ref().and_then(|r| r.album_remote_id.as_deref()),
+    ) {
+        (None, Some(rid)) => conn
+            .prepare_cached(
+                "SELECT al.id, al.artist_id FROM albums al WHERE al.remote_id = ?1
+                  ORDER BY EXISTS (SELECT 1 FROM tracks t JOIN local_files f ON f.track_id = t.id
+                                    WHERE t.album_id = al.id) DESC, al.id
+                  LIMIT 1",
+            )?
+            .query_row(params![rid], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?
+            .and_then(|(album, artist): (i64, Option<i64>)| Some((album, artist?))),
+        _ => None,
+    };
+    let (album_id, album_artist_id) = match by_server_id {
+        Some(found) => found,
+        None => (
+            get_or_create_album(
+                conn,
+                &primary.album,
+                album_artist_id,
+                date.as_deref(),
+                None,
+                None,
+                codec.as_deref(),
+                label.as_deref(),
+                pick(|m| m.album_mbid.clone()).as_deref(),
+                added_at,
+            )?,
+            album_artist_id,
+        ),
+    };
 
     let genre = pick(|m| m.genre.clone());
     let after = Derived {
@@ -642,13 +660,7 @@ fn derive(conn: &Connection, track: i64, gone: &[String]) -> Result<Option<Strin
     if let Some(rid) = &after.remote_id {
         super::adopt_uid(conn, super::UidKind::Track, track, rid)?;
     }
-    derive_record(
-        conn,
-        album_id,
-        album_artist_id,
-        local.as_ref(),
-        remote.as_ref(),
-    )?;
+    derive_record(conn, album_id, album_artist_id, remote.as_ref())?;
 
     let artist_text = if primary.artist == album_artist {
         primary.artist.clone()
@@ -664,20 +676,6 @@ fn derive(conn: &Connection, track: i64, gone: &[String]) -> Result<Option<Strin
         genre.as_deref(),
     )?;
 
-    // Favourites are keyed by path or stream address; a key this row no longer
-    // carries takes its favourites to the one it does.
-    let keys = [&after.path, &cached_path, &after.remote_url];
-    if let Some(now) = keys.iter().find_map(|k| k.as_deref()) {
-        let lost = [&before.path, &before.remote_url]
-            .into_iter()
-            .flatten()
-            .chain(gone)
-            .filter(|old| !keys.iter().any(|k| k.as_deref() == Some(old.as_str())));
-        for old in lost {
-            repoint_favourites(conn, old, now)?;
-        }
-    }
-
     super::tracks::prune_if_empty(
         conn,
         before.album_id.filter(|a| Some(*a) != after.album_id),
@@ -686,70 +684,45 @@ fn derive(conn: &Connection, track: i64, gone: &[String]) -> Result<Option<Strin
     Ok(None)
 }
 
-/// The server's id for an album and its artist, and the album's release id,
-/// from the sources of every track on it: the value most of them give, so two
-/// editions the library holds as one album, or a server and a file naming the
-/// record differently, settle on one value instead of trading it on every scan
-/// and sync. The release id follows the files where they give one; the
-/// server's ids only the server can give. The koan server's uids come with
-/// them, so the album and artist are one id on every device.
+/// The server's id for an album and for its artist: the one most of the
+/// album's server entries give, so a server and a file that name a record
+/// differently still meet on one album, and nothing trades the id back and
+/// forth. The koan server's uids come with them, so the album and artist are
+/// one id on every device.
 ///
-/// `local` and `remote` are what the track being derived says; nothing is
-/// counted unless one of them disagrees with what is stored, which on a sync
-/// or a rescan is almost never.
+/// `remote` is what the track being derived says; nothing is counted unless
+/// it disagrees with what is stored, which on a sync is almost never.
 fn derive_record(
     conn: &Connection,
     album: i64,
     artist: i64,
-    local: Option<&TrackMeta>,
     remote: Option<&TrackMeta>,
 ) -> Result<(), DbError> {
-    let (album_rid, release, artist_rid): (Option<String>, Option<String>, Option<String>) = conn
+    let Some(remote) = remote else {
+        return Ok(());
+    };
+    let (album_rid, artist_rid): (Option<String>, Option<String>) = conn
         .prepare_cached(
-            "SELECT al.remote_id, al.mbid, ar.remote_id FROM albums al, artists ar
+            "SELECT al.remote_id, ar.remote_id FROM albums al, artists ar
               WHERE al.id = ?1 AND ar.id = ?2",
         )?
-        .query_row(params![album, artist], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })?;
+        .query_row(params![album, artist], |r| Ok((r.get(0)?, r.get(1)?)))?;
 
-    let differs = |stored: &Option<String>, said: Option<&Option<String>>| {
-        said.is_some_and(|said| nonempty(said).is_some() && said != stored)
-    };
-    if differs(&album_rid, remote.map(|m| &m.album_remote_id))
-        || differs(&release, local.map(|m| &m.album_mbid))
-        || differs(&release, remote.map(|m| &m.album_mbid))
-    {
-        let (by_server, by_files, by_server_release): (
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        ) = conn
+    if nonempty(&remote.album_remote_id).is_some() && remote.album_remote_id != album_rid {
+        let by_server: Option<String> = conn
             .prepare_cached(
-                "SELECT
-                   (SELECT r.album_remote_id FROM remote_entries r JOIN tracks t ON t.id = r.track_id
-                     WHERE t.album_id = ?1 AND r.album_remote_id IS NOT NULL
-                     GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 1),
-                   (SELECT f.album_mbid FROM local_files f JOIN tracks t ON t.id = f.track_id
-                     WHERE t.album_id = ?1 AND f.album_mbid != ''
-                     GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 1),
-                   (SELECT r.album_mbid FROM remote_entries r JOIN tracks t ON t.id = r.track_id
-                     WHERE t.album_id = ?1 AND r.album_mbid != ''
-                     GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 1)",
+                "SELECT r.album_remote_id FROM remote_entries r JOIN tracks t ON t.id = r.track_id
+                  WHERE t.album_id = ?1 AND r.album_remote_id IS NOT NULL
+                  GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 1",
             )?
-            .query_row(params![album], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-        let rid = by_server.or(album_rid.clone());
-        let mbid = by_files.or(by_server_release).or(release.clone());
-        if (&rid, &mbid) != (&album_rid, &release) {
-            conn.prepare_cached("UPDATE albums SET remote_id = ?1, mbid = ?2 WHERE id = ?3")?
-                .execute(params![rid, mbid, album])?;
-        }
-        if let Some(rid) = &rid {
-            super::adopt_uid(conn, super::UidKind::Album, album, rid)?;
+            .query_row(params![album], |r| r.get(0))
+            .optional()?;
+        if let Some(rid) = by_server.filter(|rid| Some(rid) != album_rid.as_ref()) {
+            settle_album_id(conn, album, &rid)?;
         }
     }
 
-    if differs(&artist_rid, remote.map(|m| &m.artist_remote_id)) {
+    if nonempty(&remote.artist_remote_id).is_some() && remote.artist_remote_id != artist_rid {
         let by_server: Option<String> = conn
             .prepare_cached(
                 "SELECT r.artist_remote_id FROM remote_entries r
@@ -757,24 +730,50 @@ fn derive_record(
                   WHERE al.artist_id = ?1 AND r.artist_remote_id IS NOT NULL
                   GROUP BY 1 ORDER BY COUNT(*) DESC, 1 LIMIT 1",
             )?
-            .query_row(params![artist], |r| r.get(0))?;
-        if by_server.is_some() && by_server != artist_rid {
+            .query_row(params![artist], |r| r.get(0))
+            .optional()?;
+        if let Some(rid) = by_server.filter(|rid| Some(rid) != artist_rid.as_ref()) {
             conn.prepare_cached("UPDATE artists SET remote_id = ?1 WHERE id = ?2")?
-                .execute(params![by_server, artist])?;
-        }
-        if let Some(rid) = &by_server {
-            super::adopt_uid(conn, super::UidKind::Artist, artist, rid)?;
+                .execute(params![rid, artist])?;
+            super::adopt_uid(conn, super::UidKind::Artist, artist, &rid)?;
         }
     }
     Ok(())
 }
 
-fn repoint_favourites(conn: &Connection, old: &str, now: &str) -> Result<(), DbError> {
-    conn.prepare_cached("UPDATE OR IGNORE favourites SET track_path = ?1 WHERE track_path = ?2")?
-        .execute(params![now, old])?;
-    // Whoever already starred it under the new key keeps that one.
-    conn.prepare_cached("DELETE FROM favourites WHERE track_path = ?1")?
-        .execute(params![old])?;
+fn album_has_files(conn: &Connection, album: i64) -> Result<bool, DbError> {
+    Ok(conn
+        .prepare_cached(
+            "SELECT EXISTS (SELECT 1 FROM tracks t JOIN local_files f ON f.track_id = t.id
+                             WHERE t.album_id = ?1)",
+        )?
+        .query_row(params![album], |r| r.get(0))?)
+}
+
+/// Give `album` the server's id `rid`. Another album already holding it is
+/// the server's grouping of the same record: one with no files is folded into
+/// whichever has them, which is how a record the server names one way and
+/// the files another becomes one album. Two albums of files claiming one
+/// server album keep it where it is.
+fn settle_album_id(conn: &Connection, album: i64, rid: &str) -> Result<(), DbError> {
+    let holders: Vec<i64> = conn
+        .prepare_cached("SELECT id FROM albums WHERE remote_id = ?1 AND id != ?2")?
+        .query_map(params![rid, album], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mine = album_has_files(conn, album)?;
+    for other in holders {
+        if !album_has_files(conn, other)? {
+            super::merge_albums(conn, album, other)?;
+        } else if !mine {
+            super::merge_albums(conn, other, album)?;
+            return Ok(());
+        } else {
+            return Ok(());
+        }
+    }
+    conn.prepare_cached("UPDATE albums SET remote_id = ?1 WHERE id = ?2")?
+        .execute(params![rid, album])?;
+    super::adopt_uid(conn, super::UidKind::Album, album, rid)?;
     Ok(())
 }
 
@@ -814,9 +813,7 @@ fn index_for_search(
 }
 
 /// Delete a track and everything that only means something with it, then the
-/// album and artist it leaves empty. Favourites stay: they are keyed by path
-/// so that they outlive the index, and a file indexed again finds its own.
-/// Returns the downloaded copy, if there was one, for the caller to remove
+/// album and artist it leaves empty. Returns the downloaded copy, if there was one, for the caller to remove
 /// once the change is committed.
 pub(crate) fn delete_track(conn: &Connection, track: i64) -> Result<Option<String>, DbError> {
     let Some((album, artist, cached)): Option<(Option<i64>, Option<i64>, Option<String>)> = conn
@@ -830,6 +827,7 @@ pub(crate) fn delete_track(conn: &Connection, track: i64) -> Result<Option<Strin
         "tracks_fts WHERE rowid",
         "lyrics_cache WHERE track_id",
         "play_history WHERE track_id",
+        "favourites WHERE track_id",
         "scan_cache WHERE track_id",
         "playlist_tracks WHERE track_id",
         "share_tracks WHERE track_id",
@@ -851,27 +849,14 @@ pub(crate) fn delete_track(conn: &Connection, track: i64) -> Result<Option<Strin
 /// track. Lyrics are one per track, so the winner keeps what it has and
 /// inherits only what it is missing; so does the download.
 fn merge(conn: &Connection, winner: i64, loser: i64) -> Result<(), DbError> {
-    // Album, artist, and the keys favourites may know it by.
-    type Loser = (
-        Option<i64>,
-        Option<i64>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-    );
-    let (album, artist, path, url, cached): Loser = conn
-        .prepare_cached(
-            "SELECT album_id, artist_id, path, remote_url, cached_path FROM tracks WHERE id = ?1",
-        )?
-        .query_row(params![loser], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-        })?;
+    let (album, artist): (Option<i64>, Option<i64>) = conn
+        .prepare_cached("SELECT album_id, artist_id FROM tracks WHERE id = ?1")?
+        .query_row(params![loser], |r| Ok((r.get(0)?, r.get(1)?)))?;
 
     fold_rows(conn, winner, loser)?;
     log::info!("track {loser} is track {winner} from another source; merged them");
 
-    let gone: Vec<String> = [path, url, cached].into_iter().flatten().collect();
-    derive(conn, winner, &gone)?;
+    derive(conn, winner)?;
     super::tracks::prune_if_empty(conn, album, artist)?;
     Ok(())
 }
@@ -880,6 +865,8 @@ fn merge(conn: &Connection, winner: i64, loser: i64) -> Result<(), DbError> {
 /// history, scan cache, organize log, playlist and share entries, lyrics where
 /// the winner has none, and the download where the winner has none.
 pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite::Result<()> {
+    conn.prepare_cached("UPDATE OR IGNORE favourites SET track_id = ?1 WHERE track_id = ?2")?
+        .execute(params![winner, loser])?;
     for table in [
         "local_files",
         "remote_entries",
@@ -911,6 +898,7 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
     .execute(params![winner, loser])?;
     for sql in [
         "DELETE FROM lyrics_cache WHERE track_id = ?1",
+        "DELETE FROM favourites WHERE track_id = ?1",
         "DELETE FROM tracks_fts WHERE rowid = ?1",
         "DELETE FROM tracks WHERE id = ?1",
     ] {
@@ -956,7 +944,7 @@ pub(crate) fn link(conn: &Connection, kind: Kind, key: &str) -> Result<i64, DbEr
             (c.same_slot && (c.same_artist || meta.track_number.is_some())) || c.same_recording
         });
         if still {
-            derive(conn, track, &[])?;
+            derive(conn, track)?;
             return Ok(track);
         }
 
@@ -974,15 +962,15 @@ pub(crate) fn link(conn: &Connection, kind: Kind, key: &str) -> Result<i64, DbEr
             kind.key()
         ))?
         .execute(params![to, key])?;
-        derive(conn, track, &[])?;
-        derive(conn, to, &[])?;
+        derive(conn, track)?;
+        derive(conn, to)?;
         return Ok(to);
     }
 
     match counterpart(conn, kind, key, &meta, Some(track))? {
         Some(other) => merge_into_older(conn, track, other),
         None => {
-            derive(conn, track, &[])?;
+            derive(conn, track)?;
             Ok(track)
         }
     }
@@ -1064,7 +1052,7 @@ pub(crate) fn record(
         let track = if relink {
             link(conn, kind, key)?
         } else {
-            derive(conn, track, &[])?;
+            derive(conn, track)?;
             track
         };
         return Ok((track, false));
@@ -1081,7 +1069,7 @@ pub(crate) fn record(
         None => (new_track(conn, &meta)?, true),
     };
     write(conn, kind, track, &meta)?;
-    derive(conn, track, &[])?;
+    derive(conn, track)?;
     Ok((track, inserted))
 }
 
@@ -1100,10 +1088,28 @@ pub(crate) fn remove(conn: &Connection, kind: Kind, key: &str) -> Result<Option<
     .execute(params![key])?;
     match on_track(conn, kind.other(), track)? {
         Some((partner, _)) => {
-            derive(conn, track, &[])?;
+            derive(conn, track)?;
             link(conn, kind.other(), &partner)?;
             Ok(None)
         }
+        None => delete_track(conn, track),
+    }
+}
+
+/// Forget a track a rebuilt index has not re-read, whose source of `kind` —
+/// the path or server id it still carries — is gone. Its other source, if one
+/// has been read again, keeps it; otherwise it is deleted, and its download
+/// returned for the caller to remove.
+pub(crate) fn forget_unread(
+    conn: &Connection,
+    kind: Kind,
+    key: &str,
+) -> Result<Option<String>, DbError> {
+    let Some(track) = legacy_row(conn, kind, key)? else {
+        return Ok(None);
+    };
+    match on_track(conn, kind.other(), track)? {
+        Some(_) => derive(conn, track),
         None => delete_track(conn, track),
     }
 }
@@ -1126,7 +1132,7 @@ pub(crate) fn remove_vanished(
         conn.prepare_cached("DELETE FROM remote_entries WHERE remote_id = ?1")?
             .execute(params![key])?;
         if let Some((file, _)) = on_track(conn, Kind::Local, track)? {
-            derive(conn, track, &[])?;
+            derive(conn, track)?;
             link(conn, Kind::Local, &file)?;
             continue;
         }

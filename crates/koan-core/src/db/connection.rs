@@ -176,7 +176,24 @@ fn configure(conn: &Connection) -> Result<(), DbError> {
     // connection without this collation fails every ORDER BY that uses it.
     register_library_collation(conn)?;
     register_shuffle_function(conn)?;
+    register_fold_function(conn)?;
     Ok(())
+}
+
+/// `koan_fold(name)` — a name as matching compares it; see
+/// `queries::sources::fold`. The triggers that keep `artists.name_key` and
+/// `albums.title_key` call it, so a row has its key however it was written.
+pub(crate) fn register_fold_function(conn: &Connection) -> rusqlite::Result<()> {
+    conn.create_scalar_function(
+        "koan_fold",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            Ok(ctx
+                .get::<Option<String>>(0)?
+                .map(|s| super::queries::sources::fold(&s)))
+        },
+    )
 }
 
 /// `koan_shuffle(id, seed)` — a stable pseudo-random ordering key.

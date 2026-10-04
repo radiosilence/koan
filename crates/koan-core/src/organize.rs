@@ -950,12 +950,6 @@ fn rewrite_path_references(conn: &Connection, old: &Path, new: &Path) -> Result<
         "UPDATE scan_cache SET path = ?1 WHERE path = ?2",
         params![new_path, old_path],
     )?;
-    // The destination may already be starred from an earlier move; OR REPLACE
-    // leaves exactly one favourite row rather than failing on the primary key.
-    conn.execute(
-        "UPDATE OR REPLACE favourites SET track_path = ?1 WHERE track_path = ?2",
-        params![new_path, old_path],
-    )?;
     conn.execute(
         "UPDATE playback_position SET cursor_id = ?1 WHERE cursor_id = ?2",
         params![new_path, old_path],
@@ -2365,7 +2359,10 @@ mod tests {
         add_track(&db, &source, "Airbag", 1);
         let source_str = source.to_string_lossy().into_owned();
 
-        queries::add_favourite(&db.conn, crate::db::queries::LOCAL_USER, &source).unwrap();
+        let track = queries::track_id_by_path(&db.conn, &source_str)
+            .unwrap()
+            .unwrap();
+        queries::add_favourite(&db.conn, crate::db::queries::LOCAL_USER, track).unwrap();
         let item = PersistedQueueItem {
             path: source_str.clone(),
             title: "Airbag".into(),
@@ -2387,8 +2384,11 @@ mod tests {
 
         let favourites =
             queries::load_favourites(&db.conn, crate::db::queries::LOCAL_USER).unwrap();
-        assert!(favourites.contains(&dest));
-        assert!(!favourites.contains(&source));
+        assert!(favourites.contains(&track));
+        assert_eq!(
+            queries::track_id_by_path(&db.conn, &dest_str).unwrap(),
+            Some(track)
+        );
 
         let state = queries::load_playback_state(&db.conn).unwrap().unwrap();
         assert_eq!(state.items[0].path, dest_str);
@@ -2398,8 +2398,7 @@ mod tests {
 
         let favourites =
             queries::load_favourites(&db.conn, crate::db::queries::LOCAL_USER).unwrap();
-        assert!(favourites.contains(&source));
-        assert!(!favourites.contains(&dest));
+        assert!(favourites.contains(&track));
         let state = queries::load_playback_state(&db.conn).unwrap().unwrap();
         assert_eq!(state.items[0].path, source_str);
         assert_eq!(state.cursor_path.as_deref(), Some(source_str.as_str()));
