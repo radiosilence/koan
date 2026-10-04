@@ -126,7 +126,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `player/commands.rs` | `PlayerCommand` enum, `CommandChannel` (bounded crossbeam) |
 | `player/state.rs` | `SharedPlayerState`, `Playlist`, `PlaylistItem`, `QueueItemId`, `LoadState`, `PlaybackState`, `derive_visible_queue()` |
 | `player/undo.rs` | Undo/redo stack for playlist operations (100-deep) |
-| `player/renderer.rs` | A UPnP renderer as the player's output: tracks handed over as URLs, gapless via `SetNextAVTransportURI`, playhead from the renderer's clock |
+| `player/renderer.rs` | A UPnP renderer as a session's output: `RendererLink` (the chosen renderer, kept across sessions) and `Output::Passthrough` (the original file handed over, gapless via `SetNextAVTransportURI`, playhead from the renderer's clock). Renderer events return as session-tagged `PlayerCommand::Renderer` |
 | `player/history.rs` | Play history recording — writes an entry when a track starts, fills in listening time when it ends. Owns the `koan-history` writer thread |
 | `db/schema.rs` | DDL: artists, albums, tracks, scan_cache, remote_servers, organize_log, tracks_fts (FTS5) |
 | `db/connection.rs` | `Database::open()`, WAL mode, pragmas |

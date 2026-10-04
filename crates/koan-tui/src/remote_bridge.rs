@@ -439,7 +439,9 @@ fn command_loop(
         // The output is the client's, a renderer as much as a device.
         if matches!(
             cmd,
-            PlayerCommand::UseRenderer(_) | PlayerCommand::SetRendererVolume(_)
+            PlayerCommand::UseRenderer(_)
+                | PlayerCommand::SetRendererVolume(_)
+                | PlayerCommand::Renderer { .. }
         ) {
             local_tx.send(cmd).ok();
             continue;
@@ -540,7 +542,9 @@ fn command_loop(
                 log::debug!("ignoring {:?} in remote mode", cmd);
             }
             // Forwarded above.
-            PlayerCommand::UseRenderer(_) | PlayerCommand::SetRendererVolume(_) => {}
+            PlayerCommand::UseRenderer(_)
+            | PlayerCommand::SetRendererVolume(_)
+            | PlayerCommand::Renderer { .. } => {}
         }
     }
 }

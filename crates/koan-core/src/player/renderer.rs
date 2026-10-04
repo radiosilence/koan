@@ -1,19 +1,33 @@
-//! Playing to a UPnP renderer: the player's second output.
+//! Playing to a UPnP renderer, passed the original file.
 //!
-//! The queue, cursor, history and undo work exactly as they do with local
-//! output; what differs is where each track goes and where the playhead is
-//! read from. A track is handed over as a URL to the original file. The
-//! playhead is the renderer's, extrapolated from where it was last heard to
-//! be. A track ends when the renderer moves on to the next one it was given,
-//! or stops at the end of this one.
+//! Two things are kept apart. Who drives the renderer's transport is the
+//! `RendererLink` on the player: the control connection, its events and the
+//! position it reports, the same whatever the renderer is sent. What it is
+//! sent is the session's output: `Output::Passthrough`, the original file,
+//! decoded by the renderer, with no decoder or ring here. A processed stream
+//! (#642) would be a local output whose engine encodes for the renderer,
+//! driven by the same link.
+//!
+//! The renderer is chosen on the player (`Player::renderer`), and every
+//! session opened while it is set plays there. The transport, its run and its track are the same as for
+//! local output, and `publish` derives what clients see from them as it does
+//! for any session.
+//!
+//! What differs is where a track goes and where the playhead is read from. A
+//! track is handed over as a URL to the original file. The playhead is the
+//! renderer's, extrapolated from where it was last heard to be. A track ends
+//! when the renderer moves on to the next one it was given, or stops at the
+//! end of this one; either way the player carries on as it would at the end
+//! of a decode. A renderer is handed whole files only: a track still
+//! downloading waits as any track not yet on disk does.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use super::state::{
-    ItemState, PlaybackSource, PlaybackState, QueueItemId, RendererClock, TrackInfo,
-};
-use super::{Player, PlayerError, Start, media_extension};
+use super::state::{ItemState, QueueItemId, RendererClock, TrackInfo};
+use super::{Output, Player, PlayerError, Run, Session, Source, Transport, media_extension};
 use crate::audio::buffer;
 use crate::remote::client::PlaybackReportState;
 use crate::upnp::{self, Connection, didl, session};
@@ -43,11 +57,37 @@ const ON_TARGET_MS: u64 = 1_500;
 /// as playing until the new one has opened.
 const START_GRACE: Duration = Duration::from_secs(3);
 
-pub(super) struct RendererOutput {
+/// Between asking a renderer again: long enough for it to finish what it is
+/// doing, which is usually opening a file.
+const RESEND_GAP: Duration = Duration::from_millis(700);
+const MAX_RESENDS: u8 = 4;
+
+/// How long after asking a renderer to play or pause koan holds to what it
+/// asked, against an answer that says otherwise.
+const INTENT_HOLD: Duration = Duration::from_secs(4);
+
+/// The renderer chosen as the output: the open connection that drives its
+/// transport and hears what it does, which outlives the sessions played on
+/// it. Its watcher (`upnp::session`) is where the renderer's position is
+/// read, for any session on it.
+pub(super) struct RendererLink {
     session: upnp::session::Session,
-    events: crossbeam_channel::Receiver<session::Event>,
+    /// The number of the player session now playing here, which the
+    /// connection stamps on every event it sends.
+    tag: Arc<AtomicU64>,
+    /// Tracks this renderer cannot play, marked failed in the queue for as
+    /// long as it is the output.
+    refused: Vec<QueueItemId>,
+}
+
+/// One session passed to the renderer as the original file: what it holds,
+/// and what koan is waiting for it to do.
+pub(super) struct Passthrough {
     /// What the renderer was told to play.
-    current: Option<Slot>,
+    current: Slot,
+    /// Still playing what koan gave it. False once it stopped at its own
+    /// controls or was taken over: resuming loads the track again.
+    loaded: bool,
     /// What it was told to play next, through `SetNextAVTransportURI`.
     next: Option<Slot>,
     /// A next track the renderer refused, not offered again: some advertise
@@ -74,34 +114,20 @@ pub(super) struct RendererOutput {
     look_at: Vec<Instant>,
     /// When koan last told it to play.
     started: Instant,
-    /// Told to play since the current track was loaded. Until it has been, a
-    /// renderer is meant to say `STOPPED`, and saying so means nothing.
+    /// Told to play since the track was loaded. Until it has been, a renderer
+    /// is meant to say `STOPPED`, and saying so means nothing.
     played: bool,
-    /// What koan last asked of it, playing or paused, and when. A renderer
-    /// still opening a file drops commands; one that contradicts a recent
-    /// request is asked again, once, before koan takes its word for it.
-    intent: Intent,
-    /// Tracks this renderer cannot play, marked failed in the queue for as
-    /// long as it is the output.
-    refused: Vec<QueueItemId>,
+    /// When koan last asked it to play or pause; what it asked is the
+    /// session's run. A renderer still opening a file drops commands, so for
+    /// `INTENT_HOLD` one that contradicts the request is asked again.
+    asked: Asked,
 }
 
-struct Intent {
-    playing: bool,
+struct Asked {
     at: Instant,
-    /// When it was last asked again, and how many times.
-    resent: Option<Instant>,
+    resent: Instant,
     resends: u8,
 }
-
-/// Between asking a renderer again: long enough for it to finish what it is
-/// doing, which is usually opening a file.
-const RESEND_GAP: Duration = Duration::from_millis(700);
-const MAX_RESENDS: u8 = 4;
-
-/// How long after asking a renderer to play or pause koan holds to what it
-/// asked, against an answer that says otherwise.
-const INTENT_HOLD: Duration = Duration::from_secs(4);
 
 struct Slot {
     id: QueueItemId,
@@ -118,46 +144,63 @@ fn container_of(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-impl RendererOutput {
-    fn intend(&mut self, playing: bool) {
-        // Counted as just sent: an answer in the next moment predates the
-        // renderer acting on it, and is no reason to ask again.
+impl Passthrough {
+    fn new(current: Slot, seek_ms: u64) -> Self {
         let now = Instant::now();
-        self.intent = Intent {
-            playing,
+        Self {
+            current,
+            loaded: true,
+            next: None,
+            next_refused: None,
+            next_retry: None,
+            pending_seek: (seek_ms > 0).then_some(seek_ms),
+            seek_tries: 0,
+            settle_until: now,
+            look_at: Vec::new(),
+            started: now,
+            played: false,
+            asked: Asked {
+                at: now,
+                resent: now,
+                resends: 0,
+            },
+        }
+    }
+
+    /// Koan has just asked it to play or pause. An answer in the next moment
+    /// predates the renderer acting on it, and is no reason to ask again.
+    fn asked_now(&mut self) {
+        let now = Instant::now();
+        self.asked = Asked {
             at: now,
-            resent: Some(now),
+            resent: now,
             resends: 0,
         };
         self.look_at.push(now + RESEND_GAP);
     }
 
-    /// The renderer says it is `playing` (or not) against what koan asked a
-    /// moment ago. For `INTENT_HOLD` koan's request stands: the renderer is
-    /// asked again every `RESEND_GAP`, and looked at again after each, while
-    /// its contrary answers are set aside. `true` while that holds; after it,
-    /// the renderer's word is taken, since someone may have used its own
-    /// controls.
-    fn insist(&mut self, playing: bool) -> bool {
-        if self.intent.playing == playing || self.intent.at.elapsed() > INTENT_HOLD {
+    /// The renderer says it is `reported` (playing or not) against `wanted`,
+    /// what koan asked a moment ago. For `INTENT_HOLD` koan's request stands:
+    /// the renderer is asked again every `RESEND_GAP`, and looked at again
+    /// after each, while its contrary answers are set aside. `true` while
+    /// that holds; after it, the renderer's word is taken, since someone may
+    /// have used its own controls.
+    fn insist(&mut self, link: &RendererLink, reported: bool, wanted: bool) -> bool {
+        if reported == wanted || self.asked.at.elapsed() > INTENT_HOLD {
             return false;
         }
-        let due = self
-            .intent
-            .resent
-            .is_none_or(|at| at.elapsed() >= RESEND_GAP);
-        if due && self.intent.resends < MAX_RESENDS {
-            self.intent.resends += 1;
-            self.intent.resent = Some(Instant::now());
+        if self.asked.resent.elapsed() >= RESEND_GAP && self.asked.resends < MAX_RESENDS {
+            self.asked.resends += 1;
+            self.asked.resent = Instant::now();
             log::info!(
                 "upnp: renderer is {} against what was asked; asking again",
-                if playing { "playing" } else { "not playing" }
+                if reported { "playing" } else { "not playing" }
             );
-            let _ = if self.intent.playing {
+            let _ = if wanted {
                 self.played = true;
-                self.session.play()
+                link.session.play()
             } else {
-                self.session.pause()
+                link.session.pause()
             };
             self.look_at.push(Instant::now() + RESEND_GAP);
         }
@@ -177,8 +220,8 @@ impl RendererOutput {
     }
 
     fn tokens(&self) -> Vec<&str> {
-        self.current
-            .iter()
+        std::iter::once(&self.current)
+            .filter(|_| self.loaded)
             .chain(self.next.iter())
             .map(|s| s.token.as_str())
             .collect()
@@ -186,44 +229,80 @@ impl RendererOutput {
 }
 
 impl Player {
-    /// When the player loop should wake for the renderer: see `look_at`.
-    pub(super) fn renderer_deadline(&self) -> Option<Instant> {
-        self.renderer
-            .as_ref()
-            .and_then(|r| r.look_at.iter().min().copied())
+    /// The renderer, and the session playing on it, when there is one.
+    fn on_renderer(&mut self) -> Option<(&RendererLink, &mut Session)> {
+        let link = self.renderer.as_ref()?;
+        match &mut self.transport {
+            Transport::Loaded(session) if matches!(session.output, Output::Passthrough(_)) => {
+                Some((link, session))
+            }
+            _ => None,
+        }
     }
 
-    /// What the player loop does for the renderer on every pass: keep the
-    /// next track handed over, and ask where it is once a settle window ends.
+    fn passthrough(&self) -> Option<&Passthrough> {
+        match &self.session()?.output {
+            Output::Passthrough(play) => Some(play),
+            Output::Local(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn passthrough_mut(&mut self) -> Option<&mut Passthrough> {
+        match &mut self.transport {
+            Transport::Loaded(Session {
+                output: Output::Passthrough(play),
+                ..
+            }) => Some(play),
+            _ => None,
+        }
+    }
+
+    /// Whether the renderer holds the track, playing or paused.
+    #[cfg(test)]
+    pub(super) fn renderer_loaded(&self) -> bool {
+        self.passthrough().is_some_and(|p| p.loaded)
+    }
+
+    /// When the player loop should wake for the renderer: see `look_at`.
+    pub(super) fn renderer_deadline(&self) -> Option<Instant> {
+        self.passthrough()
+            .and_then(|p| p.look_at.iter().min().copied())
+    }
+
+    /// What the player loop does for the renderer on every pass: ask where it
+    /// is once a settle window ends, and keep the next track handed over.
     pub(super) fn renderer_tick(&mut self) {
-        if let Some(output) = self.renderer.as_mut() {
+        if let Some((link, session)) = self.on_renderer()
+            && let Output::Passthrough(play) = &mut session.output
+        {
             let now = Instant::now();
-            let due = output.look_at.len();
-            output.look_at.retain(|at| *at > now);
-            if output.look_at.len() < due {
-                output.session.look();
+            let due = play.look_at.len();
+            play.look_at.retain(|at| *at > now);
+            if play.look_at.len() < due {
+                link.session.look();
             }
         }
         self.queue_next_on_renderer();
     }
 
-    pub(super) fn renderer_events(&self) -> Option<crossbeam_channel::Receiver<session::Event>> {
-        self.renderer.as_ref().map(|r| r.events.clone())
-    }
-
-    /// Whether a track is loaded on the renderer, playing or paused.
-    pub(super) fn renderer_loaded(&self) -> bool {
-        self.renderer.as_ref().is_some_and(|r| r.current.is_some())
-    }
-
-    /// Switch output to `connection`'s renderer, or back to this device with
-    /// `None`, and carry on from where the music is, paused if it was.
+    /// Make `connection`'s renderer the output, or this device with `None`,
+    /// and carry on from where the music is, as it was: playing on, paused,
+    /// or still waiting for its download.
     pub(super) fn use_renderer(&mut self, connection: Option<Box<Connection>>) {
-        let info = self.shared_state.track_info();
-        let position_ms = self.shared_state.position_ms();
-        let state = self.shared_state.playback_state();
+        let carry = self
+            .session()
+            .map(|s| (s.track.id, self.shared_state.position_ms(), s.run));
         log::info!(
-            "upnp: switching output at {position_ms}ms, {state:?}, to {}",
+            "upnp: switching output{} to {}",
+            carry.map_or(String::new(), |(_, at, run)| format!(
+                " at {at}ms, {}",
+                if run == Run::Playing {
+                    "playing"
+                } else {
+                    "paused"
+                }
+            )),
             connection
                 .as_ref()
                 .map_or("this device", |c| c.session.renderer().name.as_str())
@@ -240,7 +319,7 @@ impl Player {
 
         match connection {
             Some(connection) => {
-                let Connection { session, events } = *connection;
+                let Connection { session, tag } = *connection;
                 log::info!("upnp: playing to {}", session.renderer().name);
                 self.shared_state.set_renderer(Some(upnp::Output {
                     udn: session.renderer().udn.clone(),
@@ -248,63 +327,46 @@ impl Player {
                     volume: None,
                     problem: None,
                 }));
-                self.renderer = Some(RendererOutput {
+                self.renderer = Some(RendererLink {
                     session,
-                    events,
-                    current: None,
-                    next: None,
-                    next_refused: None,
-                    next_retry: None,
-                    pending_seek: None,
-                    seek_tries: 0,
-                    settle_until: Instant::now(),
-                    look_at: Vec::new(),
-                    started: Instant::now(),
-                    played: false,
-                    intent: Intent {
-                        playing: false,
-                        at: Instant::now(),
-                        resent: None,
-                        resends: 0,
-                    },
+                    tag,
                     refused: Vec::new(),
                 });
             }
             None => self.shared_state.set_renderer(None),
         }
 
-        // Stopped stays stopped; anything else picks up where it was.
-        let (Some(info), PlaybackState::Playing | PlaybackState::Paused) = (info, state) else {
-            return;
-        };
-        self.shared_state.set_position_ms(position_ms);
-        if let Err(e) = self.restart_current(&info, position_ms) {
-            log::error!("upnp: could not carry on after switching output: {e}");
+        if let Some((id, position_ms, run)) = carry {
+            self.cue(id, position_ms, run);
         }
     }
 
-    /// Open `path` on the renderer at `seek_ms`. The counterpart of
-    /// `open_playback`.
-    pub(super) fn open_on_renderer(
+    /// Open a session on the renderer: `try_open_session` for the renderer
+    /// output. Only a file on disk opens here.
+    pub(super) fn try_open_on_renderer(
         &mut self,
         id: QueueItemId,
-        path: &Path,
+        source: Source,
+        info: Option<buffer::StreamInfo>,
         seek_ms: u64,
-        start: Start,
+        start: Run,
     ) -> Result<(), PlayerError> {
         self.stop_engine();
-        let extension = container_of(path);
-        let Some(output) = self.renderer.as_mut() else {
-            return Err(PlayerError::Renderer("no renderer".into()));
+        let Source::File(path) = source else {
+            return Err(PlayerError::Renderer(
+                "a renderer is handed whole files only".into(),
+            ));
         };
-        let Some(mime) = output.session.mime_for(&extension) else {
+        let extension = container_of(&path);
+        let link = self.renderer.as_mut().expect("caller checked");
+        let Some(mime) = link.session.mime_for(&extension) else {
             let reason = format!(
                 "{} cannot play {}",
-                output.session.renderer().name,
+                link.session.renderer().name,
                 extension.to_uppercase()
             );
             log::info!("upnp: skipping {id:?}: {reason}");
-            output.refused.push(id);
+            link.refused.push(id);
             self.shared_state
                 .update_item_state(id, ItemState::Failed(reason.clone()));
             self.shared_state
@@ -312,40 +374,27 @@ impl Player {
             return Err(PlayerError::Unplayable(reason));
         };
 
-        let info = buffer::probe_file(path)?;
-        self.shared_state.set_track_info(Some(TrackInfo {
-            id,
-            path: path.to_path_buf(),
-            codec: info.codec.clone(),
-            sample_rate: info.sample_rate,
-            bit_depth: info.bit_depth,
-            bitrate_kbps: info.bitrate_kbps,
-            channels: info.channels,
-            duration_ms: info.duration_ms,
-        }));
+        let info = match info {
+            Some(info) => info,
+            None => buffer::probe_file(&path)?,
+        };
         // What the renderer does with the samples is its own business; there
         // is no device rate here to compare against.
         self.shared_state.clear_output_sample_rate();
         self.shared_state.set_position_ms(seek_ms);
         self.on_track_changed(id, seek_ms);
+        self.timeline.reset();
 
-        let output = self.renderer.as_mut().expect("checked above");
-        let (token, url, art) = output.session.serve(path, mime, &extension);
-        let metadata = self.didl_for(id, path, &url, &art, mime, info.duration_ms);
-        let output = self.renderer.as_mut().expect("checked above");
-        output.next = None;
-        output.pending_seek = None;
-        output.current = Some(Slot {
-            id,
-            token,
-            path: path.to_path_buf(),
-        });
-        let tokens: Vec<&str> = output.tokens();
-        output.session.retain(&tokens);
-
+        let link = self.renderer.as_ref().expect("caller checked");
+        let (token, url, art) = link.session.serve(&path, mime, &extension);
+        let metadata = self.didl_for(id, &path, &url, &art, mime, info.duration_ms);
+        self.session += 1;
+        let link = self.renderer.as_ref().expect("caller checked");
+        link.tag.store(self.session, Ordering::Release);
+        link.session.retain(&[token.as_str()]);
         log::info!(
             "upnp: {} ← {} ({:?}) {}{}",
-            output.session.renderer().name,
+            link.session.renderer().name,
             path.display(),
             id,
             mime,
@@ -355,45 +404,58 @@ impl Player {
                 String::new()
             }
         );
-        output
-            .session
+        link.session
             .set_uri(&url, &metadata)
             .map_err(|e| PlayerError::Renderer(e.to_string()))?;
-        output.started = Instant::now();
-        output.played = false;
-        output.pending_seek = (seek_ms > 0).then_some(seek_ms);
-        output.seek_tries = 0;
-        output.intend(start == Start::Playing);
-        let state = match start {
-            Start::Playing => {
-                // Seeked before it plays, so a renderer that takes it starts
-                // in the right place and none of the top is heard. One that
-                // ignores it is seeked again once it plays.
-                if seek_ms > 0 {
-                    let _ = output.session.seek(seek_ms);
-                    output.seek_tries = 1;
-                }
-                output
-                    .session
-                    .play()
-                    .map_err(|e| PlayerError::Renderer(e.to_string()))?;
-                output.played = true;
-                output.started = Instant::now();
-                output.settle();
-                PlaybackState::Playing
+
+        let mut play = Passthrough::new(
+            Slot {
+                id,
+                token,
+                path: path.clone(),
+            },
+            seek_ms,
+        );
+        play.asked_now();
+        if start == Run::Playing {
+            // Seeked before it plays, so a renderer that takes it starts in
+            // the right place and none of the top is heard. One that ignores
+            // it is seeked again once it plays.
+            if seek_ms > 0 {
+                let _ = link.session.seek(seek_ms);
+                play.seek_tries = 1;
             }
-            Start::Paused => PlaybackState::Paused,
-        };
-        output.session.look();
+            link.session
+                .play()
+                .map_err(|e| PlayerError::Renderer(e.to_string()))?;
+            play.played = true;
+            play.started = Instant::now();
+            play.settle();
+        }
+        link.session.look();
         self.shared_state.update_renderer(|o| o.problem = None);
         // Held where it opens until the renderer says it is playing: several
-        // take a second or more to start, and a bar that ran from the
-        // command would have to be pulled back when the sound began.
+        // take a second or more to start, and a bar that ran from the command
+        // would have to be pulled back when the sound began.
         self.shared_state.set_renderer_clock(Some(RendererClock {
             position_ms: seek_ms,
             running: None,
         }));
-        self.shared_state.set_playback_state(state);
+        self.transport = Transport::Loaded(Session {
+            track: TrackInfo {
+                id,
+                path,
+                codec: info.codec,
+                sample_rate: info.sample_rate,
+                bit_depth: info.bit_depth,
+                bitrate_kbps: info.bitrate_kbps,
+                channels: info.channels,
+                duration_ms: info.duration_ms,
+            },
+            run: start,
+            lookahead: Default::default(),
+            output: Output::Passthrough(play),
+        });
         self.queue_next_on_renderer();
         Ok(())
     }
@@ -435,17 +497,24 @@ impl Player {
     /// next track is on disk. Asked after every command, so the queue
     /// changing under a playing track changes what follows it.
     pub(super) fn queue_next_on_renderer(&mut self) {
-        let Some(output) = self.renderer.as_ref() else {
+        let Some(play) = self.passthrough().filter(|p| p.loaded) else {
             return;
         };
-        let Some(current) = output.current.as_ref() else {
-            return;
-        };
-        if !output.session.renderer().gapless {
+        let current = play.current.id;
+        let handed = play.next.as_ref().map(|s| s.id);
+        let (refused, retry) = (play.next_refused, play.next_retry);
+        if !self
+            .renderer
+            .as_ref()
+            .is_some_and(|l| l.session.renderer().gapless)
+        {
             return;
         }
-        let next = self.shared_state.peek_next_ready_after(current.id);
-        if next.as_ref().map(|(id, _)| *id) == output.next.as_ref().map(|s| s.id) {
+        let next = self
+            .shared_state
+            .lookahead_after(current)
+            .and_then(|step| step.chosen);
+        if next.as_ref().map(|(id, _)| *id) == handed {
             return;
         }
         // What follows has changed. A renderer cannot be told to forget the
@@ -453,211 +522,173 @@ impl Player {
         // is or is not handed over in its place: one that moves on to it
         // anyway fails to fetch it and stops, which reads as the end of this
         // track.
-        if let Some(output) = self.renderer.as_mut()
-            && output.next.take().is_some()
+        if let Some((link, session)) = self.on_renderer()
+            && let Output::Passthrough(play) = &mut session.output
+            && play.next.take().is_some()
         {
-            let tokens: Vec<&str> = output.tokens();
-            output.session.retain(&tokens);
+            link.session.retain(&play.tokens());
         }
-        let output = self.renderer.as_ref().expect("checked above");
-        if next.is_some() && next.as_ref().map(|(id, _)| *id) == output.next_refused {
+        if next.is_some() && next.as_ref().map(|(id, _)| *id) == refused {
             return;
         }
-        if output.next_retry.is_some_and(|at| Instant::now() < at) {
+        if retry.is_some_and(|at| Instant::now() < at) {
             return;
         }
         let Some((next_id, path)) = next else {
             return;
         };
         let extension = container_of(&path);
-        let Some(mime) = output.session.mime_for(&extension) else {
+        let link = self.renderer.as_ref().expect("checked above");
+        let Some(mime) = link.session.mime_for(&extension) else {
             // Left for the end of this track, where it is skipped with a reason.
             return;
         };
         let duration = buffer::probe_file(&path)
             .map(|i| i.duration_ms)
             .unwrap_or(0);
-        let output = self.renderer.as_ref().expect("checked above");
-        let (token, url, art) = output.session.serve(&path, mime, &extension);
+        let (token, url, art) = link.session.serve(&path, mime, &extension);
         let metadata = self.didl_for(next_id, &path, &url, &art, mime, duration);
-        let output = self.renderer.as_mut().expect("checked above");
-        match output.session.set_next(&url, &metadata) {
+        let Some((link, session)) = self.on_renderer() else {
+            return;
+        };
+        let Output::Passthrough(play) = &mut session.output else {
+            return;
+        };
+        match link.session.set_next(&url, &metadata) {
             Ok(()) => {
                 log::info!(
                     "upnp: next on {} is {:?}",
-                    output.session.renderer().name,
+                    link.session.renderer().name,
                     next_id
                 );
-                output.next = Some(Slot {
+                play.next = Some(Slot {
                     id: next_id,
                     token,
                     path,
                 });
             }
             Err(_) => {
-                output.next = None;
-                if output.started.elapsed() < START_GRACE {
+                if play.started.elapsed() < START_GRACE {
                     // Refused while it opens the current file, as Kodi does:
                     // offered again once that is done.
-                    output.next_retry = Some(output.started + START_GRACE);
-                    output.look_at.push(output.started + START_GRACE);
+                    play.next_retry = Some(play.started + START_GRACE);
+                    play.look_at.push(play.started + START_GRACE);
                 } else {
-                    output.next_refused = Some(next_id);
+                    play.next_refused = Some(next_id);
                 }
             }
         }
-        let tokens: Vec<&str> = output.tokens();
-        output.session.retain(&tokens);
+        link.session.retain(&play.tokens());
     }
 
-    /// Walk on from a track the renderer cannot play to the next it can.
-    ///
-    /// A loop, not a recursion through `play`: a long run of tracks in a
-    /// format the renderer does not list (a DSD library on a renderer without
-    /// DSD) would otherwise grow the player thread's stack by a few frames
-    /// per track until it overflowed.
-    pub(super) fn skip_unplayable(&mut self) {
-        loop {
-            let Some(next) = self.shared_state.advance_cursor_loadable() else {
-                log::info!("upnp: nothing further the renderer can play");
-                self.stop_playback_and_clear_state();
-                return;
-            };
-            match self.shared_state.item_playback_source(next) {
-                Some(PlaybackSource::Ready(path)) => {
-                    match self.open_on_renderer(next, &path, 0, Start::Playing) {
-                        Err(PlayerError::Unplayable(_)) => continue,
-                        Err(e) => {
-                            log::error!("upnp: {e}");
-                            self.stop_playback_and_clear_state();
-                            return;
-                        }
-                        Ok(()) => return,
-                    }
-                }
-                // Not on disk yet: waited for, like any track not yet loaded.
-                _ => {
-                    self.play(next);
-                    return;
-                }
+    /// The end of a renderer session: stop the renderer, if it still holds
+    /// the track, and stop serving it. `stop_engine` for this output.
+    pub(super) fn halt_renderer(&mut self, play: Passthrough) {
+        if let Some(link) = self.renderer.as_ref() {
+            if play.loaded {
+                let _ = link.session.stop();
             }
+            link.session.retain(&[]);
         }
-    }
-
-    /// Stop the renderer and forget what it was playing. The counterpart of
-    /// tearing down the local engine.
-    pub(super) fn halt_renderer(&mut self) {
-        if !self.renderer_loaded() {
-            return;
-        }
-        self.bank_listening();
-        let output = self.renderer.as_mut().expect("checked above");
-        let _ = output.session.stop();
-        output.current = None;
-        output.next = None;
-        output.pending_seek = None;
-        output.session.retain(&[]);
         self.shared_state.set_renderer_clock(None);
     }
 
+    /// Pause on the renderer, after the session's run has been set to paused.
     pub(super) fn pause_renderer(&mut self) {
-        let Some(output) = self.renderer.as_mut() else {
+        let at = self.shared_state.position_ms();
+        let Some((link, session)) = self.on_renderer() else {
             return;
         };
-        if output.current.is_none() {
+        let Output::Passthrough(play) = &mut session.output else {
+            return;
+        };
+        if !play.loaded {
             return;
         }
-        output.intend(false);
-        if let Err(e) = output.session.pause() {
+        play.asked_now();
+        if let Err(e) = link.session.pause() {
             log::error!("upnp: pause failed: {e}");
-            return;
         }
-        output.session.look();
-        let at = self.shared_state.position_ms();
+        link.session.look();
         self.shared_state.set_renderer_clock(Some(RendererClock {
             position_ms: at,
             running: None,
         }));
-        self.shared_state.set_playback_state(PlaybackState::Paused);
     }
 
-    /// Play what is loaded on the renderer. With nothing loaded, start the
-    /// current track where the playhead stands.
+    /// Play on the renderer. With the track no longer held there, it is
+    /// loaded again where the playhead stands.
     pub(super) fn resume_renderer(&mut self) {
-        if !self.renderer_loaded() {
-            match self.shared_state.track_info() {
-                Some(info) => {
-                    let at = self.shared_state.position_ms();
-                    self.shared_state.set_playback_state(PlaybackState::Playing);
-                    if let Err(e) = self.restart_current(&info, at) {
-                        log::error!("upnp: resume failed: {e}");
-                    }
-                }
-                None => {
-                    if let Some(id) = self.shared_state.cursor() {
-                        self.play(id);
-                    }
-                }
+        let at = self.shared_state.position_ms();
+        let Some((link, session)) = self.on_renderer() else {
+            return;
+        };
+        let Output::Passthrough(play) = &mut session.output else {
+            return;
+        };
+        session.run = Run::Playing;
+        if !play.loaded {
+            if let Err(e) = self.restart_current(at) {
+                log::error!("upnp: resume failed: {e}");
             }
             return;
         }
-        let output = self.renderer.as_mut().expect("checked above");
-        if let Some(seek) = output.pending_seek
-            && output.seek_tries == 0
+        if let Some(seek) = play.pending_seek
+            && play.seek_tries == 0
         {
-            let _ = output.session.seek(seek);
-            output.seek_tries = 1;
+            let _ = link.session.seek(seek);
+            play.seek_tries = 1;
         }
-        output.intend(true);
-        if let Err(e) = output.session.play() {
+        play.asked_now();
+        if let Err(e) = link.session.play() {
             log::error!("upnp: resume failed: {e}");
-            return;
         }
-        output.played = true;
-        output.started = Instant::now();
-        output.settle();
-        let at = output
-            .pending_seek
-            .unwrap_or_else(|| self.shared_state.position_ms());
-        output.session.look();
+        play.played = true;
+        play.started = Instant::now();
+        play.settle();
+        let at = play.pending_seek.unwrap_or(at);
+        link.session.look();
         // Held until it says it is playing, as when a track opens.
         self.shared_state.set_renderer_clock(Some(RendererClock {
             position_ms: at,
             running: None,
         }));
-        self.shared_state.set_playback_state(PlaybackState::Playing);
+        self.wake_analyzer();
         self.report(PlaybackReportState::Playing);
     }
 
-    /// Seek the track loaded on the renderer. `false` when it is not the one
-    /// asked about, and the caller loads it instead.
-    pub(super) fn seek_renderer(&mut self, id: QueueItemId, position_ms: u64) -> bool {
-        let Some(output) = self.renderer.as_mut() else {
+    /// Seek the track the renderer holds, in place. `false` when no renderer
+    /// holds one, and the caller restarts the session instead.
+    pub(super) fn seek_on_renderer(&mut self, position_ms: u64) -> bool {
+        let Some((link, session)) = self.on_renderer() else {
             return false;
         };
-        if output.current.as_ref().is_none_or(|c| c.id != id) {
+        let playing = session.run == Run::Playing;
+        let id = session.track.id;
+        let Output::Passthrough(play) = &mut session.output else {
+            return false;
+        };
+        if !play.loaded {
             return false;
         }
-        let playing = self.shared_state.playback_state() == PlaybackState::Playing;
+        play.pending_seek = Some(position_ms);
         if playing {
-            output.pending_seek = Some(position_ms);
-            match output.session.seek(position_ms) {
+            match link.session.seek(position_ms) {
                 // Sent to a playing renderer, which takes it: only a check
                 // once it has settled, not the instant retry a seek before
                 // `Play` gets.
-                Ok(()) => output.seek_tries = 2,
+                Ok(()) => play.seek_tries = 2,
                 // Refused, as renderers do while they open a file: kept as
                 // the target and sent again once it says it is playing.
                 Err(e) => {
                     log::info!("upnp: seek refused for now: {e}");
-                    output.seek_tries = 1;
+                    play.seek_tries = 1;
                 }
             }
-            output.settle();
-            output.session.look();
+            play.settle();
+            link.session.look();
         } else {
-            output.pending_seek = Some(position_ms);
-            output.seek_tries = 0;
+            play.seek_tries = 0;
         }
         self.bank_listening();
         self.shared_state.set_renderer_clock(Some(RendererClock {
@@ -670,10 +701,10 @@ impl Player {
     }
 
     pub(super) fn set_renderer_volume(&mut self, volume: u8) {
-        let Some(output) = self.renderer.as_ref() else {
+        let Some(link) = self.renderer.as_ref() else {
             return;
         };
-        match output.session.set_volume(volume) {
+        match link.session.set_volume(volume) {
             Ok(()) => self
                 .shared_state
                 .update_renderer(|o| o.volume = Some(volume.min(100))),
@@ -681,31 +712,38 @@ impl Player {
         }
     }
 
-    pub(super) fn on_renderer_event(&mut self, event: session::Event) {
+    /// What the renderer was heard to do, during the session numbered
+    /// `session`. Volume and the renderer going are about the renderer; the
+    /// rest is about a session, and is dropped once that is over.
+    pub(super) fn on_renderer_event(&mut self, session: u64, event: session::Event) {
         match event {
             session::Event::Volume(volume) => self
                 .shared_state
                 .update_renderer(|o| o.volume = Some(volume)),
-            session::Event::Snapshot(snapshot) => self.on_renderer_snapshot(snapshot),
             session::Event::Gone => self.renderer_gone(),
+            session::Event::Snapshot(snapshot) if session == self.session => {
+                self.on_renderer_snapshot(snapshot)
+            }
+            session::Event::Snapshot(_) => {}
         }
     }
 
     /// The renderer stopped answering or left the network. Leave it, paused
     /// where it was, so that nothing more waits on it; play carries on here.
     fn renderer_gone(&mut self) {
-        let Some(output) = self.renderer.as_mut() else {
+        let Some(link) = self.renderer.as_ref() else {
             return;
         };
         log::info!(
             "upnp: leaving {}, which is gone",
-            output.session.renderer().name
+            link.session.renderer().name
         );
-        // Nothing is sent to it on the way out: it would only time out.
-        output.current = None;
-        output.next = None;
-        if self.shared_state.playback_state() == PlaybackState::Playing {
-            self.shared_state.set_playback_state(PlaybackState::Paused);
+        if let Some((_, session)) = self.on_renderer() {
+            session.run = Run::Paused;
+            // Nothing is sent to it on the way out: it would only time out.
+            if let Output::Passthrough(play) = &mut session.output {
+                play.loaded = false;
+            }
             self.report(PlaybackReportState::Paused);
         }
         self.use_renderer(None);
@@ -717,50 +755,64 @@ impl Player {
     fn renderer_released(&mut self) {
         let at = self.shared_state.position_ms();
         self.bank_listening();
-        let Some(output) = self.renderer.as_mut() else {
+        let Some((link, session)) = self.on_renderer() else {
             return;
         };
-        output.current = None;
-        output.next = None;
-        output.session.retain(&[]);
+        let was_playing = session.run == Run::Playing;
+        session.run = Run::Paused;
+        let Output::Passthrough(play) = &mut session.output else {
+            return;
+        };
+        play.loaded = false;
+        play.next = None;
+        play.pending_seek = None;
+        link.session.retain(&[]);
         self.shared_state.set_renderer_clock(Some(RendererClock {
             position_ms: at,
             running: None,
         }));
-        if self.shared_state.playback_state() == PlaybackState::Playing {
-            self.shared_state.set_playback_state(PlaybackState::Paused);
+        if was_playing {
             self.report(PlaybackReportState::Paused);
         }
     }
 
     /// The renderer answered where it is. Follow it.
     fn on_renderer_snapshot(&mut self, snap: session::Snapshot) {
-        let Some(output) = self.renderer.as_ref() else {
+        let Some((link, session)) = self.on_renderer() else {
             return;
         };
-        if snap.epoch != output.session.epoch() || output.current.is_none() {
+        let Output::Passthrough(play) = &session.output else {
+            return;
+        };
+        if snap.epoch != link.session.epoch() || !play.loaded {
             return;
         }
-        let token = output.session.token_of(&snap.track_uri).map(str::to_string);
+        let token = link.session.token_of(&snap.track_uri).map(str::to_string);
+        let is_current = token.as_deref() == Some(play.current.token.as_str());
+        let is_next = token.is_some() && play.next.as_ref().map(|n| &n.token) == token.as_ref();
         log::info!(
             "upnp: heard {:?} at {}ms on {}",
             snap.transport,
             snap.position_ms.unwrap_or(0),
-            match (&token, &output.current, &output.next) {
-                (Some(t), Some(c), _) if *t == c.token => "the current track",
-                (Some(t), _, Some(n)) if *t == n.token => "the next track",
-                (Some(_), ..) => "an old track of ours",
-                (None, ..) if snap.track_uri.is_empty() => "nothing",
-                (None, ..) => "something else",
+            if is_current {
+                "the current track"
+            } else if is_next {
+                "the next track"
+            } else if token.is_some() {
+                "an old track of ours"
+            } else if snap.track_uri.is_empty() {
+                "nothing"
+            } else {
+                "something else"
             }
         );
 
         // Moved on to the track it was given next: gapless, from here.
-        if token.is_some() && output.next.as_ref().map(|n| &n.token) == token.as_ref() {
+        if is_next {
             self.renderer_moved_on();
-        } else if output.started.elapsed() >= START_GRACE
+        } else if play.started.elapsed() >= START_GRACE
             && !snap.track_uri.is_empty()
-            && output.current.as_ref().map(|c| &c.token) != token.as_ref()
+            && !is_current
             && matches!(
                 snap.transport,
                 session::Transport::Playing | session::Transport::Paused
@@ -774,23 +826,24 @@ impl Player {
             return;
         }
 
-        let Some(output) = self.renderer.as_ref() else {
+        let Some((link, session)) = self.on_renderer() else {
             return;
         };
-        let state = self.shared_state.playback_state();
+        let run = session.run;
+        let Output::Passthrough(play) = &mut session.output else {
+            return;
+        };
+        let on_current = token.as_deref() == Some(play.current.token.as_str());
         match snap.transport {
             session::Transport::Playing
-                if state == PlaybackState::Playing
-                    && output.pending_seek.is_some()
-                    && output.current.as_ref().map(|c| &c.token) == token.as_ref() =>
+                if run == Run::Playing && play.pending_seek.is_some() && on_current =>
             {
-                let output = self.renderer.as_mut().expect("checked above");
-                let target = output.pending_seek.expect("checked above");
+                let target = play.pending_seek.expect("checked above");
                 let at = snap.position_ms.unwrap_or(0);
                 if at.abs_diff(target) <= ON_TARGET_MS {
                     // There, near enough: from here its readings are the
                     // playhead like any other.
-                    output.pending_seek = None;
+                    play.pending_seek = None;
                     self.follow_renderer_clock(&snap, true);
                 } else {
                     // The first answer that it is playing somewhere else is
@@ -798,22 +851,22 @@ impl Player {
                     // ignored, and every moment spent waiting is heard. One
                     // more is tried once that has settled, then koan follows
                     // the renderer wherever it is.
-                    let settled = Instant::now() >= output.settle_until;
-                    if output.seek_tries < 2 || settled && output.seek_tries < 3 {
+                    let settled = Instant::now() >= play.settle_until;
+                    if play.seek_tries < 2 || settled && play.seek_tries < 3 {
                         log::info!("upnp: renderer at {at}ms, seeking to {target}ms");
-                        if let Err(e) = output.session.seek(target) {
+                        if let Err(e) = link.session.seek(target) {
                             log::warn!("upnp: seek refused: {e}");
                         }
-                        output.seek_tries += 1;
-                        output.settle();
-                        output.session.look();
+                        play.seek_tries += 1;
+                        play.settle();
+                        link.session.look();
                         self.shared_state.set_renderer_clock(Some(RendererClock {
                             position_ms: target,
                             running: Some(Instant::now()),
                         }));
                     } else if settled {
                         log::info!("upnp: renderer will not seek; following it from {at}ms");
-                        output.pending_seek = None;
+                        play.pending_seek = None;
                         self.shared_state.set_renderer_clock(Some(RendererClock {
                             position_ms: at,
                             running: Some(snap.at),
@@ -822,32 +875,32 @@ impl Player {
                 }
             }
             session::Transport::Playing => {
-                if self.renderer.as_mut().is_some_and(|o| o.insist(true)) {
+                if play.insist(link, true, run == Run::Playing) {
                     return;
                 }
-                self.follow_renderer_clock(&snap, true);
-                if state != PlaybackState::Playing {
+                if run != Run::Playing {
                     // Played from the renderer's own controls.
-                    self.shared_state.set_playback_state(PlaybackState::Playing);
+                    session.run = Run::Playing;
                     self.report(PlaybackReportState::Playing);
                 }
+                self.follow_renderer_clock(&snap, true);
             }
             session::Transport::Paused => {
-                if self.renderer.as_mut().is_some_and(|o| o.insist(false)) {
+                if play.insist(link, false, run == Run::Playing) {
                     return;
                 }
-                self.follow_renderer_clock(&snap, false);
-                if state == PlaybackState::Playing {
-                    self.shared_state.set_playback_state(PlaybackState::Paused);
+                if run == Run::Playing {
+                    session.run = Run::Paused;
                     self.report(PlaybackReportState::Paused);
                 }
+                self.follow_renderer_clock(&snap, false);
             }
             session::Transport::Stopped | session::Transport::NoMedia => {
-                if state == PlaybackState::Paused {
+                if run == Run::Paused {
                     // Loaded paused and never played: stopped is where a
                     // renderer is meant to be. No media means it has let go
                     // of the track, played or not.
-                    if !output.played && snap.transport == session::Transport::Stopped {
+                    if !play.played && snap.transport == session::Transport::Stopped {
                         return;
                     }
                     // Stopped at the renderer while paused here. Some forget
@@ -855,15 +908,22 @@ impl Player {
                     self.renderer_released();
                     return;
                 }
-                if state != PlaybackState::Playing || output.started.elapsed() < START_GRACE {
+                if play.started.elapsed() < START_GRACE {
                     return;
                 }
                 let at = self.shared_state.position_ms();
                 let duration = self.shared_state.duration_ms();
                 if duration > 0 && at + END_TOLERANCE_MS >= duration {
                     log::info!("upnp: track finished on the renderer");
-                    self.halt_renderer();
-                    self.on_decode_finished();
+                    // It holds nothing to stop; the next session tells it what
+                    // to play.
+                    if let Some((_, session)) = self.on_renderer()
+                        && let Output::Passthrough(play) = &mut session.output
+                    {
+                        play.loaded = false;
+                    }
+                    let next = self.shared_state.advance_cursor_loadable();
+                    self.carry_on(next, self.intent());
                 } else {
                     log::info!("upnp: renderer stopped at {at}ms");
                     self.renderer_released();
@@ -883,7 +943,7 @@ impl Player {
     /// the renderer settles after a command, or before it has reached a seek
     /// still outstanding, are set aside.
     fn follow_renderer_clock(&mut self, snap: &session::Snapshot, running: bool) {
-        let Some(output) = self.renderer.as_ref() else {
+        let Some(play) = self.passthrough() else {
             return;
         };
         let clock = self.shared_state.renderer_clock();
@@ -891,7 +951,7 @@ impl Player {
         let moving = clock.is_some_and(|c| c.running.is_some());
         // Settling after a command, or not yet where koan sent it: either way
         // the reading says where it was, not where the music is meant to be.
-        let settling = Instant::now() < output.settle_until || output.pending_seek.is_some();
+        let settling = Instant::now() < play.settle_until || play.pending_seek.is_some();
         let correction = snap.position_ms.filter(|_| !settling).and_then(|at| {
             let width = if at % 1000 == 0 { 999 } else { 0 };
             // The clock as it stood when the renderer answered.
@@ -922,36 +982,34 @@ impl Player {
     /// The renderer started the track it had been given next.
     fn renderer_moved_on(&mut self) {
         self.bank_listening();
-        let output = self.renderer.as_mut().expect("caller checked");
-        let Some(next) = output.next.take() else {
+        let Some(next) = self.passthrough().and_then(|p| p.next.as_ref()) else {
             return;
         };
-        let id = next.id;
-        let path = next.path.clone();
+        let (id, path) = (next.id, next.path.clone());
         if self.shared_state.get_item(id).is_none() {
             // Handed over, then taken out of the queue before it played.
             log::info!("upnp: renderer moved on to {id:?}, which is no longer queued");
             self.renderer_released();
             return;
         }
-        let output = self.renderer.as_mut().expect("caller checked");
-        output.current = Some(next);
+        let info = buffer::probe_file(&path).ok();
+        let Some((link, session)) = self.on_renderer() else {
+            return;
+        };
+        let Output::Passthrough(play) = &mut session.output else {
+            return;
+        };
+        let next = play.next.take().expect("checked above");
+        play.current = next;
         // Whatever was being sought belonged to the track that just ended.
-        output.pending_seek = None;
-        output.seek_tries = 0;
+        play.pending_seek = None;
+        play.seek_tries = 0;
         // A hand-over starts the track at its top. The reading that showed it
         // may not: Kodi names the new track with the old one's position.
-        output.settle();
-        let tokens: Vec<&str> = output.tokens();
-        output.session.retain(&tokens);
-        log::info!("upnp: renderer moved on to {id:?}");
-        self.shared_state.set_renderer_clock(Some(RendererClock {
-            position_ms: 0,
-            running: Some(Instant::now()),
-        }));
-
-        if let Ok(info) = buffer::probe_file(&path) {
-            self.shared_state.set_track_info(Some(TrackInfo {
+        play.settle();
+        link.session.retain(&play.tokens());
+        if let Some(info) = info {
+            session.track = TrackInfo {
                 id,
                 path,
                 codec: info.codec,
@@ -960,8 +1018,13 @@ impl Player {
                 bitrate_kbps: info.bitrate_kbps,
                 channels: info.channels,
                 duration_ms: info.duration_ms,
-            }));
+            };
         }
+        log::info!("upnp: renderer moved on to {id:?}");
+        self.shared_state.set_renderer_clock(Some(RendererClock {
+            position_ms: 0,
+            running: Some(Instant::now()),
+        }));
         self.shared_state.set_cursor(Some(id));
         self.on_track_changed(id, 0);
         self.queue_next_on_renderer();
@@ -974,7 +1037,7 @@ mod tests {
 
     use super::*;
     use crate::player::commands::PlayerCommand;
-    use crate::player::state::PlaylistItem;
+    use crate::player::state::{PlaybackState, PlaylistItem};
     use crate::upnp::fake::FakeRenderer;
 
     const WAV: &str = "http-get:*:audio/wav:*,http-get:*:audio/x-wav:*";
@@ -1043,46 +1106,60 @@ mod tests {
 
     impl Rig {
         fn connect(&mut self) {
-            let (tx, events) = crossbeam_channel::unbounded();
-            let session = upnp::session::Session::open(self.fake.renderer(), move |e| {
-                let _ = tx.send(e);
-            })
-            .unwrap();
+            let connection =
+                upnp::open(self.fake.renderer(), &self.player.command_sender()).unwrap();
             self.player
-                .use_renderer(Some(Box::new(Connection { session, events })));
+                .process_command(PlayerCommand::UseRenderer(Some(Box::new(connection))));
         }
 
-        /// Run the renderer's events through the player, as its loop does,
-        /// until `done` holds.
+        /// One pass of the player's loop: a command if one arrives within
+        /// `wait`, then what the loop does on every wake. `true` if a command
+        /// came.
+        fn step(&mut self, wait: Duration) -> bool {
+            let came = match self.player.commands.rx.recv_timeout(wait) {
+                Ok(cmd) => {
+                    self.player.process_command(cmd);
+                    true
+                }
+                Err(_) => false,
+            };
+            self.player.update_playback_state();
+            came
+        }
+
+        /// Run the player's loop until `done` holds.
         fn pump_until(&mut self, done: impl Fn(&Player) -> bool) {
             let deadline = Instant::now() + Duration::from_secs(5);
             while !done(&self.player) {
-                let events = self.player.renderer_events().unwrap();
-                match events.recv_timeout(Duration::from_millis(50)) {
-                    Ok(event) => {
-                        self.player.on_renderer_event(event);
-                        self.player.renderer_tick();
-                    }
-                    Err(_) if Instant::now() < deadline => self.player.renderer_tick(),
-                    Err(_) => panic!(
+                if Instant::now() >= deadline {
+                    panic!(
                         "timed out; renderer saw {:?}; player {:?} at {}ms, cursor {:?}",
                         self.fake.actions(),
                         self.player.shared_state.playback_state(),
                         self.player.shared_state.position_ms(),
                         self.player.shared_state.cursor(),
-                    ),
+                    );
                 }
+                self.step(Duration::from_millis(50));
             }
+        }
+
+        fn play_mut(&mut self) -> &mut Passthrough {
+            self.player.passthrough_mut().expect("a renderer session")
+        }
+
+        fn link(&self) -> &RendererLink {
+            self.player.renderer.as_ref().expect("a renderer")
         }
 
         /// Hear the renderer at `ms` into the track, past the start grace.
         fn at(&mut self, ms: u64) {
             self.settle();
             self.fake.set_position(ms);
-            let output = self.player.renderer.as_mut().unwrap();
-            output.started = Instant::now() - START_GRACE;
-            output.settle_until = Instant::now();
-            output.session.look();
+            let play = self.play_mut();
+            play.started = Instant::now() - START_GRACE;
+            play.settle_until = Instant::now();
+            self.link().session.look();
             // RelTime is whole seconds.
             let floor = ms / 1000 * 1000;
             self.pump_until(|p| p.shared_state.position_ms() >= floor);
@@ -1091,34 +1168,32 @@ mod tests {
         /// Take whatever answers the load left in flight, inside the grace
         /// window, before the test moves time on past it.
         fn settle(&mut self) {
-            let events = self.player.renderer_events().unwrap();
-            while let Ok(event) = events.recv_timeout(Duration::from_millis(100)) {
-                self.player.on_renderer_event(event);
-            }
+            while self.step(Duration::from_millis(100)) {}
         }
 
         /// As if the grace window after the last load had run out.
         fn past_grace(&mut self) {
             self.settle();
-            let output = self.player.renderer.as_mut().unwrap();
-            output.started = Instant::now() - START_GRACE;
-            output.settle_until = Instant::now();
+            let play = self.play_mut();
+            play.started = Instant::now() - START_GRACE;
+            play.settle_until = Instant::now();
         }
 
-        /// Run the renderer's answers through until it has been sent
-        /// `action` `n` times.
+        /// Run the player's loop until the renderer has been sent `action`
+        /// `n` times.
         fn await_count(&mut self, action: &str, n: usize) {
             let deadline = Instant::now() + Duration::from_secs(5);
             while self.count(action) < n {
-                let events = self.player.renderer_events().unwrap();
-                match events.recv_deadline(deadline) {
-                    Ok(event) => self.player.on_renderer_event(event),
-                    Err(_) => panic!("never sent {action} ×{n}: {:?}", self.fake.actions()),
+                if Instant::now() >= deadline {
+                    panic!("never sent {action} ×{n}: {:?}", self.fake.actions());
                 }
+                self.step(Duration::from_millis(50));
             }
         }
 
+        /// The playback state, as `publish` would put it after a command.
         fn state(&self) -> PlaybackState {
+            self.player.publish();
             self.player.shared_state.playback_state()
         }
 
@@ -1309,16 +1384,19 @@ mod tests {
     fn an_answer_from_before_the_last_command_is_ignored() {
         let mut r = rig(WAV, false, &["a.wav"]);
         r.player.play(r.ids[0]);
-        r.player.renderer.as_mut().unwrap().started = Instant::now() - START_GRACE;
-        r.player
-            .on_renderer_event(session::Event::Snapshot(session::Snapshot {
+        r.play_mut().started = Instant::now() - START_GRACE;
+        let session = r.player.session;
+        r.player.on_renderer_event(
+            session,
+            session::Event::Snapshot(session::Snapshot {
                 epoch: 0,
                 transport: session::Transport::Stopped,
                 track_uri: String::new(),
                 position_ms: Some(0),
                 duration_ms: None,
                 at: Instant::now(),
-            }));
+            }),
+        );
         assert_eq!(r.state(), PlaybackState::Playing);
     }
 
@@ -1332,20 +1410,16 @@ mod tests {
         assert!(r.player.shared_state.renderer().is_none());
         assert_eq!(r.state(), PlaybackState::Paused);
         assert!(
-            r.player.active_playback.is_some(),
+            r.player
+                .session()
+                .is_some_and(|s| matches!(s.output, Output::Local(_))),
             "loaded on the local output"
         );
     }
 
-    #[test]
-    fn switching_to_a_renderer_mid_download_opens_the_track_there_once_it_lands() {
+    /// Mark `id` as still downloading, with enough of it on disk to stream.
+    fn downloading(r: &Rig, id: QueueItemId) {
         use crate::remote::downloads::{ByteFeed, Download, DownloadState, store};
-
-        let mut r = rig(WAV, false, &["a.wav"]);
-        let id = r.ids[0];
-        r.player.use_renderer(None);
-
-        // Paused locally at 3s while the file is still arriving.
         let path = r.player.shared_state.get_item(id).unwrap().path;
         r.player
             .shared_state
@@ -1358,28 +1432,58 @@ mod tests {
             title: "a".into(),
             artist: String::new(),
             source: path.clone(),
-            dest: path.clone(),
+            dest: path,
             total: 0,
             written: feed.clone(),
             state: DownloadState::Queued,
             bytes_per_second: 0,
         });
         store().started(id, 0, feed);
-        r.player.shared_state.set_cursor(Some(id));
-        r.player.shared_state.set_track_info(Some(TrackInfo {
-            id,
-            path,
-            codec: "PCM".into(),
-            sample_rate: 8_000,
-            bit_depth: Some(16),
-            bitrate_kbps: None,
-            channels: 1,
-            duration_ms: 10_000,
-        }));
-        r.player.shared_state.set_position_ms(3_000);
+    }
+
+    fn landed(r: &mut Rig, id: QueueItemId) {
+        crate::remote::downloads::store().finished(id);
         r.player
             .shared_state
-            .set_playback_state(PlaybackState::Paused);
+            .update_item_state(id, ItemState::Ready);
+        r.player.process_command(PlayerCommand::TrackReady(id));
+    }
+
+    #[test]
+    fn a_track_still_downloading_waits_for_the_whole_file_on_a_renderer() {
+        let mut r = rig(WAV, false, &["a.wav"]);
+        let id = r.ids[0];
+        downloading(&r, id);
+
+        r.player.process_command(PlayerCommand::Play(id));
+        assert!(r.player.waiting().is_some(), "parked, not streamed");
+        // Enough has arrived to stream; a renderer is handed whole files.
+        r.player
+            .process_command(PlayerCommand::TrackStreamReady(id));
+        assert_eq!(
+            r.count("SetAVTransportURI"),
+            0,
+            "nothing sent before it lands"
+        );
+
+        landed(&mut r, id);
+        assert_eq!(r.count("SetAVTransportURI"), 1);
+        assert_eq!(r.state(), PlaybackState::Playing);
+        crate::remote::downloads::store().withdrawn(id);
+    }
+
+    #[test]
+    fn a_paused_track_waiting_for_its_download_opens_on_the_renderer_where_it_was() {
+        let mut r = rig(WAV, false, &["a.wav"]);
+        let id = r.ids[0];
+        r.player.process_command(PlayerCommand::UseRenderer(None));
+        downloading(&r, id);
+        r.player.process_command(PlayerCommand::Cue {
+            id,
+            position_ms: 3_000,
+            play: false,
+        });
+        assert!(r.player.waiting().is_some());
 
         r.connect();
         assert_eq!(
@@ -1387,20 +1491,20 @@ mod tests {
             0,
             "nothing sent before it lands"
         );
-        assert_eq!(r.state(), PlaybackState::Stopped);
+        assert_eq!(
+            r.state(),
+            PlaybackState::Paused,
+            "a paused wait reads as paused"
+        );
 
-        store().finished(id);
-        r.player
-            .shared_state
-            .update_item_state(id, ItemState::Ready);
-        r.player.track_ready(id);
+        landed(&mut r, id);
         assert_eq!(r.count("SetAVTransportURI"), 1);
         assert_eq!(r.state(), PlaybackState::Paused, "still paused");
         assert_eq!(r.player.shared_state.position_ms(), 3_000);
-        r.player.resume();
+        r.player.process_command(PlayerCommand::Resume);
         let commands = r.commands();
         assert_eq!(&commands[commands.len() - 2..], ["Seek", "Play"]);
-        store().withdrawn(id);
+        crate::remote::downloads::store().withdrawn(id);
     }
 
     #[test]
@@ -1424,8 +1528,7 @@ mod tests {
             .to_string();
         assert!(
             !r.player
-                .renderer
-                .as_ref()
+                .passthrough()
                 .unwrap()
                 .tokens()
                 .contains(&token.as_str()),
@@ -1482,7 +1585,12 @@ mod tests {
         r.pump_until(|p| p.renderer.is_none());
         assert!(r.player.shared_state.renderer().is_none());
         assert_eq!(r.state(), PlaybackState::Paused);
-        assert!(r.player.active_playback.is_some(), "loaded here, paused");
+        assert!(
+            r.player
+                .session()
+                .is_some_and(|s| matches!(s.output, Output::Local(_))),
+            "loaded here, paused"
+        );
     }
 
     /// Two tones played to a real renderer, the second handed over as the
@@ -1518,23 +1626,18 @@ mod tests {
         let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
         player.process_command(PlayerCommand::AddToPlaylist(items));
 
-        let (tx, events) = crossbeam_channel::unbounded();
-        let session = upnp::session::Session::open(renderer, move |e| {
-            let _ = tx.send(e);
-        })
-        .unwrap();
-        player.use_renderer(Some(Box::new(Connection { session, events })));
+        let connection = upnp::open(renderer, &player.command_sender()).unwrap();
+        player.use_renderer(Some(Box::new(connection)));
         player.play(ids[0]);
 
         let started = Instant::now();
         let mut moved_on = None;
         while started.elapsed() < Duration::from_secs(25) {
-            let events = player.renderer_events().unwrap();
-            if let Ok(event) = events.recv_timeout(Duration::from_millis(250)) {
-                eprintln!("{:>6}ms {event:?}", started.elapsed().as_millis());
-                player.on_renderer_event(event);
-                player.queue_next_on_renderer();
+            if let Ok(cmd) = player.commands.rx.recv_timeout(Duration::from_millis(250)) {
+                eprintln!("{:>6}ms {cmd:?}", started.elapsed().as_millis());
+                player.process_command(cmd);
             }
+            player.update_playback_state();
             if moved_on.is_none() && player.shared_state.cursor() == Some(ids[1]) {
                 moved_on = Some(started.elapsed());
                 eprintln!("moved on to the second tone at {:?}", started.elapsed());
@@ -1556,18 +1659,11 @@ mod tests {
         r.player.play(r.ids[0]);
         r.player.play(r.ids[1]);
         // Its answers name the first track's URL for now.
-        r.player.renderer.as_ref().unwrap().session.look();
+        r.link().session.look();
         r.pump_until(|p| p.renderer.as_ref().is_some_and(|o| o.session.epoch() > 0));
         let deadline = Instant::now() + Duration::from_millis(300);
         while Instant::now() < deadline {
-            if let Ok(e) = r
-                .player
-                .renderer_events()
-                .unwrap()
-                .recv_timeout(Duration::from_millis(50))
-            {
-                r.player.on_renderer_event(e);
-            }
+            r.step(Duration::from_millis(50));
         }
         assert!(r.player.renderer_loaded(), "still koan's");
         assert_eq!(r.state(), PlaybackState::Playing);
@@ -1579,15 +1675,11 @@ mod tests {
         r.fake
             .seeks_only_playing
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        r.player.cue(r.ids[0], 4_000, Start::Playing);
+        r.player.cue(r.ids[0], 4_000, Run::Playing);
         assert_eq!(r.count("Seek"), 1, "tried before playing");
-        r.player.renderer.as_mut().unwrap().settle_until = Instant::now();
+        r.play_mut().settle_until = Instant::now();
         r.await_count("Seek", 2);
-        r.pump_until(|p| {
-            p.renderer
-                .as_ref()
-                .is_some_and(|o| o.pending_seek.is_none())
-        });
+        r.pump_until(|p| p.passthrough().is_some_and(|o| o.pending_seek.is_none()));
         assert!((4_000..5_000).contains(&r.player.shared_state.position_ms()));
     }
 
@@ -1599,7 +1691,7 @@ mod tests {
         let before = r.player.shared_state.position_ms();
         // The same moment as a renderer reports it: whole seconds.
         r.fake.set_position(before / 1000 * 1000);
-        r.player.renderer.as_ref().unwrap().session.look();
+        r.link().session.look();
         r.settle();
         assert!(
             r.player.shared_state.position_ms() >= before,
@@ -1666,25 +1758,17 @@ mod tests {
         player.process_command(PlayerCommand::AddToPlaylist(items));
 
         let connect = |player: &mut Player| {
-            let (tx, events) = crossbeam_channel::unbounded();
-            let session = upnp::session::Session::open(renderer.clone(), move |e| {
-                let _ = tx.send(e);
-            })
-            .unwrap();
-            player.use_renderer(Some(Box::new(Connection { session, events })));
+            let connection = upnp::open(renderer.clone(), &player.command_sender()).unwrap();
+            player.use_renderer(Some(Box::new(connection)));
         };
         // Run the player's renderer loop for `ms`.
         let run = |player: &mut Player, ms: u64| {
             let until = Instant::now() + Duration::from_millis(ms);
             while Instant::now() < until {
-                let Some(events) = player.renderer_events() else {
-                    std::thread::sleep(Duration::from_millis(50));
-                    continue;
-                };
-                if let Ok(event) = events.recv_timeout(Duration::from_millis(50)) {
-                    player.on_renderer_event(event);
+                if let Ok(cmd) = player.commands.rx.recv_timeout(Duration::from_millis(50)) {
+                    player.process_command(cmd);
                 }
-                player.renderer_tick();
+                player.update_playback_state();
             }
         };
         let failures = std::cell::RefCell::new(Vec::new());
@@ -1712,7 +1796,7 @@ mod tests {
         };
 
         connect(&mut player);
-        player.cue(ids[0], 10_000, Start::Playing);
+        player.cue(ids[0], 10_000, Run::Playing);
         run(&mut player, 4_000);
         check(&player, "opened at 10s", 1_500);
         run(&mut player, 3_000);
@@ -1829,24 +1913,16 @@ mod tests {
         player.process_command(PlayerCommand::AddToPlaylist(items));
 
         let connect = |player: &mut Player| {
-            let (tx, events) = crossbeam_channel::unbounded();
-            let session = upnp::session::Session::open(renderer.clone(), move |e| {
-                let _ = tx.send(e);
-            })
-            .unwrap();
-            player.use_renderer(Some(Box::new(Connection { session, events })));
+            let connection = upnp::open(renderer.clone(), &player.command_sender()).unwrap();
+            player.use_renderer(Some(Box::new(connection)));
         };
         let run = |player: &mut Player, ms: u64| {
             let until = Instant::now() + Duration::from_millis(ms);
             while Instant::now() < until {
-                if let Some(events) = player.renderer_events()
-                    && let Ok(event) = events.recv_timeout(Duration::from_millis(20))
-                {
-                    player.on_renderer_event(event);
-                } else {
-                    std::thread::sleep(Duration::from_millis(20));
+                if let Ok(cmd) = player.commands.rx.recv_timeout(Duration::from_millis(20)) {
+                    player.process_command(cmd);
                 }
-                player.renderer_tick();
+                player.update_playback_state();
             }
         };
         let failures = std::cell::RefCell::new(Vec::new());
@@ -1855,9 +1931,9 @@ mod tests {
             let ours = player.shared_state.position_ms();
             let playing = player.shared_state.playback_state();
             let token = player
-                .renderer
-                .as_ref()
-                .and_then(|r| r.current.as_ref().map(|c| c.token.clone()));
+                .passthrough()
+                .filter(|p| p.loaded)
+                .map(|p| p.current.token.clone());
             let same_track = token.as_ref().is_some_and(|t| uri.contains(t.as_str()));
             let same_state = match playing {
                 PlaybackState::Playing => state == "PLAYING",
@@ -2101,6 +2177,8 @@ mod tests {
                 r.player.process_command(PlayerCommand::ReplacePlaylist {
                     items: Vec::new(),
                     start: 0,
+                    position_ms: 0,
+                    play: false,
                 });
                 r.player
                     .process_command(PlayerCommand::AddToPlaylist(items));
@@ -2119,8 +2197,7 @@ mod tests {
         r.player.play(r.ids[0]);
         let handed = r
             .player
-            .renderer
-            .as_ref()
+            .passthrough()
             .unwrap()
             .next
             .as_ref()
@@ -2130,7 +2207,7 @@ mod tests {
         r.player
             .process_command(PlayerCommand::RemoveFromPlaylist(r.ids[1]));
         r.player.queue_next_on_renderer();
-        let output = r.player.renderer.as_ref().unwrap();
+        let output = r.player.passthrough().unwrap();
         assert!(
             output.next.is_none(),
             "nothing the renderer can play follows"
@@ -2144,9 +2221,9 @@ mod tests {
     #[test]
     fn a_track_loaded_paused_is_not_released_by_its_renderer_saying_stopped() {
         let mut r = rig(WAV, false, &["a.wav"]);
-        r.player.cue(r.ids[0], 3_000, Start::Paused);
-        r.player.renderer.as_mut().unwrap().started = Instant::now() - START_GRACE;
-        r.player.renderer.as_ref().unwrap().session.look();
+        r.player.cue(r.ids[0], 3_000, Run::Paused);
+        r.play_mut().started = Instant::now() - START_GRACE;
+        r.link().session.look();
         r.settle();
         assert!(r.player.renderer_loaded(), "still loaded, waiting for play");
         assert_eq!(r.state(), PlaybackState::Paused);
@@ -2167,13 +2244,204 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let first = upnp::choose();
         let _later = upnp::choose();
+        // Its events go to the same channel; only the switch matters here.
+        let switched = |rx: &crossbeam_channel::Receiver<PlayerCommand>| {
+            rx.try_iter()
+                .any(|cmd| matches!(cmd, PlayerCommand::UseRenderer(Some(_))))
+        };
         upnp::connect(&udn, first, &tx).unwrap();
-        assert!(rx.try_recv().is_err(), "the earlier pick is dropped");
+        assert!(!switched(&rx), "the earlier pick is dropped");
         let last = upnp::choose();
         upnp::connect(&udn, last, &tx).unwrap();
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(PlayerCommand::UseRenderer(Some(_)))
-        ));
+        assert!(switched(&rx));
+    }
+
+    /// `random_use_keeps_the_player_honest` with a renderer as the output:
+    /// the same invariants after every step, through switches of output,
+    /// the renderer finishing tracks and being stopped at its own controls,
+    /// events from sessions already over, and tracks still downloading,
+    /// which a renderer must wait for.
+    #[test]
+    fn random_use_with_a_renderer_keeps_the_player_honest() {
+        use crate::player::tests::{Rng, asks_to_play, check_invariants, playlist_ids};
+        use crate::remote::downloads::{ByteFeed, Download, DownloadState, store};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 30.0, 16);
+
+        for seed in 1..=8u64 {
+            let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+            let fake = FakeRenderer::start(WAV, rng.coin(), true);
+            let mut player = Player::new();
+            player.backend = Box::new(crate::player::tests::StuckBackend {
+                rate: 8_000.0,
+                asked: Default::default(),
+                starts: Default::default(),
+            });
+            let mut streamed = Vec::new();
+            let mut fresh = |rng: &mut Rng| {
+                let mut it = item(path.clone(), "t");
+                match rng.below(4) {
+                    0 => it.state = ItemState::Pending,
+                    // Still arriving, with enough on disk to stream.
+                    1 => {
+                        it.state = ItemState::Pending;
+                        let feed = ByteFeed::new();
+                        feed.set(crate::player::state::STREAM_THRESHOLD * 2);
+                        store().queued(Download {
+                            id: it.id,
+                            track_id: 0,
+                            title: "t".into(),
+                            artist: String::new(),
+                            source: path.clone(),
+                            dest: path.clone(),
+                            total: 0,
+                            written: feed.clone(),
+                            state: DownloadState::Queued,
+                            bytes_per_second: 0,
+                        });
+                        store().started(it.id, 0, feed);
+                        streamed.push(it.id);
+                    }
+                    _ => {}
+                }
+                it
+            };
+            let start: Vec<_> = (0..5).map(|_| fresh(&mut rng)).collect();
+            player.process_command(PlayerCommand::AddToPlaylist(start));
+            let connect = |player: &Player| {
+                let connection = upnp::open(fake.renderer(), &player.command_sender()).unwrap();
+                PlayerCommand::UseRenderer(Some(Box::new(connection)))
+            };
+            let cmd = connect(&player);
+            player.process_command(cmd);
+
+            let mut history = Vec::new();
+            for step in 0..100 {
+                let ids = playlist_ids(&player);
+                let pick = |rng: &mut Rng| ids.get(rng.below(ids.len())).copied();
+                let stale = |player: &Player, session: u64| PlayerCommand::Renderer {
+                    session,
+                    event: session::Event::Snapshot(session::Snapshot {
+                        epoch: player.renderer.as_ref().map_or(0, |l| l.session.epoch()),
+                        transport: session::Transport::Stopped,
+                        track_uri: String::new(),
+                        position_ms: Some(0),
+                        duration_ms: None,
+                        at: Instant::now(),
+                    }),
+                };
+                let cmd = match rng.below(22) {
+                    0 | 1 => pick(&mut rng).map(PlayerCommand::Play),
+                    2 => pick(&mut rng).map(|id| PlayerCommand::Cue {
+                        id,
+                        position_ms: if rng.coin() { 0 } else { 2_000 },
+                        play: rng.coin(),
+                    }),
+                    3 => Some(PlayerCommand::Pause),
+                    4 => Some(PlayerCommand::Resume),
+                    5 => Some(PlayerCommand::NextTrack),
+                    6 => Some(PlayerCommand::PrevTrack),
+                    7 => Some(PlayerCommand::Seek(5_000)),
+                    8 => pick(&mut rng).map(PlayerCommand::RemoveFromPlaylist),
+                    9 => pick(&mut rng).zip(pick(&mut rng)).map(|(id, target)| {
+                        PlayerCommand::MoveInPlaylist {
+                            id,
+                            target,
+                            after: rng.coin(),
+                        }
+                    }),
+                    10 => Some(PlayerCommand::AddToPlaylist(vec![fresh(&mut rng)])),
+                    11 => Some(PlayerCommand::Undo),
+                    12 => {
+                        let (items, _) = player.shared_state.snapshot_playlist();
+                        let pending: Vec<_> = items
+                            .iter()
+                            .filter(|i| matches!(i.state, ItemState::Pending))
+                            .map(|i| i.id)
+                            .collect();
+                        pending.get(rng.below(pending.len())).map(|&id| {
+                            store().finished(id);
+                            player.shared_state.update_item_state(id, ItemState::Ready);
+                            PlayerCommand::TrackReady(id)
+                        })
+                    }
+                    13 => pick(&mut rng).map(PlayerCommand::TrackStreamReady),
+                    // Switching output, either way.
+                    14 => Some(if player.renderer.is_some() && rng.coin() {
+                        PlayerCommand::UseRenderer(None)
+                    } else {
+                        connect(&player)
+                    }),
+                    // The renderer plays the track out, or someone stops it.
+                    15 => {
+                        if rng.coin() {
+                            fake.finish_track();
+                        } else {
+                            fake.press_stop(1_000);
+                        }
+                        if let Some(play) = player.passthrough_mut() {
+                            play.started = Instant::now() - START_GRACE;
+                            play.settle_until = Instant::now();
+                        }
+                        None
+                    }
+                    // What a session already over heard, and an answer from
+                    // before the last command of this one.
+                    16 => Some(stale(&player, player.session.wrapping_sub(1))),
+                    17 => {
+                        let mut cmd = stale(&player, player.session);
+                        if let PlayerCommand::Renderer {
+                            event: session::Event::Snapshot(snap),
+                            ..
+                        } = &mut cmd
+                        {
+                            snap.epoch = snap.epoch.wrapping_sub(1);
+                        }
+                        Some(cmd)
+                    }
+                    18 => Some(PlayerCommand::DecodeFinished(player.session)),
+                    19 => Some(PlayerCommand::ClearPlaylist),
+                    _ => Some(PlayerCommand::ReplacePlaylist {
+                        items: (0..3).map(|_| fresh(&mut rng)).collect(),
+                        start: rng.below(4),
+                        position_ms: if rng.coin() { 0 } else { 2_000 },
+                        play: rng.coin(),
+                    }),
+                };
+                let label = cmd
+                    .as_ref()
+                    .map_or("renderer changed".into(), |c| format!("{c:?}"));
+                let asked = cmd.as_ref().is_some_and(asks_to_play);
+                let wanted_before = player.shared_state.wants_to_play();
+                if let Some(cmd) = cmd {
+                    player.process_command(cmd);
+                }
+                // What arrived meanwhile — the renderer's answers, the decode
+                // threads' ends — as the loop would see it.
+                let settle = Instant::now() + Duration::from_millis(15);
+                while let Ok(sent) = player.commands.rx.recv_deadline(settle) {
+                    player.process_command(sent);
+                }
+                player.update_playback_state();
+                history.push(label);
+                if let Err(broken) = check_invariants(&player, wanted_before, asked) {
+                    let tail = history[history.len().saturating_sub(8)..].join("\n  ");
+                    panic!("seed {seed}, step {step}: {broken}\nlast commands:\n  {tail}");
+                }
+                // What the renderer holds is what the session says is playing.
+                if let (Some(play), Some(session)) =
+                    (player.passthrough().filter(|p| p.loaded), player.session())
+                    && play.current.id != session.track.id
+                {
+                    panic!("seed {seed}, step {step}: the renderer holds another track");
+                }
+            }
+            player.process_command(PlayerCommand::Stop);
+            for id in streamed {
+                store().withdrawn(id);
+            }
+        }
     }
 }

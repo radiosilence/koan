@@ -29,6 +29,15 @@ pub struct Renderer {
     pub openhome: bool,
 }
 
+impl Renderer {
+    /// The name it is known by as an output device, for what is attached to
+    /// one by name, such as a DSP profile. The UDN: a friendly name can be
+    /// changed on the device, and two can be the same.
+    pub fn device_name(&self) -> &str {
+        &self.udn
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Service {
     pub service_type: String,

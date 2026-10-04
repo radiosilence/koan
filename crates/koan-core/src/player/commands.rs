@@ -133,6 +133,12 @@ pub enum PlayerCommand {
     UseRenderer(Option<Box<crate::upnp::Connection>>),
     /// Set the volume of the renderer being played to, 0–100.
     SetRendererVolume(u8),
+    /// What the renderer was heard to do, during the session numbered
+    /// `session`. Dropped once that session is over, like `DecodeFinished`.
+    Renderer {
+        session: u64,
+        event: crate::upnp::session::Event,
+    },
 }
 
 /// Bounded command channel.

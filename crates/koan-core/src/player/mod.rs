@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod history;
+mod renderer;
 pub mod state;
 pub mod undo;
 
@@ -45,6 +46,12 @@ pub enum PlayerError {
     Backend(#[from] BackendError),
     #[error("decode error: {0}")]
     Decode(#[from] buffer::DecodeError),
+    #[error("renderer: {0}")]
+    Renderer(String),
+    /// The renderer cannot play this track. It is marked as such in the
+    /// queue and skipped.
+    #[error("{0}")]
+    Unplayable(String),
 }
 
 /// Everything needed to read a track that is still downloading: where it is,
@@ -127,6 +134,9 @@ pub struct Player {
     session: u64,
     /// Waiting for a pause's fade to reach silence, to hear where it did.
     silence_waiters: Vec<crossbeam_channel::Sender<u64>>,
+    /// The UPnP renderer chosen as the output, when one is: every session
+    /// opened while it is set plays there. Not a transport of its own.
+    renderer: Option<renderer::RendererLink>,
     /// Playback sessions started — lets tests assert how many engine restarts
     /// an operation costs.
     #[cfg(test)]
@@ -171,15 +181,32 @@ impl Waiting {
     }
 }
 
-/// An open playback session: the engine, the decode thread feeding it, and
-/// the track under the playhead.
+/// An open playback session: the track under the playhead, whether it plays,
+/// and the output it plays on.
 struct Session {
     /// The track under the playhead. Opened with the first; moved on by a
     /// gapless transition, corrected when a download it streams lands.
     track: TrackInfo,
     run: Run,
-    /// The steps the decoder has taken through the queue, in order.
+    /// The steps the decoder has taken through the queue, in order. Always
+    /// empty for a renderer, which has no decoder here to look ahead.
     lookahead: Arc<parking_lot::Mutex<Vec<state::Lookahead>>>,
+    output: Output,
+}
+
+/// Where a session's sound comes out, and so whether koan decodes it.
+enum Output {
+    /// Decoded here, into the ring, drained by an engine: this device's own
+    /// output. An engine that encodes the ring for a renderer instead (DSP
+    /// on a renderer, #642) is another engine here, not another output.
+    Local(Local),
+    /// The original file handed to a renderer, which decodes it and runs its
+    /// own gapless. Nothing is decoded here, so there is no ring and no
+    /// lookahead: see `renderer`.
+    Passthrough(renderer::Passthrough),
+}
+
+struct Local {
     engine: Box<dyn AudioEngineHandle>,
     decode_handle: buffer::DecodeHandle,
     /// Set when the decoder is reading a download as it arrives.
@@ -187,6 +214,16 @@ struct Session {
     /// Keeps the device rate subscription alive for as long as this engine is
     /// the one feeding the DAC. Dropped with it.
     _rate_watch: Option<Box<dyn SampleRateWatch>>,
+}
+
+impl Session {
+    /// The engine, for a session on this device.
+    fn engine(&self) -> Option<&dyn AudioEngineHandle> {
+        match &self.output {
+            Output::Local(local) => Some(local.engine.as_ref()),
+            Output::Passthrough(_) => None,
+        }
+    }
 }
 
 /// Where a session reads its first track from.
@@ -254,6 +291,7 @@ impl Player {
             lead_in_ends: None,
             session: 0,
             silence_waiters: Vec::new(),
+            renderer: None,
             timeline,
             viz_buffer,
             viz_snapshot,
@@ -426,7 +464,11 @@ impl Player {
             log::error!("failed to save output device config: {}", e);
         }
 
-        self.restart_on_current_track();
+        if self.renderer.is_some() {
+            self.use_renderer(None);
+        } else {
+            self.restart_on_current_track();
+        }
     }
 
     /// Clear the configured output device, reverting to system default.
@@ -440,7 +482,11 @@ impl Player {
             log::error!("failed to save output device config: {}", e);
         }
 
-        self.restart_on_current_track();
+        if self.renderer.is_some() {
+            self.use_renderer(None);
+        } else {
+            self.restart_on_current_track();
+        }
     }
 
     /// If a track is currently playing or paused, restart playback at the
@@ -474,6 +520,12 @@ impl Player {
             Transport::Waiting(waiting) => Some(waiting),
             _ => None,
         }
+    }
+
+    /// Whether the track waited for may open from its download as it lands:
+    /// at the start, and not to a renderer, which is handed whole files only.
+    fn may_stream(&self, waiting: &Waiting, id: QueueItemId) -> bool {
+        waiting.may_stream(id) && self.renderer.is_none()
     }
 
     fn forget_waiting(&mut self) {
@@ -556,9 +608,12 @@ impl Player {
             }) => {
                 // Stop what is playing and park here. The probe answers on its
                 // own thread; if it cannot, TrackReady starts the track once
-                // the whole file has landed.
+                // the whole file has landed. A renderer takes whole files
+                // only, so for one there is no probe: TrackReady it is.
                 self.park(id, 0, Run::Playing);
-                self.probe_stream_for_playback(id, &path, bytes_written, total);
+                if self.renderer.is_none() {
+                    self.probe_stream_for_playback(id, &path, bytes_written, total);
+                }
             }
             None => {
                 self.park(id, 0, Run::Playing);
@@ -639,7 +694,33 @@ impl Player {
             self.playback_starts += 1;
         }
         self.forget_waiting();
-        let result = self.try_open_session(id, source, info, seek_ms, start);
+        let mut result = self.try_open_session(id, source, info, seek_ms, start);
+        // A track the renderer cannot play is marked so in the queue and
+        // walked past, opening the next the way this one would have opened.
+        // A loop rather than a call back through `play`: a long run of them,
+        // a DSD library on a renderer without DSD, would grow the stack per
+        // track.
+        let mut skipped = id;
+        while matches!(result, Err(PlayerError::Unplayable(_)))
+            && self.shared_state.is_cursor(skipped)
+        {
+            let Some(next) = self.shared_state.advance_cursor_loadable() else {
+                log::info!("upnp: nothing further the renderer can play");
+                self.stop_playback_and_clear_state();
+                return Ok(());
+            };
+            match self.shared_state.item_playback_source(next) {
+                Some(PlaybackSource::Ready(path)) => {
+                    skipped = next;
+                    result = self.try_open_session(next, Source::File(path), None, 0, start);
+                }
+                // Not on disk yet: waited for, like any track not yet loaded.
+                _ => {
+                    self.cue(next, 0, start);
+                    return Ok(());
+                }
+            }
+        }
         if result.is_err() {
             self.stop_playback_and_clear_state();
         }
@@ -655,6 +736,9 @@ impl Player {
         seek_ms: u64,
         start: Run,
     ) -> Result<(), PlayerError> {
+        if self.renderer.is_some() {
+            return self.try_open_on_renderer(id, source, info, seek_ms, start);
+        }
         self.stop_engine();
         let info = match info {
             Some(info) => info,
@@ -770,10 +854,12 @@ impl Player {
             track,
             run: start,
             lookahead,
-            engine,
-            decode_handle,
-            stream,
-            _rate_watch: rate_watch,
+            output: Output::Local(Local {
+                engine,
+                decode_handle,
+                stream,
+                _rate_watch: rate_watch,
+            }),
         });
         Ok(())
     }
@@ -939,7 +1025,7 @@ impl Player {
     ) {
         // Moved on, or already open — the download landed first, or the user
         // asked for something else.
-        let Some(waiting) = self.waiting().filter(|w| w.may_stream(id)) else {
+        let Some(waiting) = self.waiting().filter(|w| self.may_stream(w, id)) else {
             return;
         };
         if !self.shared_state.is_cursor(id) {
@@ -1015,6 +1101,11 @@ impl Player {
         );
         let clamped = position_ms.min(ceiling);
 
+        // A renderer seeks the track it holds; reloading it would let the
+        // top of the track be heard.
+        if self.seek_on_renderer(clamped) {
+            return;
+        }
         if let Err(e) = self.restart_current(clamped) {
             log::error!("seek failed: {}", e);
         }
@@ -1034,6 +1125,12 @@ impl Player {
         let (info, start) = (session.track.clone(), session.run);
 
         match self.shared_state.item_playback_source(info.id) {
+            // A renderer takes whole files only: wait for this one to land,
+            // keeping its place and whether it was playing.
+            Some(PlaybackSource::Streaming { .. }) if self.renderer.is_some() => {
+                self.park(info.id, position_ms, start);
+                return Ok(());
+            }
             Some(PlaybackSource::Streaming {
                 path,
                 bytes_written,
@@ -1115,15 +1212,18 @@ impl Player {
                 return;
             }
             Transport::Loaded(session) => {
-                if fade {
-                    session.engine.fade_out();
-                } else if let Err(e) = session.engine.stop() {
-                    log::error!("pause failed: {}", e);
-                    return;
+                if let Output::Local(local) = &session.output {
+                    if fade {
+                        local.engine.fade_out();
+                    } else if let Err(e) = local.engine.stop() {
+                        log::error!("pause failed: {}", e);
+                        return;
+                    }
                 }
                 session.run = Run::Paused;
             }
         }
+        self.pause_renderer();
         self.report(PlaybackReportState::Paused);
     }
 
@@ -1149,7 +1249,11 @@ impl Player {
             }
             Transport::Loaded(session) => session,
         };
-        let engine = &session.engine;
+        let Output::Local(local) = &session.output else {
+            self.resume_renderer();
+            return;
+        };
+        let engine = &local.engine;
         let resumed = if engine.is_running() || engine.is_silent() {
             self.lead_in_ends = None;
             engine.fade_in()
@@ -1196,12 +1300,20 @@ impl Player {
         };
         self.session += 1;
         self.bank_listening();
-        let Session {
+        let local = match playback.output {
+            Output::Local(local) => local,
+            Output::Passthrough(play) => {
+                self.halt_renderer(play);
+                self.answer_silence();
+                return;
+            }
+        };
+        let Local {
             engine,
             mut decode_handle,
             stream,
             ..
-        } = playback;
+        } = local;
 
         let _ = engine.stop();
         // Stop first, so the failed read the abandon causes reads as a stop
@@ -1281,7 +1393,7 @@ impl Player {
     /// Enough of a download has landed to stream it. Opens the track if it is
     /// waiting to start from the top.
     pub fn track_stream_ready(&mut self, id: QueueItemId) {
-        let Some(waiting) = self.waiting().filter(|w| w.may_stream(id)) else {
+        let Some(waiting) = self.waiting().filter(|w| self.may_stream(w, id)) else {
             return;
         };
         if !self.shared_state.is_cursor(id) {
@@ -1399,8 +1511,13 @@ impl Player {
     /// counted. Before anything that resets the timeline, which is where the
     /// playhead is read from, and before a track is closed out.
     fn bank_listening(&mut self) {
+        // A renderer's playhead is its clock: set only while one plays.
+        let renderer_at = self
+            .shared_state
+            .renderer_clock()
+            .map(|_| self.shared_state.position_ms());
         if let Some(f) = self.in_flight.as_mut()
-            && let Some(at) = self.timeline.position_of(f.item)
+            && let Some(at) = self.timeline.position_of(f.item).or(renderer_at)
         {
             f.advance(at);
         }
@@ -1455,16 +1572,18 @@ impl Player {
 
         if let Some(session) = self.session()
             && session.run == Run::Paused
-            && session.engine.is_running()
-            && session.engine.is_silent()
+            && let Some(engine) = session.engine()
+            && engine.is_running()
+            && engine.is_silent()
         {
-            if let Err(e) = session.engine.stop() {
+            if let Err(e) = engine.stop() {
                 log::error!("stopping after fade failed: {}", e);
             }
             self.answer_silence();
         }
 
         self.follow_playhead();
+        self.renderer_tick();
         self.publish();
     }
 
@@ -1642,7 +1761,10 @@ impl Player {
             PlayerCommand::PauseAndReport(reply) => {
                 self.pause();
                 self.silence_waiters.push(reply);
-                if self.session().is_none_or(|p| !p.engine.is_running()) {
+                if self
+                    .session()
+                    .is_none_or(|p| p.engine().is_none_or(|e| !e.is_running()))
+                {
                     self.answer_silence();
                 }
             }
@@ -1773,6 +1895,9 @@ impl Player {
                 self.restart_on_current_track();
             }
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
+            PlayerCommand::UseRenderer(connection) => self.use_renderer(connection),
+            PlayerCommand::SetRendererVolume(volume) => self.set_renderer_volume(volume),
+            PlayerCommand::Renderer { session, event } => self.on_renderer_event(session, event),
         }
     }
 
@@ -1926,6 +2051,9 @@ impl Player {
     /// running out, or a pause fading to silence.
     fn next_wake(&self) -> Option<std::time::Instant> {
         let session = self.session()?;
+        let Output::Local(local) = &session.output else {
+            return self.renderer_deadline();
+        };
         let now = std::time::Instant::now();
         match session.run {
             Run::Playing => {
@@ -1938,7 +2066,7 @@ impl Player {
                     (a, b) => a.or(b),
                 }
             }
-            Run::Paused if session.engine.is_running() => Some(now + FADE_CHECK),
+            Run::Paused if local.engine.is_running() => Some(now + FADE_CHECK),
             Run::Paused => None,
         }
     }
@@ -2019,7 +2147,7 @@ mod tests {
         }
     }
 
-    fn playlist_ids(player: &Player) -> Vec<QueueItemId> {
+    pub(super) fn playlist_ids(player: &Player) -> Vec<QueueItemId> {
         let (items, _) = player.shared_state.snapshot_playlist();
         items.iter().map(|i| i.id).collect()
     }
@@ -2052,10 +2180,12 @@ mod tests {
             },
             run: Run::Playing,
             lookahead: Default::default(),
-            engine,
-            decode_handle: buffer::DecodeHandle::new_for_test(Default::default()),
-            stream: None,
-            _rate_watch: None,
+            output: Output::Local(Local {
+                engine,
+                decode_handle: buffer::DecodeHandle::new_for_test(Default::default()),
+                stream: None,
+                _rate_watch: None,
+            }),
         }
     }
 
@@ -2262,7 +2392,7 @@ mod tests {
         );
 
         if let Transport::Loaded(session) = &mut player.transport {
-            session.engine.stop().unwrap();
+            session.engine().unwrap().stop().unwrap();
             session.run = Run::Paused;
         }
         assert_eq!(player.next_wake(), None, "paused");
@@ -2775,28 +2905,28 @@ mod tests {
 
     /// xorshift64: enough randomness to drive the player, reproducible from
     /// its seed, and no dependency for it.
-    struct Rng(u64);
+    pub(super) struct Rng(pub(super) u64);
 
     impl Rng {
-        fn next(&mut self) -> u64 {
+        pub(super) fn next(&mut self) -> u64 {
             self.0 ^= self.0 << 13;
             self.0 ^= self.0 >> 7;
             self.0 ^= self.0 << 17;
             self.0
         }
 
-        fn below(&mut self, n: usize) -> usize {
+        pub(super) fn below(&mut self, n: usize) -> usize {
             (self.next() % n.max(1) as u64) as usize
         }
 
-        fn coin(&mut self) -> bool {
+        pub(super) fn coin(&mut self) -> bool {
             self.next() & 1 == 1
         }
     }
 
     /// Commands a listener can send that ask for sound. Anything else may only
     /// keep playing what was already playing or on its way to.
-    fn asks_to_play(cmd: &PlayerCommand) -> bool {
+    pub(super) fn asks_to_play(cmd: &PlayerCommand) -> bool {
         matches!(
             cmd,
             PlayerCommand::Play(_)
@@ -2810,7 +2940,11 @@ mod tests {
 
     /// Check the invariants #679 sets out, as far as they can be seen from
     /// outside the audio thread.
-    fn check_invariants(player: &Player, wanted_before: bool, asked: bool) -> Result<(), String> {
+    pub(super) fn check_invariants(
+        player: &Player,
+        wanted_before: bool,
+        asked: bool,
+    ) -> Result<(), String> {
         let state = &player.shared_state;
         let ids = playlist_ids(player);
         let listed = |id: QueueItemId| ids.contains(&id);
@@ -3857,11 +3991,11 @@ mod tests {
 
     /// Backend pinned to one sample rate that refuses every switch, recording
     /// the format the engine is asked for.
-    struct StuckBackend {
-        rate: f64,
-        asked: Arc<std::sync::Mutex<Option<(f64, u32)>>>,
+    pub(super) struct StuckBackend {
+        pub(super) rate: f64,
+        pub(super) asked: Arc<std::sync::Mutex<Option<(f64, u32)>>>,
         /// How many times an engine it made was started.
-        starts: Arc<std::sync::atomic::AtomicUsize>,
+        pub(super) starts: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     struct NullEngine {
@@ -3903,6 +4037,7 @@ mod tests {
                 name: "Stuck DAC".into(),
                 sample_rates: vec![self.rate],
                 platform_id: 0,
+                kind: Default::default(),
             })
         }
         fn supported_sample_rates(
@@ -4030,6 +4165,7 @@ mod tests {
                 name: "Slow DAC".into(),
                 sample_rates: vec![44100.0, 48000.0],
                 platform_id: 0,
+                kind: Default::default(),
             })
         }
         fn supported_sample_rates(

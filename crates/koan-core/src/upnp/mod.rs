@@ -33,15 +33,33 @@ pub struct Output {
     pub problem: Option<String>,
 }
 
-/// An open session with a renderer, and what it hears, for the player.
+/// An open session with a renderer, for the player to play to.
 ///
-/// The events come on a channel of their own rather than the command
-/// channel: a session the player holds must not keep the player's own
-/// channel open, or the player would never see its senders go.
+/// What the renderer is heard to do reaches the player as
+/// `PlayerCommand::Renderer`, tagged with the number of the player session it
+/// was heard in: `tag`, which the player keeps up to date. An event from a
+/// session already over is recognised and dropped.
 #[derive(Debug)]
 pub struct Connection {
     pub session: session::Session,
-    pub events: crossbeam_channel::Receiver<session::Event>,
+    pub tag: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// Open a session with `renderer` whose events go to `player`.
+pub fn open(
+    renderer: Renderer,
+    player: &crossbeam_channel::Sender<crate::player::commands::PlayerCommand>,
+) -> Result<Connection, String> {
+    let tag = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let tx = player.clone();
+    let tagged = tag.clone();
+    let session = session::Session::open(renderer, move |event| {
+        let _ = tx.send(crate::player::commands::PlayerCommand::Renderer {
+            session: tagged.load(std::sync::atomic::Ordering::Acquire),
+            event,
+        });
+    })?;
+    Ok(Connection { session, tag })
 }
 
 /// Each choice of output, in the order they were made. Opening a session
@@ -68,20 +86,17 @@ pub fn connect(
 ) -> Result<(), String> {
     let renderer = discovery::find(udn)
         .ok_or_else(|| "That renderer is no longer on the network.".to_string())?;
-    let (tx, events) = crossbeam_channel::unbounded();
-    let session = session::Session::open(renderer, move |event| {
-        let _ = tx.send(event);
-    })?;
+    let connection = open(renderer, player)?;
     if CHOICE.load(std::sync::atomic::Ordering::Acquire) != choice {
         log::info!(
             "upnp: {} opened after a later choice of output; not used",
-            session.renderer().name
+            connection.session.renderer().name
         );
         return Ok(());
     }
     player
         .send(crate::player::commands::PlayerCommand::UseRenderer(Some(
-            Box::new(Connection { session, events }),
+            Box::new(connection),
         )))
         .map_err(|_| "The player has stopped.".to_string())
 }
