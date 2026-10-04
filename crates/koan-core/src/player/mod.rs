@@ -1684,12 +1684,19 @@ impl Player {
                 position_ms,
                 play,
             } => {
-                self.clear_playlist();
                 if items.is_empty() {
+                    self.clear_playlist();
                     return;
                 }
                 let start_id = items.get(start).unwrap_or(&items[0]).id;
-                self.shared_state.add_items(items);
+                // Stopped before the swap, as `clear_playlist` does, and the
+                // swap one change: see `SharedPlayerState::replace_playlist`.
+                self.stop_playback_and_clear_state();
+                let (old_items, cursor) = self.shared_state.replace_playlist(items);
+                self.push_undo(UndoEntry::Replaced {
+                    items: old_items,
+                    cursor,
+                });
                 self.cue(
                     start_id,
                     position_ms,
@@ -2288,45 +2295,6 @@ mod tests {
     }
 
     #[test]
-    fn replacing_the_queue_at_a_position_opens_there_paused_in_one_command() {
-        // What a hand-off from another device sends: the new queue, opened at
-        // the point the source went silent. One command, so the playlist is
-        // never empty in between and no download is dropped for it.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.wav");
-        crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
-        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let mut player = Player::new();
-        player.backend = Box::new(StuckBackend {
-            rate: 8_000.0,
-            asked: Default::default(),
-            starts: starts.clone(),
-        });
-        player.process_command(PlayerCommand::AddToPlaylist(vec![make_item("old")]));
-        let item = PlaylistItem {
-            path,
-            ..make_item("t")
-        };
-        let id = item.id;
-
-        player.process_command(PlayerCommand::ReplacePlaylist {
-            items: vec![item],
-            start: 0,
-            position_ms: 3_000,
-            play: false,
-        });
-
-        assert_eq!(player.shared_state.snapshot_playlist().0.len(), 1);
-        assert_eq!(player.shared_state.cursor(), Some(id));
-        assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
-        assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
-        await_queued(&player);
-        let at = player.shared_state.position_ms();
-        assert!((2_750..=3_000).contains(&at), "opened at {at}ms");
-        player.process_command(PlayerCommand::Stop);
-    }
-
-    #[test]
     fn a_track_cued_paused_never_starts_the_output() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.wav");
@@ -2582,6 +2550,43 @@ mod tests {
     }
 
     #[test]
+    fn replacing_the_queue_keeps_a_transfer_both_queues_want() {
+        // The download queue syncs from its own thread on each playlist
+        // change. Replaced as a clear then an add, the playlist was empty in
+        // between, and a sync there let go of every waiter: the transfer for a
+        // track in both queues was abandoned and started over. The replace
+        // must be one change, and that change must still want the track.
+        let pending = |title: &str| PlaylistItem {
+            db_id: Some(7),
+            state: ItemState::Pending,
+            ..make_item(title)
+        };
+        let mut player = Player::new();
+        let old = pending("old");
+        let old_id = old.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![old]));
+        let store = player.shared_state.downloads().clone();
+        store.claim(7, Some(old_id));
+
+        let before = player.shared_state.pending_version();
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items: vec![pending("again")],
+            start: 0,
+            position_ms: 0,
+            play: false,
+        });
+        assert_eq!(
+            player.shared_state.pending_version(),
+            before + 1,
+            "one change, so no reader can see the playlist between two"
+        );
+
+        // A sync against the one state it published.
+        store.resync(&player.shared_state.pending_downloads());
+        assert!(!store.abandoned(7));
+    }
+
+    #[test]
     fn a_hand_off_opens_paused_at_its_position_in_one_command() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.wav");
@@ -2606,6 +2611,11 @@ mod tests {
             position_ms: 4_000,
             play: false,
         });
+        assert_eq!(
+            playlist_titles(&player),
+            vec!["before", "t"],
+            "replaced, not added to"
+        );
         assert_eq!(player.shared_state.cursor(), Some(id));
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
         assert_eq!(player.playback_starts, 1, "opened once, at the position");

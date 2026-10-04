@@ -255,10 +255,10 @@ fn wake_workers(inner: &Arc<Inner>) {
 
 /// Bring the queue in line with the playlist.
 ///
-/// Every entry still waiting for its file is either queued or waiting on the
-/// transfer for its track; anything the playlist no longer holds is let go.
-/// Order is kept for what was already queued — the cursor's promotions stand —
-/// and new arrivals join the back in playlist order.
+/// Every entry still waiting for its file is either waiting on the transfer
+/// for its track or queued, in the order the player will reach it: from the
+/// cursor to the end, then from the top. Anything the playlist no longer
+/// holds is let go.
 ///
 /// The playlist is read under the queue lock, as settling writes it: read
 /// before, it could show an entry still pending whose transfer settled a
@@ -273,30 +273,14 @@ fn sync(inner: &Arc<Inner>) {
     }
 }
 
-/// [`sync`] against a list already read. Whether anything was queued.
+/// [`sync`] against a list already read, in the order to fetch it. Whether
+/// anything was queued that was not before.
 fn sync_with(q: &mut Queue, store: &DownloadStore, wanted: &[(i64, QueueItemId)]) -> bool {
-    let ids: HashSet<QueueItemId> = wanted.iter().map(|(_, id)| *id).collect();
-    q.pending.retain(|(_, id)| ids.contains(id));
-    store.retain_waiters(&ids);
-
-    let queued: HashSet<QueueItemId> = q.pending.iter().map(|(_, id)| *id).collect();
-    let mut added = false;
-    for &(db_id, id) in wanted {
-        if queued.contains(&id) || store.join(db_id, Some(id)) {
-            continue;
-        }
-        q.pending.push_back((db_id, id));
-        added = true;
-    }
+    let unfetched = store.resync(wanted);
+    let before: HashSet<QueueItemId> = q.pending.iter().map(|(_, id)| *id).collect();
+    let added = unfetched.iter().any(|(_, id)| !before.contains(id));
+    q.pending = unfetched.into();
     added
-}
-
-/// Move every item whose id is in `ids` ahead of the rest, preserving order.
-fn bump_to_front(pending: &mut VecDeque<(i64, QueueItemId)>, ids: &HashSet<QueueItemId>) {
-    let (front, rest): (VecDeque<_>, VecDeque<_>) =
-        pending.drain(..).partition(|(_, qid)| ids.contains(qid));
-    *pending = front;
-    pending.extend(rest);
 }
 
 /// Start a priority download, or queue it at the front when the lane is full.
@@ -348,7 +332,8 @@ fn run_download(inner: &Arc<Inner>, db_id: i64) {
         None => Some(Err(crate::helpers::remote_unavailable(&cfg))),
         Some(client) => {
             // Asked per chunk, answered from the store at most every
-            // `CANCEL_CHECK`. Replacing the queue is one command, so the
+            // `CANCEL_CHECK`. Replacing the queue is one command and one
+            // playlist change (`SharedPlayerState::replace_playlist`), so the
             // playlist is never momentarily without a track still wanted.
             let checked = std::cell::Cell::new(std::time::Instant::now());
             let cancelled = || {
@@ -492,14 +477,15 @@ fn follow_playlist(inner: Arc<Inner>) {
     let mut last_version: Option<u64> = None;
     let mut last_cursor: Option<QueueItemId> = None;
     loop {
-        // Before the cursor, so the cursor's track is queued by the time it
-        // is looked for.
+        // The queue runs from the cursor, so a cursor move reorders it as
+        // well. Synced before promoting, so the cursor's track is queued by
+        // the time it is looked for.
         let version = inner.state.pending_version();
-        if last_version != Some(version) {
+        let current = inner.state.cursor();
+        if last_version != Some(version) || current != last_cursor {
             last_version = Some(version);
             sync(&inner);
         }
-        let current = inner.state.cursor();
         if current != last_cursor {
             last_cursor = current;
             inner.has_work.notify_all();
@@ -512,35 +498,23 @@ fn follow_playlist(inner: Arc<Inner>) {
 }
 
 /// Send the cursor's track, and the one after it, down the priority lane, if
-/// the cursor's track is waiting in the queue.
+/// the cursor's track is waiting in the queue. The queue is already in the
+/// order the player will reach it, so the one after is its front.
 fn promote_cursor(inner: &Arc<Inner>, cursor_id: QueueItemId) {
     if inner.state.item_state(cursor_id) != Some(ItemState::Pending) {
         return;
     }
-
-    let album_mate_ids: HashSet<QueueItemId> = inner
-        .state
-        .same_album_item_ids(cursor_id)
-        .into_iter()
-        .collect();
-
     let mut priority_items = Vec::new();
     {
         let mut q = inner.queue.lock();
         if let Some(pos) = q.pending.iter().position(|(_, qid)| *qid == cursor_id) {
             priority_items.push(q.pending.remove(pos).expect("position just found"));
-
-            if !album_mate_ids.is_empty() {
-                bump_to_front(&mut q.pending, &album_mate_ids);
-            }
-
-            // Grab the next track too, for gapless lookahead.
+            // The next track too, for gapless lookahead.
             if let Some(next) = q.pending.pop_front() {
                 priority_items.push(next);
             }
         }
     }
-
     for item in priority_items {
         dispatch_priority(inner, item);
     }
@@ -681,19 +655,6 @@ mod tests {
     }
 
     #[test]
-    fn bump_to_front_preserves_relative_order() {
-        let (a, b, c, d) = (qid(), qid(), qid(), qid());
-        let mut pending: VecDeque<(i64, QueueItemId)> =
-            [(1, a), (2, b), (3, c), (4, d)].into_iter().collect();
-        let mates: HashSet<QueueItemId> = [b, d].into_iter().collect();
-
-        bump_to_front(&mut pending, &mates);
-
-        let order: Vec<QueueItemId> = pending.iter().map(|(_, id)| *id).collect();
-        assert_eq!(order, vec![b, d, a, c]);
-    }
-
-    #[test]
     fn the_track_under_the_cursor_goes_first_and_goes_alone() {
         let (a, b, c) = (qid(), qid(), qid());
         let (mut q, store) = (Queue::default(), DownloadStore::new());
@@ -754,18 +715,36 @@ mod tests {
     }
 
     #[test]
-    fn the_queue_takes_new_entries_in_playlist_order_behind_what_it_has() {
-        let (promoted, a, b) = (qid(), qid(), qid());
+    fn the_queue_is_in_the_order_it_is_given() {
+        // The playlist's order from the cursor on, which `pending_downloads`
+        // gives: a queue that kept its old order fetched the tracks before a
+        // cursor that had jumped ahead first.
+        let (a, b, c) = (qid(), qid(), qid());
         let (mut q, store) = (Queue::default(), DownloadStore::new());
-        q.pending.push_back((9, promoted));
+        q.pending.extend([(1, a), (2, b), (3, c)]);
 
-        assert!(sync_with(&mut q, &store, &[(1, a), (9, promoted), (2, b)]));
-
-        assert_eq!(q.pending, VecDeque::from([(9, promoted), (1, a), (2, b)]));
         assert!(
-            !sync_with(&mut q, &store, &[(1, a), (9, promoted), (2, b)]),
-            "idempotent"
+            !sync_with(&mut q, &store, &[(3, c), (1, a), (2, b)]),
+            "nothing new"
         );
+        assert_eq!(q.pending, VecDeque::from([(3, c), (1, a), (2, b)]));
+
+        let d = qid();
+        assert!(sync_with(&mut q, &store, &[(3, c), (4, d), (1, a), (2, b)]));
+        assert_eq!(q.pending, VecDeque::from([(3, c), (4, d), (1, a), (2, b)]));
+    }
+
+    #[test]
+    fn playing_from_the_middle_fetches_from_there_first() {
+        // Pressed play on track three of five: three, four and five come
+        // before one and two.
+        let (inner, ids, _) = queue_over(&[1, 2, 3, 4, 5]);
+        inner.state.set_cursor(Some(ids[2].1));
+        let wanted = inner.state.pending_downloads();
+        sync_with(&mut inner.queue.lock(), inner.state.downloads(), &wanted);
+
+        let order: Vec<i64> = inner.queue.lock().pending.iter().map(|(t, _)| *t).collect();
+        assert_eq!(order, vec![3, 4, 5, 1, 2]);
     }
 
     #[test]

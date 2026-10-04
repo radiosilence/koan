@@ -347,12 +347,34 @@ impl DownloadStore {
         true
     }
 
-    /// Let go of every waiter not in `wanted`. A transfer left wanted by
+    /// Make every live transfer's waiters exactly the entries in `wanted` for
+    /// its track. Returns the wanted entries with no live transfer, in the
+    /// order given: those still to be fetched. A transfer left wanted by
     /// nothing is abandoned, and stops when it next asks.
-    pub fn retain_waiters(&self, wanted: &HashSet<QueueItemId>) {
-        for entry in self.entries.write().iter_mut().filter(|e| e.is_live()) {
-            entry.waiters.retain(|id| wanted.contains(id));
+    ///
+    /// One write lock for all of it. `abandoned` is asked from each running
+    /// transfer without the queue's lock, so a transfer must never be seen
+    /// between losing its old waiters and gaining its new ones: a queue
+    /// replaced with the same track would have that track's transfer stopped
+    /// and started again, and a decoder streaming its `.part` left waiting on
+    /// a feed nothing writes to.
+    pub fn resync(&self, wanted: &[(i64, QueueItemId)]) -> Vec<(i64, QueueItemId)> {
+        let mut entries = self.entries.write();
+        let mut live: HashMap<i64, usize> = HashMap::new();
+        for (ix, entry) in entries.iter_mut().enumerate().filter(|(_, e)| e.is_live()) {
+            entry.waiters.clear();
+            live.insert(entry.download.track_id, ix);
         }
+        let mut unfetched = Vec::new();
+        for &(track_id, id) in wanted {
+            match live.get(&track_id) {
+                Some(&ix) => {
+                    entries[ix].waiters.insert(id);
+                }
+                None => unfetched.push((track_id, id)),
+            }
+        }
+        unfetched
     }
 
     /// Whether a transfer for `track_id` is live.
@@ -913,12 +935,34 @@ mod tests {
     }
 
     #[test]
+    fn a_resync_hands_a_transfer_from_its_old_entry_to_its_new_in_one_step() {
+        // A queue replaced with the same track: the old entry goes, a new one
+        // comes, and nothing asking in between can see the transfer unwanted,
+        // because there is no in between.
+        let store = DownloadStore::new();
+        let (track_id, old, _) = running(&store, 7, "train");
+        let new = QueueItemId::new();
+        let other = QueueItemId::new();
+
+        let unfetched = store.resync(&[(7, new), (8, other)]);
+
+        assert_eq!(store.waiters(track_id), vec![new]);
+        assert!(!store.waiters(track_id).contains(&old));
+        assert!(!store.abandoned(track_id));
+        assert_eq!(
+            unfetched,
+            vec![(8, other)],
+            "the rest, in order, to be fetched"
+        );
+    }
+
+    #[test]
     fn a_transfer_nothing_waits_on_is_abandoned() {
         let store = DownloadStore::new();
         let (track_id, waiter, _) = running(&store, 1, "train");
         assert!(!store.abandoned(track_id));
 
-        store.retain_waiters(&HashSet::new());
+        store.resync(&[]);
         assert!(store.abandoned(track_id));
 
         store.join(track_id, Some(waiter));
@@ -930,7 +974,7 @@ mod tests {
         let store = DownloadStore::new();
         let track_id = 5;
         assert!(store.claim(track_id, None));
-        store.retain_waiters(&HashSet::new());
+        store.resync(&[]);
         assert!(!store.abandoned(track_id));
     }
 

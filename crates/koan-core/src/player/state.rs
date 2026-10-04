@@ -757,6 +757,26 @@ impl SharedPlayerState {
     }
 
     /// Clear the entire playlist + cursor.
+    /// Swap the whole playlist for `items`, with no cursor, as one change.
+    /// Returns what it held, for undo.
+    ///
+    /// One write and one version bump, not a clear and an add. The download
+    /// queue reads the playlist on its own thread whenever it changes, and an
+    /// empty playlist between the two would read as nothing wanted: every
+    /// transfer for a track in both the old queue and the new one let go,
+    /// cancelled, and started again.
+    pub fn replace_playlist(
+        &self,
+        items: Vec<PlaylistItem>,
+    ) -> (Vec<PlaylistItem>, Option<QueueItemId>) {
+        let mut pl = self.playlist.write();
+        let old = std::mem::replace(&mut pl.items, items);
+        let cursor = pl.cursor.take();
+        drop(pl);
+        self.bump_content();
+        (old, cursor)
+    }
+
     pub fn clear_playlist(&self) {
         let mut pl = self.playlist.write();
         pl.items.clear();
@@ -1021,12 +1041,21 @@ impl SharedPlayerState {
             .collect()
     }
 
-    /// Get all playlist items that are Pending and have a db_id.
-    /// Returns `(db_id, QueueItemId)` pairs suitable for the download queue.
+    /// Every playlist item still waiting for its file that has a track to
+    /// fetch, as `(db_id, QueueItemId)`, in the order the player will reach
+    /// it: from the cursor to the end, then from the top. What the download
+    /// queue fetches, and in that order — the tracks before the cursor are
+    /// the ones least likely to be played next.
     pub fn pending_downloads(&self) -> Vec<(i64, QueueItemId)> {
         let pl = self.playlist.read();
-        pl.items
+        let from = pl
+            .cursor
+            .and_then(|c| pl.items.iter().position(|item| item.id == c))
+            .unwrap_or(0);
+        let (before, after) = pl.items.split_at(from);
+        after
             .iter()
+            .chain(before)
             .filter(|item| matches!(item.state, ItemState::Pending))
             .filter_map(|item| item.db_id.map(|db_id| (db_id, item.id)))
             .collect()
@@ -1259,7 +1288,11 @@ impl SharedPlayerState {
                 finished_count += 1;
                 match &item.state {
                     ItemState::Ready => QueueEntryStatus::Played,
-                    ItemState::Pending => QueueEntryStatus::Downloading,
+                    // A spinner only while bytes are moving: a track skipped
+                    // past is not being fetched just for being behind the
+                    // cursor.
+                    ItemState::Pending if transferring => QueueEntryStatus::Downloading,
+                    ItemState::Pending => QueueEntryStatus::Queued,
                     ItemState::Failed(_) => QueueEntryStatus::Failed,
                 }
             } else {
@@ -2144,6 +2177,11 @@ mod tests {
         assert_eq!(pending.len(), 2);
         assert_eq!(pending[0], (10, id_b));
         assert_eq!(pending[1], (30, id_d));
+
+        // From the cursor on, then from the top: playing the fourth, the
+        // tracks before it come last.
+        state.set_cursor(Some(id_d));
+        assert_eq!(state.pending_downloads(), vec![(30, id_d), (10, id_b)]);
     }
 
     #[test]

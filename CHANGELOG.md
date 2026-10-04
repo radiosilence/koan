@@ -19,6 +19,7 @@
 - **Downloading to the cache works.** "Download" on tracks that are not in the queue (`download_to_cache`) gave up after five seconds without fetching anything.
 - **Replacing a large queue no longer stalls downloads.** Entries from the old queue stayed queued, and each held a download worker for five seconds before it gave up. The download queue now follows the playlist and drops what it no longer holds.
 - **The track under the cursor shows its download progress in the apps.** It showed a static arrow for the whole transfer; it now shows the ring, as every other downloading row does.
+- **Playing from the middle of a long queue fetches what comes next first.** The queue was fetched from the top, so playing track 105 of 192 downloaded the 104 before it first. It now runs from the cursor to the end and then from the top, and re-sorts whenever the cursor moves. Tracks behind the cursor no longer show a spinner unless one is actually downloading.
 - **Clearing the queue stops its downloads.** A transfer kept running to the end once started, so clearing a queue mid-album left the workers fetching tracks nobody would play while the new queue waited behind them. A transfer nothing wants any more now stops within a quarter of a second.
 - **The seek bar's download mark moves smoothly.** It redrew a few times a second, when the download rate was sampled; it now follows the bytes at the display's rate, like the download rings, without re-running the transport bar.
 
