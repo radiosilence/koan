@@ -171,6 +171,7 @@ impl LinkCommand {
                 | Self::SetOutput { .. }
                 | Self::SetRendererVolume { .. }
                 | Self::SetPreset { .. }
+                | Self::Shares { .. }
         )
     }
 
@@ -215,6 +216,10 @@ pub struct LinkDevice {
     /// Unix seconds when it last held a link, for one that does not now.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen: Option<i64>,
+    /// The account it belongs to, for a device another account shares: `None`
+    /// for the account's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
 }
 
 impl LinkCommand {
@@ -350,6 +355,9 @@ pub enum LinkReport {
         #[serde(default)]
         notify: bool,
     },
+    /// Let the account `grantee` control this device, or with `allow` false
+    /// stop letting it. Only ever about the device sending it.
+    Share { grantee: String, allow: bool },
 }
 
 /// How a device introduces itself to one that connected to it over the local

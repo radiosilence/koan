@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 14;
+pub const SCHEMA_VERSION: i64 = 15;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -201,6 +201,16 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             sandbox     INTEGER NOT NULL,
             updated_at  INTEGER NOT NULL,
             PRIMARY KEY (device, username)
+        );
+
+        -- Devices an owner has let other accounts on this server control,
+        -- granted from the device itself: see koan-server's clients.rs.
+        CREATE TABLE IF NOT EXISTS link_grants (
+            device      TEXT NOT NULL,
+            owner       TEXT NOT NULL,
+            grantee     TEXT NOT NULL,
+            created_at  INTEGER NOT NULL,
+            PRIMARY KEY (device, owner, grantee)
         );
 
         CREATE TABLE IF NOT EXISTS link_orders (
