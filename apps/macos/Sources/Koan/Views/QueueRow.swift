@@ -28,7 +28,7 @@ struct QueueRowContent: Equatable {
     var status: EntryStatus?
     /// The transfer this row is waiting on, when it is waiting on one. See
     /// `SourceBadges` for why it is an id and not a figure.
-    var transferring: String?
+    var transferring: Int64?
     var failureReason: String?
     /// Where this track's bytes are. Both false for an item with no library
     /// row behind it, which draws no mark rather than a guessed one.

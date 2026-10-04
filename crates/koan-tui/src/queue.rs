@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -27,7 +26,7 @@ pub struct QueueView<'a> {
     selected: &'a HashSet<usize>,
     spinner_tick: usize,
     hover_index: Option<usize>,
-    favourites: Option<&'a HashSet<PathBuf>>,
+    favourites: Option<&'a HashSet<i64>>,
 }
 
 impl<'a> QueueView<'a> {
@@ -67,7 +66,7 @@ impl<'a> QueueView<'a> {
         self
     }
 
-    pub fn with_favourites(mut self, favourites: &'a HashSet<PathBuf>) -> Self {
+    pub fn with_favourites(mut self, favourites: &'a HashSet<i64>) -> Self {
         self.favourites = Some(favourites);
         self
     }
@@ -222,7 +221,7 @@ impl Widget for QueueView<'_> {
                 let is_hovered = self.hover_index == Some(i) && !is_cursor && !is_selected;
                 let is_favourite = self
                     .favourites
-                    .is_some_and(|f| f.contains(&self.entries[i].path));
+                    .is_some_and(|f| self.entries[i].db_id.is_some_and(|id| f.contains(&id)));
                 let line = render_track_line(
                     &self.entries[i],
                     is_cursor,
@@ -560,7 +559,7 @@ mod tests {
             playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
-            path: PathBuf::from(format!("/music/{}.flac", n)),
+            path: std::path::PathBuf::from(format!("/music/{}.flac", n)),
             title: format!("track {}", n),
             artist: "artist".into(),
             album_artist: "artist".into(),

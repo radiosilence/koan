@@ -155,12 +155,14 @@ enum Commands {
         #[arg(long)]
         clear: bool,
 
-        /// Connect to a remote kōan server (e.g. http://host:4000)
+        /// Control a kōan server's playback (e.g. http://host:4000). The
+        /// server plays the audio.
         #[arg(long)]
         server: Option<String>,
 
-        /// Jukebox mode: server plays audio, client is remote control only
-        #[arg(long, requires = "server")]
+        /// What `--server` always does now. Accepted so scripts that pass it
+        /// keep working.
+        #[arg(long, requires = "server", hide = true)]
         jukebox: bool,
     },
     /// Run as MCP server on stdio (for Claude Desktop / MCP clients)
@@ -497,11 +499,9 @@ fn main() {
             library,
             clear,
             server,
-            jukebox,
+            jukebox: _,
         }) => {
-            start_player(
-                &cli, &paths, &ids, album, artist, library, clear, server, jukebox,
-            );
+            start_player(&cli, &paths, &ids, album, artist, library, clear, server);
         }
         Some(Commands::Scan {
             path,
@@ -620,7 +620,7 @@ fn main() {
         }
         // No subcommand — default to TUI player (equivalent to `koan play`).
         None => {
-            start_player(&cli, &[], &[], None, None, false, false, None, false);
+            start_player(&cli, &[], &[], None, None, false, false, None);
         }
     }
 }
@@ -636,13 +636,12 @@ fn start_player(
     start_in_library: bool,
     clear: bool,
     server: Option<String>,
-    jukebox: bool,
 ) {
     let cfg = koan_core::config::Config::load_or_default();
     commands::evict_cache(&cfg, false);
 
     if let Some(ref url) = server {
-        commands::cmd_play_remote(url, jukebox);
+        commands::cmd_play_remote(url);
     } else {
         let api_enabled = !cli.no_api && cfg.graphql.enabled;
         let api_opts = if api_enabled {

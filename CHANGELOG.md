@@ -6,14 +6,26 @@
 
 - **EQ and convolution.** A profile of impulse responses, EQ bands or both is chosen per output device, so headphones get their correction when they are the output. Profiles are imported from what other tools write: Roon zips and Convolver `.cfg` (Acourate, Audiolense, Home Audio Fidelity), impulse WAVs from REW or rePhase, CamillaDSP configs, Equalizer APO and REW filter settings, AutoEQ `ParametricEQ.txt` and squig.link's exported filters for IEMs and DACs with no EQ of their own, and raw or text coefficients — in Settings on macOS and iOS, through the iOS share sheet and "Open in", or with `koan dsp import`. Each profile's page shows what it holds: every response's rate, channels, taps and routing, any bands, and the headroom koan gives it. An impulse response is used at its own rate; a track at a rate with none is resampled to the nearest, so with one response everything plays at one rate and gapless holds across rates. Routes that mix channels (crossfeed) and per-channel delays from a `.cfg` are honoured. Linear-phase delay is trimmed, so the seek bar and synced lyrics stay with what is heard. On iOS a profile follows the route, so AirPods and wired headphones are separate outputs. On a device without a profile nothing runs, and the format badge in the apps, the TUI and GraphQL (`nowPlaying.track.dsp`) names the processing when something does. See [Equalisation and convolution](https://koan.rocks/docs/dsp/).
 
-### Changed
-
-- **Hand-off is one player command.** `ReplacePlaylist` takes the position and whether to play, so a device receiving the music no longer issues clear, add and cue separately, and undo sees one step. Session restore in the apps and the TUI sends its cue at once instead of waiting on a thread for the track to download; the player already waits.
-- **The web UI lists every album and artist on one page, as the apps do.** Pages of 60 albums and 100 artists behind a Load more button made a large library tedious to scroll and broke find-in-page. Covers load lazily, so the whole listing costs markup rather than images.
-- **The web UI's name and year filters apply as you type.** A pause in typing replaces the listing under the toolbar and leaves the field focused; the URL is replaced rather than pushed, so back does not step through each keystroke. A year applies once it has four digits. On a phone the sheet's Apply still applies everything.
-
 ### Fixed
 
+- **Track identity is rebuilt on source rows.** Each file and each server entry now keeps its own tags in a row of its own, and a track's names, path and server id are derived from them, the file's first. One function decides which file and which server entry are the same track, and it runs whenever either's tags change. This replaces eight separate matching and repair passes, and fixes the problems they shared:
+  - A track held both on disk and on a server no longer changes between the file's names and the server's on every sync and rescan. A tag corrected in the file is no longer put back by the next sync.
+  - Correcting a file's tags pairs it with its server copy, or splits it from one it no longer matches, whatever the artist credit says.
+  - Names match whatever their case or Unicode form, so `SIGUR RÓS` on a server is `Sigur Rós` on disk.
+  - A file and its server copy are not paired when the server has two candidates; they used to be paired with whichever came first.
+  - A moved file takes over the server copy its old path held, along with its history.
+  - Merging two rows keeps the older one's id and history, and the koan server's uid.
+  - Two editions of a record with the same title are two albums when their MusicBrainz release ids differ, and a release id is no longer rewritten by whichever file was scanned last.
+  - A record the server names differently from the files is one album, holding the server's album id, with the tracks only the server has listed alongside the files.
+  - Artist names match whatever their case or Unicode form, so one act no longer appears twice.
+  - A server's track number fills in one the file lacks.
+  - A database error while matching is reported rather than adding a duplicate.
+
+  Upgrading builds the source rows from the existing library, so the first scan afterwards reads every file again and the first sync walks the whole server.
+
+- **Favourites belong to the track, album or artist, not to a path or a name.** They follow a track through a merge, a moved file and a file that goes while the server still streams it. A favourite of something no longer in the library is dropped on upgrade.
+- **Rebuilding the index keeps play history, playlists, favourites and lyrics.** It now forgets only what each file and server entry said, and the next scan and sync read them all again into the rows they had.
+- **Gapless playback no longer skips a track that is still downloading.** The decoder queued the next track that had arrived and passed over the one before it, so the cursor moved beyond that track and it was never played. It now waits for the track, as skipping to it by hand does, which leaves a gap only if the download is still running when the track before it ends.
 - **Pausing a track that is still downloading keeps it paused.** The pause was ignored while the player waited for the track, which then started playing when it arrived; a paused stream also restarted from the beginning, playing, when its download completed. Resuming a restored position that was still downloading no longer loses the position.
 - **A restored session that was stopped stays stopped** when the download of its current track completes.
 - **Edits near the end of a track take effect.** About four seconds before a track ends the decoder has already queued the next one, and removing, moving or inserting a track in that window had no effect: a track added with "play next" was skipped and shown as played. The player now restarts at the current position when an edit contradicts what was queued.
@@ -25,6 +37,25 @@
 - **Skipping to a track still downloading clears the previous track's details** from the transport, and a seek or output change in the meantime no longer reopens the previous track.
 - **Skipping is no longer rate-limited for remote control.** The player dropped a next or previous within 150 ms of the last one, which swallowed rapid skips from the apps, GraphQL, MCP and the link. The TUI keeps the limit for its own keys, against terminal key repeat.
 - **A record with no artwork shows the ensō in the web UI, not a broken image.** The cover route answered 404, and the browser drew its broken-image icon until the page's script caught the error. It now serves the placeholder the macOS and iOS apps draw: the app icon's ensō, faded. It is cached for an hour rather than for good, since art added beside the files does not change the cover's URL.
+- **A track queued twice no longer plays a deleted file when its download fails.** The second entry was told the track was ready, pointing at the removed `.part` file, and stayed waiting forever if the first entry had been removed. Every entry waiting on a download now gets its result, and the second entry streams and shows progress from the one transfer.
+- **Downloading to the cache works.** "Download" on tracks that are not in the queue (`download_to_cache`) gave up after five seconds without fetching anything.
+- **Replacing a large queue no longer stalls downloads.** Entries from the old queue stayed queued, and each held a download worker for five seconds before it gave up. The download queue now follows the playlist and drops what it no longer holds.
+- **The track under the cursor shows its download progress in the apps.** It showed a static arrow for the whole transfer; it now shows the ring, as every other downloading row does.
+- **Playing from the middle of a long queue fetches what comes next first.** The queue was fetched from the top, so playing track 105 of 192 downloaded the 104 before it first. It now runs from the cursor to the end and then from the top, and re-sorts whenever the cursor moves. Tracks behind the cursor no longer show a spinner unless one is actually downloading.
+- **Clearing the queue stops its downloads.** A transfer kept running to the end once started, so clearing a queue mid-album left the workers fetching tracks nobody would play while the new queue waited behind them. A transfer nothing wants any more now stops within a quarter of a second.
+- **The seek bar's download mark moves smoothly.** It redrew a few times a second, when the download rate was sampled; it now follows the bytes at the display's rate, like the download rings, without re-running the transport bar.
+
+### Removed
+
+- **`koan play --server` no longer plays audio locally.** It is a remote control for the server, which plays the audio, as `--jukebox` did; `--jukebox` is still accepted and changes nothing. The local mode streamed one track at a time into a cache of its own, outside the download queue, and the queue mirror it shared the TUI with overwrote what it had fetched every 100 ms, so it rarely played. To listen to a koan server's library on this machine, sign in to it as a remote library (`koan remote login`, or Settings in the apps): its tracks then play through the local engine and download into the cache like any other remote library's.
+
+### Changed
+
+- **Hand-off is one player command.** `ReplacePlaylist` takes the position and whether to play, so a device receiving the music no longer issues clear, add and cue separately, and undo sees one step. Session restore in the apps and the TUI sends its cue at once instead of waiting on a thread for the track to download; the player already waits.
+- **The web UI lists every album and artist on one page, as the apps do.** Pages of 60 albums and 100 artists behind a Load more button made a large library tedious to scroll and broke find-in-page. Covers load lazily, so the whole listing costs markup rather than images.
+- **The web UI's name and year filters apply as you type.** A pause in typing replaces the listing under the toolbar and leaves the field focused; the URL is replaced rather than pushed, so back does not step through each keystroke. A year applies once it has four digits. On a phone the sheet's Apply still applies everything.
+- **Downloads follow the playlist.** The player starts the download queue, and it fetches whatever the playlist is waiting for. Front ends no longer request downloads alongside adding tracks, which removes the race between the two and the five-second wait that covered it. Each player has one table of transfers, keyed by track; in the app bindings, `Transfer` and `TransferFigure` are identified by `trackId` and no longer carry a `queueItemId`.
+
 
 ## 0.50.3
 

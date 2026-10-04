@@ -21,7 +21,15 @@ fn album_row(row: &rusqlite::Row) -> rusqlite::Result<AlbumRow> {
     })
 }
 
-/// Get or create an album by title + artist. Returns the album ID.
+/// The album a track with these names belongs to, made if there is none.
+///
+/// An album is its title and album artist, compared as matching compares
+/// names, and its release when one is known: two editions with the same title
+/// and their own MusicBrainz release ids are two albums. A track naming no
+/// release joins the album of its names that has none either, or else the
+/// oldest; one naming a release joins the album with that release, or one
+/// that has none yet, which takes it. The release id is never overwritten, so
+/// files of two editions cannot trade it back and forth.
 #[allow(clippy::too_many_arguments)]
 pub fn get_or_create_album(
     conn: &Connection,
@@ -32,12 +40,14 @@ pub fn get_or_create_album(
     total_tracks: Option<i32>,
     codec: Option<&str>,
     label: Option<&str>,
+    release: Option<&str>,
     // `added_at`: remote sync passes the server's `created`, a local scan the
     // earliest mtime among the album's files. Both ISO 8601 UTC, so the two
     // sources sort against each other.
-    remote_id: Option<&str>,
     added_at: Option<&str>,
 ) -> Result<i64, DbError> {
+    let release = release.filter(|r| !r.is_empty());
+    let key = super::sources::fold(title);
     type Stored = (
         i64,
         Option<String>,
@@ -46,12 +56,12 @@ pub fn get_or_create_album(
         Option<String>,
         Option<String>,
     );
-    let existing: Option<Stored> = conn
+    let candidates: Vec<Stored> = conn
         .prepare_cached(
-            "SELECT id, codec, date, label, remote_id, added_at FROM albums
-             WHERE title = ?1 AND artist_id = ?2",
+            "SELECT id, mbid, codec, date, label, added_at FROM albums
+             WHERE title_key = ?1 AND artist_id = ?2 ORDER BY id",
         )?
-        .query_row(params![title, artist_id], |row| {
+        .query_map(params![key, artist_id], |row| {
             Ok((
                 row.get(0)?,
                 row.get(1)?,
@@ -60,14 +70,21 @@ pub fn get_or_create_album(
                 row.get(4)?,
                 row.get(5)?,
             ))
-        })
-        .optional()?;
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let unclaimed = || candidates.iter().find(|c| c.1.is_none());
+    let existing = match release {
+        Some(release) => candidates
+            .iter()
+            .find(|c| c.1.as_deref() == Some(release))
+            .or_else(unclaimed),
+        None => unclaimed().or(candidates.first()),
+    };
 
-    if let Some((id, s_codec, s_date, s_label, s_remote_id, s_added_at)) = existing {
-        // Update mutable fields so rescans pick up format upgrades (e.g. MP3→FLAC),
-        // corrected dates, or newly-added remote IDs. Every track of the album
-        // passes through here, so the row is only written when one of them
-        // brings something new.
+    if let Some((id, s_mbid, s_codec, s_date, s_label, s_added_at)) = existing {
+        // Update mutable fields so rescans pick up format upgrades (e.g. MP3→FLAC)
+        // or corrected dates. Every track of the album passes through here, so
+        // the row is only written when one of them brings something new.
         // Earliest wins. A record acquired over months should date from its
         // first file, not its last, and filling only would freeze whichever
         // file the first scan happened to reach.
@@ -79,42 +96,102 @@ pub fn get_or_create_album(
             codec.or(s_codec.as_deref()),
             date.or(s_date.as_deref()),
             label.or(s_label.as_deref()),
-            remote_id.or(s_remote_id.as_deref()),
+            s_mbid.as_deref().or(release),
             earliest,
         );
         let stored = (
             s_codec.as_deref(),
             s_date.as_deref(),
             s_label.as_deref(),
-            s_remote_id.as_deref(),
+            s_mbid.as_deref(),
             s_added_at.as_deref(),
         );
         if merged != stored {
             conn.prepare_cached(
-                "UPDATE albums SET codec = ?1, date = ?2, label = ?3, remote_id = ?4, added_at = ?5
+                "UPDATE albums SET codec = ?1, date = ?2, label = ?3, mbid = ?4, added_at = ?5
                  WHERE id = ?6",
             )?
             .execute(params![
                 merged.0, merged.1, merged.2, merged.3, merged.4, id
             ])?;
         }
-        if let Some(rid) = remote_id {
-            super::adopt_uid(conn, super::UidKind::Album, id, rid)?;
-        }
-        return Ok(id);
+        return Ok(*id);
     }
 
-    let uid = super::free_uid(conn, super::UidKind::Album, remote_id)?;
     conn.prepare_cached(
-        "INSERT INTO albums (title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at, uid)
+        "INSERT INTO albums (title, title_key, artist_id, date, total_discs, total_tracks, codec,
+                             label, mbid, added_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     )?
-    .execute(params![title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at, uid])?;
-    let id = conn.last_insert_rowid();
-    if let Some(rid) = remote_id {
-        super::adopt_uid(conn, super::UidKind::Album, id, rid)?;
+    .execute(params![
+        title,
+        key,
+        artist_id,
+        date,
+        total_discs,
+        total_tracks,
+        codec,
+        label,
+        release,
+        added_at
+    ])?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Fold album `gone` into `keep`: its tracks, favourites and shares move
+/// across, `keep` fills its gaps from it, and it is deleted. The koan server's
+/// uid goes with the server's id, so the album stays one id on every device.
+pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite::Result<()> {
+    let server_uid: Option<String> = conn
+        .query_row(
+            "SELECT g.uid FROM albums g, albums k WHERE g.id = ?1 AND k.id = ?2
+               AND g.uid = g.remote_id AND k.uid IS NOT k.remote_id",
+            params![gone, keep],
+            |r| r.get(0),
+        )
+        .optional()?;
+    conn.execute_batch("SAVEPOINT merge_albums")?;
+    let merged = (|| {
+        for sql in [
+            "UPDATE tracks SET album_id = ?1 WHERE album_id = ?2",
+            "UPDATE OR IGNORE favourite_albums SET album_id = ?1 WHERE album_id = ?2",
+            "UPDATE shares SET subject_id = ?1 WHERE kind = 'album' AND subject_id = ?2",
+            "UPDATE albums SET
+                 remote_id = COALESCE(remote_id, (SELECT remote_id FROM albums WHERE id = ?2)),
+                 mbid = COALESCE(mbid, (SELECT mbid FROM albums WHERE id = ?2)),
+                 date = COALESCE(date, (SELECT date FROM albums WHERE id = ?2)),
+                 label = COALESCE(label, (SELECT label FROM albums WHERE id = ?2)),
+                 codec = COALESCE(codec, (SELECT codec FROM albums WHERE id = ?2)),
+                 sort_name = COALESCE(sort_name, (SELECT sort_name FROM albums WHERE id = ?2)),
+                 total_discs = COALESCE(total_discs, (SELECT total_discs FROM albums WHERE id = ?2)),
+                 total_tracks = COALESCE(total_tracks, (SELECT total_tracks FROM albums WHERE id = ?2)),
+                 added_at = MIN(COALESCE(added_at, (SELECT added_at FROM albums WHERE id = ?2)),
+                                COALESCE((SELECT added_at FROM albums WHERE id = ?2), added_at))
+               WHERE id = ?1",
+        ] {
+            conn.execute(sql, params![keep, gone])?;
+        }
+        for sql in [
+            "DELETE FROM favourite_albums WHERE album_id = ?1",
+            "DELETE FROM albums WHERE id = ?1",
+        ] {
+            conn.execute(sql, params![gone])?;
+        }
+        if let Some(uid) = &server_uid {
+            conn.execute(
+                "UPDATE albums SET uid = ?1 WHERE id = ?2",
+                params![uid, keep],
+            )?;
+        }
+        Ok(())
+    })();
+    match merged {
+        Ok(()) => conn.execute_batch("RELEASE merge_albums"),
+        Err(e) => {
+            conn.execute_batch("ROLLBACK TO merge_albums; RELEASE merge_albums")?;
+            Err(e)
+        }
     }
-    Ok(id)
 }
 
 /// How a listing of albums is ordered.
@@ -260,10 +337,7 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(user) = q.favourites_of {
         params.push(Box::new(super::auth::resolve_user(conn, user)?));
-        sql.push_str(
-            " JOIN favourite_albums f
-                ON f.artist_name = a.name AND f.album_title = al.title AND f.user_id = ?",
-        );
+        sql.push_str(" JOIN favourite_albums f ON f.album_id = al.id AND f.user_id = ?");
     }
     let mut wheres: Vec<String> = Vec::new();
     if let Some(ids) = q.ids {
@@ -884,13 +958,15 @@ mod tests {
     fn favourites_only_lists_what_was_hearted() {
         use crate::db::queries::toggle_favourite_album;
         let db = stocked_db();
-        toggle_favourite_album(
-            &db.conn,
-            crate::db::queries::LOCAL_USER,
-            "Coil",
-            "Horse Rotorvator",
-        )
-        .unwrap();
+        let album: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM albums WHERE title = 'Horse Rotorvator'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        toggle_favourite_album(&db.conn, crate::db::queries::LOCAL_USER, album).unwrap();
         let rows = list_albums(
             &db.conn,
             &AlbumQuery {

@@ -245,23 +245,21 @@ pub fn artist_stats(
     Ok(out)
 }
 
-/// Which of the given paths are favourited — one query instead of a full table
-/// scan per track.
-pub fn favourite_paths(
+/// Which of the given tracks are favourited — one query instead of one per
+/// track.
+pub fn favourite_track_ids(
     conn: &Connection,
     user: i64,
-    paths: &[String],
-) -> Result<HashSet<String>, DbError> {
-    if paths.is_empty() {
+    track_ids: &[i64],
+) -> Result<HashSet<i64>, DbError> {
+    if track_ids.is_empty() {
         return Ok(HashSet::new());
     }
     let sql =
-        format!("SELECT track_path FROM favourites WHERE user_id = ?1 AND track_path IN {IN_LIST}");
+        format!("SELECT track_id FROM favourites WHERE user_id = ?1 AND track_id IN {IN_LIST}");
     let mut stmt = conn.prepare_cached(&sql)?;
     let user = super::auth::resolve_user(conn, user)?;
-    let rows = stmt.query_map(params![user, json_list(paths)], |row| {
-        row.get::<_, String>(0)
-    })?;
+    let rows = stmt.query_map(params![user, json_list(track_ids)], |row| row.get(0))?;
     rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }
 
@@ -469,10 +467,7 @@ pub fn filter_tracks(
             "t.id IN ({})",
             super::tracks::favourite_track_ids_sql("?")
         ));
-        let user = super::auth::resolve_user(conn, user)?;
-        for _ in 0..3 {
-            binds.push(Box::new(user));
-        }
+        binds.push(Box::new(super::auth::resolve_user(conn, user)?));
     }
 
     let dir = if descending { "DESC" } else { "ASC" };
@@ -623,26 +618,22 @@ mod tests {
     }
 
     #[test]
-    fn favourite_paths_only_returns_the_requested_paths() {
+    fn favourite_track_ids_only_returns_the_requested_tracks() {
         let db = test_db();
         seed(&db);
-        add_favourite(
-            &db.conn,
-            crate::db::queries::LOCAL_USER,
-            std::path::Path::new("/music/Drukqs/Vordhosbn.flac"),
-        )
-        .unwrap();
-        let hits = favourite_paths(
-            &db.conn,
-            crate::db::queries::LOCAL_USER,
-            &[
-                "/music/Drukqs/Vordhosbn.flac".to_string(),
-                "/music/MHTRTC/Roygbiv.flac".to_string(),
-            ],
-        )
-        .unwrap();
-        assert_eq!(hits.len(), 1);
-        assert!(hits.contains("/music/Drukqs/Vordhosbn.flac"));
+        let id = |path: &str| {
+            crate::db::queries::track_id_by_path(&db.conn, path)
+                .unwrap()
+                .unwrap()
+        };
+        let (starred, plain) = (
+            id("/music/Drukqs/Vordhosbn.flac"),
+            id("/music/MHTRTC/Roygbiv.flac"),
+        );
+        add_favourite(&db.conn, crate::db::queries::LOCAL_USER, starred).unwrap();
+        let hits = favourite_track_ids(&db.conn, crate::db::queries::LOCAL_USER, &[starred, plain])
+            .unwrap();
+        assert_eq!(hits, HashSet::from([starred]));
     }
 
     #[test]
@@ -685,12 +676,7 @@ mod tests {
         meta.remote_url = Some("https://music.example/rest/stream?id=tr-1".into());
         let id = upsert_track(&db.conn, &meta).unwrap();
         let user = crate::db::queries::LOCAL_USER;
-        add_favourite(
-            &db.conn,
-            user,
-            std::path::Path::new("https://music.example/rest/stream?id=tr-1"),
-        )
-        .unwrap();
+        add_favourite(&db.conn, user, id).unwrap();
         let track = &tracks_by_ids_for_test(&db, &[id])[0];
 
         let albums = crate::db::queries::favourite_album_ids_batch(&db.conn, user).unwrap();
@@ -735,9 +721,8 @@ mod tests {
         assert_eq!(tracks_by_ids_for_test(&db, &ids).len(), 3);
         assert_eq!(album_ids_for_tracks(&db.conn, &ids).unwrap().len(), 3);
         assert_eq!(sources_for_tracks(&db.conn, &ids).unwrap().len(), 3);
-        let paths: Vec<String> = (0..40_000).map(|i| format!("/music/{i}.flac")).collect();
         assert!(
-            favourite_paths(&db.conn, crate::db::queries::LOCAL_USER, &paths)
+            favourite_track_ids(&db.conn, crate::db::queries::LOCAL_USER, &ids)
                 .unwrap()
                 .is_empty()
         );
