@@ -279,6 +279,6 @@ private struct SearchTrackRow: View {
             nav.open(album: albumId, highlighting: track.id)
         }
         .contextMenu { PlayableMenu(playable: .track(track)) }
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
     }
 }

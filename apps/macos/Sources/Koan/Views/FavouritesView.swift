@@ -152,10 +152,10 @@ struct FavouritesView: View {
                     if !albums.isEmpty { albumSection }
                     if !tracks.isEmpty { trackSection }
                 }
-                .listStyle(.inset)
+                .insetList()
                 .washedGround()
                 .clearsSelection($selection)
-                .contextMenu(forSelectionType: Int64.self) { ids in
+                .selectionMenu(for: Int64.self) { ids in
                     menu(for: ids)
                 } primaryAction: { ids in
                     play(ids)

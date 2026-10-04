@@ -115,7 +115,7 @@ struct PickerSheet: View {
                     }
                 }
             }
-            .listStyle(.inset)
+            .insetList()
             .scrollEdgeEffectStyle(.soft, for: .bottom)
         }
     }
@@ -150,11 +150,11 @@ struct PickerSheet: View {
             }
 
             Button("Replace Queue") { commit(.replace) }
-                .keyboardShortcut(.return, modifiers: [.command, .shift])
+                .shortcut(.return, modifiers: [.command, .shift])
             Button("Add") { commit(.append) }
-                .keyboardShortcut(.return, modifiers: [])
+                .shortcut(.return, modifiers: [])
             Button("Add & Play") { commit(.appendAndPlay) }
-                .keyboardShortcut(.return, modifiers: .command)
+                .shortcut(.return, modifiers: .command)
                 .buttonStyle(.borderedProminent)
         }
         .disabled(resolving || (picked.isEmpty && highlighted == nil))

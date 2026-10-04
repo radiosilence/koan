@@ -32,7 +32,7 @@ struct NowPlayingSheet: View {
                 .padding(.horizontal, 28)
                 .padding(.bottom, 12)
         }
-        .presentationDragIndicator(.visible)
+        .sheetGrabber()
         // The playing record's own wash, whatever page the sheet was opened
         // over — this is the one screen that is only about that record.
         .presentationBackground {

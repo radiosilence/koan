@@ -102,7 +102,7 @@ struct ArtistBrowser: View {
         }
         .clearsSelection($selection)
         .washedGround()
-        .contextMenu(forSelectionType: Int64.self) { ids in
+        .selectionMenu(for: Int64.self) { ids in
             // A set has no first; with several picked, no one artist is meant.
             if ids.count == 1, let id = ids.first,
                let artist = library.visibleArtists.first(where: { $0.id == id }) {
@@ -200,7 +200,7 @@ private struct ArtistRow: View {
                 .frame(width: 78, alignment: .trailing)
             #endif
         }
-        .onHover { hovered = $0 }
+        .pointerHover { hovered = $0 }
         #if os(iOS)
         .frame(minHeight: RowMetrics.line)
         #else
@@ -355,7 +355,7 @@ private struct ArtistBio: View {
             Text(bio.replacingOccurrences(of: "\n", with: "\n\n"))
                 .foregroundStyle(.secondary)
                 .lineSpacing(3)
-                .textSelection(.enabled)
+                .selectableText()
                 .frame(maxWidth: 680, alignment: .leading)
             HStack(spacing: 12) {
                 if let url = source.flatMap(URL.init(string:)) {

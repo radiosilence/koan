@@ -135,13 +135,13 @@ struct TrackListView: View {
                             .primaryTap { play([track.id]) }
                         }
                     }
-                    .listStyle(.inset)
+                    .insetList()
                     .washedGround()
 
                     // The List's own double-click hook. Wired into selection
                     // rather than the gesture system, so it doesn't steal the
                     // first click.
-                    .contextMenu(forSelectionType: Int64.self) { ids in
+                    .selectionMenu(for: Int64.self) { ids in
                         menu(for: ids)
                     } primaryAction: { ids in
                         play(ids)
@@ -384,7 +384,7 @@ struct TrackRow: View {
         // The row is only clickable where a view sits; the Spacer would
         // otherwise be a dead zone.
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
     }
 }
 

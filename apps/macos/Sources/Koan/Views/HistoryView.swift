@@ -130,10 +130,10 @@ struct HistoryView: View {
                         }
                     }
                 }
-                .listStyle(.inset)
+                .insetList()
                 .washedGround()
                 .clearsSelection($selection)
-                .contextMenu(forSelectionType: Int64.self) { ids in
+                .selectionMenu(for: Int64.self) { ids in
                     menu(for: ids)
                 } primaryAction: { ids in
                     play(ids)
@@ -282,7 +282,7 @@ private struct HistoryRow: View {
         }
         .frame(height: RowMetrics.art)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
     }
 }
 

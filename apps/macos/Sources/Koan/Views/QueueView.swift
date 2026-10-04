@@ -106,7 +106,7 @@ struct QueueView: View {
         }
         // On the whole stage, not the List: an empty queue is exactly when you
         // want to drop a folder on it, and it has no rows to land on.
-        .dropDestination(for: URL.self) { urls, _ in
+        .dropTarget(for: URL.self) { urls, _ in
             player.importFiles(urls)
             return true
         }
@@ -202,7 +202,7 @@ struct QueueView: View {
                         }
                         .onMove(perform: move)
                     }
-                    .listStyle(.inset)
+                    .insetList()
                     #if os(iOS)
                     .environment(\.editMode, $editMode)
                     .onChange(of: editMode) { _, mode in
@@ -233,7 +233,7 @@ struct QueueView: View {
                     }
                     // Double-click and context menu both come from the List, keyed
                     // on the rows under the pointer rather than on a gesture.
-                    .contextMenu(forSelectionType: String.self) { ids in
+                    .selectionMenu(for: String.self) { ids in
                         menu(forRows: ids)
                     } primaryAction: { ids in
                         play(rowIds: ids)

@@ -52,7 +52,7 @@ struct AlbumGridCell: View {
                 .underline(titleHovering)
                 .lineLimit(1)
                 .contentShape(.rect)
-                .onHover { titleHovering = $0 }
+                .pointerHover { titleHovering = $0 }
                 .onTapGesture { Trace.event("tap"); nav.open(album: album.id) }
 
             HStack(spacing: 4) {
@@ -66,7 +66,7 @@ struct AlbumGridCell: View {
                 }
             }
         }
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
         .animation(.smooth(duration: 0.18), value: hovering)
         // While selecting, the whole tile is one target that ticks it — the art
         // does not play and the links do not go anywhere.

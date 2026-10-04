@@ -162,6 +162,8 @@ targets:
           - RemoteActivity.swift
           - RemoteActivityController.swift
       - path: ../macos/Sources/Koan
+        # The iOS target's list, plus the Mac's sidebar, which the phone
+        # compiles and the TV cannot.
         excludes:
           - KoanApp.swift
           - Support/Hotkeys.swift
@@ -169,6 +171,7 @@ targets:
           - Support/EditCommands.swift
           - Support/MenuShortcuts.swift
           - Views/ShortcutsSheet.swift
+          - Views/SidebarView.swift
       - path: ../macos/Resources/Assets.xcassets
     dependencies:
       - target: KoanFFITV

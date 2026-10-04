@@ -33,7 +33,9 @@ struct BrowseFilterButton: View {
             NavigationStack {
                 BrowseFilterForm()
                     .navigationTitle("Filter")
+                    #if !os(tvOS)
                     .navigationBarTitleDisplayMode(.inline)
+                    #endif
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { open = false }

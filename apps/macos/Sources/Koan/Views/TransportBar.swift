@@ -317,7 +317,9 @@ struct SeekBar: View {
                 // thumb does not follow the pointer then — a head that moves
                 // and springs back is a worse answer than one that stays put —
                 // but the attempt is still worth answering, so releasing says
-                // why nothing happened.
+                // why nothing happened. tvOS has no drag; the remote seeks
+                // through the system's Now Playing.
+                #if !os(tvOS)
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
@@ -329,6 +331,7 @@ struct SeekBar: View {
                             player.seek(fraction: (value.location.x / geo.size.width).clamped())
                         }
                 )
+                #endif
             }
             .frame(height: Self.reach)
 

@@ -82,9 +82,9 @@ struct OrganizeSheet: View {
                     // to the field: Esc abandons the edit, Return commits it.
                     // They are handed back to Close and Move on the way out.
                     Button("Cancel") { organize.cancelEditing() }
-                        .keyboardShortcut(.cancelAction)
+                        .shortcut(.cancelAction)
                     Button("Save") { organize.saveEditing() }
-                        .keyboardShortcut(.defaultAction)
+                        .shortcut(.defaultAction)
                         .disabled(!organize.isModified)
                         .help("Store this pattern in config.toml under its name")
                 } else {
@@ -96,7 +96,7 @@ struct OrganizeSheet: View {
             if organize.editing {
                 TextField("Format string", text: $organize.draft)
                     .verbatimEntry()
-                    .textFieldStyle(.roundedBorder)
+                    .borderedField()
                     .font(.callout.monospaced())
             } else {
                 Text(organize.pattern)
@@ -104,7 +104,7 @@ struct OrganizeSheet: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .textSelection(.enabled)
+                    .selectableText()
             }
 
             HStack(spacing: 6) {
@@ -160,9 +160,9 @@ struct OrganizeSheet: View {
         } else if let plan = organize.plan, !plan.entries.isEmpty {
             List(plan.entries, id: \.fromPath) { entry in
                 OrganizeRow(entry: entry, baseDir: organize.baseDir)
-                    .listRowSeparator(.hidden)
+                    .rowSeparator(.hidden)
             }
-            .listStyle(.inset)
+            .insetList()
         } else if organize.previewing {
             Color.clear
         } else {
@@ -186,9 +186,9 @@ struct OrganizeSheet: View {
                 organize.dismiss()
                 dismiss()
             }
-            .keyboardShortcut(organize.editing ? nil : .cancelAction)
+            .shortcut(organize.editing ? nil : .cancelAction)
             Button(runTitle) { organize.run() }
-                .keyboardShortcut(organize.editing ? nil : .defaultAction)
+                .shortcut(organize.editing ? nil : .defaultAction)
                 .disabled(!canRun)
         }
         .padding(.horizontal, 18)

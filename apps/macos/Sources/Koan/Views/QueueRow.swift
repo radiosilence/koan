@@ -208,7 +208,7 @@ struct QueueRow: View {
         // the Spacer between the title and the duration is a dead zone, and
         // clicks landing there select nothing.
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
     }
 
     /// A played row steps back rather than disappears — and it does it in

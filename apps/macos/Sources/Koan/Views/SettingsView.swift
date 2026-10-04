@@ -128,7 +128,11 @@ private struct StatusLine: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
+        #if os(tvOS)
+        .background(.regularMaterial)
+        #else
         .background(.bar)
+        #endif
     }
 }
 
@@ -258,7 +262,7 @@ private struct LibrarySettings: View {
         } message: {
             Text("Your files are not touched either way. Keeping them leaves records in the library that kōan will not scan again.")
         }
-        .fileImporter(
+        .filePicker(
             isPresented: $choosingFolder,
             allowedContentTypes: [.folder],
             allowsMultipleSelection: true
@@ -338,10 +342,12 @@ private struct RemoteSettings: View {
                         Button("Sign In") { model.signIn(url: url, username: username) }
                             .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                         Spacer()
+                        #if !os(tvOS)
                         PasteButton(payloadType: String.self) { strings in
                             Task { @MainActor in join(strings.first ?? "") }
                         }
                         .labelStyle(.titleAndIcon)
+                        #endif
                     }
                     .rowButtons()
                 } header: {
@@ -378,6 +384,15 @@ private struct RemoteSettings: View {
             }
 
             Section("Downloads") {
+                #if os(tvOS)
+                // tvOS has no stepper.
+                Picker("Parallel downloads", selection: Binding(
+                    get: { Int(model.settings.downloadWorkers) },
+                    set: { v in model.edit { $0.downloadWorkers = UInt32(v) } }
+                )) {
+                    ForEach(1...16, id: \.self) { Text("\($0)").tag($0) }
+                }
+                #else
                 Stepper(
                     "Parallel downloads: \(model.settings.downloadWorkers)",
                     value: Binding(
@@ -386,6 +401,7 @@ private struct RemoteSettings: View {
                     ),
                     in: 1...16
                 )
+                #endif
                 TextField("Cache limit, e.g. 50GB — blank for no limit", text: Binding(
                     get: { cacheLimit ?? model.settings.cacheLimit },
                     set: { cacheLimit = $0 }
@@ -478,12 +494,20 @@ private struct PlaybackSettings: View {
                     Text("Per album").tag("album")
                 }
                 if model.settings.replaygain != "off" {
+                    #if os(tvOS)
+                    Picker("Pre-amp", selection: model.binding(\.preAmpDb)) {
+                        ForEach(Array(stride(from: -15.0, through: 15.0, by: 0.5)), id: \.self) { db in
+                            Text("\(db, specifier: "%.1f") dB").tag(db)
+                        }
+                    }
+                    #else
                     Stepper(
                         "Pre-amp: \(model.settings.preAmpDb, specifier: "%.1f") dB",
                         value: model.binding(\.preAmpDb),
                         in: -15...15,
                         step: 0.5
                     )
+                    #endif
                 }
             } header: {
                 Text("Loudness")
@@ -564,7 +588,7 @@ private struct DspSettings: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
-        .fileImporter(
+        .filePicker(
             isPresented: $importing,
             allowedContentTypes: [.item, .folder],
             allowsMultipleSelection: true
@@ -687,12 +711,13 @@ private struct ServerOffers: View {
                 LabeledContent("OpenSubsonic", value: c.openSubsonic ? "Yes" : "No")
                 LabeledContent("Your devices", value: devices(c))
                 if !c.extensions.isEmpty {
+                    #if os(tvOS)
+                    extensionList(c.extensions)
+                    #else
                     DisclosureGroup("Extensions (\(c.extensions.count))") {
-                        ForEach(c.extensions, id: \.name) { e in
-                            LabeledContent(e.name, value: e.versions.map { "v\($0)" }.joined(separator: ", "))
-                                .font(.callout)
-                        }
+                        extensionList(c.extensions)
                     }
+                    #endif
                 }
             } else {
                 Text("Not reached yet")
@@ -704,6 +729,13 @@ private struct ServerOffers: View {
             Text("Asked when kōan signs in and whenever its link to the server reconnects. Features beyond Subsonic are used only where the server lists them.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func extensionList(_ extensions: [ServerExtension]) -> some View {
+        ForEach(extensions, id: \.name) { e in
+            LabeledContent(e.name, value: e.versions.map { "v\($0)" }.joined(separator: ", "))
+                .font(.callout)
         }
     }
 
@@ -801,7 +833,13 @@ private struct AppearanceSettings: View {
             Section {
                 // Positioned by where a step sits in the list, not by its raw
                 // value: the raw values are what is on disk and cannot be
-                // reordered, and the cheapest step was added last.
+                // reordered, and the cheapest step was added last. tvOS has
+                // no slider; a picker in the same order stands in.
+                #if os(tvOS)
+                Picker("Level", selection: $graphics) {
+                    ForEach(Graphics.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                #else
                 Slider(
                     value: Binding(
                         get: { Double(Graphics.allCases.firstIndex(of: graphics) ?? 0) },
@@ -816,6 +854,7 @@ private struct AppearanceSettings: View {
                 } maximumValueLabel: {
                     Text(Graphics.allCases.last?.label ?? "").font(.caption)
                 }
+                #endif
                 Text("**\(graphics.label)** — \(graphics.detail)")
                     .font(.caption)
                     .foregroundStyle(.secondary)

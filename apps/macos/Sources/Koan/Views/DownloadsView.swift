@@ -39,7 +39,7 @@ struct DownloadsView: View {
                             .washedRow()
                     }
                 }
-                .listStyle(.inset)
+                .insetList()
                 #endif
             }
         }
@@ -164,7 +164,7 @@ private struct DownloadRow: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
         .contextMenu { DownloadMenu(transfer: transfer) }
     }
 

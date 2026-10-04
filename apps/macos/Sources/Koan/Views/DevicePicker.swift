@@ -312,6 +312,19 @@ private struct RendererVolume: View {
         VStack(alignment: .leading, spacing: 4) {
             if let volume {
                 HStack(spacing: 8) {
+                    #if os(tvOS)
+                    // No slider on tvOS: a step either way, as a remote's own
+                    // volume buttons do.
+                    Button("Quieter", systemImage: "speaker.fill") {
+                        player.setOutputVolume(UInt8(max(0, Int(volume) - 5)))
+                    }
+                    Text("\(volume)")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Button("Louder", systemImage: "speaker.wave.3.fill") {
+                        player.setOutputVolume(UInt8(min(100, Int(volume) + 5)))
+                    }
+                    #else
                     Image(systemName: "speaker.fill")
                         .foregroundStyle(.secondary)
                     Slider(
@@ -330,6 +343,7 @@ private struct RendererVolume: View {
                     .accessibilityLabel("Volume on \(name)")
                     Image(systemName: "speaker.wave.3.fill")
                         .foregroundStyle(.secondary)
+                    #endif
                 }
             }
             if here {
@@ -679,7 +693,7 @@ extension View {
         sheet(isPresented: isPresented) {
             ScrollView { ControlPicker() }
                 .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .sheetGrabber()
         }
     }
 
@@ -687,7 +701,7 @@ extension View {
         sheet(isPresented: isPresented) {
             ScrollView { OutputPicker() }
                 .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                .sheetGrabber()
         }
     }
 }

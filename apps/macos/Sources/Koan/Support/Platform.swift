@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 #if canImport(AppKit)
 import AppKit
 #else
@@ -120,6 +121,23 @@ extension View {
         self
         #else
         contentShape(Rectangle()).onTapGesture(perform: action)
+        #endif
+    }
+}
+
+extension View {
+    /// `contextMenu(forSelectionType:menu:primaryAction:)`, which tvOS does not
+    /// have: a list there has no selection to act on, and its rows take their
+    /// primary action through `primaryTap`.
+    func selectionMenu<I: Hashable, M: View>(
+        for type: I.Type,
+        @ViewBuilder menu: @escaping (Set<I>) -> M,
+        primaryAction: ((Set<I>) -> Void)? = nil
+    ) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        contextMenu(forSelectionType: type, menu: menu, primaryAction: primaryAction)
         #endif
     }
 }
@@ -316,3 +334,131 @@ struct SystemSwitch: ToggleStyle {
     }
 }
 #endif
+
+extension View {
+    /// `onHover`, which tvOS does not have: nothing hovers under a remote.
+    func pointerHover(perform action: @escaping (Bool) -> Void) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        onHover(perform: action)
+        #endif
+    }
+
+    /// The inset list, or the plain one on tvOS, which has no inset style.
+    func insetList() -> some View {
+        #if os(tvOS)
+        listStyle(.plain)
+        #else
+        listStyle(.inset)
+        #endif
+    }
+}
+
+/// Drag and drop, text selection and row separators, none of which tvOS has.
+/// On tvOS each leaves the view as it is.
+extension View {
+    func dragSource<T: Transferable>(_ payload: @autoclosure @escaping () -> T) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        draggable(payload())
+        #endif
+    }
+
+    func dropTarget<T: Transferable>(
+        for type: T.Type,
+        action: @escaping ([T], CGPoint) -> Bool,
+        isTargeted: @escaping (Bool) -> Void = { _ in }
+    ) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        dropDestination(for: type, action: action, isTargeted: isTargeted)
+        #endif
+    }
+
+    func rowSeparator(_ visibility: Visibility) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        listRowSeparator(visibility)
+        #endif
+    }
+
+    func selectableText() -> some View {
+        #if os(tvOS)
+        self
+        #else
+        textSelection(.enabled)
+        #endif
+    }
+
+    /// The grabber on a sheet, which a remote has no use for.
+    func sheetGrabber() -> some View {
+        #if os(tvOS)
+        self
+        #else
+        presentationDragIndicator(.visible)
+        #endif
+    }
+}
+
+extension View {
+    /// The system file picker, which tvOS does not have: there are no files to
+    /// pick on a television.
+    func filePicker(
+        isPresented: Binding<Bool>,
+        allowedContentTypes: [UTType],
+        allowsMultipleSelection: Bool,
+        onCompletion: @escaping (Result<[URL], any Error>) -> Void
+    ) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        fileImporter(
+            isPresented: isPresented,
+            allowedContentTypes: allowedContentTypes,
+            allowsMultipleSelection: allowsMultipleSelection,
+            onCompletion: onCompletion
+        )
+        #endif
+    }
+}
+
+extension View {
+    /// The bordered text field, or the system's own on tvOS, which has no
+    /// rounded-border style.
+    func borderedField() -> some View {
+        #if os(tvOS)
+        textFieldStyle(.automatic)
+        #else
+        textFieldStyle(.roundedBorder)
+        #endif
+    }
+}
+
+/// Keyboard shortcuts, which tvOS does not have.
+extension View {
+    func shortcut(_ key: KeyEquivalent, modifiers: EventModifiers = .command) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        keyboardShortcut(key, modifiers: modifiers)
+        #endif
+    }
+
+    /// A sheet's default or cancel button. Its own type, because tvOS does not
+    /// have `KeyboardShortcut` either.
+    func shortcut(_ role: ShortcutRole?) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        keyboardShortcut(role.map { $0 == .defaultAction ? .defaultAction : .cancelAction })
+        #endif
+    }
+}
+
+enum ShortcutRole {
+    case defaultAction, cancelAction
+}
