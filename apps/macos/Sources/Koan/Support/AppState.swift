@@ -98,6 +98,7 @@ final class AppState {
         // Single-key shortcuts, caught before the focused list eats them.
         #if os(macOS)
         self.hotkeys = Hotkeys.standard(player: player, library: library, nav: nav, ui: ui)
+        FullScreenBackstop.install()
         #endif
 
         // A client that cannot reach its server fails at everything quietly:
