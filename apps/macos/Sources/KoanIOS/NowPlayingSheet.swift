@@ -159,8 +159,10 @@ struct NowPlayingSheet: View {
                 ControlButton(open: $showingControl, labelled: player.isControllingAnother)
                     .font(.subheadline)
             }
-            OutputButton(open: $showingDevices, labelled: true)
-                .font(.subheadline)
+            if player.canChooseOutput {
+                OutputButton(open: $showingDevices, labelled: true)
+                    .font(.subheadline)
+            }
 
             if let format = player.currentFormat {
                 Text(Format.quality(format))

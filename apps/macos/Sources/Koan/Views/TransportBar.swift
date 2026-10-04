@@ -242,8 +242,10 @@ struct TransportBar: View {
                 ControlButton(open: $showingControl, labelled: !compact, iconSize: 17)
                     .font(.caption)
             }
-            OutputButton(open: $showingDevices, labelled: !compact, iconSize: 17)
-                .font(.caption)
+            if player.canChooseOutput {
+                OutputButton(open: $showingDevices, labelled: !compact, iconSize: 17)
+                    .font(.caption)
+            }
 
             // AirPlay is the system's to choose, so it is the system's button:
             // it switches this Mac's output, which the music follows. Shown

@@ -1913,17 +1913,43 @@ impl KoanEngine {
     /// Not on the ordered lane: opening a renderer session is a few round
     /// trips, as for `play_to_renderer`.
     pub async fn select_output(self: Arc<Self>, output: OutputChoice) -> Result<(), KoanError> {
-        offload::offload(move || match koan_core::remote::devices::target() {
-            Some(to) => self.command_target(
-                &to,
-                koan_core::remote::link::LinkCommand::SetOutput {
-                    output: output.into(),
-                },
-            ),
-            None => koan_core::remote::outputs::set(output.into(), &self.tx)
-                .map_err(|message| KoanError::Audio { message }),
-        })
-        .await
+        // Taken now, in the order the person picked: see `upnp::choose`.
+        let choice = koan_core::upnp::choose();
+        match (koan_core::remote::devices::target(), output) {
+            // In order with every other command for that device; it takes
+            // its own choice when it switches.
+            (Some(to), output) => {
+                offload::sequenced(move || {
+                    self.command_target(
+                        &to,
+                        koan_core::remote::link::LinkCommand::SetOutput {
+                            output: output.into(),
+                        },
+                    )
+                })
+                .await
+            }
+            (None, OutputChoice::Renderer { udn }) => {
+                offload::offload(move || {
+                    koan_core::upnp::connect(&udn, choice, &self.tx)
+                        .map_err(|message| KoanError::Audio { message })
+                })
+                .await
+            }
+            (None, output) => {
+                offload::sequenced(move || {
+                    koan_core::remote::outputs::set(output.into(), choice, &self.tx)
+                        .map_err(|message| KoanError::Audio { message })
+                })
+                .await
+            }
+        }
+    }
+
+    /// List this device's audio devices again, when the system says they
+    /// changed or an output menu opens. The `Outputs` slice follows.
+    pub async fn refresh_outputs(self: Arc<Self>) {
+        offload::offload(koan_core::remote::outputs::refresh_devices).await
     }
 
     /// The volume of the renderer the device in view plays to, 0–100.
@@ -2921,9 +2947,13 @@ impl KoanEngine {
                                 None,
                                 koan_core::remote::outputs::local(&engine.state),
                             )),
-                            Some(_) => koan_core::remote::devices::target_device().and_then(|d| {
-                                Some(OutputsInfo::of(Some(d.name), d.state?.outputs?))
-                            }),
+                            // Only the account's own devices say, and take
+                            // being told.
+                            Some(_) => koan_core::remote::devices::target_device()
+                                .filter(|d| d.account)
+                                .and_then(|d| {
+                                    Some(OutputsInfo::of(Some(d.name), d.state?.outputs?))
+                                }),
                         },
                     });
 
@@ -3978,8 +4008,10 @@ impl KoanEngine {
             LinkCommand::HandOff { to } => self.hand_off_blocking(&to).map(|_| ()),
             // Taken off the link before it gets here.
             LinkCommand::Devices { .. } => Ok(()),
-            LinkCommand::SetOutput { output } => koan_core::remote::outputs::set(output, &self.tx)
-                .map_err(|message| KoanError::Audio { message }),
+            LinkCommand::SetOutput { output } => {
+                koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
+                    .map_err(|message| KoanError::Audio { message })
+            }
             LinkCommand::SetRendererVolume { volume } => {
                 self.send_local(PlayerCommand::SetRendererVolume(volume))
             }

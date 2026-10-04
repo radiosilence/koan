@@ -99,7 +99,7 @@ pub fn save(imported: Imported, name: Option<&str>) -> Result<String, String> {
     };
     let filters = (!imported.filters.is_empty()).then_some(imported.filters);
     let source = imported.source;
-    Config::persist(|cfg| {
+    persist(|cfg| {
         let profile = profile_mut(&mut cfg.dsp.profiles, &name);
         for s in source {
             if !profile.source.contains(&s) {
@@ -265,7 +265,7 @@ pub fn rename(old: &str, new: &str) -> Result<(), String> {
         }
         std::fs::rename(base.join(&from), base.join(&to)).map_err(|e| e.to_string())?;
     }
-    Config::persist(|cfg| {
+    persist(|cfg| {
         if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == old) {
             p.name = new.to_string();
             if moved {
@@ -280,6 +280,17 @@ pub fn rename(old: &str, new: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// Write the profiles, and say so: what each output plays through is shown
+/// on every device that can choose it, here and on the devices controlling
+/// this one.
+fn persist(
+    mutate: impl FnOnce(&mut crate::config::Config),
+) -> Result<(), crate::config::ConfigError> {
+    Config::persist(mutate)?;
+    crate::signal::engine_changed().bump();
+    Ok(())
+}
+
 /// Play `device` through `name`, or untouched with `None`.
 pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
     if let Some(name) = name
@@ -287,7 +298,7 @@ pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
     {
         return Err(format!("No profile called {name}"));
     }
-    Config::persist(|cfg| {
+    persist(|cfg| {
         for p in &mut cfg.dsp.profiles {
             p.devices.retain(|d| d != device);
             if Some(p.name.as_str()) == name {
@@ -300,14 +311,13 @@ pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
 
 /// Delete a profile, and the responses koan keeps for it.
 pub fn remove(name: &str) -> Result<(), String> {
-    Config::persist(|cfg| cfg.dsp.profiles.retain(|p| p.name != name))
-        .map_err(|e| e.to_string())?;
+    persist(|cfg| cfg.dsp.profiles.retain(|p| p.name != name)).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_dir_all(config::config_dir().join("dsp").join(slug(name)));
     Ok(())
 }
 
 pub fn set_enabled(enabled: bool) -> Result<(), String> {
-    Config::persist(|cfg| cfg.dsp.enabled = enabled).map_err(|e| e.to_string())
+    persist(|cfg| cfg.dsp.enabled = enabled).map_err(|e| e.to_string())
 }
 
 fn profile_mut<'a>(profiles: &'a mut Vec<DspProfile>, name: &str) -> &'a mut DspProfile {

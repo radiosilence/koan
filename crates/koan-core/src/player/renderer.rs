@@ -3156,7 +3156,12 @@ mod tests {
         assert_eq!(r.fake.state.lock().volume, 42);
         assert_eq!(outputs::local(&r.player.shared_state).volume, Some(42));
 
-        outputs::set(OutputChoice::Default, &r.player.command_sender()).unwrap();
+        outputs::set(
+            OutputChoice::Default,
+            upnp::choose(),
+            &r.player.command_sender(),
+        )
+        .unwrap();
         r.pump_until(|p| p.renderer.is_none());
         assert_eq!(r.state(), PlaybackState::Paused, "paused, as it was");
         assert_eq!(r.player.shared_state.position_ms(), 5_000, "where it was");

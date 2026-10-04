@@ -73,6 +73,32 @@ pub enum OutputChoice {
     },
 }
 
+/// This device's audio devices, by name and kind, as last listed. Read on
+/// every change to the engine, so listed only when they may have changed:
+/// see `refresh_devices`.
+static DEVICES: parking_lot::Mutex<Option<Vec<(String, String)>>> = parking_lot::Mutex::new(None);
+
+/// List this device's audio devices again: on the platform's device-change
+/// notification, and when an output menu opens. Rings the engine's change
+/// signal if they moved, so every view of them follows.
+pub fn refresh_devices() {
+    let now = list_devices();
+    let mut cached = DEVICES.lock();
+    if cached.as_ref() != Some(&now) {
+        *cached = Some(now);
+        drop(cached);
+        crate::signal::engine_changed().bump();
+    }
+}
+
+fn list_devices() -> Vec<(String, String)> {
+    crate::audio::list_output_devices()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| (d.name, d.kind.as_str().to_string()))
+        .collect()
+}
+
 /// This device's outputs, as they are now.
 pub fn local(state: &SharedPlayerState) -> LinkOutputs {
     let cfg = Config::cached();
@@ -83,14 +109,15 @@ pub fn local(state: &SharedPlayerState) -> LinkOutputs {
             .find(|p| p.devices.iter().any(|d| d == device))
             .map(|p| p.name.clone())
     };
-    let devices = crate::audio::list_output_devices()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|d| LinkOutput {
-            preset: preset(&d.name),
-            id: d.name.clone(),
-            name: d.name,
-            kind: d.kind.as_str().to_string(),
+    let devices = DEVICES
+        .lock()
+        .get_or_insert_with(list_devices)
+        .iter()
+        .map(|(name, kind)| LinkOutput {
+            preset: preset(name),
+            id: name.clone(),
+            name: name.clone(),
+            kind: kind.clone(),
             ..Default::default()
         })
         .collect();
@@ -125,14 +152,15 @@ pub fn local(state: &SharedPlayerState) -> LinkOutputs {
     }
 }
 
-/// Play through `output` from now on. A renderer is a session to open, which
-/// takes a few round trips to it, so this blocks for those; the switch reaches
-/// the player in the order it was asked for (`upnp::choose`).
+/// Play through `output` from now on. `choice` is what `upnp::choose`
+/// returned when it was picked, taken before anything that could reorder it:
+/// a renderer is a session to open, a few round trips that block here, and a
+/// later pick drops it. Everything else reaches the player in order.
 pub fn set(
     output: OutputChoice,
+    choice: u64,
     player: &crossbeam_channel::Sender<PlayerCommand>,
 ) -> Result<(), String> {
-    let choice = crate::upnp::choose();
     let send = |cmd| {
         player
             .send(cmd)
@@ -235,6 +263,7 @@ mod tests {
             OutputChoice::Device {
                 name: "Topping E30".into(),
             },
+            crate::upnp::choose(),
             &tx,
         )
         .unwrap();
@@ -242,7 +271,7 @@ mod tests {
             rx.try_recv(),
             Ok(PlayerCommand::SetOutputDevice(name)) if name == "Topping E30"
         ));
-        set(OutputChoice::Default, &tx).unwrap();
+        set(OutputChoice::Default, crate::upnp::choose(), &tx).unwrap();
         assert!(matches!(
             rx.try_recv(),
             Ok(PlayerCommand::ClearOutputDevice)

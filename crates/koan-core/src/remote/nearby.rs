@@ -481,7 +481,7 @@ impl wire::Session for Serving<'_> {
             }));
             self.greeted = true;
         }
-        let now = (self.local.state)();
+        let now = for_the_network((self.local.state)());
         if self
             .sent
             .as_ref()
@@ -507,6 +507,16 @@ impl wire::Session for Serving<'_> {
 
     fn done(&self) -> bool {
         self.stop.stopped()
+    }
+}
+
+/// What a device on the network, which may belong to anyone, is told: what is
+/// playing and the queue, not the outputs. Those name the amplifiers in the
+/// room and the presets, and only the account may change them.
+fn for_the_network(state: LinkState) -> LinkState {
+    LinkState {
+        outputs: None,
+        ..state
     }
 }
 
@@ -1259,5 +1269,21 @@ mod dial_tests {
     #[test]
     fn a_redial_skips_the_wait() {
         assert_eq!(next_wait(RETRY_MAX, false, true), RETRY_MIN);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A device on the network sees what is playing, never where it plays.
+    #[test]
+    fn a_device_on_the_network_is_not_told_the_outputs() {
+        let state = crate::remote::link::LinkState {
+            playing: true,
+            outputs: Some(Default::default()),
+            ..Default::default()
+        };
+        let told = super::for_the_network(state);
+        assert!(told.playing);
+        assert_eq!(told.outputs, None);
     }
 }

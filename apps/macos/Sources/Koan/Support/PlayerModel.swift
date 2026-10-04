@@ -374,6 +374,8 @@ final class PlayerModel {
         deviceRead += 1
         let read = deviceRead
         Task {
+            // The Output menu reads the engine's list, which follows this.
+            await engine.refreshOutputs()
             let found = (try? await engine.devices()) ?? []
             let current = await engine.currentDevice()
             guard read == self.deviceRead else { return }
@@ -454,6 +456,12 @@ final class PlayerModel {
     /// What the device in view plays through: this one, or the one being
     /// controlled.
     var outputs: OutputsInfo? { mirror.outputs }
+
+    /// Whether the device in view's output can be chosen from here: this
+    /// device's always, another's only if it is one of the account's own.
+    var canChooseOutput: Bool {
+        !isControllingAnother || controlled?.account == true
+    }
 
     /// Play the device in view through `output`. On another device it
     /// switches as its own menu would; the music carries on where it is.
