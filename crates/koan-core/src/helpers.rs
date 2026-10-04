@@ -343,10 +343,11 @@ pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connect
     Ok(summary)
 }
 
-/// Remove whole albums from the download cache, least recently played first,
-/// until it is under the configured limit. Never an album with a favourite
-/// in it, nor one with a track in `keep`: the queue, whose files the player
-/// may be reading. Returns the bytes freed.
+/// Remove downloads until the cache is under the configured limit: those
+/// fetched to play first, then those asked for, least recently used first
+/// within each and an album at a time. Never an album with a favourite in it,
+/// nor a track in `keep` — the playing track and what follows it, while they
+/// fit (`playback_window`). Returns the bytes freed.
 pub fn evict_cache(
     db: &Database,
     cfg: &Config,
@@ -381,33 +382,75 @@ pub fn evict_cache(
         if current <= limit {
             break;
         }
-        if album.track_ids.iter().any(|id| keep.contains(id)) {
+        let gone: Vec<_> = album
+            .tracks
+            .iter()
+            .filter(|t| !keep.contains(&t.id))
+            .collect();
+        if gone.is_empty() {
             continue;
         }
-        for path in &album.cached_paths {
-            match std::fs::remove_file(path) {
+        for track in &gone {
+            match std::fs::remove_file(&track.path) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => log::warn!("cache eviction: failed to delete {path}: {e}"),
+                Err(e) => log::warn!("cache eviction: failed to delete {}: {e}", track.path),
             }
         }
-        if let Err(e) = queries::clear_cached_paths_for(&db.conn, &album.track_ids) {
+        let ids: Vec<i64> = gone.iter().map(|t| t.id).collect();
+        if let Err(e) = queries::clear_cached_paths_for(&db.conn, &ids) {
             log::warn!("cache eviction: failed to clear DB for album: {e}");
         }
+        let size: i64 = gone.iter().map(|t| t.size).sum();
         log::info!(
-            "evicted: {} — {} ({} bytes)",
+            "evicted: {} — {} ({} bytes{})",
             album.artist_name,
             album.album_title,
-            album.total_size
+            size,
+            if album.pinned { ", pinned" } else { "" }
         );
-        current -= album.total_size;
-        freed += album.total_size;
+        current -= size;
+        freed += size;
     }
     remove_empty_dirs(&cfg.cache_dir());
     if freed > 0 {
         log::info!("cache eviction freed {freed} bytes");
     }
     freed as u64
+}
+
+/// How many of `upcoming` — the playing track, then the queue after it — the
+/// cache has room for. The playing track and the next always: the decoder
+/// reads ahead into the next for gapless. After them each track while the
+/// cache stays under `limit`, counting favourites and pinned downloads first,
+/// since the queue does not displace them. What is already downloaded costs
+/// its file, and what is not its estimated size.
+pub fn playback_window(
+    db: &Database,
+    limit: u64,
+    upcoming: &[i64],
+) -> Result<usize, crate::db::connection::DbError> {
+    let total = queries::total_cache_size(&db.conn)?;
+    let evictable: std::collections::HashMap<i64, i64> = queries::cached_albums_lru(&db.conn)?
+        .into_iter()
+        .filter(|a| !a.pinned)
+        .flat_map(|a| a.tracks)
+        .map(|t| (t.id, t.size))
+        .collect();
+    let estimates = queries::download_estimates(&db.conn, upcoming)?;
+
+    let mut used = (total - evictable.values().sum::<i64>()).max(0) as u64;
+    let mut counted = std::collections::HashSet::new();
+    for (n, id) in upcoming.iter().enumerate() {
+        if counted.insert(*id) {
+            let cost = evictable.get(id).or_else(|| estimates.get(id));
+            used += cost.copied().unwrap_or(0).max(0) as u64;
+        }
+        if n >= 2 && used > limit {
+            return Ok(n);
+        }
+    }
+    Ok(upcoming.len())
 }
 
 /// Remove empty directories under `dir`, leaving `dir` itself.
@@ -1653,16 +1696,21 @@ fn is_cached_audio(path: &std::path::Path) -> bool {
 /// 1. Local library path (DB `path` field) -- use directly if file exists
 /// 2. Cache path -- use if already downloaded
 /// 3. Download from remote to cache -- stream while downloading
+///
+/// A `pinned` download was asked for by itself, not to play: it has no queue
+/// entry to wait for or to be cancelled by, and its file is marked pinned.
+#[allow(clippy::too_many_arguments)]
 pub fn download_track(
     db_id: i64,
     queue_id: QueueItemId,
+    pinned: bool,
     tx: &crossbeam_channel::Sender<PlayerCommand>,
     log_buf: &Arc<Mutex<Vec<String>>>,
     state: &Arc<SharedPlayerState>,
     cfg: &Config,
     client: &SubsonicClient,
 ) {
-    if !in_queue_soon(state, queue_id, Duration::from_secs(5)) {
+    if !pinned && !in_queue_soon(state, queue_id, Duration::from_secs(5)) {
         return;
     }
 
@@ -1753,6 +1801,9 @@ pub fn download_track(
         let _ = std::fs::remove_file(&dest);
     }
     if dest.exists() {
+        if pinned && let Err(e) = queries::pin_cached(&db.conn, &[db_id]) {
+            log::warn!("could not pin {}: {e}", dest.display());
+        }
         state.update_paths(&[(queue_id, dest)]);
         state.update_item_state(queue_id, ItemState::Ready);
         if state.is_cursor(queue_id) {
@@ -1790,7 +1841,7 @@ pub fn download_track(
     // A retry restarts the byte count from zero, so a changed total re-announces.
     let announced_total = AtomicU64::new(u64::MAX);
     // Taken out of the queue, cleared or removed, while waiting out an outage.
-    let gone = || state.get_item(queue_id).is_none();
+    let gone = || !pinned && state.get_item(queue_id).is_none();
     let result =
         client.download_with_progress(&remote_id, &dest, &gone, move |downloaded, total| {
             bytes_written_progress.set(downloaded);
@@ -1841,6 +1892,8 @@ pub fn download_track(
             dest.display(),
             e
         );
+    } else if pinned && let Err(e) = queries::pin_cached(&db.conn, &[db_id]) {
+        log::warn!("could not pin {}: {e}", dest.display());
     }
 
     push_log(
@@ -1938,6 +1991,20 @@ pub fn spawn_downloads(
         return;
     }
     crate::remote::queue::shared(&tx, &state, None).enqueue(pending);
+}
+
+/// Fetch tracks into the cache because someone asked for the files, not to
+/// play them. Pinned: eviction takes them only after everything fetched for
+/// playback. Tracks already downloaded are pinned where they are.
+pub fn download_pinned(
+    track_ids: Vec<i64>,
+    tx: crossbeam_channel::Sender<PlayerCommand>,
+    state: Arc<SharedPlayerState>,
+) {
+    if track_ids.is_empty() {
+        return;
+    }
+    crate::remote::queue::shared(&tx, &state, None).pin(track_ids);
 }
 
 #[cfg(test)]

@@ -1046,6 +1046,11 @@ impl MutationRoot {
                 }
             })
             .map_err(|e| super::internal_error("config write", e))?;
+            if input.cache_limit.is_some()
+                && let Some(queue) = koan_core::remote::queue::running()
+            {
+                queue.limit_changed();
+            }
 
             Ok(GqlStatus::success("config updated"))
         })

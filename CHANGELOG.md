@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- **The cache limit holds with a long queue.** Eviction skipped every album with a track in the queue, and the queue was downloaded in full, so a queue larger than the limit filled the cache past it and pinned it there: 38 GB against a 10 GB limit. The queue is now fetched only as far ahead of the cursor as the limit allows, and eviction keeps just that window; played tracks and anything past the window are evicted like any other download.
+- **Download to Cache downloads.** Its transfers had no queue entry, and a download waits for its entry to appear before starting, so each gave up after five seconds without fetching anything. Tracks downloaded this way are now pinned: evicted only once nothing fetched for playback is left to remove.
+
 - **A record with no artwork shows the ensō in the web UI, not a broken image.** The cover route answered 404, and the browser drew its broken-image icon until the page's script caught the error. It now serves the placeholder the macOS and iOS apps draw: the app icon's ensō, faded. It is cached for an hour rather than for good, since art added beside the files does not change the cover's URL.
 
 ## 0.50.3

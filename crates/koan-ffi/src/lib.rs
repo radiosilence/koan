@@ -1907,6 +1907,7 @@ impl KoanEngine {
     /// `sign_in_remote`.
     pub async fn update_settings(self: Arc<Self>, s: Settings) -> Result<(), KoanError> {
         offload::offload(move || {
+            let limit_before = Config::cached().remote.cache_limit.clone();
             Config::persist(|cfg| {
                 cfg.library.folders = s
                     .library_folders
@@ -1942,6 +1943,11 @@ impl KoanEngine {
                 message: e.to_string(),
             })?;
             koan_core::remote::nearby::reconfigure();
+            if Config::cached().remote.cache_limit != limit_before
+                && let Some(queue) = koan_core::remote::queue::running()
+            {
+                queue.limit_changed();
+            }
             Ok(())
         })
         .await
@@ -2177,18 +2183,14 @@ impl KoanEngine {
     /// Downloads are normally a side effect of wanting to play something; this
     /// is for wanting the bytes on the machine and nothing else — before going
     /// somewhere without a server, most obviously. Tracks already downloaded
-    /// are skipped, so asking twice costs nothing.
+    /// are pinned where they are, so asking twice costs nothing. Pinned
+    /// downloads are evicted only after everything fetched for playback.
     ///
-    /// The transfers get identities of their own rather than borrowing a queue
-    /// item's, because there is no queue item: they appear in the download
-    /// store and nowhere else.
+    /// The transfers have no queue item: they appear in the download store
+    /// and nowhere else.
     pub async fn download_to_cache(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
         offload::offload(move || {
-            let pending: Vec<(i64, koan_core::player::state::QueueItemId)> = track_ids
-                .into_iter()
-                .map(|id| (id, koan_core::player::state::QueueItemId::new()))
-                .collect();
-            koan_core::helpers::spawn_downloads(pending, self.tx.clone(), self.state.clone());
+            koan_core::helpers::download_pinned(track_ids, self.tx.clone(), self.state.clone());
             Ok(())
         })
         .await

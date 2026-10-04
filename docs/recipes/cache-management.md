@@ -22,22 +22,22 @@ cache_dir = "/path/to/custom/cache"
 
 Or: `KOAN_REMOTE__CACHE_DIR=/path/to/custom/cache`
 
-## Automatic LRU eviction
-
-Set a size limit and kōan evicts the least-recently-played tracks on startup:
+## Size limit
 
 ```toml
 [remote]
 cache_limit = "50GB"
 ```
 
-Eviction rules:
-- Evicts whole albums (not individual tracks), oldest last-played first
-- Favourited tracks are never evicted
-- Eviction runs when kōan starts and again as each download lands
-- Size is calculated from the database (fast), not by scanning the filesystem
+With a limit set, the queue is fetched only as far ahead as the limit allows: the playing track and the next always (gapless playback reads ahead), then each following track while the cache stays under the limit. The rest of the queue waits and is fetched as the cursor reaches it. Without this a long queue downloaded in full and then could not be evicted.
 
-If no `cache_limit` is set, the cache grows without bound.
+Eviction takes, in order:
+1. Downloads fetched for playback, least recently used first. Tracks already played from the queue are among them, as is anything past the window above.
+2. Downloads you asked for with **Download to Cache**, least recently used first. These are pinned, not permanent: they go only once nothing fetched for playback is left to remove.
+
+It never takes an album with a favourited track, nor the tracks in the window ahead of the cursor. It works an album at a time, so a record is not left with gaps beyond what the queue still needs. Eviction runs at startup, at most once a minute as downloads land, and as soon as the limit changes in Settings. Size comes from the database, not a filesystem walk.
+
+If no `cache_limit` is set, the whole queue is fetched and the cache grows without bound.
 
 ## Manual eviction
 

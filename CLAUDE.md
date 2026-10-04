@@ -145,7 +145,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/nearby.rs` | LAN control: listener on `devices.port`, Bonjour via `dns_sd`, a connection per device found or listed by address. Strangers get playback and the queue only (`LinkCommand::allowed_nearby`) |
 | `remote/wire.rs` | Event-driven WebSocket sessions: one `poll` on the socket and a pipe the engine's change signal rings |
 | `remote/wikimedia.rs` | Wikidata items, Wikipedia lead sections and Commons images — where artist bios and photos come from |
-| `remote/queue.rs` | The download queue: worker pool, a priority lane for the track under the cursor, cursor-aware reordering |
+| `remote/queue.rs` | The download queue: worker pool, a priority lane for the track under the cursor, cursor-aware reordering. With a cache limit, fetches only as far ahead of the cursor as the limit allows, and trims the cache |
 | `remote/downloads.rs` | The download store — what koan is fetching and what it just fetched. One place every front end reads, rather than each deriving its own |
 | `quiet.rs` | What runs in the background on iOS: nothing nobody asked for. Link, nearby browse and dial, sync and rescans wait here; a phone playing stays findable. Lifted by controlling another device or a push |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |

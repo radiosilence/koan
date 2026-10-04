@@ -1577,7 +1577,8 @@ pub fn clear_cached_paths(conn: &Connection) -> Result<(), DbError> {
     // Only the rows that hold a download: an unqualified UPDATE rewrites every
     // track in the library through the WAL.
     conn.execute(
-        "UPDATE tracks SET cached_path = NULL, cache_size_bytes = NULL, cache_download_date = NULL
+        "UPDATE tracks SET cached_path = NULL, cache_size_bytes = NULL, cache_download_date = NULL,
+                cache_pinned = 0
          WHERE cached_path IS NOT NULL",
         params![],
     )?;
@@ -1604,7 +1605,8 @@ pub fn clear_cached_paths_for(conn: &Connection, track_ids: &[i64]) -> Result<()
         return Ok(());
     }
     conn.execute(
-        "UPDATE tracks SET cached_path = NULL, cache_size_bytes = NULL, cache_download_date = NULL
+        "UPDATE tracks SET cached_path = NULL, cache_size_bytes = NULL, cache_download_date = NULL,
+                cache_pinned = 0
          WHERE id IN (SELECT value FROM json_each(?1))",
         [super::json_list(track_ids)],
     )?;
@@ -1626,27 +1628,53 @@ pub fn set_cached_path(conn: &Connection, track_id: i64, path: &str) -> Result<(
     Ok(())
 }
 
-/// Row returned by the cache eviction query.
+/// Mark these tracks' downloads as asked for, so eviction takes them last.
+/// Tracks with no download are left alone.
+pub fn pin_cached(conn: &Connection, track_ids: &[i64]) -> Result<(), DbError> {
+    if track_ids.is_empty() {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE tracks SET cache_pinned = 1
+         WHERE id IN (SELECT value FROM json_each(?1)) AND cached_path IS NOT NULL",
+        [super::json_list(track_ids)],
+    )?;
+    Ok(())
+}
+
+/// One downloaded file eviction may remove.
+#[derive(Debug, Clone)]
+pub struct CachedTrack {
+    pub id: i64,
+    pub path: String,
+    pub size: i64,
+}
+
+/// An album's downloads, or the pinned or unpinned half of them: eviction
+/// takes an album at a time, so a record is not left with holes in it.
 #[derive(Debug, Clone)]
 pub struct CachedAlbumInfo {
     pub album_id: i64,
     pub album_title: String,
     pub artist_name: String,
-    pub total_size: i64,
-    pub track_ids: Vec<i64>,
-    pub cached_paths: Vec<String>,
+    pub pinned: bool,
+    pub tracks: Vec<CachedTrack>,
 }
 
-/// Get cached albums ordered by LRU (least recently used first), excluding favourited tracks.
-/// Returns albums with their total cache size and file paths for eviction.
+impl CachedAlbumInfo {
+    pub fn total_size(&self) -> i64 {
+        self.tracks.iter().map(|t| t.size).sum()
+    }
+}
+
+/// Cached albums in the order eviction takes them: everything downloaded to
+/// play before anything downloaded on request, least recently used first
+/// within each. An album with a favourite in it is never listed.
 ///
 /// A download counts as a use: an album fetched for offline listening has
 /// never been played, and ranking it by plays alone would make it the first to go.
 pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbError> {
-    // Get all cached tracks with their last played timestamp.
-    // A track is "protected" if it appears in the favourites table.
-    // We exclude any album that has ANY favourited cached track.
-    // Uses LEFT JOIN with pre-aggregated play_history to avoid O(N) correlated subquery.
+    // play_history is pre-aggregated rather than queried per track.
     let mut stmt = conn.prepare(
         "SELECT t.id, t.album_id, COALESCE(al.title, 'Unknown'), COALESCE(a.name, 'Unknown'),
                 t.cached_path, COALESCE(t.cache_size_bytes, 0),
@@ -1654,7 +1682,8 @@ pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbEr
                 EXISTS(SELECT 1 FROM favourites f
                        WHERE f.track_path = t.cached_path
                           OR f.track_path = t.path
-                          OR f.track_path = t.remote_url) as is_fav
+                          OR f.track_path = t.remote_url) as is_fav,
+                t.cache_pinned != 0
          FROM tracks t
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists a ON al.artist_id = a.id
@@ -1674,6 +1703,7 @@ pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbEr
         size: i64,
         last_play: Option<i64>,
         is_fav: bool,
+        pinned: bool,
     }
 
     let rows: Vec<CachedTrackRow> = stmt
@@ -1687,53 +1717,69 @@ pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbEr
                 size: row.get(5)?,
                 last_play: row.get(6)?,
                 is_fav: row.get(7)?,
+                pinned: row.get(8)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Group by album_id; a track without an album is keyed by its negated id.
-    let mut albums: std::collections::BTreeMap<i64, CachedAlbumInfo> =
+    // A track without an album is keyed by its negated id.
+    let album_key = |r: &CachedTrackRow| r.album_id.unwrap_or(-r.track_id);
+    let with_favourites: HashSet<i64> = rows.iter().filter(|r| r.is_fav).map(album_key).collect();
+
+    let mut albums: std::collections::BTreeMap<(i64, bool), (CachedAlbumInfo, Option<i64>)> =
         std::collections::BTreeMap::new();
-    // Track max last_play per album, and whether album has any favourites.
-    let mut album_last_play: HashMap<i64, Option<i64>> = HashMap::new();
-    let mut album_has_fav: HashSet<i64> = HashSet::new();
-
-    for r in &rows {
-        let aid = r.album_id.unwrap_or(-r.track_id); // unique key for albumless tracks
-        if r.is_fav {
-            album_has_fav.insert(aid);
-        }
-        let entry = albums.entry(aid).or_insert_with(|| CachedAlbumInfo {
-            album_id: aid,
-            album_title: r.album_title.clone(),
-            artist_name: r.artist_name.clone(),
-            total_size: 0,
-            track_ids: Vec::new(),
-            cached_paths: Vec::new(),
+    for r in rows
+        .iter()
+        .filter(|r| !with_favourites.contains(&album_key(r)))
+    {
+        let aid = album_key(r);
+        let (entry, last_use) = albums.entry((aid, r.pinned)).or_insert_with(|| {
+            let info = CachedAlbumInfo {
+                album_id: aid,
+                album_title: r.album_title.clone(),
+                artist_name: r.artist_name.clone(),
+                pinned: r.pinned,
+                tracks: Vec::new(),
+            };
+            (info, None)
         });
-        entry.total_size += r.size;
-        entry.track_ids.push(r.track_id);
-        entry.cached_paths.push(r.cached_path.clone());
-
-        let current_max = album_last_play.entry(aid).or_insert(None);
-        *current_max = match (*current_max, r.last_play) {
-            (Some(a), Some(b)) => Some(a.max(b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
-        };
+        entry.tracks.push(CachedTrack {
+            id: r.track_id,
+            path: r.cached_path.clone(),
+            size: r.size,
+        });
+        *last_use = (*last_use).max(r.last_play);
     }
 
-    // Filter out albums with any favourited tracks, then sort by last use ascending (oldest first).
     // Albums with no recorded use sort before everything (None < Some).
-    let mut result: Vec<CachedAlbumInfo> = albums
-        .into_values()
-        .filter(|a| !album_has_fav.contains(&a.album_id))
-        .collect();
+    let mut result: Vec<_> = albums.into_values().collect();
+    result.sort_by_key(|(a, last_use)| (a.pinned, *last_use));
+    Ok(result.into_iter().map(|(a, _)| a).collect())
+}
 
-    result.sort_by_key(|a| album_last_play.get(&a.album_id).copied().unwrap_or(None));
-
-    Ok(result)
+/// What downloading each of these tracks would add to the cache, for those
+/// not already in it. Tracks with a library file cost nothing. The server
+/// rarely says how large a file is, so the size is reckoned from bitrate and
+/// length, or from length at CD rate when the bitrate is missing too.
+pub fn download_estimates(
+    conn: &Connection,
+    track_ids: &[i64],
+) -> Result<HashMap<i64, i64>, DbError> {
+    if track_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut stmt = conn.prepare_cached(
+        "SELECT id,
+                CASE WHEN remote_id IS NULL OR path IS NOT NULL THEN 0
+                     ELSE COALESCE(size_bytes, bitrate * duration_ms / 8, duration_ms * 1411 / 8, 0)
+                END
+         FROM tracks
+         WHERE id IN (SELECT value FROM json_each(?1)) AND cached_path IS NULL",
+    )?;
+    let rows = stmt.query_map([super::json_list(track_ids)], |r| {
+        Ok((r.get(0)?, r.get(1)?))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// Get total cache size from DB tracking (sum of cache_size_bytes for all cached tracks).
@@ -3887,6 +3933,131 @@ mod tests {
             })
             .collect();
         assert_eq!(cached, vec![ids[0]]);
+    }
+
+    /// One cached track per `(album, last used, pinned)`, 10MB each.
+    fn cached_tracks(db: &Database, albums: &[(&str, i64, bool)]) -> Vec<i64> {
+        albums
+            .iter()
+            .map(|(album, used, pinned)| {
+                let mut meta = sample_meta("Track", "Artist", album);
+                meta.source = "remote".into();
+                meta.path = None;
+                meta.remote_id = Some(format!("r-{album}"));
+                let id = upsert_track(&db.conn, &meta).unwrap();
+                db.conn
+                    .execute(
+                        "UPDATE tracks SET cached_path = ?1, cache_size_bytes = 10000000,
+                                cache_download_date = ?2, cache_pinned = ?3
+                         WHERE id = ?4",
+                        params![format!("/nonexistent/{album}/Track.flac"), used, pinned, id],
+                    )
+                    .unwrap();
+                id
+            })
+            .collect()
+    }
+
+    fn still_cached(db: &Database, ids: &[i64]) -> Vec<i64> {
+        ids.iter()
+            .copied()
+            .filter(|id| {
+                db.conn
+                    .query_row(
+                        "SELECT cached_path IS NOT NULL FROM tracks WHERE id = ?1",
+                        params![id],
+                        |r| r.get(0),
+                    )
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pinned_downloads_are_evicted_after_everything_fetched_to_play() {
+        crate::config::isolate_config_for_tests();
+        let db = test_db();
+        // The pinned album is the least recently used, and still goes last.
+        let ids = cached_tracks(
+            &db,
+            &[
+                ("Pinned", 1000, true),
+                ("Old", 2000, false),
+                ("New", 3000, false),
+            ],
+        );
+        let mut cfg = crate::config::Config::default();
+        cfg.remote.cache_limit = Some("15MB".into());
+
+        crate::helpers::evict_cache(&db, &cfg, &Default::default(), false);
+        assert_eq!(still_cached(&db, &ids), vec![ids[0]]);
+
+        cfg.remote.cache_limit = Some("5MB".into());
+        crate::helpers::evict_cache(&db, &cfg, &Default::default(), false);
+        assert!(still_cached(&db, &ids).is_empty(), "pinned is not forever");
+    }
+
+    #[test]
+    fn eviction_takes_the_played_half_of_a_queued_album() {
+        crate::config::isolate_config_for_tests();
+        let db = test_db();
+        let mut ids = Vec::new();
+        for n in 1..=4 {
+            let mut meta = sample_meta(&format!("T{n}"), "Artist", "Album");
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(format!("r-{n}"));
+            meta.track_number = Some(n);
+            let id = upsert_track(&db.conn, &meta).unwrap();
+            db.conn
+                .execute(
+                    "UPDATE tracks SET cached_path = ?1, cache_size_bytes = 10000000 WHERE id = ?2",
+                    params![format!("/nonexistent/T{n}.flac"), id],
+                )
+                .unwrap();
+            ids.push(id);
+        }
+        let mut cfg = crate::config::Config::default();
+        cfg.remote.cache_limit = Some("25MB".into());
+
+        // Two played, two to come.
+        let keep = std::collections::HashSet::from([ids[2], ids[3]]);
+        crate::helpers::evict_cache(&db, &cfg, &keep, false);
+        assert_eq!(still_cached(&db, &ids), vec![ids[2], ids[3]]);
+    }
+
+    #[test]
+    fn the_window_is_what_fits_beside_pinned_downloads() {
+        crate::config::isolate_config_for_tests();
+        let db = test_db();
+        let pinned = cached_tracks(&db, &[("Pinned", 1000, true)]);
+        let mut upcoming = Vec::new();
+        for n in 1..=5 {
+            let mut meta = sample_meta(&format!("Q{n}"), "Artist", "Queued");
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(format!("q-{n}"));
+            meta.track_number = Some(n);
+            // No size from the server: 10MB, reckoned at 1000kbps.
+            meta.size_bytes = None;
+            meta.bitrate = Some(1000);
+            meta.duration_ms = Some(80_000);
+            upcoming.push(upsert_track(&db.conn, &meta).unwrap());
+        }
+
+        // 10MB pinned, so a 45MB limit leaves room for three queued tracks.
+        let fits = crate::helpers::playback_window(&db, 45_000_000, &upcoming).unwrap();
+        assert_eq!(fits, 3);
+
+        // The playing track and the next are held however small the limit.
+        let fits = crate::helpers::playback_window(&db, 1, &upcoming).unwrap();
+        assert_eq!(fits, 2);
+
+        // A pinned track in the queue is already counted.
+        let mut with_pinned = vec![pinned[0]];
+        with_pinned.extend(&upcoming);
+        let fits = crate::helpers::playback_window(&db, 45_000_000, &with_pinned).unwrap();
+        assert_eq!(fits, 4);
     }
 
     #[test]

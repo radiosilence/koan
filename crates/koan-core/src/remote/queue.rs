@@ -79,7 +79,7 @@ fn ensure_workers(inner: &Arc<Inner>) {
 
 /// What a worker should fetch next: the track under the cursor ahead of
 /// everything, nothing at all while that track is already being fetched, and
-/// otherwise the front of the queue.
+/// otherwise the first in the queue the cache has room for.
 fn next_item(q: &mut Queue, cursor: Option<(i64, QueueItemId)>) -> Option<(i64, QueueItemId)> {
     match cursor {
         Some((db_id, _)) if q.in_flight.contains_key(&db_id) => None,
@@ -88,8 +88,8 @@ fn next_item(q: &mut Queue, cursor: Option<(i64, QueueItemId)>) -> Option<(i64, 
             .iter()
             .position(|(_, qid)| *qid == queue_id)
             .and_then(|ix| q.pending.remove(ix))
-            .or_else(|| q.pending.pop_front()),
-        None => q.pending.pop_front(),
+            .or_else(|| q.pop_allowed()),
+        None => q.pop_allowed(),
     }
 }
 
@@ -128,6 +128,29 @@ struct Queue {
     /// whichever finishes first renaming it out from under the other.
     in_flight: HashMap<i64, HashSet<QueueItemId>>,
     priority_active: usize,
+    /// The queue entries the cache has room for, from the cursor on. `None`
+    /// with no cache limit, when every entry may be fetched. An entry outside
+    /// it stays pending until the cursor brings it in.
+    window: Option<HashSet<QueueItemId>>,
+    /// Downloads asked for by themselves (`DownloadQueue::pin`). No queue
+    /// entry, so no window: they are fetched whatever the limit.
+    pinned: HashSet<QueueItemId>,
+}
+
+impl Queue {
+    fn allowed(&self, queue_id: QueueItemId) -> bool {
+        self.window.as_ref().is_none_or(|w| w.contains(&queue_id))
+            || self.pinned.contains(&queue_id)
+    }
+
+    /// Take the first pending entry the cache has room for.
+    fn pop_allowed(&mut self) -> Option<(i64, QueueItemId)> {
+        let ix = self
+            .pending
+            .iter()
+            .position(|(_, qid)| self.allowed(*qid))?;
+        self.pending.remove(ix)
+    }
 }
 
 /// What a priority request should do, given the state of the lane.
@@ -210,7 +233,7 @@ impl DownloadQueue {
         let trimmer = inner.clone();
         let _ = std::thread::Builder::new()
             .name("koan-dl-trim".into())
-            .spawn(move || trim_cache(&trimmer));
+            .spawn(move || fit_cache(&trimmer, Trim::Now));
 
         let watcher_inner = inner.clone();
         if let Err(e) = std::thread::Builder::new()
@@ -231,10 +254,32 @@ impl DownloadQueue {
         ensure_workers(&self.inner);
         retry_server_now();
         self.inner.queue.lock().pending.extend(items);
-        self.inner.has_work.notify_all();
+        fit_cache(&self.inner, Trim::No);
         if let Some(cursor) = self.inner.state.cursor() {
             promote_cursor(&self.inner, cursor);
         }
+    }
+
+    /// Fetch tracks because someone asked for the files, outside the queue
+    /// and its window. See `helpers::download_pinned`.
+    pub fn pin(&self, track_ids: Vec<i64>) {
+        ensure_workers(&self.inner);
+        retry_server_now();
+        let items: Vec<_> = track_ids
+            .into_iter()
+            .map(|id| (id, QueueItemId::new()))
+            .collect();
+        let mut q = self.inner.queue.lock();
+        q.pinned.extend(items.iter().map(|(_, qid)| *qid));
+        q.pending.extend(items);
+        drop(q);
+        self.inner.has_work.notify_all();
+    }
+
+    /// The cache limit changed: hold the queue to the new one and evict down
+    /// to it now, rather than at the next download.
+    pub fn limit_changed(&self) {
+        fit_cache(&self.inner, Trim::Now);
     }
 
     /// Submit a single item for priority download (e.g. user clicked a Pending
@@ -328,6 +373,7 @@ fn settle_waiters(inner: &Arc<Inner>, db_id: i64, downloaded: QueueItemId) {
 /// the queue lives as long as the process, and signing in, out or elsewhere
 /// has to reach it.
 fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
+    let pinned = inner.queue.lock().pinned.remove(&queue_id);
     let cfg = config::Config::cached();
     let Some(client) = crate::helpers::subsonic_client(&cfg) else {
         // Failed, not left Pending: the player waits for Ready, so a queue of
@@ -345,6 +391,7 @@ fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
         download_track(
             db_id,
             queue_id,
+            pinned,
             &inner.cmd_tx,
             &inner.log_buf,
             &inner.state,
@@ -366,41 +413,75 @@ fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
     // Before the claim is released, while the waiting entries are still
     // recorded against this track.
     settle_waiters(inner, db_id, queue_id);
-    trim_cache(inner);
+    fit_cache(inner, Trim::Throttled);
 }
 
 /// How often the cache is checked against its limit, at most: each download
 /// adds to it, and a check reads the whole cache's size from the database.
 const EVICT_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// Trim the cache to its configured limit, keeping everything in the queue:
-/// the player may be reading those files, and they are what is wanted next.
-/// The limit is read afresh, so one set in Settings applies without a
-/// restart.
-fn trim_cache(inner: &Inner) {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Trim {
+    No,
+    Throttled,
+    Now,
+}
+
+/// Hold the queue to what the cache has room for, and evict down to the limit.
+///
+/// The window runs from the cursor: the playing track and what follows it,
+/// as far as `helpers::playback_window` says fits. Entries outside it — played
+/// ones included — wait in the queue, and their downloads are what eviction
+/// takes first. The limit is read afresh, so one set in Settings applies
+/// without a restart.
+fn fit_cache(inner: &Inner, trim: Trim) {
+    let cfg = config::Config::cached();
+    let Some(limit) = cfg.cache_limit_bytes() else {
+        inner.queue.lock().window = None;
+        inner.has_work.notify_all();
+        return;
+    };
+    let (items, cursor) = inner.state.snapshot_playlist();
+    let start = cursor
+        .and_then(|c| items.iter().position(|i| i.id == c))
+        .unwrap_or(0);
+    let upcoming: Vec<(i64, QueueItemId)> = items[start..]
+        .iter()
+        .filter_map(|i| Some((i.db_id?, i.id)))
+        .collect();
+    let ids: Vec<i64> = upcoming.iter().map(|(id, _)| *id).collect();
+
+    let db = match crate::db::pool::shared().get() {
+        Ok(db) => db,
+        Err(e) => {
+            log::warn!("cache window: could not open the database: {e}");
+            return;
+        }
+    };
+    let fits = crate::helpers::playback_window(&db, limit, &ids).unwrap_or_else(|e| {
+        log::warn!("cache window: {e}");
+        ids.len()
+    });
+    let window = &upcoming[..fits];
+    inner.queue.lock().window = Some(window.iter().map(|(_, qid)| *qid).collect());
+    inner.has_work.notify_all();
+
+    if trim == Trim::No {
+        return;
+    }
     {
         let mut last = inner.last_evicted.lock();
-        if last.is_some_and(|t| t.elapsed() < EVICT_EVERY) {
+        if trim == Trim::Throttled && last.is_some_and(|t| t.elapsed() < EVICT_EVERY) {
             return;
         }
         *last = Some(std::time::Instant::now());
     }
-    let cfg = config::Config::cached();
-    if cfg.cache_limit_bytes().is_none() {
-        return;
-    }
-    let keep = inner
-        .state
-        .snapshot_playlist()
-        .0
-        .iter()
-        .filter_map(|i| i.db_id)
-        .collect();
-    match crate::db::pool::shared().get() {
-        Ok(db) => {
-            crate::helpers::evict_cache(&db, &cfg, &keep, false);
-        }
-        Err(e) => log::warn!("cache eviction: could not open the database: {e}"),
+    let keep = window.iter().map(|(id, _)| *id).collect();
+    if crate::helpers::evict_cache(&db, &cfg, &keep, false) > 0 {
+        // Played entries pointed at the files just removed. Pending again,
+        // they are fetched if the cursor comes back to them.
+        let stale = inner.state.reset_items_with_missing_files();
+        inner.queue.lock().pending.extend(stale);
     }
 }
 
@@ -472,8 +553,14 @@ fn cursor_watcher(inner: Arc<Inner>) {
     let changed = crate::signal::engine_changed();
     let mut seen = changed.generation();
     let mut last_cursor: Option<QueueItemId> = None;
+    let mut last_content = None;
     loop {
         let current = inner.state.cursor();
+        let content = inner.state.content_version();
+        if current != last_cursor || last_content != Some(content) {
+            last_content = Some(content);
+            fit_cache(&inner, Trim::No);
+        }
         if current != last_cursor {
             last_cursor = current;
             inner.has_work.notify_all();
@@ -519,7 +606,7 @@ fn promote_cursor(inner: &Arc<Inner>, cursor_id: QueueItemId) {
             }
 
             // Grab the next track too, for gapless lookahead.
-            if let Some(next) = q.pending.pop_front() {
+            if let Some(next) = q.pop_allowed() {
                 priority_items.push(next);
             }
         }
@@ -528,6 +615,13 @@ fn promote_cursor(inner: &Arc<Inner>, cursor_id: QueueItemId) {
     for item in priority_items {
         dispatch_priority(inner, item);
     }
+}
+
+static QUEUE: std::sync::OnceLock<DownloadQueue> = std::sync::OnceLock::new();
+
+/// The process's download queue, if anything has made it yet.
+pub fn running() -> Option<&'static DownloadQueue> {
+    QUEUE.get()
 }
 
 /// The process's download queue.
@@ -544,7 +638,6 @@ pub fn shared(
     state: &Arc<SharedPlayerState>,
     log_buf: Option<Arc<StdMutex<Vec<String>>>>,
 ) -> &'static DownloadQueue {
-    static QUEUE: std::sync::OnceLock<DownloadQueue> = std::sync::OnceLock::new();
     QUEUE.get_or_init(|| {
         DownloadQueue::spawn(
             cmd_tx.clone(),
@@ -723,6 +816,25 @@ mod tests {
         q.in_flight.remove(&3);
         assert_eq!(next_item(&mut q, None), Some((1, a)));
         assert_eq!(next_item(&mut q, None), Some((2, b)));
+    }
+
+    #[test]
+    fn entries_past_the_window_wait_and_pinned_ones_do_not() {
+        let (played, next, beyond, pinned) = (qid(), qid(), qid(), qid());
+        let mut q = Queue::default();
+        q.pending
+            .extend([(1, played), (2, beyond), (3, next), (4, pinned)]);
+        q.window = Some(HashSet::from([next]));
+        q.pinned.insert(pinned);
+
+        assert_eq!(next_item(&mut q, None), Some((3, next)));
+        assert_eq!(next_item(&mut q, None), Some((4, pinned)));
+        assert_eq!(next_item(&mut q, None), None);
+        assert_eq!(q.pending.len(), 2, "held, not dropped");
+
+        // The cursor moves on and the window with it.
+        q.window = Some(HashSet::from([beyond]));
+        assert_eq!(next_item(&mut q, None), Some((2, beyond)));
     }
 
     #[test]
