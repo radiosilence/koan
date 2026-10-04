@@ -857,7 +857,9 @@ mod outbox {
     use koan_core::remote::link::LinkCommand;
 
     /// Dropped undelivered after this long: a device away a month re-syncs
-    /// on its own when opened.
+    /// on its own when opened. A device unseen this long is forgotten with
+    /// its push token, so the entry a reinstall leaves behind stops being
+    /// offered as a device; a live one gives its token again when it links.
     const KEEP_SECS: i64 = 30 * 24 * 60 * 60;
 
     /// Tests keep to memory: the configured database is whoever ran them.
@@ -918,6 +920,15 @@ mod outbox {
         );
         let _ = db.conn.execute(
             "DELETE FROM link_outbox WHERE created_at < ?1",
+            [now - KEEP_SECS],
+        );
+        let _ = db.conn.execute(
+            "DELETE FROM link_push WHERE (device, username) IN
+               (SELECT device, username FROM link_devices WHERE last_seen < ?1)",
+            [now - KEEP_SECS],
+        );
+        let _ = db.conn.execute(
+            "DELETE FROM link_devices WHERE last_seen < ?1",
             [now - KEEP_SECS],
         );
         let waiting: Vec<(i64, String)> = db
