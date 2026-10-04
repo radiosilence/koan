@@ -1,11 +1,12 @@
 # Equalisation and convolution
 
 kōan can correct headphones, speakers and rooms on its own output, with filters
-designed elsewhere: room-correction impulse responses from REW, rePhase,
-Acourate, Audiolense or Home Audio Fidelity, Roon filter packs, CamillaDSP and
-Equalizer APO setups, and AutoEQ headphone profiles. A profile belongs to output
-devices, so plugging in the headphones selects their correction, and a device no
-profile names plays bit-perfect as before.
+designed elsewhere: headphone and IEM EQ from AutoEQ or squig.link, for players
+and DACs with no EQ of their own; room-correction impulse responses from REW,
+rePhase, Acourate, Audiolense or Home Audio Fidelity, Roon filter packs,
+CamillaDSP and Equalizer APO setups. A profile belongs to output devices, so
+plugging in the headphones selects their correction, and a device no profile
+names plays bit-perfect as before.
 
 The processing runs on the decode thread, before the ring buffer, so the audio
 callback is the same with DSP on as off. With DSP off, or on a device without a
@@ -39,14 +40,15 @@ room's responses and a headphone EQ can live in one profile.
 | Roon zip | Roon, Home Audio Fidelity | Unpacked and read as the files inside: responses as above, or `.cfg` files |
 | Convolver `.cfg` | Roon, JRiver, Acourate, Audiolense | The header's rate; routes say which response feeds which channel, at what weight and delay. Crossfeed works; a crossover to more outputs than inputs is refused |
 | CamillaDSP YAML | CamillaDSP | `devices.samplerate`. Biquads become bands and `Conv` filters responses, on the channels the pipeline gives them. Mixers are refused |
-| Equalizer APO `config.txt`, AutoEQ `ParametricEQ.txt`, REW filter settings | Equalizer APO, AutoEQ, REW | Bands on the channels `Channel:` selects; `Convolution:` responses at their own rate; `Include:` followed. REW's per-speaker files go to the channel their name says |
+| Equalizer APO `config.txt`, AutoEQ `ParametricEQ.txt`, squig.link `Filters.txt`, REW filter settings | Equalizer APO, AutoEQ, squig.link, REW | Bands on the channels `Channel:` selects; `Convolution:` responses at their own rate; `Include:` followed. REW's per-speaker files go to the channel their name says |
 | Raw or text coefficients | CamillaDSP, BruteFIR, REW text export | A rate in the file name (`room-48k.txt`), or asked for |
 
 Anything in these that kōan cannot do — a mixer, a delay filter, a first-order
 shelf, Equalizer APO's `Copy:` — stops the import with its name, rather than
 being dropped and leaving the correction different from what was designed.
-AutoEQ's `GraphicEQ.txt` is a curve rather than filters; import the
-`ParametricEQ.txt` for the same headphones.
+A `GraphicEQ:` file — AutoEQ's `GraphicEQ.txt`, squig.link's "Export Graphic
+EQ" — is a curve sampled from filters; import the parametric version, which
+holds the filters themselves.
 
 kōan keeps what it imported under `dsp/<profile>/` beside the config, as one
 32-bit float WAV per rate, with a `.cfg` where the routes mix or delay channels.

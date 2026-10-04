@@ -342,7 +342,8 @@ fn side_in_name(path: &Path) -> Option<usize> {
     }
 }
 
-/// `Sennheiser HD 600 ParametricEQ.txt` → `Sennheiser HD 600`.
+/// `Sennheiser HD 600 ParametricEQ.txt` → `Sennheiser HD 600`, and squig.link's
+/// `Moondrop Aria Filters.txt` → `Moondrop Aria`.
 fn profile_name(path: &Path) -> String {
     let stem = path
         .file_stem()
@@ -350,6 +351,7 @@ fn profile_name(path: &Path) -> String {
         .unwrap_or_default();
     let name = stem
         .trim_end_matches("ParametricEQ")
+        .trim_end_matches(" Filters")
         .trim_end_matches(['_', '-', ' '])
         .to_string();
     if name.is_empty() {
@@ -429,6 +431,10 @@ mod tests {
         assert_eq!(
             profile_name(&p("Sennheiser HD 600 ParametricEQ.txt")),
             "Sennheiser HD 600"
+        );
+        assert_eq!(
+            profile_name(&p("Moondrop Aria Filters.txt")),
+            "Moondrop Aria"
         );
     }
 

@@ -169,7 +169,7 @@ fn parse_into(
             "Device" => {}
             "GraphicEQ" => {
                 return Err(fail(
-                    "GraphicEQ is a curve, not filters; import the ParametricEQ.txt for the same headphones",
+                    "GraphicEQ is a curve, not filters; import the parametric version instead (AutoEQ's ParametricEQ.txt, or squig.link's Export rather than Export Graphic EQ)",
                 ));
             }
             other => return Err(fail(&format!("{other} is not supported"))),
@@ -394,6 +394,36 @@ mod tests {
         assert_eq!(
             p.filters,
             vec![band(EqFilterKind::Peaking, 46.5, -9.4, 4.47)]
+        );
+    }
+
+    /// squig.link's Export, as its graph tool writes it: CRLF, shelves as
+    /// LSC/HSC with a Q, and in two-channel mode a section per side with its
+    /// own preamp.
+    #[test]
+    fn squig_link_exports() {
+        let one = "Preamp: -4.1 dB\r\nFilter 1: ON LSC Fc 105 Hz Gain 3.5 dB Q 0.7\r\n\
+            Filter 2: ON PK Fc 3200 Hz Gain -2.25 dB Q 1.41\r\nFilter 3: ON HSC Fc 10000 Hz Gain 1 dB Q 0.7\r\n";
+        let p = parse(one).unwrap();
+        assert_eq!(p.preamp_db, Some(-4.1));
+        assert_eq!(p.filters.len(), 3);
+        assert_eq!(p.filters[0].kind, EqFilterKind::LowShelf);
+        assert_eq!(p.filters[2].kind, EqFilterKind::HighShelf);
+
+        let two = "Channel: L\r\nPreamp: -3 dB\r\nFilter 1: ON PK Fc 3000 Hz Gain -2 dB Q 1\r\n\r\n\
+            Channel: R\r\nPreamp: -2.5 dB\r\nFilter 1: ON PK Fc 3100 Hz Gain -1.5 dB Q 1\r\n\r\n";
+        let p = parse(two).unwrap();
+        assert_eq!(p.preamp_db, None);
+        let on = |c: u16| {
+            p.filters
+                .iter()
+                .filter(move |f| f.channels == vec![c])
+                .count()
+        };
+        assert_eq!(
+            (on(0), on(1)),
+            (2, 2),
+            "a gain band and a peak on each side"
         );
     }
 
