@@ -12,9 +12,9 @@
 //! gaplessly. Its CSP allows this server's own scripts and nothing else.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -32,6 +32,67 @@ const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self';
 pub(crate) const ENGINE_JS: &str = include_str!("../assets/player.js");
 const PLAYER_JS: &str = include_str!("../assets/share.js");
 const PAGE_CSS: &str = include_str!("../assets/share.css");
+/// `path` with a hash of `body`, the asset served there. Assets are cached for
+/// an hour, and the markup depends on its stylesheet: after an upgrade the new
+/// URL is fetched rather than the previous build's copy reused.
+pub(crate) fn versioned(path: &str, body: &str) -> String {
+    format!("{path}?v={}", content_hash(body))
+}
+
+pub(crate) fn content_hash(body: &str) -> String {
+    let hash = body.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{hash:016x}")
+}
+
+static SHARE_CSS_URL: LazyLock<String> =
+    LazyLock::new(|| versioned("/share/assets/share.css", PAGE_CSS));
+static SHARE_JS_URL: LazyLock<String> =
+    LazyLock::new(|| versioned("/share/assets/share.js", PLAYER_JS));
+static SHARE_ENGINE_URL: LazyLock<String> =
+    LazyLock::new(|| versioned("/share/assets/player.js", ENGINE_JS));
+
+/// The classes in `html` that `css` has no rule for, bar `hooks`: the names
+/// scripts select on. A class Tailwind did not see when it compiled `css` (an
+/// unquoted attribute, a constant in a file it does not scan) fails silently
+/// otherwise, as an unstyled element.
+#[cfg(test)]
+pub(crate) fn unstyled_classes(html: &str, css: &str, hooks: &[&str]) -> Vec<String> {
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    let has_rule = |class: &str| {
+        let selector: String = class
+            .chars()
+            .flat_map(|c| if ident(c) { vec![c] } else { vec!['\\', c] })
+            .collect();
+        let selector = format!(".{selector}");
+        css.match_indices(&selector).any(|(i, _)| {
+            css[i + selector.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !ident(c) && c != '\\')
+        })
+    };
+    let mut missing: Vec<String> = html
+        .split("class=")
+        .skip(1)
+        .flat_map(|rest| {
+            match rest.strip_prefix('"') {
+                Some(quoted) => quoted.split('"').next().unwrap_or_default(),
+                None => rest.split([' ', '>']).next().unwrap_or_default(),
+            }
+            .split_whitespace()
+        })
+        .filter(|class| !hooks.contains(class) && !has_rule(class))
+        .map(str::to_owned)
+        .collect();
+    missing.sort();
+    missing.dedup();
+    missing
+}
+
+/// The track lists' class list, on the page's one list or each album's.
+const TRACKS: &str = "grid gap-1.5";
 
 #[derive(Clone)]
 struct ShareState {
@@ -49,15 +110,15 @@ pub fn router(
     axum::Router::new()
         .route(
             "/share/assets/share.js",
-            get(|| async { asset(PLAYER_JS, "text/javascript; charset=utf-8") }),
+            get(|q: RawQuery| async move { asset(PLAYER_JS, "text/javascript; charset=utf-8", q) }),
         )
         .route(
             "/share/assets/player.js",
-            get(|| async { asset(ENGINE_JS, "text/javascript; charset=utf-8") }),
+            get(|q: RawQuery| async move { asset(ENGINE_JS, "text/javascript; charset=utf-8", q) }),
         )
         .route(
             "/share/assets/share.css",
-            get(|| async { asset(PAGE_CSS, "text/css; charset=utf-8") }),
+            get(|q: RawQuery| async move { asset(PAGE_CSS, "text/css; charset=utf-8", q) }),
         )
         .route(
             "/share/assets/{name}",
@@ -136,12 +197,16 @@ pub(crate) fn icon_links(base: &str) -> String {
     )
 }
 
-pub(crate) fn asset(body: &'static str, kind: &'static str) -> Response {
+/// A text asset. Requested by its hashed URL (`?v=`), it never changes, so it
+/// is kept for good; a bare URL is rechecked hourly.
+pub(crate) fn asset(body: &'static str, kind: &'static str, query: RawQuery) -> Response {
+    let cache = if query.0.is_some_and(|q| q.starts_with("v=")) {
+        "public, max-age=31536000, immutable"
+    } else {
+        "public, max-age=3600"
+    };
     (
-        [
-            (header::CONTENT_TYPE, kind),
-            (header::CACHE_CONTROL, "public, max-age=3600"),
-        ],
+        [(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, cache)],
         body,
     )
         .into_response()
@@ -310,7 +375,12 @@ fn render(
     // A loose list is titled by its note; a slice keeps the note beside it.
     let note = note
         .filter(|n| (album.is_some() || artist.is_some()) && *n != title)
-        .map(|n| format!("<p class=note>{}</p>", escape(&n)))
+        .map(|n| {
+            format!(
+                "<p class=\"-mt-1.5 mb-3.5 text-ink italic wrap-anywhere\">{}</p>",
+                escape(&n)
+            )
+        })
         .unwrap_or_default();
 
     let mut preview = vec![
@@ -343,7 +413,10 @@ fn render(
             true
         };
         let small = if credited {
-            format!("<small>{}</small>", escape(&t.artist_name))
+            format!(
+                "<small class=\"block truncate text-meta text-muted\">{}</small>",
+                escape(&t.artist_name)
+            )
         } else {
             String::new()
         };
@@ -351,10 +424,14 @@ fn render(
             (true, Some(n)) => n as usize,
             _ => i + 1,
         };
+        // share.js marks the row playing.
         format!(
-            "<li tabindex=0 data-src=\"/share/{id}/{pos}\" data-dur=\"{secs}\" data-title=\"{title}\" \
-             data-artist=\"{art}\" data-album=\"{alb}\"><span class=n>{n}</span><span class=t>{title}{small}</span>\
-             <span class=d>{dur}</span></li>",
+            "<li class=\"group flex cursor-pointer items-center gap-3 rounded-lg border border-rule bg-surface px-3 \
+             py-2.5 hover:border-hover [&.playing]:border-l-3 [&.playing]:border-l-brand\" tabindex=0 \
+             data-src=\"/share/{id}/{pos}\" data-dur=\"{secs}\" data-title=\"{title}\" data-artist=\"{art}\" \
+             data-album=\"{alb}\"><span class=\"w-[1.5em] text-right text-muted tabular-nums\">{n}</span>\
+             <span class=\"min-w-0 flex-1 truncate group-[.playing]:text-brand\">{title}{small}</span>\
+             <span class=\"text-meta text-muted tabular-nums\">{dur}</span></li>",
             pos = i + 1,
             secs = t.duration_ms.unwrap_or(0) / 1000,
             title = escape(&t.title),
@@ -382,8 +459,12 @@ fn render(
             sub.push(plural(end - i, "track"));
             let rows: String = (i..end).map(|k| row(k, &tracks[k])).collect();
             out.push_str(&format!(
-                "<section class=album><header><img class=art src=\"/share/{id}/{first}/cover\" alt=\"\" loading=lazy>\
-                 <div><h2>{title}</h2><p class=sub>{sub}</p></div></header><ol class=tracks>{rows}</ol></section>",
+                "<section class=\"mt-7\"><header class=\"mb-2.5 flex items-center gap-3.5\">\
+                 <img class=\"art size-16 flex-none rounded-md border border-rule bg-surface object-cover \
+                 [&.missing]:invisible\" src=\"/share/{id}/{first}/cover\" alt=\"\" loading=lazy>\
+                 <div><h2 class=\"m-0 text-[17px] font-bold wrap-anywhere\">{title}</h2>\
+                 <p class=\"mt-0.5 mb-0 text-meta text-muted\">{sub}</p></div></header>\
+                 <ol class=\"{TRACKS}\">{rows}</ol></section>",
                 first = i + 1,
                 title = escape(&tracks[i].album_title),
                 sub = escape(&sub.join(" · ")),
@@ -393,7 +474,7 @@ fn render(
         out
     } else {
         let rows: String = tracks.iter().enumerate().map(|(i, t)| row(i, t)).collect();
-        format!("<ol class=tracks>{rows}</ol>")
+        format!("<ol class=\"{TRACKS}\">{rows}</ol>")
     };
     let links: String = tracks
         .iter()
@@ -415,19 +496,28 @@ fn render(
         "<!doctype html><html lang=en><head><meta charset=utf-8>\
 <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
 <meta name=robots content=\"noindex,nofollow\"><title>{title}</title>{preview}\
-{icons}<link rel=stylesheet href=\"/share/assets/share.css\"></head><body><main>\
-<header class=hero><img id=cover class=cover src=\"/share/{id}/cover\" alt=\"\">\
-<div class=info><p class=kicker>{kicker}</p><h1>{title}</h1><p class=sub>{sub}</p>{note}\
-<div class=controls><button id=prev class=quiet aria-label=Previous>&#9198;</button>\
-<button id=play class=primary>Play</button><button id=next class=quiet aria-label=Next>&#9197;</button></div>\
-<div class=scrub><span id=pos>0:00</span><input id=seek type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
+{icons}<link rel=stylesheet href=\"{css}\"></head><body>\
+<main class=\"mx-auto max-w-[760px] px-4 pt-[max(24px,env(safe-area-inset-top))] pb-12\">\
+<header class=\"mb-5 flex items-end gap-5 max-wide:flex-col max-wide:items-stretch\">\
+<img id=cover class=\"size-[200px] flex-none rounded-lg border border-rule bg-surface object-cover \
+max-wide:aspect-square max-wide:h-auto max-wide:w-full\" src=\"/share/{id}/cover\" alt=\"\">\
+<div class=\"min-w-0 flex-1\"><p class=\"m-0 text-fine tracking-[.08em] text-muted uppercase\">{kicker}</p>\
+<h1>{title}</h1><p class=\"mt-0 mb-3.5 text-muted\">{sub}</p>{note}\
+<div class=\"flex items-center gap-2\"><button id=prev class=\"bg-transparent text-muted\" aria-label=Previous>&#9198;</button>\
+<button id=play class=\"min-w-24 border-brand bg-brand font-semibold text-bg\">Play</button>\
+<button id=next class=\"bg-transparent text-muted\" aria-label=Next>&#9197;</button></div>\
+<div class=\"mt-3 flex items-center gap-2.5 text-meta text-muted tabular-nums\"><span id=pos>0:00</span>\
+<input id=seek class=\"min-w-0 flex-1 accent-brand\" type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span id=len>0:00</span></div></div></header>\
 <div id=tracks data-start=\"{start}\">{body}</div><noscript><p>{links}</p></noscript></main>\
-<script src=\"/share/assets/player.js\" defer></script>\
-<script src=\"/share/assets/share.js\" defer></script></body></html>",
+<script src=\"{engine}\" defer></script>\
+<script src=\"{js}\" defer></script></body></html>",
         title = escape(&title),
         preview = preview.concat(),
         icons = icon_links("/share/assets"),
+        css = *SHARE_CSS_URL,
+        engine = *SHARE_ENGINE_URL,
+        js = *SHARE_JS_URL,
         sub = escape(&sub.join(" · ")),
         start = start.map_or(-1, |i| i as i64),
     )
@@ -864,9 +954,9 @@ mod tests {
         assert_eq!(og(&html, "og:type"), "profile");
         assert_eq!(og(&html, "og:title"), "Rrose");
         assert_eq!(og(&html, "og:description"), "2 albums · 3 tracks · 6:15");
-        assert_eq!(html.matches("<section class=album>").count(), 2);
+        assert_eq!(html.matches("<section ").count(), 2);
         let first = html.find("Hymn &lt;to&gt;").unwrap();
-        assert!(first < html.find("<h2>Later</h2>").unwrap());
+        assert!(first < html.find(">Later</h2>").unwrap());
         // Each album heading's art is addressed through the share, by position.
         assert!(html.contains(&format!("src=\"/share/{id}/3/cover\"")));
         for n in ["3", "4"] {
@@ -876,6 +966,24 @@ mod tests {
                 StatusCode::NOT_FOUND,
                 "no art in fake files, nor a 4th track"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn every_class_on_the_share_page_has_a_rule() {
+        let lib = library();
+        for target in [
+            ShareTarget::Artist(lib.artist),
+            ShareTarget::Album {
+                album_id: queries::tracks_by_ids(&lib.db.conn, &[lib.tracks[0]]).unwrap()[0]
+                    .album_id
+                    .unwrap(),
+                start_track_id: None,
+            },
+        ] {
+            let html = lib.page(&lib.share(target)).await;
+            let missing = unstyled_classes(&html, PAGE_CSS, &["art"]);
+            assert!(missing.is_empty(), "no rule in share.css for {missing:?}");
         }
     }
 
