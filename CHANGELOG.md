@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Covers decode as fast as before 0.52.1.** mimalloc returned freed memory 10 ms after it was freed, so in an album grid each full-size cover faulted its buffers back in from scratch, and a cold grid took three to six times as long. Freed memory is now held for 100 ms, so a burst reuses its own and still gives it back once it ends.
+
 ## 0.52.1
 
 ### Added
@@ -14,7 +20,7 @@
 
 ### Fixed
 
-- **The server no longer grows with use.** Opening an album grid on a fresh server took it from about 170 MB to over 1 GB, which it then kept. Two things held it. Covers were also kept in memory, 512 of them, alongside the copies on disk; they are now read from disk, where the kernel caches them without counting against koan. And each cover was decoded on whichever thread served the request, so a grid of hundreds decoded in parallel, and glibc's allocator kept every thread's share. Decoding now runs on at most four threads, and koan uses mimalloc, which returns freed memory to the system a tenth of a second after a burst ends, so a burst reuses its own memory and covers decode as fast as before.
+- **The server no longer grows with use.** Opening an album grid on a fresh server took it from about 170 MB to over 1 GB, which it then kept. Two things held it. Covers were also kept in memory, 512 of them, alongside the copies on disk; they are now read from disk, where the kernel caches them without counting against koan. And each cover was decoded on whichever thread served the request, so a grid of hundreds decoded in parallel, and glibc's allocator kept every thread's share. Decoding now runs on at most four threads, and koan uses mimalloc, which returns freed memory to the system.
 - **A cover two clients asked for at once is cached whole.** Both wrote the same temporary file, so the cache could keep a truncated cover, shown as missing or broken until the file changed. Each write now has a file of its own.
 
 ## 0.52.0

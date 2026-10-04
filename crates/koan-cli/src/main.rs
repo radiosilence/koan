@@ -463,13 +463,17 @@ pub fn sigint_received() -> bool {
 /// fixed: mimalloc keeps retired options' slots so later ones do not move.
 const MI_OPTION_PURGE_DELAY: libmimalloc_sys::mi_option_t = 15;
 
-fn main() {
-    // mimalloc returns freed pages to the system 10 ms after they are freed.
-    // A cover is tens of megabytes of pixels, so in a burst of them each one
-    // faulted its buffers back in from scratch, which halved decoding speed.
-    // At 100 ms a burst reuses its pages, and they still go back once it ends.
+/// mimalloc returns freed pages to the system 10 ms after they are freed. A
+/// cover is tens of megabytes of pixels, so in a burst of them each one faulted
+/// its buffers back in from scratch, which halved decoding speed. At 100 ms a
+/// burst reuses its pages, and they still go back once it ends.
+fn hold_freed_pages() {
     // SAFETY: setting an option takes no pointers and is valid at any time.
     unsafe { libmimalloc_sys::mi_option_set(MI_OPTION_PURGE_DELAY, 100) };
+}
+
+fn main() {
+    hold_freed_pages();
     // Graceful SIGINT: set a flag instead of killing immediately so we can
     // persist queue state. In raw mode crossterm delivers Ctrl+C as a key
     // event, but outside raw mode (e.g. during scan) we need this handler.
@@ -710,6 +714,19 @@ fn complete_albums() -> Vec<CompletionCandidate> {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    /// Slot 15 is the purge delay: it holds mimalloc's documented default of
+    /// 10 ms until set. A renumbered option would fail here rather than set
+    /// something else.
+    #[test]
+    fn the_purge_delay_slot_is_the_purge_delay() {
+        let get = || unsafe { libmimalloc_sys::mi_option_get(MI_OPTION_PURGE_DELAY) };
+        if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
+            assert_eq!(get(), 10);
+        }
+        hold_freed_pages();
+        assert_eq!(get(), 100);
+    }
 
     #[test]
     fn cli_no_args_parses() {
