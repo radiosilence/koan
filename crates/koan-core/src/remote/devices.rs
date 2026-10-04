@@ -316,10 +316,11 @@ pub fn set_account(devices: Vec<LinkDevice>) {
             })
             .collect();
         for d in leaving {
-            if d.state.is_some() || s.live.contains_key(&d.id) {
-                s.departed.retain(|g| g.id != d.id);
-                s.departed.push(d);
-            }
+            // Listed until now, so last seen now if not since: a departed
+            // device always has a time to expire from.
+            s.live.entry(d.id.clone()).or_insert(unix);
+            s.departed.retain(|g| g.id != d.id);
+            s.departed.push(d);
         }
         s.account = devices.into_iter().map(|d| (d, now)).collect();
         s.save();
