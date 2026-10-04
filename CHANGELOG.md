@@ -4,7 +4,7 @@
 
 ### Added
 
-- **The route's preset in iOS Now Playing.** Beside the AirPlay button, the preset of the route playing (AirPods, headphones, the speaker), or "Off"; tapping it picks another for that route. It follows the route as it changes, and is tinted while what is heard is processed.
+- **The route's preset in iOS Now Playing.** Beside the AirPlay button, the preset of the route playing (AirPods, headphones, the speaker), or "Off"; tapping it picks another for that route. It follows the route as it changes, shows a UPnP renderer's preset while the phone plays to one, and is tinted while what is heard is processed.
 
 ### Changed
 
