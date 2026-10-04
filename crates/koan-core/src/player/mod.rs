@@ -205,7 +205,7 @@ enum Output {
     /// The original file handed to a renderer, which decodes it and runs its
     /// own gapless. Nothing is decoded here, so there is no ring and no
     /// lookahead: see `renderer`.
-    Passthrough(renderer::Passthrough),
+    Passthrough(Box<renderer::Passthrough>),
 }
 
 struct Local {

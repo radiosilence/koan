@@ -251,7 +251,7 @@ impl Player {
     fn passthrough_mut(&mut self) -> Option<&mut Passthrough> {
         match &mut self.transport {
             Transport::Loaded(Session {
-                output: Output::Passthrough(play),
+                output: Output::Passthrough(Box::new(play)),
                 ..
             }) => Some(play),
             _ => None,
