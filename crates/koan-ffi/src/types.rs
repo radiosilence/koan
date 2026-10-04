@@ -281,6 +281,9 @@ pub struct Transfer {
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct TransferFigure {
     pub queue_item_id: String,
+    /// The track being fetched. A track queued twice is fetched once, under
+    /// the entry that asked first; the other entry finds its progress by this.
+    pub track_id: i64,
     /// 0.0–1.0, or `None` when the server sent no Content-Length — a bar drawn
     /// at zero for a transfer that is going fine reads as stuck.
     pub progress: Option<f64>,
@@ -331,6 +334,7 @@ impl From<&koan_core::remote::downloads::Download> for TransferFigure {
     fn from(d: &koan_core::remote::downloads::Download) -> Self {
         Self {
             queue_item_id: d.id.0.to_string(),
+            track_id: d.track_id,
             progress: d.fraction(),
             bytes_written: d.bytes_written(),
             total_bytes: d.total,
@@ -343,6 +347,7 @@ impl From<&koan_core::remote::downloads::Reading> for TransferFigure {
     fn from(r: &koan_core::remote::downloads::Reading) -> Self {
         Self {
             queue_item_id: r.id.0.to_string(),
+            track_id: r.track_id,
             progress: r.fraction(),
             bytes_written: r.written,
             total_bytes: r.total,
@@ -358,12 +363,11 @@ impl QueueItem {
     pub(crate) fn from_cursor_item(item: &PlaylistItem, state: PlaybackState) -> Self {
         // The item's own state and any transfer against it, as one answer.
         let load = LoadState::of(item);
-        let status = match (&load, state) {
-            (LoadState::Failed(_), _) => EntryStatus::Failed,
-            (LoadState::Downloading { .. }, _) => EntryStatus::Downloading,
-            (_, PlaybackState::Playing) => EntryStatus::Playing,
-            (_, PlaybackState::Paused) => EntryStatus::Playing,
-            (_, PlaybackState::Stopped) => EntryStatus::Queued,
+        // The queue row's mapping, so the transport and the row agree; a
+        // playable track the player is not on yet is merely queued.
+        let status = match QueueEntryStatus::at_cursor(&load) {
+            QueueEntryStatus::Playing if state == PlaybackState::Stopped => EntryStatus::Queued,
+            status => status.into(),
         };
         Self {
             queue_item_id: item.id.0.to_string(),

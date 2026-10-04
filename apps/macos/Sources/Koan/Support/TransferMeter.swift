@@ -92,10 +92,7 @@ final class TransferMeter: Observable {
     }
 
     private func read() {
-        latest = Dictionary(
-            engine.transferReadings().map { ($0.queueItemId, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
+        latest = TransferFigure.keyed(engine.transferReadings())
     }
 
     /// The gauges still alive. A weak-keyed map table drops a dead key

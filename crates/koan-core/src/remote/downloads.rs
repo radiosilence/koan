@@ -102,6 +102,9 @@ impl Phase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Reading {
     pub id: QueueItemId,
+    /// The track being fetched — what a queue entry other than `id` waiting on
+    /// the same transfer finds it by.
+    pub track_id: i64,
     pub written: u64,
     /// 0 when the server sent no Content-Length.
     pub total: u64,
@@ -246,6 +249,24 @@ impl DownloadStore {
         self.entries.read().iter().find(|d| d.id == id).cloned()
     }
 
+    /// The transfer a queue item reads: its own, or else the one running for
+    /// its track. A track queued twice is fetched once, under the entry that
+    /// asked first, and the second entry streams and reports from that same
+    /// transfer.
+    pub fn for_item(&self, id: QueueItemId, track_id: Option<i64>) -> Option<Download> {
+        let entries = self.entries.read();
+        entries
+            .iter()
+            .find(|d| d.id == id)
+            .or_else(|| {
+                let track_id = track_id?;
+                entries
+                    .iter()
+                    .find(|d| d.track_id == track_id && !d.state.is_settled())
+            })
+            .cloned()
+    }
+
     /// Whether a transfer exists for this item and what it is doing, without
     /// cloning its paths and titles — what deriving a queue row needs, per row
     /// per frame.
@@ -278,6 +299,7 @@ impl DownloadStore {
             .filter(|d| !d.state.is_settled())
             .map(|d| Reading {
                 id: d.id,
+                track_id: d.track_id,
                 written: d.bytes_written(),
                 total: d.total,
                 bytes_per_second: d.bytes_per_second,

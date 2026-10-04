@@ -26,7 +26,6 @@ use koan_core::audio::viz::VizSnapshot;
 use koan_core::config::{self, Config};
 use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, PersistedQueueItem};
-use koan_core::helpers::spawn_downloads;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
@@ -457,7 +456,7 @@ impl KoanEngine {
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
-            let (items, pending) = self.build_items(&db, &track_ids);
+            let items = self.build_items(&db, &track_ids);
             if items.is_empty() {
                 return Ok(Vec::new());
             }
@@ -471,7 +470,6 @@ impl KoanEngine {
             if was_stopped && koan_core::remote::devices::target().is_none() {
                 let _ = self.tx.send(PlayerCommand::Play(first));
             }
-            self.start_downloads(pending);
 
             Ok(ids)
         })
@@ -491,7 +489,7 @@ impl KoanEngine {
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
-            let (items, pending) = self.build_items(&db, &track_ids);
+            let items = self.build_items(&db, &track_ids);
             if items.is_empty() {
                 self.send(PlayerCommand::ClearPlaylist)?;
                 return Ok(Vec::new());
@@ -502,7 +500,6 @@ impl KoanEngine {
                 items,
                 start: start_at.unwrap_or(0) as usize,
             })?;
-            self.start_downloads(pending);
 
             Ok(ids)
         })
@@ -518,14 +515,13 @@ impl KoanEngine {
         offload::sequenced(move || {
             let after = parse_qid(&after_queue_item_id)?;
             let db = self.db()?;
-            let (items, pending) = self.build_items(&db, &track_ids);
+            let items = self.build_items(&db, &track_ids);
             if items.is_empty() {
                 return Ok(Vec::new());
             }
 
             let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
             self.send(PlayerCommand::InsertInPlaylist { items, after })?;
-            self.start_downloads(pending);
 
             Ok(ids)
         })
@@ -1539,7 +1535,7 @@ impl KoanEngine {
             }
             let track_ids: Vec<i64> = entries.iter().map(|e| e.track.id).collect();
 
-            let (mut items, pending) = self.build_items(&db, &track_ids);
+            let mut items = self.build_items(&db, &track_ids);
             // Each queue item remembers the row it came from. The queue is an
             // ephemeral view onto the playlist and may be shuffled, cut about
             // or added to; this is what still says which row is playing, and
@@ -1572,7 +1568,6 @@ impl KoanEngine {
             };
             let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
             self.send(PlayerCommand::ReplacePlaylist { items, start })?;
-            self.start_downloads(pending);
 
             Ok(ids)
         })
@@ -1675,7 +1670,7 @@ impl KoanEngine {
             // queue comes back, but not playing over that device's.
             let resume = saved.was_playing && koan_core::remote::devices::target().is_none();
 
-            let (items, pending) = restore_items(&db, &saved.items);
+            let items = restore_items(&db, &saved.items);
             if items.is_empty() {
                 return Ok(0);
             }
@@ -1692,7 +1687,6 @@ impl KoanEngine {
                 .map(|i| i.id);
 
             self.send_local(PlayerCommand::AddToPlaylist(items))?;
-            self.download_now(pending);
 
             if let Some(id) = cursor {
                 self.state.set_cursor(Some(id));
@@ -2143,7 +2137,7 @@ impl KoanEngine {
             let db = self.db()?;
             let cfg = Config::load().unwrap_or_default();
             let cleared = koan_core::helpers::clear_download_cache(&db, &cfg);
-            koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
+            koan_core::helpers::requeue_cleared_downloads(&self.state);
             self.bump_library();
             Ok(CacheCleared {
                 files: cleared.files,
@@ -2162,7 +2156,7 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             let cleared = koan_core::helpers::clear_downloads_for(&db, &track_ids);
-            koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
+            koan_core::helpers::requeue_cleared_downloads(&self.state);
             self.bump_library();
             Ok(CacheCleared {
                 files: cleared.files,
@@ -2184,11 +2178,7 @@ impl KoanEngine {
     /// store and nowhere else.
     pub async fn download_to_cache(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
         offload::offload(move || {
-            let pending: Vec<(i64, koan_core::player::state::QueueItemId)> = track_ids
-                .into_iter()
-                .map(|id| (id, koan_core::player::state::QueueItemId::new()))
-                .collect();
-            koan_core::helpers::spawn_downloads(pending, self.tx.clone(), self.state.clone());
+            koan_core::remote::queue::shared(&self.tx, &self.state).cache(track_ids);
             Ok(())
         })
         .await
@@ -3441,25 +3431,16 @@ impl KoanEngine {
         })
     }
 
-    /// Resolve track IDs into playlist items, collecting the ones that still
-    /// need downloading. Skips IDs that aren't in the library.
+    /// Resolve track IDs into playlist items. Skips IDs that aren't in the
+    /// library. Remote ones download once the player has them — the download
+    /// queue follows the playlist.
     ///
     /// One query for the rows and one config load for the batch. Doing either
     /// per track is what made adding an album — never mind an artist — take
     /// long enough to be worth a progress indicator.
-    fn build_items(
-        &self,
-        db: &Database,
-        track_ids: &[i64],
-    ) -> (Vec<PlaylistItem>, Vec<(i64, QueueItemId)>) {
+    fn build_items(&self, db: &Database, track_ids: &[i64]) -> Vec<PlaylistItem> {
         let rows = queries::tracks_by_ids(&db.conn, track_ids).unwrap_or_default();
-        let items = koan_core::helpers::playlist_items_for_tracks(db, &rows);
-        let pending = items
-            .iter()
-            .filter(|item| matches!(item.state, koan_core::player::state::ItemState::Pending))
-            .filter_map(|item| item.db_id.map(|id| (id, item.id)))
-            .collect();
-        (items, pending)
+        koan_core::helpers::playlist_items_for_tracks(db, &rows)
     }
 
     /// Load the cursor's track, seek to `position_ms`, and stop there.
@@ -3588,14 +3569,13 @@ impl KoanEngine {
         let mut added = std::collections::HashMap::new();
         if !missing.is_empty() {
             let track_ids: Vec<i64> = missing.iter().map(|e| e.track.id).collect();
-            let (mut new_items, pending) = self.build_items(db, &track_ids);
+            let mut new_items = self.build_items(db, &track_ids);
             for (item, entry) in new_items.iter_mut().zip(&missing) {
                 item.playlist_entry_id = Some(entry.id);
                 added.insert(entry.id, item.id);
             }
             if !new_items.is_empty() {
                 let _ = self.send_local(PlayerCommand::AddToPlaylist(new_items));
-                self.download_now(pending);
             }
         }
 
@@ -3632,7 +3612,7 @@ impl KoanEngine {
                 paused,
             } => self.db().and_then(|db| {
                 let ids = resolve_tracks(&db, &track_ids);
-                let (items, pending) = self.build_items(&db, &ids);
+                let items = self.build_items(&db, &ids);
                 if items.is_empty() {
                     log::warn!(
                         "link: none of {} tracks are in the library",
@@ -3657,7 +3637,6 @@ impl KoanEngine {
                         play: !paused,
                     })?;
                 }
-                self.download_now(pending);
                 Ok(())
             }),
             LinkCommand::PlayItem { id } => {
@@ -3679,12 +3658,11 @@ impl KoanEngine {
             LinkCommand::Insert { track_ids, after } => self.db().and_then(|db| {
                 let after = parse_qid(&after)?;
                 let ids = resolve_tracks(&db, &track_ids);
-                let (items, pending) = self.build_items(&db, &ids);
+                let items = self.build_items(&db, &ids);
                 if items.is_empty() {
                     return Ok(());
                 }
                 self.send_local(PlayerCommand::InsertInPlaylist { items, after })?;
-                self.download_now(pending);
                 Ok(())
             }),
             LinkCommand::Undo => self.send_local(PlayerCommand::Undo),
@@ -3694,7 +3672,7 @@ impl KoanEngine {
             LinkCommand::Devices { .. } => Ok(()),
             LinkCommand::Enqueue { track_ids } => self.db().and_then(|db| {
                 let ids = resolve_tracks(&db, &track_ids);
-                let (items, pending) = self.build_items(&db, &ids);
+                let items = self.build_items(&db, &ids);
                 let Some(first) = items.first().map(|i| i.id) else {
                     return Ok(());
                 };
@@ -3703,7 +3681,6 @@ impl KoanEngine {
                 if was_stopped {
                     self.send_local(PlayerCommand::Play(first))?;
                 }
-                self.download_now(pending);
                 Ok(())
             }),
             LinkCommand::JumpTo { track_id } => self.db().and_then(|db| {
@@ -3716,7 +3693,7 @@ impl KoanEngine {
                 if let Some(item) = items.iter().find(|i| i.db_id == Some(local)) {
                     return self.send_local(PlayerCommand::Play(item.id));
                 }
-                let (mut new, pending) = self.build_items(&db, &[local]);
+                let mut new = self.build_items(&db, &[local]);
                 let Some(item) = new.pop() else { return Ok(()) };
                 let id = item.id;
                 match cursor {
@@ -3727,12 +3704,11 @@ impl KoanEngine {
                     None => self.send_local(PlayerCommand::AddToPlaylist(vec![item]))?,
                 }
                 self.send_local(PlayerCommand::Play(id))?;
-                self.download_now(pending);
                 Ok(())
             }),
             LinkCommand::PlayNext { track_ids } => self.db().and_then(|db| {
                 let ids = resolve_tracks(&db, &track_ids);
-                let (items, pending) = self.build_items(&db, &ids);
+                let items = self.build_items(&db, &ids);
                 if items.is_empty() {
                     return Ok(());
                 }
@@ -3742,7 +3718,6 @@ impl KoanEngine {
                     }
                     None => self.send_local(PlayerCommand::AddToPlaylist(items))?,
                 }
-                self.download_now(pending);
                 Ok(())
             }),
             LinkCommand::Remove { track_ids } => self.db().and_then(|db| {
@@ -3859,20 +3834,6 @@ impl KoanEngine {
         koan_core::signal::engine_changed().bump();
     }
 
-    /// Fetch what a command the user gave just queued. Nothing, while the
-    /// queue it went to is another device's.
-    fn start_downloads(&self, pending: Vec<(i64, QueueItemId)>) {
-        if koan_core::remote::devices::target().is_none() {
-            self.download_now(pending);
-        }
-    }
-
-    fn download_now(&self, pending: Vec<(i64, QueueItemId)>) {
-        if !pending.is_empty() {
-            spawn_downloads(pending, self.tx.clone(), self.state.clone());
-        }
-    }
-
     /// Attach favourite state in one pass — one query per listing rather than
     /// one per row. Keyed by track ID because the favourites table stores
     /// whichever path a track happens to have, and a never-cached remote track
@@ -3894,10 +3855,7 @@ impl KoanEngine {
 /// Anything still in the library is re-resolved so cache paths and downloads
 /// are correct; anything that has since gone keeps the copy stored in the
 /// snapshot, so a restore never silently drops tracks.
-fn restore_items(
-    db: &Database,
-    saved: &[PersistedQueueItem],
-) -> (Vec<PlaylistItem>, Vec<(i64, QueueItemId)>) {
+fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistItem> {
     // By id first: a saved path names the container it was written in, which
     // iOS moves on every update, and a track still downloading when the session
     // was saved has no row with its path at all. The title guards against an
@@ -3925,22 +3883,14 @@ fn restore_items(
     let rows = queries::tracks_by_ids(&db.conn, &known).unwrap_or_default();
     let mut resolved = koan_core::helpers::playlist_items_for_tracks(db, &rows).into_iter();
 
-    let mut items = Vec::with_capacity(saved.len());
-    let mut pending = Vec::new();
-    for (saved_item, id) in saved.iter().zip(ids) {
-        match id.and_then(|_| resolved.next()) {
-            Some(item) => {
-                if matches!(item.state, koan_core::player::state::ItemState::Pending)
-                    && let Some(db_id) = item.db_id
-                {
-                    pending.push((db_id, item.id));
-                }
-                items.push(item);
-            }
-            None => items.push(saved_item.to_playlist_item()),
-        }
-    }
-    (items, pending)
+    saved
+        .iter()
+        .zip(ids)
+        .map(|(saved_item, id)| match id.and_then(|_| resolved.next()) {
+            Some(item) => item,
+            None => saved_item.to_playlist_item(),
+        })
+        .collect()
 }
 
 fn sort_rows(mut rows: Vec<queries::TrackRow>, sort: TrackSort) -> Vec<queries::TrackRow> {
@@ -4289,7 +4239,7 @@ mod restore_tests {
         let id = track(&db, "Song", &file);
 
         let stale = "/var/mobile/Containers/Data/Application/OLD/Library/Caches/koan/a.flac";
-        let (items, _) = restore_items(
+        let items = restore_items(
             &db,
             &[
                 saved("Song", stale, Some(id)),

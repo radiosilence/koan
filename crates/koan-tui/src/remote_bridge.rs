@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 use koan_core::graphql_client::GraphQLClient;
-use koan_core::helpers::{sanitise_extension, sanitise_filename};
+use koan_core::helpers::{sanitise_extension, sanitise_filename, settle_transfer};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     ItemState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState, TrackInfo,
@@ -176,8 +176,7 @@ fn download_and_play(
 ) {
     // A file at `dest` is always complete — downloads land there by rename only.
     if dest.exists() {
-        state.update_item_state(queue_id, ItemState::Ready);
-        local_tx.send(PlayerCommand::TrackReady(queue_id)).ok();
+        settle_transfer(state, local_tx, &[queue_id], None, &Ok(dest.to_path_buf()));
         return;
     }
 
@@ -225,21 +224,17 @@ fn download_and_play(
         }
     });
 
-    // Whatever ends a transfer says so: a decoder reading the `.part` file is
-    // parked on the feed waiting for bytes that are not coming.
-    bytes_written.done();
-
-    if let Err(e) = result {
+    let result = result.map(|_| dest.to_path_buf()).map_err(|e| {
         log::warn!("failed to stream {} from server: {}", dest.display(), e);
-        store.failed(queue_id, e.to_string());
-        state.update_item_state(queue_id, ItemState::Failed(e.to_string()));
-        return;
-    }
-
-    store.finished(queue_id);
-    state.update_paths(&[(queue_id, dest.to_path_buf())]);
-    state.update_item_state(queue_id, ItemState::Ready);
-    local_tx.send(PlayerCommand::TrackReady(queue_id)).ok();
+        e.to_string()
+    });
+    settle_transfer(
+        state,
+        local_tx,
+        &[queue_id],
+        Some((queue_id, &bytes_written)),
+        &result,
+    );
 }
 
 fn poll_and_stream_loop(

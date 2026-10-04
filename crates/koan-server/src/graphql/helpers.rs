@@ -1,11 +1,6 @@
-use std::sync::Arc;
-
 use async_graphql::connection::Edge;
-use crossbeam_channel::Sender;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
-use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{QueueItemId, SharedPlayerState};
 
 use super::types::Conn;
 
@@ -92,16 +87,4 @@ pub(super) fn album_year(album: &queries::AlbumRow) -> Option<i32> {
 /// Push a favourite to the remote server.
 pub(super) fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
     koan_core::helpers::sync_favourite_to_remote(db, std::path::Path::new(path), star);
-}
-
-// ---------------------------------------------------------------------------
-// Download spawning — delegates to koan-core helpers
-// ---------------------------------------------------------------------------
-
-pub(super) fn spawn_downloads(
-    pending: Vec<(i64, QueueItemId)>,
-    tx: Sender<PlayerCommand>,
-    state: Arc<SharedPlayerState>,
-) {
-    koan_core::helpers::spawn_downloads(pending, tx, state);
 }

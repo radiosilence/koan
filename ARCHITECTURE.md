@@ -11,7 +11,7 @@ crates/
 │                  No UI code, no terminal deps.
 │
 ├── koan-tui/      Library crate. Ratatui TUI, visualizers, media keys,
-│                  transport, download queue. Exports `run_tui()`.
+│                  transport. Exports `run_tui()`.
 │                  Depends on koan-core.
 │
 ├── koan-server/   Library crate. GraphQL (async-graphql + axum),
@@ -199,11 +199,15 @@ struct Playlist {
 
 **Advance vs peek:** `advance_cursor_loadable()` moves the cursor (explicit NextTrack, and auto-advance when the decode thread finishes). `peek_next_ready_after()` reads without moving (decode thread gapless lookahead).
 
-Advancing parks on the next item that is not `Failed`, including one still downloading — playback stops until its `TrackReady`/`TrackStreamReady` arrives, which only reaches the player because the cursor is sitting on it. Skipping ahead to the next `Ready` item instead would drop the track from the queue permanently. Both advance and peek treat a reference item that is no longer in the playlist as "nothing follows": restarting from index 0 would silently replay the queue from the top.
+Advancing parks on the next item that is not `Failed`, including one still downloading — playback stops until its `TrackReady`/`TrackStreamReady` arrives, which only reaches the player because the cursor is sitting on it. Skipping ahead to the next `Ready` item instead would drop the track from the queue permanently. The gapless lookahead follows the same rule: it steps over a `Failed` item and stops at a `Pending` one, so decoding ends there and the advance parks on it. Both advance and peek treat a reference item that is no longer in the playlist as "nothing follows": restarting from index 0 would silently replay the queue from the top.
 
 A download that gives up sends `TrackFailed` instead, and the parked cursor advances past the item rather than waiting for a `TrackReady` that cannot come. The reason rides on the item as `LoadState::Failed(reason)` and out through `QueueEntry::error`, because a queue of unplayable tracks and a queue still fetching look identical without it.
 
 **Download progress is not a queue mutation.** `LoadState::Downloading` says *that* a transfer is running and carries the `Arc<AtomicU64>` the download thread writes bytes into; the state itself is set once per attempt. Progress therefore moves without the playlist lock and without bumping `playlist_version` — which matters because every front end reads that version as "refetch the queue", and a transfer produces a byte count several hundred times a second. Anything that wants to *watch* progress reads `downloads_in_flight()` on its own poll rather than waiting for a version change.
+
+**Downloads follow the playlist.** `Player::spawn` starts the download queue (`remote/queue.rs`), whose watcher thread re-reads the playlist on every `playlist_version` change: each item still `Pending` is queued, or joins the transfer already running for its track, and anything the playlist no longer holds is dropped. Front ends add tracks to the player and nothing else. When each front end queued downloads alongside its `AddToPlaylist`, a worker could start before the player had applied the command, and an entry left queued after the playlist was replaced cost a worker a timeout.
+
+There is one transfer per track. The queue's in-flight table is keyed by track id and records every queue entry waiting on the transfer; the download store names the transfer by the entry that asked first, and `LoadState::of` falls back to the running transfer for an item's track, so a second entry streams and shows progress from the same bytes. When the transfer ends, `helpers::settle_transfer` gives every waiter the one result in a fixed order: each item's state, then the store, then `ByteFeed::done()` to wake a decoder parked at the write head, then `TrackReady` or `TrackFailed` for an entry under the cursor. A decoder woken before the state is written would read "still downloading" and park again with nothing left to wake it. The TUI's remote bridge settles through the same function.
 
 ## koan-core modules
 
@@ -280,6 +284,8 @@ fb2k-compatible template engine, re-exported from [sift](https://github.com/radi
 | File | Purpose |
 |---|---|
 | `client.rs` | Subsonic/Navidrome HTTP client. Signs requests with an API key, or the password (`p=enc:` over HTTPS, token auth over HTTP). Endpoints: ping, getArtists, getAlbumList2, getAlbum, search3, scrobble, reportPlayback (OpenSubsonic `playbackReport`, probed once per client), download. Two HTTP clients: total-deadline for JSON, stall-bounded for downloads |
+| `queue.rs` | The download queue: follows the playlist, one transfer per track, a worker pool, and a two-permit priority lane for the track under the cursor and the one after it. Workers hold back while the cursor's track is being fetched. Tracks wanted only in the cache (`DownloadQueue::cache`) wait behind the playlist |
+| `downloads.rs` | The download store every front end reads: one entry per transfer, byte counts in a `ByteFeed` a decoder can wait on, a version that moves only when an entry appears or settles |
 | `download.rs` | The one place bytes are streamed to disk: `.part` temp file → verify → atomic rename, progress callback, retry with backoff. A server that is not answering (503, 429, 502, 504, no connection) is waited out on a per-client `Outage` rather than failing each track in turn. Shared by `client.rs` and the TUI remote bridge |
 | `sync.rs` | Library sync: stable `alphabeticalByName` album list (500/page), then every song via empty-query `search3` (500/page, four in flight) joined to it, one transaction per page. Servers that list no songs that way fetch albums one at a time with rayon. Reports progress per page. Whether to walk at all is `helpers::sync_remote`'s: koan's own syncs walk only when the server's `getIndexes` `lastModified` has moved since the last complete walk (`remote_servers.library_version`) |
 | `lrclib.rs` | LRCLIB API client for lyrics fetching (synced LRC + plain text) |

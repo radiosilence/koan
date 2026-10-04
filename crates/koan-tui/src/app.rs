@@ -10,11 +10,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use koan_core::audio::viz::VizSnapshot;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
-    LoadState, PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, SharedPlayerState,
+    PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, SharedPlayerState,
     VisibleQueueSnapshot,
 };
-
-use koan_core::remote::queue::DownloadQueue;
 
 use super::library::LibraryState;
 use super::lyrics::LyricsState;
@@ -296,9 +294,6 @@ pub struct App {
 
     /// Album art width in terminal columns. Height = width/2 (square via halfblocks).
     pub art_size: u16,
-
-    /// Persistent download queue — used to trigger downloads for pending items.
-    pub download_queue: DownloadQueue,
 }
 
 impl App {
@@ -308,7 +303,6 @@ impl App {
         tx: Sender<PlayerCommand>,
         log_buffer: Arc<Mutex<Vec<String>>>,
         ticks_per_sec: u8,
-        download_queue: DownloadQueue,
     ) -> Self {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
         let ticker_divisor = (ticks_per_sec / TICKER_FPS).max(1);
@@ -369,7 +363,6 @@ impl App {
             fps_sample_count: 0,
             display_fps: 0,
             art_size: cfg.playback.art_size.clamp(4, 80),
-            download_queue,
         }
     }
 
@@ -2351,19 +2344,9 @@ impl App {
         if let Some(entry) = visible.get(idx)
             && entry.status != QueueEntryStatus::Playing
         {
-            let queue_id = entry.id;
-            let db_id = entry.db_id;
-            let is_pending = self
-                .state
-                .item_load_state(queue_id)
-                .is_some_and(|s| matches!(s, LoadState::Pending));
-
-            self.tx.send(PlayerCommand::Play(queue_id)).ok();
-
-            // Trigger priority download if the item needs it.
-            if is_pending && let Some(db_id) = db_id {
-                self.download_queue.prioritize(db_id, queue_id);
-            }
+            // A track still to be fetched jumps the download queue when the
+            // cursor reaches it.
+            self.tx.send(PlayerCommand::Play(entry.id)).ok();
         }
     }
 

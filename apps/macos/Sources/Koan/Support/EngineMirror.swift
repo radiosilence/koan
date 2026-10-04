@@ -198,21 +198,22 @@ final class EngineMirror: Observable {
     // second while anything is downloading — right for a row drawing a ring,
     // wrong for the rest of a list.
 
-    /// The byte counts, keyed by queue item.
+    /// The byte counts, keyed by queue item and by track.
     private var figures: [String: TransferFigure] {
         access(\.figures)
         return _figures
     }
 
-    /// How far one transfer has got, if it is one koan is running.
-    func figure(for queueItemId: String) -> TransferFigure? {
-        figures[queueItemId]
+    /// How far one transfer has got, if it is one koan is running. Found by
+    /// queue item, or by `TransferFigure.key(track:)`.
+    func figure(for transfer: String) -> TransferFigure? {
+        figures[transfer]
     }
 
     /// 0–1 through a transfer, or `nil` when the server never said how big it
     /// was and there is no fraction to draw.
-    func progress(for queueItemId: String) -> Double? {
-        figure(for: queueItemId)?.progress
+    func progress(for transfer: String) -> Double? {
+        figure(for: transfer)?.progress
     }
 
     /// How many transfers are moving. What the sidebar counts.
@@ -282,10 +283,7 @@ final class EngineMirror: Observable {
             mutate(\.transfers) { _transfers = transfers }
         case .figures(let figures):
             mutate(\.figures) {
-                _figures = Dictionary(
-                    figures.map { ($0.queueItemId, $0) },
-                    uniquingKeysWith: { first, _ in first }
-                )
+                _figures = TransferFigure.keyed(figures)
             }
         case .library(let version):
             mutate(\.libraryVersion) { _libraryVersion = version }

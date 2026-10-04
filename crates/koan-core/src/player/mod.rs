@@ -19,9 +19,7 @@ use crate::remote::client::PlaybackReportState;
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
 use history::{InFlight, PlayEvent, PlayRecorder, PlaybackReport};
-use state::{
-    ItemState, LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo,
-};
+use state::{LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
 use undo::{UndoEntry, UndoStack};
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
@@ -1213,10 +1211,11 @@ impl Player {
 
     /// A download finished — if cursor is waiting on this item, start playback.
     /// If already streaming this item, re-read its metadata from the complete file.
+    ///
+    /// The item's state is the downloader's to set, before it sends this.
+    /// Setting it here as well would turn a duplicate entry's `Failed` back to
+    /// `Ready`, pointing at a `.part` file that was deleted.
     pub fn track_ready(&mut self, id: QueueItemId) {
-        // Mark as Ready (download thread already did this, but be safe).
-        self.shared_state.update_item_state(id, ItemState::Ready);
-
         if !self.shared_state.is_cursor(id) {
             return;
         }
@@ -1884,6 +1883,10 @@ impl Player {
             .spawn(move || player.run())
             .expect("failed to spawn player thread");
 
+        // Downloads follow the playlist, so they come with the player rather
+        // than being something each front end has to remember to ask for.
+        crate::remote::queue::shared(&tx, &state);
+
         (state, timeline, viz_snapshot, tx)
     }
 }
@@ -1917,7 +1920,7 @@ mod tests {
     }
 
     use super::*;
-    use state::PlaylistItem;
+    use state::{ItemState, PlaylistItem};
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -2248,6 +2251,31 @@ mod tests {
         (player, id, starts)
     }
 
+    /// The download lands, as the downloader says so: the item first, then
+    /// the player.
+    fn land(player: &mut Player, id: QueueItemId) {
+        player.shared_state.update_item_state(id, ItemState::Ready);
+        player.process_command(PlayerCommand::TrackReady(id));
+    }
+
+    #[test]
+    fn track_ready_never_resurrects_an_item_that_failed() {
+        let mut player = Player::new();
+        let item = PlaylistItem {
+            state: ItemState::Failed("gone".into()),
+            ..make_item("t")
+        };
+        let id = item.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
+
+        player.process_command(PlayerCommand::TrackReady(id));
+
+        assert!(matches!(
+            player.shared_state.get_item(id).map(|i| i.state),
+            Some(ItemState::Failed(_))
+        ));
+    }
+
     fn await_queued(player: &Player) {
         loop {
             match player
@@ -2276,7 +2304,7 @@ mod tests {
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Stopped);
         assert_eq!(starts.load(Ordering::Relaxed), 0);
 
-        player.process_command(PlayerCommand::TrackReady(id));
+        land(&mut player, id);
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
         assert_eq!(player.playback_starts, 1, "opened once, at the position");
         assert_eq!(starts.load(Ordering::Relaxed), 1);
@@ -2296,7 +2324,7 @@ mod tests {
             position_ms: 3_000,
             play: false,
         });
-        player.process_command(PlayerCommand::TrackReady(id));
+        land(&mut player, id);
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
         assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
         await_queued(&player);

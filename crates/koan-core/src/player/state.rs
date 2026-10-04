@@ -124,7 +124,7 @@ impl LoadState {
     pub fn of(item: &PlaylistItem) -> Self {
         use crate::remote::downloads::{DownloadState, store};
 
-        if let Some(transfer) = store().get(item.id) {
+        if let Some(transfer) = store().for_item(item.id, item.db_id) {
             match transfer.state {
                 DownloadState::Queued | DownloadState::Running => {
                     return Self::Downloading {
@@ -210,6 +210,22 @@ pub enum QueueEntryStatus {
     /// User double-clicked — this track is priority, will play when ready.
     PriorityPending,
     Failed,
+}
+
+impl QueueEntryStatus {
+    /// The item under the cursor. Every front end maps it through here, so
+    /// the transport and the queue row agree on what it is doing.
+    ///
+    /// `PriorityPending` is waiting its turn with no bytes moving; once its
+    /// transfer starts it is `Downloading`, with progress to draw.
+    pub fn at_cursor(load: &LoadState) -> Self {
+        match load {
+            LoadState::Ready => Self::Playing,
+            LoadState::Downloading { .. } => Self::Downloading,
+            LoadState::Pending => Self::PriorityPending,
+            LoadState::Failed(_) => Self::Failed,
+        }
+    }
 }
 
 /// A single entry in the UI-visible queue snapshot.
@@ -712,7 +728,7 @@ impl SharedPlayerState {
         Some(next)
     }
 
-    /// Peek at the next Ready item after a given item ID WITHOUT moving the cursor.
+    /// Peek at the next playable item after a given item ID WITHOUT moving the cursor.
     /// Used by the decode thread for gapless lookahead — the cursor is moved
     /// later by update_playback_state when playback actually reaches the track.
     pub fn peek_next_ready_after(&self, after_id: QueueItemId) -> Option<(QueueItemId, PathBuf)> {
@@ -721,10 +737,14 @@ impl SharedPlayerState {
         // to follow; starting from the top would gaplessly replay the queue.
         let start = pl.items.iter().position(|item| item.id == after_id)? + 1;
 
-        for i in start..pl.items.len() {
-            if matches!(pl.items[i].state, ItemState::Ready) {
-                let item = &pl.items[i];
-                return Some((item.id, item.path.clone()));
+        // A track still arriving ends the lookahead rather than being stepped
+        // over: the cursor parks on it, as `advance_cursor_loadable` does, and
+        // playback resumes from it once it lands.
+        for item in &pl.items[start..] {
+            match item.state {
+                ItemState::Ready => return Some((item.id, item.path.clone())),
+                ItemState::Failed(_) => continue,
+                ItemState::Pending => return None,
             }
         }
         None
@@ -1135,12 +1155,7 @@ impl SharedPlayerState {
 
             let status = if is_cursor {
                 has_playing = true;
-                match &load_state {
-                    LoadState::Ready => QueueEntryStatus::Playing,
-                    LoadState::Downloading { .. } => QueueEntryStatus::PriorityPending,
-                    LoadState::Pending => QueueEntryStatus::PriorityPending,
-                    LoadState::Failed(_) => QueueEntryStatus::Failed,
-                }
+                QueueEntryStatus::at_cursor(&load_state)
             } else if is_before_cursor {
                 finished_count += 1;
                 match &load_state {
@@ -1234,11 +1249,16 @@ mod tests {
         total: u64,
         written: Arc<crate::remote::downloads::ByteFeed>,
     ) -> PlaylistItem {
-        let item = make_item(title, ItemState::Pending);
+        // A track of its own: the store is the process's, and another test's
+        // transfer for the same track would be found by this one's items.
+        static NEXT_TRACK: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
+        let track_id = NEXT_TRACK.fetch_sub(1, Ordering::Relaxed);
+        let mut item = make_item(title, ItemState::Pending);
+        item.db_id = Some(track_id);
         let store = crate::remote::downloads::store();
         store.queued(crate::remote::downloads::Download {
             id: item.id,
-            track_id: 1,
+            track_id,
             title: title.into(),
             artist: String::new(),
             source: PathBuf::from(format!("/cache/{title}.flac.part")),
@@ -1547,6 +1567,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_lookahead_stops_at_a_track_still_arriving() {
+        // Stepping over it would play the track after it gaplessly and leave
+        // this one behind the cursor, never played.
+        let state = SharedPlayerState::new();
+        let playing = ready_item("playing");
+        let arriving = pending_item("arriving");
+        let after = ready_item("after");
+        let playing_id = playing.id;
+        state.add_items(vec![playing, arriving, after]);
+
+        assert!(state.peek_next_ready_after(playing_id).is_none());
+    }
+
+    #[test]
+    fn the_lookahead_steps_over_a_track_that_failed() {
+        let state = SharedPlayerState::new();
+        let playing = ready_item("playing");
+        let failed = failed_item("failed");
+        let after = ready_item("after");
+        let (playing_id, after_id) = (playing.id, after.id);
+        state.add_items(vec![playing, failed, after]);
+
+        assert_eq!(
+            state.peek_next_ready_after(playing_id).map(|(id, _)| id),
+            Some(after_id)
+        );
+    }
+
     // --- surviving_item_before ---
 
     #[test]
@@ -1638,7 +1687,8 @@ mod tests {
 
     #[test]
     fn test_derive_visible_queue_downloading_statuses() {
-        // A Downloading item at cursor → PriorityPending; after cursor → Downloading.
+        // Downloading reads the same at the cursor as after it: bytes are
+        // moving, and the row has progress to draw.
         let state = SharedPlayerState::new();
         let bytes_cursor = crate::remote::downloads::ByteFeed::new();
         let bytes_queued = crate::remote::downloads::ByteFeed::new();
@@ -1651,8 +1701,44 @@ mod tests {
 
         let snap = state.derive_visible_queue();
 
-        assert_eq!(snap.entries[0].status, QueueEntryStatus::PriorityPending);
+        assert_eq!(snap.entries[0].status, QueueEntryStatus::Downloading);
         assert_eq!(snap.entries[1].status, QueueEntryStatus::Downloading);
+    }
+
+    #[test]
+    fn a_cursor_waiting_its_turn_is_priority_pending() {
+        let state = SharedPlayerState::new();
+        let item = pending_item("waiting");
+        let id = item.id;
+        state.add_items(vec![item]);
+        state.set_cursor(Some(id));
+
+        let snap = state.derive_visible_queue();
+        assert_eq!(snap.entries[0].status, QueueEntryStatus::PriorityPending);
+    }
+
+    #[test]
+    fn a_second_entry_for_a_track_reads_the_transfer_running_for_it() {
+        // One transfer per track: the entry queued second has none of its own,
+        // and streams and reports from the first one's.
+        let bytes = crate::remote::downloads::ByteFeed::new();
+        bytes.set(STREAM_THRESHOLD);
+        let first = downloading_item("twice", 1_000_000, bytes);
+        let mut again = pending_item("twice");
+        again.db_id = first.db_id;
+        let again_id = again.id;
+
+        let state = SharedPlayerState::new();
+        state.add_items(vec![first, again]);
+
+        assert!(matches!(
+            state.item_load_state(again_id),
+            Some(LoadState::Downloading { .. })
+        ));
+        assert!(matches!(
+            state.item_playback_source(again_id),
+            Some(PlaybackSource::Streaming { .. })
+        ));
     }
 
     /// The saved queue is rewritten when its contents move, and only then:

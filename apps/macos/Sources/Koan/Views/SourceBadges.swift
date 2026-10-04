@@ -138,8 +138,23 @@ extension SourceBadges {
     }
 
     /// The transfer a queue item is waiting on, if its status says it is.
+    /// Found by track where there is one: a track queued twice is one
+    /// transfer, running under whichever entry asked first.
     nonisolated static func transfer(of item: QueueItem?) -> String? {
         guard let item, item.status == .downloading else { return nil }
-        return item.queueItemId
+        return item.trackId.map(TransferFigure.key(track:)) ?? item.queueItemId
+    }
+}
+
+extension TransferFigure {
+    /// What a transfer's figure is found by: the queue entry it runs under,
+    /// and its track, for any other entry waiting on it.
+    nonisolated static func key(track: Int64) -> String { "track:\(track)" }
+
+    nonisolated static func keyed(_ figures: [TransferFigure]) -> [String: TransferFigure] {
+        Dictionary(
+            figures.flatMap { f in [(f.queueItemId, f), (key(track: f.trackId), f)] },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 }
