@@ -14,7 +14,8 @@ profile, nothing runs at all: the samples reach the device untouched, and the
 format badge says when they did not ("FLAC 24/96 · FIR").
 
 Processing applies to this device's own output. When it controls another
-device, or plays to a renderer, that device's settings apply.
+device, that device's settings apply. A UPnP renderer is handed the original
+file, untouched.
 
 ## Importing
 
@@ -68,6 +69,15 @@ between tracks and gapless holds across tracks of different rates.
 A linear-phase filter delays the audio by its group delay, often tens of
 milliseconds. kōan trims that delay from the start of playback and plays it out
 at the end, so the seek bar and synced lyrics line up with what is heard.
+
+## Precision
+
+Everything between the decoder and the device runs in 64-bit floating point:
+resampling, the bands and convolution, with one conversion in and one out. A
+test subtracts a textbook convolution, summed tap by tap, from kōan's output;
+what is left is −152 dB, the rounding of the 32-bit samples the output takes.
+A 262,145-tap Roon filter at 192 kHz, stereo, runs at 37 times real time on one
+core of an M-series Mac.
 
 ## Headroom
 

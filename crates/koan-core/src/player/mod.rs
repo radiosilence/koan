@@ -4341,6 +4341,7 @@ mod tests {
                 name: "Capture DAC".into(),
                 sample_rates: vec![44100.0],
                 platform_id: 0,
+                kind: Default::default(),
             })
         }
         fn supported_sample_rates(
