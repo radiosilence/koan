@@ -725,6 +725,19 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
     client.koan_command(id, &json).map_err(|e| e.to_string())
 }
 
+/// Send `cmd` to `id` over the local network only, never up this device's
+/// link. For what a device on the network asked of this one: over the
+/// network it reaches only what the asker could have reached itself; up the
+/// link it would act as this device's account, on that account's devices.
+pub fn send_nearby(id: &str, cmd: LinkCommand) -> Result<(), String> {
+    let nearby = with(|s| s.nearby.iter().any(|n| n.hello.id == id));
+    if nearby && cmd.allowed_nearby() && crate::remote::nearby::send(id, cmd) {
+        Ok(())
+    } else {
+        Err(format!("{id} is not on this network"))
+    }
+}
+
 /// This device's id, as other devices know it.
 pub fn this_id() -> Option<String> {
     local().map(|l| l.identity.device_id.clone())
@@ -1003,9 +1016,22 @@ mod tests {
                 .any(|n| n.id == "tv" && n.addr == "10.0.0.9:5626")
         );
 
+        // What a device on the network asks this one to pass on stays on the
+        // network: the account's Mac, out of reach there, is not sent to up
+        // the link.
+        nearby_gone("mac");
+        let play = LinkCommand::Play {
+            track_ids: vec!["t".into()],
+            start_at: 0,
+            position_ms: 0,
+            paused: false,
+            handoff: true,
+        };
+        assert!(listed.iter().any(|d| d.id == "mac" && d.account));
+        assert!(send_nearby("mac", play).is_err());
+
         set_target(None);
         set_account(Vec::new());
-        nearby_gone("mac");
         assert!(
             list().iter().all(|d| d.last_seen.is_some()),
             "only what has just left, kept for a heartbeat"
