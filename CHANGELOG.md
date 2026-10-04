@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **The queue can follow what is playing.** The jump-to-playing button now also follows: the queue keeps the playing track in view as it moves on, through gapless transitions, skips and repeats, sliding by a row rather than jumping. The button is tinted while it follows; pressing it again, or scrolling the queue yourself, stops it. On the Mac the track keeps its place on screen; on iOS it is kept centred.
+
 ### Changed
 
 - **Devices that stop answering stay listed, asleep.** A device that went quiet dropped out of the Control menu at once, and a phone iOS suspended a moment ago vanished from every other device's list. A device now reads as reconnecting for one heartbeat (45 seconds), so a single missed signal does not mark it asleep, and is then shown asleep with when it was last seen. One a push can wake stays listed and can be chosen. One that nothing can wake from here is shown, cannot be chosen, and is dropped after `devices.asleep_grace_mins` (30 by default). Whether a device can be woken is the server's word: it has the device's push token and a push key to send with. The server sends when an absent device was last seen, which older apps ignore.
