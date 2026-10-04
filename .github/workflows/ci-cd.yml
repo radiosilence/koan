@@ -677,6 +677,26 @@ jobs:
       - if: always()
         run: rm -rf target/package
 
+  # The site workflow also asks the deployment to update, but it finishes long
+  # before a release is published, so on its own the server stays a version behind.
+  deploy:
+    name: Ask the deployment to update
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [publish-release, check-version]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' && needs.check-version.outputs.should_release == 'true' }}
+    steps:
+      # DEPLOYMENT_PAT needs `actions: write` on radiosilence/jaritanet; it triggers the updater, it doesn't commit.
+      - name: Ask the deployment to pick this release up
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOYMENT_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::DEPLOYMENT_PAT isn't set, so the deployment wasn't asked to update"
+            exit 0
+          fi
+          gh workflow run update-apps.yml --repo radiosilence/jaritanet
+
   update-homebrew:
     name: Update Homebrew Tap
     runs-on: ubuntu-latest
