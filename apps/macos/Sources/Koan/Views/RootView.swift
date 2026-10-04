@@ -280,6 +280,11 @@ struct RecordRoom: ViewModifier {
         // Reading an `@Environment` inside that closure — including to put one
         // back — traps, and the app dies on launch.
         let wash = colourSource
+        // Whether this pass had to guess. The cache is not observed, so a
+        // colour landing in it later — worked out by `LibraryModel.warm`
+        // alongside the rows — re-renders nothing; the task below hands it
+        // over instead.
+        let guessed = recordTint == nil
         let player = player
         let artCache = art
         // Over an opaque ground, because this *replaces* the window's own
@@ -310,7 +315,15 @@ struct RecordRoom: ViewModifier {
             // navigating warms this alongside the rows, see
             // `LibraryModel.prepare(album:)`.
             .task(id: colourSource) {
-                guard let colourSource, art.cachedColour(for: colourSource) == nil else { return }
+                guard let colourSource else { return }
+                if let held = art.cachedColour(for: colourSource) {
+                    // Worked out between this pass reading the cache and the
+                    // task starting. Without this the room keeps the colour it
+                    // was wearing — the accent, on a first visit — for as long
+                    // as nothing else happens to redraw it.
+                    if guessed { fetchedTint = (colourSource, held) }
+                    return
+                }
                 // Nobody is waiting on a slow ease into the background, so it
                 // stands aside until the page in front of it has drawn rather
                 // than racing it for artwork, threads and a slot on the main
