@@ -886,6 +886,6 @@ mod tests {
         let reconnect = pipe.connect();
         pipe.disconnect(&player);
         assert_eq!(pipe.origin_ms(), 5000, "the reconnect carries on");
-        drop(reconnect);
+        pipe.disconnect(&reconnect);
     }
 }
