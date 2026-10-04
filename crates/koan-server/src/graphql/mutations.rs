@@ -667,6 +667,11 @@ impl MutationRoot {
         with_db(ctx, move |db| {
             if persisted.is_empty() {
                 queries::playback_state::clear_playback_state(&db.conn)
+                    .and_then(|()| {
+                        queries::playback_state::save_playback_position(
+                            &db.conn, mode, None, 0, false,
+                        )
+                    })
                     .map_err(|e| super::internal_error("db", e))?;
                 return Ok(GqlStatus::success("playback state cleared (empty queue)"));
             }

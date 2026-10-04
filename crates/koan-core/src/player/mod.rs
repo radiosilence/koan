@@ -1829,28 +1829,35 @@ impl Player {
     /// Decode thread naturally finished (playlist exhausted or error).
     /// Advance to the next playable track; otherwise stop cleanly.
     ///
-    /// A track that has not finished downloading parks the cursor on it, so its
-    /// `TrackReady`/`TrackStreamReady` resumes the queue instead of being
-    /// discarded as "not the cursor".
-    ///
     /// Ignored from a session already torn down: a play or seek handled after
     /// the message was sent has replaced what it describes.
-    ///
-    /// Opening the item that just ended again — repeating it, or a queue of
-    /// one repeating — closes the play that ended first, so the session
-    /// that opens is a new play rather than a seek within it. A repeat of something that played for
-    /// no time at all — a file that opens but decodes nothing — would go
-    /// round forever, so it stops instead.
     fn on_decode_finished(&mut self, session: u64) {
         if session != self.session || self.renderer_stream_finished() {
             return;
         }
         log::info!("decode finished, checking for next track");
+        self.track_ended();
+    }
+
+    /// The track under the playhead played out, here or on a renderer. Go on
+    /// as the play mode says: the same item again under repeat one, the next
+    /// otherwise, from the top again when the queue repeats.
+    ///
+    /// A track that has not finished downloading parks the cursor on it, so its
+    /// `TrackReady`/`TrackStreamReady` resumes the queue instead of being
+    /// discarded as "not the cursor".
+    ///
+    /// Opening the item that just ended again — repeating it, or a queue of
+    /// one repeating — closes the play that ended first, so the session that
+    /// opens is a new play rather than a seek within it. A repeat of something
+    /// that played for no time at all — a file that opens but decodes nothing
+    /// — would go round forever, so it stops instead.
+    fn track_ended(&mut self) {
         self.bank_listening();
         let ended = self.in_flight.as_ref().map(|f| f.item);
         let heard = self.in_flight.as_ref().is_some_and(|f| f.listened_ms() > 0);
         if self.mode.repeat != Repeat::Off && !heard {
-            log::info!("decode finished with nothing heard; not repeating it");
+            log::info!("track ended with nothing heard; not repeating it");
             self.stop_playback_and_clear_state();
             return;
         }
@@ -1986,7 +1993,15 @@ impl Player {
             PlayerCommand::PrevTrack => self.prev_track(),
             PlayerCommand::AddToPlaylist(items) => {
                 let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
+                let whole = self.shared_state.is_empty();
                 self.shared_state.add_items(items);
+                // Into an empty queue, an add is a queue arriving whole.
+                if whole
+                    && self.mode.shuffle
+                    && let Some(&first) = ids.first()
+                {
+                    self.shared_state.shuffle_from(first);
+                }
                 self.push_undo(UndoEntry::Added { ids });
             }
             PlayerCommand::UpdatePaths(updates) => {
@@ -2019,6 +2034,9 @@ impl Player {
                 // swap one change: see `SharedPlayerState::replace_playlist`.
                 self.stop_playback_and_clear_state();
                 let (old_items, cursor) = self.shared_state.replace_playlist(items);
+                if self.mode.shuffle {
+                    self.shared_state.shuffle_from(start_id);
+                }
                 self.push_undo(UndoEntry::Replaced {
                     items: old_items,
                     cursor,
@@ -3252,6 +3270,45 @@ mod tests {
     }
 
     #[test]
+    fn a_queue_replaced_while_shuffled_plays_shuffled_from_its_start() {
+        let mut player = Player::new();
+        seed(&mut player, 3);
+        player.process_command(PlayerCommand::SetShuffle(true));
+
+        let items: Vec<_> = (0..20).map(|i| make_item(&format!("n{i}"))).collect();
+        let given: Vec<_> = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items,
+            start: 5,
+            position_ms: 0,
+            play: false,
+        });
+        let shuffled = playlist_ids(&player);
+        assert_eq!(shuffled[0], given[5], "the start first");
+        assert_eq!(player.shared_state.cursor(), Some(given[5]));
+        assert_ne!(shuffled, given);
+
+        player.process_command(PlayerCommand::SetShuffle(false));
+        assert_eq!(
+            playlist_ids(&player),
+            given,
+            "off gives the queue as it came"
+        );
+    }
+
+    #[test]
+    fn a_queue_added_to_an_empty_one_while_shuffled_plays_shuffled() {
+        let mut player = Player::new();
+        player.process_command(PlayerCommand::SetShuffle(true));
+        let given = seed(&mut player, 20);
+        assert_eq!(playlist_ids(&player)[0], given[0]);
+        assert_ne!(playlist_ids(&player), given);
+
+        player.process_command(PlayerCommand::SetShuffle(false));
+        assert_eq!(playlist_ids(&player), given);
+    }
+
+    #[test]
     fn shuffle_is_one_undo_step() {
         let mut player = Player::new();
         let ids = seed(&mut player, 10);
@@ -3726,6 +3783,8 @@ mod tests {
                 let Some(cmd) = cmd else { continue };
                 let label = format!("{cmd:?}");
                 let asked = asks_to_play(&cmd);
+                let replaced_shuffled = player.mode.shuffle
+                    && matches!(&cmd, PlayerCommand::ReplacePlaylist { items, .. } if items.len() > 1);
                 let wanted_before = player.shared_state.wants_to_play();
                 player.process_command(cmd);
                 // What the decode threads sent meanwhile, as the loop would
@@ -3736,7 +3795,18 @@ mod tests {
                 }
                 player.update_playback_state();
                 history.push(label);
-                if let Err(broken) = check_invariants(&player, wanted_before, asked) {
+                let broken = check_invariants(&player, wanted_before, asked)
+                    .err()
+                    .or_else(|| {
+                        (replaced_shuffled
+                            && player
+                                .shared_state
+                                .shuffle_order()
+                                .iter()
+                                .all(|(_, pre)| pre.is_none()))
+                        .then(|| "a queue replaced while shuffled plays in order".to_string())
+                    });
+                if let Some(broken) = broken {
                     let tail = history[history.len().saturating_sub(8)..].join("\n  ");
                     panic!("seed {seed}, step {step}: {broken}\nlast commands:\n  {tail}");
                 }

@@ -988,6 +988,10 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.playlist.read().items.is_empty()
+    }
+
     pub fn cursor(&self) -> Option<QueueItemId> {
         self.playlist.read().cursor
     }
@@ -1113,7 +1117,8 @@ impl SharedPlayerState {
     }
 
     /// Retreat cursor to the previous item. Returns (id, path) if found.
-    /// For prev_track — goes to the item before cursor regardless of load state.
+    /// For prev_track — goes to the item before cursor regardless of load state,
+    /// and from the first to the last while repeat is on.
     pub fn retreat_cursor(&self) -> Option<(QueueItemId, PathBuf)> {
         let mut pl = self.playlist.write();
         let cursor_pos = match pl.cursor {
@@ -1121,7 +1126,13 @@ impl SharedPlayerState {
             None => None,
         };
 
-        let prev_pos = cursor_pos.and_then(|p| p.checked_sub(1));
+        // From the first item, round to the last while the queue repeats. A
+        // queue of one has nothing to go back to: the caller restarts it.
+        let wraps = self.play_mode().repeat != Repeat::Off && pl.items.len() > 1;
+        let prev_pos = cursor_pos.and_then(|p| match p.checked_sub(1) {
+            None if wraps => Some(pl.items.len() - 1),
+            prev => prev,
+        });
 
         match prev_pos {
             Some(pos) => {
@@ -1430,6 +1441,28 @@ impl SharedPlayerState {
             .and_then(|c| pl.items.iter().position(|item| item.id == c))
             .map_or(0, |at| at + 1);
         crate::helpers::shuffle(&mut pl.items[from..]);
+        drop(pl);
+        self.bump_content();
+    }
+
+    /// A queue arriving whole while shuffle is on — replaced, or added to an
+    /// empty one — plays shuffled: `start` first, the rest in a random order
+    /// after it, each item noting where it was given so turning shuffle off
+    /// puts the queue back as it came. A queue that already carries those
+    /// notes, a shuffled session restored, is left as it was saved.
+    pub fn shuffle_from(&self, start: QueueItemId) {
+        let mut pl = self.playlist.write();
+        if pl.items.iter().any(|item| item.pre_shuffle.is_some()) {
+            return;
+        }
+        for (at, item) in pl.items.iter_mut().enumerate() {
+            item.pre_shuffle = Some(at as u32);
+        }
+        if let Some(at) = pl.items.iter().position(|item| item.id == start) {
+            let item = pl.items.remove(at);
+            pl.items.insert(0, item);
+        }
+        crate::helpers::shuffle(&mut pl.items[1..]);
         drop(pl);
         self.bump_content();
     }
@@ -2151,6 +2184,26 @@ mod tests {
             Some(a),
             "round, as repeating"
         );
+    }
+
+    #[test]
+    fn previous_from_the_first_item_wraps_only_while_repeating() {
+        let state = SharedPlayerState::new();
+        let items: Vec<_> = ["a", "b", "c"].map(ready_item).into();
+        let (a, c) = (items[0].id, items[2].id);
+        state.add_items(items);
+
+        state.set_cursor(Some(a));
+        assert!(state.retreat_cursor().is_none());
+        for repeat in [Repeat::Queue, Repeat::One] {
+            repeating(&state, repeat);
+            state.set_cursor(Some(a));
+            assert_eq!(
+                state.retreat_cursor().map(|(id, _)| id),
+                Some(c),
+                "{repeat:?}"
+            );
+        }
     }
 
     #[test]

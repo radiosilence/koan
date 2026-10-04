@@ -87,8 +87,16 @@ pub fn cmd_play(
             .expect("failed to spawn API server thread");
     }
 
-    if clear_queue && let Ok(db) = koan_core::db::pool::shared().get() {
-        let _ = queries::clear_playback_state(&db.conn);
+    if let Ok(db) = koan_core::db::pool::shared().get() {
+        if clear_queue {
+            let _ = queries::clear_playback_state(&db.conn);
+        }
+        // Before any queue: the mode is the player's, kept with or without
+        // one, and a queue arriving under shuffle is shuffled.
+        if let Ok(mode) = queries::load_play_mode(&db.conn) {
+            tx.send(PlayerCommand::RestorePlayMode(mode))
+                .expect("player thread died");
+        }
     }
 
     let mut expects_playback = track_ids.is_some() || !paths.is_empty();
@@ -158,8 +166,6 @@ pub fn cmd_play(
                     .map(|i| i.id)
             });
             tx.send(PlayerCommand::AddToPlaylist(items))
-                .expect("player thread died");
-            tx.send(PlayerCommand::RestorePlayMode(persisted.mode))
                 .expect("player thread died");
             if let Some(cid) = cursor_id {
                 // The player waits for a track still downloading, and opens it

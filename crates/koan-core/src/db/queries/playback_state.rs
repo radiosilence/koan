@@ -35,7 +35,6 @@ pub struct PersistedPlaybackState {
     pub position_ms: u64,
     /// Playback was running when this was saved.
     pub was_playing: bool,
-    pub mode: PlayMode,
 }
 
 /// Save the queue, the mode it plays in, and where it is up to.
@@ -50,48 +49,71 @@ pub fn save_playback_state(
     let json = serde_json::to_string(items).unwrap_or_else(|_| "[]".into());
     super::atomically(conn, || {
         conn.execute(
-            "INSERT INTO playback_state (id, queue_json, shuffle, repeat, updated_at)
-             VALUES (1, ?1, ?2, ?3, datetime('now'))
-             ON CONFLICT(id) DO UPDATE SET queue_json = ?1, shuffle = ?2, repeat = ?3,
-               updated_at = datetime('now')",
-            rusqlite::params![json, mode.shuffle, mode.repeat.as_str()],
+            "INSERT INTO playback_state (id, queue_json, updated_at)
+             VALUES (1, ?1, datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET queue_json = ?1, updated_at = datetime('now')",
+            [json],
         )?;
-        save_playback_position(conn, cursor_path, position_ms, was_playing)
+        save_playback_position(conn, mode, cursor_path, position_ms, was_playing)
     })
 }
 
-/// Save where the queue is up to, leaving the queue alone.
+/// Save where the queue is up to and the mode it plays in, leaving the
+/// queue alone.
 ///
 /// Called every second while music plays. The queue is a JSON blob in a row
 /// of its own, and this never touches it: `save_playback_state` writes it when
-/// the queue itself changes.
+/// the queue itself changes. The mode lives here rather than with the queue
+/// so that it outlives one: repeat set on an empty queue is still set after
+/// a relaunch.
 pub fn save_playback_position(
     conn: &Connection,
+    mode: PlayMode,
     cursor_path: Option<&str>,
     position_ms: u64,
     was_playing: bool,
 ) -> rusqlite::Result<()> {
     conn.prepare_cached(
         "INSERT INTO playback_position
-             (id, cursor_id, position_ms, was_playing, updated_at)
-         VALUES (1, ?1, ?2, ?3, datetime('now'))
+             (id, cursor_id, position_ms, was_playing, shuffle, repeat, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, datetime('now'))
          ON CONFLICT(id) DO UPDATE SET
-           cursor_id = ?1, position_ms = ?2, was_playing = ?3,
+           cursor_id = ?1, position_ms = ?2, was_playing = ?3, shuffle = ?4, repeat = ?5,
            updated_at = datetime('now')",
     )?
     .execute(rusqlite::params![
         cursor_path,
         position_ms as i64,
-        was_playing
+        was_playing,
+        mode.shuffle,
+        mode.repeat.as_str(),
     ])?;
     Ok(())
+}
+
+/// The play mode last saved, with or without a queue. Off when none was.
+pub fn load_play_mode(conn: &Connection) -> rusqlite::Result<PlayMode> {
+    match conn.query_row(
+        "SELECT shuffle, repeat FROM playback_position WHERE id = 1",
+        [],
+        |row| {
+            let repeat: String = row.get(1)?;
+            Ok(PlayMode {
+                shuffle: row.get(0)?,
+                repeat: Repeat::parse(&repeat).unwrap_or_default(),
+            })
+        },
+    ) {
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(PlayMode::default()),
+        other => other,
+    }
 }
 
 /// Load persisted playback state. Returns None if no state has been saved.
 pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<PersistedPlaybackState>> {
     let result = conn.query_row(
         "SELECT s.queue_json, p.cursor_id, COALESCE(p.position_ms, 0),
-                COALESCE(p.was_playing, 0), s.shuffle, s.repeat
+                COALESCE(p.was_playing, 0)
          FROM playback_state s LEFT JOIN playback_position p ON p.id = 1
          WHERE s.id = 1",
         [],
@@ -100,17 +122,12 @@ pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<Persist
             let cursor_path: Option<String> = row.get(1)?;
             let position_ms: i64 = row.get(2)?;
             let was_playing: bool = row.get(3)?;
-            let repeat: String = row.get(5)?;
-            let mode = PlayMode {
-                shuffle: row.get(4)?,
-                repeat: Repeat::parse(&repeat).unwrap_or_default(),
-            };
-            Ok((json, cursor_path, position_ms as u64, was_playing, mode))
+            Ok((json, cursor_path, position_ms as u64, was_playing))
         },
     );
 
     match result {
-        Ok((json, cursor_path, position_ms, was_playing, mode)) => {
+        Ok((json, cursor_path, position_ms, was_playing)) => {
             let items: Vec<PersistedQueueItem> = serde_json::from_str(&json).unwrap_or_default();
             if items.is_empty() {
                 return Ok(None);
@@ -120,7 +137,6 @@ pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<Persist
                 cursor_path,
                 position_ms,
                 was_playing,
-                mode,
             }))
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -128,9 +144,13 @@ pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<Persist
     }
 }
 
-/// Clear persisted playback state.
+/// Clear the saved queue and where it was up to. The play mode stays: it is
+/// the player's, not the queue's.
 pub fn clear_playback_state(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch("DELETE FROM playback_state; DELETE FROM playback_position;")
+    conn.execute_batch(
+        "DELETE FROM playback_state;
+         UPDATE playback_position SET cursor_id = NULL, position_ms = 0, was_playing = 0;",
+    )
 }
 
 impl PersistedQueueItem {
@@ -311,7 +331,14 @@ mod tests {
             .unwrap();
         let before = queue_row(&conn);
 
-        save_playback_position(&conn, Some("/music/track.flac"), 61_000, false).unwrap();
+        save_playback_position(
+            &conn,
+            PlayMode::default(),
+            Some("/music/track.flac"),
+            61_000,
+            false,
+        )
+        .unwrap();
 
         assert_eq!(queue_row(&conn), before);
         let loaded = load_playback_state(&conn).unwrap().unwrap();
@@ -348,6 +375,25 @@ mod tests {
 
         clear_playback_state(&conn).unwrap();
         assert!(load_playback_state(&conn).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_play_mode_outlives_the_queue() {
+        let conn = test_conn();
+        let mode = PlayMode {
+            shuffle: true,
+            repeat: Repeat::One,
+        };
+        save_playback_state(&conn, &[], mode, None, 0, false).unwrap();
+        assert!(load_playback_state(&conn).unwrap().is_none(), "no queue");
+        assert_eq!(load_play_mode(&conn).unwrap(), mode);
+
+        clear_playback_state(&conn).unwrap();
+        assert_eq!(
+            load_play_mode(&conn).unwrap(),
+            mode,
+            "clearing the queue keeps it"
+        );
     }
 
     #[test]

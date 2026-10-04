@@ -1678,6 +1678,10 @@ impl KoanEngine {
     pub async fn restore_session(self: Arc<Self>) -> Result<u32, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
+            // Before the queue and whether there is one: the mode is the
+            // player's, and a queue added under it would be shuffled again.
+            let mode = queries::load_play_mode(&db.conn).map_err(fav_err)?;
+            self.send_local(PlayerCommand::RestorePlayMode(mode))?;
             let Some(saved) = queries::load_playback_state(&db.conn).map_err(fav_err)? else {
                 return Ok(0);
             };
@@ -1703,7 +1707,6 @@ impl KoanEngine {
                 .map(|i| i.id);
 
             self.send_local(PlayerCommand::AddToPlaylist(items))?;
-            self.send_local(PlayerCommand::RestorePlayMode(saved.mode))?;
 
             if let Some(id) = cursor {
                 // The player waits for a track still downloading, and opens it
@@ -3558,6 +3561,7 @@ impl KoanEngine {
             .map(|p| p.to_string_lossy().into_owned());
         queries::save_playback_position(
             &db.conn,
+            self.state.play_mode(),
             cursor_path.as_deref(),
             self.state.position_ms(),
             self.state.playback_state() == PlaybackState::Playing,
