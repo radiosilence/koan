@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><script src="sleeves.js"></script></head><body>
+<div class="wash" style="background:radial-gradient(1200px 900px at 25% 35%,rgba(30,90,220,.55),transparent 70%),radial-gradient(1000px 800px at 85% 80%,rgba(250,210,90,.22),transparent 70%),#0e1220"></div>
+<div class="content">
+ <div style="position:absolute;top:110px;left:150px" id="art"></div>
+ <div style="position:absolute;top:200px;left:860px;right:150px">
+  <div class="dim" style="font-size:26px;letter-spacing:.08em;text-transform:uppercase">Playing on Living Room</div>
+  <div style="font-size:68px;font-weight:700;line-height:1.08;margin-top:18px">Golden Skans<br><span style="font-weight:500">(David E Sugar Remix)</span></div>
+  <div style="font-size:36px;margin-top:20px" class="dim">Klaxons — Golden Skans</div>
+  <div style="display:flex;gap:12px;margin-top:30px;align-items:center"><span class="badge">MP3 16/44.1</span><span class="dimmer" style="font-size:22px">→ HDMI 48 kHz</span></div>
+  <div style="margin-top:80px;height:10px;border-radius:5px;background:rgba(255,255,255,.18)"><div style="width:62%;height:100%;border-radius:5px;background:#f2f2f4"></div></div>
+  <div style="display:flex;justify-content:space-between;margin-top:14px;font-size:24px;font-variant-numeric:tabular-nums" class="dim"><span>3:18</span><span>−2:02</span></div>
+  <div style="display:flex;gap:18px;margin-top:40px"><span class="btn">♥</span><span class="btn">Lyrics</span><span class="btn">⤮</span><span class="btn">↻</span></div>
+ </div>
+ <div style="position:absolute;left:150px;right:0;bottom:0;height:230px">
+  <div class="dim" style="font-size:24px;font-weight:600;letter-spacing:.06em;text-transform:uppercase">Up next · swipe down for the queue</div>
+  <div id="next" style="display:flex;gap:30px;margin-top:20px"></div>
+ </div>
+</div>
+<div class="label">Now Playing · the landing page while music plays</div>
+<script>
+document.getElementById('art').innerHTML=sl(15,620,false);
+let h='';[16,17,2,13,6,1].forEach(i=>{h+=`<div style="display:flex;gap:18px;align-items:center;width:380px;opacity:.85">${sl(i,110,false)}<div><div style="font-size:23px;font-weight:600">${AL[i][0]}</div><div class="dim" style="font-size:20px">${AL[i][1]}</div></div></div>`});
+document.getElementById('next').innerHTML=h;
+</script></body></html>
