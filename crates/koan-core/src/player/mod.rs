@@ -19,9 +19,7 @@ use crate::remote::client::PlaybackReportState;
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
 use history::{InFlight, PlayEvent, PlayRecorder, PlaybackReport};
-use state::{
-    ItemState, LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo,
-};
+use state::{ItemState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
 use undo::{UndoEntry, UndoStack};
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
@@ -118,6 +116,10 @@ pub struct Player {
     /// Writes plays away from this thread. None when there is no database to
     /// write to, and in tests, which must not touch the real library.
     history: Option<PlayRecorder>,
+    /// This player's download queue, which follows its playlist. Held here so
+    /// it lives as long as the player it fetches for. `None` for a player
+    /// made without `spawn`, which fetches nothing.
+    downloads: Option<crate::remote::queue::DownloadQueue>,
     /// How much of the current track has been heard so far.
     in_flight: Option<InFlight>,
     /// When the silence after a rate switch runs out and the track is heard.
@@ -264,6 +266,7 @@ impl Player {
             backend: crate::audio::platform_backend(),
             stream_mode: streaming::ProbeMode::Full,
             history: None,
+            downloads: None,
             in_flight: None,
             #[cfg(test)]
             playback_starts: 0,
@@ -981,10 +984,13 @@ impl Player {
         &self,
         id: QueueItemId,
     ) -> Arc<dyn Fn() -> streaming::StreamStatus + Send + Sync> {
+        // The item's own state, which a transfer's end writes before it wakes
+        // anyone: asked twice per read of a file still arriving, so nothing
+        // else is looked up.
         let state = self.shared_state.clone();
-        Arc::new(move || match state.item_load_state(id) {
-            Some(LoadState::Ready) => streaming::StreamStatus::Complete,
-            Some(LoadState::Failed(_)) => streaming::StreamStatus::Failed,
+        Arc::new(move || match state.item_state(id) {
+            Some(ItemState::Ready) => streaming::StreamStatus::Complete,
+            Some(ItemState::Failed(_)) => streaming::StreamStatus::Failed,
             _ => streaming::StreamStatus::Downloading,
         })
     }
@@ -1255,10 +1261,11 @@ impl Player {
     /// A download finished. A track waiting on it opens; one already
     /// streaming from it, playing or paused, re-reads its metadata from the
     /// complete file.
+    ///
+    /// The item's state is the downloader's to set, before it sends this.
+    /// Setting it here as well would turn a duplicate entry's `Failed` back to
+    /// `Ready`, pointing at a `.part` file that was deleted.
     pub fn track_ready(&mut self, id: QueueItemId) {
-        // Mark as Ready (download thread already did this, but be safe).
-        self.shared_state.update_item_state(id, ItemState::Ready);
-
         if !self.shared_state.is_cursor(id) {
             return;
         }
@@ -1677,12 +1684,19 @@ impl Player {
                 position_ms,
                 play,
             } => {
-                self.clear_playlist();
                 if items.is_empty() {
+                    self.clear_playlist();
                     return;
                 }
                 let start_id = items.get(start).unwrap_or(&items[0]).id;
-                self.shared_state.add_items(items);
+                // Stopped before the swap, as `clear_playlist` does, and the
+                // swap one change: see `SharedPlayerState::replace_playlist`.
+                self.stop_playback_and_clear_state();
+                let (old_items, cursor) = self.shared_state.replace_playlist(items);
+                self.push_undo(UndoEntry::Replaced {
+                    items: old_items,
+                    cursor,
+                });
                 self.cue(
                     start_id,
                     position_ms,
@@ -1752,6 +1766,11 @@ impl Player {
             PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),
             PlayerCommand::StreamProbed { id, info, mode } => self.stream_probed(id, *info, mode),
             PlayerCommand::TrackFailed(id) => self.track_failed(id),
+            PlayerCommand::CacheTracks(ids) => {
+                if let Some(downloads) = &self.downloads {
+                    downloads.cache(ids);
+                }
+            }
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),
             PlayerCommand::BeginUndoBatch => {
@@ -1957,6 +1976,12 @@ impl Player {
         let timeline = player.timeline();
         let viz_snapshot = player.viz_snapshot();
         let tx = player.command_sender();
+        // Downloads follow the playlist, so they come with the player rather
+        // than being something each front end has to remember to ask for.
+        player.downloads = Some(crate::remote::queue::DownloadQueue::spawn(
+            tx.clone(),
+            state.clone(),
+        ));
 
         thread::Builder::new()
             .name("koan-player".into())
@@ -2347,6 +2372,31 @@ mod tests {
         (player, id, starts)
     }
 
+    /// The download lands, as the downloader says so: the item first, then
+    /// the player.
+    fn land(player: &mut Player, id: QueueItemId) {
+        player.shared_state.update_item_state(id, ItemState::Ready);
+        player.process_command(PlayerCommand::TrackReady(id));
+    }
+
+    #[test]
+    fn track_ready_never_resurrects_an_item_that_failed() {
+        let mut player = Player::new();
+        let item = PlaylistItem {
+            state: ItemState::Failed("gone".into()),
+            ..make_item("t")
+        };
+        let id = item.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
+
+        player.process_command(PlayerCommand::TrackReady(id));
+
+        assert!(matches!(
+            player.shared_state.get_item(id).map(|i| i.state),
+            Some(ItemState::Failed(_))
+        ));
+    }
+
     fn await_queued(player: &Player) {
         loop {
             match player
@@ -2375,7 +2425,7 @@ mod tests {
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Stopped);
         assert_eq!(starts.load(Ordering::Relaxed), 0);
 
-        player.process_command(PlayerCommand::TrackReady(id));
+        land(&mut player, id);
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
         assert_eq!(player.playback_starts, 1, "opened once, at the position");
         assert_eq!(starts.load(Ordering::Relaxed), 1);
@@ -2395,7 +2445,7 @@ mod tests {
             position_ms: 3_000,
             play: false,
         });
-        player.process_command(PlayerCommand::TrackReady(id));
+        land(&mut player, id);
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
         assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
         await_queued(&player);
@@ -2500,6 +2550,43 @@ mod tests {
     }
 
     #[test]
+    fn replacing_the_queue_keeps_a_transfer_both_queues_want() {
+        // The download queue syncs from its own thread on each playlist
+        // change. Replaced as a clear then an add, the playlist was empty in
+        // between, and a sync there let go of every waiter: the transfer for a
+        // track in both queues was abandoned and started over. The replace
+        // must be one change, and that change must still want the track.
+        let pending = |title: &str| PlaylistItem {
+            db_id: Some(7),
+            state: ItemState::Pending,
+            ..make_item(title)
+        };
+        let mut player = Player::new();
+        let old = pending("old");
+        let old_id = old.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![old]));
+        let store = player.shared_state.downloads().clone();
+        store.claim(7, Some(old_id));
+
+        let before = player.shared_state.pending_version();
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items: vec![pending("again")],
+            start: 0,
+            position_ms: 0,
+            play: false,
+        });
+        assert_eq!(
+            player.shared_state.pending_version(),
+            before + 1,
+            "one change, so no reader can see the playlist between two"
+        );
+
+        // A sync against the one state it published.
+        store.resync(&player.shared_state.pending_downloads());
+        assert!(!store.abandoned(7));
+    }
+
+    #[test]
     fn a_hand_off_opens_paused_at_its_position_in_one_command() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.wav");
@@ -2524,6 +2611,11 @@ mod tests {
             position_ms: 4_000,
             play: false,
         });
+        assert_eq!(
+            playlist_titles(&player),
+            vec!["before", "t"],
+            "replaced, not added to"
+        );
         assert_eq!(player.shared_state.cursor(), Some(id));
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
         assert_eq!(player.playback_starts, 1, "opened once, at the position");

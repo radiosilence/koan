@@ -1,269 +1,78 @@
-//! Remote bridge: connects TUI to a remote koan server via GQL.
+//! Remote bridge: drives a koan server from the TUI over GraphQL.
 //!
-//! Spawns a local Player for audio output. The server owns the queue/library state.
-//! When the server's now-playing changes, the bridge downloads the track from
-//! the server's stream endpoint and plays it locally.
+//! The server plays the audio; this is a remote control. The TUI sees a normal
+//! `SharedPlayerState` and `Sender<PlayerCommand>`: the state mirrors the
+//! server's now-playing and queue, and commands go to the server.
 //!
-//! The TUI sees a normal SharedPlayerState + Sender<PlayerCommand>.
-//! Commands go to the server via GQL. Audio plays locally.
+//! There is no local playback. Playing a server's library on this machine is
+//! what signing in to it as a Subsonic server does, through the same engine,
+//! download queue and cache as everything else.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 use koan_core::graphql_client::GraphQLClient;
-use koan_core::helpers::{sanitise_extension, sanitise_filename};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     ItemState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState, TrackInfo,
 };
-use koan_core::remote::client::SubsonicClient;
-use koan_core::remote::{download, downloads};
 
-/// Disk budget for streamed-from-server tracks. These files belong to no local
-/// track row, so DB-driven cache eviction cannot see them — the bridge prunes
-/// its own directory instead.
-const STREAM_CACHE_BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-
-/// Spawn the remote bridge with local audio playback.
+/// Spawn the remote bridge.
 ///
 /// Returns the same types as `Player::spawn()` — the TUI works unchanged.
 ///
 /// `client` is shared by every thread the bridge starts, so they share one
 /// session with the server.
-///
-/// `jukebox`: if true, the server plays audio. No local Player is spawned.
-/// The client is purely a remote control.
 pub fn spawn_remote_bridge(
     client: GraphQLClient,
-    jukebox: bool,
 ) -> (
     Arc<SharedPlayerState>,
     Arc<koan_core::audio::buffer::PlaybackTimeline>,
     Arc<koan_core::audio::viz::VizSnapshot>,
     Sender<PlayerCommand>,
 ) {
-    // In jukebox mode: no local audio. In client mode: local Player for audio.
-    let (state, timeline, viz, local_tx) = if jukebox {
-        let state = SharedPlayerState::new();
-        let timeline = koan_core::audio::buffer::PlaybackTimeline::new();
-        let viz = koan_core::audio::viz::VizSnapshot::new();
-        let (tx, _rx) = bounded::<PlayerCommand>(16); // dummy — no local player
-        (state, timeline, viz, tx)
-    } else {
-        koan_core::player::Player::spawn()
-    };
+    let state = SharedPlayerState::new();
+    let timeline = koan_core::audio::buffer::PlaybackTimeline::new();
+    let viz = koan_core::audio::viz::VizSnapshot::new();
 
     // Channel for TUI → bridge commands.
     let (cmd_tx, cmd_rx) = bounded::<PlayerCommand>(16);
 
-    let streamer = stream_client(client.server_url()).map(Arc::new);
-
-    // Poller thread: syncs remote state → local SharedPlayerState.
-    // In client mode also triggers downloads. In jukebox mode, display only.
+    // Poller thread: mirrors the server's state into the local one.
     {
         let state = state.clone();
-        let local_tx = local_tx.clone();
         let client = client.clone();
-        let streamer = streamer.clone();
         std::thread::Builder::new()
             .name("koan-remote-poll".into())
-            .spawn(move || {
-                poll_and_stream_loop(client, state, local_tx, streamer, jukebox);
-            })
+            .spawn(move || poll_loop(client, state))
             .expect("failed to spawn remote poller");
     }
 
-    // Command translator: TUI commands → GQL mutations + local player forwarding.
-    {
-        let client = client.clone();
-        let local_tx_fwd = local_tx.clone();
-        std::thread::Builder::new()
-            .name("koan-remote-cmd".into())
-            .spawn(move || {
-                command_loop(client, cmd_rx, local_tx_fwd);
-            })
-            .expect("failed to spawn remote command handler");
-    }
+    // Command translator: TUI commands → GQL mutations.
+    std::thread::Builder::new()
+        .name("koan-remote-cmd".into())
+        .spawn(move || command_loop(client, cmd_rx))
+        .expect("failed to spawn remote command handler");
 
     (state, timeline, viz, cmd_tx)
 }
 
-/// Client for the server's `/rest/*` endpoints.
-///
-/// `koan serve` guards those with the `[subsonic]` credentials, not the JWT the
-/// GraphQL side uses, so the bridge signs its stream requests the Subsonic way
-/// — `u` + `t=md5(secret + salt)` + `s`. The credentials come from *this*
-/// machine's config: pointing at someone else's server means copying its
-/// `[subsonic]` username and secret locally.
-fn stream_client(server_url: &str) -> Option<SubsonicClient> {
-    let cfg = koan_core::config::Config::load().unwrap_or_default();
-    let secret = koan_core::helpers::get_subsonic_password(&cfg);
-    match secret {
-        Some(secret) if !cfg.subsonic.username.is_empty() => Some(SubsonicClient::new(
-            server_url,
-            &cfg.subsonic.username,
-            &secret,
-        )),
-        _ => {
-            log::warn!(
-                "no [subsonic] credentials configured — cannot stream audio from the server. \
-                 Run `koan subsonic setup` and copy the secret from the server's config."
-            );
-            None
-        }
-    }
-}
-
-/// Cache path for a track streamed from a koan server.
-///
-/// Keyed on the track's identity rather than its queue item id: a UUIDv7 per
-/// queue entry meant nothing was ever reused and every play left a full-size
-/// file behind. Mirrors the main cache layout so the tree is browsable.
-fn stream_cache_path(
-    cache_dir: &Path,
-    track: &koan_core::graphql_client::NowPlayingTrack,
-) -> PathBuf {
-    let ext = sanitise_extension(&track.codec).unwrap_or_else(|| "audio".into());
-    cache_dir
-        .join(sanitise_filename(&track.artist))
-        .join(sanitise_filename(&track.album))
-        .join(format!("{}.{}", sanitise_filename(&track.title), ext))
-}
-
-/// Trim the stream cache to `budget` bytes, dropping least-recently-modified
-/// files first. Cheap enough to run before each download.
-fn prune_stream_cache(cache_dir: &Path, budget: u64, keep: &Path) {
-    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
-    let mut total = 0u64;
-    for entry in jwalk::WalkDir::new(cache_dir).into_iter().flatten() {
-        let path = entry.path();
-        if !entry.file_type().is_file() || path == keep {
-            continue;
-        }
-        let Ok(meta) = entry.metadata() else { continue };
-        total += meta.len();
-        let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-        files.push((mtime, meta.len(), path));
-    }
-
-    if total <= budget {
-        return;
-    }
-
-    files.sort_by_key(|(mtime, _, _)| *mtime);
-    for (_, len, path) in files {
-        if total <= budget {
-            break;
-        }
-        if std::fs::remove_file(&path).is_ok() {
-            total = total.saturating_sub(len);
-            log::info!("pruned stream cache entry {}", path.display());
-        }
-    }
-}
-
-/// Downloads a track from the server and plays it via the local player.
-fn download_and_play(
-    streamer: &SubsonicClient,
-    track_id: &str,
-    dest: &Path,
-    queue_id: QueueItemId,
-    state: &Arc<SharedPlayerState>,
-    local_tx: &Sender<PlayerCommand>,
-) {
-    // A file at `dest` is always complete — downloads land there by rename only.
-    if dest.exists() {
-        state.update_item_state(queue_id, ItemState::Ready);
-        local_tx.send(PlayerCommand::TrackReady(queue_id)).ok();
-        return;
-    }
-
-    // Point the queue item at the in-progress file so the decoder reads bytes
-    // as they land; it flips to `dest` once the rename has happened.
-    state.update_paths(&[(queue_id, download::part_path(dest))]);
-
-    let bytes_written = downloads::ByteFeed::new();
-    let stream_ready_sent = std::sync::atomic::AtomicBool::new(false);
-
-    // Told to the download store like any other transfer, so the downloads
-    // page and everything else reading the store see what the bridge fetches.
-    let store = downloads::store();
-    store.queued(downloads::Download {
-        id: queue_id,
-        // The track has no row in this library; it is the server's.
-        track_id: 0,
-        title: dest
-            .file_stem()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        artist: String::new(),
-        source: download::part_path(dest),
-        dest: dest.to_path_buf(),
-        total: 0,
-        written: bytes_written.clone(),
-        state: downloads::DownloadState::Queued,
-        bytes_per_second: 0,
-    });
-
-    // Once per attempt, not per chunk — see `helpers::download_track`.
-    let announced_total = AtomicU64::new(u64::MAX);
-    let result = streamer.stream_to_file(track_id, dest, |downloaded, total| {
-        bytes_written.set(downloaded);
-        if announced_total.swap(total, Ordering::Relaxed) != total {
-            store.started(queue_id, total, bytes_written.clone());
-        }
-        if !stream_ready_sent.load(Ordering::Relaxed)
-            && downloaded >= koan_core::player::state::STREAM_THRESHOLD
-        {
-            stream_ready_sent.store(true, Ordering::Relaxed);
-            local_tx
-                .send(PlayerCommand::TrackStreamReady(queue_id))
-                .ok();
-        }
-    });
-
-    // Whatever ends a transfer says so: a decoder reading the `.part` file is
-    // parked on the feed waiting for bytes that are not coming.
-    bytes_written.done();
-
-    if let Err(e) = result {
-        log::warn!("failed to stream {} from server: {}", dest.display(), e);
-        store.failed(queue_id, e.to_string());
-        state.update_item_state(queue_id, ItemState::Failed(e.to_string()));
-        return;
-    }
-
-    store.finished(queue_id);
-    state.update_paths(&[(queue_id, dest.to_path_buf())]);
-    state.update_item_state(queue_id, ItemState::Ready);
-    local_tx.send(PlayerCommand::TrackReady(queue_id)).ok();
-}
-
-fn poll_and_stream_loop(
-    client: GraphQLClient,
-    state: Arc<SharedPlayerState>,
-    local_tx: Sender<PlayerCommand>,
-    streamer: Option<Arc<SubsonicClient>>,
-    jukebox: bool,
-) {
+fn poll_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
     let mut last_track_id: Option<String> = None;
     let mut connected = true;
-    let cache_dir = koan_core::config::config_dir().join("cache/remote-stream");
 
     loop {
         match client.now_playing() {
             Ok(np) => {
                 note_connection(&mut connected, true);
-                let server_state = match np.state.as_str() {
+                state.set_playback_state(match np.state.as_str() {
                     "PLAYING" => PlaybackState::Playing,
                     "PAUSED" => PlaybackState::Paused,
                     _ => PlaybackState::Stopped,
-                };
+                });
 
-                // Detect track change.
                 let current_track_id = np.queue_item_id.clone();
                 if current_track_id != last_track_id && current_track_id.is_some() {
                     last_track_id = current_track_id.clone();
@@ -272,13 +81,9 @@ fn poll_and_stream_loop(
                         && let Ok(uuid) = uuid::Uuid::parse_str(qid_str)
                         && let Some(ref track) = np.track
                     {
-                        let queue_id = QueueItemId(uuid);
-                        let dest = stream_cache_path(&cache_dir, track);
-
-                        // Update track info for TUI display (both modes).
                         state.set_track_info(Some(TrackInfo {
-                            id: queue_id,
-                            path: dest.clone(),
+                            id: QueueItemId(uuid),
+                            path: PathBuf::from(format!("/remote/{qid_str}")),
                             codec: track.codec.clone(),
                             sample_rate: track.sample_rate,
                             bit_depth: track.bit_depth,
@@ -286,84 +91,7 @@ fn poll_and_stream_loop(
                             channels: track.channels,
                             duration_ms: track.duration_ms,
                         }));
-
-                        // Client mode: download and play locally.
-                        if !jukebox {
-                            let cached = dest.exists();
-                            let item = PlaylistItem {
-                                playlist_entry_id: None,
-                                id: queue_id,
-                                db_id: None,
-                                path: if cached {
-                                    dest.clone()
-                                } else {
-                                    download::part_path(&dest)
-                                },
-                                title: track.title.clone(),
-                                artist: track.artist.clone(),
-                                album_artist: track.artist.clone(),
-                                album: track.album.clone(),
-                                year: None,
-                                codec: Some(track.codec.clone()),
-                                track_number: None,
-                                disc: None,
-                                duration_ms: Some(track.duration_ms),
-                                state: ItemState::Pending,
-                            };
-
-                            local_tx.send(PlayerCommand::ClearPlaylist).ok();
-                            local_tx.send(PlayerCommand::AddToPlaylist(vec![item])).ok();
-
-                            // `/rest/stream` takes the track's id. The queue
-                            // item id names a queue entry, which the endpoint
-                            // cannot resolve.
-                            match (streamer.clone(), track.track_id.clone()) {
-                                (Some(streamer), Some(track_id)) => {
-                                    let state_dl = state.clone();
-                                    let tx_dl = local_tx.clone();
-                                    let cache_dir_dl = cache_dir.clone();
-                                    if let Err(e) = std::thread::Builder::new()
-                                        .name("koan-remote-dl".into())
-                                        .spawn(move || {
-                                            prune_stream_cache(
-                                                &cache_dir_dl,
-                                                STREAM_CACHE_BUDGET_BYTES,
-                                                &dest,
-                                            );
-                                            download_and_play(
-                                                &streamer, &track_id, &dest, queue_id, &state_dl,
-                                                &tx_dl,
-                                            );
-                                        })
-                                    {
-                                        log::error!("failed to spawn stream download: {}", e);
-                                        state.update_item_state(
-                                            queue_id,
-                                            ItemState::Failed(e.to_string()),
-                                        );
-                                    }
-                                }
-                                (None, _) => state.update_item_state(
-                                    queue_id,
-                                    ItemState::Failed("no [subsonic] credentials".into()),
-                                ),
-                                (_, None) => state.update_item_state(
-                                    queue_id,
-                                    ItemState::Failed("server track has no library id".into()),
-                                ),
-                            }
-                        }
                     }
-                }
-
-                // Sync playback state (pause/resume from server).
-                let local_state = state.playback_state();
-                if server_state == PlaybackState::Paused && local_state == PlaybackState::Playing {
-                    local_tx.send(PlayerCommand::Pause).ok();
-                } else if server_state == PlaybackState::Playing
-                    && local_state == PlaybackState::Paused
-                {
-                    local_tx.send(PlayerCommand::Resume).ok();
                 }
 
                 state.set_position_ms(np.position_ms);
@@ -430,31 +158,21 @@ fn note_connection(connected: &mut bool, now_up: bool) {
     *connected = now_up;
 }
 
-fn command_loop(
-    client: GraphQLClient,
-    rx: Receiver<PlayerCommand>,
-    local_tx: Sender<PlayerCommand>,
-) {
+fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
     while let Ok(cmd) = rx.recv() {
-        // Forward playback commands to both server (GQL) and local player.
         match &cmd {
             PlayerCommand::Pause => {
                 client.pause().ok();
-                local_tx.send(PlayerCommand::Pause).ok();
             }
             PlayerCommand::Resume => {
                 client.resume().ok();
-                local_tx.send(PlayerCommand::Resume).ok();
             }
             PlayerCommand::Stop => {
                 client.stop().ok();
-                local_tx.send(PlayerCommand::Stop).ok();
             }
             PlayerCommand::Seek(ms) => {
                 client.seek(*ms).ok();
-                local_tx.send(PlayerCommand::Seek(*ms)).ok();
             }
-            // These go to server only — the poller handles local playback.
             PlayerCommand::NextTrack => {
                 client.next().ok();
             }
@@ -467,12 +185,10 @@ fn command_loop(
             PlayerCommand::ClearPlaylist => {
                 client.clear_queue().ok();
             }
-            // The bridge drives a remote server's queue, which is rebuilt from
-            // track ids rather than from items this process built.
+            // The server's queue is built from its own track ids, not from
+            // items this process resolved against its library.
             PlayerCommand::ReplacePlaylist { .. } => {
                 client.clear_queue().ok();
-                local_tx.send(cmd).ok();
-                continue;
             }
             PlayerCommand::RemoveFromPlaylist(id) => {
                 let _ = client.execute(
@@ -499,26 +215,18 @@ fn command_loop(
             PlayerCommand::Redo => {
                 let _ = client.execute("mutation { redo { ok } }", None);
             }
-            PlayerCommand::SetOutputDevice(name) => {
-                // Device switching is local — the client owns the audio output.
-                local_tx
-                    .send(PlayerCommand::SetOutputDevice(name.clone()))
-                    .ok();
-            }
-            PlayerCommand::RestartOutput => {
-                local_tx.send(PlayerCommand::RestartOutput).ok();
-            }
-            PlayerCommand::ClearOutputDevice => {
-                local_tx.send(PlayerCommand::ClearOutputDevice).ok();
-            }
             // Not applicable in remote mode — listed explicitly so the compiler
-            // catches new variants.
-            PlayerCommand::TrackReady(_)
+            // catches new variants. The output device is the server's.
+            PlayerCommand::SetOutputDevice(_)
+            | PlayerCommand::RestartOutput
+            | PlayerCommand::ClearOutputDevice
+            | PlayerCommand::TrackReady(_)
             | PlayerCommand::TrackStreamReady(_)
             | PlayerCommand::StreamProbed { .. }
             | PlayerCommand::Cue { .. }
             | PlayerCommand::PauseAndReport(_)
             | PlayerCommand::TrackFailed(_)
+            | PlayerCommand::CacheTracks(_)
             | PlayerCommand::BeginUndoBatch
             | PlayerCommand::EndUndoBatch
             | PlayerCommand::UpdatePaths(_)

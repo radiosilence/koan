@@ -2,12 +2,6 @@
 
 ## Unreleased
 
-### Changed
-
-- **Hand-off is one player command.** `ReplacePlaylist` takes the position and whether to play, so a device receiving the music no longer issues clear, add and cue separately, and undo sees one step. Session restore in the apps and the TUI sends its cue at once instead of waiting on a thread for the track to download; the player already waits.
-- **The web UI lists every album and artist on one page, as the apps do.** Pages of 60 albums and 100 artists behind a Load more button made a large library tedious to scroll and broke find-in-page. Covers load lazily, so the whole listing costs markup rather than images.
-- **The web UI's name and year filters apply as you type.** A pause in typing replaces the listing under the toolbar and leaves the field focused; the URL is replaced rather than pushed, so back does not step through each keystroke. A year applies once it has four digits. On a phone the sheet's Apply still applies everything.
-
 ### Fixed
 
 - **Pausing a track that is still downloading keeps it paused.** The pause was ignored while the player waited for the track, which then started playing when it arrived; a paused stream also restarted from the beginning, playing, when its download completed. Resuming a restored position that was still downloading no longer loses the position.
@@ -21,6 +15,25 @@
 - **Skipping to a track still downloading clears the previous track's details** from the transport, and a seek or output change in the meantime no longer reopens the previous track.
 - **Skipping is no longer rate-limited for remote control.** The player dropped a next or previous within 150 ms of the last one, which swallowed rapid skips from the apps, GraphQL, MCP and the link. The TUI keeps the limit for its own keys, against terminal key repeat.
 - **A record with no artwork shows the ensō in the web UI, not a broken image.** The cover route answered 404, and the browser drew its broken-image icon until the page's script caught the error. It now serves the placeholder the macOS and iOS apps draw: the app icon's ensō, faded. It is cached for an hour rather than for good, since art added beside the files does not change the cover's URL.
+- **A track queued twice no longer plays a deleted file when its download fails.** The second entry was told the track was ready, pointing at the removed `.part` file, and stayed waiting forever if the first entry had been removed. Every entry waiting on a download now gets its result, and the second entry streams and shows progress from the one transfer.
+- **Downloading to the cache works.** "Download" on tracks that are not in the queue (`download_to_cache`) gave up after five seconds without fetching anything.
+- **Replacing a large queue no longer stalls downloads.** Entries from the old queue stayed queued, and each held a download worker for five seconds before it gave up. The download queue now follows the playlist and drops what it no longer holds.
+- **The track under the cursor shows its download progress in the apps.** It showed a static arrow for the whole transfer; it now shows the ring, as every other downloading row does.
+- **Playing from the middle of a long queue fetches what comes next first.** The queue was fetched from the top, so playing track 105 of 192 downloaded the 104 before it first. It now runs from the cursor to the end and then from the top, and re-sorts whenever the cursor moves. Tracks behind the cursor no longer show a spinner unless one is actually downloading.
+- **Clearing the queue stops its downloads.** A transfer kept running to the end once started, so clearing a queue mid-album left the workers fetching tracks nobody would play while the new queue waited behind them. A transfer nothing wants any more now stops within a quarter of a second.
+- **The seek bar's download mark moves smoothly.** It redrew a few times a second, when the download rate was sampled; it now follows the bytes at the display's rate, like the download rings, without re-running the transport bar.
+
+### Removed
+
+- **`koan play --server` no longer plays audio locally.** It is a remote control for the server, which plays the audio, as `--jukebox` did; `--jukebox` is still accepted and changes nothing. The local mode streamed one track at a time into a cache of its own, outside the download queue, and the queue mirror it shared the TUI with overwrote what it had fetched every 100 ms, so it rarely played. To listen to a koan server's library on this machine, sign in to it as a remote library (`koan remote login`, or Settings in the apps): its tracks then play through the local engine and download into the cache like any other remote library's.
+
+### Changed
+
+- **Hand-off is one player command.** `ReplacePlaylist` takes the position and whether to play, so a device receiving the music no longer issues clear, add and cue separately, and undo sees one step. Session restore in the apps and the TUI sends its cue at once instead of waiting on a thread for the track to download; the player already waits.
+- **The web UI lists every album and artist on one page, as the apps do.** Pages of 60 albums and 100 artists behind a Load more button made a large library tedious to scroll and broke find-in-page. Covers load lazily, so the whole listing costs markup rather than images.
+- **The web UI's name and year filters apply as you type.** A pause in typing replaces the listing under the toolbar and leaves the field focused; the URL is replaced rather than pushed, so back does not step through each keystroke. A year applies once it has four digits. On a phone the sheet's Apply still applies everything.
+- **Downloads follow the playlist.** The player starts the download queue, and it fetches whatever the playlist is waiting for. Front ends no longer request downloads alongside adding tracks, which removes the race between the two and the five-second wait that covered it. Each player has one table of transfers, keyed by track; in the app bindings, `Transfer` and `TransferFigure` are identified by `trackId` and no longer carry a `queueItemId`.
+
 
 ## 0.50.3
 
