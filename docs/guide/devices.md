@@ -49,6 +49,27 @@ to do with it. On iOS, finding anything on the network needs **Local Network**
 allowed for kōan (Settings → Privacy & Security); the picker says so when it
 is not.
 
+### Devices that stop answering
+
+A device is not dropped the moment it goes quiet. For one heartbeat (45
+seconds) it reads as reconnecting, so one missed signal does not mark it
+asleep; then it is listed as asleep with when it was last seen. A device heard
+from again is back at once. While nothing can reach it, it can be chosen only
+if it can be woken.
+
+- **One a push can wake**, a phone on your account that iOS has suspended,
+  stays listed as asleep for as long as the server can reach it. Choosing it
+  wakes it. That takes a push key on the server; without one, the phone is
+  listed but cannot be woken.
+- **One that cannot be woken from here**, such as a stranger's phone on the
+  network or a Mac that has gone to sleep, is shown asleep and cannot be
+  chosen. It is dropped after `devices.asleep_grace_mins` (30 by default), a
+  setting of this machine's kept in `config.local.toml`.
+
+iOS gives an app no way to wake itself on a schedule, so a suspended phone
+stops announcing itself on the network within seconds of going idle. A phone
+that is playing stays reachable, since its audio keeps it running.
+
 The device being controlled and the devices last seen are kept between runs,
 so reopening the app shows them at once, still controlling the same device;
 each is checked as the app comes to the front.

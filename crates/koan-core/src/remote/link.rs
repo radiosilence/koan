@@ -225,6 +225,14 @@ pub struct LinkDevice {
     /// What it last reported, with the playhead placed as of sending. `None`
     /// until it has reported at all.
     pub state: Option<LinkState>,
+    /// Unix seconds when it last held a link, for one that does not now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<i64>,
+    /// Whether the server can wake it once it is not linked: it gave a push
+    /// token, and the server has a push key. `None` from a server older than
+    /// this, which listed an absent device only when it had a token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wakeable: Option<bool>,
 }
 
 impl LinkCommand {

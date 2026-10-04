@@ -69,7 +69,8 @@ private struct DeviceRow: View {
             selected: player.controlled?.id == device.id,
             action: .control,
             canMove: player.canMoveMusic(to: device),
-            unreachable: device.problem != nil,
+            // Out of reach with nothing able to wake it: a command would go nowhere.
+            unreachable: device.problem != nil || (!device.awake && !device.wakeable),
             onSelect: { player.control(device.id) },
             onMove: { player.moveMusic(to: device.id) }
         )
@@ -79,8 +80,14 @@ private struct DeviceRow: View {
         if let problem = device.problem {
             return problem
         }
+        if !device.awake && !device.asleep {
+            return "Reconnecting…"
+        }
         if !device.awake {
-            return "Asleep. Music sent here arrives as a notification to tap."
+            let seen = Self.seen(device.lastSeen).map { " · seen \($0)" } ?? ""
+            return device.wakeable
+                ? "Asleep\(seen). Choosing it wakes it; music sent here arrives as a notification to tap."
+                : "Asleep\(seen)"
         }
         let playing = [device.title, device.artist].compactMap { $0 }.joined(separator: " — ")
         let library = device.sameLibrary ? "" : " · different library"
@@ -89,6 +96,18 @@ private struct DeviceRow: View {
         case .paused: return "Paused · \(playing)\(library)"
         case .stopped: return "Idle\(library)"
         }
+    }
+
+    private static let ago: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+
+    /// "5 min. ago", from Unix seconds.
+    private static func seen(_ at: Int64?) -> String? {
+        guard let at else { return nil }
+        return ago.localizedString(for: Date(timeIntervalSince1970: TimeInterval(at)), relativeTo: .now)
     }
 }
 
