@@ -377,6 +377,34 @@ pub fn resume() {
     crate::remote::nearby::refresh();
 }
 
+/// Where the target's playhead is now and whether it is playing, from what
+/// it last reported: the network's report when there is one, as `list`
+/// prefers it. Cheap enough for every display frame, which `list` is not.
+pub fn target_playhead() -> Option<(u64, bool)> {
+    with(|s| {
+        let id = &s.target.as_ref()?.id;
+        let (state, at) = s
+            .nearby
+            .iter()
+            .find(|n| n.hello.id == *id)
+            .and_then(|n| Some((n.state.as_ref()?, n.at)))
+            .or_else(|| {
+                s.account
+                    .iter()
+                    .find(|(d, _)| d.id == *id)
+                    .and_then(|(d, at)| Some((d.state.as_ref()?, *at)))
+            })?;
+        let mut position = state.position_ms;
+        if state.playing {
+            position += at.elapsed().as_millis() as u64;
+            if state.duration_ms > 0 {
+                position = position.min(state.duration_ms);
+            }
+        }
+        Some((position, state.playing))
+    })
+}
+
 /// The target as `list` would give it.
 pub fn target_device() -> Option<Device> {
     let id = target()?;

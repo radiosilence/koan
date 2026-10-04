@@ -112,6 +112,10 @@ pub struct Registry {
     entries: Mutex<Vec<Entry>>,
     orders: Mutex<Vec<Order>>,
     activities: Mutex<Vec<Activity>>,
+    /// Which of an account's devices has another's playing bars on screen:
+    /// `(username, watcher, target)`. Held in memory only, and forgotten with
+    /// the watcher's link.
+    level_watches: Mutex<Vec<(String, String, String)>>,
 }
 
 /// One registry per process: the WebSocket route and the GraphQL schema are
@@ -206,8 +210,70 @@ impl Registry {
         entries.retain(|e| e.info.id != id);
         drop(entries);
         if let Some((device, username)) = gone {
-            outbox::touch(&[(device, username.clone())]);
+            outbox::touch(&[(device.clone(), username.clone())]);
             self.announce(&username);
+            // A controller that went stops watching whatever it watched.
+            let targets: Vec<String> = self
+                .level_watches
+                .lock()
+                .iter()
+                .filter(|(u, w, _)| *u == username && *w == device)
+                .map(|(_, _, t)| t.clone())
+                .collect();
+            for target in targets {
+                self.watch_levels(&username, &device, &target, false);
+            }
+        }
+    }
+
+    /// `watcher` has `target`'s playing bars on screen, or no longer has. The
+    /// target is told to send its levels while anyone watches, and to stop
+    /// when the last one goes. Only over a live link: levels are no reason to
+    /// wake a phone or to queue a command for later.
+    pub fn watch_levels(&self, username: &str, watcher: &str, target: &str, on: bool) {
+        let mut watches = self.level_watches.lock();
+        watches.retain(|(u, w, t)| !(u == username && w == watcher && t == target));
+        if on {
+            watches.push((username.into(), watcher.into(), target.into()));
+        }
+        let watched = watches.iter().any(|(u, _, t)| u == username && t == target);
+        drop(watches);
+        if on || !watched {
+            self.send_live(username, target, LinkCommand::WatchLevels { on: watched });
+        }
+    }
+
+    /// A frame of `from`'s levels, for each device watching it. Not stored:
+    /// one that cannot be delivered now is of no use later.
+    pub fn levels(&self, username: &str, from: &str, f: koan_core::remote::levels::Frame) {
+        let watchers: Vec<String> = self
+            .level_watches
+            .lock()
+            .iter()
+            .filter(|(u, _, t)| u == username && t == from)
+            .map(|(_, w, _)| w.clone())
+            .collect();
+        for watcher in watchers {
+            self.send_live(
+                username,
+                &watcher,
+                LinkCommand::Levels {
+                    from: from.to_string(),
+                    f,
+                },
+            );
+        }
+    }
+
+    /// Send `cmd` to `device` if it is linked now, and nowhere else.
+    fn send_live(&self, username: &str, device: &str, cmd: LinkCommand) {
+        if let Some(e) = self
+            .entries
+            .lock()
+            .iter()
+            .find(|e| e.info.username == username && e.device == device)
+        {
+            let _ = e.tx.send(cmd);
         }
     }
 
@@ -265,7 +331,10 @@ impl Registry {
         to: &str,
         command: LinkCommand,
     ) -> Result<ClientInfo, String> {
-        if matches!(command, LinkCommand::Devices { .. }) {
+        if matches!(
+            command,
+            LinkCommand::Devices { .. } | LinkCommand::Levels { .. }
+        ) {
             return Err("not a command".into());
         }
         self.send(Some(username), Some(to), command)
@@ -1203,6 +1272,60 @@ fn pick(clients: &[ClientInfo], now: i64) -> Result<&ClientInfo, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn levels_reach_a_watcher_only_while_it_watches() {
+        use koan_core::remote::levels::Frame;
+        let reg = Registry::default();
+        let (tx_mac, mut mac) = tokio::sync::mpsc::unbounded_channel();
+        let (tx_phone, mut phone) = tokio::sync::mpsc::unbounded_channel();
+        let mac_id = reg.register("lv", "mac", "macos", "lv-mac", tx_mac, false);
+        reg.register("lv", "phone", "ios", "lv-phone", tx_phone, false);
+        let levels = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkCommand>| {
+            std::iter::from_fn(|| rx.try_recv().ok())
+                .filter(|c| {
+                    matches!(
+                        c,
+                        LinkCommand::Levels { .. } | LinkCommand::WatchLevels { .. }
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let f = Frame(1_000, 1, 2, 3);
+
+        reg.levels("lv", "lv-phone", f);
+        assert!(levels(&mut mac).is_empty(), "nobody watching");
+
+        reg.watch_levels("lv", "lv-mac", "lv-phone", true);
+        assert_eq!(
+            levels(&mut phone),
+            vec![LinkCommand::WatchLevels { on: true }]
+        );
+        reg.levels("lv", "lv-phone", f);
+        assert_eq!(
+            levels(&mut mac),
+            vec![LinkCommand::Levels {
+                from: "lv-phone".into(),
+                f
+            }]
+        );
+
+        // The watcher's link goes: the phone is told to stop.
+        reg.unregister(&mac_id);
+        assert_eq!(
+            levels(&mut phone),
+            vec![LinkCommand::WatchLevels { on: false }]
+        );
+        reg.watch_levels("lv", "lv-mac", "lv-phone", true);
+        reg.watch_levels("lv", "lv-mac", "lv-phone", false);
+        assert_eq!(
+            levels(&mut phone),
+            vec![
+                LinkCommand::WatchLevels { on: true },
+                LinkCommand::WatchLevels { on: false }
+            ]
+        );
+    }
 
     #[test]
     fn a_playlist_order_adds_the_named_tracks_once_they_arrive() {

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The playing bars follow the device being controlled.** While one kōan controls another, the bars beside the playing track show that device's levels rather than this one's silence. The device sends its levels only while a controller has bars on screen, about forty bytes a frame at its analyser's rate, and stops when the bars go. Frames are drawn a couple of frames behind the playhead and interpolated, so a late one is not seen, and the bars settle to rest when the music pauses or the link stalls. A device on the same network may watch the bars of one it can already see playing; through a koan server, only the account's own devices can. The server must be this version or later to relay them; with an older one the bars stay at rest.
+
 ## 0.52.2
 
 ### Changed
