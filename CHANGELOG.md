@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The queue can follow what is playing.** The jump-to-playing button now also follows: the queue keeps the playing track in view as it moves on, through gapless transitions, skips and repeats, sliding by a row rather than jumping. The button is tinted while it follows; pressing it again, or scrolling the queue yourself, stops it. On the Mac the track keeps its place on screen; on iOS it is kept centred.
+
 ## 0.52.3
 
 ### Added
