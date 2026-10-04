@@ -450,6 +450,7 @@
   }
   a {
     color: var(--brand);
+    text-decoration-line: underline;
   }
   p {
     margin-block: 1em;

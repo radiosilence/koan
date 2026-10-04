@@ -32,6 +32,8 @@ const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self';
 pub(crate) const ENGINE_JS: &str = include_str!("../assets/player.js");
 const PLAYER_JS: &str = include_str!("../assets/share.js");
 const PAGE_CSS: &str = include_str!("../assets/share.css");
+/// The track lists' class list, on the page's one list or each album's.
+const TRACKS: &str = "grid gap-1.5";
 
 #[derive(Clone)]
 struct ShareState {
@@ -228,8 +230,6 @@ fn meta(attr: &str, key: &str, content: &str) -> String {
 /// Each row carries what the player needs in data attributes; without script,
 /// each row is a link. The link-preview tags need absolute URLs, so they are
 /// only complete when `sharing.public_url` is set.
-const TRACKS: &str = "grid gap-1.5";
-
 fn render(
     id: &str,
     share: &ShareRow,
