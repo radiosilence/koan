@@ -239,6 +239,7 @@ impl Registry {
                     position_ms: e.info.position_ms(),
                     ..e.info.state.clone()
                 }),
+                last_seen: None,
             })
             .collect();
         for t in asleep {
@@ -249,6 +250,7 @@ impl Registry {
                     platform: t.platform,
                     linked: false,
                     state: None,
+                    last_seen: Some(t.last_seen),
                 });
             }
         }
@@ -1056,6 +1058,8 @@ mod outbox {
         pub platform: String,
         pub token: String,
         pub sandbox: bool,
+        /// Unix seconds.
+        pub last_seen: i64,
     }
 
     /// Queue `cmd` for one device, to go down its next link.
@@ -1092,7 +1096,7 @@ mod outbox {
         let Some(db) = db() else { return Vec::new() };
         db.conn
             .prepare(
-                "SELECT p.device, p.username, d.name, d.platform, p.token, p.sandbox
+                "SELECT p.device, p.username, d.name, d.platform, p.token, p.sandbox, d.last_seen
                    FROM link_push p JOIN link_devices d ON d.device = p.device AND d.username = p.username
                   WHERE ?1 IS NULL OR p.username = ?1
                   ORDER BY d.last_seen DESC",
@@ -1106,6 +1110,7 @@ mod outbox {
                         platform: r.get(3)?,
                         token: r.get(4)?,
                         sandbox: r.get(5)?,
+                        last_seen: r.get(6)?,
                     })
                 })?
                 .collect()

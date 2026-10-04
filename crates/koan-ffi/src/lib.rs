@@ -1809,6 +1809,10 @@ impl KoanEngine {
     /// picked. Nothing moves; see `move_music`.
     pub async fn control_device(self: Arc<Self>, id: Option<String>) -> Result<(), KoanError> {
         offload::sequenced(move || {
+            if let Some(id) = &id {
+                koan_core::remote::devices::choosable(id)
+                    .map_err(|message| KoanError::Remote { message })?;
+            }
             if id.is_some() && self.state.playback_state() == PlaybackState::Playing {
                 self.send_local(PlayerCommand::Pause)?;
             }
@@ -3171,6 +3175,9 @@ impl KoanEngine {
                     account: d.account,
                     nearby: d.nearby,
                     awake: d.awake,
+                    asleep: d.asleep,
+                    wakeable: d.wakeable,
+                    last_seen: d.last_seen,
                     same_library: d.same_library,
                     state: play_state(&st),
                     title: st.title.clone(),

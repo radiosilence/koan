@@ -1324,6 +1324,13 @@ pub struct DeviceInfo {
     /// Reachable at once. False for a phone iOS has suspended, which a
     /// command wakes and music reaches as a notification to tap.
     pub awake: bool,
+    /// Not heard from for longer than a heartbeat.
+    pub asleep: bool,
+    /// Can be woken from asleep. An asleep device that cannot is shown and
+    /// cannot be chosen.
+    pub wakeable: bool,
+    /// Unix seconds when it was last reachable.
+    pub last_seen: Option<i64>,
     /// Plays from the same library, so music can be handed between the two.
     pub same_library: bool,
     pub state: PlayState,

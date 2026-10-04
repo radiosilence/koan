@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Devices that stop answering stay listed, asleep.** A device that went quiet dropped out of the Control menu at once, and a phone iOS suspended a moment ago vanished from every other device's list. A device now stays as it was for one heartbeat (45 seconds), so a single missed signal changes nothing, and is then shown asleep with when it was last seen. One a push can wake stays listed and can be chosen; one that nothing can wake from here is shown, cannot be chosen, and is dropped after `devices.asleep_grace_mins` (30 by default). The server sends when an absent device was last seen, which older apps ignore.
+
 ## 0.52.2
 
 ### Changed

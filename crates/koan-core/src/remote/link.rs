@@ -212,6 +212,9 @@ pub struct LinkDevice {
     /// What it last reported, with the playhead placed as of sending. `None`
     /// until it has reported at all.
     pub state: Option<LinkState>,
+    /// Unix seconds when it last held a link, for one that does not now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen: Option<i64>,
 }
 
 impl LinkCommand {
