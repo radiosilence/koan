@@ -26,7 +26,6 @@ use koan_core::audio::viz::VizSnapshot;
 use koan_core::config::{self, Config};
 use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, PersistedQueueItem};
-use koan_core::helpers::spawn_downloads;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState};
@@ -399,7 +398,7 @@ impl KoanEngine {
     /// Forget the transfers that have already settled. Running ones are left
     /// alone — stopping one is a different verb.
     pub fn clear_settled_downloads(&self) {
-        koan_core::remote::downloads::store().clear_settled();
+        self.state.downloads().clear_settled();
     }
 
     /// The byte counts of every transfer still going, read now.
@@ -410,10 +409,11 @@ impl KoanEngine {
     /// time to await one; it holds the download list's read lock for one pass
     /// over a few dozen entries and touches nothing else.
     pub fn transfer_readings(&self) -> Vec<TransferFigure> {
-        koan_core::remote::downloads::store()
+        self.state
+            .downloads()
             .readings()
             .iter()
-            .map(TransferFigure::from)
+            .map(TransferFigure::reading)
             .collect()
     }
 
@@ -455,7 +455,7 @@ impl KoanEngine {
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
-            let (items, pending) = self.build_items(&db, &track_ids);
+            let items = self.build_items(&db, &track_ids);
             if items.is_empty() {
                 return Ok(Vec::new());
             }
@@ -469,7 +469,6 @@ impl KoanEngine {
             if was_stopped && koan_core::remote::devices::target().is_none() {
                 let _ = self.tx.send(PlayerCommand::Play(first));
             }
-            self.start_downloads(pending);
 
             Ok(ids)
         })
@@ -489,7 +488,7 @@ impl KoanEngine {
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
-            let (items, pending) = self.build_items(&db, &track_ids);
+            let items = self.build_items(&db, &track_ids);
             if items.is_empty() {
                 self.send(PlayerCommand::ClearPlaylist)?;
                 return Ok(Vec::new());
@@ -502,7 +501,6 @@ impl KoanEngine {
                 position_ms: 0,
                 play: true,
             })?;
-            self.start_downloads(pending);
 
             Ok(ids)
         })
@@ -518,14 +516,13 @@ impl KoanEngine {
         offload::sequenced(move || {
             let after = parse_qid(&after_queue_item_id)?;
             let db = self.db()?;
-            let (items, pending) = self.build_items(&db, &track_ids);
+            let items = self.build_items(&db, &track_ids);
             if items.is_empty() {
                 return Ok(Vec::new());
             }
 
             let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
             self.send(PlayerCommand::InsertInPlaylist { items, after })?;
-            self.start_downloads(pending);
 
             Ok(ids)
         })
@@ -1539,7 +1536,7 @@ impl KoanEngine {
             }
             let track_ids: Vec<i64> = entries.iter().map(|e| e.track.id).collect();
 
-            let (mut items, pending) = self.build_items(&db, &track_ids);
+            let mut items = self.build_items(&db, &track_ids);
             // Each queue item remembers the row it came from. The queue is an
             // ephemeral view onto the playlist and may be shuffled, cut about
             // or added to; this is what still says which row is playing, and
@@ -1577,7 +1574,6 @@ impl KoanEngine {
                 position_ms: 0,
                 play: true,
             })?;
-            self.start_downloads(pending);
 
             Ok(ids)
         })
@@ -1680,7 +1676,7 @@ impl KoanEngine {
             // queue comes back, but not playing over that device's.
             let resume = saved.was_playing && koan_core::remote::devices::target().is_none();
 
-            let (items, pending) = restore_items(&db, &saved.items);
+            let items = restore_items(&db, &saved.items);
             if items.is_empty() {
                 return Ok(0);
             }
@@ -1697,7 +1693,6 @@ impl KoanEngine {
                 .map(|i| i.id);
 
             self.send_local(PlayerCommand::AddToPlaylist(items))?;
-            self.download_now(pending);
 
             if let Some(id) = cursor {
                 // The player waits for a track still downloading, and opens it
@@ -2200,7 +2195,7 @@ impl KoanEngine {
             let db = self.db()?;
             let cfg = Config::load().unwrap_or_default();
             let cleared = koan_core::helpers::clear_download_cache(&db, &cfg);
-            koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
+            koan_core::helpers::requeue_cleared_downloads(&self.state);
             self.bump_library();
             Ok(CacheCleared {
                 files: cleared.files,
@@ -2219,7 +2214,7 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             let cleared = koan_core::helpers::clear_downloads_for(&db, &track_ids);
-            koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
+            koan_core::helpers::requeue_cleared_downloads(&self.state);
             self.bump_library();
             Ok(CacheCleared {
                 files: cleared.files,
@@ -2241,12 +2236,8 @@ impl KoanEngine {
     /// store and nowhere else.
     pub async fn download_to_cache(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
         offload::offload(move || {
-            let pending: Vec<(i64, koan_core::player::state::QueueItemId)> = track_ids
-                .into_iter()
-                .map(|id| (id, koan_core::player::state::QueueItemId::new()))
-                .collect();
-            koan_core::helpers::spawn_downloads(pending, self.tx.clone(), self.state.clone());
-            Ok(())
+            // This device's cache, whichever device is being controlled.
+            self.send_local(PlayerCommand::CacheTracks(track_ids))
         })
         .await
     }
@@ -2601,6 +2592,42 @@ impl KoanEngine {
     ///
     /// The playhead is the one thing no writer can announce, because it moves
     /// on its own. It is published as an anchor instead: see `state::Anchor`.
+    /// Publish the transfers' figures whenever the store takes a reading — a
+    /// few times a second while something downloads, never otherwise.
+    ///
+    /// Its own thread on the store's own signal. Readings are rung there and
+    /// not on the engine's, so a transfer in progress wakes this and nothing
+    /// else: not the state watcher, not a link, not a subscription.
+    fn spawn_figures(self: &Arc<Self>) {
+        let engine = Arc::downgrade(self);
+        let store = self.state.downloads().clone();
+        std::thread::Builder::new()
+            .name("koan-figures".into())
+            .spawn(move || {
+                let mut seen = store.moved().generation();
+                let mut last = u64::MAX;
+                loop {
+                    let Some(engine) = engine.upgrade() else {
+                        return;
+                    };
+                    let figures = store.figures();
+                    if figures != last {
+                        last = figures;
+                        engine.out.publish(StateSlice::Figures {
+                            figures: store.all().iter().map(TransferFigure::of).collect(),
+                        });
+                    }
+                    drop(engine);
+                    // Bounded, to notice the engine going: nothing rings this
+                    // when it does.
+                    seen = store
+                        .moved()
+                        .wait_until(seen, std::time::Duration::from_secs(30));
+                }
+            })
+            .expect("failed to spawn the figures thread");
+    }
+
     fn spawn_watcher(self: &Arc<Self>) {
         let engine = Arc::downgrade(self);
         std::thread::Builder::new()
@@ -2608,7 +2635,6 @@ impl KoanEngine {
             .spawn(move || {
                 let mut last_queue = u64::MAX;
                 let mut last_store = u64::MAX;
-                let mut last_figures = u64::MAX;
                 let mut last_library = u64::MAX;
                 let mut last_devices = u64::MAX;
                 let mut last_target: Option<String> = None;
@@ -2621,7 +2647,7 @@ impl KoanEngine {
                 // this set has landed on disk, which wrote a cached path onto a
                 // library row — and nothing else says so, because the download
                 // ran in koan-core, which has no notion of that version.
-                let mut running: HashSet<String> = HashSet::new();
+                let mut running: HashSet<i64> = HashSet::new();
                 // A transfer landed since the library last said so.
                 let mut landed = false;
                 let mut last_landing = Instant::now();
@@ -2744,36 +2770,20 @@ impl KoanEngine {
                         }
                     }
 
-                    // Readings are taken as the bytes land rather than here —
-                    // see `DownloadStore::progressed` — so this asks whether
-                    // one has been taken since the last it published, which for
-                    // a koan with nothing downloading is never. The list is
-                    // read once and only when one of the two has moved: it is a
-                    // clone of every transfer koan knows about.
-                    let store = koan_core::remote::downloads::store();
+                    // The list's shape: a transfer listed, settled or
+                    // forgotten. Its figures are `spawn_figures`'.
+                    let store = engine.state.downloads();
                     let store_version = store.version();
-                    let figures_version = store.figures();
-                    if figures_version != last_figures || store_version != last_store {
-                        // Structural and volatile from one reading of one list,
-                        // so a row and its figure can never describe different
-                        // moments.
+                    if store_version != last_store {
+                        last_store = store_version;
                         let transfers = store.all();
-                        if figures_version != last_figures {
-                            last_figures = figures_version;
-                            out.publish(StateSlice::Figures {
-                                figures: transfers.iter().map(TransferFigure::from).collect(),
-                            });
-                        }
-                        if store_version != last_store {
-                            last_store = store_version;
-                            out.publish(StateSlice::Transfers {
-                                transfers: transfers.iter().map(Transfer::from).collect(),
-                            });
-                        }
-                        let now_running: HashSet<String> = transfers
+                        out.publish(StateSlice::Transfers {
+                            transfers: transfers.iter().map(Transfer::of).collect(),
+                        });
+                        let now_running: HashSet<_> = transfers
                             .iter()
                             .filter(|d| !d.state.is_settled())
-                            .map(|d| d.id.0.to_string())
+                            .map(|d| d.track_id)
                             .collect();
                         if running.difference(&now_running).next().is_some() {
                             landed = true;
@@ -3312,6 +3322,7 @@ impl KoanEngine {
             playlist_history: Default::default(),
         });
         engine.spawn_watcher();
+        engine.spawn_figures();
         // A koan server this app syncs from can then tell it what to play, and
         // so can this person's other devices and anyone's on the network.
         let (weak, state) = (Arc::downgrade(&engine), engine.state.clone());
@@ -3365,7 +3376,7 @@ impl KoanEngine {
         let play_state = self.state.playback_state();
         let entry = cursor
             .and_then(|cid| self.state.get_item(cid))
-            .map(|item| QueueItem::from_cursor_item(&item, play_state));
+            .map(|item| QueueItem::from_cursor_item(&item, play_state, self.state.downloads()));
 
         NowPlaying {
             state: play_state.into(),
@@ -3529,25 +3540,16 @@ impl KoanEngine {
         })
     }
 
-    /// Resolve track IDs into playlist items, collecting the ones that still
-    /// need downloading. Skips IDs that aren't in the library.
+    /// Resolve track IDs into playlist items. Skips IDs that aren't in the
+    /// library. Remote ones download once the player has them — the download
+    /// queue follows the playlist.
     ///
     /// One query for the rows and one config load for the batch. Doing either
     /// per track is what made adding an album — never mind an artist — take
     /// long enough to be worth a progress indicator.
-    fn build_items(
-        &self,
-        db: &Database,
-        track_ids: &[i64],
-    ) -> (Vec<PlaylistItem>, Vec<(i64, QueueItemId)>) {
+    fn build_items(&self, db: &Database, track_ids: &[i64]) -> Vec<PlaylistItem> {
         let rows = queries::tracks_by_ids(&db.conn, track_ids).unwrap_or_default();
-        let items = koan_core::helpers::playlist_items_for_tracks(db, &rows);
-        let pending = items
-            .iter()
-            .filter(|item| matches!(item.state, koan_core::player::state::ItemState::Pending))
-            .filter_map(|item| item.db_id.map(|id| (id, item.id)))
-            .collect();
-        (items, pending)
+        koan_core::helpers::playlist_items_for_tracks(db, &rows)
     }
 
     /// Undo or redo a playlist edit: put it back, follow it from the queue if
@@ -3621,14 +3623,13 @@ impl KoanEngine {
         let mut added = std::collections::HashMap::new();
         if !missing.is_empty() {
             let track_ids: Vec<i64> = missing.iter().map(|e| e.track.id).collect();
-            let (mut new_items, pending) = self.build_items(db, &track_ids);
+            let mut new_items = self.build_items(db, &track_ids);
             for (item, entry) in new_items.iter_mut().zip(&missing) {
                 item.playlist_entry_id = Some(entry.id);
                 added.insert(entry.id, item.id);
             }
             if !new_items.is_empty() {
                 let _ = self.send_local(PlayerCommand::AddToPlaylist(new_items));
-                self.download_now(pending);
             }
         }
 
@@ -3673,7 +3674,7 @@ impl KoanEngine {
                     koan_core::remote::devices::set_target(None);
                 }
                 let ids = resolve_tracks(&db, &track_ids);
-                let (items, pending) = self.build_items(&db, &ids);
+                let items = self.build_items(&db, &ids);
                 if items.is_empty() {
                     log::warn!(
                         "link: none of {} tracks are in the library",
@@ -3687,9 +3688,7 @@ impl KoanEngine {
                     start,
                     position_ms,
                     play: !paused,
-                })?;
-                self.download_now(pending);
-                Ok(())
+                })
             }),
             LinkCommand::PlayItem { id } => {
                 let id = parse_qid(&id);
@@ -3710,12 +3709,11 @@ impl KoanEngine {
             LinkCommand::Insert { track_ids, after } => self.db().and_then(|db| {
                 let after = parse_qid(&after)?;
                 let ids = resolve_tracks(&db, &track_ids);
-                let (items, pending) = self.build_items(&db, &ids);
+                let items = self.build_items(&db, &ids);
                 if items.is_empty() {
                     return Ok(());
                 }
                 self.send_local(PlayerCommand::InsertInPlaylist { items, after })?;
-                self.download_now(pending);
                 Ok(())
             }),
             LinkCommand::Undo => self.send_local(PlayerCommand::Undo),
@@ -3725,7 +3723,7 @@ impl KoanEngine {
             LinkCommand::Devices { .. } => Ok(()),
             LinkCommand::Enqueue { track_ids } => self.db().and_then(|db| {
                 let ids = resolve_tracks(&db, &track_ids);
-                let (items, pending) = self.build_items(&db, &ids);
+                let items = self.build_items(&db, &ids);
                 let Some(first) = items.first().map(|i| i.id) else {
                     return Ok(());
                 };
@@ -3734,7 +3732,6 @@ impl KoanEngine {
                 if was_stopped {
                     self.send_local(PlayerCommand::Play(first))?;
                 }
-                self.download_now(pending);
                 Ok(())
             }),
             LinkCommand::JumpTo { track_id } => self.db().and_then(|db| {
@@ -3747,7 +3744,7 @@ impl KoanEngine {
                 if let Some(item) = items.iter().find(|i| i.db_id == Some(local)) {
                     return self.send_local(PlayerCommand::Play(item.id));
                 }
-                let (mut new, pending) = self.build_items(&db, &[local]);
+                let mut new = self.build_items(&db, &[local]);
                 let Some(item) = new.pop() else { return Ok(()) };
                 let id = item.id;
                 match cursor {
@@ -3758,12 +3755,11 @@ impl KoanEngine {
                     None => self.send_local(PlayerCommand::AddToPlaylist(vec![item]))?,
                 }
                 self.send_local(PlayerCommand::Play(id))?;
-                self.download_now(pending);
                 Ok(())
             }),
             LinkCommand::PlayNext { track_ids } => self.db().and_then(|db| {
                 let ids = resolve_tracks(&db, &track_ids);
-                let (items, pending) = self.build_items(&db, &ids);
+                let items = self.build_items(&db, &ids);
                 if items.is_empty() {
                     return Ok(());
                 }
@@ -3773,7 +3769,6 @@ impl KoanEngine {
                     }
                     None => self.send_local(PlayerCommand::AddToPlaylist(items))?,
                 }
-                self.download_now(pending);
                 Ok(())
             }),
             LinkCommand::Remove { track_ids } => self.db().and_then(|db| {
@@ -3891,20 +3886,6 @@ impl KoanEngine {
         koan_core::signal::engine_changed().bump();
     }
 
-    /// Fetch what a command the user gave just queued. Nothing, while the
-    /// queue it went to is another device's.
-    fn start_downloads(&self, pending: Vec<(i64, QueueItemId)>) {
-        if koan_core::remote::devices::target().is_none() {
-            self.download_now(pending);
-        }
-    }
-
-    fn download_now(&self, pending: Vec<(i64, QueueItemId)>) {
-        if !pending.is_empty() {
-            spawn_downloads(pending, self.tx.clone(), self.state.clone());
-        }
-    }
-
     /// Attach favourite state in one pass — one query per listing rather than
     /// one per row. Keyed by track ID because the favourites table stores
     /// whichever path a track happens to have, and a never-cached remote track
@@ -3926,10 +3907,7 @@ impl KoanEngine {
 /// Anything still in the library is re-resolved so cache paths and downloads
 /// are correct; anything that has since gone keeps the copy stored in the
 /// snapshot, so a restore never silently drops tracks.
-fn restore_items(
-    db: &Database,
-    saved: &[PersistedQueueItem],
-) -> (Vec<PlaylistItem>, Vec<(i64, QueueItemId)>) {
+fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistItem> {
     // By id first: a saved path names the container it was written in, which
     // iOS moves on every update, and a track still downloading when the session
     // was saved has no row with its path at all. The title guards against an
@@ -3957,22 +3935,14 @@ fn restore_items(
     let rows = queries::tracks_by_ids(&db.conn, &known).unwrap_or_default();
     let mut resolved = koan_core::helpers::playlist_items_for_tracks(db, &rows).into_iter();
 
-    let mut items = Vec::with_capacity(saved.len());
-    let mut pending = Vec::new();
-    for (saved_item, id) in saved.iter().zip(ids) {
-        match id.and_then(|_| resolved.next()) {
-            Some(item) => {
-                if matches!(item.state, koan_core::player::state::ItemState::Pending)
-                    && let Some(db_id) = item.db_id
-                {
-                    pending.push((db_id, item.id));
-                }
-                items.push(item);
-            }
-            None => items.push(saved_item.to_playlist_item()),
-        }
-    }
-    (items, pending)
+    saved
+        .iter()
+        .zip(ids)
+        .map(|(saved_item, id)| match id.and_then(|_| resolved.next()) {
+            Some(item) => item,
+            None => saved_item.to_playlist_item(),
+        })
+        .collect()
 }
 
 fn sort_rows(mut rows: Vec<queries::TrackRow>, sort: TrackSort) -> Vec<queries::TrackRow> {
@@ -4321,7 +4291,7 @@ mod restore_tests {
         let id = track(&db, "Song", &file);
 
         let stale = "/var/mobile/Containers/Data/Application/OLD/Library/Caches/koan/a.flac";
-        let (items, _) = restore_items(
+        let items = restore_items(
             &db,
             &[
                 saved("Song", stale, Some(id)),

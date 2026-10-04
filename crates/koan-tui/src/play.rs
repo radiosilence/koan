@@ -15,7 +15,6 @@ use crate::picker::{
     artist_id_from_sentinel, is_all_tracks_sentinel,
 };
 use crate::picker_items::{load_picker_items, make_album_picker_items};
-use koan_core::remote::queue::DownloadQueue;
 
 /// Callbacks for CLI integration. The TUI library crate doesn't own
 /// the logger or signal handler — koan-cli provides those.
@@ -104,7 +103,6 @@ pub fn run_tui(
     log_buffer: Arc<Mutex<Vec<String>>>,
     start_in_library: bool,
     expects_playback: bool,
-    download_queue: DownloadQueue,
     callbacks: TuiCallbacks,
 ) -> std::io::Result<()> {
     use crossterm::{
@@ -157,14 +155,7 @@ pub fn run_tui(
     let frame_duration = Duration::from_micros(1_000_000 / target_fps as u64);
     let mut next_frame = std::time::Instant::now();
 
-    let mut app = app::App::new(
-        state,
-        viz_snapshot,
-        tx.clone(),
-        log_buffer,
-        target_fps,
-        download_queue.clone(),
-    );
+    let mut app = app::App::new(state, viz_snapshot, tx.clone(), log_buffer, target_fps);
 
     if expects_playback {
         app.loading_message = Some("loading...".into());
@@ -385,7 +376,6 @@ pub fn run_tui(
 
         if let Some((kind, ids, action)) = app.picker_result.take() {
             let tx_bg = tx.clone();
-            let dq_bg = download_queue.clone();
 
             app.loading_message = Some("loading...".into());
 
@@ -416,7 +406,7 @@ pub fn run_tui(
                     };
 
                     if !track_ids.is_empty() {
-                        enqueue_playlist(track_ids, action, tx_bg, dq_bg);
+                        enqueue_playlist(track_ids, action, tx_bg);
                     }
                 })
                 .ok();

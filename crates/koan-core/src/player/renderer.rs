@@ -1043,10 +1043,12 @@ mod tests {
     const WAV: &str = "http-get:*:audio/wav:*,http-get:*:audio/x-wav:*";
 
     fn item(path: PathBuf, title: &str) -> PlaylistItem {
+        // A library id of its own, which a download is keyed by.
+        static NEXT_TRACK: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
         PlaylistItem {
             playlist_entry_id: None,
             id: QueueItemId::new(),
-            db_id: None,
+            db_id: Some(NEXT_TRACK.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
             path,
             title: title.to_string(),
             artist: "Artist".into(),
@@ -1417,36 +1419,41 @@ mod tests {
         );
     }
 
-    /// Mark `id` as still downloading, with enough of it on disk to stream.
-    fn downloading(r: &Rig, id: QueueItemId) {
-        use crate::remote::downloads::{ByteFeed, Download, DownloadState, store};
-        let path = r.player.shared_state.get_item(id).unwrap().path;
-        r.player
-            .shared_state
-            .update_item_state(id, ItemState::Pending);
-        let feed = ByteFeed::new();
+    /// Start a transfer for queue entry `id` in `state`'s download store,
+    /// with enough of it on disk to stream.
+    fn start_download(state: &crate::player::state::SharedPlayerState, id: QueueItemId) {
+        let item = state.get_item(id).unwrap();
+        let track = item.db_id.unwrap();
+        state.update_item_state(id, ItemState::Pending);
+        let downloads = state.downloads();
+        downloads.claim(track, Some(id));
+        let feed = downloads.announce(
+            track,
+            item.title.clone(),
+            String::new(),
+            item.path.clone(),
+            item.path,
+        );
         feed.set(crate::player::state::STREAM_THRESHOLD * 2);
-        store().queued(Download {
-            id,
-            track_id: 0,
-            title: "a".into(),
-            artist: String::new(),
-            source: path.clone(),
-            dest: path,
-            total: 0,
-            written: feed.clone(),
-            state: DownloadState::Queued,
-            bytes_per_second: 0,
-        });
-        store().started(id, 0, feed);
+        downloads.started(track, 0);
     }
 
+    fn downloading(r: &Rig, id: QueueItemId) {
+        start_download(&r.player.shared_state, id);
+    }
+
+    /// The transfer for `id` lands, as the download queue would settle it.
     fn landed(r: &mut Rig, id: QueueItemId) {
-        crate::remote::downloads::store().finished(id);
-        r.player
-            .shared_state
-            .update_item_state(id, ItemState::Ready);
-        r.player.process_command(PlayerCommand::TrackReady(id));
+        let item = r.player.shared_state.get_item(id).unwrap();
+        crate::remote::downloads::settle(
+            &r.player.shared_state,
+            item.db_id.unwrap(),
+            &Ok(item.path),
+        )
+        .announce(&r.player.command_sender());
+        while let Ok(cmd) = r.player.commands.rx.try_recv() {
+            r.player.process_command(cmd);
+        }
     }
 
     #[test]
@@ -1469,7 +1476,6 @@ mod tests {
         landed(&mut r, id);
         assert_eq!(r.count("SetAVTransportURI"), 1);
         assert_eq!(r.state(), PlaybackState::Playing);
-        crate::remote::downloads::store().withdrawn(id);
     }
 
     #[test]
@@ -1504,7 +1510,6 @@ mod tests {
         r.player.process_command(PlayerCommand::Resume);
         let commands = r.commands();
         assert_eq!(&commands[commands.len() - 2..], ["Seek", "Play"]);
-        crate::remote::downloads::store().withdrawn(id);
     }
 
     #[test]
@@ -2264,7 +2269,6 @@ mod tests {
     #[test]
     fn random_use_with_a_renderer_keeps_the_player_honest() {
         use crate::player::tests::{Rng, asks_to_play, check_invariants, playlist_ids};
-        use crate::remote::downloads::{ByteFeed, Download, DownloadState, store};
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.wav");
@@ -2279,30 +2283,16 @@ mod tests {
                 asked: Default::default(),
                 starts: Default::default(),
             });
-            let mut streamed = Vec::new();
-            let mut fresh = |rng: &mut Rng| {
+            // Items still arriving, with enough on disk to stream: started
+            // once they are in the playlist, where the store looks them up.
+            let streamed = std::cell::RefCell::new(Vec::new());
+            let fresh = |rng: &mut Rng| {
                 let mut it = item(path.clone(), "t");
                 match rng.below(4) {
                     0 => it.state = ItemState::Pending,
-                    // Still arriving, with enough on disk to stream.
                     1 => {
                         it.state = ItemState::Pending;
-                        let feed = ByteFeed::new();
-                        feed.set(crate::player::state::STREAM_THRESHOLD * 2);
-                        store().queued(Download {
-                            id: it.id,
-                            track_id: 0,
-                            title: "t".into(),
-                            artist: String::new(),
-                            source: path.clone(),
-                            dest: path.clone(),
-                            total: 0,
-                            written: feed.clone(),
-                            state: DownloadState::Queued,
-                            bytes_per_second: 0,
-                        });
-                        store().started(it.id, 0, feed);
-                        streamed.push(it.id);
+                        streamed.borrow_mut().push(it.id);
                     }
                     _ => {}
                 }
@@ -2310,6 +2300,18 @@ mod tests {
             };
             let start: Vec<_> = (0..5).map(|_| fresh(&mut rng)).collect();
             player.process_command(PlayerCommand::AddToPlaylist(start));
+            let state = player.shared_state.clone();
+            let mut started = 0;
+            let mut start_streams = || {
+                let streamed = streamed.borrow();
+                for &id in &streamed[started..] {
+                    if state.get_item(id).is_some() {
+                        start_download(&state, id);
+                    }
+                }
+                started = streamed.len();
+            };
+            start_streams();
             let connect = |player: &Player| {
                 let connection = upnp::open(fake.renderer(), &player.command_sender()).unwrap();
                 PlayerCommand::UseRenderer(Some(Box::new(connection)))
@@ -2362,7 +2364,13 @@ mod tests {
                             .map(|i| i.id)
                             .collect();
                         pending.get(rng.below(pending.len())).map(|&id| {
-                            store().finished(id);
+                            let item = player.shared_state.get_item(id).unwrap();
+                            crate::remote::downloads::settle(
+                                &player.shared_state,
+                                item.db_id.unwrap(),
+                                &Ok(item.path),
+                            )
+                            .announce(&player.command_sender());
                             player.shared_state.update_item_state(id, ItemState::Ready);
                             PlayerCommand::TrackReady(id)
                         })
@@ -2418,6 +2426,7 @@ mod tests {
                 if let Some(cmd) = cmd {
                     player.process_command(cmd);
                 }
+                start_streams();
                 // What arrived meanwhile — the renderer's answers, the decode
                 // threads' ends — as the loop would see it.
                 let settle = Instant::now() + Duration::from_millis(15);
@@ -2439,9 +2448,6 @@ mod tests {
                 }
             }
             player.process_command(PlayerCommand::Stop);
-            for id in streamed {
-                store().withdrawn(id);
-            }
         }
     }
 }

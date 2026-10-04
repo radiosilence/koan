@@ -16,7 +16,7 @@ struct DownloadsView: View {
     @Environment(CoverArtCache.self) private var art
     @Environment(UIState.self) private var ui
     @Environment(TransferMeter.self) private var meter
-    @State private var selection: Set<String> = []
+    @State private var selection: Set<Int64> = []
     #endif
 
     var body: some View {
@@ -34,7 +34,7 @@ struct DownloadsView: View {
                 table
                 #else
                 List {
-                    ForEach(mirror.transfers, id: \.queueItemId) { transfer in
+                    ForEach(mirror.transfers, id: \.trackId) { transfer in
                         DownloadRow(transfer: transfer)
                             .washedRow()
                     }
@@ -63,13 +63,13 @@ extension DownloadsView {
         // What the rows draw that changes under them. The figures of the
         // transfers still going are not in it: `TransferMeter` hands those to
         // the rows directly.
-        let key = transfers.map { "\($0.queueItemId):\($0.state)" }
+        let key = transfers.map { "\($0.trackId):\($0.state)" }
         let library = library
         let nav = nav
         return SafeAreaReader { insets in
             KoanTable(
                 items: transfers,
-                id: \.queueItemId,
+                id: \.trackId,
                 context: DownloadTableRow.Context(
                     meter: meter,
                     art: art,
@@ -79,13 +79,13 @@ extension DownloadsView {
                 selection: $selection,
                 make: DownloadTableRow.init,
                 menu: { ids, environment in
-                    guard ids.count == 1, let transfer = transfers.first(where: { ids.contains($0.queueItemId) }) else {
+                    guard ids.count == 1, let transfer = transfers.first(where: { ids.contains($0.trackId) }) else {
                         return nil
                     }
                     return hostedMenu(DownloadMenu(transfer: transfer), environment: environment)
                 },
                 primaryAction: { ids in
-                    if let transfer = transfers.first(where: { ids.contains($0.queueItemId) }) {
+                    if let transfer = transfers.first(where: { ids.contains($0.trackId) }) {
                         DownloadMenu.showInLibrary(transfer, library: library, nav: nav)
                     }
                 },
@@ -146,7 +146,7 @@ private struct DownloadRow: View {
     /// settled — which is exactly what the two slices are for. A settled row
     /// does not read them at all, or it would redraw at the others' rate.
     private var figures: TransferFigure? {
-        isRunning ? mirror.figure(for: transfer.queueItemId) : nil
+        isRunning ? mirror.figure(for: transfer.trackId) : nil
     }
     private var bytesWritten: UInt64 { figures?.bytesWritten ?? 0 }
     private var totalBytes: UInt64 { figures?.totalBytes ?? 0 }
@@ -193,7 +193,7 @@ private struct DownloadRow: View {
             // Layers fed by `TransferMeter`, so the bar moves at the display's
             // rate without this body running for it.
             TransferBar(
-                transfer: transfer.state == .running ? transfer.queueItemId : nil,
+                transfer: transfer.state == .running ? transfer.trackId : nil,
                 fraction: fraction,
                 meter: meter
             )
@@ -275,7 +275,7 @@ private struct DownloadRow: View {
 /// A download's bar: the whole length quiet, what has arrived lit.
 private struct TransferBar: PlatformViewRepresentable {
     /// The transfer to follow while it runs; `nil` holds `fraction`.
-    let transfer: String?
+    let transfer: Int64?
     let fraction: Double
     let meter: TransferMeter
 

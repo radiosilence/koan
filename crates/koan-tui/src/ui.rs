@@ -480,11 +480,6 @@ mod tests {
         let state = SharedPlayerState::new();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let log_buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let download_queue = koan_core::remote::queue::DownloadQueue::spawn(
-            tx.clone(),
-            state.clone(),
-            log_buffer.clone(),
-        );
 
         let mut entries: Vec<QueueEntry> = (0..len).map(entry).collect();
         if let Some(first) = entries.first_mut() {
@@ -509,7 +504,6 @@ mod tests {
             tx,
             log_buffer,
             60,
-            download_queue,
         );
         app.queue.vq_cache.entries = entries;
         app.queue.vq_version = app.state.playlist_version();

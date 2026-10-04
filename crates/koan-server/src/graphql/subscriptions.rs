@@ -89,21 +89,29 @@ impl SubscriptionRoot {
         let _ = interval_ms; // Kept in the schema, not used — see above.
         let state = ctx.data_unchecked::<Arc<SharedPlayerState>>().clone();
         let mut wake = koan_core::signal::engine_changed().subscribe();
+        // Download progress rings the store's own signal, not the engine's,
+        // so only a stream that carries it wakes for it.
+        let mut moved = state.downloads().moved().subscribe();
 
         async_stream::stream! {
-            let mut last_version = u64::MAX; // force first emit
+            let (mut last_version, mut last_figures) = (u64::MAX, u64::MAX); // force first emit
 
             loop {
                 let version = state.playlist_version();
-                let downloading = !state.downloads_in_flight().is_empty();
+                let figures = state.downloads().figures();
 
-                if version != last_version || downloading {
-                    last_version = version;
+                if version != last_version || figures != last_figures {
+                    (last_version, last_figures) = (version, figures);
                     yield GqlQueueSnapshot::capture(&state);
                 }
 
                 wake.borrow_and_update();
-                if wake.changed().await.is_err() {
+                moved.borrow_and_update();
+                let ended = tokio::select! {
+                    r = wake.changed() => r.is_err(),
+                    r = moved.changed() => r.is_err(),
+                };
+                if ended {
                     return;
                 }
             }
