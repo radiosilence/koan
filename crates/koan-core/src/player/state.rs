@@ -29,13 +29,29 @@ impl fmt::Debug for QueueItemId {
     }
 }
 
-/// A step the decoder took through the queue: from `after`, past `passed`
-/// (items that were not Ready), to `chosen`, or to the end of the queue.
+/// A step the decoder took through the queue from `after`, to `next`: the
+/// first item after it that has not failed, or the end of the queue. The
+/// decoder queues `next` as `chosen` when it is Ready, and stops at it when it
+/// is still arriving.
 #[derive(Debug, Clone)]
 pub struct Lookahead {
     pub after: QueueItemId,
-    pub passed: Vec<QueueItemId>,
+    pub next: Option<QueueItemId>,
     pub chosen: Option<(QueueItemId, PathBuf)>,
+}
+
+/// The first item after `after` that has not failed: `Some(None)` at the end
+/// of the queue, `None` when `after` is not in it.
+fn first_unfailed_after(
+    items: &[PlaylistItem],
+    after: QueueItemId,
+) -> Option<Option<&PlaylistItem>> {
+    let at = items.iter().position(|item| item.id == after)?;
+    Some(
+        items[at + 1..]
+            .iter()
+            .find(|item| !matches!(item.state, ItemState::Failed(_))),
+    )
 }
 
 /// Set in `SharedPlayerState::state` beside the playback state while the
@@ -760,54 +776,38 @@ impl SharedPlayerState {
         Some(next)
     }
 
-    /// One step of the decoder's gapless lookahead from `after_id`: the next
-    /// Ready item, and the items passed over to reach it. Does not move the
-    /// cursor; `update_playback_state` does that when the playhead gets there.
+    /// One step of the decoder's gapless lookahead from `after_id`. Does not
+    /// move the cursor; `update_playback_state` does that when the playhead
+    /// gets there.
+    ///
+    /// Failed items are passed over, as `advance_cursor_loadable` passes over
+    /// them. A track still arriving is not: the decoder stops at it, the
+    /// session drains, and the advance that follows waits for it. Passing over
+    /// it would play the track after it and move the cursor beyond it, so it
+    /// would never be heard.
     ///
     /// None when `after_id` has been removed: the lookahead then has nothing
     /// to follow, and starting from the top would gaplessly replay the queue.
     pub fn lookahead_after(&self, after_id: QueueItemId) -> Option<Lookahead> {
         let pl = self.playlist.read();
-        let start = pl.items.iter().position(|item| item.id == after_id)? + 1;
-        let mut passed = Vec::new();
-        for item in &pl.items[start..] {
-            if matches!(item.state, ItemState::Ready) {
-                return Some(Lookahead {
-                    after: after_id,
-                    passed,
-                    chosen: Some((item.id, item.path.clone())),
-                });
-            }
-            passed.push(item.id);
-        }
+        let next = first_unfailed_after(&pl.items, after_id)?;
         Some(Lookahead {
             after: after_id,
-            passed,
-            chosen: None,
+            next: next.map(|item| item.id),
+            chosen: next
+                .filter(|item| matches!(item.state, ItemState::Ready))
+                .map(|item| (item.id, item.path.clone())),
         })
     }
 
-    /// Whether the decoder would still take `step`: `chosen` is still after
-    /// `after`, and every Ready item between them is one it passed over. Items
-    /// that are not Ready would be passed over again, so adding, moving or
-    /// removing them changes nothing, and nor does a passed item landing since.
-    /// With nothing chosen, the same holds to the end of the queue.
+    /// Whether the decoder would still take `step`: the first item after
+    /// `after` that has not failed is still `next`. A track it stopped at
+    /// landing since is not a change, since the advance at the end of the
+    /// session plays it in order; an edit that puts another track first is.
     pub fn still_follows(&self, step: &Lookahead) -> bool {
         let pl = self.playlist.read();
-        let Some(at) = pl.items.iter().position(|item| item.id == step.after) else {
-            return false;
-        };
-        let rest = &pl.items[at + 1..];
-        let between = match &step.chosen {
-            Some((chosen, _)) => match rest.iter().position(|item| item.id == *chosen) {
-                Some(end) => &rest[..end],
-                None => return false,
-            },
-            None => rest,
-        };
-        between
-            .iter()
-            .all(|item| step.passed.contains(&item.id) || !matches!(item.state, ItemState::Ready))
+        first_unfailed_after(&pl.items, step.after)
+            .is_some_and(|next| next.map(|item| item.id) == step.next)
     }
 
     /// Retreat cursor to the previous item. Returns (id, path) if found.
@@ -1607,7 +1607,7 @@ mod tests {
     }
 
     #[test]
-    fn a_step_over_a_pending_item_holds_until_the_queue_is_edited() {
+    fn a_step_stops_at_a_track_still_arriving() {
         let state = SharedPlayerState::new();
         let a = ready_item("a");
         let b = PlaylistItem {
@@ -1615,40 +1615,57 @@ mod tests {
             ..ready_item("b")
         };
         let c = ready_item("c");
-        let (ida, idb, idc) = (a.id, b.id, c.id);
+        let (ida, idb) = (a.id, b.id);
         state.add_items(vec![a, b, c]);
 
         let step = state.lookahead_after(ida).unwrap();
-        assert_eq!(step.passed, vec![idb]);
-        assert_eq!(step.chosen.as_ref().map(|(id, _)| *id), Some(idc));
+        assert_eq!(step.next, Some(idb));
+        assert!(step.chosen.is_none(), "c is not queued over it");
 
         state.update_item_state(idb, ItemState::Ready);
         assert!(
             state.still_follows(&step),
-            "a download landing is not an edit"
+            "its landing is not an edit: the advance plays it"
         );
 
         state.add_items(vec![ready_item("d")]);
-        assert!(
-            state.still_follows(&step),
-            "nor is adding after what was chosen"
-        );
-
-        let pending = PlaylistItem {
-            state: ItemState::Pending,
-            ..ready_item("pending")
-        };
-        state.insert_items_after(vec![pending], ida);
-        assert!(
-            state.still_follows(&step),
-            "nor is adding a track it would pass over again"
-        );
-
-        state.remove_item(idb);
-        assert!(state.still_follows(&step), "nor is removing a passed track");
+        assert!(state.still_follows(&step), "nor is adding after it");
 
         state.insert_items_after(vec![ready_item("next")], ida);
-        assert!(!state.still_follows(&step), "a Ready track before it is");
+        assert!(!state.still_follows(&step), "a track put before it is");
+    }
+
+    #[test]
+    fn a_step_passes_over_failed_tracks() {
+        let state = SharedPlayerState::new();
+        let a = ready_item("a");
+        let failed = PlaylistItem {
+            state: ItemState::Failed("gone".into()),
+            ..ready_item("failed")
+        };
+        let c = ready_item("c");
+        let (ida, idc) = (a.id, c.id);
+        state.add_items(vec![a, failed, c]);
+
+        let step = state.lookahead_after(ida).unwrap();
+        assert_eq!(step.chosen.as_ref().map(|(id, _)| *id), Some(idc));
+
+        let another = PlaylistItem {
+            state: ItemState::Failed("gone".into()),
+            ..ready_item("another")
+        };
+        state.insert_items_after(vec![another], ida);
+        assert!(
+            state.still_follows(&step),
+            "another failed track before it changes nothing"
+        );
+
+        let arriving = PlaylistItem {
+            state: ItemState::Pending,
+            ..ready_item("arriving")
+        };
+        state.insert_items_after(vec![arriving], ida);
+        assert!(!state.still_follows(&step), "a track still arriving does");
     }
 
     #[test]

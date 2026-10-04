@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- **Gapless playback no longer skips a track that is still downloading.** The decoder queued the next track that had arrived and passed over the one before it, so the cursor moved beyond that track and it was never played. It now waits for the track, as skipping to it by hand does, which leaves a gap only if the download is still running when the track before it ends.
 - **Pausing a track that is still downloading keeps it paused.** The pause was ignored while the player waited for the track, which then started playing when it arrived; a paused stream also restarted from the beginning, playing, when its download completed. Resuming a restored position that was still downloading no longer loses the position.
 - **A restored session that was stopped stays stopped** when the download of its current track completes.
 - **Edits near the end of a track take effect.** About four seconds before a track ends the decoder has already queued the next one, and removing, moving or inserting a track in that window had no effect: a track added with "play next" was skipped and shown as played. The player now restarts at the current position when an edit contradicts what was queued.

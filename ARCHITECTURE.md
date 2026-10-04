@@ -197,7 +197,7 @@ struct Playlist {
 
 **Status is derived, not stored.** Each item's display status (Playing, Queued, Played, Downloading, Failed) is computed from its position relative to the cursor and its `LoadState`. This happens once per frame in `derive_visible_queue()`.
 
-**Advance vs peek:** `advance_cursor_loadable()` moves the cursor (explicit NextTrack, and auto-advance when the decode thread finishes). `peek_next_ready_after()` reads without moving (decode thread gapless lookahead).
+**Advance vs peek:** `advance_cursor_loadable()` moves the cursor (explicit NextTrack, and auto-advance when the decode thread finishes). `lookahead_after()` reads without moving (decode thread gapless lookahead). Both pass over `Failed` items and both stop at a track still arriving: the lookahead queues nothing past it, the session drains, and the advance waits for it. Passing over it gaplessly would move the cursor beyond a track that was never heard.
 
 Advancing parks on the next item that is not `Failed`, including one still downloading — playback stops until its `TrackReady`/`TrackStreamReady` arrives, which only reaches the player because the cursor is sitting on it. Skipping ahead to the next `Ready` item instead would drop the track from the queue permanently. Both advance and peek treat a reference item that is no longer in the playlist as "nothing follows": restarting from index 0 would silently replay the queue from the top.
 
@@ -387,7 +387,7 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **Status is derived:** `QueueEntryStatus` (Playing/Queued/Played/Downloading/Failed) is computed from cursor position + load state, not stored.
 
-**Decode cursor ≠ UI cursor:** The decode thread peeks ahead for gapless without moving the playlist cursor. The player thread syncs them on boundary crossing. What it has queued is in the ring and cannot be taken out. The decode cursor records each step it takes — the item it chose and the not-Ready items it passed over, or that it found the end — and a queue edit that breaks a step the playhead has not reached restarts the session there. The check is against what the decoder decided, not what it would decide now, so a download landing or a file failing to open is not mistaken for an edit; and a track added after the decoder found the end follows gaplessly. `DecodeFinished` carries its session's id and is dropped once that session has been replaced.
+**Decode cursor ≠ UI cursor:** The decode thread peeks ahead for gapless without moving the playlist cursor. The player thread syncs them on boundary crossing. What it has queued is in the ring and cannot be taken out. The decode cursor records each step it takes: the first item after the current one that has not failed, which it queued if Ready and stopped at if still arriving, or the end of the queue. A queue edit that puts a different item first, for a step the playhead has not reached, restarts the session there. The check is against what the decoder decided, not what it would decide now, so a download landing or a file failing to open is not mistaken for an edit; and a track added after the decoder found the end follows gaplessly. `DecodeFinished` carries its session's id and is dropped once that session has been replaced.
 
 **Atomic visible queue snapshot:** One `derive_visible_queue()` call per frame, cached in `vq_cache`. All render/mouse operations see consistent state within a frame.
 
