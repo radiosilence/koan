@@ -13,6 +13,7 @@ struct NowPlayingSheet: View {
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
     @Environment(UIState.self) private var ui
+    @Environment(AppState.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var showingDevices = false
 
@@ -156,15 +157,41 @@ struct NowPlayingSheet: View {
                     .background(.quaternary, in: Capsule())
             }
 
-            // This phone's own output; nothing it chooses reaches another
-            // device.
+            // This phone's own output and its preset; nothing either chooses
+            // reaches another device.
             if !player.isControllingAnother {
+                if let route = app.dsp.route,
+                   let presets = Presets(dsp: app.dsp, device: route, none: "Off") {
+                    PresetMenu(presets: presets, title: route) {
+                        RoutePreset(presets: presets, processed: player.currentFormat?.dsp != nil)
+                    }
+                }
                 RoutePicker()
                     .frame(width: 28, height: 28)
             }
         }
         .font(.title3)
         .buttonStyle(.plain)
+    }
+}
+
+/// The route's preset, beside the route picker: its name, or "Off". Tinted
+/// while what is heard is processed.
+private struct RoutePreset: View {
+    let presets: Presets
+    let processed: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "slider.horizontal.3")
+            Text(presets.current.map { presets.enabled ? $0 : "\($0), off" } ?? presets.none)
+                .lineLimit(1)
+        }
+        .font(.caption)
+        .foregroundStyle(processed ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(.quaternary, in: Capsule())
     }
 }
 

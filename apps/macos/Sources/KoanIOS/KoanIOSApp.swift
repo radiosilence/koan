@@ -126,8 +126,12 @@ struct KoanIOSApp: App {
                         self.pendingURL = nil
                     }
                     session.onRoute = { [weak built] name in
-                        guard let engine = built?.player.engine else { return }
-                        Task { try? await engine.setAudioRoute(name: name) }
+                        guard let built else { return }
+                        let engine = built.player.engine
+                        Task {
+                            try? await engine.setAudioRoute(name: name)
+                            built.dsp.follow(route: name)
+                        }
                     }
                     ShareInbox.collect(into: built.dsp)
                 } catch {
