@@ -73,7 +73,8 @@ pub struct Snapshot {
 pub enum Event {
     Snapshot(Snapshot),
     Volume(u8),
-    /// The renderer stopped answering, or said goodbye on the network.
+    /// The renderer stopped answering, or said goodbye on the network. A
+    /// reason to check `Session::is_lost`, which says which renderer.
     Gone,
 }
 
@@ -287,6 +288,12 @@ impl Session {
     pub fn token_of<'a>(&self, uri: &'a str) -> Option<&'a str> {
         let rest = uri.strip_prefix(&self.base)?.strip_prefix("/t/")?;
         rest.split('.').next()
+    }
+
+    /// It stopped answering, or said goodbye on the network: nothing more is
+    /// sent to it.
+    pub fn is_lost(&self) -> bool {
+        self.shared.unreachable.load(Ordering::Acquire)
     }
 
     pub fn epoch(&self) -> u64 {

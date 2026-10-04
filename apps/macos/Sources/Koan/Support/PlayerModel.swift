@@ -452,6 +452,9 @@ final class PlayerModel {
     /// Play this device's own music through `output`, coming back from
     /// controlling another device if it was.
     func playHere(_ output: Output) {
+        // Already playing there: reconnecting would stop the music and load
+        // the track again.
+        if isPlayingHere(output) { return }
         attempt {
             if self.isControllingAnother {
                 try await self.engine.controlDevice(id: nil)

@@ -54,10 +54,25 @@ pub fn open(
     let tx = player.clone();
     let tagged = tag.clone();
     let session = session::Session::open(renderer, move |event| {
-        let _ = tx.send(crate::player::commands::PlayerCommand::Renderer {
+        let cmd = crate::player::commands::PlayerCommand::Renderer {
             session: tagged.load(std::sync::atomic::Ordering::Acquire),
             event,
-        });
+        };
+        match &cmd {
+            // Only a wake-up: the player reads the loss from the session. It
+            // can be raised on the player's own thread, or under the
+            // discovery lock, where waiting for room in the channel could
+            // never end.
+            crate::player::commands::PlayerCommand::Renderer {
+                event: session::Event::Gone,
+                ..
+            } => {
+                let _ = tx.try_send(cmd);
+            }
+            _ => {
+                let _ = tx.send(cmd);
+            }
+        }
     })?;
     Ok(Connection { session, tag })
 }

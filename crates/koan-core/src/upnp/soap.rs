@@ -11,8 +11,8 @@ const TIMEOUT: Duration = Duration::from_secs(4);
 
 #[derive(Debug, thiserror::Error)]
 pub enum SoapError {
-    /// No answer at all: refused, unroutable or timed out. A renderer that
-    /// was switched off looks like this.
+    /// No connection: refused or unroutable. A renderer that was switched
+    /// off looks like this; a slow answer does not.
     #[error("not answering: {0}")]
     Unreachable(String),
     #[error("{0}")]
@@ -68,7 +68,10 @@ pub fn call(
         .body(envelope(&service.service_type, action, args))
         .send()
         .map_err(|e| {
-            if e.is_connect() || e.is_timeout() {
+            // Only a connection that cannot be made means the renderer is
+            // gone. A slow answer is a failed command: some fetch the head of
+            // the file before they acknowledge `SetAVTransportURI`.
+            if e.is_connect() {
                 SoapError::Unreachable(e.to_string())
             } else {
                 SoapError::Http(e.to_string())

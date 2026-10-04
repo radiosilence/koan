@@ -273,6 +273,12 @@ impl Player {
     /// What the player loop does for the renderer on every pass: ask where it
     /// is once a settle window ends, and keep the next track handed over.
     pub(super) fn renderer_tick(&mut self) {
+        // Read on the player's own thread, not waited for as an event: the
+        // loss can be found by a command this thread is running.
+        if self.renderer.as_ref().is_some_and(|l| l.session.is_lost()) {
+            self.renderer_gone();
+            return;
+        }
         if let Some((link, session)) = self.on_renderer()
             && let Output::Passthrough(play) = &mut session.output
         {
@@ -290,6 +296,14 @@ impl Player {
     /// and carry on from where the music is, as it was: playing on, paused,
     /// or still waiting for its download.
     pub(super) fn use_renderer(&mut self, connection: Option<Box<Connection>>) {
+        // Picked again while it plays: nothing to do, and reconnecting would
+        // stop it and load the track again.
+        if let (Some(new), Some(link)) = (&connection, &self.renderer)
+            && new.session.renderer().udn == link.session.renderer().udn
+            && !link.session.is_lost()
+        {
+            return;
+        }
         let carry = self
             .session()
             .map(|s| (s.track.id, self.shared_state.position_ms(), s.run));
@@ -309,31 +323,22 @@ impl Player {
         );
 
         self.stop_engine();
-        if let Some(old) = self.renderer.take() {
-            log::info!("upnp: leaving {}", old.session.renderer().name);
-            for id in old.refused {
-                self.shared_state.update_item_state(id, ItemState::Ready);
-            }
-        }
-        self.shared_state.set_renderer_clock(None);
+        self.leave_renderer();
 
-        match connection {
-            Some(connection) => {
-                let Connection { session, tag } = *connection;
-                log::info!("upnp: playing to {}", session.renderer().name);
-                self.shared_state.set_renderer(Some(upnp::Output {
-                    udn: session.renderer().udn.clone(),
-                    name: session.renderer().name.clone(),
-                    volume: session.volume(),
-                    problem: None,
-                }));
-                self.renderer = Some(RendererLink {
-                    session,
-                    tag,
-                    refused: Vec::new(),
-                });
-            }
-            None => self.shared_state.set_renderer(None),
+        if let Some(connection) = connection {
+            let Connection { session, tag } = *connection;
+            log::info!("upnp: playing to {}", session.renderer().name);
+            self.shared_state.set_renderer(Some(upnp::Output {
+                udn: session.renderer().udn.clone(),
+                name: session.renderer().name.clone(),
+                volume: session.volume(),
+                problem: None,
+            }));
+            self.renderer = Some(RendererLink {
+                session,
+                tag,
+                refused: Vec::new(),
+            });
         }
 
         if let Some((id, position_ms, run)) = carry {
@@ -404,9 +409,9 @@ impl Player {
                 String::new()
             }
         );
-        link.session
-            .set_uri(&url, &metadata)
-            .map_err(|e| PlayerError::Renderer(e.to_string()))?;
+        if let Err(e) = link.session.set_uri(&url, &metadata) {
+            return self.renderer_failed_to_open(id, path, info, seek_ms, start, e);
+        }
 
         let mut play = Passthrough::new(
             Slot {
@@ -425,9 +430,9 @@ impl Player {
                 let _ = link.session.seek(seek_ms);
                 play.seek_tries = 1;
             }
-            link.session
-                .play()
-                .map_err(|e| PlayerError::Renderer(e.to_string()))?;
+            if let Err(e) = link.session.play() {
+                return self.renderer_failed_to_open(id, path, info, seek_ms, start, e);
+            }
             play.played = true;
             play.started = Instant::now();
             play.settle();
@@ -458,6 +463,42 @@ impl Player {
         });
         self.queue_next_on_renderer();
         Ok(())
+    }
+
+    /// A track could not be handed to the renderer. One that is gone is left
+    /// here, as `renderer_gone` leaves it: the track opens on this device,
+    /// paused, where it was to open. Any other failure fails the open.
+    fn renderer_failed_to_open(
+        &mut self,
+        id: QueueItemId,
+        path: PathBuf,
+        info: buffer::StreamInfo,
+        seek_ms: u64,
+        start: Run,
+        error: upnp::soap::SoapError,
+    ) -> Result<(), PlayerError> {
+        if !self.renderer.as_ref().is_some_and(|l| l.session.is_lost()) {
+            return Err(PlayerError::Renderer(error.to_string()));
+        }
+        log::info!("upnp: renderer gone while opening {id:?}; carrying on here, paused");
+        self.leave_renderer();
+        if start == Run::Playing {
+            self.report(PlaybackReportState::Paused);
+        }
+        self.try_open_session(id, Source::File(path), Some(info), seek_ms, Run::Paused)
+    }
+
+    /// Stop playing to the renderer: forget the link and put back what it
+    /// refused. Whatever is open on it must already have been stopped.
+    fn leave_renderer(&mut self) {
+        if let Some(old) = self.renderer.take() {
+            log::info!("upnp: leaving {}", old.session.renderer().name);
+            for id in old.refused {
+                self.shared_state.update_item_state(id, ItemState::Ready);
+            }
+        }
+        self.shared_state.set_renderer_clock(None);
+        self.shared_state.set_renderer(None);
     }
 
     fn didl_for(
@@ -724,7 +765,13 @@ impl Player {
                     self.shared_state.update_renderer(|o| o.volume = volume);
                 }
             }
-            session::Event::Gone => self.renderer_gone(),
+            // From any connection, this one or one already left behind: only
+            // the renderer now playing, if it is the one lost, is left.
+            session::Event::Gone => {
+                if self.renderer.as_ref().is_some_and(|l| l.session.is_lost()) {
+                    self.renderer_gone();
+                }
+            }
             session::Event::Snapshot(snapshot) if session == self.session => {
                 self.on_renderer_snapshot(snapshot)
             }
@@ -1005,9 +1052,16 @@ impl Player {
         };
         let next = play.next.take().expect("checked above");
         play.current = next;
-        // Whatever was being sought belonged to the track that just ended.
+        // A new load, as far as the renderer is concerned: it is opening
+        // this file now, which is when it refuses a next track and goes on
+        // naming the last one. What was sought, refused or deferred belonged
+        // to the track that just ended.
         play.pending_seek = None;
         play.seek_tries = 0;
+        play.started = Instant::now();
+        play.played = true;
+        play.next_refused = None;
+        play.next_retry = None;
         // A hand-over starts the track at its top. The reading that showed it
         // may not: Kodi names the new track with the old one's position.
         play.settle();
