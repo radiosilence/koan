@@ -363,6 +363,13 @@ pub enum LinkReport {
     },
     /// Who is at the other end of a connection made on the local network.
     Hello(LinkHello),
+    /// Wake the device `to`, which is not linked: with a background push, or
+    /// with `notify` a notification to tap, for when the push has not done it.
+    Wake {
+        to: String,
+        #[serde(default)]
+        notify: bool,
+    },
     /// A frame of this device's audio levels, while it is watched: see
     /// `LinkCommand::WatchLevels`. Sent at the analyser's rate, so short.
     Levels {

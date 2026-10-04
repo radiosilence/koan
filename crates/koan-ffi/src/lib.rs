@@ -1872,7 +1872,11 @@ impl KoanEngine {
             if id.is_some() && self.state.playback_state() == PlaybackState::Playing {
                 self.send_local(PlayerCommand::Pause)?;
             }
-            koan_core::remote::devices::set_target(id);
+            koan_core::remote::devices::set_target(id.clone());
+            // Asleep: wake it, and let the row say how that is going.
+            if let Some(id) = id {
+                koan_core::remote::devices::wake(&id);
+            }
             Ok(())
         })
         .await
@@ -3245,6 +3249,18 @@ impl KoanEngine {
                     asleep: d.asleep,
                     wakeable: d.wakeable,
                     last_seen: d.last_seen,
+                    waking: d.waking.as_ref().and_then(|w| match w {
+                        koan_core::remote::devices::Waking::Network => Some("network".into()),
+                        koan_core::remote::devices::Waking::Push => Some("push".into()),
+                        koan_core::remote::devices::Waking::Notification => {
+                            Some("notification".into())
+                        }
+                        koan_core::remote::devices::Waking::Failed(_) => None,
+                    }),
+                    wake_failed: d.waking.as_ref().and_then(|w| match w {
+                        koan_core::remote::devices::Waking::Failed(why) => Some(why.clone()),
+                        _ => None,
+                    }),
                     same_library: d.same_library,
                     state: play_state(&st),
                     title: st.title.clone(),

@@ -142,6 +142,15 @@ impl Registry {
         wants_devices: bool,
     ) -> String {
         let id = uuid::Uuid::now_v7().to_string();
+        if let Some((sent, how)) = WOKEN
+            .lock()
+            .remove(&(device.to_string(), username.to_string()))
+        {
+            log::info!(
+                "wake: {name} linked {}ms after its {how}",
+                sent.elapsed().as_millis()
+            );
+        }
         // What waited for this device while it was away goes down the new
         // link first.
         let live = self.live();
@@ -338,6 +347,58 @@ impl Registry {
             let devices = all.iter().filter(|d| d.id != e.device).cloned().collect();
             let _ = e.tx.send(LinkCommand::Devices { devices });
         }
+    }
+
+    /// Wake `to`, one of `username`'s devices that is not linked, for `from`
+    /// (a device id), which chose it: with a background push, or with
+    /// `notify` a notification asking to be tapped. Logged with the push's
+    /// round trip, and remembered so the link that follows is logged with how
+    /// long it took.
+    pub fn wake(&self, username: &str, from: &str, to: &str, notify: bool) {
+        if self.list(Some(username)).iter().any(|c| c.device == to) {
+            log::info!("wake: {to} is already linked");
+            return;
+        }
+        let Some(pusher) = crate::push::pusher() else {
+            log::info!("wake: no push key, so {to} cannot be woken");
+            return;
+        };
+        let Some(target) = outbox::push_targets(Some(username))
+            .into_iter()
+            .find(|t| t.device == to)
+        else {
+            log::info!("wake: {to} has given no push token");
+            return;
+        };
+        let from_name = self
+            .list(Some(username))
+            .into_iter()
+            .find(|c| c.device == from)
+            .map_or_else(|| "Another device".to_string(), |c| c.name);
+        let (push, how) = if notify {
+            (
+                crate::push::Push::Summon {
+                    title: format!("{from_name} wants to play here"),
+                    body: "Tap to open kōan and let it.".into(),
+                },
+                "notification",
+            )
+        } else {
+            (crate::push::Push::WakeNow, "wake push")
+        };
+        WOKEN.lock().insert(
+            (target.device.clone(), target.username.clone()),
+            (std::time::Instant::now(), how),
+        );
+        std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            deliver_push(pusher, &target, &push);
+            log::info!(
+                "wake: {how} for {} answered by APNs in {}ms",
+                target.name,
+                started.elapsed().as_millis()
+            );
+        });
     }
 
     /// Relay `command` from one of `username`'s devices to another, `to`.
@@ -821,6 +882,13 @@ fn deliver_push(
         Outcome::Failed(e) => log::warn!("push: to {} failed: {e}", target.name),
     }
 }
+
+/// Wakes sent and not yet answered by a link, by `(device, username)`: when,
+/// and which kind. A device that does not link is never answered; the map
+/// is bounded by the devices that have pushed tokens.
+type Woken = std::collections::HashMap<(String, String), (std::time::Instant, &'static str)>;
+
+static WOKEN: LazyLock<Mutex<Woken>> = LazyLock::new(Default::default);
 
 /// Have every device pull what the server just changed (a playlist edited,
 /// albums added): at once where linked, on next link where not. Syncs waiting

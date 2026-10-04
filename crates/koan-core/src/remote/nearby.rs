@@ -152,6 +152,12 @@ pub fn refresh() {
     bonjour::restart();
 }
 
+/// Dial every device now, rather than when its backoff runs out: the first
+/// thing tried when waking one, which may not be suspended yet.
+pub fn dial_now() {
+    redial(None);
+}
+
 /// Dial every device now rather than when its backoff runs out, `except` the
 /// dialer asking.
 fn redial(except: Option<&str>) {
