@@ -535,7 +535,7 @@ impl Player {
         match result {
             // Marked failed in the queue, so the walk on cannot land on it again.
             Err(PlayerError::Unplayable(_)) if self.shared_state.is_cursor(id) => {
-                self.next_track();
+                self.skip_unplayable();
                 return Ok(());
             }
             Err(_) => self.stop_playback_and_clear_state(),

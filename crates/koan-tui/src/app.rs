@@ -1030,13 +1030,15 @@ impl App {
                     let label = selector.devices[idx].clone();
                     selector.current_device = Some(label);
                     let tx = self.tx.clone();
+                    let choice = koan_core::upnp::choose();
                     // Opening a session is a few round trips to the renderer.
                     std::thread::spawn(move || {
-                        if let Err(e) = koan_core::upnp::connect(&udn, &tx) {
+                        if let Err(e) = koan_core::upnp::connect(&udn, choice, &tx) {
                             log::error!("upnp: {e}");
                         }
                     });
                 } else if idx == 0 {
+                    koan_core::upnp::choose();
                     // "System Default" — clear the configured device.
                     self.tx.send(PlayerCommand::ClearOutputDevice).ok();
                     if let Some(ref mut sel) = self.device_selector {
@@ -1044,6 +1046,7 @@ impl App {
                     }
                 } else {
                     let name = selector.devices[idx].clone();
+                    koan_core::upnp::choose();
                     self.tx
                         .send(PlayerCommand::SetOutputDevice(name.clone()))
                         .ok();

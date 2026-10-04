@@ -44,11 +44,26 @@ pub struct Connection {
     pub events: crossbeam_channel::Receiver<session::Event>,
 }
 
+/// Each choice of output, in the order they were made. Opening a session
+/// takes a few round trips; one that finishes after a later choice is
+/// dropped, so the last one picked is where the music goes.
+static CHOICE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Record a choice of output, made now, and return its place. Called when the
+/// choice is made, before any work towards it: every output change (a
+/// renderer, a local device, the system default) takes one.
+pub fn choose() -> u64 {
+    CHOICE.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1
+}
+
 /// Make the renderer `udn` this koan's output, carrying on from where the
-/// music is. Blocks for the few round trips a session takes to open, so call
-/// it from a thread nothing is waiting on.
+/// music is, unless a later choice was made while the session opened.
+/// `choice` is what `choose` returned when this one was picked. Blocks for
+/// the few round trips a session takes to open, so call it from a thread
+/// nothing is waiting on.
 pub fn connect(
     udn: &str,
+    choice: u64,
     player: &crossbeam_channel::Sender<crate::player::commands::PlayerCommand>,
 ) -> Result<(), String> {
     let renderer = discovery::find(udn)
@@ -57,6 +72,13 @@ pub fn connect(
     let session = session::Session::open(renderer, move |event| {
         let _ = tx.send(event);
     })?;
+    if CHOICE.load(std::sync::atomic::Ordering::Acquire) != choice {
+        log::info!(
+            "upnp: {} opened after a later choice of output; not used",
+            session.renderer().name
+        );
+        return Ok(());
+    }
     player
         .send(crate::player::commands::PlayerCommand::UseRenderer(Some(
             Box::new(Connection { session, events }),
@@ -66,5 +88,6 @@ pub fn connect(
 
 /// Bring the music back to this device's own output.
 pub fn disconnect(player: &crossbeam_channel::Sender<crate::player::commands::PlayerCommand>) {
+    choose();
     let _ = player.send(crate::player::commands::PlayerCommand::UseRenderer(None));
 }

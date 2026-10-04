@@ -10,7 +10,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::state::{ItemState, PlaybackState, QueueItemId, RendererClock, TrackInfo};
+use super::state::{
+    ItemState, PlaybackSource, PlaybackState, QueueItemId, RendererClock, TrackInfo,
+};
 use super::{Player, PlayerError, Start, media_extension};
 use crate::audio::buffer;
 use crate::remote::client::PlaybackReportState;
@@ -72,6 +74,9 @@ pub(super) struct RendererOutput {
     look_at: Vec<Instant>,
     /// When koan last told it to play.
     started: Instant,
+    /// Told to play since the current track was loaded. Until it has been, a
+    /// renderer is meant to say `STOPPED`, and saying so means nothing.
+    played: bool,
     /// What koan last asked of it, playing or paused, and when. A renderer
     /// still opening a file drops commands; one that contradicts a recent
     /// request is asked again, once, before koan takes its word for it.
@@ -149,6 +154,7 @@ impl RendererOutput {
                 if playing { "playing" } else { "not playing" }
             );
             let _ = if self.intent.playing {
+                self.played = true;
                 self.session.play()
             } else {
                 self.session.pause()
@@ -254,6 +260,7 @@ impl Player {
                     settle_until: Instant::now(),
                     look_at: Vec::new(),
                     started: Instant::now(),
+                    played: false,
                     intent: Intent {
                         playing: false,
                         at: Instant::now(),
@@ -353,6 +360,7 @@ impl Player {
             .set_uri(&url, &metadata)
             .map_err(|e| PlayerError::Renderer(e.to_string()))?;
         output.started = Instant::now();
+        output.played = false;
         output.pending_seek = (seek_ms > 0).then_some(seek_ms);
         output.seek_tries = 0;
         output.intend(start == Start::Playing);
@@ -369,6 +377,7 @@ impl Player {
                     .session
                     .play()
                     .map_err(|e| PlayerError::Renderer(e.to_string()))?;
+                output.played = true;
                 output.started = Instant::now();
                 output.settle();
                 PlaybackState::Playing
@@ -439,6 +448,18 @@ impl Player {
         if next.as_ref().map(|(id, _)| *id) == output.next.as_ref().map(|s| s.id) {
             return;
         }
+        // What follows has changed. A renderer cannot be told to forget the
+        // track it was handed, so that track's URL stops working, whatever
+        // is or is not handed over in its place: one that moves on to it
+        // anyway fails to fetch it and stops, which reads as the end of this
+        // track.
+        if let Some(output) = self.renderer.as_mut()
+            && output.next.take().is_some()
+        {
+            let tokens: Vec<&str> = output.tokens();
+            output.session.retain(&tokens);
+        }
+        let output = self.renderer.as_ref().expect("checked above");
         if next.is_some() && next.as_ref().map(|(id, _)| *id) == output.next_refused {
             return;
         }
@@ -446,15 +467,6 @@ impl Player {
             return;
         }
         let Some((next_id, path)) = next else {
-            // The queue changed and nothing follows now. A renderer cannot be
-            // told to forget its next track, so its URL stops working: a
-            // renderer that moves on to it anyway fails to fetch it and stops,
-            // which reads as the end of this track.
-            if let Some(output) = self.renderer.as_mut() {
-                output.next = None;
-                let tokens: Vec<&str> = output.tokens();
-                output.session.retain(&tokens);
-            }
             return;
         };
         let extension = container_of(&path);
@@ -496,6 +508,40 @@ impl Player {
         }
         let tokens: Vec<&str> = output.tokens();
         output.session.retain(&tokens);
+    }
+
+    /// Walk on from a track the renderer cannot play to the next it can.
+    ///
+    /// A loop, not a recursion through `play`: a long run of tracks in a
+    /// format the renderer does not list (a DSD library on a renderer without
+    /// DSD) would otherwise grow the player thread's stack by a few frames
+    /// per track until it overflowed.
+    pub(super) fn skip_unplayable(&mut self) {
+        loop {
+            let Some(next) = self.shared_state.advance_cursor_loadable() else {
+                log::info!("upnp: nothing further the renderer can play");
+                self.stop_playback_and_clear_state();
+                return;
+            };
+            match self.shared_state.item_playback_source(next) {
+                Some(PlaybackSource::Ready(path)) => {
+                    match self.open_on_renderer(next, &path, 0, Start::Playing) {
+                        Err(PlayerError::Unplayable(_)) => continue,
+                        Err(e) => {
+                            log::error!("upnp: {e}");
+                            self.stop_playback_and_clear_state();
+                            return;
+                        }
+                        Ok(()) => return,
+                    }
+                }
+                // Not on disk yet: waited for, like any track not yet loaded.
+                _ => {
+                    self.play(next);
+                    return;
+                }
+            }
+        }
     }
 
     /// Stop the renderer and forget what it was playing. The counterpart of
@@ -567,6 +613,7 @@ impl Player {
             log::error!("upnp: resume failed: {e}");
             return;
         }
+        output.played = true;
         output.started = Instant::now();
         output.settle();
         let at = output
@@ -797,6 +844,12 @@ impl Player {
             }
             session::Transport::Stopped | session::Transport::NoMedia => {
                 if state == PlaybackState::Paused {
+                    // Loaded paused and never played: stopped is where a
+                    // renderer is meant to be. No media means it has let go
+                    // of the track, played or not.
+                    if !output.played && snap.transport == session::Transport::Stopped {
+                        return;
+                    }
                     // Stopped at the renderer while paused here. Some forget
                     // the track when they stop, so play must load it again.
                     self.renderer_released();
@@ -875,6 +928,13 @@ impl Player {
         };
         let id = next.id;
         let path = next.path.clone();
+        if self.shared_state.get_item(id).is_none() {
+            // Handed over, then taken out of the queue before it played.
+            log::info!("upnp: renderer moved on to {id:?}, which is no longer queued");
+            self.renderer_released();
+            return;
+        }
+        let output = self.renderer.as_mut().expect("caller checked");
         output.current = Some(next);
         // Whatever was being sought belonged to the track that just ended.
         output.pending_seek = None;
@@ -1982,7 +2042,7 @@ mod tests {
         };
 
         send(PlayerCommand::AddToPlaylist(items));
-        upnp::connect(&udn, &tx).unwrap();
+        upnp::connect(&udn, upnp::choose(), &tx).unwrap();
         send(PlayerCommand::Play(ids[0]));
         wait(4_000);
         agree("played");
@@ -2004,7 +2064,7 @@ mod tests {
         upnp::disconnect(&tx);
         wait(1_000);
         let left = state.position_ms();
-        upnp::connect(&udn, &tx).unwrap();
+        upnp::connect(&udn, upnp::choose(), &tx).unwrap();
         wait(5_000);
         let back = state.position_ms();
         agree("out and back while playing");
@@ -2019,5 +2079,101 @@ mod tests {
         wait(500);
         drop(looping);
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
+    fn a_long_run_of_unplayable_tracks_is_walked_without_growing_the_stack() {
+        // On a thread with a small stack: a recursion per skipped track
+        // overflows it long before the run ends.
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(|| {
+                let mut r = rig(WAV, false, &["a.wav"]);
+                let dir = tempfile::tempdir().unwrap();
+                let mut items: Vec<PlaylistItem> = (0..3_000)
+                    .map(|i| item(dir.path().join(format!("{i}.mp3")), "x"))
+                    .collect();
+                let last = dir.path().join("last.wav");
+                crate::test_utils::generate_wav(&last, 8_000, 1, 2.0, 16);
+                items.push(item(last, "last"));
+                let first = items[0].id;
+                let last_id = items.last().unwrap().id;
+                r.player.process_command(PlayerCommand::ReplacePlaylist {
+                    items: Vec::new(),
+                    start: 0,
+                });
+                r.player
+                    .process_command(PlayerCommand::AddToPlaylist(items));
+                r.player.play(first);
+                assert_eq!(r.player.shared_state.cursor(), Some(last_id));
+                assert_eq!(r.count("SetAVTransportURI"), 1);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn a_next_track_replaced_by_one_the_renderer_cannot_play_is_revoked() {
+        let mut r = rig(WAV, true, &["a.wav", "b.wav", "c.mp3"]);
+        r.player.play(r.ids[0]);
+        let handed = r
+            .player
+            .renderer
+            .as_ref()
+            .unwrap()
+            .next
+            .as_ref()
+            .unwrap()
+            .token
+            .clone();
+        r.player
+            .process_command(PlayerCommand::RemoveFromPlaylist(r.ids[1]));
+        r.player.queue_next_on_renderer();
+        let output = r.player.renderer.as_ref().unwrap();
+        assert!(
+            output.next.is_none(),
+            "nothing the renderer can play follows"
+        );
+        assert!(
+            !output.tokens().contains(&handed.as_str()),
+            "the old next no longer serves"
+        );
+    }
+
+    #[test]
+    fn a_track_loaded_paused_is_not_released_by_its_renderer_saying_stopped() {
+        let mut r = rig(WAV, false, &["a.wav"]);
+        r.player.cue(r.ids[0], 3_000, Start::Paused);
+        r.player.renderer.as_mut().unwrap().started = Instant::now() - START_GRACE;
+        r.player.renderer.as_ref().unwrap().session.look();
+        r.settle();
+        assert!(r.player.renderer_loaded(), "still loaded, waiting for play");
+        assert_eq!(r.state(), PlaybackState::Paused);
+        r.player.resume();
+        assert_eq!(
+            r.count("SetAVTransportURI"),
+            1,
+            "played as loaded, not loaded again"
+        );
+    }
+
+    #[test]
+    fn a_renderer_that_opens_after_a_later_choice_is_not_used() {
+        let fake = FakeRenderer::start(WAV, false, true);
+        let renderer = fake.renderer();
+        let udn = renderer.udn.clone();
+        upnp::discovery::remember(renderer, Duration::from_secs(60));
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let first = upnp::choose();
+        let _later = upnp::choose();
+        upnp::connect(&udn, first, &tx).unwrap();
+        assert!(rx.try_recv().is_err(), "the earlier pick is dropped");
+        let last = upnp::choose();
+        upnp::connect(&udn, last, &tx).unwrap();
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(PlayerCommand::UseRenderer(Some(_)))
+        ));
     }
 }

@@ -1725,6 +1725,8 @@ impl KoanEngine {
     }
 
     pub async fn set_device(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+        // A renderer still opening for an earlier pick is not used.
+        koan_core::upnp::choose();
         offload::sequenced(move || self.send_local(PlayerCommand::SetOutputDevice(name))).await
     }
 
@@ -1766,6 +1768,7 @@ impl KoanEngine {
     }
 
     pub async fn clear_device(self: Arc<Self>) -> Result<(), KoanError> {
+        koan_core::upnp::choose();
         offload::sequenced(move || self.send_local(PlayerCommand::ClearOutputDevice)).await
     }
 
@@ -1859,10 +1862,12 @@ impl KoanEngine {
     /// renderer, and app commands queued behind it would wait them out. The
     /// player takes the switch in its own order when it arrives.
     pub async fn play_to_renderer(self: Arc<Self>, udn: Option<String>) -> Result<(), KoanError> {
+        // Taken now, in the order the person picked: see `upnp::choose`.
+        let choice = koan_core::upnp::choose();
         offload::offload(move || match udn {
             Some(udn) => {
                 koan_core::remote::devices::set_target(None);
-                koan_core::upnp::connect(&udn, &self.tx)
+                koan_core::upnp::connect(&udn, choice, &self.tx)
                     .map_err(|message| KoanError::Audio { message })
             }
             None => {
