@@ -42,7 +42,7 @@ struct MiniPlayer: View {
                 // Reachable with nothing playing here, which is when a phone
                 // is most likely to be wanted as a remote.
                 if player.hasOtherDevices || player.isControllingAnother {
-                    DevicePickerButton(open: $showingDevices, labelled: false)
+                    ControlButton(open: $showingDevices, labelled: false)
                         .font(.body)
                         .frame(width: Self.target, height: Self.target)
                 }

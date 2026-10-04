@@ -27,6 +27,7 @@ struct TransportBar: View {
     /// being wide is no promise that the bar is.
     @State private var barWidth: CGFloat = 0
     @State private var showingDevices = false
+    @State private var showingControl = false
 
     /// Wide enough to read as a slab rather than a pill at this height.
     private static let radius: CGFloat = 26
@@ -233,7 +234,11 @@ struct TransportBar: View {
                     .help(Format.outputExplanation(format))
             }
 
-            DevicePickerButton(open: $showingDevices, labelled: !compact, iconSize: 17)
+            if player.hasOtherDevices || player.isControllingAnother {
+                ControlButton(open: $showingControl, labelled: !compact, iconSize: 17)
+                    .font(.caption)
+            }
+            OutputButton(open: $showingDevices, labelled: !compact, iconSize: 17)
                 .font(.caption)
 
             // AirPlay is the system's to choose, so it is the system's button:
