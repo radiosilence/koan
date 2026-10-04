@@ -480,6 +480,9 @@ impl From<LibraryStats> for Stats {
 pub struct Device {
     pub name: String,
     pub sample_rates: Vec<f64>,
+    /// How it is connected: `builtin`, `usb`, `bluetooth`, `airplay`,
+    /// `display`, `virtual` or `other`. For its icon.
+    pub kind: String,
 }
 
 /// Cover art as raw bytes. The GraphQL surface base64s this because JSON has to;
@@ -1079,6 +1082,9 @@ pub struct RendererInfo {
     pub model: String,
     /// Takes the next track before this one ends, so albums play without gaps.
     pub gapless: bool,
+    /// Playing or paused when last asked, by whatever drives it. Picking it
+    /// takes it over.
+    pub busy: bool,
 }
 
 /// The renderer this koan is playing to in place of its own output.

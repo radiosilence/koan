@@ -27,6 +27,8 @@ const DEFAULT_MAX_AGE: Duration = Duration::from_secs(1800);
 struct Known {
     renderer: Renderer,
     expires: Instant,
+    /// Playing or paused when last asked, whoever is driving it.
+    busy: bool,
 }
 
 #[derive(Default)]
@@ -56,6 +58,43 @@ pub fn renderers() -> Vec<Renderer> {
     list
 }
 
+/// Whether the renderer was playing or paused when last asked: picking one
+/// that is takes it over from whatever is driving it.
+pub fn busy(udn: &str) -> bool {
+    with(|s| s.renderers.get(udn).is_some_and(|k| k.busy))
+}
+
+/// Ask every known renderer whether it is in use, each on its own thread.
+fn check_busy() {
+    for renderer in renderers() {
+        let _ = thread::Builder::new()
+            .name("koan-upnp-status".into())
+            .spawn(move || {
+                let http = super::soap::client();
+                let Ok(args) = super::soap::call(
+                    &http,
+                    &renderer.av_transport,
+                    "GetTransportInfo",
+                    &[("InstanceID", "0")],
+                ) else {
+                    return;
+                };
+                let busy = matches!(
+                    super::soap::arg(&args, "CurrentTransportState"),
+                    Some("PLAYING" | "PAUSED_PLAYBACK" | "TRANSITIONING")
+                );
+                let changed = with(|s| {
+                    s.renderers
+                        .get_mut(&renderer.udn)
+                        .is_some_and(|k| std::mem::replace(&mut k.busy, busy) != busy)
+                });
+                if changed {
+                    crate::signal::engine_changed().bump();
+                }
+            });
+    }
+}
+
 pub fn find(udn: &str) -> Option<Renderer> {
     with(|s| s.renderers.get(udn).map(|k| k.renderer.clone()))
 }
@@ -66,7 +105,15 @@ pub fn remember(renderer: Renderer, max_age: Duration) {
     let changed = with(|s| {
         let expires = Instant::now() + max_age;
         let changed = s.renderers.get(&udn).is_none_or(|k| k.renderer != renderer);
-        s.renderers.insert(udn, Known { renderer, expires });
+        let busy = s.renderers.get(&udn).is_some_and(|k| k.busy);
+        s.renderers.insert(
+            udn,
+            Known {
+                renderer,
+                expires,
+                busy,
+            },
+        );
         changed
     });
     if changed {
@@ -104,11 +151,13 @@ pub(crate) fn forget(udn: &str) {
 }
 
 /// Search the network for renderers, starting discovery if it has not
-/// started. Answers arrive over the next couple of seconds.
+/// started, and ask the ones already known whether they are in use. Answers
+/// arrive over the next couple of seconds.
 pub fn search() {
     let Some(socket) = SEARCH.get_or_init(start) else {
         return;
     };
+    check_busy();
     let msg = format!(
         "M-SEARCH * HTTP/1.1\r\nHOST: {GROUP}:{PORT}\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: {SEARCH_TARGET}\r\nUSER-AGENT: koan/{} UPnP/1.0\r\n\r\n",
         env!("CARGO_PKG_VERSION")

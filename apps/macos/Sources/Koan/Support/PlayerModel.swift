@@ -423,6 +423,43 @@ final class PlayerModel {
         attempt { try await self.engine.controlDevice(id: id) }
     }
 
+    /// One of this device's outputs: a CoreAudio device by name (`nil` for
+    /// the system default), or a UPnP renderer by UDN.
+    enum Output: Equatable {
+        case system(String?)
+        case renderer(String)
+    }
+
+    /// Whether this device's music is coming out of `output` now.
+    func isPlayingHere(_ output: Output) -> Bool {
+        guard !isControllingAnother else { return false }
+        switch output {
+        case .renderer(let udn): return renderer?.udn == udn
+        case .system(let name): return renderer == nil && currentDevice == name
+        }
+    }
+
+    /// Play this device's own music through `output`, coming back from
+    /// controlling another device if it was.
+    func playHere(_ output: Output) {
+        attempt {
+            if self.isControllingAnother {
+                try await self.engine.controlDevice(id: nil)
+            }
+            switch output {
+            case .renderer(let udn):
+                try await self.engine.playToRenderer(udn: udn)
+            case .system(let name?):
+                try await self.engine.setDevice(name: name)
+            case .system(nil):
+                try await self.engine.clearDevice()
+            }
+        }
+        if case .system(let name) = output {
+            currentDevice = name
+        }
+    }
+
     /// The renderer playing this device's music, if one is.
     var renderer: RendererOutput? { mirror.rendererOutput }
 

@@ -233,10 +233,6 @@ struct TransportBar: View {
             DevicePickerButton(open: $showingDevices, labelled: !compact)
                 .font(.caption)
 
-            // This Mac's own output; nothing it chooses reaches another device.
-            if !player.isControllingAnother {
-                DeviceMenu()
-            }
         }
         // Natural size, always. What does not fit is dropped above rather than
         // compressed — a badge and a menu squeezed to a few points wide say
@@ -417,38 +413,6 @@ private struct FetchedMark: View {
         return player.canSeek
             ? "Downloaded to \(percent)% — seeking stops there until the rest arrives"
             : "Downloading, \(percent)% — seeking becomes available when it finishes"
-    }
-}
-
-private struct DeviceMenu: View {
-    @Environment(PlayerModel.self) private var player
-
-    var body: some View {
-        Menu {
-            // An inline picker is what puts the checkmark against the output
-            // in use; a `Label` with a checkmark symbol shows none on macOS 27.
-            Picker("Output", selection: Binding(
-                get: { player.currentDevice },
-                set: { player.setDevice($0) }
-            )) {
-                Text("System Default").tag(String?.none)
-                Divider()
-                ForEach(player.devices, id: \.name) { device in
-                    Text(device.name).tag(String?.some(device.name))
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
-            Image(systemName: "hifispeaker")
-        }
-        // Drawn by SwiftUI. `.borderlessButton` hands the label to AppKit's
-        // popup button, which draws nothing on the bar's glass in dark mode.
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .frame(width: 24)
-        .help("Output device — \(player.currentDevice ?? "System Default")")
     }
 }
 

@@ -1717,6 +1717,7 @@ impl KoanEngine {
                 .map(|d| Device {
                     name: d.name,
                     sample_rates: d.sample_rates,
+                    kind: d.kind.as_str().to_string(),
                 })
                 .collect())
         })
@@ -2653,6 +2654,7 @@ impl KoanEngine {
                         renderers: koan_core::upnp::discovery::renderers()
                             .into_iter()
                             .map(|r| RendererInfo {
+                                busy: koan_core::upnp::discovery::busy(&r.udn),
                                 udn: r.udn,
                                 name: r.name,
                                 manufacturer: r.manufacturer,

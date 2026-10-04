@@ -2,19 +2,23 @@ import KoanFFI
 import SwiftUI
 #if os(iOS)
 import UIKit
+#else
+import AVKit
 #endif
 
-/// Where music plays: this device, another of the account's, any koan app on
-/// the same network, or a UPnP amplifier or streamer.
+/// Where music plays, in one place, in two kinds.
 ///
-/// A koan row is a device to control. Picking one pauses this device and turns
-/// the transport, the queue and what is playing into that device's, until
-/// another is picked. Nothing moves until "Move here", which sends what the
-/// device being controlled is playing to that row's device and controls it
-/// there.
+/// **Outputs** are where this device's own music comes out: its speakers, a
+/// DAC, AirPlay, a UPnP amplifier. Picking one keeps the queue and transport
+/// here and moves only the sound.
 ///
-/// A renderer row is different underneath: it becomes this device's output, as
-/// a DAC would, so the transport and queue stay this device's own.
+/// **Other kōan devices** are controlled: picking one pauses this device and
+/// turns the transport, the queue and what is playing into that device's,
+/// until another is picked. Nothing moves until "Move here", which sends what
+/// the device being controlled is playing to that row's device.
+///
+/// Each row carries the glyph of what picking it does, so the two kinds read
+/// apart without being explained.
 struct DevicePicker: View {
     @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
@@ -25,7 +29,7 @@ struct DevicePicker: View {
                 .font(.headline)
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
-                .padding(.bottom, 6)
+                .padding(.bottom, 4)
 
             if mirror.connection?.localNetworkBlocked == true {
                 LocalNetworkBlocked()
@@ -33,59 +37,79 @@ struct DevicePicker: View {
                     .padding(.bottom, 8)
             }
 
-            thisDevice
-            ForEach(mirror.devices, id: \.id) { device in
-                DeviceRow(device: device)
-            }
-            ForEach(mirror.renderers, id: \.udn) { renderer in
-                RendererRow(renderer: renderer)
-            }
-            if let output = player.renderer {
-                RendererVolume(output: output)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
+            outputs
+            if !mirror.devices.isEmpty {
+                SectionHeading(
+                    title: "Control another kōan",
+                    glyph: Action.control.glyph,
+                    detail: "Shows and commands that device's own queue"
+                )
+                ForEach(mirror.devices, id: \.id) { device in
+                    DeviceRow(device: device)
+                }
             }
 
             footer
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
         }
-        .frame(minWidth: 320)
-        .onAppear { player.searchRenderers() }
+        .frame(minWidth: 340)
+        .onAppear {
+            player.searchRenderers()
+            player.refreshDevices()
+        }
     }
 
-    private var thisDevice: some View {
-        DeviceChoiceRow(
+    @ViewBuilder private var outputs: some View {
+        SectionHeading(
+            title: "Play from this \(Self.deviceNoun)",
+            glyph: Action.output.glyph,
+            detail: player.isControllingAnother
+                ? "Paused while you control another device"
+                : "The queue stays here; the sound goes there",
+            move: player.isControllingAnother && player.canMoveMusic(to: nil)
+                ? { player.moveMusic(to: nil) } : nil
+        )
+        #if os(macOS)
+        OutputRow(
+            icon: "speaker.wave.2",
+            name: "System Default",
+            detail: nil,
+            selected: player.isPlayingHere(.system(nil)),
+            onSelect: { player.playHere(.system(nil)) }
+        )
+        ForEach(player.devices, id: \.name) { device in
+            OutputRow(
+                icon: Self.icon(forOutput: device.kind),
+                name: device.name,
+                detail: nil,
+                selected: player.isPlayingHere(.system(device.name)),
+                onSelect: { player.playHere(.system(device.name)) }
+            )
+        }
+        AirPlayRow()
+        #else
+        OutputRow(
             icon: Self.icon(for: Self.platform),
             name: "This \(Self.deviceNoun)",
-            detail: thisDetail,
-            selected: !player.isControllingAnother && player.renderer == nil,
-            canMove: player.isControllingAnother && player.canMoveMusic(to: nil),
-            onSelect: {
-                if player.renderer != nil {
-                    player.playOn(renderer: nil)
-                } else {
-                    player.control(nil)
-                }
-            },
-            onMove: { player.moveMusic(to: nil) }
+            detail: nil,
+            selected: player.isPlayingHere(.system(nil)),
+            onSelect: { player.playHere(.system(nil)) }
         )
-    }
-
-    private var thisDetail: String {
-        if player.isControllingAnother { return "Paused while you control another device" }
-        if let renderer = player.renderer { return "Playing through \(renderer.name)" }
-        return "Music plays here"
+        #endif
+        ForEach(mirror.renderers, id: \.udn) { renderer in
+            RendererRow(renderer: renderer)
+        }
+        if let output = player.renderer, !player.isControllingAnother {
+            RendererVolume(output: output)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+        }
     }
 
     @ViewBuilder private var footer: some View {
-        if mirror.devices.isEmpty && mirror.renderers.isEmpty {
+        if mirror.devices.isEmpty {
             Text(emptyExplanation)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        } else {
-            Text("Pick a device to control it. Move here sends what is playing to that device.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -94,9 +118,21 @@ struct DevicePicker: View {
 
     private var emptyExplanation: String {
         if mirror.connection?.devices == true {
-            return "No other devices. Open kōan on another device signed in to this server, or on this network."
+            return "No other kōan devices. Open kōan on another device signed in to this server, or on this network."
         }
-        return "No other devices on this network. Devices signed in to one kōan server reach each other through it, on any network."
+        return "No other kōan devices on this network. Devices signed in to one kōan server reach each other through it, on any network."
+    }
+
+    /// An output's icon by how it is connected.
+    static func icon(forOutput kind: String) -> String {
+        switch kind {
+        case "builtin": "laptopcomputer"
+        case "usb": "cable.connector"
+        case "bluetooth": "headphones"
+        case "airplay": "airplayaudio"
+        case "display": "display"
+        default: "hifispeaker"
+        }
     }
 
     static var platform: String {
@@ -136,6 +172,7 @@ private struct DeviceRow: View {
             reach: device.nearby ? "wifi" : "cloud",
             reachHelp: device.nearby ? "On this network" : "Through your server",
             selected: player.controlled?.id == device.id,
+            action: .control,
             canMove: player.canMoveMusic(to: device),
             unreachable: device.problem != nil,
             onSelect: { player.control(device.id) },
@@ -173,20 +210,25 @@ private struct RendererRow: View {
             detail: detail(output),
             reach: "wifi",
             reachHelp: "UPnP, on this network",
-            selected: output != nil,
+            selected: player.isPlayingHere(.renderer(renderer.udn)),
+            action: .output,
             canMove: false,
-            onSelect: { player.playOn(renderer: renderer.udn) },
+            warning: output == nil && renderer.busy,
+            onSelect: { player.playHere(.renderer(renderer.udn)) },
             onMove: {}
         )
     }
 
     private func detail(_ output: RendererOutput?) -> String {
         if let problem = output?.problem { return problem }
-        if output != nil { return "Playing from this \(DevicePicker.deviceNoun)" }
         let model = [renderer.manufacturer, renderer.model]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-        return model.isEmpty ? "Amplifier or streamer" : model
+        let kind = model.isEmpty ? "UPnP" : "\(model) · UPnP"
+        if output == nil && renderer.busy {
+            return "In use by something else. Picking it takes over."
+        }
+        return kind
     }
 }
 
@@ -229,6 +271,135 @@ private struct RendererVolume: View {
     }
 }
 
+/// What picking a row does.
+enum Action {
+    /// This device's music comes out there.
+    case output
+    /// This device shows and commands that one.
+    case control
+
+    var glyph: String {
+        switch self {
+        case .output: "speaker.wave.2"
+        case .control: "av.remote"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .output: "Play this device's music through it"
+        case .control: "Control that device and its own queue"
+        }
+    }
+
+    var selectedLabel: String {
+        switch self {
+        case .output: "Playing here"
+        case .control: "Controlling"
+        }
+    }
+}
+
+/// A section's title, the glyph its rows carry, and what picking one does.
+private struct SectionHeading: View {
+    let title: String
+    let glyph: String
+    let detail: String
+    /// "Move here", when there is music elsewhere to bring to this section.
+    var move: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: glyph)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 0)
+            if let move {
+                Button("Move here", action: move)
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Bring what the other device is playing back here")
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+    }
+}
+
+/// One of this device's own outputs.
+private struct OutputRow: View {
+    let icon: String
+    let name: String
+    let detail: String?
+    let selected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        DeviceChoiceRow(
+            icon: icon,
+            name: name,
+            detail: detail ?? "",
+            selected: selected,
+            action: .output,
+            canMove: false,
+            onSelect: onSelect,
+            onMove: {}
+        )
+    }
+}
+
+#if os(macOS)
+/// AirPlay speakers are chosen by the system, not listed by CoreAudio, so the
+/// row hands over to the system's own picker. What it picks shows up above as
+/// the AirPlay output.
+private struct AirPlayRow: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "airplayaudio")
+                .font(.title3)
+                .frame(width: 28)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("AirPlay")
+                Text("Choose a speaker")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        // The system's button over the whole row, nearly transparent: it is
+        // what opens the AirPlay menu, and it cannot be opened any other way.
+        .overlay { RoutePicker().opacity(0.02) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+private struct RoutePicker: NSViewRepresentable {
+    func makeNSView(context: Context) -> AVRoutePickerView {
+        let picker = AVRoutePickerView()
+        picker.isRoutePickerButtonBordered = false
+        return picker
+    }
+
+    func updateNSView(_ view: AVRoutePickerView, context: Context) {}
+}
+#endif
+
 /// One device: tap to control it, and a button to move the music there.
 private struct DeviceChoiceRow: View {
     let icon: String
@@ -237,10 +408,14 @@ private struct DeviceChoiceRow: View {
     var reach: String?
     var reachHelp: String?
     let selected: Bool
+    /// What picking it does, drawn at the row's end.
+    let action: Action
     let canMove: Bool
     /// Found but not reached: shown with the reason, and not pickable unless
     /// it is already the one picked.
     var unreachable = false
+    /// Pickable, with something worth reading first.
+    var warning = false
     let onSelect: () -> Void
     let onMove: () -> Void
 
@@ -251,7 +426,7 @@ private struct DeviceChoiceRow: View {
                     Image(systemName: icon)
                         .font(.title3)
                         .frame(width: 28)
-                        .foregroundStyle(selected ? Color.accentColor : .secondary)
+                        .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 5) {
                             Text(name)
@@ -267,15 +442,23 @@ private struct DeviceChoiceRow: View {
                         }
                         Text(detail)
                             .font(.caption)
-                            .foregroundStyle(unreachable ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                            .foregroundStyle(
+                                unreachable || warning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
+                            )
                             .lineLimit(2)
                     }
                     Spacer(minLength: 0)
                     if selected {
                         Image(systemName: "checkmark")
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(Color.accentColor)
-                            .accessibilityLabel("Controlling")
+                            .foregroundStyle(.tint)
+                            .accessibilityLabel(action.selectedLabel)
+                    } else if !canMove {
+                        Image(systemName: action.glyph)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .help(action.help)
+                            .accessibilityHidden(true)
                     }
                 }
                 .contentShape(Rectangle())
@@ -293,7 +476,7 @@ private struct DeviceChoiceRow: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(selected ? Color.accentColor.opacity(0.08) : .clear)
+        .background(selected ? AnyShapeStyle(.tint.opacity(0.12)) : AnyShapeStyle(.clear))
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -351,12 +534,12 @@ struct DevicePickerButton: View {
         Button {
             open = true
         } label: {
-            // Only the icon takes the tint: it follows the record's colour,
-            // and a dark sleeve makes tinted text vanish against the bar.
+            // The icon says where the music is going and takes the tint; the
+            // name stays primary, since a dark sleeve's tint vanishes as text.
             HStack(spacing: 5) {
-                Image(systemName: "laptopcomputer.and.iphone")
-                    .foregroundStyle(controlledName != nil ? Color.accentColor : .primary)
-                if labelled, let name = controlledName {
+                Image(systemName: target.icon)
+                    .foregroundStyle(target.name != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                if labelled, let name = target.name {
                     Text(name)
                         .lineLimit(1)
                         .foregroundStyle(.primary)
@@ -364,17 +547,32 @@ struct DevicePickerButton: View {
             }
         }
         .buttonStyle(.plain)
-        .help(controlledName.map { "Playing on \($0)" } ?? "Play on another device")
-        .accessibilityLabel(controlledName.map { "Playing on \($0)" } ?? "Play on another device")
+        .help(target.help)
+        .accessibilityLabel(target.help)
         #if os(macOS)
         .popover(isPresented: $open, arrowEdge: .top) { DevicePicker() }
         #endif
     }
 
-    private var controlledName: String? {
-        if let renderer = player.renderer { return renderer.name }
-        guard player.isControllingAnother else { return nil }
-        return player.controlled?.name ?? "another device"
+    /// Where the music is going: another kōan being controlled, a renderer,
+    /// one of this device's own outputs, or the default.
+    private var target: (icon: String, name: String?, help: String) {
+        if player.isControllingAnother {
+            let name = player.controlled?.name ?? "another device"
+            return (
+                DevicePicker.icon(for: player.controlled?.platform ?? ""),
+                name,
+                "Controlling \(name)"
+            )
+        }
+        if let renderer = player.renderer {
+            return ("hifispeaker", renderer.name, "Playing through \(renderer.name)")
+        }
+        if let name = player.currentDevice,
+           let device = player.devices.first(where: { $0.name == name }) {
+            return (DevicePicker.icon(forOutput: device.kind), nil, "Playing through \(name)")
+        }
+        return ("laptopcomputer.and.iphone", nil, "Play on")
     }
 }
 

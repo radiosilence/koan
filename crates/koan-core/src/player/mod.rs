@@ -3312,6 +3312,7 @@ mod tests {
                 name: "Stuck DAC".into(),
                 sample_rates: vec![self.rate],
                 platform_id: 0,
+                kind: Default::default(),
             })
         }
         fn supported_sample_rates(
@@ -3439,6 +3440,7 @@ mod tests {
                 name: "Slow DAC".into(),
                 sample_rates: vec![44100.0, 48000.0],
                 platform_id: 0,
+                kind: Default::default(),
             })
         }
         fn supported_sample_rates(

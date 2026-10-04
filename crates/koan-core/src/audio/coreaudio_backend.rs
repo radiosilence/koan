@@ -14,6 +14,7 @@ impl CoreAudioBackend {
             name: dev.name.clone(),
             sample_rates: dev.sample_rates.clone(),
             platform_id: u64::from(dev.id),
+            kind: dev.kind,
         }
     }
 }
