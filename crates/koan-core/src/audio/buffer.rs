@@ -462,7 +462,7 @@ pub fn start_decode<N, F>(
     rg_mode: ReplayGainMode,
     pre_amp_db: f64,
     on_finished: F,
-) -> Result<(StreamInfo, DecodeHandle), DecodeError>
+) -> Result<DecodeHandle, DecodeError>
 where
     N: Fn() -> Option<SourceEntry> + Send + 'static,
     F: FnOnce() + Send + 'static,
@@ -492,69 +492,10 @@ where
         })
         .map_err(DecodeError::Io)?;
 
-    // Return a placeholder StreamInfo — the real info is pushed to the timeline
-    // by the decode thread immediately after probing the source.
-    let placeholder = StreamInfo {
-        codec: String::from("?"),
-        sample_rate: 44100,
-        channels: 2,
-        bit_depth: Some(16),
-        bitrate_kbps: None,
-        duration_ms: 0,
-    };
-
-    Ok((
-        placeholder,
-        DecodeHandle {
-            stop,
-            thread: Some(thread),
-        },
-    ))
-}
-
-// ---------------------------------------------------------------------------
-// File-based convenience wrapper
-// ---------------------------------------------------------------------------
-
-/// Start decoding a file into the ring buffer (convenience wrapper).
-///
-/// `initial_id` — the QueueItemId of the first track.
-/// `seek_ms` — if > 0, seek to this position before decoding the first track.
-/// `next_track` — closure returning the next (id, path) for gapless playback.
-#[allow(clippy::too_many_arguments)]
-pub fn start_decode_file<N, F>(
-    initial_id: QueueItemId,
-    path: &Path,
-    producer: rtrb::Producer<f32>,
-    seek_ms: u64,
-    next_track: N,
-    timeline: Arc<PlaybackTimeline>,
-    viz_buffer: Option<Arc<VizBuffer>>,
-    rg_mode: ReplayGainMode,
-    pre_amp_db: f64,
-    on_finished: F,
-) -> Result<(StreamInfo, DecodeHandle), DecodeError>
-where
-    N: Fn() -> Option<(QueueItemId, PathBuf)> + Send + 'static,
-    F: FnOnce() + Send + 'static,
-{
-    let info = probe_file(path)?;
-    let first = SourceEntry::from_file(initial_id, path.to_path_buf());
-    let (_, handle) = start_decode(
-        first,
-        producer,
-        seek_ms,
-        move || {
-            let (id, p) = next_track()?;
-            Some(SourceEntry::from_file(id, p))
-        },
-        timeline,
-        viz_buffer,
-        rg_mode,
-        pre_amp_db,
-        on_finished,
-    )?;
-    Ok((info, handle))
+    Ok(DecodeHandle {
+        stop,
+        thread: Some(thread),
+    })
 }
 
 // ---------------------------------------------------------------------------

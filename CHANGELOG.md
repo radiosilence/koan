@@ -10,6 +10,9 @@
 - **A skip or seek arriving as a track finished decoding no longer jumps a track further.**
 - **Undoing the add of a track the player was waiting for** no longer leaves it to start when its download lands.
 - **Space and the media keys pause a track that is still on its way.** They read the wait as stopped and resumed it instead. Adding tracks while one is on its way no longer starts the first of them over it.
+- **Removing the paused track, or undoing past it, leaves the player paused** on the track that follows, instead of starting it. With nothing loaded, removing the track under the cursor moves the cursor without starting anything.
+- **A track added after the last one has finished decoding follows it without a gap.**
+- **Skipping to a track still downloading clears the previous track's details** from the transport, and a seek or output change in the meantime no longer reopens the previous track.
 - **Skipping is no longer rate-limited for remote control.** The player dropped a next or previous within 150 ms of the last one, which swallowed rapid skips from the apps, GraphQL, MCP and the link. The TUI keeps the limit for its own keys, against terminal key repeat.
 - **New playlists on iOS.** The Playlists page has a button to make one, and "New Playlist…" in a context menu now asks for a name. The naming dialog was hosted only by the Mac's window, so on iOS the menu item did nothing.
 - **A reinstalled iOS app keeps its device id.** The id lived only in the app's container, which iOS empties when the app is deleted, so each reinstall appeared on the server as a new "iPhone" beside the old one. It is now kept in the Keychain as well, which survives a reinstall. The app also reports the phone's own name; iOS returns "iPhone" for it until the app holds Apple's user-assigned-device-name entitlement.

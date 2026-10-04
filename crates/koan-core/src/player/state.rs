@@ -29,6 +29,19 @@ impl fmt::Debug for QueueItemId {
     }
 }
 
+/// A step the decoder took through the queue: from `after`, past `passed`
+/// (items that were not Ready), to `chosen`, or to the end of the queue.
+#[derive(Debug, Clone)]
+pub struct Lookahead {
+    pub after: QueueItemId,
+    pub passed: Vec<QueueItemId>,
+    pub chosen: Option<(QueueItemId, PathBuf)>,
+}
+
+/// Set in `SharedPlayerState::state` beside the playback state while the
+/// player waits for a track.
+const WAITING: u8 = 0x80;
+
 /// Playback state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -49,7 +62,7 @@ impl PlaybackState {
 }
 
 /// Audio format info for the currently playing track.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TrackInfo {
     pub id: QueueItemId,
     pub path: PathBuf,
@@ -250,9 +263,10 @@ pub struct VisibleQueueSnapshot {
 /// The engine writes these, the UI reads them. No mutexes in the hot path.
 #[derive(Debug)]
 pub struct SharedPlayerState {
+    /// The playback state, with `WAITING` set while the player waits for a
+    /// track it was asked for. One atomic, so no reader sees one updated
+    /// without the other.
     state: AtomicU8,
-    /// The player is waiting for a track it was asked for to arrive.
-    waiting: AtomicBool,
     /// Where a session starts, and where a stopped one stands. While one is
     /// running the playhead is read off the timeline instead.
     position_ms: AtomicU64,
@@ -290,7 +304,6 @@ impl SharedPlayerState {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             state: AtomicU8::new(PlaybackState::Stopped as u8),
-            waiting: AtomicBool::new(false),
             position_ms: AtomicU64::new(0),
             timeline: std::sync::OnceLock::new(),
             track_info: parking_lot::RwLock::new(None),
@@ -305,38 +318,43 @@ impl SharedPlayerState {
 
     // --- Playback state ---
 
+    fn transport(&self) -> (PlaybackState, bool) {
+        let bits = self.state.load(Ordering::Acquire);
+        (PlaybackState::from_u8(bits & !WAITING), bits & WAITING != 0)
+    }
+
     pub fn playback_state(&self) -> PlaybackState {
-        PlaybackState::from_u8(self.state.load(Ordering::Acquire))
+        self.transport().0
     }
 
     pub fn set_playback_state(&self, state: PlaybackState) {
-        self.state.store(state as u8, Ordering::Release);
-        self.changed();
+        self.set_transport(state, false);
     }
 
     /// Whether the player is waiting for a track it was asked for to arrive.
     /// Stopped while waiting, the track opens playing; paused, it opens paused.
     pub fn is_waiting(&self) -> bool {
-        self.waiting.load(Ordering::Acquire)
+        self.transport().1
     }
 
     /// Playing, or waiting for a track that will open playing: what a
     /// play/pause toggle pauses.
     pub fn wants_to_play(&self) -> bool {
-        match self.playback_state() {
-            PlaybackState::Playing => true,
-            PlaybackState::Stopped => self.is_waiting(),
-            PlaybackState::Paused => false,
-        }
+        matches!(
+            self.transport(),
+            (PlaybackState::Playing, _) | (PlaybackState::Stopped, true)
+        )
     }
 
     /// Nothing loaded and nothing waited for: where adding tracks starts them.
     pub fn is_idle(&self) -> bool {
-        self.playback_state() == PlaybackState::Stopped && !self.is_waiting()
+        self.transport() == (PlaybackState::Stopped, false)
     }
 
-    pub fn set_waiting(&self, waiting: bool) {
-        if self.waiting.swap(waiting, Ordering::AcqRel) != waiting {
+    /// Publish the playback state and the wait together.
+    pub fn set_transport(&self, state: PlaybackState, waiting: bool) {
+        let bits = state as u8 | if waiting { WAITING } else { 0 };
+        if self.state.swap(bits, Ordering::AcqRel) != bits {
             self.changed();
         }
     }
@@ -742,22 +760,50 @@ impl SharedPlayerState {
         Some(next)
     }
 
-    /// Peek at the next Ready item after a given item ID WITHOUT moving the cursor.
-    /// Used by the decode thread for gapless lookahead — the cursor is moved
-    /// later by update_playback_state when playback actually reaches the track.
-    pub fn peek_next_ready_after(&self, after_id: QueueItemId) -> Option<(QueueItemId, PathBuf)> {
+    /// One step of the decoder's gapless lookahead from `after_id`: the next
+    /// Ready item, and the items passed over to reach it. Does not move the
+    /// cursor; `update_playback_state` does that when the playhead gets there.
+    ///
+    /// None when `after_id` has been removed: the lookahead then has nothing
+    /// to follow, and starting from the top would gaplessly replay the queue.
+    pub fn lookahead_after(&self, after_id: QueueItemId) -> Option<Lookahead> {
         let pl = self.playlist.read();
-        // A reference item that has been removed means the lookahead has nothing
-        // to follow; starting from the top would gaplessly replay the queue.
         let start = pl.items.iter().position(|item| item.id == after_id)? + 1;
-
-        for i in start..pl.items.len() {
-            if matches!(pl.items[i].state, ItemState::Ready) {
-                let item = &pl.items[i];
-                return Some((item.id, item.path.clone()));
+        let mut passed = Vec::new();
+        for item in &pl.items[start..] {
+            if matches!(item.state, ItemState::Ready) {
+                return Some(Lookahead {
+                    after: after_id,
+                    passed,
+                    chosen: Some((item.id, item.path.clone())),
+                });
             }
+            passed.push(item.id);
         }
-        None
+        Some(Lookahead {
+            after: after_id,
+            passed,
+            chosen: None,
+        })
+    }
+
+    /// Whether the queue still reads as it did when `step` was taken: the same
+    /// items after `after`, in the same order, up to what was chosen, or to
+    /// the end when nothing was. An item becoming Ready since is not a change;
+    /// an edit is.
+    pub fn still_follows(&self, step: &Lookahead) -> bool {
+        let pl = self.playlist.read();
+        let Some(at) = pl.items.iter().position(|item| item.id == step.after) else {
+            return false;
+        };
+        let rest = pl.items[at + 1..].iter().map(|item| item.id);
+        let expected = step.passed.iter().copied();
+        match &step.chosen {
+            Some((chosen, _)) => rest
+                .take(step.passed.len() + 1)
+                .eq(expected.chain(std::iter::once(*chosen))),
+            None => rest.eq(expected),
+        }
     }
 
     /// Retreat cursor to the previous item. Returns (id, path) if found.
@@ -1547,7 +1593,59 @@ mod tests {
         assert_ne!(state.cursor(), Some(id0));
     }
 
-    // --- peek_next_ready_after ---
+    // --- lookahead_after ---
+
+    fn chosen_after(state: &SharedPlayerState, id: QueueItemId) -> Option<QueueItemId> {
+        state
+            .lookahead_after(id)
+            .and_then(|step| step.chosen)
+            .map(|(id, _)| id)
+    }
+
+    #[test]
+    fn a_step_over_a_pending_item_holds_until_the_queue_is_edited() {
+        let state = SharedPlayerState::new();
+        let a = ready_item("a");
+        let b = PlaylistItem {
+            state: ItemState::Pending,
+            ..ready_item("b")
+        };
+        let c = ready_item("c");
+        let (ida, idb, idc) = (a.id, b.id, c.id);
+        state.add_items(vec![a, b, c]);
+
+        let step = state.lookahead_after(ida).unwrap();
+        assert_eq!(step.passed, vec![idb]);
+        assert_eq!(step.chosen.as_ref().map(|(id, _)| *id), Some(idc));
+
+        state.update_item_state(idb, ItemState::Ready);
+        assert!(
+            state.still_follows(&step),
+            "a download landing is not an edit"
+        );
+
+        state.add_items(vec![ready_item("d")]);
+        assert!(
+            state.still_follows(&step),
+            "nor is adding after what was chosen"
+        );
+
+        state.move_item(idc, ida, false);
+        assert!(!state.still_follows(&step));
+    }
+
+    #[test]
+    fn a_step_to_the_end_of_the_queue_breaks_when_a_track_is_added() {
+        let state = SharedPlayerState::new();
+        let a = ready_item("a");
+        let ida = a.id;
+        state.add_items(vec![a]);
+        let step = state.lookahead_after(ida).unwrap();
+        assert!(step.chosen.is_none());
+        assert!(state.still_follows(&step));
+        state.add_items(vec![ready_item("b")]);
+        assert!(!state.still_follows(&step));
+    }
 
     #[test]
     fn peek_after_a_removed_item_returns_none() {
@@ -1561,20 +1659,14 @@ mod tests {
         let (id0, id1, id2) = (item0.id, item1.id, item2.id);
 
         state.add_items(vec![item0, item1, item2]);
-        assert_eq!(
-            state.peek_next_ready_after(id1).map(|(id, _)| id),
-            Some(id2)
-        );
+        assert_eq!(chosen_after(&state, id1), Some(id2));
 
         state.remove_item(id2);
         assert!(
-            state.peek_next_ready_after(id2).is_none(),
+            state.lookahead_after(id2).is_none(),
             "a vanished reference must not resolve to the head of the queue"
         );
-        assert_ne!(
-            state.peek_next_ready_after(id2).map(|(id, _)| id),
-            Some(id0)
-        );
+        assert_ne!(chosen_after(&state, id2), Some(id0));
     }
 
     // --- surviving_item_before ---
