@@ -195,6 +195,7 @@ sift import ~/Downloads/some-album</code></pre>
         <li><strong>Bit-perfect output</strong> through CoreAudio on macOS and ALSA on Linux. The device is switched to the source's sample rate rather than resampled to reach it; when a device refuses, the format badge says the output is resampled.</li>
         <li><strong>Gapless</strong>: the decoder runs ahead across track boundaries.</li>
         <li><strong>Network amplifiers and streamers</strong>: the Mac app and the terminal UI play to UPnP/DLNA renderers, such as a WiiM or an Arcam amplifier. The queue stays in kōan and the renderer is sent the original file, so playback is bit-perfect up to its DAC, and gapless where the renderer supports it. See <a href="/docs/devices/#amplifiers-and-streamers-upnp">Playing on another device</a>.</li>
+        <li><strong>EQ and convolution</strong>, chosen per output device, so headphones get their correction only when they are the output. Profiles import from what other tools write: Roon and Convolver configs, impulse responses from REW or rePhase, CamillaDSP, Equalizer APO and AutoEQ. A device without a profile runs nothing and stays bit-perfect, and the format badge says when audio is processed. See <a href="/docs/dsp/">Equalisation and convolution</a>.</li>
         <li><strong>Formats</strong>: FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF and CAF, in Ogg, Matroska/WebM and MP4 containers.</li>
         <li><strong>ReplayGain</strong> in track and album modes, with peak limiting and a configurable pre-amp.</li>
         <li><strong>Media keys</strong> and now-playing through Control Center on macOS and MPRIS on Linux.</li>
@@ -203,6 +204,7 @@ sift import ~/Downloads/some-album</code></pre>
       <h3>Library</h3>
       <ul>
         <li><strong>Local and Subsonic/Navidrome in one library</strong>, synced when the server changes, with streaming and favourites and playlists synced both ways.</li>
+        <li><strong>A download cache with a size limit</strong> that holds however long the queue is: tracks are fetched ahead of the cursor as far as the limit allows, played ones are evicted first, and tracks downloaded to keep go last. See <a href="/docs/cache-management/">Cache management</a>.</li>
         <li><strong>Search</strong> across the whole library with SQLite full-text search.</li>
         <li><strong>Queue</strong> grouped by album, with drag reordering, multi-select, 100 levels of undo, and Finder drag and drop. It survives restarts.</li>
         <li><strong>Playlists</strong>, ordered and named, exportable as M3U8.</li>
@@ -218,12 +220,12 @@ sift import ~/Downloads/some-album</code></pre>
         <li><strong>Accounts</strong> with Ed25519 JWTs, three roles and 1Password CLI integration.</li>
       </ul>
 
-      <p class="text-muted">Not there yet: tag editing, and DSP or EQ.</p>
+      <p class="text-muted">Not there yet: tag editing, and EQ or convolution for audio played on a UPnP renderer, which is sent the original file.</p>
     </section>
 
     <section id="app" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>The macOS app</h2>
-      <p>A SwiftUI app built for macOS 26. Browse and search the library (<kbd>⌘K</kbd>), build and reorder the queue, keep playlists, favourite tracks, albums and artists, read synced lyrics, look through play history and reorganise files on disk. First-run setup covers library folders and remote sign-in.</p>
+      <p>A SwiftUI app built for macOS 26. Browse and search the library (<kbd>⌘K</kbd>), build and reorder the queue, keep playlists, favourite tracks, albums and artists, read synced lyrics, look through play history and reorganise files on disk. One Play on menu sends the music to this Mac's outputs, to UPnP amplifiers on the network, or to another kōan device, and each output can carry its own EQ or convolution profile. First-run setup covers library folders and remote sign-in.</p>
       <p>It links the Rust core in-process through FFI rather than talking to a server, so there is no daemon, port or auth surface between the interface and the audio engine, and CoreAudio output never leaves Rust. It shares one library and one config with the terminal UI: a queue saved in one shows up in the other.</p>
       <p>Two things it leaves to the terminal: visualisers, and running the server (<code>koan --headless</code>).</p>
     </section>
@@ -234,7 +236,7 @@ sift import ~/Downloads/some-album</code></pre>
 
     <section id="ios" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>The iOS app</h2>
-      <p>The macOS app's pages and engine in a phone's shell: a tab bar for the queue, the library, search and settings, and Now Playing with synced lyrics and AirPlay over the playing record's colour. It plays from a server and caches what it plays, so the rest of an album or queue carries on underground. On an iPad with room for a sidebar it takes the Mac's layout. Output goes through the system mixer, so bit-perfect is a claim for the Mac and Linux only.</p>
+      <p>The macOS app's pages and engine in a phone's shell: a tab bar for the queue, the library, search and settings, and Now Playing with synced lyrics and AirPlay over the playing record's colour. It plays from a server and caches what it plays, so the rest of an album or queue carries on underground. On an iPad with room for a sidebar it takes the Mac's layout. Output goes through the system mixer, so bit-perfect is a claim for the Mac and Linux only. EQ and convolution profiles follow the route, so AirPods and wired headphones each get their own.</p>
     </section>
 
     <figure class="mx-auto my-8 max-w-5xl px-5">
@@ -259,9 +261,9 @@ sift import ~/Downloads/some-album</code></pre>
       <h2>As a server</h2>
       <p>Run kōan on the machine that holds the music (<code>koan --headless</code>, or a container) and it serves the library to everything else. It stands in for Navidrome rather than needing it; <a href="/docs/migrating-from-navidrome/">Migrating from Navidrome</a> covers the move.</p>
       <ul>
-        <li><strong>Web UI.</strong> Albums, artists, search and a queue, laid out for a phone as well as a desktop. Sorting and filters live in the URL. Playback is gapless, in the browser.</li>
+        <li><strong>Web UI.</strong> Every album and artist on one page, search and a queue, laid out for a phone as well as a desktop. Filters apply as you type and live in the URL, so a filtered view can be bookmarked or sent. Playback is gapless, in the browser.</li>
         <li><strong>Share links.</strong> Sharing a track shares its album, cued to that track. An album shares the album, and an artist their albums. The page plays without an account, and a pasted link unfurls with its cover.</li>
-        <li><strong>OpenSubsonic API.</strong> Subsonic apps such as Play:Sub, and kōan's own app and terminal UI on other machines, connect with a kōan account: by password, by token auth or with an API key.</li>
+        <li><strong>OpenSubsonic API.</strong> Subsonic apps such as Play:Sub, and kōan's own app and terminal UI on other machines, connect with a kōan account, by password or with an API key.</li>
         <li><strong>Accounts.</strong> Admin, user and read-only roles, and API keys that can be revoked from the web UI.</li>
         <li><strong>Linked apps.</strong> kōan's Mac and iPhone apps keep a connection open to a kōan server, which makes each one a remote the server can drive: see what it is playing and its queue, start an album on it, queue, pause and skip. Playlist edits and library changes reach every device without a sync, and one that is away receives them when it next connects. A plain Subsonic server can only answer what an app asks.</li>
         <li><strong>MCP.</strong> At <code>/mcp</code>, with the server as its own sign-in, so an assistant can browse the library and drive playback on any of the person's linked devices. See <a href="#assistants">With an assistant</a>.</li>
@@ -300,6 +302,8 @@ sift import ~/Downloads/some-album</code></pre>
         <li><a href="/docs/authentication/">Authentication</a></li>
         <li><a href="/docs/devices/">Playing on another device</a></li>
         <li><a href="/docs/remote-servers/">Remote servers</a></li>
+        <li><a href="/docs/dsp/">Equalisation and convolution</a></li>
+        <li><a href="/docs/cache-management/">Cache management</a></li>
         <li><a href="/docs/file-organization/">File organisation</a></li>
         <li><a href="/docs/format-strings/">Format strings</a></li>
         <li><a href="/docs/mcp-integration/">MCP integration</a></li>
