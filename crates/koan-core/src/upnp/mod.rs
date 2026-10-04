@@ -166,7 +166,7 @@ fn resume_onto(
         Some(false) => {}
         Some(true)
             if discovery::playing_uri(&renderer)
-                .is_some_and(|uri| served_from_here(&renderer, &uri)) =>
+                .is_some_and(|uri| served_from_here(&renderer, &uri) && !still_served(&uri)) =>
         {
             log::info!(
                 "upnp: {} is still on what a kōan here sent it; taking it back",
@@ -206,6 +206,34 @@ fn served_from_here(renderer: &Renderer, uri: &str) -> bool {
         .and_then(|t| t.split('.').next())
         .unwrap_or_default();
     host(&url) == Some(here) && token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Whether a kōan is still serving `uri`: another one on this machine, a
+/// TUI beside the app say, is playing to the renderer, and it is not ours to
+/// take. A run that has ended refuses the connection; a live one that has let
+/// the track go answers 404.
+fn still_served(uri: &str) -> bool {
+    use std::io::{Read, Write};
+    let Ok(url) = url::Url::parse(uri) else {
+        return false;
+    };
+    let Some(addr) = url
+        .socket_addrs(|| Some(80))
+        .ok()
+        .and_then(|a| a.into_iter().next())
+    else {
+        return false;
+    };
+    let timeout = std::time::Duration::from_millis(500);
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&addr, timeout) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(timeout));
+    if write!(stream, "HEAD {} HTTP/1.1\r\nHost: x\r\n\r\n", url.path()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 12];
+    stream.read_exact(&mut head).is_ok() && head.starts_with(b"HTTP/1.1 2")
 }
 
 /// The renderer `udn` once discovery has found it, waiting at most `window`.
@@ -270,8 +298,27 @@ mod tests {
 
         // Still on a track a kōan here sent it, from a run that ended
         // without stopping it: ours, taken back.
-        fake.play_foreign(&format!("http://127.0.0.1:4/t/{}.flac", "0a".repeat(16)));
+        let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let gone_port = gone.local_addr().unwrap().port();
+        drop(gone);
+        fake.play_foreign(&format!(
+            "http://127.0.0.1:{gone_port}/t/{}.flac",
+            "0a".repeat(16)
+        ));
         assert!(resume_onto(&renderer.udn, window, now, &tx).is_some());
+
+        // On a track a kōan here is still serving, a TUI beside the app say:
+        // that one's, left alone.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("t.flac");
+        std::fs::write(&file, b"fLaC").unwrap();
+        let live = serve::Listener::start(Box::new(|_, _| {})).unwrap();
+        let token = live.add(serve::Served::File {
+            path: file,
+            mime: "audio/flac".into(),
+        });
+        fake.play_foreign(&format!("http://127.0.0.1:{}/t/{token}.flac", live.port()));
+        assert!(resume_onto(&renderer.udn, window, now, &tx).is_none());
 
         fake.press_stop(0);
         assert!(resume_onto(&renderer.udn, window, now, &tx).is_some());

@@ -1958,12 +1958,19 @@ impl Player {
         // remembered from last time is no longer what to go back to. A cue is
         // how a session is restored at launch, which is what the renderer is
         // to carry on with, so it is not one of them.
+        // So, too, is one that pauses, stops or replaces the session: what was
+        // held for the renderer is no longer wanted anywhere.
         if cmd.asks_to_play() && !matches!(cmd, PlayerCommand::Cue { .. })
             || matches!(
                 cmd,
                 PlayerCommand::UseRenderer(_)
                     | PlayerCommand::SetOutputDevice(_)
                     | PlayerCommand::ClearOutputDevice
+                    | PlayerCommand::Pause
+                    | PlayerCommand::PauseAndReport(_)
+                    | PlayerCommand::Stop
+                    | PlayerCommand::ClearPlaylist
+                    | PlayerCommand::ReplacePlaylist { .. }
             )
         {
             self.resume_renderer = false;

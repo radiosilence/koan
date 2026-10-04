@@ -3277,6 +3277,35 @@ mod tests {
         assert_eq!(starts.load(Relaxed), 1);
     }
 
+    /// A pause, a move elsewhere or a stop while the renderer is looked for
+    /// ends what was held for it: nothing starts, here or there, when the
+    /// search ends.
+    #[test]
+    fn pausing_moving_or_stopping_during_the_search_starts_nothing() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let stoppers: [fn() -> PlayerCommand; 3] = [
+            || PlayerCommand::Pause,
+            || PlayerCommand::PauseAndReport(crossbeam_channel::bounded(1).0),
+            || PlayerCommand::Stop,
+        ];
+        for stop in stoppers {
+            let (mut r, starts) = launched_playing();
+            r.player.process_command(stop());
+            r.player
+                .process_command(PlayerCommand::ResumeRendererMissed);
+            assert_ne!(r.state(), PlaybackState::Playing);
+            assert_eq!(starts.load(Relaxed), 0);
+
+            let (mut r, starts) = launched_playing();
+            r.player.process_command(stop());
+            let cmd = found(&r);
+            r.player.process_command(cmd);
+            assert!(r.player.renderer.is_none(), "not taken after all");
+            assert_ne!(r.state(), PlaybackState::Playing);
+            assert_eq!(starts.load(Relaxed), 0);
+        }
+    }
+
     /// Playing something, or picking an output, before the renderer turns up
     /// leaves the music where it is.
     #[test]
