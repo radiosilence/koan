@@ -71,6 +71,11 @@ fft-convolver = "0.4"
 rubato = "5"
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 yaml-rust2 = { version = "0.13.0", default-features = false }
+# UPnP renderers: device descriptions, SOAP and DIDL-Lite are XML.
+quick-xml = "0.42.0"
+# SSDP announcements arrive on port 1900, which other processes hold too:
+# sharing it takes SO_REUSEADDR/SO_REUSEPORT before the bind.
+socket2 = { version = "0.6.5", features = ["all"] }
 
 [target.'cfg(unix)'.dependencies]
 # statvfs, for the free-space check before an organize run

@@ -194,6 +194,7 @@ sift import ~/Downloads/some-album</code></pre>
       <ul>
         <li><strong>Bit-perfect output</strong> through CoreAudio on macOS and ALSA on Linux. The device is switched to the source's sample rate rather than resampled to reach it; when a device refuses, the format badge says the output is resampled.</li>
         <li><strong>Gapless</strong>: the decoder runs ahead across track boundaries.</li>
+        <li><strong>Network amplifiers and streamers</strong>: the Mac app and the terminal UI play to UPnP/DLNA renderers, such as a WiiM or an Arcam amplifier. The queue stays in kōan and the renderer is sent the original file, so playback is bit-perfect up to its DAC, and gapless where the renderer supports it. See <a href="/docs/devices/#amplifiers-and-streamers-upnp">Playing on another device</a>.</li>
         <li><strong>Formats</strong>: FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF and CAF, in Ogg, Matroska/WebM and MP4 containers.</li>
         <li><strong>ReplayGain</strong> in track and album modes, with peak limiting and a configurable pre-amp.</li>
         <li><strong>Media keys</strong> and now-playing through Control Center on macOS and MPRIS on Linux.</li>

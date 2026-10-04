@@ -1,5 +1,8 @@
 import KoanFFI
 import SwiftUI
+#if os(macOS)
+import AVKit
+#endif
 
 /// The transport, as a slab of glass floating over the stage.
 ///
@@ -230,13 +233,20 @@ struct TransportBar: View {
                     .help(Format.outputExplanation(format))
             }
 
-            DevicePickerButton(open: $showingDevices, labelled: !compact)
+            DevicePickerButton(open: $showingDevices, labelled: !compact, iconSize: 17)
                 .font(.caption)
 
-            // This Mac's own output; nothing it chooses reaches another device.
-            if !player.isControllingAnother {
-                DeviceMenu()
+            // AirPlay is the system's to choose, so it is the system's button:
+            // it switches this Mac's output, which the music follows. Shown
+            // only while this Mac is what is playing.
+            #if os(macOS)
+            if !player.isControllingAnother && player.renderer == nil {
+                AirPlayButton()
+                    .frame(width: 22, height: 22)
+                    .help("AirPlay")
             }
+            #endif
+
         }
         // Natural size, always. What does not fit is dropped above rather than
         // compressed — a badge and a menu squeezed to a few points wide say
@@ -480,38 +490,6 @@ final class FetchedMarkView: LayerView, TransferGauge {
     }
 }
 
-private struct DeviceMenu: View {
-    @Environment(PlayerModel.self) private var player
-
-    var body: some View {
-        Menu {
-            // An inline picker is what puts the checkmark against the output
-            // in use; a `Label` with a checkmark symbol shows none on macOS 27.
-            Picker("Output", selection: Binding(
-                get: { player.currentDevice },
-                set: { player.setDevice($0) }
-            )) {
-                Text("System Default").tag(String?.none)
-                Divider()
-                ForEach(player.devices, id: \.name) { device in
-                    Text(device.name).tag(String?.some(device.name))
-                }
-            }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
-            Image(systemName: "hifispeaker")
-        }
-        // Drawn by SwiftUI. `.borderlessButton` hands the label to AppKit's
-        // popup button, which draws nothing on the bar's glass in dark mode.
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .frame(width: 24)
-        .help("Output device — \(player.currentDevice ?? "System Default")")
-    }
-}
-
 /// Its own view so a pause re-runs the button, not the whole bar.
 private struct PlayPauseButton: View {
     @Environment(PlayerModel.self) private var player
@@ -532,3 +510,18 @@ private struct PlayPauseButton: View {
 extension Double {
     func clamped() -> Double { min(1, max(0, self)) }
 }
+
+#if os(macOS)
+/// The system's AirPlay picker. Without a player of its own it changes the
+/// Mac's output device, which `PlayerModel` follows while playing to the
+/// system default.
+private struct AirPlayButton: NSViewRepresentable {
+    func makeNSView(context: Context) -> AVRoutePickerView {
+        let picker = AVRoutePickerView()
+        picker.isRoutePickerButtonBordered = false
+        return picker
+    }
+
+    func updateNSView(_ view: AVRoutePickerView, context: Context) {}
+}
+#endif

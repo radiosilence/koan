@@ -43,6 +43,7 @@ fn current_route() -> DeviceInfo {
             .unwrap_or_else(|| "System Output".to_string()),
         sample_rates: vec![44100.0, 48000.0],
         platform_id: 0,
+        kind: Default::default(),
     }
 }
 

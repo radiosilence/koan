@@ -1723,6 +1723,7 @@ impl KoanEngine {
                 .map(|d| Device {
                     name: d.name,
                     sample_rates: d.sample_rates,
+                    kind: d.kind.as_str().to_string(),
                 })
                 .collect())
         })
@@ -1730,6 +1731,8 @@ impl KoanEngine {
     }
 
     pub async fn set_device(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+        // A renderer still opening for an earlier pick is not used.
+        koan_core::upnp::choose();
         offload::sequenced(move || self.send_local(PlayerCommand::SetOutputDevice(name))).await
     }
 
@@ -1771,6 +1774,7 @@ impl KoanEngine {
     }
 
     pub async fn clear_device(self: Arc<Self>) -> Result<(), KoanError> {
+        koan_core::upnp::choose();
         offload::sequenced(move || self.send_local(PlayerCommand::ClearOutputDevice)).await
     }
 
@@ -1844,6 +1848,45 @@ impl KoanEngine {
                 .map_err(|message| KoanError::Remote { message })
         })
         .await
+    }
+
+    // --- Renderers ---------------------------------------------------------
+
+    /// Look for UPnP renderers on the network. They arrive in the
+    /// `Renderers` slice over the next couple of seconds, and the list follows
+    /// the network from then on.
+    pub fn search_renderers(&self) {
+        koan_core::upnp::discovery::search();
+    }
+
+    /// Play to the renderer `udn` in place of this device's own output, or
+    /// back here with `None`. The music carries on from where it is. A
+    /// renderer is this device's output rather than a device to control, so
+    /// picking one stops controlling another koan.
+    ///
+    /// Not on the ordered lane: opening a session is a few round trips to the
+    /// renderer, and app commands queued behind it would wait them out. The
+    /// player takes the switch in its own order when it arrives.
+    pub async fn play_to_renderer(self: Arc<Self>, udn: Option<String>) -> Result<(), KoanError> {
+        // Taken now, in the order the person picked: see `upnp::choose`.
+        let choice = koan_core::upnp::choose();
+        offload::offload(move || match udn {
+            Some(udn) => {
+                koan_core::remote::devices::set_target(None);
+                koan_core::upnp::connect(&udn, choice, &self.tx)
+                    .map_err(|message| KoanError::Audio { message })
+            }
+            None => {
+                koan_core::upnp::disconnect(&self.tx);
+                Ok(())
+            }
+        })
+        .await
+    }
+
+    /// Set the volume of the renderer being played to, 0–100.
+    pub async fn set_renderer_volume(self: Arc<Self>, volume: u8) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send_local(PlayerCommand::SetRendererVolume(volume))).await
     }
 
     /// Where the server should push updates to this app's Live Activity
@@ -2751,6 +2794,28 @@ impl KoanEngine {
                         }
                     }
 
+                    // A handful of rows, compared whole: published only when a
+                    // renderer comes, goes, or the one playing changes.
+                    out.publish(StateSlice::Renderers {
+                        renderers: koan_core::upnp::discovery::renderers()
+                            .into_iter()
+                            .map(|r| RendererInfo {
+                                busy: koan_core::upnp::discovery::busy(&r.udn),
+                                udn: r.udn,
+                                name: r.name,
+                                manufacturer: r.manufacturer,
+                                model: r.model,
+                                gapless: r.gapless,
+                            })
+                            .collect(),
+                        output: engine.state.renderer().map(|o| RendererOutput {
+                            udn: o.udn,
+                            name: o.name,
+                            volume: o.volume,
+                            problem: o.problem,
+                        }),
+                    });
+
                     // Compared whole rather than on a signature of a few named
                     // fields: the output sample rate moves when another client
                     // retunes the device, a stream's duration is corrected once
@@ -2780,7 +2845,8 @@ impl KoanEngine {
                         // client can work out for itself; a seek, a pause, a track
                         // boundary and a stall are not, and each of them breaks the
                         // prediction by more than the tolerance below.
-                        let playing = snapshot.state == types::PlayState::Playing;
+                        let playing = snapshot.state == types::PlayState::Playing
+                            && engine.state.playhead_moving();
                         let seekable = engine.state.seekable_ms();
                         let now = Instant::now();
                         let adrift = anchor.is_none_or(|held: state::Anchor| {
@@ -3524,6 +3590,7 @@ impl KoanEngine {
                     track_ids,
                     position_ms,
                     paused: !play,
+                    handoff: false,
                 }
             }
             PlayerCommand::RemoveFromPlaylist(id) => LinkCommand::RemoveItems {
@@ -3709,7 +3776,15 @@ impl KoanEngine {
                 start_at,
                 position_ms,
                 paused,
+                handoff,
             } => self.db().and_then(|db| {
+                // The music is coming back here: stop controlling whatever
+                // this was controlling. A renderer this device was playing to
+                // is still its output, so the music resumes there.
+                if handoff && koan_core::remote::devices::target().is_some() {
+                    log::info!("link: handed the music; taking control back");
+                    koan_core::remote::devices::set_target(None);
+                }
                 let ids = resolve_tracks(&db, &track_ids);
                 let items = self.build_items(&db, &ids);
                 if items.is_empty() {
@@ -3902,6 +3977,7 @@ impl KoanEngine {
                 start_at: start_at as u32,
                 position_ms,
                 paused,
+                handoff: true,
             },
         );
         if let Err(message) = sent {

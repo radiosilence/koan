@@ -302,27 +302,9 @@ pub fn list() -> Vec<Device> {
                 problem: None,
             });
         }
-        // Announced on this network but not connected: listed with the reason.
-        for f in crate::remote::nearby::found() {
-            let id =
-                f.id.clone()
-                    .unwrap_or_else(|| format!("bonjour:{}", f.name));
-            if out.iter().any(|d| d.id == id) || f.id.is_some() && f.id == this_id() {
-                continue;
-            }
-            out.push(Device {
-                id,
-                name: f.name,
-                platform: f.platform.unwrap_or_default(),
-                account: false,
-                nearby: false,
-                awake: false,
-                same_library: false,
-                state: None,
-                heard: Instant::now(),
-                problem: Some(f.problem.unwrap_or_else(|| "Connecting…".into())),
-            });
-        }
+        // A device announced on this network but not connected is left out:
+        // it cannot be played on, and a phone that left or a stranger's app
+        // that is not discoverable would sit in the list as a reason only.
         // The device being controlled, out of every list for now.
         if let Some(t) = &s.target
             && !out.iter().any(|d| d.id == t.id)

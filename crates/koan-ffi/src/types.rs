@@ -513,6 +513,9 @@ impl From<LibraryStats> for Stats {
 pub struct Device {
     pub name: String,
     pub sample_rates: Vec<f64>,
+    /// How it is connected: `builtin`, `usb`, `bluetooth`, `airplay`,
+    /// `display`, `virtual` or `other`. For its icon.
+    pub kind: String,
 }
 
 /// Cover art as raw bytes. The GraphQL surface base64s this because JSON has to;
@@ -1229,6 +1232,32 @@ pub struct DeviceInfo {
     pub duration_ms: u64,
     /// Why it cannot be reached, for a device found but not connected or
     /// the one being controlled while it is out of reach.
+    pub problem: Option<String>,
+}
+
+/// A UPnP renderer on the network: an amplifier or streamer that plays a
+/// file it is handed a URL to.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct RendererInfo {
+    pub udn: String,
+    pub name: String,
+    pub manufacturer: String,
+    pub model: String,
+    /// Takes the next track before this one ends, so albums play without gaps.
+    pub gapless: bool,
+    /// Playing or paused when last asked, by whatever drives it. Picking it
+    /// takes it over.
+    pub busy: bool,
+}
+
+/// The renderer this koan is playing to in place of its own output.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct RendererOutput {
+    pub udn: String,
+    pub name: String,
+    /// 0–100, when the renderer has a volume control.
+    pub volume: Option<u8>,
+    /// Why the last track was skipped there, until one plays.
     pub problem: Option<String>,
 }
 

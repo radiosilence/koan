@@ -133,6 +133,19 @@ pub enum PlayerCommand {
     /// underneath us: an iOS interruption (a call, Siri) or a reset of its
     /// media services leaves the old unit unable to start again.
     RestartOutput,
+    /// Play to this renderer from now on, carrying on from where the current
+    /// track is; `None` brings the music back to this device's own output.
+    /// The session is opened by the caller, off this thread: see
+    /// `upnp::connect`.
+    UseRenderer(Option<Box<crate::upnp::Connection>>),
+    /// Set the volume of the renderer being played to, 0–100.
+    SetRendererVolume(u8),
+    /// What the renderer was heard to do, during the session numbered
+    /// `session`. Dropped once that session is over, like `DecodeFinished`.
+    Renderer {
+        session: u64,
+        event: crate::upnp::session::Event,
+    },
 }
 
 /// Bounded command channel.

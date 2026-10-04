@@ -60,6 +60,8 @@ final class EngineMirror: Observable {
     private var _devicesAt = Date.now
     private var _target: String?
     private var _connection: ConnectionInfo?
+    private var _renderers: [RendererInfo] = []
+    private var _rendererOutput: RendererOutput?
 
     /// Everything a transport bar shows other than the position. Changes per
     /// track, per state, per format — not per tick.
@@ -134,6 +136,20 @@ final class EngineMirror: Observable {
     var connection: ConnectionInfo? {
         access(\.connection)
         return _connection
+    }
+
+    /// UPnP renderers on the network: amplifiers and streamers this device
+    /// can play to.
+    var renderers: [RendererInfo] {
+        access(\.renderers)
+        return _renderers
+    }
+
+    /// The renderer playing this device's music in place of its own output.
+    /// The transport and queue stay this device's while it does.
+    var rendererOutput: RendererOutput? {
+        access(\.renderers)
+        return _rendererOutput
     }
 
     /// Bumped by every queue mutation. Observed as `queue`: it arrives with the
@@ -300,6 +316,11 @@ final class EngineMirror: Observable {
             }
         case .connection(let connection):
             mutate(\.connection) { _connection = connection }
+        case .renderers(let renderers, let output):
+            mutate(\.renderers) {
+                _renderers = renderers
+                _rendererOutput = output
+            }
         }
     }
 

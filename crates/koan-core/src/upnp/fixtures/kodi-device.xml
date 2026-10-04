@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:dlna="urn:schemas-dlna-org:device-1-0">
+  <specVersion><major>1</major><minor>0</minor></specVersion>
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>
+    <friendlyName>Kodi (mac)</friendlyName>
+    <manufacturer>XBMC Foundation</manufacturer>
+    <modelName>Kodi</modelName>
+    <UDN>uuid:bc9d8c87-6b5c-4b62-b4c5-4b7d2c3a6f1e</UDN>
+    <dlna:X_DLNADOC>DMR-1.50</dlna:X_DLNADOC>
+    <serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:AVTransport:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:AVTransport</serviceId>
+        <SCPDURL>/AVTransport/bc9d8c87/scpd.xml</SCPDURL>
+        <controlURL>/AVTransport/bc9d8c87/control.xml</controlURL>
+        <eventSubURL>/AVTransport/bc9d8c87/event.xml</eventSubURL>
+      </service>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:ConnectionManager</serviceId>
+        <SCPDURL>/ConnectionManager/bc9d8c87/scpd.xml</SCPDURL>
+        <controlURL>/ConnectionManager/bc9d8c87/control.xml</controlURL>
+        <eventSubURL>/ConnectionManager/bc9d8c87/event.xml</eventSubURL>
+      </service>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:RenderingControl:1</serviceType>
+        <serviceId>urn:upnp-org:serviceId:RenderingControl</serviceId>
+        <SCPDURL>/RenderingControl/bc9d8c87/scpd.xml</SCPDURL>
+        <controlURL>/RenderingControl/bc9d8c87/control.xml</controlURL>
+        <eventSubURL>/RenderingControl/bc9d8c87/event.xml</eventSubURL>
+      </service>
+    </serviceList>
+  </device>
+</root>

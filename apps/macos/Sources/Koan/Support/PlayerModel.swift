@@ -381,6 +381,26 @@ final class PlayerModel {
         ) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.refreshDevices() }
         }
+
+        // The system's output moved: an AirPlay speaker picked from the
+        // AirPlay button, headphones plugged in. Playing to the system
+        // default, the music follows it, where it was. A device picked by
+        // name, a renderer, or another kōan being controlled keep theirs.
+        var defaultOutput = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &defaultOutput, .main
+        ) { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self, self.currentDevice == nil, self.renderer == nil,
+                      !self.isControllingAnother
+                else { return }
+                self.attempt { try await self.engine.restartOutput() }
+            }
+        }
         #endif
     }
 
@@ -411,6 +431,64 @@ final class PlayerModel {
     /// Show and command `id`, or this device with `nil`. Nothing moves.
     func control(_ id: String?) {
         attempt { try await self.engine.controlDevice(id: id) }
+    }
+
+    /// One of this device's outputs: a CoreAudio device by name (`nil` for
+    /// the system default), or a UPnP renderer by UDN.
+    enum Output: Equatable {
+        case system(String?)
+        case renderer(String)
+    }
+
+    /// Whether this device's music is coming out of `output` now.
+    func isPlayingHere(_ output: Output) -> Bool {
+        guard !isControllingAnother else { return false }
+        switch output {
+        case .renderer(let udn): return renderer?.udn == udn
+        case .system(let name): return renderer == nil && currentDevice == name
+        }
+    }
+
+    /// Play this device's own music through `output`, coming back from
+    /// controlling another device if it was.
+    func playHere(_ output: Output) {
+        // Already playing there: reconnecting would stop the music and load
+        // the track again.
+        if isPlayingHere(output) { return }
+        attempt {
+            if self.isControllingAnother {
+                try await self.engine.controlDevice(id: nil)
+            }
+            switch output {
+            case .renderer(let udn):
+                try await self.engine.playToRenderer(udn: udn)
+            case .system(let name?):
+                try await self.engine.setDevice(name: name)
+            case .system(nil):
+                try await self.engine.clearDevice()
+            }
+        }
+        if case .system(let name) = output {
+            currentDevice = name
+        }
+    }
+
+    /// The renderer playing this device's music, if one is.
+    var renderer: RendererOutput? { mirror.rendererOutput }
+
+    /// Play to the renderer `udn` in place of this device's output, or back
+    /// here with `nil`. The music carries on from where it is.
+    func playOn(renderer udn: String?) {
+        attempt { try await self.engine.playToRenderer(udn: udn) }
+    }
+
+    func setRendererVolume(_ volume: UInt8) {
+        attempt { try await self.engine.setRendererVolume(volume: volume) }
+    }
+
+    /// Look for renderers on the network; they arrive over a second or two.
+    func searchRenderers() {
+        engine.searchRenderers()
     }
 
     /// Send what the controlled device is playing to `id` (this device with
