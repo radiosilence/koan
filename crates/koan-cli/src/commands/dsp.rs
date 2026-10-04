@@ -45,7 +45,7 @@ pub fn cmd_dsp_list() {
             println!("  {} {}", "devices:".dimmed(), p.devices.join(", "));
         }
         if p.bands > 0 {
-            println!("  {} {}", "bands:".dimmed(), p.bands);
+            println!("  {} {}", "filters:".dimmed(), p.bands);
         }
         if !p.rates.is_empty() {
             let rates: Vec<String> = p.rates.iter().map(|r| format!("{r} Hz")).collect();
@@ -71,7 +71,7 @@ pub fn cmd_dsp_import(
         )),
         Err(e) => fail(e),
     };
-    let bands = imported.filters.len();
+    let filters = imported.filters.len();
     let rates: Vec<String> = imported
         .impulses
         .iter()
@@ -79,8 +79,8 @@ pub fn cmd_dsp_import(
         .collect();
     let name = profiles::save(imported, name.as_deref()).unwrap_or_else(|e| fail(e));
     let mut what = Vec::new();
-    if bands > 0 {
-        what.push(format!("{bands} bands"));
+    if filters > 0 {
+        what.push(format!("{filters} filters"));
     }
     if !rates.is_empty() {
         what.push(format!("impulses at {}", rates.join(", ")));

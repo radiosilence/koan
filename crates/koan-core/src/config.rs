@@ -518,7 +518,8 @@ pub struct DspProfile {
     /// gain, so that no boost can push a sample past full scale.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preamp_db: Option<f64>,
-    pub filters: Vec<EqFilter>,
+    /// Run in order, at the output rate, ahead of the impulse responses.
+    pub filters: Vec<DspFilter>,
     /// Impulse responses as WAV files, one per sample rate the correction was
     /// exported at; a relative path is read from beside the config. Each
     /// file's own rate is the rate it applies to.
@@ -527,6 +528,84 @@ pub struct DspProfile {
     /// from. Nothing reads them again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source: Vec<String>,
+}
+
+/// One step of a profile's processing. Bands on different channels commute;
+/// a mix does not, which is why the steps are an ordered list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DspFilter {
+    Delay(Delay),
+    Mix(Mix),
+    Graphic(GraphicEq),
+    #[serde(untagged)]
+    Band(EqFilter),
+}
+
+impl DspFilter {
+    /// The channels it applies to, from 0. Empty is every channel; a mix
+    /// names its own.
+    pub fn channels(&self) -> &[u16] {
+        match self {
+            Self::Band(f) => &f.channels,
+            Self::Delay(d) => &d.channels,
+            Self::Graphic(g) => &g.channels,
+            Self::Mix(_) => &[],
+        }
+    }
+
+    pub fn channels_mut(&mut self) -> Option<&mut Vec<u16>> {
+        match self {
+            Self::Band(f) => Some(&mut f.channels),
+            Self::Delay(d) => Some(&mut d.channels),
+            Self::Graphic(g) => Some(&mut g.channels),
+            Self::Mix(_) => None,
+        }
+    }
+}
+
+impl From<EqFilter> for DspFilter {
+    fn from(f: EqFilter) -> Self {
+        Self::Band(f)
+    }
+}
+
+/// A fixed delay: `ms` and `samples` added together, at the output rate.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Delay {
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ms: f64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub samples: f64,
+    /// Keep the fraction of a sample, through an allpass, rather than round
+    /// to the nearest whole one.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub subsample: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub channels: Vec<u16>,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
+}
+
+/// Channels made from others. `outputs[o]` is what channel `o` becomes, as
+/// `(input channel, linear gain)` pairs read before any is written; an empty
+/// list is silence. Channels past the end of `outputs` pass through.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Mix {
+    pub outputs: Vec<Vec<(u16, f64)>>,
+}
+
+/// A curve of `(Hz, dB)` points, as Equalizer APO's `GraphicEQ:` gives one,
+/// run as a minimum-phase FIR designed at the output rate. Between points the
+/// gain is interpolated against log frequency; past the ends it holds.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GraphicEq {
+    pub points: Vec<(f64, f64)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channels: Vec<u16>,
 }
 
 /// One parametric band, as AutoEQ and Equalizer APO describe it.
@@ -560,6 +639,13 @@ pub enum EqFilterKind {
     Notch,
     BandPass,
     AllPass,
+    /// First-order sections, 6 dB per octave. The shelves are at half their
+    /// gain at `freq`; `q` is not used.
+    LowShelfFirstOrder,
+    HighShelfFirstOrder,
+    LowPassFirstOrder,
+    HighPassFirstOrder,
+    AllPassFirstOrder,
     /// Flat gain, `gain_db`: a channel's own preamp.
     Gain,
 }
@@ -576,6 +662,11 @@ impl EqFilterKind {
             Self::Notch => "notch",
             Self::BandPass => "band_pass",
             Self::AllPass => "all_pass",
+            Self::LowShelfFirstOrder => "low_shelf_first_order",
+            Self::HighShelfFirstOrder => "high_shelf_first_order",
+            Self::LowPassFirstOrder => "low_pass_first_order",
+            Self::HighPassFirstOrder => "high_pass_first_order",
+            Self::AllPassFirstOrder => "all_pass_first_order",
             Self::Gain => "gain",
         }
     }
@@ -1840,20 +1931,32 @@ fps = 30
             devices: vec!["Topping E30".into()],
             preamp_db: None,
             filters: vec![
-                EqFilter {
+                DspFilter::Band(EqFilter {
                     kind: EqFilterKind::Peaking,
                     freq: 20.0,
                     gain_db: -1.3,
                     q: 2.0,
                     channels: vec![],
-                },
-                EqFilter {
-                    kind: EqFilterKind::HighShelf,
+                }),
+                DspFilter::Band(EqFilter {
+                    kind: EqFilterKind::HighShelfFirstOrder,
                     freq: 10000.0,
                     gain_db: 2.5,
                     q: 0.7,
                     channels: vec![],
-                },
+                }),
+                DspFilter::Delay(Delay {
+                    ms: 1.5,
+                    channels: vec![1],
+                    ..Default::default()
+                }),
+                DspFilter::Mix(Mix {
+                    outputs: vec![vec![(0, 0.5), (1, 0.5)], vec![]],
+                }),
+                DspFilter::Graphic(GraphicEq {
+                    points: vec![(20.0, -1.0), (1000.0, 0.0)],
+                    channels: vec![],
+                }),
             ],
             impulses: vec![],
             source: vec![],

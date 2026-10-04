@@ -78,7 +78,7 @@ pub fn overview() -> Overview {
 }
 
 /// Save an import as the profile `name`, or the name it came with. An existing
-/// profile of that name keeps its devices, and whichever of its bands and
+/// profile of that name keeps its devices, and whichever of its filters and
 /// responses the import does not replace — so a room's responses and a
 /// headphone EQ can be imported into one profile in turn.
 pub fn save(imported: Imported, name: Option<&str>) -> Result<String, String> {
@@ -171,7 +171,7 @@ pub struct Detail {
     pub name: String,
     pub devices: Vec<String>,
     pub source: Vec<String>,
-    pub filters: Vec<crate::config::EqFilter>,
+    pub filters: Vec<crate::config::DspFilter>,
     pub impulses: Vec<ImpulseDetail>,
     /// The gain applied ahead of the filters, at `preamp_rate`.
     pub preamp_db: f64,
@@ -355,13 +355,13 @@ mod tests {
         let eq = Imported {
             name: "HD 600".into(),
             source: vec![],
-            filters: vec![crate::config::EqFilter {
+            filters: vec![crate::config::DspFilter::Band(crate::config::EqFilter {
                 kind: crate::config::EqFilterKind::Peaking,
                 freq: 100.0,
                 gain_db: 3.0,
                 q: 1.0,
                 channels: vec![],
-            }],
+            })],
             impulses: vec![],
         };
         assert_eq!(save(eq, None).unwrap(), "HD 600");

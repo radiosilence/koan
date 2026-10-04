@@ -136,7 +136,7 @@ final class DspModel {
 
     static func describe(_ p: DspProfileSummary) -> String {
         var parts: [String] = []
-        if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "band" : "bands")") }
+        if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "filter" : "filters")") }
         if !p.rates.isEmpty {
             parts.append(p.rates.map(khz).joined(separator: ", ") + " kHz")
         }

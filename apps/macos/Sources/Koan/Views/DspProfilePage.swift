@@ -58,7 +58,7 @@ struct DspProfilePage: View {
                 }
 
                 if !d.bands.isEmpty {
-                    Section("EQ") {
+                    Section("Filters") {
                         ForEach(Array(d.bands.enumerated()), id: \.offset) { _, band in
                             BandRow(band: band)
                         }
@@ -192,26 +192,62 @@ private struct BandRow: View {
         case "notch": "Notch"
         case "band_pass": "Band pass"
         case "all_pass": "All pass"
+        case "low_shelf_first_order": "Low shelf, 6 dB/oct"
+        case "high_shelf_first_order": "High shelf, 6 dB/oct"
+        case "low_pass_first_order": "Low pass, 6 dB/oct"
+        case "high_pass_first_order": "High pass, 6 dB/oct"
+        case "all_pass_first_order": "All pass, first order"
         case "gain": "Gain"
+        case "delay": "Delay"
+        case "mix": "Mix"
+        case "graphic": "Graphic EQ"
         default: band.kind
         }
-        let channels = band.channels.map { c in
-            switch c {
-            case 0: "L"
-            case 1: "R"
-            default: "Ch \(c + 1)"
-            }
-        }
+        let channels = band.channels.map(Self.channel)
         return channels.isEmpty ? name : "\(name) · \(channels.joined(separator: " "))"
+    }
+
+    private static func channel(_ c: UInt16) -> String {
+        switch c {
+        case 0: "L"
+        case 1: "R"
+        default: "Ch \(c + 1)"
+        }
     }
 
     private var values: String {
         let gain = String(format: "%+.1f dB", band.gainDb)
-        if band.kind == "gain" { return gain }
+        switch band.kind {
+        case "gain":
+            return gain
+        case "delay":
+            var parts: [String] = []
+            if band.delayMs != 0 { parts.append(String(format: "%.2f ms", band.delayMs)) }
+            if band.delaySamples != 0 { parts.append(String(format: "%.2f samples", band.delaySamples)) }
+            return parts.joined(separator: " + ")
+        case "mix":
+            // Only the outputs the mix changes.
+            return band.mix.enumerated().compactMap { o, out in
+                let s = out.sources
+                if s.count == 1, s[0].channel == UInt16(o), s[0].gain == 1 { return nil }
+                let terms = s.map { src in
+                    src.gain == 1 ? Self.channel(src.channel) : String(format: "%g×%@", src.gain, Self.channel(src.channel))
+                }
+                return "\(Self.channel(UInt16(o))) = \(terms.isEmpty ? "0" : terms.joined(separator: " + "))"
+            }.joined(separator: "   ")
+        case "graphic":
+            let gains = band.curve.map(\.db)
+            return String(format: "%d points  %+.1f to %+.1f dB", band.curve.count, gains.min() ?? 0, gains.max() ?? 0)
+        default:
+            break
+        }
         let freq = band.freq >= 1000
             ? String(format: "%.1f kHz", band.freq / 1000)
             : String(format: "%.0f Hz", band.freq)
         let q = String(format: "Q %.2f", band.q)
+        if band.kind.hasSuffix("_first_order") {
+            return band.kind.contains("shelf") ? "\(freq)  \(gain)" : freq
+        }
         return ["low_pass", "high_pass", "notch", "band_pass", "all_pass"].contains(band.kind)
             ? "\(freq)  \(q)"
             : "\(freq)  \(gain)  \(q)"
