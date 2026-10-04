@@ -234,7 +234,24 @@ impl ServerHandler for KoanMcpServer {
     }
 }
 
-const SERVER_INSTRUCTIONS: &str = "kōan is the user's music: their whole music library, and the \
+/// How to choose music by style. Shared by both instruction sets: genre tags are
+/// sparse wherever the library lives.
+macro_rules! choosing_by_style {
+    () => {
+        "- **Choosing music by style, mood or era** (\"psychedelic rock\", \"something for a rainy \
+Sunday\"): genre tags are sparse and inconsistent, so do not rely on `genre` filters. Use your \
+own knowledge, and research when unsure, to list many artists and albums that fit, then look \
+them all up in a single query with aliases (`a: artists(search: \"Can\") { … } b: …`) and \
+choose from the ones present. `search` matches any part of a name, ignoring case, so check that \
+a result is the artist you meant. If most are missing, read the library's artist names once \
+(`artists(first: 500, sortBy: TRACK_COUNT, sortDir: DESC) { edges { node { id name } } \
+pageInfo { hasNextPage endCursor } }`, then `after: endCursor` while `hasNextPage`) and pick \
+from them by what you know of each. Do not guess names one round at a time.
+"
+    };
+}
+
+const SERVER_INSTRUCTIONS: &str = concat!("kōan is the user's music: their whole music library, and the \
 phones and computers they listen on. Use it for anything about music they are playing or own — \
 \"pause the music\", \"play something like Polar Bear on my phone\", \"what's this song\", \
 \"skip to the Phace remix\", \"add their new album when it's downloaded\". Call `schema_sdl` \
@@ -282,7 +299,9 @@ hears; `nowPlaying` there reports nothing about what the user is listening to.
 ## The library
 - `artists`, `albums`, `tracks` with filters (genre, year range, codec, sample rate, bit depth, \
 duration, favourites), `randomTracks`, `fuzzySearch`
-- Build a set from these, then send its track ids to a device with `playOnClient`. Track ids are \
+",
+    choosing_by_style!(),
+    "- Build a set from these, then send its track ids to a device with `playOnClient`. Track ids are \
 integers in queries; pass them to the client mutations as strings.
 - Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
 - Playlists: `playlists`, `playlistTracks`, `createPlaylist`, `addToPlaylist`, \
@@ -294,9 +313,10 @@ account; confirm with the user first. `shares`, `updateShare`, `deleteShare` man
 ## Not available
 `organizeExecute`, `organizeUndo` (move files on disk) and `updateConfig` are never run \
 through MCP. Other admin mutations (`triggerScan`, user management) are refused unless \
-`KOAN_MCP_ADMIN=1` is set.";
+`KOAN_MCP_ADMIN=1` is set.");
 
-const LOCAL_INSTRUCTIONS: &str = "kōan is the user's music player on this machine and their \
+const LOCAL_INSTRUCTIONS: &str = concat!(
+    "kōan is the user's music player on this machine and their \
 music library. Use it for anything about music they are playing or own — \"pause the music\", \
 \"play something like Polar Bear\", \"what's this song\". Call `schema_sdl` once, then do \
 everything through `graphql`.
@@ -309,7 +329,9 @@ This player is what the user hears: `play`, `pause`, `resume`, `stop`, `next`, `
 ## The library
 - `artists`, `albums`, `tracks` with filters (genre, year range, codec, sample rate, bit depth, \
 duration, favourites), `randomTracks`, `fuzzySearch`
-- Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
+",
+    choosing_by_style!(),
+    "- Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
 - Playlists: `playlists`, `playlistTracks`, `createPlaylist`, `saveQueueAsPlaylist`, \
 `addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist`
 - History: `playHistory`
@@ -320,7 +342,8 @@ duration, favourites), `randomTracks`, `fuzzySearch`
 through MCP. `triggerScan` and `setDevice` are refused unless `KOAN_MCP_ADMIN=1` is set.
 
 ## IDs
-Track IDs are integers from the library; queue item IDs are UUIDs from the queue.";
+Track IDs are integers from the library; queue item IDs are UUIDs from the queue."
+);
 
 const MAX_BODY: usize = 1024 * 1024;
 /// Open event streams count against it, so it allows a few clients each with
