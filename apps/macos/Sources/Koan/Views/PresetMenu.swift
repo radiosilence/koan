@@ -1,3 +1,4 @@
+import KoanFFI
 import SwiftUI
 
 /// The DSP profiles a device can play through, and the one it does. Nil when
