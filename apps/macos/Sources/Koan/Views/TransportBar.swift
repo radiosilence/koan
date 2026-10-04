@@ -233,7 +233,7 @@ struct TransportBar: View {
                     .help(Format.outputExplanation(format))
             }
 
-            DevicePickerButton(open: $showingDevices, labelled: !compact)
+            DevicePickerButton(open: $showingDevices, labelled: !compact, iconSize: 17)
                 .font(.caption)
 
             // AirPlay is the system's to choose, so it is the system's button:

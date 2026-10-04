@@ -487,6 +487,8 @@ struct DevicePickerButton: View {
     @Binding var open: Bool
     /// Show the controlled device's name beside the icon.
     var labelled = true
+    /// The icon's size, where the host's font would draw it too small.
+    var iconSize: CGFloat?
 
     var body: some View {
         Button {
@@ -496,6 +498,7 @@ struct DevicePickerButton: View {
             // name stays primary, since a dark sleeve's tint vanishes as text.
             HStack(spacing: 5) {
                 Image(systemName: "hifispeaker")
+                    .font(iconSize.map { .system(size: $0) })
                     .foregroundStyle(target.name != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
                 if labelled, let name = target.name {
                     Text(name)
