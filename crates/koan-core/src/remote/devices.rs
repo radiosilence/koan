@@ -411,6 +411,24 @@ pub fn target_device() -> Option<Device> {
     list().into_iter().find(|d| d.id == id)
 }
 
+/// Get `cmd` to the device `id` over a connection that is up now: the local
+/// network's, else the link. Never queued, never a push, never the HTTP
+/// fallback `send` has: for what is only worth saying while someone is there
+/// to hear it, like `WatchLevels`. A stop goes both ways, since the start may
+/// have taken either. `false` when there was no way through.
+pub fn send_live(id: &str, cmd: LinkCommand) -> bool {
+    let everywhere = matches!(cmd, LinkCommand::WatchLevels { on: false });
+    let near = cmd.allowed_nearby() && crate::remote::nearby::send(id, cmd.clone());
+    if near && !everywhere {
+        return true;
+    }
+    let linked = link::report(LinkReport::Command {
+        to: id.to_string(),
+        command: cmd,
+    });
+    near || linked
+}
+
 /// Get `cmd` to the device `id`: over the local network if connected there,
 /// else up the link, else in one request to the server, which is what a Live
 /// Activity's button has while iOS keeps the app's link down.
@@ -455,6 +473,15 @@ pub fn this_id() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_live_send_with_no_way_through_sends_nothing() {
+        // No connection on the network and no link: false, and no fallback.
+        assert!(!send_live(
+            "nowhere-at-all",
+            LinkCommand::WatchLevels { on: true }
+        ));
+    }
 
     fn device(id: &str, playing: bool) -> LinkDevice {
         LinkDevice {

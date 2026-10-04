@@ -170,6 +170,16 @@ impl Registry {
         });
         drop(entries);
         self.announce(username);
+        // A device that relinked has a new session, which holds no watch:
+        // tell it again that it is watched, if it is.
+        if self
+            .level_watches
+            .lock()
+            .iter()
+            .any(|(u, _, t)| u == username && t == device)
+        {
+            self.send_live(username, device, LinkCommand::WatchLevels { on: true });
+        }
         id
     }
 
@@ -331,9 +341,13 @@ impl Registry {
         to: &str,
         command: LinkCommand,
     ) -> Result<ClientInfo, String> {
+        // Levels are relayed only between live links, by `watch_levels` and
+        // `levels`: never queued for a device that is away, never a push.
         if matches!(
             command,
-            LinkCommand::Devices { .. } | LinkCommand::Levels { .. }
+            LinkCommand::Devices { .. }
+                | LinkCommand::Levels { .. }
+                | LinkCommand::WatchLevels { .. }
         ) {
             return Err("not a command".into());
         }
@@ -1272,6 +1286,37 @@ fn pick(clients: &[ClientInfo], now: i64) -> Result<&ClientInfo, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_watch_is_never_queued_and_is_renewed_when_the_target_relinks() {
+        let reg = Registry::default();
+        let watches = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkCommand>| {
+            std::iter::from_fn(|| rx.try_recv().ok())
+                .filter(|c| matches!(c, LinkCommand::WatchLevels { .. }))
+                .collect::<Vec<_>>()
+        };
+        // Not as a relayed command: that path queues and pushes.
+        assert!(
+            reg.relay("rl", "rl-phone", LinkCommand::WatchLevels { on: true })
+                .is_err()
+        );
+        // Watched while away: nothing is queued for it.
+        reg.watch_levels("rl", "rl-mac", "rl-phone", true);
+        let (tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("rl", "phone", "ios", "rl-phone", tx, false);
+        assert_eq!(
+            watches(&mut phone),
+            vec![LinkCommand::WatchLevels { on: true }],
+            "told once, on linking, because it is watched now"
+        );
+        // Relinked: a new session, told again.
+        let (tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("rl", "phone", "ios", "rl-phone", tx, false);
+        assert_eq!(
+            watches(&mut phone),
+            vec![LinkCommand::WatchLevels { on: true }]
+        );
+    }
 
     #[test]
     fn levels_reach_a_watcher_only_while_it_watches() {

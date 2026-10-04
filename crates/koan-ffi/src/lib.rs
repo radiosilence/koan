@@ -204,6 +204,9 @@ impl VizStream {
         loop {
             let target = devices::target();
             if f.view.as_ref().map(|v| v.target()) != target.as_deref() {
+                // The old device let go before the new one is watched, so it
+                // is told to stop.
+                f.view = None;
                 f.view = target.map(|t| levels::remote().view(t));
             }
             // Marked seen *before* the wait, so a frame published between the
@@ -218,6 +221,9 @@ impl VizStream {
                     tick = remote.changed() => tick.ok()?,
                     moved = devices.changed() => {
                         moved.ok()?;
+                        // A link or a connection on the network may have come
+                        // up, or the device relinked: ask again where due.
+                        levels::remote().ask(false);
                         continue;
                     }
                 }
