@@ -10,6 +10,7 @@
 
 ### Changed
 
+- **The MCP server tells assistants to choose music by style from their own knowledge.** Genre tags in most libraries are sparse, so an assistant asked for a genre filtered on them, found little, and then guessed artist names a few at a time, which took minutes. It is now told to list what fits, look it all up in one aliased query, and read the library's artist names when its guesses miss.
 - **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
 

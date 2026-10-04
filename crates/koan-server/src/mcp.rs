@@ -282,6 +282,14 @@ hears; `nowPlaying` there reports nothing about what the user is listening to.
 ## The library
 - `artists`, `albums`, `tracks` with filters (genre, year range, codec, sample rate, bit depth, \
 duration, favourites), `randomTracks`, `fuzzySearch`
+- **Choosing music by style, mood or era** (\"psychedelic rock\", \"something for a rainy \
+Sunday\"): genre tags are sparse and inconsistent, so do not rely on `genre` filters. Use your \
+own knowledge, and research when unsure, to list many artists and albums that fit, then look \
+them all up in a single query with aliases (`a: artists(search: \"Can\") { … } b: …`) and \
+choose from the ones present. If most are missing, read the library's artist names once \
+(`artists(first: 500, sortBy: TRACK_COUNT, sortDir: DESC) { edges { node { id name } } }`, \
+paging on) and pick from them by what you know of each. Do not guess names one round at a \
+time.
 - Build a set from these, then send its track ids to a device with `playOnClient`. Track ids are \
 integers in queries; pass them to the client mutations as strings.
 - Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
