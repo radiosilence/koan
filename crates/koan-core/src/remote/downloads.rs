@@ -20,7 +20,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::player::commands::PlayerCommand;
@@ -135,12 +135,17 @@ impl Reading {
 /// The downloader publishes it as chunks land. A read is a plain atomic load;
 /// beside the atomic is somewhere to wait, so a decode thread reading a file
 /// that is still arriving sleeps until there is more instead of polling.
+///
+/// Writing is an atomic store per chunk. The lock and the wake are paid only
+/// while a reader is actually parked, which for most of a transfer nobody is.
 #[derive(Debug, Default)]
 pub struct ByteFeed {
     written: AtomicU64,
-    /// Taken by both sides. A store outside it could land between a reader
-    /// deciding to wait and waiting, and be slept through — which for a stream
-    /// is a stall the length of the whole timeout.
+    /// Readers waiting, or about to. A writer that sees none skips the lock.
+    parked: AtomicUsize,
+    /// Held by a reader from its last look until it sleeps, and taken by a
+    /// writer that saw it parked, so a store cannot land between the two
+    /// unseen — which for a stream is a stall the length of the whole timeout.
     at: parking_lot::Mutex<()>,
     more: parking_lot::Condvar,
 }
@@ -157,16 +162,24 @@ impl ByteFeed {
 
     /// Say how much has been written, and wake whoever is waiting for it.
     pub fn set(&self, bytes: u64) {
-        let _at = self.at.lock();
-        self.written.store(bytes, Ordering::Release);
-        self.more.notify_all();
+        self.written.store(bytes, Ordering::SeqCst);
+        self.wake_parked();
     }
 
     /// Add to the count, for a writer that knows only how much it just wrote.
     pub fn advance(&self, bytes: u64) {
-        let _at = self.at.lock();
-        self.written.fetch_add(bytes, Ordering::Release);
-        self.more.notify_all();
+        self.written.fetch_add(bytes, Ordering::SeqCst);
+        self.wake_parked();
+    }
+
+    /// The count is stored before `parked` is read, and a reader counts itself
+    /// parked before it reads the count — both sequentially consistent — so at
+    /// least one of the two sees the other.
+    fn wake_parked(&self) {
+        if self.parked.load(Ordering::SeqCst) > 0 {
+            let _at = self.at.lock();
+            self.more.notify_all();
+        }
     }
 
     /// The transfer is over, however it ended. Whoever is waiting wants to
@@ -185,14 +198,14 @@ impl ByteFeed {
     /// deciding it twice.
     pub fn wait_past(&self, seen: u64, deadline: Instant) -> u64 {
         let mut at = self.at.lock();
-        let written = self.written.load(Ordering::Acquire);
-        if written > seen {
-            return written;
+        self.parked.fetch_add(1, Ordering::SeqCst);
+        let written = self.written.load(Ordering::SeqCst);
+        if written <= seen
+            && let Some(left) = deadline.checked_duration_since(Instant::now())
+        {
+            self.more.wait_for(&mut at, left);
         }
-        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
-            return written;
-        };
-        self.more.wait_for(&mut at, left);
+        self.parked.fetch_sub(1, Ordering::SeqCst);
         self.written.load(Ordering::Acquire)
     }
 }
@@ -264,14 +277,25 @@ pub struct DownloadStore {
     /// Separate from the entries so taking a sample does not touch the list
     /// every client is reading.
     samples: parking_lot::Mutex<HashMap<TransferKey, Sample>>,
-    /// When the last reading was taken.
+    /// When the last reading was taken, in nanoseconds on [`clock_ns`]; 0
+    /// for never.
     ///
     /// Readings are taken as bytes land rather than on a timer — the thing
     /// that knows a transfer moved is the code moving it — and a chunk lands
     /// far more often than a figure needs redrawing, so this is what holds
-    /// them to `MIN_SAMPLE_GAP`.
-    last_sample: parking_lot::Mutex<Option<Instant>>,
+    /// them to `MIN_SAMPLE_GAP`. An atomic, because it is asked per chunk.
+    last_sample: AtomicU64,
     figures: AtomicU64,
+    /// Rung when the figures move. Its own signal rather than the engine's:
+    /// a transfer's progress is news only to what draws it, and the engine's
+    /// wakes every link, subscription and watcher in the process.
+    moved: crate::signal::Wake,
+}
+
+/// Nanoseconds since the first time this was asked, never 0.
+fn clock_ns() -> u64 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_nanos() as u64 + 1
 }
 
 /// How many settled entries to keep. This is a view of now, not an archive,
@@ -295,6 +319,12 @@ impl DownloadStore {
     /// changing shape.
     pub fn figures(&self) -> u64 {
         self.figures.load(Ordering::Acquire)
+    }
+
+    /// Rung whenever `figures` moves. What a reader of progress waits on; the
+    /// engine's signal is not rung for it.
+    pub fn moved(&self) -> &crate::signal::Wake {
+        &self.moved
     }
 
     // --- What the download queue asks and decides ---
@@ -469,6 +499,7 @@ impl DownloadStore {
         self.samples.lock().remove(&key);
         if listed {
             self.figures.fetch_add(1, Ordering::Release);
+            self.moved.bump();
             self.bump();
         }
         Some((waiters, feed))
@@ -661,15 +692,20 @@ impl DownloadStore {
     /// would otherwise keep its own last-reading map and get a different
     /// answer.
     pub fn progressed(&self) {
-        let now = Instant::now();
-        {
-            let mut last = self.last_sample.lock();
-            if last.is_some_and(|at| now.saturating_duration_since(at) < MIN_SAMPLE_GAP) {
-                return;
-            }
-            *last = Some(now);
+        let now = clock_ns();
+        let last = self.last_sample.load(Ordering::Relaxed);
+        if last != 0 && now.saturating_sub(last) < MIN_SAMPLE_GAP.as_nanos() as u64 {
+            return;
         }
-        self.sample_rates_at(now);
+        // One chunk among the transfers running takes the reading; the rest
+        // see it taken and go on.
+        if self
+            .last_sample
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            self.sample_rates_at(Instant::now());
+        }
     }
 
     fn sample_rates_at(&self, now: Instant) {
@@ -720,7 +756,7 @@ impl DownloadStore {
         // Said once for the whole reading, so a client redraws every figure
         // from one moment rather than a row at a time.
         self.figures.fetch_add(1, Ordering::Release);
-        crate::signal::engine_changed().bump();
+        self.moved.bump();
     }
 }
 
@@ -993,5 +1029,43 @@ mod tests {
             store.end(key, Outcome::Done);
         }
         assert_eq!(store.all().len(), SETTLED_LIMIT);
+    }
+
+    #[test]
+    fn a_parked_reader_is_woken_by_every_write_it_waits_for() {
+        // The writer skips the lock when nobody is parked; a reader parking as
+        // a write lands must still see it, every time.
+        let feed = ByteFeed::new();
+        let reader = {
+            let feed = feed.clone();
+            std::thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let mut seen = 0;
+                while seen < 20_000 {
+                    seen = feed.wait_past(seen, deadline);
+                    assert!(
+                        Instant::now() < deadline,
+                        "a write was slept through at {seen}"
+                    );
+                }
+            })
+        };
+        for n in 1..=20_000 {
+            feed.set(n);
+        }
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn a_reading_rings_the_store_and_not_the_engine() {
+        // Progress is news to what draws it. The engine's signal wakes every
+        // link, subscription and watcher in the process.
+        let store = DownloadStore::new();
+        let (key, _, feed) = running(&store, 1, "train");
+        store.started(key, 1000);
+        let before = store.moved().generation();
+        feed.set(500);
+        store.progressed();
+        assert_ne!(store.moved().generation(), before);
     }
 }

@@ -23,6 +23,9 @@ const PRIORITY_PERMITS: usize = 2;
 /// track in both would be thrown away and started again from nothing.
 const ABANDON_GRACE: Duration = Duration::from_secs(2);
 
+/// How often a running transfer asks whether it is still wanted.
+const CANCEL_CHECK: Duration = Duration::from_millis(250);
+
 /// Persistent download queue — lives for the app's lifetime.
 ///
 /// Follows the playlist rather than being told about it: whenever the set of
@@ -353,7 +356,16 @@ fn run_download(inner: &Arc<Inner>, db_id: i64) {
         // tracks that can never arrive would otherwise sit saying nothing.
         None => Some(Err(crate::helpers::remote_unavailable(&cfg))),
         Some(client) => {
-            let cancelled = || store.abandoned(key, ABANDON_GRACE);
+            // Asked per chunk, answered from the store at most every
+            // `CANCEL_CHECK`: against a two-second grace, sooner buys nothing.
+            let checked = std::cell::Cell::new(std::time::Instant::now());
+            let cancelled = || {
+                if checked.get().elapsed() < CANCEL_CHECK {
+                    return false;
+                }
+                checked.set(std::time::Instant::now());
+                store.abandoned(key, ABANDON_GRACE)
+            };
             std::panic::catch_unwind(AssertUnwindSafe(|| {
                 download_track(
                     db_id,

@@ -2535,6 +2535,42 @@ impl KoanEngine {
     ///
     /// The playhead is the one thing no writer can announce, because it moves
     /// on its own. It is published as an anchor instead: see `state::Anchor`.
+    /// Publish the transfers' figures whenever the store takes a reading — a
+    /// few times a second while something downloads, never otherwise.
+    ///
+    /// Its own thread on the store's own signal. Readings are rung there and
+    /// not on the engine's, so a transfer in progress wakes this and nothing
+    /// else: not the state watcher, not a link, not a subscription.
+    fn spawn_figures(self: &Arc<Self>) {
+        let engine = Arc::downgrade(self);
+        let store = self.state.downloads().clone();
+        std::thread::Builder::new()
+            .name("koan-figures".into())
+            .spawn(move || {
+                let mut seen = store.moved().generation();
+                let mut last = u64::MAX;
+                loop {
+                    let Some(engine) = engine.upgrade() else {
+                        return;
+                    };
+                    let figures = store.figures();
+                    if figures != last {
+                        last = figures;
+                        engine.out.publish(StateSlice::Figures {
+                            figures: store.all().iter().filter_map(TransferFigure::of).collect(),
+                        });
+                    }
+                    drop(engine);
+                    // Bounded, to notice the engine going: nothing rings this
+                    // when it does.
+                    seen = store
+                        .moved()
+                        .wait_until(seen, std::time::Duration::from_secs(30));
+                }
+            })
+            .expect("failed to spawn the figures thread");
+    }
+
     fn spawn_watcher(self: &Arc<Self>) {
         let engine = Arc::downgrade(self);
         std::thread::Builder::new()
@@ -2542,7 +2578,6 @@ impl KoanEngine {
             .spawn(move || {
                 let mut last_queue = u64::MAX;
                 let mut last_store = u64::MAX;
-                let mut last_figures = u64::MAX;
                 let mut last_library = u64::MAX;
                 let mut last_devices = u64::MAX;
                 let mut last_target: Option<String> = None;
@@ -2656,32 +2691,16 @@ impl KoanEngine {
                         }
                     }
 
-                    // Readings are taken as the bytes land rather than here —
-                    // see `DownloadStore::progressed` — so this asks whether
-                    // one has been taken since the last it published, which for
-                    // a koan with nothing downloading is never. The list is
-                    // read once and only when one of the two has moved: it is a
-                    // clone of every transfer koan knows about.
+                    // The list's shape: a transfer listed, settled or
+                    // forgotten. Its figures are `spawn_figures`'.
                     let store = engine.state.downloads();
                     let store_version = store.version();
-                    let figures_version = store.figures();
-                    if figures_version != last_figures || store_version != last_store {
-                        // Structural and volatile from one reading of one list,
-                        // so a row and its figure can never describe different
-                        // moments.
+                    if store_version != last_store {
+                        last_store = store_version;
                         let transfers = store.all();
-                        if figures_version != last_figures {
-                            last_figures = figures_version;
-                            out.publish(StateSlice::Figures {
-                                figures: transfers.iter().filter_map(TransferFigure::of).collect(),
-                            });
-                        }
-                        if store_version != last_store {
-                            last_store = store_version;
-                            out.publish(StateSlice::Transfers {
-                                transfers: transfers.iter().filter_map(Transfer::of).collect(),
-                            });
-                        }
+                        out.publish(StateSlice::Transfers {
+                            transfers: transfers.iter().filter_map(Transfer::of).collect(),
+                        });
                         let now_running: HashSet<_> = transfers
                             .iter()
                             .filter(|d| !d.state.is_settled())
@@ -3223,6 +3242,7 @@ impl KoanEngine {
             playlist_history: Default::default(),
         });
         engine.spawn_watcher();
+        engine.spawn_figures();
         // A koan server this app syncs from can then tell it what to play, and
         // so can this person's other devices and anyone's on the network.
         let (weak, state) = (Arc::downgrade(&engine), engine.state.clone());
