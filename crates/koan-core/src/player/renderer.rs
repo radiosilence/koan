@@ -115,12 +115,16 @@ fn container_of(path: &Path) -> String {
 
 impl RendererOutput {
     fn intend(&mut self, playing: bool) {
+        // Counted as just sent: an answer in the next moment predates the
+        // renderer acting on it, and is no reason to ask again.
+        let now = Instant::now();
         self.intent = Intent {
             playing,
-            at: Instant::now(),
-            resent: None,
+            at: now,
+            resent: Some(now),
             resends: 0,
         };
+        self.look_at.push(now + RESEND_GAP);
     }
 
     /// The renderer says it is `playing` (or not) against what koan asked a
@@ -1607,7 +1611,6 @@ mod tests {
                 let _ = tx.send(e);
             })
             .unwrap();
-            let _ = session.set_volume(20);
             player.use_renderer(Some(Box::new(Connection { session, events })));
         };
         // Run the player's renderer loop for `ms`.
@@ -1771,7 +1774,6 @@ mod tests {
                 let _ = tx.send(e);
             })
             .unwrap();
-            let _ = session.set_volume(20);
             player.use_renderer(Some(Box::new(Connection { session, events })));
         };
         let run = |player: &mut Player, ms: u64| {
