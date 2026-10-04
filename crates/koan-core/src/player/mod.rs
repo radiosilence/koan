@@ -128,10 +128,19 @@ pub struct Player {
     pending_cue: Option<(QueueItemId, u64, Start)>,
     /// Waiting for a pause's fade to reach silence, to hear where it did.
     silence_waiters: Vec<crossbeam_channel::Sender<u64>>,
+    /// The DSP setup last loaded, and the config and device it was loaded
+    /// for. Reading impulse responses off disk on every seek would be wasted.
+    dsp: Option<DspCache>,
     /// Playback sessions started — lets tests assert how many engine restarts
     /// an operation costs.
     #[cfg(test)]
     playback_starts: usize,
+}
+
+struct DspCache {
+    config: Arc<crate::config::Config>,
+    device: String,
+    setup: Option<Arc<crate::audio::dsp::Setup>>,
 }
 
 /// Whether a track opens playing, or loaded and paused.
@@ -200,6 +209,7 @@ impl Player {
             commands,
             active_playback: None,
             lead_in_ends: None,
+            dsp: None,
             pending_cue: None,
             silence_waiters: Vec::new(),
             timeline,
@@ -260,7 +270,19 @@ impl Player {
     ) -> Result<(Box<dyn AudioEngineHandle>, Option<Box<dyn SampleRateWatch>>), PlayerError> {
         let device = self.resolve_device()?;
         let device_rate = self.backend.get_device_sample_rate(&device)?;
-        let source_rate = info.sample_rate as f64;
+        // The setup the decode thread was just handed, not a fresh read: a
+        // config edited in between would put the engine at another rate.
+        let dsp = match &self.dsp {
+            Some(cache) if cache.device == device.name => cache.setup.clone(),
+            _ => self.dsp_for(&device.name),
+        };
+        self.shared_state
+            .set_dsp(dsp.as_ref().map(|d| d.status(info.sample_rate)));
+        // The rate the decode thread writes at: the source's, unless DSP
+        // resamples it to reach an impulse response.
+        let source_rate =
+            dsp.as_ref()
+                .map_or(info.sample_rate, |d| d.output_rate(info.sample_rate)) as f64;
 
         // The track info is already published, so anything read between here
         // and the switch landing would pair this track with the last one's
@@ -339,6 +361,49 @@ impl Player {
         }
 
         Ok((engine, rate_watch))
+    }
+
+    /// The DSP profile for `device`, loaded once per config and device.
+    fn dsp_for(&mut self, device: &str) -> Option<Arc<crate::audio::dsp::Setup>> {
+        let config = crate::config::Config::cached();
+        if let Some(cache) = &self.dsp
+            && Arc::ptr_eq(&cache.config, &config)
+            && cache.device == device
+        {
+            return cache.setup.clone();
+        }
+        let setup = config.dsp.profile_for(device).and_then(|profile| {
+            crate::audio::dsp::Setup::load(profile, &crate::config::config_dir())
+                .inspect_err(|e| {
+                    log::error!(
+                        "dsp: profile '{}' not loaded, playing without it: {e}",
+                        profile.name
+                    )
+                })
+                .ok()
+                .flatten()
+                .map(Arc::new)
+        });
+        self.dsp = Some(DspCache {
+            config,
+            device: device.to_string(),
+            setup: setup.clone(),
+        });
+        setup
+    }
+
+    /// ReplayGain and DSP for a session on the output device.
+    fn processing(&mut self) -> buffer::Processing {
+        let cfg = crate::config::Config::cached();
+        let dsp = match self.resolve_device() {
+            Ok(device) => self.dsp_for(&device.name),
+            Err(_) => None,
+        };
+        buffer::Processing {
+            rg_mode: cfg.playback.replaygain,
+            pre_amp_db: cfg.playback.pre_amp_db,
+            dsp,
+        }
     }
 
     /// Resolve the output device: use configured device name if set,
@@ -551,10 +616,7 @@ impl Player {
 
         let next_track = self.decode_cursor(id);
 
-        // Load ReplayGain config for this playback session.
-        let cfg = crate::config::Config::load_or_default();
-        let rg_mode = cfg.playback.replaygain;
-        let pre_amp_db = cfg.playback.pre_amp_db;
+        let processing = self.processing();
 
         let finish_tx = self.commands.tx.clone();
         let (_stream_info, decode_handle) = buffer::start_decode_file(
@@ -565,8 +627,7 @@ impl Player {
             next_track,
             self.timeline.clone(),
             Some(self.viz_buffer.clone()),
-            rg_mode,
-            pre_amp_db,
+            processing,
             move || {
                 finish_tx.send(PlayerCommand::DecodeFinished).ok();
             },
@@ -909,10 +970,7 @@ impl Player {
             }),
         };
 
-        // Load ReplayGain config for this streaming session.
-        let cfg = crate::config::Config::load_or_default();
-        let rg_mode = cfg.playback.replaygain;
-        let pre_amp_db = cfg.playback.pre_amp_db;
+        let processing = self.processing();
 
         let finish_tx = self.commands.tx.clone();
         let (_stream_info, decode_handle) = buffer::start_decode(
@@ -925,8 +983,7 @@ impl Player {
             },
             self.timeline.clone(),
             Some(self.viz_buffer.clone()),
-            rg_mode,
-            pre_amp_db,
+            processing,
             move || {
                 finish_tx.send(PlayerCommand::DecodeFinished).ok();
             },

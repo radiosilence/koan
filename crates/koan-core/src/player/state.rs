@@ -282,6 +282,10 @@ pub struct SharedPlayerState {
     /// to reach it. Everything past that — other clients, the volume stage — is
     /// the system's, and not ours to claim.
     output_sample_rate: AtomicU64,
+
+    /// What DSP is doing to the current session's audio. `None` is the
+    /// bit-perfect path.
+    dsp: parking_lot::RwLock<Option<crate::audio::dsp::DspStatus>>,
 }
 
 impl SharedPlayerState {
@@ -297,6 +301,7 @@ impl SharedPlayerState {
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             output_sample_rate: AtomicU64::new(0),
+            dsp: parking_lot::RwLock::new(None),
         })
     }
 
@@ -509,6 +514,21 @@ impl SharedPlayerState {
     /// an answer for this one.
     pub fn clear_output_sample_rate(&self) {
         self.output_sample_rate.store(0, Ordering::Release);
+    }
+
+    // --- DSP ---
+
+    pub fn dsp(&self) -> Option<crate::audio::dsp::DspStatus> {
+        self.dsp.read().clone()
+    }
+
+    pub fn set_dsp(&self, status: Option<crate::audio::dsp::DspStatus>) {
+        let mut dsp = self.dsp.write();
+        if *dsp != status {
+            *dsp = status;
+            drop(dsp);
+            self.changed();
+        }
     }
 
     // --- Playlist version ---

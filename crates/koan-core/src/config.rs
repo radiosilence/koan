@@ -37,6 +37,7 @@ pub struct Config {
     pub mcp: McpConfig,
     pub push: PushConfig,
     pub devices: DevicesConfig,
+    pub dsp: DspConfig,
 }
 
 /// Share links this koan serves itself.
@@ -473,6 +474,84 @@ impl Default for DevicesConfig {
 /// "koan" on a phone keypad.
 pub const DEVICES_PORT: u16 = 5626;
 
+/// Equalisation and convolution for the listening setup: headphones, speakers,
+/// a room. Each profile names the output devices it is for, so plugging in the
+/// headphones selects their correction. A device no profile names plays
+/// bit-perfect, untouched.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DspConfig {
+    /// Off bypasses every profile without forgetting any of them.
+    pub enabled: bool,
+    pub profiles: Vec<DspProfile>,
+}
+
+impl Default for DspConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            profiles: Vec::new(),
+        }
+    }
+}
+
+impl DspConfig {
+    /// The profile for the output device called `device`, if DSP is on and
+    /// one names it.
+    pub fn profile_for(&self, device: &str) -> Option<&DspProfile> {
+        if !self.enabled {
+            return None;
+        }
+        self.profiles
+            .iter()
+            .find(|p| p.devices.iter().any(|d| d == device))
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DspProfile {
+    pub name: String,
+    /// Output devices, by name, that play through this profile.
+    pub devices: Vec<String>,
+    /// Gain before the filters. Unset, it is derived from the filters' peak
+    /// gain, so that no boost can push a sample past full scale.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preamp_db: Option<f64>,
+    pub filters: Vec<EqFilter>,
+    /// Impulse responses as WAV files, one per sample rate the correction was
+    /// exported at; a relative path is read from beside the config. Each
+    /// file's own rate is the rate it applies to.
+    pub impulses: Vec<PathBuf>,
+}
+
+/// One parametric band, as AutoEQ and Equalizer APO describe it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EqFilter {
+    #[serde(rename = "type")]
+    pub kind: EqFilterKind,
+    /// Centre or corner frequency in Hz.
+    pub freq: f64,
+    #[serde(default)]
+    pub gain_db: f64,
+    #[serde(default = "default_q")]
+    pub q: f64,
+}
+
+fn default_q() -> f64 {
+    std::f64::consts::FRAC_1_SQRT_2
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EqFilterKind {
+    Peaking,
+    LowShelf,
+    HighShelf,
+    LowPass,
+    HighPass,
+}
+
 /// Which of the two files a setting is written to when koan changes it itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layer {
@@ -529,6 +608,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "visualizer.mode"
         | "visualizer.matrix_overlay"
         | "visualizer.bass_shake" => Layer::Machine,
+        // The listening setup: these headphones, this room.
+        p if p == "dsp" || p.starts_with("dsp.") => Layer::Machine,
         _ => Layer::Shared,
     }
 }
@@ -810,11 +891,51 @@ fn doc_set(doc: &mut toml_edit::DocumentMut, path: &str, value: &toml::Value) {
     // Comments attach to the key, and `insert` replaces the key. Overwrite the
     // value in place where one already exists so the line keeps its notes.
     match table.get_mut(last) {
-        Some(existing) => *existing = toml_edit::value(to_edit_value(value)),
+        Some(existing) => *existing = to_edit_item(value),
         None => {
-            table.insert(last, toml_edit::value(to_edit_value(value)));
+            table.insert(last, to_edit_item(value));
         }
     }
+}
+
+/// A list of tables — DSP profiles — is written as `[[sections]]`, and any list
+/// of tables inside one a line per entry, so the file stays editable by hand.
+fn to_edit_item(value: &toml::Value) -> toml_edit::Item {
+    let toml::Value::Array(items) = value else {
+        return toml_edit::value(to_edit_value(value));
+    };
+    if items.is_empty() || !items.iter().all(toml::Value::is_table) {
+        return toml_edit::value(to_edit_value(value));
+    }
+    let mut sections = toml_edit::ArrayOfTables::new();
+    for item in items {
+        let mut section = toml_edit::Table::new();
+        for (k, v) in item.as_table().expect("checked above") {
+            let mut v = to_edit_value(v);
+            if let toml_edit::Value::Array(list) = &mut v
+                && list.iter().any(toml_edit::Value::is_inline_table)
+            {
+                for entry in list.iter_mut() {
+                    entry.decor_mut().set_prefix("\n    ");
+                    if let Some(t) = entry.as_inline_table_mut() {
+                        t.sort_values_by(|a, _, b, _| key_rank(a).cmp(&key_rank(b)));
+                    }
+                }
+                list.set_trailing("\n");
+                list.set_trailing_comma(true);
+            }
+            section.insert(k, toml_edit::value(v));
+        }
+        section.sort_values_by(|a, _, b, _| key_rank(a).cmp(&key_rank(b)));
+        sections.push(section);
+    }
+    toml_edit::Item::ArrayOfTables(sections)
+}
+
+/// What an entry is reads first: a profile's name, a band's type.
+fn key_rank(key: &toml_edit::Key) -> (u8, &str) {
+    let k = key.get();
+    (if k == "name" || k == "type" { 0 } else { 1 }, k)
 }
 
 fn doc_remove(doc: &mut toml_edit::DocumentMut, path: &str) {
@@ -1678,6 +1799,51 @@ fps = 30
             );
             assert!(machine.contains(machine_only), "{machine}");
         }
+    }
+
+    #[test]
+    fn persist_writes_dsp_profiles_to_the_local_file_as_sections() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (base, local) = persist_sandbox("dsp");
+
+        let profile = DspProfile {
+            name: "HD 600".into(),
+            devices: vec!["Topping E30".into()],
+            preamp_db: None,
+            filters: vec![
+                EqFilter {
+                    kind: EqFilterKind::Peaking,
+                    freq: 20.0,
+                    gain_db: -1.3,
+                    q: 2.0,
+                },
+                EqFilter {
+                    kind: EqFilterKind::HighShelf,
+                    freq: 10000.0,
+                    gain_db: 2.5,
+                    q: 0.7,
+                },
+            ],
+            impulses: vec![],
+        };
+        Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
+
+        assert!(!base.exists() || !fs::read_to_string(&base).unwrap().contains("dsp"));
+        let machine = fs::read_to_string(&local).unwrap();
+        assert!(machine.contains("[[dsp.profiles]]"), "{machine}");
+        assert!(
+            machine.contains("\n    { type = \"peaking\""),
+            "one band per line: {machine}"
+        );
+        assert_eq!(Config::from_files().unwrap().dsp.profiles, vec![profile]);
+        assert_eq!(
+            Config::from_files()
+                .unwrap()
+                .dsp
+                .profile_for("Topping E30")
+                .map(|p| p.name.as_str()),
+            Some("HD 600")
+        );
     }
 
     #[test]

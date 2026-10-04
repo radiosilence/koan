@@ -38,7 +38,8 @@ enum Format {
     ///
     /// A rate the device refused is appended — "FLAC 24/96 → 48" — because a
     /// badge that reads the same whether or not something resampled is the one
-    /// claim this player cannot afford to get wrong.
+    /// claim this player cannot afford to get wrong. DSP is named for the same
+    /// reason: "FLAC 24/96 → 48 · EQ + FIR".
     static func quality(_ f: StreamFormat) -> String {
         var parts = [f.codec.uppercased()]
         if let depth = f.bitDepth {
@@ -52,7 +53,18 @@ enum Format {
         if isResampled(f), let out = f.outputSampleRate {
             parts.append("→ \(rate(out))")
         }
+        if let dsp = f.dsp {
+            parts.append("· \(dspLabel(dsp))")
+        }
         return parts.joined(separator: " ")
+    }
+
+    private static func dspLabel(_ d: DspInfo) -> String {
+        switch (d.eq, d.convolutionRate != nil) {
+        case (true, true): "EQ + FIR"
+        case (false, true): "FIR"
+        default: "EQ"
+        }
     }
 
     /// Whether anything had to resample to reach the device. `false` while the
@@ -66,6 +78,17 @@ enum Format {
     /// bit-perfection outright: the device is shared, so another app's audio
     /// and the system volume stage are both past the point koan can see.
     static func outputExplanation(_ f: StreamFormat) -> String {
+        guard let dsp = f.dsp else { return deviceExplanation(f) }
+        var what = dsp.eq && dsp.convolutionRate != nil
+            ? "equalised and convolved"
+            : dsp.eq ? "equalised" : "convolved"
+        if let conv = dsp.convolutionRate, conv != f.sampleRate {
+            what += ", resampled \(rate(f.sampleRate)) kHz → \(rate(conv)) kHz for convolution"
+        }
+        return "Processed by the \u{201C}\(dsp.profile)\u{201D} profile: \(what)"
+    }
+
+    private static func deviceExplanation(_ f: StreamFormat) -> String {
         guard let out = f.outputSampleRate else {
             return "Source format — kōan matches the device to the source rate rather than resampling"
         }

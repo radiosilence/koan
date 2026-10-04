@@ -386,6 +386,19 @@ pub(super) struct GqlNowPlayingTrack {
     /// `sampleRate` means koan handed the device the samples as they are;
     /// anything else means something resampled to reach it.
     pub output_sample_rate: Option<u32>,
+    /// What DSP is doing to the audio. Null is the untouched path.
+    pub dsp: Option<GqlDsp>,
+}
+
+/// The output device's DSP profile, while one is running.
+#[derive(SimpleObject, Clone, Debug)]
+#[graphql(name = "Dsp")]
+pub(super) struct GqlDsp {
+    pub profile: String,
+    pub eq: bool,
+    /// The rate the impulse response in use was designed at, which the output
+    /// runs at. A source at another rate is resampled to reach it.
+    pub convolution_rate: Option<u32>,
 }
 
 #[ComplexObject]
@@ -438,6 +451,11 @@ impl GqlNowPlaying {
                 channels: info.channels,
                 duration_ms: state.duration_ms(),
                 output_sample_rate: state.output_sample_rate(),
+                dsp: state.dsp().map(|d| GqlDsp {
+                    profile: d.profile,
+                    eq: d.eq,
+                    convolution_rate: d.convolution_rate,
+                }),
             }),
             queue_item_id: Some(info.id.0.to_string()),
         }

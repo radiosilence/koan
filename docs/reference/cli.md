@@ -145,6 +145,27 @@ Prints which config files were read, the names of any active `KOAN_*` environmen
 
 ---
 
+## `koan dsp`
+
+Equalisation and convolution profiles, per output device. See
+[Equalisation and convolution](../guide/dsp.md).
+
+```bash
+koan dsp                                        # list profiles; * marks the current output's
+koan dsp import "HD 600 ParametricEQ.txt"       # profile from an AutoEQ / Equalizer APO file
+koan dsp import eq.txt --name HD600 --device "Topping E30"
+koan dsp impulse "Living room" room-44k.wav room-48k.wav  # impulse responses, one per rate
+koan dsp use "Living room" [--device NAME]      # play a device through a profile
+koan dsp clear [--device NAME]                  # play a device untouched
+koan dsp remove NAME
+koan dsp off | on                               # bypass every profile, or stop bypassing
+```
+
+`--device` defaults to the current output: `[playback] output_device`, or the
+system default.
+
+---
+
 ## `koan devices`
 
 List available audio output devices.

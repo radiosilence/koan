@@ -6,7 +6,7 @@ Feasibility research and implementation plans for koan's next major features.
 
 | # | Plan | Effort | Key Decision |
 |---|------|--------|-------------|
-| [02](02-dsp-and-profiles.md) | DSP + Headphone Profiles | ~5-7 days | Insert between decode and ring buffer. `biquad` for parametric EQ. AutoEQ profiles trivially parseable. |
+| [02](02-dsp-and-profiles.md) | DSP + Headphone Profiles | — | Phase 1 and convolution landed (`audio/dsp/`, `koan dsp`). Left: AutoEQ index search/download, settings in the apps, device auto-detection. |
 | [04](04-tagging.md) | Tag Editing | ~8-12 days | vimv-style (TSV + $EDITOR) first, TUI inline editor second. Terminal suspend/resume is a standard ratatui pattern. |
 | [09](09-artist-metadata.md) | Artist Metadata | — | Bios, images and similar artists from MusicBrainz/Last.fm. |
 | [10](10-gapless-encoder-trim.md) | Gapless Encoder Trim | — | Trim encoder delay and padding on lossy codecs only, as foobar2000 does. |

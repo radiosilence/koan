@@ -3294,7 +3294,7 @@ impl KoanEngine {
             entry,
             format: info
                 .as_ref()
-                .map(|i| StreamFormat::of(i, self.state.output_sample_rate())),
+                .map(|i| StreamFormat::of(i, self.state.output_sample_rate(), self.state.dsp())),
             playlist_version: self.state.playlist_version(),
         }
     }

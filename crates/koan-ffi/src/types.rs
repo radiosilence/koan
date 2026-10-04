@@ -196,12 +196,39 @@ pub struct StreamFormat {
     /// past the device — other clients, the volume stage — is the system's,
     /// and this says nothing about it.
     pub output_sample_rate: Option<u32>,
+    /// What DSP is doing to the audio. `None` is the untouched path.
+    pub dsp: Option<DspInfo>,
+}
+
+/// The output device's DSP profile, while one is running.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspInfo {
+    pub profile: String,
+    pub eq: bool,
+    /// The rate the impulse response in use was designed at, which the output
+    /// runs at. A source at another rate is resampled to reach it.
+    pub convolution_rate: Option<u32>,
+}
+
+impl From<koan_core::audio::dsp::DspStatus> for DspInfo {
+    fn from(d: koan_core::audio::dsp::DspStatus) -> Self {
+        Self {
+            profile: d.profile,
+            eq: d.eq,
+            convolution_rate: d.convolution_rate,
+        }
+    }
 }
 
 impl StreamFormat {
-    pub(crate) fn of(t: &TrackInfo, output_sample_rate: Option<u32>) -> Self {
+    pub(crate) fn of(
+        t: &TrackInfo,
+        output_sample_rate: Option<u32>,
+        dsp: Option<koan_core::audio::dsp::DspStatus>,
+    ) -> Self {
         Self {
             output_sample_rate,
+            dsp: dsp.map(Into::into),
             codec: t.codec.clone(),
             sample_rate: t.sample_rate,
             bit_depth: t.bit_depth,

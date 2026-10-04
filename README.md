@@ -95,6 +95,7 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 - **Music server** -- run headless and kōan serves the library itself: a mobile-first web UI with gapless browser playback, share links (a track shares its album cued to it) that unfurl with their cover, and an OpenSubsonic API for Subsonic apps, signed in with a kōan account by password, token or API key. See [Running a server](https://koan.rocks/docs/headless-server/)
 - **Playlists** -- ordered, named, reorderable; synced both ways with Navidrome, exportable as M3U8
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
+- **EQ and convolution** -- parametric EQ (AutoEQ profiles import directly) and FIR room correction, chosen per output device. Impulse responses are used at their own rate, one per rate; a track without one is resampled to the nearest, and the badge says so. Off, or on a device without a profile, nothing runs. See [Equalisation and convolution](https://koan.rocks/docs/dsp/)
 - **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` — 59 of them — for display and file organization
 - **File organization** -- rename/reorganize your library from the macOS app or the TUI using format string patterns
 - **GraphQL API** -- alongside the app and TUI, or headless. Relay pagination, filters, and mutations for playback, the queue, favourites, playlists and the library
@@ -137,7 +138,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Streaming playback** | **Yes (256KB)** | Via MPD | No | No | No | Via MPD | **Yes** |
 | **API / MCP** | **GraphQL + MCP** | MPD protocol | No | No | No | MPD protocol | No |
 | **Tag editing** | No | Via MPD | No | Yes | Yes | Via MPD | No |
-| **DSP / EQ** | No | Via MPD | Yes | Yes | No | Via MPD | No |
+| **DSP / EQ** | **EQ + FIR** | Via MPD | Yes | Yes | No | Via MPD | No |
 | **Auth** | **JWT + roles** | No | No | No | No | No | No |
 | **Platforms** | macOS, Linux | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
 
@@ -157,7 +158,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Lyrics** | **Synced + plain** | Plugin | No | Plugin |
 | **Visualizer** | **22 modes** | Plugin | No | Plugin |
 | **Tag editing** | No | **Yes** | Yes | **Yes** |
-| **DSP / EQ** | No | **Yes (VST)** | Yes | Yes |
+| **DSP / EQ** | **EQ + FIR, per device** | **Yes (VST)** | Yes | Yes |
 | **Platforms** | macOS (app + TUI), Linux (TUI) | Windows/macOS | All | All |
 
 <img width="768" height="612" alt="Screenshot 2026-03-04 at 18 31 01" src="https://github.com/user-attachments/assets/0ad4879e-815f-42f3-8ebe-f6d01616bc96" />

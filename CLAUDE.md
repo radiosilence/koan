@@ -119,6 +119,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
 | `audio/device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
 | `audio/replaygain.rs` | EBU R128 loudness scanning, gain application via lofty |
+| `audio/dsp/` | EQ and convolution per output device, on the decode thread. No profile, no chain: bit-perfect stays checkable. Delays trimmed and flushed so the timeline counts output time. `autoeq.rs` parses `ParametricEQ.txt` |
 | `audio/viz.rs` | `VizBuffer` (ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI), `VizLevels` (the spectrum as three bands, for callers that poll often and draw little) |
 | `audio/analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold. Runs at configurable FPS |
 | `audio/streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
@@ -305,6 +306,7 @@ follows the top of the stack in front — see `TabShell`.
 | `rayon` | Data parallelism for scan + sync |
 | `ebur128` | EBU R128 loudness measurement for ReplayGain |
 | `realfft` | FFT for spectrum analyzer |
+| `biquad` / `fft-convolver` / `rubato` | Parametric EQ, FIR convolution, resampling to an impulse response's rate |
 | `async-graphql` | GraphQL schema derivation, execution engine |
 | `axum` | HTTP server for GraphQL/Subsonic API |
 
@@ -313,7 +315,7 @@ follows the top of the stack in front — see `TabShell`.
 Active plans live in `.claude/plans/`. Key upcoming work:
 
 1. **Tag editing** (plan 04) — vimv-style (TSV + $EDITOR) first, TUI inline editor second.
-2. **DSP pipeline** (plan 02) — EQ, headphone profiles, crossfeed. Inserts between decode and ring buffer.
+2. **DSP** (plan 02) — EQ and convolution are in (`audio/dsp/`); AutoEQ search/download, settings in the apps and crossfeed remain.
 3. **Artist metadata** (plan 09) — bios, images, similar artists from MusicBrainz/Last.fm.
 
 See `.claude/plans/README.md` for dependency graph and status.
