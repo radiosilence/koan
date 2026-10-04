@@ -218,6 +218,8 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         pool: pool.clone(),
     };
 
+    crate::auth::set_signing_keys(Arc::new(private_pem.clone()), Arc::new(public_pem.clone()));
+
     let auth_route_state = AuthRouteState {
         pool: pool.clone(),
         private_pem: Arc::new(private_pem),

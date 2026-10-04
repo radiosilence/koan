@@ -1,10 +1,12 @@
 //! Invite links: an account's server and username, and a token the app trades
 //! for an API key of its own.
 //!
-//! The token is a JWT signed with the server's key, naming the account and
-//! when it stops working. Nothing is stored when one is made, so an admin can
-//! make another at any time, and one link signs in as many devices as the
-//! account holder has until it expires. The server checks its own signature
+//! The token is a JWT signed with the server's key, naming the account, a mark
+//! of its password hash, and when it stops working. Nothing is stored when one
+//! is made, so an admin can make another at any time, and one link signs in as
+//! many devices as the account holder has until it expires, or until the
+//! account's password changes, which changes the mark: a reset is how a link
+//! sent to the wrong place is withdrawn. The server checks its own signature
 //! when the app redeems it (`redeem`), and answers with a new API key: from
 //! then on the app signs in the OpenSubsonic way, and every device it was
 //! opened on has a key of its own to revoke.
@@ -258,30 +260,39 @@ struct Claims {
     /// account it was made for.
     sub: i64,
     username: String,
+    /// `password_mark` of the account's password hash when the token was
+    /// made.
+    pwd: String,
     iat: u64,
     exp: u64,
 }
 
-/// A token for `user_id`, signed with the server's private key.
+/// Enough of a digest of the password hash to tell when it changed, and too
+/// little to say anything about the password.
+fn password_mark(password_hash: &str) -> String {
+    auth::sha256_hex(password_hash)[..16].to_owned()
+}
+
+/// A token for the account `user_id`, signed with the server's private key.
 pub fn mint_token(
+    conn: &Connection,
     private_pem: &[u8],
     user_id: i64,
-    username: &str,
-) -> Result<String, auth::AuthError> {
+) -> Result<String, AccountError> {
+    let user = users::get_user_by_id(conn, user_id)
+        .map_err(other)?
+        .ok_or_else(|| AccountError::NoSuchUser(user_id.to_string()))?;
     let now = auth::now_unix();
     let claims = Claims {
         typ: TOKEN_TYP.into(),
-        sub: user_id,
-        username: username.to_owned(),
+        sub: user.id,
+        username: user.username,
+        pwd: password_mark(&user.password_hash),
         iat: now,
         exp: now + TOKEN_TTL_SECS,
     };
-    let key = EncodingKey::from_ed_pem(private_pem)?;
-    Ok(jsonwebtoken::encode(
-        &Header::new(Algorithm::EdDSA),
-        &claims,
-        &key,
-    )?)
+    let key = EncodingKey::from_ed_pem(private_pem).map_err(other)?;
+    jsonwebtoken::encode(&Header::new(Algorithm::EdDSA), &claims, &key).map_err(other)
 }
 
 /// What redeeming an invite gives the app: the account, and a key to sign in
@@ -312,6 +323,7 @@ pub fn redeem(
     let user = users::get_user_by_id(conn, claims.sub)
         .map_err(other)?
         .filter(|u| u.username == claims.username)
+        .filter(|u| password_mark(&u.password_hash) == claims.pwd)
         .ok_or(AccountError::BadInvite)?;
     let name: String = device
         .trim()
@@ -583,7 +595,7 @@ mod tests {
         let conn = &db.conn;
         let (private, public) = auth::generate_keypair_pem().unwrap();
         let made = create_account(conn, "sarita", Role::User).unwrap();
-        let token = mint_token(private.as_bytes(), made.id, "sarita").unwrap();
+        let token = mint_token(conn, private.as_bytes(), made.id).unwrap();
 
         let phone = redeem(conn, public.as_bytes(), &token, "Sarita's iPhone").unwrap();
         let mac = redeem(conn, public.as_bytes(), &token, "").unwrap();
@@ -620,6 +632,22 @@ mod tests {
             redeem(conn, public.as_bytes(), &token, "x"),
             Err(AccountError::BadInvite)
         ));
+    }
+
+    #[test]
+    fn a_new_password_withdraws_links_already_sent() {
+        let (_dir, db) = db();
+        let conn = &db.conn;
+        let (private, public) = auth::generate_keypair_pem().unwrap();
+        let made = create_account(conn, "sarita", Role::User).unwrap();
+        let sent = mint_token(conn, private.as_bytes(), made.id).unwrap();
+        set_password(conn, "sarita", None).unwrap();
+        assert!(matches!(
+            redeem(conn, public.as_bytes(), &sent, "x"),
+            Err(AccountError::BadInvite)
+        ));
+        let again = mint_token(conn, private.as_bytes(), made.id).unwrap();
+        redeem(conn, public.as_bytes(), &again, "x").unwrap();
     }
 
     #[test]

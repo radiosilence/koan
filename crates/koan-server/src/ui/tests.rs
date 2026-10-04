@@ -757,7 +757,7 @@ async fn admins_create_invite_and_remove_accounts() {
     // The link's token is signed with this server's key and redeems for a key.
     let joined = koan_core::invite::redeem(
         &db.conn,
-        &f.state.public_pem,
+        &crate::auth::signing_keys().unwrap().1,
         invite.token.as_deref().unwrap(),
         "phone",
     )

@@ -1239,7 +1239,7 @@ impl MutationRoot {
         let server = invite_server(ctx, server)?;
         with_db(ctx, move |db| {
             let made = koan_core::invite::create_account(&db.conn, &username, role.into())?;
-            let token = invite_token(made.id, username.trim())?;
+            let token = invite_token(db, made.id)?;
             Ok(koan_core::invite::Invite::with_token(
                 &server,
                 username.trim(),
@@ -1272,7 +1272,7 @@ impl MutationRoot {
             } else {
                 None
             };
-            let token = invite_token(user.id, &username)?;
+            let token = invite_token(db, user.id)?;
             Ok(koan_core::invite::Invite::with_token(
                 &server,
                 &username,
@@ -1506,9 +1506,12 @@ fn reach(sent: &[String], queued: &[String]) -> String {
 /// Where an invite points: the caller's choice, `sharing.public_url`, or the
 /// address the request came in on.
 /// A token for an invite, signed with the server's key.
-fn invite_token(user_id: i64, username: &str) -> Result<String, koan_core::auth::AuthError> {
-    let (private, _) = koan_core::auth::load_or_generate_keypair()?;
-    koan_core::invite::mint_token(&private, user_id, username)
+fn invite_token(
+    db: &koan_core::db::connection::Database,
+    user_id: i64,
+) -> async_graphql::Result<String> {
+    let keys = crate::auth::signing_keys()?;
+    Ok(koan_core::invite::mint_token(&db.conn, &keys.0, user_id)?)
 }
 
 fn invite_server(ctx: &Context<'_>, server: Option<String>) -> async_graphql::Result<String> {

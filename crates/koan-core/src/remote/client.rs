@@ -742,6 +742,12 @@ impl SubsonicClient {
             .ok_or(SubsonicError::BadResponse)
     }
 
+    /// Revoke the API key this client signs in with (`koanRevokeKey`).
+    pub fn koan_revoke_own_key(&self) -> Result<(), SubsonicError> {
+        self.get("koanRevokeKey")?;
+        Ok(())
+    }
+
     pub fn koan_set_user_role(&self, username: &str, role: &str) -> Result<(), SubsonicError> {
         self.get_with_params("koanSetUserRole", &[("username", username), ("role", role)])?;
         Ok(())

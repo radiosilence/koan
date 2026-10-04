@@ -1022,10 +1022,35 @@ pub fn join_with_invite(invite: &crate::invite::Invite) -> Result<(), SignInErro
         (Some(token), _) => {
             let device = crate::remote::link::LinkIdentity::this_device(None).name;
             let joined = crate::remote::client::redeem_invite(url, token, &device)?;
-            let key = Credential::ApiKey(joined.api_key);
-            SubsonicClient::from_auth(SubsonicAuth::with(url, &joined.username, key.clone()))
-                .ping()?;
-            remember_remote(url, &joined.username, key)
+            // The key this device held on the same account, which the new one
+            // replaces: left valid, it would sit in the key list unused.
+            let replaced = Config::load()
+                .ok()
+                .filter(|c| c.remote.url.trim_end_matches('/') == url)
+                .filter(|c| c.remote.username == joined.username)
+                .map(|c| c.remote.api_key)
+                .filter(|k| !k.is_empty() && *k != joined.api_key);
+            // Revoked best-effort: a key signs in to give itself up.
+            let revoke = |key: &str| {
+                let credential = Credential::ApiKey(key.to_string());
+                let client = SubsonicClient::from_auth(SubsonicAuth::with(
+                    url,
+                    &joined.username,
+                    credential,
+                ));
+                if let Err(e) = client.koan_revoke_own_key() {
+                    log::warn!("could not revoke an unused API key: {e}");
+                }
+            };
+            let credential = Credential::ApiKey(joined.api_key.clone());
+            if let Err(e) = remember_remote(url, &joined.username, credential) {
+                revoke(&joined.api_key);
+                return Err(e);
+            }
+            if let Some(old) = replaced {
+                revoke(&old);
+            }
+            Ok(())
         }
         (None, Some(password)) => set_remote_credentials(url, &invite.username, password),
         (None, None) => Err(SignInError::Rejected(SubsonicError::BadResponse)),

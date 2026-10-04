@@ -120,8 +120,9 @@ fn token_invite(
     username: &str,
     password: Option<&str>,
 ) -> Result<Invite, AccountError> {
-    let token = invite::mint_token(&s.auth.private_pem, id, username)
-        .map_err(|e| AccountError::Other(Box::new(e)))?;
+    let keys = crate::auth::signing_keys().map_err(|e| AccountError::Other(Box::new(e)))?;
+    let db = open(&s.pool).ok_or_else(|| AccountError::Other("no database".into()))?;
+    let token = invite::mint_token(&db.conn, &keys.0, id)?;
     Ok(Invite::with_token(server, username, &token, password))
 }
 

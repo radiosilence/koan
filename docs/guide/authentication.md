@@ -76,10 +76,14 @@ does not see it.
 
 The token is a JWT signed with the server's key, naming the account and good for
 a week. Nothing is stored when one is made, so an admin can make another at any
-time; a token cannot be withdrawn before it expires, short of deleting the
-account or rotating the server's keys (`koan auth regenerate-keys`, which also
-signs everyone out). Links from servers older than tokens, which carried the
-password, are no longer read.
+time. It also carries a short digest of the account's password hash, so any
+password change withdraws every link sent before it: a reset is how a link that
+went to the wrong place is taken back. Links from servers older than tokens,
+which carried the password, are no longer read.
+
+Opening a link again on a device that already joined replaces that device's key
+and revokes the old one, through `/rest/koanRevokeKey`, which revokes the key
+the request signs in with.
 
 Creating an account generates its password, and the email carries it once, for
 the web UI and other Subsonic apps. Inviting an existing account sends only the
@@ -241,6 +245,8 @@ koan subsonic status
 koan subsonic disable
 ```
 
-Signed-in users manage their own keys in the web UI under **API keys**. `readonly` accounts, and their keys, get error 50 from every endpoint that writes.
+Signed-in users manage their own keys in the web UI under **API keys**.
+
+A koan app that joined by invite keeps its key as `remote.api_key` in `config.local.toml`, and signs in with it ahead of any password, `KOAN_REMOTE__PASSWORD` included. Sign out to go back to a password. `readonly` accounts, and their keys, get error 50 from every endpoint that writes.
 
 `koan play --server` streams audio over `/rest/stream` and signs those requests with the `[subsonic]` credentials from the machine it runs on, so they have to match the server's.
