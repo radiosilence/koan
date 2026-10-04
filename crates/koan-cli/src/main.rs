@@ -210,8 +210,7 @@ enum Commands {
     #[command(subcommand)]
     Cache(CacheCommands),
     /// Manage authentication (users, tokens)
-    #[command(subcommand)]
-    Auth(AuthCommands),
+    Auth(AuthArgs),
     /// Manage kōan's own Subsonic REST API
     #[command(subcommand)]
     Subsonic(SubsonicCommands),
@@ -275,10 +274,24 @@ enum SubsonicCommands {
     Disable,
 }
 
+#[derive(clap::Args)]
+struct AuthArgs {
+    /// Never prompt: credentials come from KOAN_USERNAME and KOAN_PASSWORD,
+    /// confirmations from --yes. Implied when stdin is not a terminal
+    #[arg(long, global = true)]
+    non_interactive: bool,
+    #[command(subcommand)]
+    command: AuthCommands,
+}
+
 #[derive(Subcommand)]
 enum AuthCommands {
     /// Initial setup — generate keypair and create first admin user
-    Setup,
+    Setup {
+        /// Save the new credentials to 1Password without asking
+        #[arg(long)]
+        save_to_1password: bool,
+    },
     /// Create a new user
     CreateUser {
         /// Username
@@ -287,11 +300,17 @@ enum AuthCommands {
         /// Role (admin, user, readonly)
         #[arg(long, default_value = "user")]
         role: String,
+        /// Save the new credentials to 1Password without asking
+        #[arg(long)]
+        save_to_1password: bool,
     },
     /// Delete a user
     DeleteUser {
         /// Username to delete
         username: String,
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
     /// List all users
     ListUsers,
@@ -314,6 +333,9 @@ enum AuthCommands {
     ResetPassword {
         /// Username
         username: String,
+        /// Save the new credentials to 1Password without asking
+        #[arg(long)]
+        save_to_1password: bool,
     },
     /// Change a user's role
     SetRole {
@@ -338,9 +360,17 @@ enum AuthCommands {
     #[command(subcommand)]
     ApiKey(ApiKeyCommands),
     /// Regenerate Ed25519 keypair (invalidates all existing tokens)
-    RegenerateKeys,
+    RegenerateKeys {
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
     /// Delete all auth state: keys, users and tokens
-    Reset,
+    Reset {
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -471,40 +501,55 @@ fn main() {
                 }
             }
         },
-        Some(Commands::Auth(sub)) => match sub {
-            AuthCommands::Setup => commands::cmd_auth_setup(),
-            AuthCommands::CreateUser { username, role } => {
-                commands::cmd_auth_create_user(&username, &role);
-            }
-            AuthCommands::DeleteUser { username } => commands::cmd_auth_delete_user(&username),
-            AuthCommands::ListUsers => commands::cmd_auth_list_users(),
-            AuthCommands::Login { server, username } => {
-                commands::cmd_auth_login(&server, &username);
-            }
-            AuthCommands::Logout { server } => commands::cmd_auth_logout(&server),
-            AuthCommands::ResetPassword { username } => {
-                commands::cmd_auth_reset_password(&username);
-            }
-            AuthCommands::SetRole { username, role } => {
-                commands::cmd_auth_set_role(&username, &role);
-            }
-            AuthCommands::Invite {
-                username,
-                server,
-                reset_password,
-            } => commands::cmd_auth_invite(&username, server.as_deref(), reset_password),
-            AuthCommands::ApiKey(sub) => match sub {
-                ApiKeyCommands::Create { username, name } => {
-                    commands::cmd_auth_api_key_create(&username, &name);
+        Some(Commands::Auth(AuthArgs {
+            non_interactive,
+            command,
+        })) => {
+            let tty = commands::Tty::detect(non_interactive);
+            match command {
+                AuthCommands::Setup { save_to_1password } => {
+                    commands::cmd_auth_setup(tty, save_to_1password);
                 }
-                ApiKeyCommands::List { username } => {
-                    commands::cmd_auth_api_key_list(username.as_deref());
+                AuthCommands::CreateUser {
+                    username,
+                    role,
+                    save_to_1password,
+                } => commands::cmd_auth_create_user(tty, &username, &role, save_to_1password),
+                AuthCommands::DeleteUser { username, yes } => {
+                    commands::cmd_auth_delete_user(tty, &username, yes);
                 }
-                ApiKeyCommands::Revoke { id } => commands::cmd_auth_api_key_revoke(id),
-            },
-            AuthCommands::RegenerateKeys => commands::cmd_auth_regenerate_keys(),
-            AuthCommands::Reset => commands::cmd_auth_reset(),
-        },
+                AuthCommands::ListUsers => commands::cmd_auth_list_users(),
+                AuthCommands::Login { server, username } => {
+                    commands::cmd_auth_login(tty, &server, &username);
+                }
+                AuthCommands::Logout { server } => commands::cmd_auth_logout(&server),
+                AuthCommands::ResetPassword {
+                    username,
+                    save_to_1password,
+                } => commands::cmd_auth_reset_password(tty, &username, save_to_1password),
+                AuthCommands::SetRole { username, role } => {
+                    commands::cmd_auth_set_role(&username, &role);
+                }
+                AuthCommands::Invite {
+                    username,
+                    server,
+                    reset_password,
+                } => commands::cmd_auth_invite(&username, server.as_deref(), reset_password),
+                AuthCommands::ApiKey(sub) => match sub {
+                    ApiKeyCommands::Create { username, name } => {
+                        commands::cmd_auth_api_key_create(&username, &name);
+                    }
+                    ApiKeyCommands::List { username } => {
+                        commands::cmd_auth_api_key_list(username.as_deref());
+                    }
+                    ApiKeyCommands::Revoke { id } => commands::cmd_auth_api_key_revoke(id),
+                },
+                AuthCommands::RegenerateKeys { yes } => {
+                    commands::cmd_auth_regenerate_keys(tty, yes)
+                }
+                AuthCommands::Reset { yes } => commands::cmd_auth_reset(tty, yes),
+            }
+        }
         Some(Commands::Subsonic(sub)) => match sub {
             SubsonicCommands::Setup { username } => commands::cmd_subsonic_setup(&username),
             SubsonicCommands::Status => commands::cmd_subsonic_status(),

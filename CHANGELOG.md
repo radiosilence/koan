@@ -15,6 +15,7 @@
 
 ### Changed
 
+- **`koan auth` does not prompt without a terminal.** Run from a script, CI or an agent, its prompts took their defaults: `koan auth setup` saved the new account to 1Password and overwrote an existing `koan@<hostname>` item. With stdin not a terminal, or with `--non-interactive`, credentials come only from `KOAN_USERNAME` and `KOAN_PASSWORD` (`login` now reads `KOAN_PASSWORD` too), and a missing one fails naming it. 1Password is written only with `--save-to-1password`, and `delete-user`, `regenerate-keys` and `reset` need `--yes`.
 - **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
 
