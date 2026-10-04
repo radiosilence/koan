@@ -8,6 +8,10 @@
 - **A command reaches a suspended iPhone after the app has been reinstalled.** A reinstall gives the app a new device id and leaves the old one's push token behind under the same name, so the server answered "several can be reached: iPhone, iPhone" and sent no push. It now wakes the device seen most recently.
 - **ALAC tracks from a koan server no longer show as "BIN".** The server had no suffix or content type for ALAC, PCM or `.aif`, so it published those tracks as `bin`, `application/octet-stream`, and an app syncing from it stored `bin` as the codec. Every codec the indexer records now has its suffix and content type. Since a suffix cannot tell ALAC from AAC (both are `m4a`), a koan server also sends the stored codec in a `codec` attribute, which koan clients prefer over the suffix. Tracks already synced pick up the correct codec on the next full library sync.
 
+### Added
+
+- **The album and artist browsers offer the same filters on every client.** The macOS and iOS apps filter by favourites, lossless, codec, release years and genre, behind one control that shows how many are on; the filters persist across launches and apply to both browsers. The web UI's toolbar gains the name filter the apps had, carried in the URL with the others. Every client narrows in the same SQL query.
+
 ### Changed
 
 - **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.

@@ -573,6 +573,7 @@ impl KoanEngine {
     pub async fn artists(
         self: Arc<Self>,
         search: Option<String>,
+        filter: BrowseFilter,
     ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -580,6 +581,8 @@ impl KoanEngine {
                 &db.conn,
                 &queries::ArtistQuery {
                     search: trimmed(&search),
+                    favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
+                    filter: album_filter(&filter),
                     ..Default::default()
                 },
             )
@@ -599,7 +602,8 @@ impl KoanEngine {
         .await
     }
 
-    /// The library's albums, narrowed by `search` and ordered by `sort`.
+    /// The library's albums, narrowed by `search` and `filter` and ordered by
+    /// `sort`.
     ///
     /// Both run in SQL. A client that narrows or sorts what it has already been
     /// handed pays to read and marshal every album in the library on each
@@ -617,6 +621,7 @@ impl KoanEngine {
         sort: AlbumSort,
         seed: i64,
         search: Option<String>,
+        filter: BrowseFilter,
     ) -> Result<Vec<Album>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -626,11 +631,25 @@ impl KoanEngine {
                     artist_id,
                     search: trimmed(&search),
                     order: album_order(sort, seed),
+                    favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
+                    filter: album_filter(&filter),
                     ..Default::default()
                 },
             )
             .map_err(db_err)?;
             Ok(rows.into_iter().map(Album::from).collect())
+        })
+        .await
+    }
+
+    /// What the browsers' codec and genre filters offer.
+    pub async fn browse_choices(self: Arc<Self>) -> Result<BrowseChoices, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(BrowseChoices {
+                codecs: queries::album_codecs(&db.conn).map_err(db_err)?,
+                genres: queries::genres(&db.conn, GENRES_OFFERED).map_err(db_err)?,
+            })
         })
         .await
     }
@@ -3935,6 +3954,19 @@ fn parse_qids(ids: &[String]) -> Result<Vec<QueueItemId>, KoanError> {
 /// filter, and neither is an empty box.
 fn trimmed(search: &Option<String>) -> Option<&str> {
     search.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// How many genres the browsers' genre filter offers, most common first.
+const GENRES_OFFERED: u32 = 80;
+
+fn album_filter(f: &BrowseFilter) -> queries::AlbumFilter<'_> {
+    queries::AlbumFilter {
+        lossless: f.lossless,
+        codec: trimmed(&f.codec),
+        year_from: f.year_from,
+        year_to: f.year_to,
+        genre: trimmed(&f.genre),
+    }
 }
 
 /// The browser's sort as an order the database can apply.
