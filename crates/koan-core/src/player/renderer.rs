@@ -637,8 +637,14 @@ impl Player {
                 }
             })
         });
-        let encoder = stream::start(consumer, format, pipe.clone(), self.timeline.clone())
-            .map_err(|e| PlayerError::Renderer(e.to_string()))?;
+        let encoder = stream::start(
+            consumer,
+            format,
+            pipe.clone(),
+            self.timeline.clone(),
+            decode.thread(),
+        )
+        .map_err(|e| PlayerError::Renderer(e.to_string()))?;
         let processed = Processed {
             pipe: pipe.clone(),
             decode,

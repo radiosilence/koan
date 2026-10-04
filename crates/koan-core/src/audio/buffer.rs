@@ -63,6 +63,13 @@ impl DecodeHandle {
         }
     }
 
+    /// The decode thread, to wake when its ring has room. An output that
+    /// drains the ring faster than it plays, as an encoder for a renderer
+    /// does, would otherwise wait out the decoder's park on a full ring.
+    pub fn thread(&self) -> Option<thread::Thread> {
+        self.thread.as_ref().map(|t| t.thread().clone())
+    }
+
     /// Create a DecodeHandle with no real thread (for tests only).
     #[cfg(test)]
     pub fn new_for_test(stop: Arc<AtomicBool>) -> Self {

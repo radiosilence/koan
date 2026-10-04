@@ -162,6 +162,11 @@ impl Pipe {
         if state.closed {
             return false;
         }
+        log::debug!(
+            "upnp: chunk at frame {} queued behind {} bytes",
+            chunk.start,
+            state.queued
+        );
         state.queued += chunk.bytes.len();
         state.queue.push_back(Arc::new(chunk));
         drop(state);
@@ -259,14 +264,36 @@ pub(crate) fn serve(stream: &mut TcpStream, req: &Request, pipe: &Pipe) -> std::
         sent: String::new(),
     };
     let mut reader = pipe.connect();
-    out.write(&header)?;
-    while let Some(chunk) = pipe.next(&mut reader) {
-        if let Some(track) = chunk.track {
-            out.title = (pipe.title)(track);
+    log::info!(
+        "upnp: stream connection {} ({}{}), from {}ms",
+        reader.connection,
+        req.header("User-Agent").unwrap_or("no agent"),
+        req.header("Range")
+            .map(|r| format!(", {r}"))
+            .unwrap_or_default(),
+        pipe.origin_ms()
+    );
+    let mut sent = 0usize;
+    let result = (|| {
+        out.write(&header)?;
+        while let Some(chunk) = pipe.next(&mut reader) {
+            if let Some(track) = chunk.track {
+                out.title = (pipe.title)(track);
+            }
+            out.write(&chunk.bytes)?;
+            sent += chunk.bytes.len();
         }
-        out.write(&chunk.bytes)?;
-    }
-    Ok(())
+        Ok::<_, std::io::Error>(())
+    })();
+    log::info!(
+        "upnp: stream connection {} ended after {sent} bytes: {}",
+        reader.connection,
+        match &result {
+            Err(e) => format!("the renderer hung up ({e})"),
+            Ok(()) => "the stream ended or another connection replaced it".into(),
+        }
+    );
+    result
 }
 
 /// Audio bytes with ICY metadata blocks between them, when the renderer asked
@@ -332,18 +359,30 @@ impl Drop for Encoder {
 }
 
 /// Drain `consumer` into `pipe`, encoded as `format` says, until the decoder
-/// lets go of the ring or the pipe is closed.
+/// lets go of the ring or the pipe is closed. `decoder` is woken whenever the
+/// ring has room: a decoder parked on a full ring waits for as long as half
+/// of it takes to play, and the renderer reads faster than that at first.
 pub fn start(
     consumer: rtrb::Consumer<f32>,
     format: Format,
     pipe: Arc<Pipe>,
     timeline: Arc<PlaybackTimeline>,
+    decoder: Option<thread::Thread>,
 ) -> std::io::Result<Encoder> {
     let mut codec = Codec::new(format).map_err(std::io::Error::other)?;
     pipe.set_header(codec.header());
     let thread = thread::Builder::new()
         .name("koan-upnp-encode".into())
-        .spawn(move || encode(consumer, format, &mut codec, &pipe, &timeline))?;
+        .spawn(move || {
+            encode(
+                consumer,
+                format,
+                &mut codec,
+                &pipe,
+                &timeline,
+                decoder.as_ref(),
+            )
+        })?;
     Ok(Encoder {
         thread: Some(thread),
     })
@@ -355,6 +394,7 @@ fn encode(
     codec: &mut Codec,
     pipe: &Pipe,
     timeline: &PlaybackTimeline,
+    decoder: Option<&thread::Thread>,
 ) {
     let channels = format.channels as usize;
     let block = BLOCK * channels;
@@ -369,6 +409,9 @@ fn encode(
             && let Ok(chunk) = consumer.read_chunk(ready)
         {
             samples.extend(chunk);
+            if let Some(decoder) = decoder {
+                decoder.unpark();
+            }
         }
         let ended = consumer.is_abandoned() && consumer.is_empty();
         if samples.len() == block || ended && !samples.is_empty() {
@@ -394,6 +437,9 @@ fn encode(
         }
         if pipe.state.lock().closed {
             return;
+        }
+        if ready == 0 {
+            log::debug!("upnp: encoder waiting on an empty ring at frame {frames}");
         }
         // An empty ring is the start of a session or its end; while it plays,
         // the renderer's reading is what this thread waits on, in `push`.
@@ -436,7 +482,7 @@ impl Dither {
 
 enum Codec {
     Flac {
-        config: flacenc::error::Verified<flacenc::config::Encoder>,
+        config: Box<flacenc::error::Verified<flacenc::config::Encoder>>,
         info: StreamInfo,
         buffer: FrameBuf,
         frame: usize,
@@ -459,9 +505,11 @@ impl Codec {
                 info.set_block_sizes(BLOCK, BLOCK)
                     .map_err(|e| e.to_string())?;
                 Self::Flac {
-                    config: flacenc::config::Encoder::default()
-                        .into_verified()
-                        .map_err(|(_, e)| e.to_string())?,
+                    config: Box::new(
+                        flacenc::config::Encoder::default()
+                            .into_verified()
+                            .map_err(|(_, e)| e.to_string())?,
+                    ),
                     info,
                     buffer: FrameBuf::with_size(format.channels as usize, BLOCK)
                         .map_err(|e| e.to_string())?,
@@ -601,7 +649,14 @@ mod tests {
         }
         drop(producer);
         let pipe = Pipe::new(format, "audio/flac", |_| String::new());
-        let encoder = start(consumer, format, pipe.clone(), PlaybackTimeline::new()).unwrap();
+        let encoder = start(
+            consumer,
+            format,
+            pipe.clone(),
+            PlaybackTimeline::new(),
+            None,
+        )
+        .unwrap();
         let mut bytes = pipe.state.lock().header.clone();
         let mut reader = pipe.connect();
         while let Some(chunk) = pipe.next(&mut reader) {
@@ -653,6 +708,65 @@ mod tests {
         assert_eq!(block.len(), 1 + block[0] as usize * 16);
         assert!(block[1..].starts_with(b"StreamTitle='Polar Bear"));
         assert_eq!(icy_block("it's").len() % 16, 1);
+    }
+
+    /// Kodi's pattern: a probe that hangs up, a second connection, and a
+    /// third opened while the second is still reading, which is the one it
+    /// plays. The third must go on getting the stream after the replay.
+    #[test]
+    fn the_connection_that_replaces_an_open_one_is_fed_past_the_replay() {
+        use std::io::Read;
+        let format = Format {
+            encoding: Encoding::Wav,
+            rate: 44_100,
+            channels: 2,
+            bits: 16,
+        };
+        let (mut producer, consumer) = rtrb::RingBuffer::new(1 << 16);
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let feeding = stop.clone();
+        let feeder = thread::spawn(move || {
+            while !feeding.load(Ordering::Relaxed) {
+                if producer.push(0.25).is_err() {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+        });
+        let pipe = Pipe::new(format, "audio/wav", |_| String::new());
+        let _encoder = start(
+            consumer,
+            format,
+            pipe.clone(),
+            PlaybackTimeline::new(),
+            None,
+        )
+        .unwrap();
+        let listener = super::super::serve::Listener::start(Box::new(|_, _| {})).unwrap();
+        let token = listener.add(super::super::serve::Served::Stream {
+            pipe: pipe.clone(),
+            art: Default::default(),
+        });
+        let open = || {
+            let mut s = TcpStream::connect(("127.0.0.1", listener.port())).unwrap();
+            write!(s, "GET /t/{token}.wav HTTP/1.1\r\nRange: bytes=0-\r\n\r\n").unwrap();
+            s
+        };
+        let read = |s: &mut TcpStream, n: usize| {
+            let mut buf = vec![0u8; n];
+            s.read_exact(&mut buf).unwrap();
+        };
+        let mut probe = open();
+        read(&mut probe, 160_000);
+        drop(probe);
+        let mut second = open();
+        read(&mut second, 340_000);
+        let mut third = open();
+        // The replay, and well past it.
+        read(&mut third, 2_000_000);
+        drop(second);
+        stop.store(true, Ordering::Relaxed);
+        pipe.close();
+        feeder.join().unwrap();
     }
 
     #[test]
