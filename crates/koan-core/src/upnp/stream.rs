@@ -8,16 +8,20 @@
 //! served on a token like a file. Track changes inside the session are the
 //! timeline's boundaries; the renderer is never asked to switch.
 //!
-//! The renderer paces the stream. Encoded bytes queue in a `Pipe` of bounded
-//! size, so a renderer that stops reading (paused, or its buffer full) holds
-//! the encoder, which holds the ring, which holds the decoder.
+//! The renderer paces the stream. Encoded chunks go into a `Pipe`, a log
+//! that every open connection reads at its own place. The encoder runs at
+//! most `AHEAD` bytes past the connection furthest along, so a renderer that
+//! stops reading (paused, or its buffer full) holds the encoder, which holds
+//! the ring, which holds the decoder.
 //!
-//! Renderers often open a URL more than once before playing it: a probe that
-//! reads the first kilobytes and hangs up, then the real fetch. Until
-//! `EARLY` bytes have gone out, a new connection is served the stream from
-//! its start. After that a new connection joins where the stream is, and
-//! `Pipe::origin_ms` says how far into the stream that was, which is what the
-//! renderer's position counts from.
+//! Renderers open a URL more than once, and not one after another: Kodi opens
+//! one connection to play from and another that reads a few hundred kilobytes
+//! and hangs up, at the same moment. So no connection replaces another, and
+//! until one has read `EARLY` bytes a new connection starts at the top of the
+//! stream. After that a new one is a reconnect, and joins where the stream
+//! is; `Pipe::origin_ms` says how far into the stream that was, which is
+//! what the renderer's position then counts from. A connection that falls
+//! more than `AHEAD` behind the furthest skips forward.
 
 use std::collections::VecDeque;
 use std::io::Write;
@@ -39,11 +43,12 @@ use crate::player::state::QueueItemId;
 /// Frames per FLAC block, and per chunk of the pipe.
 const BLOCK: usize = 4096;
 
-/// How many encoded bytes wait for the renderer before the encoder stops.
-const QUEUED: usize = 512 * 1024;
+/// How far the encoder runs ahead of the connection furthest along, and how
+/// far behind it a connection may fall, in bytes.
+const AHEAD: usize = 512 * 1024;
 
-/// Bytes served before a reconnect joins the stream where it is rather than
-/// at its start.
+/// How far a connection reads before a new one joins the stream where it is
+/// rather than at its start.
 const EARLY: usize = 1024 * 1024;
 
 /// Bytes of audio between two ICY metadata blocks.
@@ -84,30 +89,71 @@ impl Format {
 
 struct Chunk {
     bytes: Vec<u8>,
+    /// Bytes of the stream before this chunk, the header aside.
+    offset: usize,
     /// Frames of the stream before this chunk's first.
     start: u64,
-    frames: u64,
     /// The track playing at this chunk's first frame.
     track: Option<QueueItemId>,
+}
+
+impl Chunk {
+    fn end(&self) -> usize {
+        self.offset + self.bytes.len()
+    }
 }
 
 #[derive(Default)]
 struct State {
     header: Vec<u8>,
-    queue: VecDeque<Arc<Chunk>>,
-    queued: usize,
-    /// Every chunk served, while fewer than `EARLY` bytes have been.
-    history: Option<Vec<Arc<Chunk>>>,
-    served: usize,
-    /// The first frame of the next chunk a connection will be served.
+    /// The chunks some connection may still read, oldest first.
+    log: VecDeque<Arc<Chunk>>,
+    /// The index of `log`'s first chunk in the stream.
+    base: usize,
+    /// Each open connection and the index of the next chunk it reads.
+    readers: Vec<(u64, usize)>,
+    /// The furthest any connection has read, as the index of the next chunk.
+    read_to: usize,
+    /// Bytes encoded so far, and the frame the next chunk starts at.
+    written: usize,
     next_frame: u64,
-    /// The newest connection, the only one served.
-    connection: u64,
+    connections: u64,
     finished: bool,
     closed: bool,
 }
 
-/// Between the encoder and whichever connection the renderer has open.
+impl State {
+    /// The next chunk after the furthest any connection has read, and how
+    /// far into the stream that is.
+    fn furthest(&self) -> (usize, usize) {
+        let index = self.read_to.max(self.base);
+        let offset = self
+            .log
+            .get(index - self.base)
+            .map_or(self.written, |c| c.offset);
+        (index, offset)
+    }
+
+    /// Whether a new connection starts at the top: nobody has read far yet.
+    fn early(&self) -> bool {
+        self.base == 0 && self.furthest().1 <= EARLY
+    }
+
+    /// Drop what no connection can be served any more: everything before
+    /// `AHEAD` behind the furthest, once past the early part.
+    fn trim(&mut self) {
+        if self.early() {
+            return;
+        }
+        let (_, furthest) = self.furthest();
+        while self.log.front().is_some_and(|c| c.end() + AHEAD < furthest) {
+            self.log.pop_front();
+            self.base += 1;
+        }
+    }
+}
+
+/// Between the encoder and the connections the renderer has open.
 pub struct Pipe {
     state: Mutex<State>,
     changed: Condvar,
@@ -124,10 +170,7 @@ impl Pipe {
         title: impl Fn(QueueItemId) -> String + Send + Sync + 'static,
     ) -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new(State {
-                history: Some(Vec::new()),
-                ..Default::default()
-            }),
+            state: Mutex::default(),
             changed: Condvar::new(),
             rate: format.rate,
             origin: AtomicU64::new(0),
@@ -152,29 +195,32 @@ impl Pipe {
         self.state.lock().header = header;
     }
 
-    /// Queue a chunk, waiting while the renderer has enough. False once the
-    /// pipe is closed.
-    fn push(&self, chunk: Chunk) -> bool {
+    /// Add a chunk, waiting while the encoder is `AHEAD` of every connection.
+    /// False once the pipe is closed.
+    fn push(&self, bytes: Vec<u8>, start: u64, frames: u64, track: Option<QueueItemId>) -> bool {
         let mut state = self.state.lock();
-        while state.queued >= QUEUED && !state.closed {
+        while state.written >= state.furthest().1 + AHEAD && !state.closed {
             self.changed.wait(&mut state);
         }
         if state.closed {
             return false;
         }
-        log::debug!(
-            "upnp: chunk at frame {} queued behind {} bytes",
-            chunk.start,
-            state.queued
-        );
-        state.queued += chunk.bytes.len();
-        state.queue.push_back(Arc::new(chunk));
+        let offset = state.written;
+        state.written += bytes.len();
+        state.next_frame = start + frames;
+        state.log.push_back(Arc::new(Chunk {
+            bytes,
+            offset,
+            start,
+            track,
+        }));
+        state.trim();
         drop(state);
         self.changed.notify_all();
         true
     }
 
-    /// Everything has been queued: a connection that drains the queue ends.
+    /// Everything has been written: a connection that reaches the end ends.
     fn finish(&self) {
         self.state.lock().finished = true;
         self.changed.notify_all();
@@ -182,43 +228,47 @@ impl Pipe {
 
     fn connect(&self) -> Reader {
         let mut state = self.state.lock();
-        state.connection += 1;
-        let (replay, origin) = match &state.history {
-            Some(history) => (history.iter().cloned().collect(), 0),
-            None => (
-                VecDeque::new(),
-                state.queue.front().map_or(state.next_frame, |c| c.start),
-            ),
+        state.connections += 1;
+        let id = state.connections;
+        // Early, from the top; otherwise a reconnect, carrying on from the
+        // furthest anything has been read.
+        let index = if state.early() { 0 } else { state.furthest().0 };
+        let origin = match index {
+            0 => 0,
+            _ => state
+                .log
+                .get(index - state.base)
+                .map_or(state.next_frame, |c| c.start),
         };
         self.origin.store(origin, Ordering::Release);
-        let connection = state.connection;
+        state.readers.push((id, index));
+        Reader { id }
+    }
+
+    fn disconnect(&self, reader: &Reader) {
+        let mut state = self.state.lock();
+        state.readers.retain(|r| r.0 != reader.id);
+        state.trim();
         drop(state);
-        // A connection it replaces is waiting on the queue, and has to see
-        // that it is no longer served.
         self.changed.notify_all();
-        Reader { connection, replay }
     }
 
     /// The next chunk for `reader`, waiting for the encoder. `None` when the
-    /// stream is over for it: finished, closed, or another connection opened.
-    fn next(&self, reader: &mut Reader) -> Option<Arc<Chunk>> {
-        if let Some(chunk) = reader.replay.pop_front() {
-            return Some(chunk);
-        }
+    /// stream is over: finished, or closed.
+    fn next(&self, reader: &Reader) -> Option<Arc<Chunk>> {
         let mut state = self.state.lock();
         loop {
-            if state.closed || state.connection != reader.connection {
+            if state.closed {
                 return None;
             }
-            if let Some(chunk) = state.queue.pop_front() {
-                state.queued -= chunk.bytes.len();
-                state.served += chunk.bytes.len();
-                state.next_frame = chunk.start + chunk.frames;
-                if state.served > EARLY {
-                    state.history = None;
-                } else if let Some(history) = state.history.as_mut() {
-                    history.push(chunk.clone());
-                }
+            let base = state.base;
+            let at = state.readers.iter().position(|r| r.0 == reader.id)?;
+            // Fallen behind what is kept: on from the oldest kept.
+            let index = state.readers[at].1.max(base);
+            if let Some(chunk) = state.log.get(index - base).cloned() {
+                state.readers[at].1 = index + 1;
+                state.read_to = state.read_to.max(index + 1);
+                state.trim();
                 drop(state);
                 self.changed.notify_all();
                 return Some(chunk);
@@ -232,11 +282,10 @@ impl Pipe {
 }
 
 struct Reader {
-    connection: u64,
-    replay: VecDeque<Arc<Chunk>>,
+    id: u64,
 }
 
-/// Serve the stream to one connection, for as long as it is the renderer's.
+/// Serve the stream to one connection, for as long as it reads.
 pub(crate) fn serve(stream: &mut TcpStream, req: &Request, pipe: &Pipe) -> std::io::Result<()> {
     let icy = req.header("Icy-MetaData").is_some_and(|v| v.trim() == "1");
     // No length and no ranges: the stream is made as it is sent. CI=1 says
@@ -254,7 +303,6 @@ pub(crate) fn serve(stream: &mut TcpStream, req: &Request, pipe: &Pipe) -> std::
     if req.method == "HEAD" {
         return Ok(());
     }
-    stream.set_write_timeout(None)?;
     let header = pipe.state.lock().header.clone();
     let mut out = Icy {
         stream,
@@ -263,20 +311,17 @@ pub(crate) fn serve(stream: &mut TcpStream, req: &Request, pipe: &Pipe) -> std::
         title: String::new(),
         sent: String::new(),
     };
-    let mut reader = pipe.connect();
+    let reader = pipe.connect();
     log::info!(
-        "upnp: stream connection {} ({}{}), from {}ms",
-        reader.connection,
+        "upnp: stream connection {} ({}), from {}ms",
+        reader.id,
         req.header("User-Agent").unwrap_or("no agent"),
-        req.header("Range")
-            .map(|r| format!(", {r}"))
-            .unwrap_or_default(),
         pipe.origin_ms()
     );
     let mut sent = 0usize;
     let result = (|| {
         out.write(&header)?;
-        while let Some(chunk) = pipe.next(&mut reader) {
+        while let Some(chunk) = pipe.next(&reader) {
             if let Some(track) = chunk.track {
                 out.title = (pipe.title)(track);
             }
@@ -285,12 +330,13 @@ pub(crate) fn serve(stream: &mut TcpStream, req: &Request, pipe: &Pipe) -> std::
         }
         Ok::<_, std::io::Error>(())
     })();
+    pipe.disconnect(&reader);
     log::info!(
-        "upnp: stream connection {} ended after {sent} bytes: {}",
-        reader.connection,
+        "upnp: stream connection {} ended after {sent} bytes{}",
+        reader.id,
         match &result {
-            Err(e) => format!("the renderer hung up ({e})"),
-            Ok(()) => "the stream ended or another connection replaced it".into(),
+            Err(e) => format!(": {e}"),
+            Ok(()) => String::new(),
         }
     );
     result
@@ -419,15 +465,11 @@ fn encode(
             ints.extend(samples.iter().map(|&s| dither.quantise(s)));
             let bytes = codec.encode(&ints, samples.len() / channels);
             let track = timeline.track_at(frames * channels as u64);
-            if !pipe.push(Chunk {
-                bytes,
-                start: frames,
-                frames: (samples.len() / channels) as u64,
-                track,
-            }) {
+            let count = (samples.len() / channels) as u64;
+            if !pipe.push(bytes, frames, count, track) {
                 return;
             }
-            frames += (samples.len() / channels) as u64;
+            frames += count;
             samples.clear();
             continue;
         }
@@ -437,9 +479,6 @@ fn encode(
         }
         if pipe.state.lock().closed {
             return;
-        }
-        if ready == 0 {
-            log::debug!("upnp: encoder waiting on an empty ring at frame {frames}");
         }
         // An empty ring is the start of a session or its end; while it plays,
         // the renderer's reading is what this thread waits on, in `push`.
@@ -658,8 +697,8 @@ mod tests {
         )
         .unwrap();
         let mut bytes = pipe.state.lock().header.clone();
-        let mut reader = pipe.connect();
-        while let Some(chunk) = pipe.next(&mut reader) {
+        let reader = pipe.connect();
+        while let Some(chunk) = pipe.next(&reader) {
             bytes.extend_from_slice(&chunk.bytes);
         }
         drop(encoder);
@@ -769,8 +808,11 @@ mod tests {
         feeder.join().unwrap();
     }
 
+    /// Connections opened at the start each get the stream from its top,
+    /// and none ends another. Once one has read past `EARLY`, a new one is a
+    /// reconnect and carries on from the furthest read.
     #[test]
-    fn a_reconnect_early_replays_from_the_start_and_later_joins_live() {
+    fn early_connections_start_at_the_top_and_a_later_one_carries_on() {
         let format = Format {
             encoding: Encoding::Wav,
             rate: 1000,
@@ -778,28 +820,25 @@ mod tests {
             bits: 16,
         };
         let pipe = Pipe::new(format, "audio/wav", |_| String::new());
-        let chunk = |start| Chunk {
-            bytes: vec![0; 400 * 1024],
-            start,
-            frames: 1000,
-            track: None,
-        };
-        pipe.push(chunk(0));
-        pipe.push(chunk(1000));
-        let mut probe = pipe.connect();
-        assert_eq!(pipe.next(&mut probe).unwrap().start, 0);
-        // A second connection replaces the probe and starts again.
-        let mut real = pipe.connect();
-        assert!(pipe.next(&mut probe).is_none());
-        assert_eq!(pipe.next(&mut real).unwrap().start, 0);
-        assert_eq!(pipe.next(&mut real).unwrap().start, 1000);
+        let push = |start| assert!(pipe.push(vec![0; 300 * 1024], start, 1000, None));
+        push(0);
+        push(1000);
+        let probe = pipe.connect();
+        assert_eq!(pipe.next(&probe).unwrap().start, 0);
+        let player = pipe.connect();
+        assert_eq!(pipe.next(&player).unwrap().start, 0);
+        assert_eq!(pipe.next(&probe).unwrap().start, 1000, "the probe reads on");
+        pipe.disconnect(&probe);
+        assert_eq!(pipe.next(&player).unwrap().start, 1000);
         assert_eq!(pipe.origin_ms(), 0);
-        // Past `EARLY`, a reconnect joins at the next chunk.
-        pipe.push(chunk(2000));
-        pipe.push(chunk(3000));
-        assert_eq!(pipe.next(&mut real).unwrap().start, 2000);
-        let mut again = pipe.connect();
-        assert_eq!(pipe.origin_ms(), 3000);
-        assert_eq!(pipe.next(&mut again).unwrap().start, 3000);
+
+        push(2000);
+        push(3000);
+        assert_eq!(pipe.next(&player).unwrap().start, 2000);
+        assert_eq!(pipe.next(&player).unwrap().start, 3000);
+        push(4000);
+        let again = pipe.connect();
+        assert_eq!(pipe.origin_ms(), 4000);
+        assert_eq!(pipe.next(&again).unwrap().start, 4000);
     }
 }
