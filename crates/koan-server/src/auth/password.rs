@@ -97,10 +97,8 @@ impl PasswordVerifier {
             .lock()
             .get(&key)
             .is_some_and(|at| at.elapsed() < REMEMBER);
-        if !fresh {
-            if !self.check(key, password, hash)? {
-                return Err(Refused::Wrong);
-            }
+        if !fresh && !self.check(key, password, hash)? {
+            return Err(Refused::Wrong);
         }
         user.map(|u| (u.id, u.role)).ok_or(Refused::Wrong)
     }
