@@ -69,8 +69,8 @@ private struct DeviceRow: View {
             selected: player.controlled?.id == device.id,
             action: .control,
             canMove: player.canMoveMusic(to: device),
-            // Asleep with nothing able to wake it: a command would go nowhere.
-            unreachable: device.problem != nil || (device.asleep && !device.wakeable),
+            // Out of reach with nothing able to wake it: a command would go nowhere.
+            unreachable: device.problem != nil || (!device.awake && !device.wakeable),
             onSelect: { player.control(device.id) },
             onMove: { player.moveMusic(to: device.id) }
         )
@@ -79,6 +79,9 @@ private struct DeviceRow: View {
     private var detail: String {
         if let problem = device.problem {
             return problem
+        }
+        if !device.awake && !device.asleep {
+            return "Reconnecting…"
         }
         if !device.awake {
             let seen = Self.seen(device.lastSeen).map { " · seen \($0)" } ?? ""

@@ -220,6 +220,8 @@ impl Registry {
             return;
         }
         let asleep = outbox::push_targets(Some(username));
+        // Waking takes a push key as well as the device's token.
+        let can_push = crate::push::pusher().is_some();
         let entries = self.entries.lock();
         let ours: Vec<&Entry> = entries
             .iter()
@@ -240,6 +242,7 @@ impl Registry {
                     ..e.info.state.clone()
                 }),
                 last_seen: None,
+                wakeable: Some(can_push && asleep.iter().any(|t| t.device == e.device)),
             })
             .collect();
         for t in asleep {
@@ -251,6 +254,7 @@ impl Registry {
                     linked: false,
                     state: None,
                     last_seen: Some(t.last_seen),
+                    wakeable: Some(can_push),
                 });
             }
         }
