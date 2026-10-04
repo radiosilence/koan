@@ -4647,7 +4647,8 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "sift-music"
 version = "0.4.0"
-source = "git+https://github.com/radiosilence/sift?rev=659a066b92358546681b757902de68dae4d642b2#659a066b92358546681b757902de68dae4d642b2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb2783c3402ee1328ca667fbe3332783271f86689cb0ced3c1ce152c6085fae4"
 dependencies = [
  "anyhow",
  "bytes",
