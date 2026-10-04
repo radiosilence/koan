@@ -787,23 +787,27 @@ impl SharedPlayerState {
         })
     }
 
-    /// Whether the queue still reads as it did when `step` was taken: the same
-    /// items after `after`, in the same order, up to what was chosen, or to
-    /// the end when nothing was. An item becoming Ready since is not a change;
-    /// an edit is.
+    /// Whether the decoder would still take `step`: `chosen` is still after
+    /// `after`, and every Ready item between them is one it passed over. Items
+    /// that are not Ready would be passed over again, so adding, moving or
+    /// removing them changes nothing, and nor does a passed item landing since.
+    /// With nothing chosen, the same holds to the end of the queue.
     pub fn still_follows(&self, step: &Lookahead) -> bool {
         let pl = self.playlist.read();
         let Some(at) = pl.items.iter().position(|item| item.id == step.after) else {
             return false;
         };
-        let rest = pl.items[at + 1..].iter().map(|item| item.id);
-        let expected = step.passed.iter().copied();
-        match &step.chosen {
-            Some((chosen, _)) => rest
-                .take(step.passed.len() + 1)
-                .eq(expected.chain(std::iter::once(*chosen))),
-            None => rest.eq(expected),
-        }
+        let rest = &pl.items[at + 1..];
+        let between = match &step.chosen {
+            Some((chosen, _)) => match rest.iter().position(|item| item.id == *chosen) {
+                Some(end) => &rest[..end],
+                None => return false,
+            },
+            None => rest,
+        };
+        between
+            .iter()
+            .all(|item| step.passed.contains(&item.id) || !matches!(item.state, ItemState::Ready))
     }
 
     /// Retreat cursor to the previous item. Returns (id, path) if found.
@@ -1630,6 +1634,30 @@ mod tests {
             "nor is adding after what was chosen"
         );
 
+        let pending = PlaylistItem {
+            state: ItemState::Pending,
+            ..ready_item("pending")
+        };
+        state.insert_items_after(vec![pending], ida);
+        assert!(
+            state.still_follows(&step),
+            "nor is adding a track it would pass over again"
+        );
+
+        state.remove_item(idb);
+        assert!(state.still_follows(&step), "nor is removing a passed track");
+
+        state.insert_items_after(vec![ready_item("next")], ida);
+        assert!(!state.still_follows(&step), "a Ready track before it is");
+    }
+
+    #[test]
+    fn a_step_breaks_when_what_it_chose_moves_ahead_of_it() {
+        let state = SharedPlayerState::new();
+        let (a, c) = (ready_item("a"), ready_item("c"));
+        let (ida, idc) = (a.id, c.id);
+        state.add_items(vec![a, c]);
+        let step = state.lookahead_after(ida).unwrap();
         state.move_item(idc, ida, false);
         assert!(!state.still_follows(&step));
     }

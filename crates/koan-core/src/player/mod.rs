@@ -2711,6 +2711,22 @@ mod tests {
     }
 
     #[test]
+    fn playing_next_a_track_still_downloading_leaves_the_lookahead_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, ids) = queued_wavs(dir.path(), &["a", "b"]);
+
+        player.process_command(PlayerCommand::InsertInPlaylist {
+            items: vec![pending_item("remote")],
+            after: ids[0],
+        });
+        assert_eq!(
+            player.playback_starts, 1,
+            "the decoder would pass over it and queue b all the same"
+        );
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
     fn an_edit_after_what_the_decoder_queued_leaves_playback_alone() {
         let dir = tempfile::tempdir().unwrap();
         let (mut player, ids) = wavs_playing(dir.path(), &["a", "b"], 30.0);
