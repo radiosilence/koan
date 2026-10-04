@@ -1,7 +1,7 @@
 //! The web UI: sign in, browse the library and play it in the browser.
 //!
 //! Server-rendered HTML, with Datastar for the parts that change in place
-//! (search as you type, loading more, the share button) and a small script of
+//! (search as you type, the share button) and a small script of
 //! its own that swaps only the page content on navigation, so the player keeps
 //! playing. Playback happens in the browser, streaming from `/ui/stream`: a
 //! headless server has no speakers.
@@ -54,6 +54,7 @@ const PARTIAL: &str = "x-koan-partial";
 const UI_CSS: &str = include_str!("../../assets/ui.css");
 const UI_JS: &str = include_str!("../../assets/ui.js");
 const DATASTAR_JS: &str = include_str!("../../assets/datastar.js");
+const NO_COVER_SVG: &str = include_str!("../../assets/no-cover.svg");
 
 /// The page's stylesheet and scripts, each URL carrying a hash of its asset.
 pub(super) struct AssetUrls {
@@ -112,12 +113,10 @@ pub fn router(
     let gated = axum::Router::new()
         .route("/", get(pages::albums))
         .route("/albums", get(pages::albums))
-        .route("/albums/more", get(pages::albums_more))
         .route("/album/{id}", get(pages::album))
         .route("/album/{id}/share", post(pages::share_album))
         .route("/artist/{id}/share", post(pages::share_artist))
         .route("/artists", get(pages::artists))
-        .route("/artists/more", get(pages::artists_more))
         .route("/artist/{id}", get(pages::artist))
         .route("/playlists", get(pages::playlists))
         .route("/playlist/{id}", get(pages::playlist))
@@ -401,10 +400,24 @@ async fn cover(
     axum::extract::Query(q): axum::extract::Query<CoverQuery>,
 ) -> Response {
     let size = crate::covers::snap(q.size);
-    let art = blocking(move || {
+    let found = blocking(move || {
         let tracks = queries::tracks_for_album(&open(&s.pool)?.conn, id).ok()?;
-        s.covers.cover(&tracks, size)
+        (!tracks.is_empty()).then(|| s.covers.cover(&tracks, size))
     })
     .await;
-    crate::share::jpeg(art, q.v.is_some())
+    match found {
+        Some(Some(art)) => crate::share::jpeg(Some(art), q.v.is_some()),
+        // A record with no artwork draws what the apps draw, not a broken
+        // image. Not kept for good: art added beside the files changes no
+        // track's mtime, so the URL stays the same when it arrives.
+        Some(None) => (
+            [
+                (header::CONTENT_TYPE, "image/svg+xml"),
+                (header::CACHE_CONTROL, "private, max-age=3600"),
+            ],
+            NO_COVER_SVG,
+        )
+            .into_response(),
+        None => not_found(),
+    }
 }

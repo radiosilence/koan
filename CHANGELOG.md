@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- **The web UI lists every album and artist on one page, as the apps do.** Pages of 60 albums and 100 artists behind a Load more button made a large library tedious to scroll and broke find-in-page. Covers load lazily, so the whole listing costs markup rather than images.
+- **The web UI's name and year filters apply as you type.** A pause in typing replaces the listing under the toolbar and leaves the field focused; the URL is replaced rather than pushed, so back does not step through each keystroke. A year applies once it has four digits. On a phone the sheet's Apply still applies everything.
+
 ### Fixed
 
 - **Track identity is rebuilt on source rows.** Each file and each server entry now keeps its own tags in a row of its own, and a track's names, path and server id are derived from them, the file's first. One function decides which file and which server entry are the same track, and it runs whenever either's tags change. This replaces eight separate matching and repair passes, and fixes the problems they shared:
@@ -21,6 +26,7 @@
 
 - **Favourites belong to the track, album or artist, not to a path or a name.** They follow a track through a merge, a moved file and a file that goes while the server still streams it. A favourite of something no longer in the library is dropped on upgrade.
 - **Rebuilding the index keeps play history, playlists, favourites and lyrics.** It now forgets only what each file and server entry said, and the next scan and sync read them all again into the rows they had.
+- **A record with no artwork shows the ensō in the web UI, not a broken image.** The cover route answered 404, and the browser drew its broken-image icon until the page's script caught the error. It now serves the placeholder the macOS and iOS apps draw: the app icon's ensō, faded. It is cached for an hour rather than for good, since art added beside the files does not change the cover's URL.
 
 ## 0.50.3
 
