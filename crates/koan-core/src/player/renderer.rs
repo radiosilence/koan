@@ -1901,4 +1901,121 @@ mod tests {
         let failures = failures.into_inner();
         assert!(failures.is_empty(), "{failures:#?}");
     }
+
+    /// The same, through the player's own command loop on its own thread, as
+    /// an app drives it: commands in, shared state out.
+    ///
+    /// `KOAN_UPNP_LOCATION=http://host:port/ cargo test -p koan-core --lib
+    /// loops_a_real_renderer -- --ignored --nocapture --test-threads=1`
+    #[test]
+    #[ignore = "needs a renderer on the network"]
+    fn loops_a_real_renderer() {
+        let _ = env_logger::builder()
+            .is_test(true)
+            .filter_level(log::LevelFilter::Warn)
+            .filter_module("koan_core::player::renderer", log::LevelFilter::Info)
+            .try_init();
+        let Ok(location) = std::env::var("KOAN_UPNP_LOCATION") else {
+            eprintln!("KOAN_UPNP_LOCATION is not set");
+            return;
+        };
+        let renderer = upnp::discovery::fetch(&url::Url::parse(&location).unwrap())
+            .unwrap()
+            .expect("a renderer at that address");
+        let udn = renderer.udn.clone();
+        let avt = renderer.av_transport.clone();
+        upnp::discovery::remember(renderer, Duration::from_secs(600));
+        let http = upnp::soap::client();
+        let truth = || {
+            let id = [("InstanceID", "0")];
+            let info = upnp::soap::call(&http, &avt, "GetTransportInfo", &id).unwrap();
+            let pos = upnp::soap::call(&http, &avt, "GetPositionInfo", &id).unwrap();
+            (
+                upnp::soap::arg(&info, "CurrentTransportState")
+                    .unwrap_or_default()
+                    .to_string(),
+                upnp::soap::arg(&pos, "RelTime")
+                    .and_then(upnp::soap::parse_time)
+                    .unwrap_or(0),
+            )
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut player = Player::new();
+        player.backend = Box::new(crate::player::tests::StuckBackend {
+            rate: 44_100.0,
+            asked: Default::default(),
+            starts: Default::default(),
+        });
+        let items: Vec<PlaylistItem> = (0..4)
+            .map(|i| {
+                let path = dir.path().join(format!("l{i}.wav"));
+                crate::test_utils::generate_wav_tone(&path, 44_100, 260.0 + 90.0 * i as f32, 30.0);
+                item(path, &format!("l{i}"))
+            })
+            .collect();
+        let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
+        let state = player.shared_state();
+        let tx = player.command_sender();
+        let looping = std::thread::spawn(move || player.run());
+        let send = |cmd: PlayerCommand| tx.send(cmd).unwrap();
+        let wait = |ms: u64| std::thread::sleep(Duration::from_millis(ms));
+
+        let mut failures = Vec::new();
+        let mut agree = |step: &str| {
+            let (renderer_state, theirs) = truth();
+            let ours = state.position_ms();
+            let playing = state.playback_state();
+            let moving = state.playhead_moving();
+            let same_state = (playing == PlaybackState::Playing) == (renderer_state == "PLAYING");
+            let ok = same_state && ours.abs_diff(theirs) <= 1_500;
+            eprintln!(
+                "{} {step:<30} koan {ours:>6}ms {playing:?}{} | renderer {theirs:>6}ms {renderer_state}",
+                if ok { "ok  " } else { "FAIL" },
+                if moving { "" } else { " (held)" }
+            );
+            if !ok {
+                failures.push(step.to_string());
+            }
+        };
+
+        send(PlayerCommand::AddToPlaylist(items));
+        upnp::connect(&udn, &tx).unwrap();
+        send(PlayerCommand::Play(ids[0]));
+        wait(4_000);
+        agree("played");
+        send(PlayerCommand::Seek(15_000));
+        wait(4_000);
+        agree("seeked to 15s");
+        send(PlayerCommand::Pause);
+        wait(2_000);
+        agree("paused");
+        send(PlayerCommand::Resume);
+        wait(4_000);
+        agree("resumed");
+        send(PlayerCommand::NextTrack);
+        wait(4_000);
+        agree("next");
+        send(PlayerCommand::Seek(24_000));
+        wait(10_000);
+        agree("played into the next track");
+        upnp::disconnect(&tx);
+        wait(1_000);
+        let left = state.position_ms();
+        upnp::connect(&udn, &tx).unwrap();
+        wait(5_000);
+        let back = state.position_ms();
+        agree("out and back while playing");
+        eprintln!("     left at {left}ms, {back}ms five seconds after coming back");
+        if back + 1_000 < left {
+            failures.push(format!("came back at {back}ms having left at {left}ms"));
+        }
+
+        // The loop is left running: the player holds a sender of its own
+        // (the timeline's), so it never sees the channel close.
+        send(PlayerCommand::Stop);
+        wait(500);
+        drop(looping);
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
 }
