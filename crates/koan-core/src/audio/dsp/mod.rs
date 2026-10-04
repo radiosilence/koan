@@ -173,14 +173,21 @@ pub fn load_impulses(path: &Path, base: &Path) -> Result<Vec<Impulse>, DspError>
 }
 
 /// The processing for one session, built for the first track's format.
+///
+/// Samples become 64-bit floats on the way in and 32-bit on the way out, and
+/// nothing is rounded between: resampling, bands and convolution all run in
+/// 64-bit, as CamillaDSP and Roon do. `null_test_against_direct_convolution`
+/// measures what is left.
 pub struct Chain {
     channels: usize,
     out_rate: u32,
-    gain: f32,
+    gain: f64,
     resample: Option<Resample>,
     /// Each channel's bands, in order.
     eq: Vec<Vec<DirectForm2Transposed<f64>>>,
     convolve: Option<Convolve>,
+    input: Vec<f64>,
+    work: Vec<f64>,
     out: Vec<f32>,
 }
 
@@ -215,13 +222,15 @@ impl Chain {
         Self {
             channels,
             out_rate,
-            gain: 10f64.powf(preamp_db / 20.0) as f32,
+            gain: 10f64.powf(preamp_db / 20.0),
             resample: Resample::new(source_rate, out_rate, channels),
             eq: bands
                 .iter()
                 .map(|b| b.iter().map(|&c| DirectForm2Transposed::new(c)).collect())
                 .collect(),
             convolve: impulse.map(|i| Convolve::new(i, channels)),
+            input: Vec::new(),
+            work: Vec::new(),
             out: Vec::new(),
         }
     }
@@ -234,73 +243,74 @@ impl Chain {
     /// unchanged. Returns the outgoing resampler's tail, which belongs to the
     /// track before and is still to be written.
     pub fn set_source_rate(&mut self, source_rate: u32) -> &[f32] {
-        self.out.clear();
-        if self.resample.as_ref().map_or(self.out_rate, |r| r.in_rate) == source_rate {
-            return &self.out;
+        self.work.clear();
+        if self.resample.as_ref().map_or(self.out_rate, |r| r.in_rate) != source_rate {
+            if let Some(mut r) = self.resample.take() {
+                r.flush(&mut self.work);
+            }
+            self.resample = Resample::new(source_rate, self.out_rate, self.channels);
+            self.post();
         }
-        let mut tail = Vec::new();
-        if let Some(mut r) = self.resample.take() {
-            r.flush(&mut tail);
-        }
-        self.resample = Resample::new(source_rate, self.out_rate, self.channels);
-        self.run_tail(tail);
-        &self.out
+        self.emit()
     }
 
     /// Process interleaved `input`. Returns what is ready to be written, and
     /// how many samples of output time `input` amounts to — the figure the
     /// timeline counts, which with a resampler is not what came out this call.
     pub fn process(&mut self, input: &[f32]) -> (&[f32], u64) {
-        self.out.clear();
+        self.input.clear();
+        self.input.extend(input.iter().map(|&s| s as f64));
+        self.work.clear();
         let length = match self.resample.as_mut() {
             Some(r) => {
-                r.run(input, &mut self.out);
+                r.run(&self.input, &mut self.work);
                 r.counted() * self.channels as u64
             }
             None => {
-                self.out.extend_from_slice(input);
+                self.work.extend_from_slice(&self.input);
                 input.len() as u64
             }
         };
         self.post();
-        (&self.out, length)
+        (self.emit(), length)
     }
 
     /// What the chain still holds at the end of a session.
     pub fn flush(&mut self) -> &[f32] {
-        self.out.clear();
-        let mut tail = Vec::new();
+        self.work.clear();
         if let Some(r) = self.resample.as_mut() {
-            r.flush(&mut tail);
+            r.flush(&mut self.work);
         }
-        self.run_tail(tail);
-        if let Some(c) = self.convolve.as_mut() {
-            c.flush(&mut self.out);
-        }
-        &self.out
-    }
-
-    fn run_tail(&mut self, tail: Vec<f32>) {
-        self.out = tail;
         self.post();
+        if let Some(c) = self.convolve.as_mut() {
+            c.flush(&mut self.work);
+        }
+        self.emit()
     }
 
-    /// Gain, bands and convolution over `self.out`, at the output rate.
+    /// Gain, bands and convolution over `self.work`, at the output rate.
     fn post(&mut self) {
         if self.gain != 1.0 || self.eq.iter().any(|b| !b.is_empty()) {
-            for frame in self.out.chunks_exact_mut(self.channels) {
+            for frame in self.work.chunks_exact_mut(self.channels) {
                 for (s, bands) in frame.iter_mut().zip(&mut self.eq) {
-                    let mut x = (*s * self.gain) as f64;
+                    let mut x = *s * self.gain;
                     for f in bands {
                         x = f.run(x);
                     }
-                    *s = x as f32;
+                    *s = x;
                 }
             }
         }
         if let Some(c) = self.convolve.as_mut() {
-            c.run(&mut self.out);
+            c.run(&mut self.work);
         }
+    }
+
+    /// `self.work` as the ring buffer takes it.
+    fn emit(&mut self) -> &[f32] {
+        self.out.clear();
+        self.out.extend(self.work.iter().map(|&s| s as f32));
+        &self.out
     }
 }
 
@@ -401,13 +411,13 @@ fn peak_gain(
 
 /// Sample-rate conversion to an impulse response's rate.
 struct Resample {
-    inner: Fft<f32>,
+    inner: Fft<f64>,
     in_rate: u32,
     out_rate: u32,
     channels: usize,
     /// Interleaved input not yet a whole chunk.
-    pending: Vec<f32>,
-    scratch: Vec<f32>,
+    pending: Vec<f64>,
+    scratch: Vec<f64>,
     /// Output frames of the resampler's own delay still to drop.
     skip: usize,
     fed: u64,
@@ -420,7 +430,7 @@ impl Resample {
         if in_rate == out_rate {
             return None;
         }
-        let inner = Fft::<f32>::new(
+        let inner = Fft::<f64>::new(
             in_rate as usize,
             out_rate as usize,
             1024,
@@ -456,7 +466,7 @@ impl Resample {
         new
     }
 
-    fn run(&mut self, input: &[f32], dst: &mut Vec<f32>) {
+    fn run(&mut self, input: &[f64], dst: &mut Vec<f64>) {
         self.fed += (input.len() / self.channels) as u64;
         self.pending.extend_from_slice(input);
         loop {
@@ -471,7 +481,7 @@ impl Resample {
 
     /// Everything still held, padded with silence until the output reaches
     /// the length of what was fed.
-    fn flush(&mut self, dst: &mut Vec<f32>) {
+    fn flush(&mut self, dst: &mut Vec<f64>) {
         let start = dst.len();
         let target = self.target();
         let mut partial = self.pending.len() / self.channels;
@@ -491,7 +501,7 @@ impl Resample {
 
     /// Resample one chunk into `dst`. Returns the frames the resampler made,
     /// its delay included.
-    fn chunk(&mut self, need: usize, partial: Option<usize>, dst: &mut Vec<f32>) -> usize {
+    fn chunk(&mut self, need: usize, partial: Option<usize>, dst: &mut Vec<f64>) -> usize {
         let ch = self.channels;
         let frames_out = self.scratch.len() / ch;
         let (Ok(input), Ok(mut output)) = (
@@ -558,6 +568,88 @@ mod tests {
         }
         out.extend_from_slice(chain.flush());
         (out, counted)
+    }
+
+    /// Deterministic noise in [-1, 1).
+    fn noise(seed: &mut u64) -> f64 {
+        *seed = seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        ((*seed >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+    }
+
+    /// What is left after subtracting a textbook convolution — every output
+    /// sample summed tap by tap in 64-bit — from the chain's. The partitioned
+    /// FFT is the same sum reordered, so the residual is rounding: what the
+    /// 64-bit chain adds, and the 32-bit floats it hands the ring buffer.
+    #[test]
+    fn null_test_against_direct_convolution() {
+        let (rate, taps, frames, peak) = (48000, 4096, 8192, 200);
+        let mut seed = 1;
+        let mut ir: Vec<f32> = (0..taps)
+            .map(|i| (noise(&mut seed) * 0.2 * (-(i as f64) / 600.0).exp()) as f32)
+            .collect();
+        ir[peak] = 1.0;
+        let input: Vec<f32> = (0..frames * 2)
+            .map(|_| (noise(&mut seed) * 0.25) as f32)
+            .collect();
+        let mut setup = Setup::new(vec![], vec![Impulse::from_channels(rate, vec![ir.clone()])]);
+        setup.preamp_db = Some(0.0);
+        let mut chain = Chain::new(&setup, rate, 2);
+        let (out, _) = run_all(&mut chain, &input, 1152);
+        assert_eq!(out.len(), input.len());
+
+        let (mut err, mut sig) = (0.0f64, 0.0f64);
+        for c in 0..2 {
+            for n in 0..frames {
+                // Output frame n is input frame n: the peak's delay is trimmed.
+                let m = n + peak;
+                let y: f64 = (0..taps)
+                    .filter(|&k| k <= m && m - k < frames)
+                    .map(|k| ir[k] as f64 * input[(m - k) * 2 + c] as f64)
+                    .sum();
+                err += (out[n * 2 + c] as f64 - y).powi(2);
+                sig += y.powi(2);
+            }
+        }
+        let db = 10.0 * (err / sig).log10();
+        eprintln!("residual against direct convolution: {db:.1} dB");
+        // 32-bit output rounding alone sits near -150 dB.
+        assert!(db < -140.0, "residual {db:.1} dB");
+    }
+
+    /// The heaviest response there is: 262,145 taps a channel at 192 kHz, as
+    /// the Harman 780 Roon pack ships. Run it in release:
+    /// `cargo test --release -p koan-core --lib bench_long_response -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_long_response() {
+        let (rate, taps, secs) = (192000, 262_145, 10);
+        let mut seed = 7;
+        let ir: Vec<Vec<f32>> = (0..2)
+            .map(|_| {
+                (0..taps)
+                    .map(|i| (noise(&mut seed) * (-(i as f64) / 20000.0).exp()) as f32)
+                    .collect()
+            })
+            .collect();
+        let input: Vec<f32> = (0..rate as usize * secs * 2)
+            .map(|_| (noise(&mut seed) * 0.25) as f32)
+            .collect();
+        let setup = Setup::new(vec![], vec![Impulse::from_channels(rate, ir)]);
+        let started = std::time::Instant::now();
+        let mut chain = Chain::new(&setup, rate, 2);
+        let built = started.elapsed();
+        let started = std::time::Instant::now();
+        for p in input.chunks(4096 * 2) {
+            chain.process(p);
+        }
+        let took = started.elapsed();
+        eprintln!(
+            "{taps} taps at {rate} Hz, stereo: built in {built:?}; {secs} s of audio in {took:?}, {:.1}x real time, {:.1}% of one core",
+            secs as f64 / took.as_secs_f64(),
+            100.0 * took.as_secs_f64() / secs as f64
+        );
     }
 
     #[test]

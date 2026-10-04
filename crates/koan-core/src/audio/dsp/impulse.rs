@@ -206,14 +206,14 @@ pub fn read_audio(path: &Path) -> Result<(u32, Vec<Vec<f32>>), String> {
 }
 
 /// A fixed delay, in frames.
-struct DelayLine(VecDeque<f32>);
+struct DelayLine(VecDeque<f64>);
 
 impl DelayLine {
     fn new(frames: usize) -> Option<Self> {
         (frames > 0).then(|| Self(std::iter::repeat_n(0.0, frames).collect()))
     }
 
-    fn run(&mut self, samples: &mut [f32]) {
+    fn run(&mut self, samples: &mut [f64]) {
         for s in samples {
             self.0.push_back(*s);
             *s = self.0.pop_front().expect("never empty");
@@ -223,7 +223,7 @@ impl DelayLine {
 
 /// A route ready to run.
 struct Running {
-    conv: FFTConvolver<f32>,
+    conv: FFTConvolver<f64>,
     inputs: Vec<(usize, f32)>,
     outputs: Vec<(usize, f32)>,
 }
@@ -237,10 +237,10 @@ pub(crate) struct Convolve {
     delay: usize,
     /// Output frames of the responses' delay still to drop.
     skip: usize,
-    planar_in: Vec<Vec<f32>>,
-    planar_out: Vec<Vec<f32>>,
-    mix: Vec<f32>,
-    wet: Vec<f32>,
+    planar_in: Vec<Vec<f64>>,
+    planar_out: Vec<Vec<f64>>,
+    mix: Vec<f64>,
+    wet: Vec<f64>,
 }
 
 impl Convolve {
@@ -256,7 +256,8 @@ impl Convolve {
                 // output, so a block's latency costs nothing. Only a block
                 // size of zero is refused.
                 let block = (r.ir.len().next_power_of_two() / 32).clamp(1024, 16384);
-                let _ = conv.init(block, &r.ir);
+                let ir: Vec<f64> = r.ir.iter().map(|&t| t as f64).collect();
+                let _ = conv.init(block, &ir);
                 Running {
                     conv,
                     inputs: r.inputs,
@@ -284,7 +285,7 @@ impl Convolve {
         }
     }
 
-    pub(crate) fn run(&mut self, buf: &mut Vec<f32>) {
+    pub(crate) fn run(&mut self, buf: &mut Vec<f64>) {
         let ch = self.channels;
         let frames = buf.len() / ch;
         for (c, plane) in self.planar_in.iter_mut().enumerate() {
@@ -310,7 +311,7 @@ impl Convolve {
             for &(c, w) in inputs.iter() {
                 if let Some(plane) = self.planar_in.get(c) {
                     for (m, s) in self.mix.iter_mut().zip(plane) {
-                        *m += w * s;
+                        *m += w as f64 * s;
                     }
                 }
             }
@@ -320,7 +321,7 @@ impl Convolve {
             for &(c, w) in outputs.iter() {
                 if let Some(plane) = self.planar_out.get_mut(c) {
                     for (o, s) in plane.iter_mut().zip(&self.wet) {
-                        *o += w * s;
+                        *o += w as f64 * s;
                     }
                 }
             }
@@ -341,7 +342,7 @@ impl Convolve {
     /// The responses' delay worth of silence, which brings out the last of
     /// the audio. A channel delayed on purpose loses that much of its end, so
     /// the session stays exactly as long as what was fed.
-    pub(crate) fn flush(&mut self, dst: &mut Vec<f32>) {
+    pub(crate) fn flush(&mut self, dst: &mut Vec<f64>) {
         let mut tail = vec![0.0; self.delay * self.channels];
         self.run(&mut tail);
         dst.extend_from_slice(&tail);
