@@ -135,7 +135,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `index/watch.rs` | Which filesystem events can change the index, and the directory each one means a scan of. Drops access, metadata, hidden and Syncthing paths, partial downloads |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
 | `index/id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
-| `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 59 built-in functions |
+| `format` | fb2k-compatible template engine, re-exported from sift (`sift-music`) — the tagger shared with other importers. Change it there |
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
 | `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
 | `remote/sync.rs` | Library sync: album list, then songs paged in bulk via empty-query `search3` (per-album `getAlbum` for servers that cannot), one transaction per page, progress per page. Every sync walks everything; `helpers::sync_remote` decides whether to walk, by the server's `getIndexes` `lastModified` |

@@ -26,6 +26,9 @@ figment = { version = "0.10", features = ["toml", "env"] }
 # Credentials (cross-platform: macOS Keychain, Linux secret-service)
 # Metadata
 lofty = "0.25"
+# Format strings, shared with sift's importer. Published as `sift-music`; the
+# git source is used until that version is on crates.io.
+sift = { package = "sift-music", version = "0.4", git = "https://github.com/radiosilence/sift", rev = "659a066b92358546681b757902de68dae4d642b2" }
 unicode-normalization = "0.1"
 log = "0.4"
 # Subsonic/Navidrome

@@ -11,6 +11,7 @@
 
 ### Changed
 
+- **The format engine comes from [sift](https://github.com/radiosilence/sift).** koan's `format` module and sift's were the same code kept in two places; koan-core now depends on sift (`sift-music` on crates.io) and re-exports its engine as `koan_core::format`, so templates behave exactly as before. Tagging and importing will come from sift's importer rather than a second implementation here.
 - **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
 
