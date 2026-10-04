@@ -159,6 +159,9 @@ pub struct Player {
     dsp_override: Option<Arc<crate::audio::dsp::Setup>>,
     #[cfg(test)]
     renderer_dsp_override: Option<Arc<crate::audio::dsp::Setup>>,
+    /// The renderer used last time is being looked for, and is to be gone
+    /// back to if it turns up before anyone plays or picks an output.
+    resume_renderer: bool,
 }
 
 struct DspCache {
@@ -337,6 +340,7 @@ impl Player {
             dsp_override: None,
             #[cfg(test)]
             renderer_dsp_override: None,
+            resume_renderer: false,
         }
     }
 
@@ -591,6 +595,8 @@ impl Player {
 
         if let Err(e) = crate::config::Config::persist(|cfg| {
             cfg.playback.output_device = Some(name);
+            cfg.playback.renderer = None;
+            cfg.playback.renderer_name = None;
         }) {
             log::error!("failed to save output device config: {}", e);
         }
@@ -609,6 +615,8 @@ impl Player {
 
         if let Err(e) = crate::config::Config::persist(|cfg| {
             cfg.playback.output_device = None;
+            cfg.playback.renderer = None;
+            cfg.playback.renderer_name = None;
         }) {
             log::error!("failed to save output device config: {}", e);
         }
@@ -1941,6 +1949,20 @@ impl Player {
 
     /// Process a single command.
     pub fn process_command(&mut self, cmd: PlayerCommand) {
+        // Someone wants to hear something, or has picked where: the renderer
+        // remembered from last time is no longer what to go back to. A cue is
+        // how a session is restored at launch, which is what the renderer is
+        // to carry on with, so it is not one of them.
+        if cmd.asks_to_play() && !matches!(cmd, PlayerCommand::Cue { .. })
+            || matches!(
+                cmd,
+                PlayerCommand::UseRenderer(_)
+                    | PlayerCommand::SetOutputDevice(_)
+                    | PlayerCommand::ClearOutputDevice
+            )
+        {
+            self.resume_renderer = false;
+        }
         let edits_queue = matches!(
             cmd,
             PlayerCommand::AddToPlaylist(_)
@@ -2137,7 +2159,24 @@ impl Player {
             }
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
             PlayerCommand::ReloadDsp => self.reload_dsp(),
-            PlayerCommand::UseRenderer(connection) => self.use_renderer(connection),
+            PlayerCommand::UseRenderer(connection) => {
+                self.remember_renderer(connection.as_deref());
+                self.use_renderer(connection);
+            }
+            PlayerCommand::ResumeRenderer(connection) => {
+                if std::mem::take(&mut self.resume_renderer) && self.renderer.is_none() {
+                    log::info!(
+                        "upnp: back to {}, as last time",
+                        connection.session.renderer().name
+                    );
+                    self.use_renderer(Some(connection));
+                } else {
+                    log::info!(
+                        "upnp: not going back to {}: playback or the output moved first",
+                        connection.session.renderer().name
+                    );
+                }
+            }
             PlayerCommand::SetRendererVolume(volume) => self.set_renderer_volume(volume),
             PlayerCommand::Renderer { session, event } => self.on_renderer_event(session, event),
             PlayerCommand::SetShuffle(on) => self.set_shuffle(on),
@@ -2359,7 +2398,55 @@ impl Player {
 
     /// Spawn the player on a background thread, returning the shared state,
     /// timeline, visualization snapshot, and command sender.
+    /// Remember the renderer picked as the output, or that this device's own
+    /// was, for the next launch. Only a choice is remembered: a renderer that
+    /// drops off the network is gone back to next time.
+    fn remember_renderer(&self, connection: Option<&crate::upnp::Connection>) {
+        let renderer = connection.map(|c| c.session.renderer());
+        if let Err(e) = crate::config::Config::persist(|cfg| {
+            cfg.playback.renderer = renderer.map(|r| r.udn.clone());
+            cfg.playback.renderer_name = renderer.map(|r| r.name.clone());
+        }) {
+            log::error!("failed to save the output: {e}");
+        }
+    }
+
+    /// Spawn a player for a process that does not own an output of its own:
+    /// `koan serve`, `koan mcp`. It plays where it is told and nowhere else.
     pub fn spawn() -> (
+        Arc<SharedPlayerState>,
+        Arc<PlaybackTimeline>,
+        Arc<VizSnapshot>,
+        crossbeam_channel::Sender<PlayerCommand>,
+    ) {
+        Self::spawn_with(false)
+    }
+
+    /// Spawn the player for an app someone listens through: the macOS and iOS
+    /// apps and `koan play`. It goes back to the renderer used last time if
+    /// that turns up at launch (`upnp::resume`). A headless process must not:
+    /// the config is the machine's, and it would take the amplifier from the
+    /// app.
+    pub fn spawn_for_listening() -> (
+        Arc<SharedPlayerState>,
+        Arc<PlaybackTimeline>,
+        Arc<VizSnapshot>,
+        crossbeam_channel::Sender<PlayerCommand>,
+    ) {
+        Self::spawn_with(true)
+    }
+
+    /// The renderer to go back to at launch: the one used last time, for a
+    /// player someone listens through.
+    fn renderer_to_resume(listening: bool) -> Option<String> {
+        listening
+            .then(|| crate::config::Config::cached().playback.renderer.clone())
+            .flatten()
+    }
+
+    fn spawn_with(
+        listening: bool,
+    ) -> (
         Arc<SharedPlayerState>,
         Arc<PlaybackTimeline>,
         Arc<VizSnapshot>,
@@ -2378,6 +2465,11 @@ impl Player {
             state.clone(),
         ));
 
+        if let Some(udn) = Self::renderer_to_resume(listening) {
+            player.resume_renderer = true;
+            crate::upnp::resume(udn, &tx);
+        }
+
         thread::Builder::new()
             .name("koan-player".into())
             .spawn(move || player.run())
@@ -2389,6 +2481,18 @@ impl Player {
 
 #[cfg(test)]
 mod tests {
+    /// `koan serve` and `koan mcp` read the same config as the app, and must
+    /// not go looking for the app's amplifier.
+    #[test]
+    fn a_headless_player_does_not_go_back_to_a_renderer() {
+        crate::config::isolate_config_for_tests();
+        crate::config::Config::persist(|cfg| {
+            cfg.playback.renderer = Some("uuid:headless-test".into());
+        })
+        .unwrap();
+        assert_eq!(Player::renderer_to_resume(false), None);
+    }
+
     #[test]
     fn a_download_in_progress_is_known_by_its_own_extension() {
         use std::path::Path;
@@ -3582,15 +3686,7 @@ mod tests {
     /// Commands a listener can send that ask for sound. Anything else may only
     /// keep playing what was already playing or on its way to.
     pub(super) fn asks_to_play(cmd: &PlayerCommand) -> bool {
-        matches!(
-            cmd,
-            PlayerCommand::Play(_)
-                | PlayerCommand::Cue { play: true, .. }
-                | PlayerCommand::Resume
-                | PlayerCommand::NextTrack
-                | PlayerCommand::PrevTrack
-                | PlayerCommand::ReplacePlaylist { play: true, .. }
-        )
+        cmd.asks_to_play()
     }
 
     /// Check the invariants #679 sets out, as far as they can be seen from

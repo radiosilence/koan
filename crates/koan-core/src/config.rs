@@ -122,6 +122,13 @@ pub struct PlaybackConfig {
     /// Persisted by name (not ID) since IDs can change across reboots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_device: Option<String>,
+    /// The UPnP renderer last picked as the output, by UDN, and its name for
+    /// showing. Gone back to at launch if it is on the network; otherwise the
+    /// music plays on `output_device`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renderer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renderer_name: Option<String>,
     /// Album art width in terminal columns (default: 24).
     /// Height is always width/2 (square via halfblock rendering).
     pub art_size: u16,
@@ -193,6 +200,8 @@ impl Default for PlaybackConfig {
             pre_amp_db: 0.0,
             fade_on_pause: true,
             output_device: None,
+            renderer: None,
+            renderer_name: None,
             art_size: 24,
             rate_switch_lead_in_ms: 1000,
         }
@@ -710,6 +719,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "remote.cache_limit"
         // This machine's hardware.
         | "playback.output_device"
+        | "playback.renderer"
+        | "playback.renderer_name"
         | "playback.rate_switch_lead_in_ms"
         // Which machine serves Subsonic, and as whom. Enabling a REST API is a
         // decision about one host, and the secret guarding it is per-machine.

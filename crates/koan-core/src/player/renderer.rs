@@ -1446,6 +1446,8 @@ mod tests {
     /// A player playing to a fake renderer, with `names` queued as ten-second
     /// WAVs (or MP3s, by extension).
     fn rig(sink: &'static str, gapless: bool, names: &[&str]) -> Rig {
+        // Picking a renderer is remembered in the config.
+        crate::config::isolate_config_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let fake = FakeRenderer::start(sink, gapless, true);
         let mut player = Player::new();
@@ -2723,6 +2725,7 @@ mod tests {
     fn random_use_with_a_renderer_keeps_the_player_honest() {
         use crate::player::tests::{Rng, asks_to_play, check_invariants, playlist_ids};
 
+        crate::config::isolate_config_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.wav");
         crate::test_utils::generate_wav(&path, 8_000, 1, 30.0, 16);
@@ -3121,6 +3124,60 @@ mod tests {
         r.fake.finish_track();
         r.pump_until(|p| p.session().is_none());
         assert_eq!(r.state(), PlaybackState::Stopped);
+    }
+
+    /// Just after launch: this device's own output, the session restored
+    /// paused at 5s, and the renderer used last time being looked for.
+    fn launched() -> Rig {
+        let mut r = rig(WAV, true, &["a.wav", "b.wav"]);
+        r.player.use_renderer(None);
+        r.player.resume_renderer = true;
+        r.player.process_command(PlayerCommand::Cue {
+            id: r.ids[0],
+            position_ms: 5_000,
+            play: false,
+        });
+        r
+    }
+
+    fn found(r: &Rig) -> PlayerCommand {
+        let connection = upnp::open(r.fake.renderer(), &r.player.command_sender()).unwrap();
+        PlayerCommand::ResumeRenderer(Box::new(connection))
+    }
+
+    /// Found before anyone plays or picks an output, the renderer used last
+    /// time takes the restored session where it stands.
+    #[test]
+    fn the_renderer_used_last_time_takes_the_restored_session() {
+        let mut r = launched();
+        let cmd = found(&r);
+        r.player.process_command(cmd);
+        assert!(r.player.renderer.is_some());
+        assert!(r.player.renderer_loaded());
+        assert_eq!(r.player.session().unwrap().track.id, r.ids[0]);
+        assert_eq!(r.state(), PlaybackState::Paused);
+        // Where the restored session stood: the packet holding 5s.
+        let at = r.player.shared_state.position_ms();
+        assert!((4_800..=5_000).contains(&at), "at {at}ms");
+    }
+
+    /// Playing something, or picking an output, before the renderer turns up
+    /// leaves the music where it is.
+    #[test]
+    fn playing_or_picking_first_keeps_the_music_here() {
+        let mut r = launched();
+        r.player.process_command(PlayerCommand::Play(r.ids[1]));
+        let cmd = found(&r);
+        r.player.process_command(cmd);
+        assert!(r.player.renderer.is_none(), "not taken over");
+        assert_eq!(r.state(), PlaybackState::Playing);
+
+        let mut r = launched();
+        r.player.process_command(PlayerCommand::UseRenderer(None));
+        let cmd = found(&r);
+        r.player.process_command(cmd);
+        assert!(r.player.renderer.is_none());
+        assert_eq!(r.state(), PlaybackState::Paused);
     }
 
     #[test]

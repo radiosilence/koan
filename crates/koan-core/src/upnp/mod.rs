@@ -117,8 +117,121 @@ pub fn connect(
         .map_err(|_| "The player has stopped.".to_string())
 }
 
+/// How long after launch the renderer used last time is looked for.
+const RESUME_WINDOW: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// Go back to the renderer `udn`, used last time, on a thread of its own:
+/// look for it for `RESUME_WINDOW`, waking on each change discovery
+/// announces, and hand the player an open session as
+/// `PlayerCommand::ResumeRenderer` if it turns up idle. The player takes it
+/// only if nobody has played anything or picked an output meanwhile.
+pub fn resume(
+    udn: String,
+    player: &crossbeam_channel::Sender<crate::player::commands::PlayerCommand>,
+) {
+    let choice = CHOICE.load(std::sync::atomic::Ordering::Acquire);
+    let player = player.clone();
+    let _ = std::thread::Builder::new()
+        .name("koan-upnp-resume".into())
+        .spawn(move || {
+            if let Some(connection) = resume_onto(&udn, RESUME_WINDOW, choice, &player) {
+                let _ = player.send(crate::player::commands::PlayerCommand::ResumeRenderer(
+                    Box::new(connection),
+                ));
+            }
+        });
+}
+
+/// The session `resume` hands over, if the renderer is found within `window`,
+/// nothing else has been picked since `choice`, and it is not playing or
+/// paused for something else: whatever is driving it, a phone on the same
+/// amplifier say, is not taken over by a launch nobody asked for.
+fn resume_onto(
+    udn: &str,
+    window: std::time::Duration,
+    choice: u64,
+    player: &crossbeam_channel::Sender<crate::player::commands::PlayerCommand>,
+) -> Option<Connection> {
+    let Some(renderer) = await_renderer(udn, window) else {
+        log::info!("upnp: {udn}, used last time, is not on the network; playing here");
+        return None;
+    };
+    if CHOICE.load(std::sync::atomic::Ordering::Acquire) != choice {
+        return None;
+    }
+    if discovery::in_use(&renderer) != Some(false) {
+        log::info!(
+            "upnp: {}, used last time, is busy or not answering; playing here",
+            renderer.name
+        );
+        return None;
+    }
+    open(renderer, player)
+        .inspect_err(|e| log::info!("upnp: could not go back to {udn}: {e}"))
+        .ok()
+}
+
+/// The renderer `udn` once discovery has found it, waiting at most `window`.
+fn await_renderer(udn: &str, window: std::time::Duration) -> Option<Renderer> {
+    let signal = crate::signal::engine_changed();
+    let mut seen = signal.generation();
+    let deadline = std::time::Instant::now() + window;
+    discovery::search();
+    loop {
+        if let Some(renderer) = discovery::find(udn) {
+            return Some(renderer);
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        seen = signal.wait_until(seen, left);
+    }
+}
+
 /// Bring the music back to this device's own output.
 pub fn disconnect(player: &crossbeam_channel::Sender<crate::player::commands::PlayerCommand>) {
     choose();
     let _ = player.send(crate::player::commands::PlayerCommand::UseRenderer(None));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A renderer discovery knows is found at once; one it never hears of
+    /// is given up on when the window closes, and the music stays here.
+    #[test]
+    fn a_remembered_renderer_is_found_or_given_up_on() {
+        let fake = fake::FakeRenderer::start("http-get:*:audio/wav:*", true, false);
+        let renderer = fake.renderer();
+        discovery::remember(renderer.clone(), std::time::Duration::from_secs(60));
+        assert_eq!(
+            await_renderer(&renderer.udn, std::time::Duration::from_secs(1)).map(|r| r.udn),
+            Some(renderer.udn)
+        );
+
+        let start = std::time::Instant::now();
+        let window = std::time::Duration::from_millis(300);
+        assert!(await_renderer("uuid:nowhere", window).is_none());
+        assert!(start.elapsed() >= window);
+    }
+
+    /// A renderer playing for something else when the app launches is left
+    /// to it; an idle one is gone back to.
+    #[test]
+    fn a_busy_renderer_is_not_taken_at_launch() {
+        let fake = fake::FakeRenderer::start("http-get:*:audio/wav:*", true, false);
+        let renderer = fake.renderer();
+        discovery::remember(renderer.clone(), std::time::Duration::from_secs(60));
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let window = std::time::Duration::from_secs(1);
+        let now = CHOICE.load(std::sync::atomic::Ordering::Acquire);
+
+        fake.play_foreign("http://phone/track.flac");
+        assert!(resume_onto(&renderer.udn, window, now, &tx).is_none());
+
+        fake.press_stop(0);
+        assert!(resume_onto(&renderer.udn, window, now, &tx).is_some());
+    }
 }
