@@ -36,6 +36,9 @@ pub struct FakeRenderer {
     /// Go on reporting the previous URI after a new one is set, as Kodi
     /// does while it opens the new one.
     pub lag: std::sync::atomic::AtomicBool,
+    /// Ignore a seek unless playing, as several renderers do while they
+    /// open a file.
+    pub seeks_only_playing: std::sync::atomic::AtomicBool,
     stale_uri: Mutex<Option<String>>,
 }
 
@@ -54,6 +57,7 @@ impl FakeRenderer {
             gapless,
             events,
             lag: Default::default(),
+            seeks_only_playing: Default::default(),
             stale_uri: Default::default(),
         });
         let serving = fake.clone();
@@ -166,8 +170,12 @@ impl FakeRenderer {
             let url = Url::parse(callback.trim_matches(['<', '>'])).unwrap();
             let body = body.clone();
             thread::spawn(move || {
-                let mut stream =
-                    TcpStream::connect((url.host_str().unwrap(), url.port().unwrap())).unwrap();
+                // The session it was subscribed for may have closed.
+                let Ok(mut stream) =
+                    TcpStream::connect((url.host_str().unwrap(), url.port().unwrap()))
+                else {
+                    return;
+                };
                 write!(
                     stream,
                     "NOTIFY {} HTTP/1.1\r\nHOST: x\r\nCONTENT-TYPE: text/xml\r\nNT: upnp:event\r\nNTS: upnp:propchange\r\nSID: uuid:sub\r\nSEQ: 0\r\nContent-Length: {}\r\n\r\n{body}",
@@ -295,6 +303,14 @@ impl FakeRenderer {
                 transport_changed = true;
                 vec![]
             }
+            "Seek"
+                if self
+                    .seeks_only_playing
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    && s.transport != "PLAYING" =>
+            {
+                vec![]
+            }
             "Seek" => {
                 s.position_ms = super::soap::parse_time(&get("Target")).unwrap_or(0);
                 vec![]
@@ -306,7 +322,7 @@ impl FakeRenderer {
             ],
             "GetPositionInfo" => vec![
                 ("Track".into(), "1".into()),
-                ("TrackDuration".into(), "0:00:10".into()),
+                ("TrackDuration".into(), "0:00:30".into()),
                 (
                     "TrackURI".into(),
                     self.stale_uri

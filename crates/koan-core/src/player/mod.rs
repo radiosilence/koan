@@ -1911,9 +1911,11 @@ impl Player {
     pub fn run(&mut self) {
         let rx = self.commands.rx.clone();
         loop {
-            let deadline = self
-                .next_wake()
-                .map_or_else(crossbeam_channel::never, crossbeam_channel::at);
+            let wake = match (self.next_wake(), self.renderer_deadline()) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            let deadline = wake.map_or_else(crossbeam_channel::never, crossbeam_channel::at);
             let renderer = self
                 .renderer_events()
                 .unwrap_or_else(crossbeam_channel::never);
@@ -1930,7 +1932,7 @@ impl Player {
                 recv(deadline) -> _ => {}
             }
             self.update_playback_state();
-            self.queue_next_on_renderer();
+            self.renderer_tick();
         }
         self.stop();
     }

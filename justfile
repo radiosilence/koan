@@ -549,7 +549,7 @@ ios-bundle: macos-ffi ios-ffi
                 <key>CFBundleURLSchemes</key><array><string>koan</string></array>
             </dict>
         </array>
-        <key>NSBonjourServices</key><array><string>_koan._tcp</string></array>
+        <key>NSBonjourServices</key><array><string>_koan._tcp</string><string>_airplay._tcp</string></array>
         <key>NSLocalNetworkUsageDescription</key><string>koan finds other koan apps on your network to play music on.</string>
     </dict>
     </plist>

@@ -369,6 +369,20 @@ impl SharedPlayerState {
     /// Set by the player while a renderer is the output. A change to it is a
     /// change clients are told about: the clock only moves when the renderer
     /// is heard from, or when a command moved it.
+    /// Whether the playhead is advancing on its own. Playing, but held, while
+    /// a renderer has been told to play and has not yet started: a client
+    /// counting on from the command would run ahead of the sound.
+    pub fn playhead_moving(&self) -> bool {
+        match *self.renderer_clock.lock() {
+            Some(clock) => clock.running.is_some(),
+            None => self.playback_state() == PlaybackState::Playing,
+        }
+    }
+
+    pub(crate) fn renderer_clock(&self) -> Option<RendererClock> {
+        *self.renderer_clock.lock()
+    }
+
     pub(crate) fn set_renderer_clock(&self, clock: Option<RendererClock>) {
         let mut guard = self.renderer_clock.lock();
         if *guard != clock {

@@ -4,6 +4,7 @@ import SwiftUI
 import UIKit
 #else
 import AVKit
+import Network
 #endif
 
 /// Where music plays, in one place, in two kinds.
@@ -22,6 +23,9 @@ import AVKit
 struct DevicePicker: View {
     @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
+    #if os(macOS)
+    @State private var airPlay = AirPlaySpeakers()
+    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -57,7 +61,13 @@ struct DevicePicker: View {
         .onAppear {
             player.searchRenderers()
             player.refreshDevices()
+            #if os(macOS)
+            airPlay.start()
+            #endif
         }
+        #if os(macOS)
+        .onDisappear { airPlay.stop() }
+        #endif
     }
 
     @ViewBuilder private var outputs: some View {
@@ -87,7 +97,13 @@ struct DevicePicker: View {
                 onSelect: { player.playHere(.system(device.name)) }
             )
         }
-        AirPlayRow()
+        if airPlay.names.isEmpty {
+            AirPlayRow(name: "AirPlay", detail: "Choose a speaker")
+        } else {
+            ForEach(airPlay.names, id: \.self) { name in
+                AirPlayRow(name: name, detail: "AirPlay · picked in the system's AirPlay menu")
+            }
+        }
         #else
         OutputRow(
             icon: Self.icon(for: Self.platform),
@@ -360,10 +376,48 @@ private struct OutputRow: View {
 }
 
 #if os(macOS)
+/// The AirPlay speakers on the network, as they advertise themselves.
+///
+/// Listed so each is visible for what it is, including a speaker that also
+/// answers as a UPnP renderer and so appears twice. Choosing one is the
+/// system's: macOS gives apps no way to route to a given AirPlay speaker, only
+/// its own picker.
+@MainActor @Observable
+final class AirPlaySpeakers {
+    private(set) var names: [String] = []
+    @ObservationIgnored private var browser: NWBrowser?
+
+    func start() {
+        guard browser == nil else { return }
+        let browser = NWBrowser(for: .bonjour(type: "_airplay._tcp", domain: nil), using: .tcp)
+        browser.browseResultsChangedHandler = { [weak self] results, _ in
+            let names = results.compactMap { result -> String? in
+                guard case .service(let name, _, _, _) = result.endpoint else { return nil }
+                return name
+            }
+            Task { @MainActor in
+                self?.names = Array(Set(names)).sorted {
+                    $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+                }
+            }
+        }
+        browser.start(queue: .main)
+        self.browser = browser
+    }
+
+    func stop() {
+        browser?.cancel()
+        browser = nil
+    }
+}
+
 /// AirPlay speakers are chosen by the system, not listed by CoreAudio, so the
 /// row hands over to the system's own picker. What it picks shows up above as
 /// the AirPlay output.
 private struct AirPlayRow: View {
+    let name: String
+    let detail: String
+
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: "airplayaudio")
@@ -371,12 +425,16 @@ private struct AirPlayRow: View {
                 .frame(width: 28)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text("AirPlay")
-                Text("Choose a speaker")
+                Text(name)
+                    .lineLimit(1)
+                Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            Image(systemName: Action.output.glyph)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

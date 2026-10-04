@@ -2699,7 +2699,8 @@ impl KoanEngine {
                         // client can work out for itself; a seek, a pause, a track
                         // boundary and a stall are not, and each of them breaks the
                         // prediction by more than the tolerance below.
-                        let playing = snapshot.state == types::PlayState::Playing;
+                        let playing = snapshot.state == types::PlayState::Playing
+                            && engine.state.playhead_moving();
                         let seekable = engine.state.seekable_ms();
                         let now = Instant::now();
                         let adrift = anchor.is_none_or(|held: state::Anchor| {
