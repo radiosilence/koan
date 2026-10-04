@@ -560,7 +560,8 @@ pub fn nearby_gone(id: &str) {
 /// Forget the device `id`: out of the list until it links or is heard on the
 /// network again, which brings it straight back. An account device is
 /// forgotten by the server too, push token and all, and every other device
-/// of the account drops it; only the account's own devices can be. Only a
+/// of the account drops it. A device another account shares with this one
+/// is forgotten by declining the share. Only a
 /// device out of reach is forgotten: one reachable would be back at once.
 pub fn forget(id: &str) -> Result<(), String> {
     let device = list().into_iter().find(|d| d.id == id);

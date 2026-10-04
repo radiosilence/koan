@@ -101,8 +101,9 @@ An asleep device stays listed until you forget it: right-click it in the
 Control menu on the Mac, or press and hold it on iOS, and choose **Forget**.
 One this device only knows of, such as a stranger's on the network, is
 forgotten here. One of your account's is forgotten by the server too, with the
-token it is woken by, and drops off your other devices. Forgetting is not a
-block: a device that links or is heard on the network again is listed again.
+token it is woken by, and drops off your other devices. Forgetting one another
+account shares with you declines the share; its owner can share it again.
+Forgetting is not a block otherwise: a device that links or is heard on the network again is listed again.
 The server still forgets a device of your account it has not seen for 30 days
 on its own.
 

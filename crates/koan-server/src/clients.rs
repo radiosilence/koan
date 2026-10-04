@@ -657,6 +657,11 @@ impl Registry {
     /// record is keyed by account. A device that links again is recorded
     /// afresh.
     pub fn forget(&self, username: &str, device: &str) -> Result<(), String> {
+        // Another account's device, shared with this one: forgetting it
+        // declines the share, or the next list would bring it straight back.
+        if let Some(owner) = self.shared_owner(username, device) {
+            return self.share(&owner, device, username, false);
+        }
         if self.list(Some(username)).iter().any(|c| c.device == device) {
             return Err(format!("{device} is linked; it would be back at once"));
         }
@@ -2395,6 +2400,26 @@ mod tests {
             .is_err(),
             "news from the server, not a command a device may send"
         );
+    }
+
+    /// A device shared by another account is forgotten by declining the
+    /// share: its owner keeps it and is told, and it is not listed again.
+    #[test]
+    fn forgetting_a_shared_device_declines_the_share() {
+        let (reg, mut phone, _mac, mut k) = shared();
+        drain(&mut k);
+        reg.forget("k", "dev-phone").unwrap();
+        assert!(reg.shared_owner("k", "dev-phone").is_none());
+        assert!(
+            drain(&mut phone)
+                .iter()
+                .any(|c| matches!(c, LinkCommand::Shares { grantees, .. } if grantees.is_empty()))
+        );
+        let listed = drain(&mut k).into_iter().rev().find_map(|c| match c {
+            LinkCommand::Devices { devices } => Some(devices),
+            _ => None,
+        });
+        assert_eq!(listed.map(|d| d.len()), Some(0));
     }
 
     /// The server forgets a device's push token with it, so nothing is
