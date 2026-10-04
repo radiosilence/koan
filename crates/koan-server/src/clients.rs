@@ -640,7 +640,8 @@ fn wake(devices: &[(String, String)]) {
     });
 }
 
-/// Reach a device that is not linked.
+/// Reach a device that is not linked: the one named, else the one seen most
+/// recently.
 ///
 /// Music is sent as a notification to tap, at once: iOS does not let an app it
 /// woke start audio, so waking it for that only delays the notification. Every
@@ -653,24 +654,11 @@ fn reach_absent(
     cmd: &LinkCommand,
 ) -> Option<Result<ClientInfo, String>> {
     let pusher = crate::push::pusher()?;
-    let targets: Vec<outbox::PushTarget> = outbox::push_targets(username)
+    // Most recently seen first: a reinstall leaves its old entry behind under
+    // the same name, and the newest is the one in the person's hand.
+    let target = outbox::push_targets(username)
         .into_iter()
-        .filter(|t| id.is_none_or(|id| t.device == id || t.name.eq_ignore_ascii_case(id)))
-        .collect();
-    let target = match targets.as_slice() {
-        [] => return None,
-        [only] => only.clone(),
-        several => {
-            return Some(Err(format!(
-                "no koan app is linked, and several can be reached: {}. Ask which, then pass `client`",
-                several
-                    .iter()
-                    .map(|t| t.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )));
-        }
-    };
+        .find(|t| id.is_none_or(|id| t.device == id || t.name.eq_ignore_ascii_case(id)))?;
     let info = ClientInfo {
         id: target.device.clone(),
         device: target.device.clone(),
@@ -1169,7 +1157,7 @@ fn pick(clients: &[ClientInfo], now: i64) -> Result<&ClientInfo, String> {
             "several koan apps are linked and none has played recently: {}. Ask which, then pass `client`",
             several
                 .iter()
-                .map(|c| c.name.as_str())
+                .map(|c| format!("{} ({}, id {})", c.name, c.platform, c.device))
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
@@ -1239,6 +1227,7 @@ mod tests {
             track_ids: vec!["x".into(), uid.clone()],
             start_at: 1,
             position_ms: 0,
+            paused: false,
         };
         assert_eq!(cover_track(&play), Some(uid.as_str()));
     }

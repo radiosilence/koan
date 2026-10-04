@@ -470,11 +470,10 @@ fn editable_playlist(
     }
 }
 
-/// Whose linked clients the current user may see and command: their own, or
-/// every account's for an admin.
+/// Whose linked clients the current user may see and command: their own,
+/// whatever their role.
 fn client_scope(ctx: &Context<'_>) -> Option<String> {
-    let user = get_auth_user(ctx);
-    (user.role != Role::Admin).then_some(user.username)
+    Some(get_auth_user(ctx).username)
 }
 
 /// Check that the current user has at least the required role.
