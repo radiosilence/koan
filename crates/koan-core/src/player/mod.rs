@@ -4046,32 +4046,42 @@ mod tests {
         player.process_command(PlayerCommand::Play(id));
         player.process_command(PlayerCommand::Pause);
         player.process_command(PlayerCommand::Seek(4_000));
+        // Once the decoder has queued the track, the playhead reads the start
+        // of the packet holding 4 s, which can be a little before it; until
+        // then it reads the 4 s asked for. Waiting makes the read the same on
+        // every run.
+        await_queued(&player);
         player.process_command(PlayerCommand::Resume);
         player.process_command(PlayerCommand::Stop);
 
-        let report = |state, position_ms| {
-            PlayEvent::Playback(PlaybackReport {
-                track_id: 5,
-                state,
-                position_ms,
+        let events: Vec<_> = events.try_iter().collect();
+        let near_seek = |position_ms: u64| (3_750..=4_000).contains(&position_ms);
+        let reports: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                PlayEvent::Playback(r) => Some((r.track_id, r.state, r.position_ms)),
+                _ => None,
             })
-        };
+            .collect();
         assert_eq!(
-            events.try_iter().collect::<Vec<_>>(),
-            vec![
-                PlayEvent::Started {
-                    track_id: 5,
-                    position_ms: 0
-                },
-                report(Paused, 0),
-                report(Paused, 4_000),
-                report(Playing, 4_000),
-                report(Stopped, 4_000),
-                PlayEvent::Finished {
-                    track_id: 5,
-                    listened_ms: 0
-                },
-            ]
+            events.first(),
+            Some(&PlayEvent::Started {
+                track_id: 5,
+                position_ms: 0
+            })
+        );
+        assert_eq!(reports.len(), 4, "{events:?}");
+        assert_eq!(reports[0], (5, Paused, 0));
+        for (report, state) in reports[1..].iter().zip([Paused, Playing, Stopped]) {
+            assert_eq!((report.0, report.1), (5, state), "{events:?}");
+            assert!(near_seek(report.2), "{events:?}");
+        }
+        assert_eq!(
+            events.last(),
+            Some(&PlayEvent::Finished {
+                track_id: 5,
+                listened_ms: 0
+            })
         );
     }
 
