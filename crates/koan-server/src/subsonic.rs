@@ -47,6 +47,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     // koan's own. See `koan_core::remote::profile`.
     (koan_core::remote::profile::LINK, &[1]),
     (koan_core::remote::profile::DEVICES, &[1]),
+    (koan_core::remote::profile::INVITE, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -832,17 +833,9 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
                 Err(SubsonicError::wrong_auth())
             };
         }
-        // An account: checked against its sealed password. Without one (never
-        // signed in by password since this existed) token auth can't be
-        // checked, which 41 tells the client so it can fall back.
-        return match state.users.verify_token(username, token, salt) {
-            Ok(account) => caller(account),
-            Err(Refused::Busy) => Err(SubsonicError::busy()),
-            Err(Refused::Wrong) if state.users.has_sealed(username) => {
-                Err(SubsonicError::wrong_auth())
-            }
-            Err(Refused::Wrong) => Err(SubsonicError::token_auth_unsupported()),
-        };
+        // An account: token auth needs the plaintext password, which koan
+        // does not keep. 41 tells the client to send the password or a key.
+        return Err(SubsonicError::token_auth_unsupported());
     }
 
     let Some(p) = params.p.as_deref() else {
@@ -3464,8 +3457,9 @@ async fn delete_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
 // ---------------------------------------------------------------------------
 //
 // What the apps manage this server's accounts through. An invite comes back
-// as the account's username and password; the app builds the link from the
-// address it already reaches this server at.
+// as the account's username and a token, with the password when one was just
+// made; the app builds the link from the address it already reaches this
+// server at. `koanJoin` is the other end: an app trading the token for a key.
 
 fn respond_admin(
     state: &AppState,
@@ -3509,14 +3503,27 @@ fn username_param(params: &RawParams) -> Result<&str, SubsonicError> {
         .ok_or_else(|| SubsonicError::missing_param("username"))
 }
 
-fn invite_node(username: &str, password: &str) -> XmlNode {
-    XmlNode::new("invite")
-        .attr("username", username)
-        .attr("password", password)
+/// The server's signing keypair: what invite tokens are signed and checked
+/// with.
+fn keypair() -> Result<&'static crate::auth::Keypair, SubsonicError> {
+    crate::auth::signing_keys().map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
-fn sealing_key() -> Result<[u8; 32], SubsonicError> {
-    koan_core::auth::subsonic_key().map_err(|e| SubsonicError::internal(e.to_string()))
+fn invite_node(
+    conn: &rusqlite::Connection,
+    user_id: i64,
+    username: &str,
+    password: Option<&str>,
+) -> Result<XmlNode, SubsonicError> {
+    let token =
+        koan_core::invite::mint_token(conn, &keypair()?.0, user_id).map_err(account_error)?;
+    let node = XmlNode::new("invite")
+        .attr("username", username)
+        .attr("token", &token);
+    Ok(match password {
+        Some(p) => node.attr("password", p),
+        None => node,
+    })
 }
 
 async fn koan_users(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
@@ -3544,10 +3551,14 @@ async fn koan_create_user(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
         respond_admin(&state, &params.auth(), |db, _, b| {
             let username = username_param(&params)?;
             let role = role_param(&params)?;
-            let password =
-                koan_core::invite::create_account(&db.conn, &sealing_key()?, username, role)
-                    .map_err(account_error)?;
-            Ok(b.child(invite_node(username.trim(), &password)))
+            let made = koan_core::invite::create_account(&db.conn, username, role)
+                .map_err(account_error)?;
+            Ok(b.child(invite_node(
+                &db.conn,
+                made.id,
+                username.trim(),
+                Some(&made.password),
+            )?))
         })
     })
     .await
@@ -3558,15 +3569,74 @@ async fn koan_invite(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
         let params = RawParams::parse(raw.as_deref());
         respond_admin(&state, &params.auth(), |db, _, b| {
             let username = username_param(&params)?;
-            let reset = params.get("reset") == Some("true");
-            let password =
-                koan_core::invite::account_password(&db.conn, &sealing_key()?, username, reset)
+            let user = koan_core::invite::account(&db.conn, username).map_err(account_error)?;
+            let password = if params.get("reset") == Some("true") {
+                let p = koan_core::invite::set_password(&db.conn, username, None)
                     .map_err(account_error)?;
-            if reset {
                 crate::clients::registry().disconnect(username);
-            }
-            Ok(b.child(invite_node(username, &password)))
+                Some(p)
+            } else {
+                None
+            };
+            Ok(b.child(invite_node(
+                &db.conn,
+                user.id,
+                username,
+                password.as_deref(),
+            )?))
         })
+    })
+    .await
+}
+
+/// Revoke the API key the request is signed in with: for an app giving up a
+/// key it no longer holds, such as the one a join replaced.
+async fn koan_revoke_key(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, _, b| {
+            let key = auth.api_key.as_deref().ok_or_else(|| {
+                SubsonicError::new(SubsonicErrorCode::Generic, "sign in with the key to revoke")
+            })?;
+            queries::api_keys::revoke_api_key_value(&db.conn, key)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
+/// Trade an invite token for an API key named `name`. The token is the
+/// credential, so this alone of koan's endpoints asks for no other.
+async fn koan_join(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let json = params.auth().wants_json();
+        let joined = params
+            .get("invite")
+            .ok_or_else(|| SubsonicError::missing_param("invite"))
+            .and_then(|token| {
+                let public = &keypair()?.1;
+                let db = state.open_db()?;
+                koan_core::invite::redeem(
+                    &db.conn,
+                    public,
+                    token,
+                    params.get("name").unwrap_or_default(),
+                )
+                .map_err(account_error)
+            });
+        match joined {
+            Ok(j) => SubsonicResponse::ok(json)
+                .child(
+                    XmlNode::new("join")
+                        .attr("username", &j.username)
+                        .attr("apiKey", &j.api_key),
+                )
+                .build(),
+            Err(e) => SubsonicResponse::error(json, &e),
+        }
     })
     .await
 }
@@ -3840,6 +3910,11 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             get(koan_create_user).post(koan_create_user),
         )
         .route("/rest/koanInvite", get(koan_invite).post(koan_invite))
+        .route("/rest/koanJoin", get(koan_join).post(koan_join))
+        .route(
+            "/rest/koanRevokeKey",
+            get(koan_revoke_key).post(koan_revoke_key),
+        )
         .route(
             "/rest/koanSetUserRole",
             get(koan_set_user_role).post(koan_set_user_role),
@@ -4593,18 +4668,68 @@ mod tests {
         ))
         .await;
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        let password = v["subsonic-response"]["invite"]["password"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        assert_eq!(v["subsonic-response"]["invite"]["username"], "sarita");
+        let invite = &v["subsonic-response"]["invite"];
+        let password = invite["password"].as_str().unwrap().to_owned();
+        let token = invite["token"].as_str().unwrap().to_owned();
+        assert_eq!(invite["username"], "sarita");
 
-        // The account signs in with what the invite carries.
+        // The password works in any Subsonic app; the token, redeemed with
+        // nothing else, makes this device a key.
         let body = call(format!("/rest/ping?u=sarita&p={password}&v=1.16.1&c=test")).await;
         assert!(body.contains("status=\"ok\""), "{body}");
+        let body = call(format!(
+            "/rest/koanJoin?invite={token}&name=Sarita%27s%20iPhone&f=json"
+        ))
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            v["subsonic-response"]["join"]["username"], "sarita",
+            "{body}"
+        );
+        let key = v["subsonic-response"]["join"]["apiKey"].as_str().unwrap();
+        let body = call(format!("/rest/ping?apiKey={key}&v=1.16.1&c=test")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = call("/rest/koanJoin?invite=forged&f=json".to_owned()).await;
+        assert!(body.contains("not valid"), "{body}");
 
+        // A key gives itself up.
+        let body = call(format!("/rest/koanJoin?invite={token}&name=spare&f=json")).await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let spare = v["subsonic-response"]["join"]["apiKey"].as_str().unwrap();
+        let body = call(format!("/rest/koanRevokeKey?apiKey={spare}&f=json")).await;
+        assert!(body.contains("\"ok\""), "{body}");
+        let body = call(format!("/rest/ping?apiKey={spare}&v=1.16.1&c=test")).await;
+        assert!(body.contains("code=\"44\""), "{body}");
+        let body = call(format!("/rest/koanRevokeKey?{owner}")).await;
+        assert!(body.contains("sign in with the key"), "{body}");
+
+        // Inviting again never reads the password back.
         let body = call(format!("/rest/koanInvite?username=sarita&{owner}")).await;
-        assert!(body.contains(&password), "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(
+            v["subsonic-response"]["invite"]["token"].is_string(),
+            "{body}"
+        );
+        assert!(
+            v["subsonic-response"]["invite"]["password"].is_null(),
+            "{body}"
+        );
+
+        // A reset gives a new one, signs the invited device out, and withdraws
+        // the link already sent.
+        let body = call(format!(
+            "/rest/koanInvite?username=sarita&reset=true&{owner}"
+        ))
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let reset = v["subsonic-response"]["invite"]["password"]
+            .as_str()
+            .unwrap();
+        assert_ne!(reset, password);
+        let body = call(format!("/rest/ping?apiKey={key}&v=1.16.1&c=test")).await;
+        assert!(body.contains("code=\"44\""), "{body}");
+        let body = call(format!("/rest/koanJoin?invite={token}&name=late&f=json")).await;
+        assert!(body.contains("not valid"), "{body}");
 
         let body = call(format!(
             "/rest/koanSetUserRole?username=owner&role=user&{owner}"
@@ -6191,8 +6316,14 @@ mod tests {
         let r = json_of(app(), &format!("/rest/star?id=mf-1&apiKey={owner}&f=json")).await;
         assert_eq!(r["status"], "ok");
 
-        // Accounts cannot use token auth, whatever the token.
+        // Accounts cannot use token auth, whatever the token: not even the
+        // right one, after a password sign-in.
         let r = json_of(app(), "/rest/ping?u=mate&t=abc&s=def&f=json").await;
+        assert_eq!(r["error"]["code"], 41);
+        let r = json_of(app(), "/rest/ping?u=mate&p=hunter22&f=json").await;
+        assert_eq!(r["status"], "ok");
+        let right = format!("{:x}", md5::compute("hunter22salt"));
+        let r = json_of(app(), &format!("/rest/ping?u=mate&t={right}&s=salt&f=json")).await;
         assert_eq!(r["error"]["code"], 41);
     }
 

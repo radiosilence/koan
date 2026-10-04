@@ -1,5 +1,8 @@
 import KoanFFI
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 /// Everything the app needs, built once the engine is up.
 ///
@@ -20,6 +23,7 @@ final class AppState {
     let playlists: PlaylistsModel
     let activity: ActivityModel
     let levels: PlayingLevels
+    let meter: TransferMeter
     let ui = UIState()
     /// Menu enablement and single-key shortcuts — both are the menu bar's, and
     /// there isn't one on iOS.
@@ -30,7 +34,14 @@ final class AppState {
     private var nowPlaying: NowPlayingCentre?
 
     init() async throws {
-        let engine = try await KoanEngine()
+        // The name the person gave the phone needs Apple's
+        // user-assigned-device-name entitlement; without it this is "iPhone".
+        // A Mac names itself by its hostname.
+        #if os(iOS)
+        let engine = try await KoanEngine(deviceName: UIDevice.current.name)
+        #else
+        let engine = try await KoanEngine(deviceName: nil)
+        #endif
         self.engine = engine
         let mirror = EngineMirror()
         self.mirror = mirror
@@ -52,6 +63,7 @@ final class AppState {
         let activity = ActivityModel()
         self.activity = activity
         self.levels = PlayingLevels(engine: engine)
+        self.meter = TransferMeter(engine: engine, mirror: mirror)
         library.activity = activity
         library.art = art
         library.mirror = mirror
@@ -88,6 +100,7 @@ final class AppState {
         // Single-key shortcuts, caught before the focused list eats them.
         #if os(macOS)
         self.hotkeys = Hotkeys.standard(player: player, library: library, nav: nav, ui: ui)
+        FullScreenBackstop.install()
         #endif
 
         // A client that cannot reach its server fails at everything quietly:

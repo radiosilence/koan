@@ -18,6 +18,9 @@ pub const LINK: &str = "koanLink";
 /// the account's other devices sent down the link, commands relayed between
 /// them, handoff, and `/rest/koanCommand` for a device whose link is down.
 pub const DEVICES: &str = "koanDevices";
+/// Invite links: `/rest/koanJoin` trades the token one carries for an API
+/// key. See `crate::invite`.
+pub const INVITE: &str = "koanInvite";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {

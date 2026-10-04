@@ -21,6 +21,7 @@ struct FavouritesView: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
+    @Environment(TransferMeter.self) private var meter
     @Environment(UIState.self) private var ui
     @Environment(\.roomTint) private var tint
     @Environment(\.onStage) private var onStage
@@ -78,7 +79,7 @@ struct FavouritesView: View {
         let key: [AnyHashable] = [
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds), AnyHashable(library.favouriteAlbumIds),
-            AnyHashable(queued.map { "\($0.key):\($0.value.status):\(SourceBadges.transfer(of: $0.value).flatMap(mirror.progress(for:)) ?? -1)" }.sorted()),
+            AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
         ]
         let library = library
         let nav = nav
@@ -118,7 +119,7 @@ struct FavouritesView: View {
                     tint: NSColor(tint),
                     favourites: library.favouriteTrackIds,
                     queued: queued,
-                    progress: { mirror.progress(for: $0) },
+                    meter: meter,
                     art: art,
                     levels: levels,
                     play: { line in play([line.id]) },

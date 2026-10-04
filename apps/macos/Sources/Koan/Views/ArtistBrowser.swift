@@ -64,7 +64,7 @@ struct ArtistBrowser: View {
         .clearsSelection($selection)
         .overlay {
             if library.visibleArtists.isEmpty {
-                EmptyState(icon: "music.mic", title: "No artists yet")
+                EmptyState(icon: "music.mic", title: library.isNarrowed ? "Nothing matches" : "No artists yet")
             }
         }
     }
@@ -113,7 +113,7 @@ struct ArtistBrowser: View {
         }
         .overlay {
             if library.visibleArtists.isEmpty {
-                EmptyState(icon: "music.mic", title: "No artists yet")
+                EmptyState(icon: "music.mic", title: library.isNarrowed ? "Nothing matches" : "No artists yet")
             }
         }
     }

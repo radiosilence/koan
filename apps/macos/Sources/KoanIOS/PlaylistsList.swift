@@ -27,6 +27,9 @@ struct PlaylistsList: View {
             }
         }
         .navigationTitle("Playlists")
+        .toolbar {
+            Button("New Playlist", systemImage: Icon.add) { playlists.naming = [] }
+        }
         .task { playlists.load() }
     }
 }

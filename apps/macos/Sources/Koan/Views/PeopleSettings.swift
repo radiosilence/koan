@@ -14,9 +14,8 @@ final class PeopleModel {
     private(set) var accounts: [ServerAccount]?
     var invite: Invite?
     var error: String?
-    /// The account whose password cannot be recovered, waiting for a yes to a
-    /// new one.
-    var needsReset: String?
+    /// The account waiting for a yes to a new password.
+    var resetting: String?
 
     init(engine: KoanEngine) {
         self.engine = engine
@@ -33,13 +32,8 @@ final class PeopleModel {
     }
 
     func invite(_ username: String, reset: Bool = false) async {
-        do {
-            invite = try await engine.inviteServerAccount(username: username, reset: reset)
-            error = nil
-        } catch let KoanError.BadArgument(message) where message.contains("not recoverable") {
-            needsReset = username
-        } catch {
-            self.error = SettingsModel.describe(error)
+        _ = await attempt {
+            self.invite = try await self.engine.inviteServerAccount(username: username, reset: reset)
         }
     }
 
@@ -125,18 +119,18 @@ struct PeopleSettings: View {
                     InviteSheet(invite: item.invite)
                 }
                 .alert(
-                    "Give \(model.needsReset ?? "") a new password?",
+                    "Give \(model.resetting ?? "") a new password?",
                     isPresented: Binding(
-                        get: { model.needsReset != nil },
-                        set: { if !$0 { model.needsReset = nil } }
+                        get: { model.resetting != nil },
+                        set: { if !$0 { model.resetting = nil } }
                     )
                 ) {
                     Button("New Password") {
-                        if let name = model.needsReset { Task { await model.invite(name, reset: true) } }
+                        if let name = model.resetting { Task { await model.invite(name, reset: true) } }
                     }
                     Button("Cancel", role: .cancel) {}
                 } message: {
-                    Text("kōan cannot recover this account's password, so an invite needs a new one. Their devices will have to sign in again.")
+                    Text("The invite carries the new password. Their devices will have to sign in again.")
                 }
                 .confirmationDialog(
                     "Delete \(deleting ?? "")?",
@@ -174,7 +168,9 @@ struct PeopleSettings: View {
             .fixedSize()
             Menu {
                 Button("Invite") { Task { await model.invite(account.username) } }
+                // Not for this account: a new password signs this app out too.
                 if account.username != signedInAs {
+                    Button("New Password and Invite…") { model.resetting = account.username }
                     Button("Delete", role: .destructive) { deleting = account.username }
                 }
             } label: {
@@ -203,7 +199,7 @@ struct InviteSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("Opening the link on a phone, tablet or Mac with kōan installed signs in and loads the library.")
+                    Text("Opening the link on a phone, tablet or Mac with kōan installed signs in and loads the library, on each device, for a week.")
                         .foregroundStyle(.secondary)
                     ShareLink(
                         item: invite.emailText,
@@ -230,14 +226,18 @@ struct InviteSheet: View {
                 } header: {
                     Text("Invite for \(invite.username)")
                 }
-                Section {
-                    LabeledContent("Server URL", value: invite.server)
-                    LabeledContent("Username", value: invite.username)
-                    LabeledContent("Password", value: invite.password)
-                } header: {
-                    Text("For other Subsonic apps")
+                if let password = invite.password {
+                    Section {
+                        LabeledContent("Server URL", value: invite.server)
+                        LabeledContent("Username", value: invite.username)
+                        LabeledContent("Password", value: password)
+                    } header: {
+                        Text("For other Subsonic apps")
+                    } footer: {
+                        Text("Shown this once: the server keeps only its hash.")
+                    }
+                    .textSelection(.enabled)
                 }
-                .textSelection(.enabled)
             }
             .formStyle(.grouped)
             .navigationTitle("Invite")

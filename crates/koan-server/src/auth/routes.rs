@@ -361,8 +361,7 @@ where
 /// a stored refresh token. The error is the response to send. Shared by the
 /// JSON login and the web UI's sign-in form, so both are one implementation.
 ///
-/// On the blocking pool as a whole: the queries, argon2 and the sealing all
-/// block, and on a runtime worker they stall every other request the server
+/// On the blocking pool as a whole: the queries and argon2 both block, and on a runtime worker they stall every other request the server
 /// is handling.
 pub(crate) async fn authenticate(
     state: &AuthRouteState,
@@ -420,11 +419,6 @@ fn authenticate_blocking(
             )
                 .into_response(),
         ));
-    }
-
-    // Lets the account use Subsonic token auth; see `auth::seal_password`.
-    if let Err(e) = auth_queries::remember_password(&db.conn, username, password) {
-        log::warn!("could not seal the password for Subsonic token auth: {e}");
     }
 
     let access_token = match auth::mint_access_token(

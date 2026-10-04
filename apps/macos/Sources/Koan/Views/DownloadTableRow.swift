@@ -5,9 +5,9 @@ import KoanFFI
 /// One transfer in the Mac's downloads list, as `DownloadRow` draws it in
 /// SwiftUI: the sleeve; the title and how far along; a bar; who it is by and
 /// how it is going, with a link to the record under the pointer.
-final class DownloadTableRow: NSTableCellView, TableRow {
+final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
     struct Context {
-        let figures: (String) -> TransferFigure?
+        let meter: TransferMeter
         let art: CoverArtCache
         let showInLibrary: (Transfer) -> Void
     }
@@ -69,19 +69,42 @@ final class DownloadTableRow: NSTableCellView, TableRow {
         self.context = context
         title.stringValue = transfer.title
 
-        let running = transfer.state == .running || transfer.state == .queued
         // The numbers only while it moves; a settled row does not read them.
-        let figures = running ? context.figures(transfer.queueItemId) : nil
+        let running = transfer.state == .running
+        let figures = running ? context.meter.figure(for: transfer.queueItemId) : nil
         switch transfer.state {
         case .done: figure.stringValue = "Done"
         case .failed: figure.stringValue = "Failed"
         case .queued: figure.stringValue = "Queued"
-        case .running: figure.stringValue = figures?.progress.map { "\(Int($0 * 100))%" } ?? ""
+        case .running: figure.stringValue = Self.percent(figures)
         }
         // Whole once it has landed; empty, not full, when no length was given.
         fraction = transfer.state == .done ? 1 : figures?.progress ?? 0
         subtitle.stringValue = Self.subtitle(transfer, figures: figures)
         restyle()
+        context.meter.follow(self, transfer: running ? transfer.queueItemId : nil)
+    }
+
+    /// A frame's figures, between the table's own redraws: the bar by its
+    /// width, the text only when it reads differently.
+    func take(_ figures: TransferFigure) {
+        guard let transfer, transfer.state == .running else { return }
+        let percent = Self.percent(figures)
+        if figure.stringValue != percent {
+            figure.stringValue = percent
+            needsLayout = true
+        }
+        let status = Self.subtitle(transfer, figures: figures)
+        if subtitle.stringValue != status { subtitle.stringValue = status }
+        fraction = figures.progress ?? 0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        filled.frame.size.width = track.frame.width * fraction
+        CATransaction.commit()
+    }
+
+    private static func percent(_ figures: TransferFigure?) -> String {
+        figures?.progress.map { "\(Int($0 * 100))%" } ?? ""
     }
 
     private static func subtitle(_ transfer: Transfer, figures: TransferFigure?) -> String {

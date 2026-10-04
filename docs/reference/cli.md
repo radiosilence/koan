@@ -191,11 +191,12 @@ koan auth regenerate-keys             # regenerate Ed25519 keypair (invalidates 
 koan auth reset                       # delete all keys, users, tokens
 ```
 
-Non-interactive setup for scripting:
+Without a terminal, or with `--non-interactive`, `koan auth` never prompts: credentials come from `KOAN_USERNAME` and `KOAN_PASSWORD`, destructive commands need `--yes`, and 1Password is used only with `--save-to-1password`.
 
 ```bash
 KOAN_USERNAME=admin KOAN_PASSWORD=secret koan auth setup
 KOAN_PASSWORD=secret koan auth create-user --username alice --role user
+koan auth delete-user alice --yes
 ```
 
 See [Authentication](../guide/authentication.md) for the full guide.

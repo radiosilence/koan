@@ -60,7 +60,8 @@ final class LibraryModel {
         return await Listing(
             section: section,
             rows: Request(
-                section: section, filter: "", sort: albumSort, seed: shuffleSeed, engine: engine
+                section: section, filter: "", browse: browseFilter, sort: albumSort,
+                seed: shuffleSeed, engine: engine
             ).detached()
         )
     }
@@ -102,6 +103,31 @@ final class LibraryModel {
             UserDefaults.standard.set(albumSort.storageKey, forKey: "albumSort")
             reload()
         }
+    }
+
+    /// What the album and artist browsers are narrowed to beyond the name
+    /// filter. Unlike the name filter it follows you between the two and
+    /// survives a relaunch, as the sort does: it is a standing choice, and the
+    /// control showing how many are on says so.
+    var browseFilter: BrowseFilter = .none {
+        didSet {
+            guard browseFilter != oldValue else { return }
+            UserDefaults.standard.set(browseFilter.stored, forKey: "browseFilter")
+            guard section == .albums || section == .artists else { return }
+            reload()
+        }
+    }
+
+    /// Whether the browser on screen is showing less than the whole library.
+    var isNarrowed: Bool { !filter.isEmpty || browseFilter.activeCount > 0 }
+
+    /// What the codec and genre filters offer, read when the filters open.
+    private(set) var browseChoices: BrowseChoices?
+
+    func loadBrowseChoices() async {
+        let engine = self.engine
+        let choices = await Task.detached { try? await engine.browseChoices() }.value
+        if let choices { browseChoices = choices }
     }
 
     /// Which shuffle Random means right now. Held rather than dealt afresh on
@@ -176,6 +202,9 @@ final class LibraryModel {
            let sort = AlbumSort(storageKey: stored) {
             albumSort = sort
         }
+        if let stored = UserDefaults.standard.dictionary(forKey: "browseFilter") {
+            browseFilter = BrowseFilter(stored: stored)
+        }
     }
 
     // MARK: - Loading
@@ -206,7 +235,8 @@ final class LibraryModel {
 
     private var request: Request {
         Request(
-            section: section, filter: filter, sort: albumSort, seed: shuffleSeed, engine: engine
+            section: section, filter: filter, browse: browseFilter, sort: albumSort,
+            seed: shuffleSeed, engine: engine
         )
     }
 
@@ -363,7 +393,7 @@ final class LibraryModel {
             await Task.detached(priority: .userInitiated) {
                 async let artist = try? await engine.artist(artistId: id)
                 async let albums = try? await engine.albums(
-                    artistId: id, sort: .year, seed: 0, search: nil
+                    artistId: id, sort: .year, seed: 0, search: nil, filter: .none
                 )
                 async let info = try? await engine.artistInfo(artistId: id)
                 let cached = await info ?? nil
@@ -589,6 +619,7 @@ final class LibraryModel {
 private struct Request: Sendable {
     let section: Navigator.Section
     let filter: String
+    let browse: BrowseFilter
     let sort: AlbumSort
     let seed: Int64
     let engine: KoanEngine
@@ -615,11 +646,11 @@ private struct Request: Sendable {
         case .albums:
             return .albums(
                 (try? await engine.albums(
-                    artistId: nil, sort: sort, seed: seed, search: search
+                    artistId: nil, sort: sort, seed: seed, search: search, filter: browse
                 )) ?? []
             )
         case .artists:
-            return .artists((try? await engine.artists(search: search)) ?? [])
+            return .artists((try? await engine.artists(search: search, filter: browse)) ?? [])
         case .favourites:
             // Three questions, asked at once — they are answers to the same
             // one and the page shows them together.
