@@ -63,6 +63,21 @@ final class UIState {
     func jumpQueue(to target: Jump) {
         queueJumpTarget = target
         queueJumpToken += 1
+        followingQueue = target == .playing
+    }
+
+    /// Whether the queue keeps the playing track in view as it changes.
+    /// Turned on by jumping to it, off by any scroll of the person's own.
+    /// For the session only, as the queue's scroll position is.
+    var followingQueue = false
+
+    /// The jump-to-playing button: jump and follow, or stop following.
+    func toggleFollowingQueue() {
+        if followingQueue {
+            followingQueue = false
+        } else {
+            jumpQueue(to: .playing)
+        }
     }
 
     /// Whether the lyrics panel is open.

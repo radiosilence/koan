@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **The queue can follow what is playing.** The jump-to-playing button now also follows: the queue keeps the playing track in view as it moves on, through gapless transitions, skips and repeats, sliding by a row rather than jumping. The button is tinted while it follows; pressing it again, or scrolling the queue yourself, stops it. On the Mac the track keeps its place on screen; on iOS it is kept centred.
+
 ### Fixed
 
 - **Hand-off from a nearby device stays on the network.** A device on the same network could make another kōan hand its music to a device on that kōan's account, sent through its server as that account. A hand-off asked for by a device on the network now goes over the network or not at all; "Move here" between devices on one network works as before.
