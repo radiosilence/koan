@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+use crate::player::state::{PlayMode, Repeat};
+
 /// Serializable representation of a queue item for persistence.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedQueueItem {
@@ -20,6 +22,9 @@ pub struct PersistedQueueItem {
     /// Absent in pre-v0.18.2 persisted state; serde default covers migration.
     #[serde(default)]
     pub db_id: Option<i64>,
+    /// Where the item stood before shuffle was turned on, while it is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_shuffle: Option<u32>,
 }
 
 /// Full persisted playback state.
@@ -30,12 +35,14 @@ pub struct PersistedPlaybackState {
     pub position_ms: u64,
     /// Playback was running when this was saved.
     pub was_playing: bool,
+    pub mode: PlayMode,
 }
 
-/// Save the queue and where it is up to.
+/// Save the queue, the mode it plays in, and where it is up to.
 pub fn save_playback_state(
     conn: &Connection,
     items: &[PersistedQueueItem],
+    mode: PlayMode,
     cursor_path: Option<&str>,
     position_ms: u64,
     was_playing: bool,
@@ -43,10 +50,11 @@ pub fn save_playback_state(
     let json = serde_json::to_string(items).unwrap_or_else(|_| "[]".into());
     super::atomically(conn, || {
         conn.execute(
-            "INSERT INTO playback_state (id, queue_json, updated_at)
-             VALUES (1, ?1, datetime('now'))
-             ON CONFLICT(id) DO UPDATE SET queue_json = ?1, updated_at = datetime('now')",
-            [json],
+            "INSERT INTO playback_state (id, queue_json, shuffle, repeat, updated_at)
+             VALUES (1, ?1, ?2, ?3, datetime('now'))
+             ON CONFLICT(id) DO UPDATE SET queue_json = ?1, shuffle = ?2, repeat = ?3,
+               updated_at = datetime('now')",
+            rusqlite::params![json, mode.shuffle, mode.repeat.as_str()],
         )?;
         save_playback_position(conn, cursor_path, position_ms, was_playing)
     })
@@ -83,7 +91,7 @@ pub fn save_playback_position(
 pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<PersistedPlaybackState>> {
     let result = conn.query_row(
         "SELECT s.queue_json, p.cursor_id, COALESCE(p.position_ms, 0),
-                COALESCE(p.was_playing, 0)
+                COALESCE(p.was_playing, 0), s.shuffle, s.repeat
          FROM playback_state s LEFT JOIN playback_position p ON p.id = 1
          WHERE s.id = 1",
         [],
@@ -92,12 +100,17 @@ pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<Persist
             let cursor_path: Option<String> = row.get(1)?;
             let position_ms: i64 = row.get(2)?;
             let was_playing: bool = row.get(3)?;
-            Ok((json, cursor_path, position_ms as u64, was_playing))
+            let repeat: String = row.get(5)?;
+            let mode = PlayMode {
+                shuffle: row.get(4)?,
+                repeat: Repeat::parse(&repeat).unwrap_or_default(),
+            };
+            Ok((json, cursor_path, position_ms as u64, was_playing, mode))
         },
     );
 
     match result {
-        Ok((json, cursor_path, position_ms, was_playing)) => {
+        Ok((json, cursor_path, position_ms, was_playing, mode)) => {
             let items: Vec<PersistedQueueItem> = serde_json::from_str(&json).unwrap_or_default();
             if items.is_empty() {
                 return Ok(None);
@@ -107,6 +120,7 @@ pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<Persist
                 cursor_path,
                 position_ms,
                 was_playing,
+                mode,
             }))
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -134,6 +148,7 @@ impl PersistedQueueItem {
             disc: item.disc,
             duration_ms: item.duration_ms,
             db_id: item.db_id,
+            pre_shuffle: item.pre_shuffle,
         }
     }
 
@@ -168,6 +183,7 @@ impl PersistedQueueItem {
             disc: self.disc,
             duration_ms: self.duration_ms,
             state,
+            pre_shuffle: self.pre_shuffle,
         }
     }
 }
@@ -199,6 +215,7 @@ mod tests {
                 disc: Some(1),
                 duration_ms: Some(240_000),
                 db_id: None,
+                pre_shuffle: None,
             },
             PersistedQueueItem {
                 path: "/music/track2.flac".into(),
@@ -212,10 +229,19 @@ mod tests {
                 disc: Some(1),
                 duration_ms: Some(180_000),
                 db_id: None,
+                pre_shuffle: None,
             },
         ];
 
-        save_playback_state(&conn, &items, Some("/music/track1.flac"), 42_000, true).unwrap();
+        save_playback_state(
+            &conn,
+            &items,
+            PlayMode::default(),
+            Some("/music/track1.flac"),
+            42_000,
+            true,
+        )
+        .unwrap();
 
         let loaded = load_playback_state(&conn).unwrap().unwrap();
         assert_eq!(loaded.items.len(), 2);
@@ -241,8 +267,9 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
+            pre_shuffle: None,
         }];
-        save_playback_state(&conn, &items, None, 0, false).unwrap();
+        save_playback_state(&conn, &items, PlayMode::default(), None, 0, false).unwrap();
         assert!(!load_playback_state(&conn).unwrap().unwrap().was_playing);
     }
 
@@ -261,8 +288,17 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
+            pre_shuffle: None,
         }];
-        save_playback_state(&conn, &items, Some("/music/track.flac"), 1_000, true).unwrap();
+        save_playback_state(
+            &conn,
+            &items,
+            PlayMode::default(),
+            Some("/music/track.flac"),
+            1_000,
+            true,
+        )
+        .unwrap();
         let queue_row = |conn: &Connection| -> (String, Option<String>) {
             conn.query_row(
                 "SELECT queue_json, updated_at FROM playback_state WHERE id = 1",
@@ -305,8 +341,9 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
+            pre_shuffle: None,
         }];
-        save_playback_state(&conn, &items, None, 0, false).unwrap();
+        save_playback_state(&conn, &items, PlayMode::default(), None, 0, false).unwrap();
         assert!(load_playback_state(&conn).unwrap().is_some());
 
         clear_playback_state(&conn).unwrap();
@@ -327,6 +364,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: Some(42),
+            pre_shuffle: None,
         };
         let playlist_item = item.to_playlist_item();
         assert!(
@@ -357,6 +395,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
+            pre_shuffle: None,
         };
         let playlist_item = item.to_playlist_item();
         assert!(
@@ -381,8 +420,9 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
+            pre_shuffle: None,
         }];
-        save_playback_state(&conn, &items1, None, 100, false).unwrap();
+        save_playback_state(&conn, &items1, PlayMode::default(), None, 100, false).unwrap();
 
         let items2 = vec![PersistedQueueItem {
             path: "/music/new.flac".into(),
@@ -396,8 +436,17 @@ mod tests {
             disc: None,
             duration_ms: None,
             db_id: None,
+            pre_shuffle: None,
         }];
-        save_playback_state(&conn, &items2, Some("/music/new.flac"), 999, false).unwrap();
+        save_playback_state(
+            &conn,
+            &items2,
+            PlayMode::default(),
+            Some("/music/new.flac"),
+            999,
+            false,
+        )
+        .unwrap();
 
         let loaded = load_playback_state(&conn).unwrap().unwrap();
         assert_eq!(loaded.items.len(), 1);
@@ -421,6 +470,7 @@ mod tests {
                 disc: None,
                 duration_ms: None,
                 db_id: None,
+                pre_shuffle: None,
             },
             PersistedQueueItem {
                 path: "/cache/remote.flac".into(),
@@ -434,9 +484,10 @@ mod tests {
                 disc: None,
                 duration_ms: None,
                 db_id: Some(99),
+                pre_shuffle: None,
             },
         ];
-        save_playback_state(&conn, &items, None, 0, false).unwrap();
+        save_playback_state(&conn, &items, PlayMode::default(), None, 0, false).unwrap();
 
         let loaded = load_playback_state(&conn).unwrap().unwrap();
         assert_eq!(
@@ -489,6 +540,7 @@ mod tests {
                 disc: Some(1),
                 duration_ms: Some(300_000),
                 db_id: Some(10),
+                pre_shuffle: None,
             },
             PersistedQueueItem {
                 path: "/music/beta.flac".into(),
@@ -502,6 +554,7 @@ mod tests {
                 disc: Some(1),
                 duration_ms: Some(250_000),
                 db_id: Some(11),
+                pre_shuffle: None,
             },
             PersistedQueueItem {
                 path: "/music/gamma.flac".into(),
@@ -515,13 +568,22 @@ mod tests {
                 disc: None,
                 duration_ms: Some(180_000),
                 db_id: None,
+                pre_shuffle: None,
             },
         ];
 
         // Save with cursor on the second track, position 42s in.
         let cursor_path = "/music/beta.flac";
         let position_ms = 42_000u64;
-        save_playback_state(&conn, &items, Some(cursor_path), position_ms, false).unwrap();
+        save_playback_state(
+            &conn,
+            &items,
+            PlayMode::default(),
+            Some(cursor_path),
+            position_ms,
+            false,
+        )
+        .unwrap();
 
         // Simulate "clear in-memory state" by just loading fresh from DB.
         let restored = load_playback_state(&conn)

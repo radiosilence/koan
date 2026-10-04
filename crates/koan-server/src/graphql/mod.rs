@@ -1044,6 +1044,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             state: ItemState::Ready,
+            pre_shuffle: None,
         };
         state.add_items(vec![
             item("Known", "/music/known.flac", Some(known)),
@@ -1113,6 +1114,7 @@ mod tests {
             disc: Some(1),
             duration_ms: Some(240000),
             state: ItemState::Ready,
+            pre_shuffle: None,
         };
         state.add_items(vec![item]);
 

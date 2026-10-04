@@ -741,6 +741,22 @@ impl App {
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
             KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
+            KeyCode::Char('s') => {
+                let on = !self.state.play_mode().shuffle;
+                self.tx.send(PlayerCommand::SetShuffle(on)).ok();
+                self.status_message = Some((
+                    if on { "shuffle on" } else { "shuffle off" }.into(),
+                    std::time::Instant::now(),
+                ));
+            }
+            KeyCode::Char('R') => {
+                let repeat = self.state.play_mode().repeat.cycled();
+                self.tx.send(PlayerCommand::SetRepeat(repeat)).ok();
+                self.status_message = Some((
+                    format!("repeat {}", repeat.as_str()),
+                    std::time::Instant::now(),
+                ));
+            }
             KeyCode::Char('.') | KeyCode::Right => {
                 self.seek_to(self.state.position_ms().saturating_add(10_000));
             }

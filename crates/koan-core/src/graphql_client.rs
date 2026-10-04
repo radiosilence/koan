@@ -207,7 +207,7 @@ impl GraphQLClient {
 
     pub fn now_playing(&self) -> Result<NowPlaying, GraphQLError> {
         let data = self.execute(
-            "{ nowPlaying { state positionMs durationMs queueItemId \
+            "{ nowPlaying { state positionMs durationMs queueItemId shuffle repeat \
              track { trackId title artist album codec sampleRate bitDepth bitrateKbps channels durationMs } } }",
             None,
         )?;
@@ -217,6 +217,13 @@ impl GraphQLClient {
             position_ms: np["positionMs"].as_u64().unwrap_or(0),
             duration_ms: np["durationMs"].as_u64(),
             queue_item_id: np["queueItemId"].as_str().map(String::from),
+            mode: crate::player::state::PlayMode {
+                shuffle: np["shuffle"].as_bool().unwrap_or(false),
+                repeat: np["repeat"]
+                    .as_str()
+                    .and_then(|r| crate::player::state::Repeat::parse(&r.to_lowercase()))
+                    .unwrap_or_default(),
+            },
             track: np.get("track").and_then(|t| {
                 if t.is_null() {
                     return None;
@@ -291,6 +298,22 @@ impl GraphQLClient {
         Ok(())
     }
 
+    pub fn set_shuffle(&self, on: bool) -> Result<(), GraphQLError> {
+        self.execute(
+            "mutation($on: Boolean!) { setPlayMode(shuffle: $on) { ok } }",
+            Some(serde_json::json!({ "on": on })),
+        )?;
+        Ok(())
+    }
+
+    pub fn set_repeat(&self, repeat: crate::player::state::Repeat) -> Result<(), GraphQLError> {
+        self.execute(
+            "mutation($repeat: Repeat!) { setPlayMode(repeat: $repeat) { ok } }",
+            Some(serde_json::json!({ "repeat": repeat.as_str().to_uppercase() })),
+        )?;
+        Ok(())
+    }
+
     pub fn seek(&self, position_ms: u64) -> Result<(), GraphQLError> {
         self.execute(
             "mutation($positionMs: Int!) { seek(positionMs: $positionMs) { ok } }",
@@ -361,6 +384,7 @@ pub struct NowPlaying {
     pub position_ms: u64,
     pub duration_ms: Option<u64>,
     pub queue_item_id: Option<String>,
+    pub mode: crate::player::state::PlayMode,
     pub track: Option<NowPlayingTrack>,
 }
 

@@ -56,6 +56,7 @@ fn save_playback_state_from_app(app: &app::App) {
             if let Err(e) = koan_core::db::queries::save_playback_state(
                 &db.conn,
                 &persisted,
+                app.state.play_mode(),
                 cursor_path.as_deref(),
                 position_ms,
                 app.state.playback_state() == koan_core::player::state::PlaybackState::Playing,

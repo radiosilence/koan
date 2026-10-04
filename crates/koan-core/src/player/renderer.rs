@@ -1397,7 +1397,9 @@ impl Player {
             running: Some(Instant::now()),
         }));
         self.shared_state.set_cursor(Some(id));
-        self.on_track_changed(id, 0);
+        // A new play even of the same item, repeated: the renderer opened it
+        // again.
+        self.begin_play(id, 0, 0);
         self.queue_next_on_renderer();
     }
 }
@@ -1431,6 +1433,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             state: ItemState::Ready,
+            pre_shuffle: None,
         }
     }
 

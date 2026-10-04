@@ -4,7 +4,7 @@ use async_graphql::connection::{DisableNodesField, EmptyFields};
 use async_graphql::dataloader::DataLoader;
 use async_graphql::{ComplexObject, Context, Enum, ID, InputObject, Object, SimpleObject};
 use koan_core::db::queries::{self, UidKind};
-use koan_core::player::state::{PlaybackState, QueueEntryStatus, SharedPlayerState};
+use koan_core::player::state::{PlaybackState, QueueEntryStatus, Repeat, SharedPlayerState};
 
 use super::helpers::paginate;
 use super::jobs::{Job, JobState};
@@ -363,6 +363,41 @@ pub(super) struct GqlNowPlaying {
     pub seekable_ms: Option<u64>,
     pub track: Option<GqlNowPlayingTrack>,
     pub queue_item_id: Option<String>,
+    /// Shuffle is on: the queue after the current track was reordered at
+    /// random. The queue is the play order either way.
+    pub shuffle: bool,
+    pub repeat: GqlRepeat,
+}
+
+/// What follows a track at its end.
+#[derive(Enum, Copy, Clone, Eq, PartialEq, Debug)]
+#[graphql(name = "Repeat")]
+pub(super) enum GqlRepeat {
+    Off,
+    /// The last track runs on into the first.
+    Queue,
+    /// The track plays again; next and previous still move on.
+    One,
+}
+
+impl From<Repeat> for GqlRepeat {
+    fn from(r: Repeat) -> Self {
+        match r {
+            Repeat::Off => Self::Off,
+            Repeat::Queue => Self::Queue,
+            Repeat::One => Self::One,
+        }
+    }
+}
+
+impl From<GqlRepeat> for Repeat {
+    fn from(r: GqlRepeat) -> Self {
+        match r {
+            GqlRepeat::Off => Self::Off,
+            GqlRepeat::Queue => Self::Queue,
+            GqlRepeat::One => Self::One,
+        }
+    }
 }
 
 #[derive(SimpleObject)]
@@ -417,6 +452,7 @@ impl GqlNowPlaying {
             PlaybackState::Paused => PlaybackStateEnum::Paused,
         };
         let position_ms = state.position_ms();
+        let mode = state.play_mode();
 
         let Some(info) = state.track_info() else {
             return Self {
@@ -426,6 +462,8 @@ impl GqlNowPlaying {
                 seekable_ms: None,
                 track: None,
                 queue_item_id: None,
+                shuffle: mode.shuffle,
+                repeat: mode.repeat.into(),
             };
         };
 
@@ -455,6 +493,8 @@ impl GqlNowPlaying {
                 }),
             }),
             queue_item_id: Some(info.id.0.to_string()),
+            shuffle: mode.shuffle,
+            repeat: mode.repeat.into(),
         }
     }
 }
@@ -576,6 +616,8 @@ pub(super) struct GqlClient {
     /// the app. What was sent runs when someone taps the notification, so say
     /// that rather than that it is playing.
     pub notified: bool,
+    pub shuffle: bool,
+    pub repeat: GqlRepeat,
 }
 
 #[derive(SimpleObject)]
@@ -622,6 +664,8 @@ impl From<crate::clients::ClientInfo> for GqlClient {
                 })
                 .collect(),
             notified: c.notified,
+            shuffle: c.state.shuffle,
+            repeat: c.state.repeat.into(),
         }
     }
 }

@@ -102,11 +102,16 @@ struct NowPlayingSheet: View {
         }
     }
 
+    /// Shuffle and repeat flank the three that move, at the size of the
+    /// extras below: they set how the queue plays rather than moving it.
     private var transport: some View {
-        HStack(spacing: 48) {
+        HStack(spacing: 0) {
+            ShuffleButton().font(.title3)
+            Spacer()
             Button { player.previous() } label: {
                 Image(systemName: Icon.previous).font(.title)
             }
+            Spacer()
             Button { player.togglePlayPause() } label: {
                 Group {
                     if player.isWaitingForTrack {
@@ -120,10 +125,14 @@ struct NowPlayingSheet: View {
                 .frame(width: 56, height: 56)
             }
             .accessibilityLabel(player.isWaitingForTrack ? "Loading" : player.isPlaying ? "Pause" : "Play")
+            Spacer()
             Button { player.next() } label: {
                 Image(systemName: Icon.next).font(.title)
             }
+            Spacer()
+            RepeatButton().font(.title3)
         }
+        .padding(.horizontal, 28)
         .buttonStyle(.plain)
         .disabled(player.currentEntry == nil)
     }

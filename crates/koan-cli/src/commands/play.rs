@@ -159,6 +159,8 @@ pub fn cmd_play(
             });
             tx.send(PlayerCommand::AddToPlaylist(items))
                 .expect("player thread died");
+            tx.send(PlayerCommand::RestorePlayMode(persisted.mode))
+                .expect("player thread died");
             if let Some(cid) = cursor_id {
                 // The player waits for a track still downloading, and opens it
                 // at the position once it can.

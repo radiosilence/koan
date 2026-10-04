@@ -414,6 +414,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
         "was_playing",
         "INTEGER NOT NULL DEFAULT 0",
     ),
+    // The play mode the saved queue was in. Saved with the queue because a
+    // shuffled queue is saved in its shuffled order.
+    ("playback_state", "shuffle", "INTEGER NOT NULL DEFAULT 0"),
+    ("playback_state", "repeat", "TEXT NOT NULL DEFAULT 'off'"),
     // MusicBrainz ids are the join key for anything that wants to look a
     // release or a recording up elsewhere. The server hands them over on every
     // album and every song.

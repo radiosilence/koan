@@ -180,6 +180,8 @@ struct TransportBar: View {
 
     private var controls: some View {
         HStack(spacing: 22) {
+            ShuffleButton()
+
             // A skip is acknowledged by the arrow itself. On a remote library
             // the next track can take a moment to load, and until it does
             // nothing else on the bar has changed — so the press reads as
@@ -205,6 +207,8 @@ struct TransportBar: View {
                     .symbolEffect(.bounce, value: reduceMotion ? 0 : forwardSkips)
             }
             .help("Next track (⌘→)")
+
+            RepeatButton()
         }
         .buttonStyle(.plain)
         .font(.system(size: 13))
@@ -504,6 +508,47 @@ private struct PlayPauseButton: View {
                 .frame(width: 30)
         }
         .help(player.isPlaying ? "Pause (Space)" : "Play (Space)")
+    }
+}
+
+/// Shuffle, lit while on. Its own view, like the play button, so a mode
+/// change re-runs it alone.
+struct ShuffleButton: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        Button(action: player.toggleShuffle) {
+            Image(systemName: Icon.shuffle)
+                .foregroundStyle(player.shuffle ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+        }
+        .help(player.shuffle ? "Shuffle is on: turn it off to put the queue back" : "Shuffle the rest of the queue")
+        .accessibilityLabel("Shuffle")
+        .accessibilityValue(player.shuffle ? "On" : "Off")
+    }
+}
+
+/// Repeat: off, the queue, one track. One press steps to the next.
+struct RepeatButton: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        let mode = player.repeatMode
+        Button(action: player.cycleRepeat) {
+            Image(systemName: mode == .one ? Icon.repeatOne : Icon.repeatQueue)
+                .foregroundStyle(mode == .off ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .help(switch mode {
+        case .off: "Repeat the queue"
+        case .queue: "Repeating the queue: repeat this track instead"
+        case .one: "Repeating this track: turn repeat off"
+        })
+        .accessibilityLabel("Repeat")
+        .accessibilityValue(switch mode {
+        case .off: "Off"
+        case .queue: "Queue"
+        case .one: "One track"
+        })
     }
 }
 
