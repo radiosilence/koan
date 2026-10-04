@@ -1,50 +1,96 @@
-//! Invite links: an account's server, username and password as one link.
+//! Invite links: an account's server and username, and a token the app trades
+//! for an API key of its own.
 //!
-//! The link is the whole invitation. Nothing is redeemed on the server, so it
-//! works against any Subsonic server and a mail scanner fetching it changes
-//! nothing. The credentials travel in the fragment of a koan.rocks address,
-//! which browsers do not send, so the site serving the page never sees them.
-//! With the app installed the address is a universal link and opens it
-//! directly; without, the page offers the downloads, a `koan://join` button
-//! and the details in plain text for other clients.
+//! The token is a JWT signed with the server's key, naming the account, a mark
+//! of its password hash, and when it stops working. Nothing is stored when one
+//! is made, so an admin can make another at any time, and one link signs in as
+//! many devices as the account holder has until it expires, or until the
+//! account's password changes, which changes the mark: a reset is how a link
+//! sent to the wrong place is withdrawn. The server checks its own signature
+//! when the app redeems it (`redeem`), and answers with a new API key: from
+//! then on the app signs in the OpenSubsonic way, and every device it was
+//! opened on has a key of its own to revoke.
+//!
+//! The server never keeps a password it can read back. A new account's
+//! password is generated, shown once in the invite email for the web UI and
+//! other Subsonic apps, and stored only as a hash.
+//!
+//! The link travels in the fragment of a koan.rocks address, which browsers
+//! do not send, so the site serving the page never sees it. With the app
+//! installed the address is a universal link and opens it directly; without,
+//! the page offers the downloads and a `koan://join` button.
+//!
+//! A server address with the account in it (`https://user:password@host`),
+//! which is what someone pasting into the server field may have, reads as an
+//! invite too, and signs in with the password.
 //!
 //! The server never sends mail. It produces the email for the admin to send
 //! from their own client.
 
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 use url::{Url, form_urlencoded};
 
 use crate::auth::{self, Role};
+use crate::db::queries::api_keys;
 use crate::db::queries::auth as users;
 
 pub const JOIN_PAGE: &str = "https://koan.rocks/join/";
 pub const APP_STORE: &str = "https://apps.apple.com/app/id6817137172";
 pub const MAC_DOWNLOAD: &str = "https://github.com/radiosilence/koan/releases/latest";
 
+/// How long an invite link signs devices in for.
+pub const TOKEN_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+const TOKEN_TYP: &str = "koan-invite";
+
 const MAX_USERNAME: usize = 64;
+const MIN_PASSWORD: usize = 8;
+const MAX_DEVICE_NAME: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invite {
     pub server: String,
     pub username: String,
-    pub password: String,
+    /// What a koan server trades for an API key. Absent only from an address
+    /// with the account in it.
+    pub token: Option<String>,
+    /// The account's password: generated with the account and put in the
+    /// email once, or taken from an address. Never in a link.
+    pub password: Option<String>,
 }
 
 impl Invite {
-    pub fn new(server: &str, username: &str, password: &str) -> Self {
+    /// An invite carrying `token`, and the account's password for the email
+    /// when it was just made.
+    pub fn with_token(server: &str, username: &str, token: &str, password: Option<&str>) -> Self {
         Self {
             server: server.trim().trim_end_matches('/').to_owned(),
             username: username.to_owned(),
-            password: password.to_owned(),
+            token: Some(token.to_owned()),
+            password: password.map(str::to_owned),
+        }
+    }
+
+    /// An account that signs in with its password: an address with the account
+    /// in it.
+    pub fn with_password(server: &str, username: &str, password: &str) -> Self {
+        Self {
+            server: server.trim().trim_end_matches('/').to_owned(),
+            username: username.to_owned(),
+            token: None,
+            password: Some(password.to_owned()),
         }
     }
 
     fn params(&self) -> String {
-        form_urlencoded::Serializer::new(String::new())
-            .append_pair("server", &self.server)
-            .append_pair("username", &self.username)
-            .append_pair("password", &self.password)
-            .finish()
+        let mut p = form_urlencoded::Serializer::new(String::new());
+        p.append_pair("server", &self.server)
+            .append_pair("username", &self.username);
+        if let Some(token) = &self.token {
+            p.append_pair("invite", token);
+        }
+        p.finish()
     }
 
     /// The link to send: a universal link into the app, or the join page.
@@ -58,9 +104,7 @@ impl Invite {
     }
 
     /// Reads either form of the link, or a server address with the account
-    /// in it (`https://user:password@host`), which is what someone pasting
-    /// into the server field may have. Anything else, or a link missing a
-    /// field, is `None`.
+    /// in it. Anything else, or a link missing a field, is `None`.
     pub fn parse(link: &str) -> Option<Self> {
         let url = Url::parse(link.trim()).ok()?;
         if matches!(url.scheme(), "http" | "https") && !url.username().is_empty() {
@@ -72,7 +116,7 @@ impl Invite {
             let mut server = url;
             server.set_username("").ok()?;
             server.set_password(None).ok()?;
-            return Some(Self::new(server.as_str(), &username, &password));
+            return Some(Self::with_password(server.as_str(), &username, &password));
         }
         let params = match (url.scheme(), url.host_str()) {
             ("koan", Some("join")) => url.query().or(url.fragment()),
@@ -81,28 +125,47 @@ impl Invite {
             }
             _ => None,
         }?;
-        let (mut server, mut username, mut password) = (None, None, None);
+        let (mut server, mut username, mut token) = (None, None, None);
         for (k, v) in form_urlencoded::parse(params.as_bytes()) {
+            let v = Some(v.into_owned()).filter(|v| !v.is_empty());
             match &*k {
-                "server" => server = Some(v.into_owned()),
-                "username" => username = Some(v.into_owned()),
-                "password" => password = Some(v.into_owned()),
+                "server" => server = v,
+                "username" => username = v,
+                "invite" => token = v,
                 _ => {}
             }
         }
-        let (server, username, password) = (server?, username?, password?);
+        let (server, username) = (server?, username?);
         let scheme = Url::parse(&server).ok()?.scheme().to_owned();
-        if !matches!(scheme.as_str(), "http" | "https")
-            || username.is_empty()
-            || password.is_empty()
-        {
+        if !matches!(scheme.as_str(), "http" | "https") {
             return None;
         }
-        Some(Self::new(&server, &username, &password))
+        Some(Self::with_token(&server, &username, &token?, None))
     }
 
     pub fn email_subject(&self) -> String {
         "Your koan account".to_owned()
+    }
+
+    /// How to sign in to anything that is not koan: the password when the
+    /// email carries it, or where to make an API key when it does not.
+    fn other_apps_text(&self) -> String {
+        match &self.password {
+            Some(password) => format!(
+                "Using a different Subsonic app, or the web player at {server}? Sign in with:\n\
+                 \n\
+                 Server URL: {server}\n\
+                 Username: {username}\n\
+                 Password: {password}\n",
+                server = self.server,
+                username = self.username,
+            ),
+            None => format!(
+                "Using a different Subsonic app? Sign in at {server} with your password and \
+                 make an API key under API keys.\n",
+                server = self.server,
+            ),
+        }
     }
 
     pub fn email_text(&self) -> String {
@@ -115,17 +178,12 @@ impl Invite {
              \n\
              {link}\n\
              \n\
-             koan signs in and loads the library by itself.\n\
+             koan signs in and loads the library by itself. The link works on each of \
+             your devices for a week.\n\
              \n\
-             Using a different Subsonic app? Sign in with:\n\
-             \n\
-             Server URL: {server}\n\
-             Username: {username}\n\
-             Password: {password}\n",
+             {other}",
             link = self.link(),
-            server = self.server,
-            username = self.username,
-            password = self.password,
+            other = self.other_apps_text(),
         )
     }
 
@@ -133,6 +191,21 @@ impl Invite {
     /// client as rich text.
     pub fn email_html(&self) -> String {
         let e = html_escape;
+        let other = match &self.password {
+            Some(password) => format!(
+                "<p>Using a different Subsonic app, or the web player at {server}? Sign in \
+                 with:</p><p>Server URL: {server}<br>Username: {username}<br>Password: \
+                 {password}</p>",
+                server = e(&self.server),
+                username = e(&self.username),
+                password = e(password),
+            ),
+            None => format!(
+                "<p>Using a different Subsonic app? Sign in at {server} with your password \
+                 and make an API key under API keys.</p>",
+                server = e(&self.server),
+            ),
+        };
         format!(
             "<p>I've made you an account on my music server.</p>\
              <ol><li>Install koan: from the <a href=\"{APP_STORE}\">App Store</a> on an iPhone \
@@ -141,13 +214,9 @@ impl Invite {
              <p><a href=\"{link}\" style=\"display:inline-block;padding:10px 18px;\
              border-radius:8px;background:#111;color:#fff;text-decoration:none;\
              font-weight:600\">Open in koan</a></p>\
-             <p>koan signs in and loads the library by itself.</p>\
-             <p>Using a different Subsonic app? Sign in with:</p>\
-             <p>Server URL: {server}<br>Username: {username}<br>Password: {password}</p>",
+             <p>koan signs in and loads the library by itself. The link works on each of \
+             your devices for a week.</p>{other}",
             link = e(&self.link()),
-            server = e(&self.server),
-            username = e(&self.username),
-            password = e(&self.password),
         )
     }
 
@@ -180,6 +249,100 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+// ---------------------------------------------------------------------------
+// Tokens
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize)]
+struct Claims {
+    typ: String,
+    /// The account's id. Ids are never reused, so a token outlives no
+    /// account it was made for.
+    sub: i64,
+    username: String,
+    /// `password_mark` of the account's password hash when the token was
+    /// made.
+    pwd: String,
+    iat: u64,
+    exp: u64,
+}
+
+/// Enough of a digest of the password hash to tell when it changed, and too
+/// little to say anything about the password.
+fn password_mark(password_hash: &str) -> String {
+    auth::sha256_hex(password_hash)[..16].to_owned()
+}
+
+/// A token for the account `user_id`, signed with the server's private key.
+pub fn mint_token(
+    conn: &Connection,
+    private_pem: &[u8],
+    user_id: i64,
+) -> Result<String, AccountError> {
+    let user = users::get_user_by_id(conn, user_id)
+        .map_err(other)?
+        .ok_or_else(|| AccountError::NoSuchUser(user_id.to_string()))?;
+    let now = auth::now_unix();
+    let claims = Claims {
+        typ: TOKEN_TYP.into(),
+        sub: user.id,
+        username: user.username,
+        pwd: password_mark(&user.password_hash),
+        iat: now,
+        exp: now + TOKEN_TTL_SECS,
+    };
+    let key = EncodingKey::from_ed_pem(private_pem).map_err(other)?;
+    jsonwebtoken::encode(&Header::new(Algorithm::EdDSA), &claims, &key).map_err(other)
+}
+
+/// What redeeming an invite gives the app: the account, and a key to sign in
+/// with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Redeemed {
+    pub username: String,
+    pub api_key: String,
+}
+
+/// Check `token` against the server's public key and make an API key for the
+/// account it names, called `device`.
+pub fn redeem(
+    conn: &Connection,
+    public_pem: &[u8],
+    token: &str,
+    device: &str,
+) -> Result<Redeemed, AccountError> {
+    let key = DecodingKey::from_ed_pem(public_pem).map_err(other)?;
+    let mut validation = Validation::new(Algorithm::EdDSA);
+    validation.set_required_spec_claims(&["exp"]);
+    let claims = jsonwebtoken::decode::<Claims>(token, &key, &validation)
+        .map_err(|_| AccountError::BadInvite)?
+        .claims;
+    if claims.typ != TOKEN_TYP {
+        return Err(AccountError::BadInvite);
+    }
+    let user = users::get_user_by_id(conn, claims.sub)
+        .map_err(other)?
+        .filter(|u| u.username == claims.username)
+        .filter(|u| password_mark(&u.password_hash) == claims.pwd)
+        .ok_or(AccountError::BadInvite)?;
+    let name: String = device
+        .trim()
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_DEVICE_NAME)
+        .collect();
+    let name = if name.is_empty() { "koan" } else { &name };
+    let (_, api_key) = api_keys::create_api_key(conn, user.id, name).map_err(other)?;
+    Ok(Redeemed {
+        username: user.username,
+        api_key,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Accounts
+// ---------------------------------------------------------------------------
+
 /// A password someone can type from an email: 20 characters with no
 /// lookalikes (0/O, 1/l/I), about 116 bits.
 pub fn generate_password() -> Result<String, auth::AuthError> {
@@ -205,14 +368,16 @@ pub fn generate_password() -> Result<String, auth::AuthError> {
 pub enum AccountError {
     #[error("usernames are 1 to {MAX_USERNAME} characters, without spaces")]
     BadUsername,
+    #[error("passwords are at least {MIN_PASSWORD} characters")]
+    ShortPassword,
     #[error("there is already an account called {0}")]
     Taken(String),
     #[error("{0} is reserved")]
     Reserved(String),
     #[error("there is no account called {0}")]
     NoSuchUser(String),
-    #[error("{0}'s password is not recoverable; invite with a new password instead")]
-    NotRecoverable(String),
+    #[error("this invite is not valid here, or has expired")]
+    BadInvite,
     #[error("the last admin cannot be removed or demoted")]
     LastAdmin,
     #[error(transparent)]
@@ -223,25 +388,20 @@ fn other(e: impl std::error::Error + Send + Sync + 'static) -> AccountError {
     AccountError::Other(Box::new(e))
 }
 
-fn seal(
-    conn: &Connection,
-    key: &[u8; 32],
-    username: &str,
-    password: &str,
-) -> Result<(), AccountError> {
-    let sealed = auth::seal_password(key, username, password).map_err(other)?;
-    users::set_sealed_password(conn, username, &sealed).map_err(other)
+/// An account just made: its id, for a token, and its generated password,
+/// for the email. The password is not kept anywhere it can be read back.
+#[derive(Debug)]
+pub struct NewAccount {
+    pub id: i64,
+    pub password: String,
 }
 
-/// Create an account with a generated password, sealed under `key` (the
-/// server's `auth::subsonic_key`) so it can use token auth and be recovered
-/// for a later invite. Returns the password.
+/// Create an account with a generated password.
 pub fn create_account(
     conn: &Connection,
-    key: &[u8; 32],
     username: &str,
     role: Role,
-) -> Result<String, AccountError> {
+) -> Result<NewAccount, AccountError> {
     let username = username.trim();
     if username.is_empty()
         || username.chars().count() > MAX_USERNAME
@@ -259,47 +419,39 @@ pub fn create_account(
         return Err(AccountError::Taken(username.to_owned()));
     }
     let password = generate_password().map_err(other)?;
-    users::create_user(conn, username, &password, role).map_err(other)?;
-    seal(conn, key, username, &password)?;
-    Ok(password)
+    let id = users::create_user(conn, username, &password, role).map_err(other)?;
+    Ok(NewAccount { id, password })
 }
 
-/// The password to put in an invite for an existing account.
-///
-/// Recovered from the sealed copy, so the account's other devices keep
-/// working. With `reset`, a new password replaces it instead, which signs
-/// every existing device out (see `update_password`); open links are the
-/// server's to drop.
-pub fn account_password(
-    conn: &Connection,
-    key: &[u8; 32],
-    username: &str,
-    reset: bool,
-) -> Result<String, AccountError> {
-    if users::get_user_by_username(conn, username)
+/// The account called `username`, or `NoSuchUser`.
+pub fn account(conn: &Connection, username: &str) -> Result<users::UserRow, AccountError> {
+    users::get_user_by_username(conn, username)
         .map_err(other)?
-        .is_none()
-    {
-        return Err(AccountError::NoSuchUser(username.to_owned()));
-    }
-    if !reset {
-        return users::sealed_password(conn, username)
-            .map_err(other)?
-            .and_then(|sealed| auth::open_password(key, username, &sealed))
-            .ok_or_else(|| AccountError::NotRecoverable(username.to_owned()));
-    }
-    let password = generate_password().map_err(other)?;
+        .ok_or_else(|| AccountError::NoSuchUser(username.to_owned()))
+}
+
+/// Give an account `password`, or a generated one when `None`, which is
+/// returned. Signs every device out: sessions end and API keys are revoked
+/// (see `update_password`), invited devices included.
+pub fn set_password(
+    conn: &Connection,
+    username: &str,
+    password: Option<&str>,
+) -> Result<String, AccountError> {
+    account(conn, username)?;
+    let password = match password {
+        Some(p) if p.chars().count() < MIN_PASSWORD => return Err(AccountError::ShortPassword),
+        Some(p) => p.to_owned(),
+        None => generate_password().map_err(other)?,
+    };
     users::update_password(conn, username, &password)
         .map_err(|e| AccountError::Other(e.to_string().into()))?;
-    seal(conn, key, username, &password)?;
     Ok(password)
 }
 
 /// Change an account's role, refusing to demote the last admin.
 pub fn set_role(conn: &Connection, username: &str, role: Role) -> Result<(), AccountError> {
-    let user = users::get_user_by_username(conn, username)
-        .map_err(other)?
-        .ok_or_else(|| AccountError::NoSuchUser(username.to_owned()))?;
+    let user = account(conn, username)?;
     if user.role == Role::Admin
         && role != Role::Admin
         && users::admin_count(conn).map_err(other)? <= 1
@@ -312,9 +464,7 @@ pub fn set_role(conn: &Connection, username: &str, role: Role) -> Result<(), Acc
 
 /// Delete an account, refusing to delete the last admin.
 pub fn delete_account(conn: &Connection, username: &str) -> Result<(), AccountError> {
-    let user = users::get_user_by_username(conn, username)
-        .map_err(other)?
-        .ok_or_else(|| AccountError::NoSuchUser(username.to_owned()))?;
+    let user = account(conn, username)?;
     if user.role == Role::Admin && users::admin_count(conn).map_err(other)? <= 1 {
         return Err(AccountError::LastAdmin);
     }
@@ -327,29 +477,53 @@ mod tests {
     use super::*;
 
     fn invite() -> Invite {
-        Invite::new("https://music.example.com/", "sarita", "p&ss word=#?")
+        Invite::with_token(
+            "https://music.example.com/",
+            "sarita",
+            "a.b-c_d",
+            Some("p&ss word=#?"),
+        )
     }
 
     #[test]
-    fn both_links_round_trip() {
+    fn both_links_round_trip_without_the_password() {
         let i = invite();
         assert_eq!(i.server, "https://music.example.com");
         assert!(i.link().starts_with("https://koan.rocks/join/#server="));
-        assert_eq!(Invite::parse(&i.link()), Some(i.clone()));
-        assert_eq!(Invite::parse(&i.app_link()), Some(i));
+        assert!(!i.link().contains("password"));
+        let read = Invite {
+            password: None,
+            ..i.clone()
+        };
+        assert_eq!(Invite::parse(&i.link()), Some(read.clone()));
+        assert_eq!(Invite::parse(&i.app_link()), Some(read));
+    }
+
+    #[test]
+    fn links_carrying_a_password_are_not_invites() {
+        let old =
+            "https://koan.rocks/join/#server=https%3A%2F%2Fa.example&username=u&password=p%26q";
+        assert_eq!(Invite::parse(old), None);
     }
 
     #[test]
     fn the_join_page_without_its_slash_still_parses() {
         let link = invite().link().replacen("/join/#", "/join#", 1);
-        assert_eq!(Invite::parse(&link), Some(invite()));
+        assert_eq!(
+            Invite::parse(&link).unwrap().token.as_deref(),
+            Some("a.b-c_d")
+        );
     }
 
     #[test]
     fn an_address_with_the_account_in_it_is_split() {
         assert_eq!(
             Invite::parse("https://sarita:p%40ss+w@koan.example.com/"),
-            Some(Invite::new("https://koan.example.com", "sarita", "p@ss+w"))
+            Some(Invite::with_password(
+                "https://koan.example.com",
+                "sarita",
+                "p@ss+w"
+            ))
         );
         assert_eq!(Invite::parse("https://sarita@koan.example.com"), None);
     }
@@ -358,7 +532,7 @@ mod tests {
     fn other_links_and_missing_fields_are_refused() {
         assert_eq!(Invite::parse("https://example.com/join/#server=x"), None);
         assert_eq!(
-            Invite::parse("https://koan.rocks/#server=https://a&username=u&password=p"),
+            Invite::parse("https://koan.rocks/#server=https://a&username=u&invite=t"),
             None
         );
         assert_eq!(
@@ -366,7 +540,11 @@ mod tests {
             None
         );
         assert_eq!(
-            Invite::parse("koan://join?server=ftp://a&username=u&password=p"),
+            Invite::parse("koan://join?server=https://a&username=u&invite="),
+            None
+        );
+        assert_eq!(
+            Invite::parse("koan://join?server=ftp://a&username=u&invite=t"),
             None
         );
         assert_eq!(Invite::parse("not a url"), None);
@@ -380,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    fn the_email_carries_the_link_and_the_details() {
+    fn the_email_carries_the_link_and_a_new_accounts_password() {
         let i = invite();
         let text = i.email_text();
         assert!(text.contains(&i.link()));
@@ -388,6 +566,13 @@ mod tests {
         assert!(text.contains("Password: p&ss word=#?"));
         assert!(i.email_html().contains("p&amp;ss word=#?"));
         assert!(!i.mailto().contains(' '));
+
+        let again = Invite {
+            password: None,
+            ..invite()
+        };
+        assert!(!again.email_text().contains("Password:"));
+        assert!(again.email_text().contains("API key"));
     }
 
     #[test]
@@ -398,24 +583,88 @@ mod tests {
         assert_ne!(p, generate_password().unwrap());
     }
 
-    #[test]
-    fn accounts_are_created_recovered_and_guarded() {
+    fn db() -> (tempfile::TempDir, crate::db::connection::Database) {
         let dir = tempfile::tempdir().unwrap();
         let db = crate::db::connection::Database::open(&dir.path().join("t.db")).unwrap();
+        (dir, db)
+    }
+
+    #[test]
+    fn a_token_is_redeemed_for_a_key_per_device() {
+        let (_dir, db) = db();
         let conn = &db.conn;
-        let key = &[7; 32];
-        let admin = create_account(conn, key, "owner", Role::Admin).unwrap();
-        assert_eq!(account_password(conn, key, "owner", false).unwrap(), admin);
+        let (private, public) = auth::generate_keypair_pem().unwrap();
+        let made = create_account(conn, "sarita", Role::User).unwrap();
+        let token = mint_token(conn, private.as_bytes(), made.id).unwrap();
+
+        let phone = redeem(conn, public.as_bytes(), &token, "Sarita's iPhone").unwrap();
+        let mac = redeem(conn, public.as_bytes(), &token, "").unwrap();
+        assert_eq!(phone.username, "sarita");
+        assert_ne!(phone.api_key, mac.api_key);
+        let keys = api_keys::list_api_keys(conn, Some(made.id)).unwrap();
+        let names: Vec<_> = keys.iter().map(|k| k.name.as_str()).collect();
+        assert!(names.contains(&"Sarita's iPhone") && names.contains(&"koan"));
+        assert!(
+            api_keys::authenticate_api_key(conn, &phone.api_key)
+                .unwrap()
+                .is_some()
+        );
+
+        // Another server's key, a token for a deleted account, or something
+        // that is not a token are all refused alike.
+        let (_, elsewhere) = auth::generate_keypair_pem().unwrap();
         assert!(matches!(
-            create_account(conn, key, "owner", Role::User),
+            redeem(conn, elsewhere.as_bytes(), &token, "x"),
+            Err(AccountError::BadInvite)
+        ));
+        assert!(matches!(
+            redeem(conn, public.as_bytes(), "nonsense", "x"),
+            Err(AccountError::BadInvite)
+        ));
+        let session =
+            auth::mint_access_token(private.as_bytes(), made.id, "sarita", Role::User, 60).unwrap();
+        assert!(matches!(
+            redeem(conn, public.as_bytes(), &session, "x"),
+            Err(AccountError::BadInvite)
+        ));
+        delete_account(conn, "sarita").unwrap();
+        assert!(matches!(
+            redeem(conn, public.as_bytes(), &token, "x"),
+            Err(AccountError::BadInvite)
+        ));
+    }
+
+    #[test]
+    fn a_new_password_withdraws_links_already_sent() {
+        let (_dir, db) = db();
+        let conn = &db.conn;
+        let (private, public) = auth::generate_keypair_pem().unwrap();
+        let made = create_account(conn, "sarita", Role::User).unwrap();
+        let sent = mint_token(conn, private.as_bytes(), made.id).unwrap();
+        set_password(conn, "sarita", None).unwrap();
+        assert!(matches!(
+            redeem(conn, public.as_bytes(), &sent, "x"),
+            Err(AccountError::BadInvite)
+        ));
+        let again = mint_token(conn, private.as_bytes(), made.id).unwrap();
+        redeem(conn, public.as_bytes(), &again, "x").unwrap();
+    }
+
+    #[test]
+    fn accounts_are_created_and_guarded() {
+        let (_dir, db) = db();
+        let conn = &db.conn;
+        create_account(conn, "owner", Role::Admin).unwrap();
+        assert!(matches!(
+            create_account(conn, "owner", Role::User),
             Err(AccountError::Taken(_))
         ));
         assert!(matches!(
-            create_account(conn, key, "two words", Role::User),
+            create_account(conn, "two words", Role::User),
             Err(AccountError::BadUsername)
         ));
         assert!(matches!(
-            create_account(conn, key, "anonymous", Role::User),
+            create_account(conn, "anonymous", Role::User),
             Err(AccountError::Reserved(_))
         ));
         assert!(matches!(
@@ -426,34 +675,35 @@ mod tests {
             delete_account(conn, "owner"),
             Err(AccountError::LastAdmin)
         ));
+        assert!(matches!(
+            set_password(conn, "nobody", None),
+            Err(AccountError::NoSuchUser(_))
+        ));
+    }
 
-        let first = create_account(conn, key, "sarita", Role::Readonly).unwrap();
-        let sarita = users::get_user_by_username(conn, "sarita")
-            .unwrap()
-            .unwrap()
-            .id;
-        let (_, api_key) =
-            crate::db::queries::api_keys::create_api_key(conn, sarita, "phone").unwrap();
-        // Recovering the password for an invite leaves the keys alone.
-        account_password(conn, key, "sarita", false).unwrap();
+    #[test]
+    fn a_new_password_signs_every_device_out() {
+        let (_dir, db) = db();
+        let conn = &db.conn;
+        let made = create_account(conn, "sarita", Role::Readonly).unwrap();
+        let hash = |conn| account(conn, "sarita").unwrap().password_hash;
+        auth::verify_password(&made.password, &hash(conn)).unwrap();
+        let (_, key) = api_keys::create_api_key(conn, made.id, "phone").unwrap();
+
+        assert!(matches!(
+            set_password(conn, "sarita", Some("short")),
+            Err(AccountError::ShortPassword)
+        ));
+        set_password(conn, "sarita", Some("correct horse")).unwrap();
+        auth::verify_password("correct horse", &hash(conn)).unwrap();
         assert!(
-            crate::db::queries::api_keys::authenticate_api_key(conn, &api_key)
-                .unwrap()
-                .is_some()
-        );
-        let reset = account_password(conn, key, "sarita", true).unwrap();
-        assert_ne!(first, reset);
-        assert_eq!(account_password(conn, key, "sarita", false).unwrap(), reset);
-        // A reset takes the keys with the old password.
-        assert!(
-            crate::db::queries::api_keys::authenticate_api_key(conn, &api_key)
+            api_keys::authenticate_api_key(conn, &key)
                 .unwrap()
                 .is_none()
         );
-        delete_account(conn, "sarita").unwrap();
-        assert!(matches!(
-            account_password(conn, key, "sarita", false),
-            Err(AccountError::NoSuchUser(_))
-        ));
+
+        let generated = set_password(conn, "sarita", None).unwrap();
+        assert_ne!(generated, made.password);
+        auth::verify_password(&generated, &hash(conn)).unwrap();
     }
 }

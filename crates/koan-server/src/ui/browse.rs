@@ -19,6 +19,9 @@ pub(super) struct Browse {
     sort: String,
     /// Fixes a random order, so paging through it stays one shuffle.
     seed: Option<i64>,
+    /// The name filter: album title or artist name on the album browser, the
+    /// artist's name on the artist browser.
+    q: String,
     fav: String,
     lossless: String,
     codec: String,
@@ -81,6 +84,7 @@ impl Browse {
         };
         AlbumQuery {
             order,
+            search: set(&self.q),
             favourites_of: set(&self.fav).map(|_| user),
             filter: self.filter(),
             limit: Some(limit),
@@ -98,6 +102,7 @@ impl Browse {
         };
         ArtistQuery {
             order,
+            search: set(&self.q),
             favourites_of: set(&self.fav).map(|_| user),
             filter: self.filter(),
             limit: Some(limit),
@@ -108,7 +113,7 @@ impl Browse {
 
     /// How many filters are on, for the collapsed toolbar's label.
     fn active(&self) -> usize {
-        [&self.fav, &self.lossless, &self.codec, &self.genre]
+        [&self.q, &self.fav, &self.lossless, &self.codec, &self.genre]
             .into_iter()
             .filter(|v| set(v).is_some())
             .count()
@@ -129,6 +134,7 @@ impl Browse {
         for (k, v) in [
             ("sort", self.sort.as_str()),
             ("seed", &seed),
+            ("q", &self.q),
             ("fav", &self.fav),
             ("lossless", &self.lossless),
             ("codec", &self.codec),
@@ -230,7 +236,8 @@ pub(super) fn toolbar(
     };
     format!(
         "<details class=browse><summary>{label}</summary>\
-<form class=toolbar method=get action=\"{path}\">{sort_select}{seed}{reshuffle}{fav}{lossless}{codec}\
+<form class=toolbar method=get action=\"{path}\">\
+<label class=name>Name<input type=search name=q placeholder=\"{name_hint}\" value=\"{q}\" aria-label=\"Filter by name\"></label>{sort_select}{seed}{reshuffle}{fav}{lossless}{codec}\
 <label class=years>Years<input name=from inputmode=numeric maxlength=4 placeholder=From value=\"{from}\" aria-label=\"From year\">\
 <span>–</span><input name=to inputmode=numeric maxlength=4 placeholder=To value=\"{to}\" aria-label=\"To year\"></label>\
 {genre}<div class=toolbar-actions><button class=\"primary apply\">Apply</button><a class=reset href=\"{path}\">Reset</a></div>\
@@ -240,6 +247,8 @@ pub(super) fn toolbar(
         lossless = check("lossless", "Lossless", &b.lossless),
         codec = select("codec", "Codec", &codec_options, &b.codec),
         genre = select("genre", "Genre", &genre_options, &b.genre),
+        name_hint = if artists { "Artist" } else { "Album or artist" },
+        q = escape(&b.q),
         from = escape(&b.from),
         to = escape(&b.to),
     )
@@ -258,8 +267,11 @@ mod tests {
 
     #[test]
     fn blank_fields_are_unset_and_the_query_round_trips() {
-        let b = browse("sort=year&fav=&lossless=1&codec=&from=1990&to=&genre=Drum+%26+Bass");
+        let b =
+            browse("sort=year&q=+aphex+&fav=&lossless=1&codec=&from=1990&to=&genre=Drum+%26+Bass");
         let q = b.albums(0, 60);
+        assert_eq!(q.search, Some("aphex"));
+        assert_eq!(b.artists(0, 60).search, Some("aphex"));
         assert_eq!(q.order, AlbumOrder::YearDesc);
         assert!(q.favourites_of.is_none() && q.filter.lossless);
         assert_eq!(
@@ -269,9 +281,9 @@ mod tests {
         assert_eq!(q.filter.genre, Some("Drum & Bass"));
         assert_eq!(
             b.query(60),
-            "sort=year&lossless=1&from=1990&genre=Drum+%26+Bass&offset=60"
+            "sort=year&q=aphex&lossless=1&from=1990&genre=Drum+%26+Bass&offset=60"
         );
-        assert_eq!(b.active(), 3);
+        assert_eq!(b.active(), 4);
     }
 
     #[test]

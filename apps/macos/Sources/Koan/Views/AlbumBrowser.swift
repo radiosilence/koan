@@ -39,8 +39,8 @@ struct AlbumBrowser: View {
     private var empty: some View {
         EmptyState(
             icon: "square.stack",
-            title: library.filter.isEmpty ? "No albums yet" : "Nothing matches",
-            detail: library.filter.isEmpty
+            title: library.isNarrowed ? "Nothing matches" : "No albums yet",
+            detail: !library.isNarrowed
                 ? Self.emptyDetail
                 : "Try a different filter."
         )

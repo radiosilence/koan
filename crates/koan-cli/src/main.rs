@@ -330,7 +330,8 @@ enum AuthCommands {
         /// Address clients reach this server at (default: sharing.public_url)
         #[arg(long)]
         server: Option<String>,
-        /// Replace the password, signing the user's existing devices out
+        /// Also give the account a new password, put in the email, signing its
+        /// existing devices out
         #[arg(long)]
         reset_password: bool,
     },
