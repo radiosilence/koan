@@ -335,10 +335,12 @@ pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connect
     Ok(summary)
 }
 
-/// Remove whole albums from the download cache, least recently played first,
-/// until it is under the configured limit. Never an album with a favourite
-/// in it, nor one with a track in `keep`: the queue, whose files the player
-/// may be reading. Returns the bytes freed.
+/// Remove downloads until the cache is under the configured limit, a file at
+/// a time: those fetched to play first, then those asked for, least recently
+/// used first within each. Never a file whose album has a favourite in it,
+/// nor a track in `keep` — the playback window, whose files the player may be
+/// reading and which are what it wants next (`playback_window`). Returns the
+/// bytes freed.
 pub fn evict_cache(
     db: &Database,
     cfg: &Config,
@@ -361,45 +363,79 @@ pub fn evict_cache(
         }
         return 0;
     }
-    let albums = match queries::cached_albums_lru(&db.conn) {
-        Ok(a) => a,
+    let files = match queries::cached_files_lru(&db.conn) {
+        Ok(f) => f,
         Err(e) => {
-            log::warn!("cache eviction: failed to query cached albums: {e}");
+            log::warn!("cache eviction: failed to query cached files: {e}");
             return 0;
         }
     };
+    let mut gone = Vec::new();
     let mut freed: i64 = 0;
-    for album in &albums {
+    for file in files.iter().filter(|f| !keep.contains(&f.track_id)) {
         if current <= limit {
             break;
         }
-        if album.track_ids.iter().any(|id| keep.contains(id)) {
-            continue;
-        }
-        for path in &album.cached_paths {
-            match std::fs::remove_file(path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => log::warn!("cache eviction: failed to delete {path}: {e}"),
+        match std::fs::remove_file(&file.path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                log::warn!("cache eviction: failed to delete {}: {e}", file.path);
+                continue;
             }
         }
-        if let Err(e) = queries::clear_cached_paths_for(&db.conn, &album.track_ids) {
-            log::warn!("cache eviction: failed to clear DB for album: {e}");
-        }
         log::info!(
-            "evicted: {} — {} ({} bytes)",
-            album.artist_name,
-            album.album_title,
-            album.total_size
+            "evicted: {} ({} bytes{})",
+            file.path,
+            file.size,
+            if file.pinned { ", pinned" } else { "" }
         );
-        current -= album.total_size;
-        freed += album.total_size;
+        gone.push(file.track_id);
+        current -= file.size;
+        freed += file.size;
+    }
+    if let Err(e) = queries::clear_cached_paths_for(&db.conn, &gone) {
+        log::warn!("cache eviction: failed to clear DB: {e}");
     }
     remove_empty_dirs(&cfg.cache_dir());
     if freed > 0 {
         log::info!("cache eviction freed {freed} bytes");
     }
     freed as u64
+}
+
+/// How many of `upcoming` — the playing track, then the rest of the queue in
+/// the order the player reaches it — the cache has room for. The playing
+/// track and the next always: the decoder reads ahead into the next for
+/// gapless. After them each track while the cache stays under `limit`,
+/// counting favourites and pinned downloads first, since the queue does not
+/// displace them. What is already downloaded costs its file, and what is not
+/// its estimated size.
+pub fn playback_window(
+    db: &Database,
+    limit: u64,
+    upcoming: &[i64],
+) -> Result<usize, crate::db::connection::DbError> {
+    let total = queries::total_cache_size(&db.conn)?;
+    let evictable: std::collections::HashMap<i64, i64> = queries::cached_files_lru(&db.conn)?
+        .into_iter()
+        .filter(|f| !f.pinned)
+        .map(|f| (f.track_id, f.size))
+        .collect();
+    let estimates = queries::download_estimates(&db.conn, upcoming)?;
+
+    let mut used = (total - evictable.values().sum::<i64>()).max(0) as u64;
+    let mut counted = std::collections::HashSet::new();
+    for (n, id) in upcoming.iter().enumerate() {
+        if counted.insert(*id) {
+            let cost = evictable.get(id).or_else(|| estimates.get(id));
+            used += cost.copied().unwrap_or(0).max(0) as u64;
+        }
+        if n >= 2 && used > limit {
+            return Ok(n);
+        }
+    }
+    Ok(upcoming.len())
 }
 
 /// Remove empty directories under `dir`, leaving `dir` itself.

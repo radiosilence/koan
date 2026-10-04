@@ -6,6 +6,7 @@ use std::time::Duration;
 use parking_lot::{Condvar, Mutex};
 
 use crate::config;
+use crate::db::queries;
 use crate::helpers::download_track;
 use crate::player::commands::PlayerCommand;
 use crate::player::state::{ItemState, QueueItemId, SharedPlayerState};
@@ -89,7 +90,7 @@ fn ensure_workers(inner: &Arc<Inner>) {
                 // rather than when the queue is made: a player that never
                 // fetches anything has no business reading the cache's size.
                 if have == 0 {
-                    trim_cache(&worker);
+                    trim_cache(&worker, false);
                 }
                 worker_loop(worker, have)
             })
@@ -159,6 +160,10 @@ struct Queue {
     /// Tracks wanted in the cache with no queue entry behind them.
     cache: VecDeque<i64>,
     priority_active: usize,
+    /// The tracks in the playback window as last worked out, which eviction
+    /// leaves alone. `None` when the whole playlist is wanted: no cache limit,
+    /// or a window that could not be worked out.
+    window: Option<HashSet<i64>>,
 }
 
 /// What a priority request should do, given the state of the lane.
@@ -260,23 +265,75 @@ fn wake_workers(inner: &Arc<Inner>) {
 /// cursor to the end, then from the top. Anything the playlist no longer
 /// holds is let go.
 ///
+/// With a cache limit, only the entries in the playback window are wanted.
+/// One past it is let go like one removed, and a later sync brings it in when
+/// the cursor or the cache makes room. One inside it is wanted on every sync
+/// that finds it there, so its transfer is never abandoned by a window
+/// recomputed around it.
+///
 /// The playlist is read under the queue lock, as settling writes it: read
 /// before, it could show an entry still pending whose transfer settled a
-/// moment later, and the entry would be fetched a second time.
+/// moment later, and the entry would be fetched a second time. The window is
+/// worked out before, from the database; an entry added in between is
+/// outside it, and the sync its arrival causes brings it in.
 fn sync(inner: &Arc<Inner>) {
+    let window = playback_window(&inner.state);
     let mut q = inner.queue.lock();
     let wanted = inner.state.pending_downloads();
-    let added = sync_with(&mut q, inner.state.downloads(), &wanted);
+    let entries = window
+        .as_ref()
+        .map(|w| w.iter().map(|(_, id)| *id).collect::<HashSet<_>>());
+    let added = sync_with(&mut q, inner.state.downloads(), &wanted, entries.as_ref());
+    q.window = window.map(|w| w.into_iter().map(|(track, _)| track).collect());
     drop(q);
     if added {
         wake_workers(inner);
     }
 }
 
-/// [`sync`] against a list already read, in the order to fetch it. Whether
-/// anything was queued that was not before.
-fn sync_with(q: &mut Queue, store: &DownloadStore, wanted: &[(i64, QueueItemId)]) -> bool {
-    let unfetched = store.resync(wanted);
+/// The entries the cache has room for, from the cursor on
+/// (`helpers::playback_window`). `None` with no cache limit, and when the
+/// database cannot say: then the whole playlist is fetched, as without one.
+fn playback_window(state: &SharedPlayerState) -> Option<Vec<(i64, QueueItemId)>> {
+    let limit = config::Config::cached().cache_limit_bytes()?;
+    let mut order = state.playback_order();
+    let tracks: Vec<i64> = order.iter().map(|(track, _)| *track).collect();
+    let fits = crate::db::pool::shared()
+        .get()
+        .map_err(|e| e.to_string())
+        .and_then(|db| {
+            crate::helpers::playback_window(&db, limit, &tracks).map_err(|e| e.to_string())
+        });
+    match fits {
+        Ok(fits) => {
+            order.truncate(fits);
+            Some(order)
+        }
+        Err(e) => {
+            log::warn!("cache window: {e}");
+            None
+        }
+    }
+}
+
+/// [`sync`] against a list already read, in the order to fetch it, cut to
+/// `window` when there is one. Whether anything was queued that was not
+/// before.
+fn sync_with(
+    q: &mut Queue,
+    store: &DownloadStore,
+    wanted: &[(i64, QueueItemId)],
+    window: Option<&HashSet<QueueItemId>>,
+) -> bool {
+    let wanted: Vec<_> = match window {
+        Some(window) => wanted
+            .iter()
+            .filter(|(_, id)| window.contains(id))
+            .copied()
+            .collect(),
+        None => wanted.to_vec(),
+    };
+    let unfetched = store.resync(&wanted);
     let before: HashSet<QueueItemId> = q.pending.iter().map(|(_, id)| *id).collect();
     let added = unfetched.iter().any(|(_, id)| !before.contains(id));
     q.pending = unfetched.into();
@@ -363,6 +420,11 @@ fn run_download(inner: &Arc<Inner>, db_id: i64) {
     // Under the queue lock, so no entry can join the transfer between being
     // told and the transfer ending: one arriving after this finds no
     // transfer and is queued afresh.
+    if let Some(Ok(_)) = &result
+        && store.kept(db_id)
+    {
+        pin(db_id);
+    }
     let mut q = inner.queue.lock();
     let settled = match result {
         Some(result) => Some(downloads::settle(&inner.state, db_id, &result)),
@@ -381,21 +443,38 @@ fn run_download(inner: &Arc<Inner>, db_id: i64) {
     }
     // Workers held back for the track under the cursor go on from here.
     inner.has_work.notify_all();
-    trim_cache(inner);
+    // The file's real size replaces its estimate, which may move the window.
+    if config::Config::cached().cache_limit_bytes().is_some() {
+        sync(inner);
+    }
+    trim_cache(inner, false);
+}
+
+/// A track downloaded because someone asked for the file: eviction takes it
+/// only once everything fetched for playback has gone.
+fn pin(db_id: i64) {
+    let pinned = crate::db::pool::shared()
+        .get()
+        .map_err(|e| e.to_string())
+        .and_then(|db| queries::pin_cached(&db.conn, &[db_id]).map_err(|e| e.to_string()));
+    if let Err(e) = pinned {
+        log::warn!("could not pin the download of track {db_id}: {e}");
+    }
 }
 
 /// How often the cache is checked against its limit, at most: each download
 /// adds to it, and a check reads the whole cache's size from the database.
 const EVICT_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// Trim the cache to its configured limit, keeping everything in the queue:
-/// the player may be reading those files, and they are what is wanted next.
-/// The limit is read afresh, so one set in Settings applies without a
-/// restart.
-fn trim_cache(inner: &Inner) {
+/// Trim the cache to its configured limit, keeping the playback window: the
+/// player may be reading those files, and they are what is wanted next.
+/// Without a window, everything in the playlist is kept. `now` skips the
+/// throttle, for a limit just changed. The limit is read afresh, so one set
+/// in Settings applies without a restart.
+fn trim_cache(inner: &Inner, now: bool) {
     {
         let mut last = inner.last_evicted.lock();
-        if last.is_some_and(|t| t.elapsed() < EVICT_EVERY) {
+        if !now && last.is_some_and(|t| t.elapsed() < EVICT_EVERY) {
             return;
         }
         *last = Some(std::time::Instant::now());
@@ -404,19 +483,34 @@ fn trim_cache(inner: &Inner) {
     if cfg.cache_limit_bytes().is_none() {
         return;
     }
-    let keep = inner
-        .state
-        .snapshot_playlist()
-        .0
-        .iter()
-        .filter_map(|i| i.db_id)
-        .collect();
+    let keep = inner.queue.lock().window.clone().unwrap_or_else(|| {
+        inner
+            .state
+            .playback_order()
+            .into_iter()
+            .map(|(track, _)| track)
+            .collect()
+    });
     match crate::db::pool::shared().get() {
         Ok(db) => {
-            crate::helpers::evict_cache(&db, &cfg, &keep, false);
+            if crate::helpers::evict_cache(&db, &cfg, &keep, false) > 0 {
+                // Played entries pointed at the files just removed. Pending
+                // again, they are fetched when the window comes back to them.
+                inner.state.reset_items_with_missing_files();
+            }
         }
         Err(e) => log::warn!("cache eviction: could not open the database: {e}"),
     }
+}
+
+/// Moved whenever the cache limit is changed.
+static LIMIT_CHANGES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The cache limit was changed: work the window out again and evict down to
+/// the new limit now, rather than at the next download.
+pub fn cache_limit_changed() {
+    LIMIT_CHANGES.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    crate::signal::engine_changed().bump();
 }
 
 /// Worker loop: wait for work, download, repeat.
@@ -476,15 +570,21 @@ fn follow_playlist(inner: Arc<Inner>) {
     let mut seen = changed.generation();
     let mut last_version: Option<u64> = None;
     let mut last_cursor: Option<QueueItemId> = None;
+    let mut last_limit = LIMIT_CHANGES.load(std::sync::atomic::Ordering::Acquire);
     loop {
         // The queue runs from the cursor, so a cursor move reorders it as
         // well. Synced before promoting, so the cursor's track is queued by
         // the time it is looked for.
         let version = inner.state.pending_version();
         let current = inner.state.cursor();
-        if last_version != Some(version) || current != last_cursor {
+        let limit = LIMIT_CHANGES.load(std::sync::atomic::Ordering::Acquire);
+        if last_version != Some(version) || current != last_cursor || limit != last_limit {
             last_version = Some(version);
             sync(&inner);
+        }
+        if limit != last_limit {
+            last_limit = limit;
+            trim_cache(&inner, true);
         }
         if current != last_cursor {
             last_cursor = current;
@@ -704,7 +804,7 @@ mod tests {
         q.pending.extend([(1, old), (2, kept)]);
         store.claim(3, Some(waiter));
 
-        sync_with(&mut q, &store, &[(2, kept)]);
+        sync_with(&mut q, &store, &[(2, kept)], None);
 
         assert_eq!(q.pending, VecDeque::from([(2, kept)]));
         assert!(waiters(&store, 3).is_empty());
@@ -724,13 +824,18 @@ mod tests {
         q.pending.extend([(1, a), (2, b), (3, c)]);
 
         assert!(
-            !sync_with(&mut q, &store, &[(3, c), (1, a), (2, b)]),
+            !sync_with(&mut q, &store, &[(3, c), (1, a), (2, b)], None),
             "nothing new"
         );
         assert_eq!(q.pending, VecDeque::from([(3, c), (1, a), (2, b)]));
 
         let d = qid();
-        assert!(sync_with(&mut q, &store, &[(3, c), (4, d), (1, a), (2, b)]));
+        assert!(sync_with(
+            &mut q,
+            &store,
+            &[(3, c), (4, d), (1, a), (2, b)],
+            None
+        ));
         assert_eq!(q.pending, VecDeque::from([(3, c), (4, d), (1, a), (2, b)]));
     }
 
@@ -741,7 +846,12 @@ mod tests {
         let (inner, ids, _) = queue_over(&[1, 2, 3, 4, 5]);
         inner.state.set_cursor(Some(ids[2].1));
         let wanted = inner.state.pending_downloads();
-        sync_with(&mut inner.queue.lock(), inner.state.downloads(), &wanted);
+        sync_with(
+            &mut inner.queue.lock(),
+            inner.state.downloads(),
+            &wanted,
+            None,
+        );
 
         let order: Vec<i64> = inner.queue.lock().pending.iter().map(|(t, _)| *t).collect();
         assert_eq!(order, vec![3, 4, 5, 1, 2]);
@@ -753,7 +863,12 @@ mod tests {
         let (mut q, store) = (Queue::default(), DownloadStore::new());
         store.claim(7, Some(running));
 
-        assert!(!sync_with(&mut q, &store, &[(7, running), (7, again)]));
+        assert!(!sync_with(
+            &mut q,
+            &store,
+            &[(7, running), (7, again)],
+            None
+        ));
 
         assert!(q.pending.is_empty());
         assert_eq!(waiters(&store, 7), HashSet::from([running, again]));
@@ -767,10 +882,47 @@ mod tests {
         let (mut q, store) = (Queue::default(), DownloadStore::new());
         store.claim(7, Some(old));
 
-        sync_with(&mut q, &store, &[(7, new)]);
+        sync_with(&mut q, &store, &[(7, new)], None);
 
         assert_eq!(waiters(&store, 7), HashSet::from([new]));
         assert!(!store.abandoned(7));
+    }
+
+    #[test]
+    fn entries_past_the_window_wait_until_it_reaches_them() {
+        let (played, next, beyond) = (qid(), qid(), qid());
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
+        let wanted = [(2, next), (3, beyond), (1, played)];
+
+        sync_with(&mut q, &store, &wanted, Some(&HashSet::from([next])));
+        assert_eq!(q.pending, VecDeque::from([(2, next)]));
+
+        // The cursor moves on and the window with it.
+        sync_with(&mut q, &store, &wanted, Some(&HashSet::from([beyond])));
+        assert_eq!(q.pending, VecDeque::from([(3, beyond)]));
+    }
+
+    #[test]
+    fn a_track_inside_the_window_keeps_its_transfer_when_the_window_is_recomputed() {
+        let (playing, next, beyond) = (qid(), qid(), qid());
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
+        store.claim(2, Some(next));
+        store.claim(3, Some(beyond));
+        let wanted = [(1, playing), (2, next), (3, beyond)];
+
+        // The download of the next track lands, the window is worked out
+        // again from the cache's new size, and comes out smaller.
+        sync_with(
+            &mut q,
+            &store,
+            &wanted,
+            Some(&HashSet::from([playing, next])),
+        );
+
+        assert!(!store.abandoned(2), "inside the window: still wanted");
+        assert_eq!(waiters(&store, 2), HashSet::from([next]));
+        assert!(store.abandoned(3), "past the window: let go");
+        assert_eq!(q.pending, VecDeque::from([(1, playing)]));
     }
 
     /// A player holding one pending item per track id, the cursor on the
