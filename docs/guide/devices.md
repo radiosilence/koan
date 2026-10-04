@@ -51,7 +51,10 @@ device list (`o`) in the TUI, where they are marked `· UPnP`. Kodi with
 "Allow remote control via UPnP" turned on, gmrender-resurrect and upmpdcli
 are renderers too.
 
-Picking one makes it this device's output, in the same way a USB DAC is. The
+Picking one makes it this device's output, in the same way a USB DAC is, and
+kōan goes back to it at the next launch if it is on the network within a few
+seconds; playing something or picking another output before then keeps the
+music where it is. The
 queue, the transport and history stay on this device, and only the audio goes
 to the amplifier. Each track is sent as the original file, so playback is
 bit-perfect up to the amplifier's own DAC. Room correction built into the

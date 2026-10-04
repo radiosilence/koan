@@ -4,6 +4,7 @@
 
 ### Added
 
+- **The output is remembered across launches, amplifiers included.** kōan goes back to the UPnP renderer it last played to if it turns up on the network within a few seconds of launch, carrying on with the restored session where it stood. Playing something or picking an output before then keeps the music where it is. An audio device that is absent at launch falls back to the system default, as before, and is still remembered.
 - **The route's preset in iOS Now Playing.** Beside the AirPlay button, the preset of the route playing (AirPods, headphones, the speaker), or "Off"; tapping it picks another for that route. It follows the route as it changes, shows a UPnP renderer's preset while the phone plays to one, and is tinted while what is heard is processed.
 
 ### Changed
