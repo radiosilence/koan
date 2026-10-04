@@ -2,7 +2,7 @@
 //!
 //! The state is the page's query string and nothing else: a reload, the back
 //! button and a copied link all land on the same listing, and the server reads
-//! it straight into the SQL that narrows, orders and pages the library.
+//! it straight into the SQL that narrows and orders the library.
 
 use std::fmt::Write as _;
 
@@ -17,7 +17,7 @@ use crate::share::escape;
 #[serde(default)]
 pub(super) struct Browse {
     sort: String,
-    /// Fixes a random order, so paging through it stays one shuffle.
+    /// Fixes a random order, so a reload or a link lands on the same shuffle.
     seed: Option<i64>,
     /// The name filter: album title or artist name on the album browser, the
     /// artist's name on the artist browser.
@@ -28,7 +28,6 @@ pub(super) struct Browse {
     from: String,
     to: String,
     genre: String,
-    pub(super) offset: u32,
 }
 
 /// Album sorts, as the macOS app offers them.
@@ -74,7 +73,7 @@ impl Browse {
     }
 
     /// `user` is whose favourites the favourites toggle narrows to.
-    pub(super) fn albums(&self, user: i64, limit: u32) -> AlbumQuery<'_> {
+    pub(super) fn albums(&self, user: i64) -> AlbumQuery<'_> {
         let order = match self.sort.as_str() {
             "title" => AlbumOrder::Title,
             "artist" => AlbumOrder::ArtistThenDate,
@@ -87,14 +86,12 @@ impl Browse {
             search: set(&self.q),
             favourites_of: set(&self.fav).map(|_| user),
             filter: self.filter(),
-            limit: Some(limit),
-            offset: self.offset,
             ..Default::default()
         }
     }
 
     /// `user` is whose favourites the favourites toggle narrows to.
-    pub(super) fn artists(&self, user: i64, limit: u32) -> ArtistQuery<'_> {
+    pub(super) fn artists(&self, user: i64) -> ArtistQuery<'_> {
         let order = match self.sort.as_str() {
             "albums" => ArtistOrder::AlbumCount,
             "recent" => ArtistOrder::RecentlyAdded,
@@ -105,8 +102,6 @@ impl Browse {
             search: set(&self.q),
             favourites_of: set(&self.fav).map(|_| user),
             filter: self.filter(),
-            limit: Some(limit),
-            offset: self.offset,
             ..Default::default()
         }
     }
@@ -120,17 +115,12 @@ impl Browse {
             + usize::from(set(&self.from).is_some() || set(&self.to).is_some())
     }
 
-    /// The query string for this state at `offset`, blank values dropped.
+    /// The query string for this state, blank values dropped.
     /// Percent-encoded throughout, so it is safe inside an attribute and a
     /// quoted script string alike.
-    pub(super) fn query(&self, offset: u32) -> String {
+    pub(super) fn query(&self) -> String {
         let mut q = form_urlencoded::Serializer::new(String::new());
         let seed = self.seed.map(|s| s.to_string()).unwrap_or_default();
-        let offset = if offset > 0 {
-            offset.to_string()
-        } else {
-            String::new()
-        };
         for (k, v) in [
             ("sort", self.sort.as_str()),
             ("seed", &seed),
@@ -141,7 +131,6 @@ impl Browse {
             ("from", &self.from),
             ("to", &self.to),
             ("genre", &self.genre),
-            ("offset", &offset),
         ] {
             if let Some(v) = set(v) {
                 q.append_pair(k, v);
@@ -232,7 +221,7 @@ pub(super) fn toolbar(
         };
         format!(
             "<a class=\"text-muted\" href=\"{path}?{}\">Reshuffle</a>",
-            fresh.query(0)
+            fresh.query()
         )
     } else {
         String::new()
@@ -288,9 +277,9 @@ mod tests {
     fn blank_fields_are_unset_and_the_query_round_trips() {
         let b =
             browse("sort=year&q=+aphex+&fav=&lossless=1&codec=&from=1990&to=&genre=Drum+%26+Bass");
-        let q = b.albums(0, 60);
+        let q = b.albums(0);
         assert_eq!(q.search, Some("aphex"));
-        assert_eq!(b.artists(0, 60).search, Some("aphex"));
+        assert_eq!(b.artists(0).search, Some("aphex"));
         assert_eq!(q.order, AlbumOrder::YearDesc);
         assert!(q.favourites_of.is_none() && q.filter.lossless);
         assert_eq!(
@@ -299,8 +288,8 @@ mod tests {
         );
         assert_eq!(q.filter.genre, Some("Drum & Bass"));
         assert_eq!(
-            b.query(60),
-            "sort=year&q=aphex&lossless=1&from=1990&genre=Drum+%26+Bass&offset=60"
+            b.query(),
+            "sort=year&q=aphex&lossless=1&from=1990&genre=Drum+%26+Bass"
         );
         assert_eq!(b.active(), 4);
     }
@@ -309,10 +298,10 @@ mod tests {
     fn a_random_order_keeps_its_seed_and_hostile_values_stay_encoded() {
         let b = browse("sort=random").seeded();
         let seed = b.seed.unwrap();
-        assert_eq!(b.albums(0, 1).order, AlbumOrder::Random(seed));
-        assert!(b.query(0).contains(&format!("seed={seed}")));
+        assert_eq!(b.albums(0).order, AlbumOrder::Random(seed));
+        assert!(b.query().contains(&format!("seed={seed}")));
         let evil = browse("genre=%27%29%3Balert(1)%2F%2F%22%3E%3C");
-        let q = evil.query(0);
+        let q = evil.query();
         assert!(
             !q.contains('\'') && !q.contains('"') && !q.contains('<'),
             "{q}"
