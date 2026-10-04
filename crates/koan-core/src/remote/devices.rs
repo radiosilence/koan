@@ -377,10 +377,56 @@ pub fn resume() {
     crate::remote::nearby::refresh();
 }
 
+/// Where the target's playhead is now and whether it is playing, from what
+/// it last reported: the network's report when there is one, as `list`
+/// prefers it. Cheap enough for every display frame, which `list` is not.
+pub fn target_playhead() -> Option<(u64, bool)> {
+    with(|s| {
+        let id = &s.target.as_ref()?.id;
+        let (state, at) = s
+            .nearby
+            .iter()
+            .find(|n| n.hello.id == *id)
+            .and_then(|n| Some((n.state.as_ref()?, n.at)))
+            .or_else(|| {
+                s.account
+                    .iter()
+                    .find(|(d, _)| d.id == *id)
+                    .and_then(|(d, at)| Some((d.state.as_ref()?, *at)))
+            })?;
+        let mut position = state.position_ms;
+        if state.playing {
+            position += at.elapsed().as_millis() as u64;
+            if state.duration_ms > 0 {
+                position = position.min(state.duration_ms);
+            }
+        }
+        Some((position, state.playing))
+    })
+}
+
 /// The target as `list` would give it.
 pub fn target_device() -> Option<Device> {
     let id = target()?;
     list().into_iter().find(|d| d.id == id)
+}
+
+/// Get `cmd` to the device `id` over a connection that is up now: the local
+/// network's, else the link. Never queued, never a push, never the HTTP
+/// fallback `send` has: for what is only worth saying while someone is there
+/// to hear it, like `WatchLevels`. A stop goes both ways, since the start may
+/// have taken either. `false` when there was no way through.
+pub fn send_live(id: &str, cmd: LinkCommand) -> bool {
+    let everywhere = matches!(cmd, LinkCommand::WatchLevels { on: false });
+    let near = cmd.allowed_nearby() && crate::remote::nearby::send(id, cmd.clone());
+    if near && !everywhere {
+        return true;
+    }
+    let linked = link::report(LinkReport::Command {
+        to: id.to_string(),
+        command: cmd,
+    });
+    near || linked
 }
 
 /// Get `cmd` to the device `id`: over the local network if connected there,
@@ -427,6 +473,15 @@ pub fn this_id() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_live_send_with_no_way_through_sends_nothing() {
+        // No connection on the network and no link: false, and no fallback.
+        assert!(!send_live(
+            "nowhere-at-all",
+            LinkCommand::WatchLevels { on: true }
+        ));
+    }
 
     fn device(id: &str, playing: bool) -> LinkDevice {
         LinkDevice {

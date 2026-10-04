@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **The playing bars follow the device being controlled.** While one kōan controls another, the bars beside the playing track show that device's levels rather than this one's silence. The device sends its levels only while a controller has bars on screen, about forty bytes a frame at its analyser's rate, and stops when the bars go. Frames are drawn a couple of frames behind the playhead and interpolated, so a late one is not seen, and the bars settle to rest when the music pauses or the link stalls. A device on the same network may watch the bars of one it can already see playing; through a koan server, only the account's own devices can. The server must be this version or later to relay them; with an older one the bars stay at rest.
+
 ### Fixed
 
 - **Quitting while playing to an amplifier no longer leaves two things playing at the next launch.** Quitting stops the amplifier, which otherwise played on until its buffer ran out. At launch, a session that was playing waits while kōan looks for the amplifier it used, and plays there if it turns up, or here if it does not, rather than starting here at once. An amplifier still on a track a kōan on this machine sent it is taken back, not left as someone else's.

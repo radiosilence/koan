@@ -2,6 +2,7 @@ pub mod client;
 pub mod devices;
 pub mod download;
 pub mod downloads;
+pub mod levels;
 pub mod link;
 pub mod lrclib;
 pub mod musicbrainz;
