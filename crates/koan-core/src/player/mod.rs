@@ -1309,7 +1309,7 @@ impl Player {
         let local = match playback.output {
             Output::Local(local) => local,
             Output::Passthrough(play) => {
-                self.halt_renderer(play);
+                self.halt_renderer(*play);
                 self.answer_silence();
                 return;
             }

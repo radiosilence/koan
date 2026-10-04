@@ -242,7 +242,7 @@ impl Player {
 
     fn passthrough(&self) -> Option<&Passthrough> {
         match &self.session()?.output {
-            Output::Passthrough(play) => Some(play),
+            Output::Passthrough(play) => Some(play.as_ref()),
             Output::Local(_) => None,
         }
     }
@@ -251,9 +251,9 @@ impl Player {
     fn passthrough_mut(&mut self) -> Option<&mut Passthrough> {
         match &mut self.transport {
             Transport::Loaded(Session {
-                output: Output::Passthrough(Box::new(play)),
+                output: Output::Passthrough(play),
                 ..
-            }) => Some(play),
+            }) => Some(play.as_mut()),
             _ => None,
         }
     }
@@ -454,7 +454,7 @@ impl Player {
             },
             run: start,
             lookahead: Default::default(),
-            output: Output::Passthrough(play),
+            output: Output::Passthrough(Box::new(play)),
         });
         self.queue_next_on_renderer();
         Ok(())
