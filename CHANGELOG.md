@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- **The web UI lists every album and artist on one page, as the apps do.** Pages of 60 albums and 100 artists behind a Load more button made a large library tedious to scroll and broke find-in-page. Covers load lazily, so the whole listing costs markup rather than images.
+- **The web UI's name and year filters apply as you type.** A pause in typing replaces the listing under the toolbar and leaves the field focused; the URL is replaced rather than pushed, so back does not step through each keystroke. A year applies once it has four digits. On a phone the sheet's Apply still applies everything.
+
 ### Fixed
 
 - **A record with no artwork shows the ensō in the web UI, not a broken image.** The cover route answered 404, and the browser drew its broken-image icon until the page's script caught the error. It now serves the placeholder the macOS and iOS apps draw: the app icon's ensō, faded. It is cached for an hour rather than for good, since art added beside the files does not change the cover's URL.

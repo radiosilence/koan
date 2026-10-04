@@ -21,8 +21,6 @@ use super::{PARTIAL, UiState, events, html, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
 
-const ALBUMS_PAGE: u32 = 60;
-const ARTISTS_PAGE: u32 = 100;
 const GENRES_OFFERED: u32 = 80;
 
 const ICON_PREV: &str =
@@ -301,18 +299,6 @@ width={size} height={size} src=\"{src}\" alt=\"\">\
     })
 }
 
-/// The "Load more" button, fetching `next` (a path with its query), or an
-/// empty placeholder at the end of the listing.
-fn more(next: Option<String>) -> String {
-    match next {
-        Some(next) => format!(
-            "<div id=more class=\"mt-5 flex justify-center\"><button data-indicator:_more data-attr:disabled=\"$_more\" \
-data-class:busy=\"$_more\" data-on:click=\"@get('{next}')\">Load more</button></div>"
-        ),
-        None => "<div id=more class=\"mt-5\"></div>".into(),
-    }
-}
-
 /// The codecs and genres the filters offer.
 pub(super) type Options = Arc<(Vec<String>, Vec<String>)>;
 
@@ -399,20 +385,13 @@ data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><sp
     )
 }
 
-/// One page of albums as `b` narrows and orders them, and the URL of the next
-/// page if there is one.
-fn album_page(
-    s: &UiState,
-    user: i64,
-    b: &Browse,
-) -> Option<(Vec<AlbumRow>, Option<String>, Versions)> {
+/// Every album `b` lets through, in its order. Whole, as the apps list them:
+/// the covers load lazily, so the page costs markup and not images.
+fn album_list(s: &UiState, user: i64, b: &Browse) -> Option<(Vec<AlbumRow>, Versions)> {
     let db = open(&s.pool)?;
-    let mut albums = queries::list_albums(&db.conn, &b.albums(user, ALBUMS_PAGE + 1)).ok()?;
-    let next = (albums.len() > ALBUMS_PAGE as usize)
-        .then(|| format!("/albums/more?{}", b.query(b.offset + ALBUMS_PAGE)));
-    albums.truncate(ALBUMS_PAGE as usize);
+    let albums = queries::list_albums(&db.conn, &b.albums(user)).ok()?;
     let versions = album_versions(&db.conn, &albums);
-    Some((albums, next, versions))
+    Some((albums, versions))
 }
 
 pub(super) async fn albums(
@@ -423,17 +402,16 @@ pub(super) async fn albums(
 ) -> Response {
     let b = b.seeded();
     let (st, bb, id) = (s.clone(), b.clone(), user.user_id);
-    let found = blocking(move || Some((album_page(&st, id, &bb)?, filter_options(&st)?))).await;
-    let Some(((albums, next, versions), options)) = found else {
+    let found = blocking(move || Some((album_list(&st, id, &bb)?, filter_options(&st)?))).await;
+    let Some(((albums, versions), options)) = found else {
         return unavailable();
     };
     let grid = if albums.is_empty() {
         format!("<p class=\"{EMPTY}\">No albums match.</p>")
     } else {
         format!(
-            "<div class=\"{GRID}\" id=albums>{}</div>{}",
-            cells(&albums, &versions),
-            more(next)
+            "<div class=\"{GRID}\" id=albums>{}</div>",
+            cells(&albums, &versions)
         )
     };
     let inner = format!(
@@ -441,26 +419,6 @@ pub(super) async fn albums(
         browse::toolbar(&b, "/albums", false, &options.0, &options.1)
     );
     respond(&s, &headers, &user, "Albums", &inner)
-}
-
-pub(super) async fn albums_more(
-    State(s): State<UiState>,
-    Extension(user): Extension<AuthUser>,
-    Query(b): Query<Browse>,
-) -> Response {
-    let Some((albums, next, versions)) = blocking(move || album_page(&s, user.user_id, &b)).await
-    else {
-        return unavailable();
-    };
-    let mut out = Vec::new();
-    if !albums.is_empty() {
-        out.push(patch(
-            &cells(&albums, &versions),
-            Some(("#albums", "append")),
-        ));
-    }
-    out.push(patch(&more(next), None));
-    events(out)
 }
 
 pub(super) async fn album(
@@ -621,17 +579,9 @@ fn artist_list(artists: &[queries::ArtistRow]) -> String {
     })
 }
 
-fn artist_page(
-    s: &UiState,
-    user: i64,
-    b: &Browse,
-) -> Option<(Vec<queries::ArtistRow>, Option<String>)> {
+fn artist_rows(s: &UiState, user: i64, b: &Browse) -> Option<Vec<queries::ArtistRow>> {
     let db = open(&s.pool)?;
-    let mut artists = queries::list_artists(&db.conn, &b.artists(user, ARTISTS_PAGE + 1)).ok()?;
-    let next = (artists.len() > ARTISTS_PAGE as usize)
-        .then(|| format!("/artists/more?{}", b.query(b.offset + ARTISTS_PAGE)));
-    artists.truncate(ARTISTS_PAGE as usize);
-    Some((artists, next))
+    queries::list_artists(&db.conn, &b.artists(user)).ok()
 }
 
 pub(super) async fn artists(
@@ -641,40 +591,20 @@ pub(super) async fn artists(
     headers: HeaderMap,
 ) -> Response {
     let (st, bb, id) = (s.clone(), b.clone(), user.user_id);
-    let found = blocking(move || Some((artist_page(&st, id, &bb)?, filter_options(&st)?))).await;
-    let Some(((artists, next), options)) = found else {
+    let found = blocking(move || Some((artist_rows(&st, id, &bb)?, filter_options(&st)?))).await;
+    let Some((artists, options)) = found else {
         return unavailable();
     };
     let list = if artists.is_empty() {
         format!("<p class=\"{EMPTY}\">No artists match.</p>")
     } else {
-        format!(
-            "<ul id=artists>{}</ul>{}",
-            artist_list(&artists),
-            more(next)
-        )
+        format!("<ul id=artists>{}</ul>", artist_list(&artists))
     };
     let inner = format!(
         "<h1>Artists</h1>{}{list}",
         browse::toolbar(&b, "/artists", true, &options.0, &options.1)
     );
     respond(&s, &headers, &user, "Artists", &inner)
-}
-
-pub(super) async fn artists_more(
-    State(s): State<UiState>,
-    Extension(user): Extension<AuthUser>,
-    Query(b): Query<Browse>,
-) -> Response {
-    let Some((artists, next)) = blocking(move || artist_page(&s, user.user_id, &b)).await else {
-        return unavailable();
-    };
-    let mut out = Vec::new();
-    if !artists.is_empty() {
-        out.push(patch(&artist_list(&artists), Some(("#artists", "append"))));
-    }
-    out.push(patch(&more(next), None));
-    events(out)
 }
 
 pub(super) async fn artist(
