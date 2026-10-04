@@ -415,7 +415,7 @@ impl KoanEngine {
             .downloads()
             .readings()
             .iter()
-            .filter_map(TransferFigure::reading)
+            .map(TransferFigure::reading)
             .collect()
     }
 
@@ -500,6 +500,8 @@ impl KoanEngine {
             self.send(PlayerCommand::ReplacePlaylist {
                 items,
                 start: start_at.unwrap_or(0) as usize,
+                position_ms: 0,
+                play: true,
             })?;
 
             Ok(ids)
@@ -1568,7 +1570,12 @@ impl KoanEngine {
                 None => 0,
             };
             let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
-            self.send(PlayerCommand::ReplacePlaylist { items, start })?;
+            self.send(PlayerCommand::ReplacePlaylist {
+                items,
+                start,
+                position_ms: 0,
+                play: true,
+            })?;
 
             Ok(ids)
         })
@@ -2557,7 +2564,7 @@ impl KoanEngine {
                     if figures != last {
                         last = figures;
                         engine.out.publish(StateSlice::Figures {
-                            figures: store.all().iter().filter_map(TransferFigure::of).collect(),
+                            figures: store.all().iter().map(TransferFigure::of).collect(),
                         });
                     }
                     drop(engine);
@@ -2590,8 +2597,7 @@ impl KoanEngine {
                 // this set has landed on disk, which wrote a cached path onto a
                 // library row — and nothing else says so, because the download
                 // ran in koan-core, which has no notion of that version.
-                let mut running: HashSet<koan_core::remote::downloads::TransferKey> =
-                    HashSet::new();
+                let mut running: HashSet<i64> = HashSet::new();
                 // A transfer landed since the library last said so.
                 let mut landed = false;
                 let mut last_landing = Instant::now();
@@ -2699,12 +2705,12 @@ impl KoanEngine {
                         last_store = store_version;
                         let transfers = store.all();
                         out.publish(StateSlice::Transfers {
-                            transfers: transfers.iter().filter_map(Transfer::of).collect(),
+                            transfers: transfers.iter().map(Transfer::of).collect(),
                         });
                         let now_running: HashSet<_> = transfers
                             .iter()
                             .filter(|d| !d.state.is_settled())
-                            .map(|d| d.key)
+                            .map(|d| d.track_id)
                             .collect();
                         if running.difference(&now_running).next().is_some() {
                             landed = true;
@@ -3387,7 +3393,7 @@ impl KoanEngine {
                 track_ids: tracks(&items)?,
                 after: entry(after),
             },
-            PlayerCommand::ReplacePlaylist { items, start } => {
+            PlayerCommand::ReplacePlaylist { items, start, .. } => {
                 // Where `start` lands once the tracks the server lacks are
                 // left out: on it, or on the next one that remains.
                 let track_ids = tracks(&items)?;
@@ -3643,23 +3649,12 @@ impl KoanEngine {
                     return Ok(());
                 }
                 let start = (start_at as usize).min(items.len() - 1);
-                let first = items[start].id;
-                if position_ms == 0 && !paused {
-                    self.send_local(PlayerCommand::ReplacePlaylist { items, start })?;
-                } else {
-                    // Opened at the position rather than started and seeked,
-                    // which would let the top of the track be heard first.
-                    self.send_local(PlayerCommand::BeginUndoBatch)?;
-                    self.send_local(PlayerCommand::ClearPlaylist)?;
-                    self.send_local(PlayerCommand::AddToPlaylist(items))?;
-                    self.send_local(PlayerCommand::EndUndoBatch)?;
-                    self.send_local(PlayerCommand::Cue {
-                        id: first,
-                        position_ms,
-                        play: !paused,
-                    })?;
-                }
-                Ok(())
+                self.send_local(PlayerCommand::ReplacePlaylist {
+                    items,
+                    start,
+                    position_ms,
+                    play: !paused,
+                })
             }),
             LinkCommand::PlayItem { id } => {
                 let id = parse_qid(&id);

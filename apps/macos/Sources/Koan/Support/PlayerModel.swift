@@ -153,15 +153,6 @@ final class PlayerModel {
         return Double(seekableMs) / Double(durationMs)
     }
 
-    /// How much of what is playing has arrived, while it is still arriving.
-    ///
-    /// Bytes, not reachable time: the two differ for a track that is playing
-    /// but cannot be seeked, where the point of the mark is to say the transfer
-    /// is going and roughly how far — not to offer a position.
-    var fetched: Double? {
-        currentTrackId.flatMap { mirror.progress(for: $0) }
-    }
-
     // MARK: - Where what is playing lives
 
     /// The record and the artist behind what is playing, so the transport bar
@@ -271,6 +262,7 @@ final class PlayerModel {
     /// has not arrived is a reasonable thing to try, and a bar that simply
     /// ignores the attempt teaches nothing.
     func explainUnseekable() {
+        let fetched = currentTrackId.flatMap { mirror.figure(for: $0)?.progress }
         let progress = fetched.map { " — \(Int($0 * 100))% so far" } ?? ""
         lastNotice = "Still downloading\(progress). This track can be seeked once it has finished."
     }

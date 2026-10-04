@@ -196,7 +196,7 @@ pub fn cmd_play(
     std::thread::sleep(Duration::from_millis(100));
 }
 
-pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
+pub fn cmd_play_remote(server_url: &str) {
     eprintln!("connecting to kōan server at {}...", server_url);
 
     let client = GraphQLClient::from_config(server_url);
@@ -240,11 +240,9 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         }
     }
 
-    if jukebox {
-        eprintln!("jukebox mode — server plays audio, client is remote control");
-    }
+    eprintln!("remote control — the server plays the audio");
     let (state, _timeline, viz_snapshot, cmd_tx) =
-        koan_tui::remote_bridge::spawn_remote_bridge(client, jukebox);
+        koan_tui::remote_bridge::spawn_remote_bridge(client);
 
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());

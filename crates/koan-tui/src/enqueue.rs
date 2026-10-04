@@ -11,7 +11,7 @@ use crate::app::PickerAction;
 /// Build PlaylistItems from track IDs and enqueue according to the action:
 /// - Append: add to end of queue, don't play.
 /// - AppendAndPlay: add to end, play the first added track.
-/// - ReplaceQueue: clear queue, add tracks, play from top.
+/// - ReplaceQueue: replace the queue in one command, play from top.
 ///
 /// Remote tracks download once the player has them: the download queue
 /// follows the playlist.
@@ -36,7 +36,16 @@ pub fn enqueue_playlist(
 
     let first_id = items[0].id;
 
-    if action == PickerAction::ReplaceQueue && tx.send(PlayerCommand::ClearPlaylist).is_err() {
+    // One command, so the playlist is never empty in between: the download
+    // queue reads an empty playlist as nothing wanted.
+    if action == PickerAction::ReplaceQueue {
+        tx.send(PlayerCommand::ReplacePlaylist {
+            items,
+            start: 0,
+            position_ms: 0,
+            play: true,
+        })
+        .ok();
         return;
     }
 
@@ -44,10 +53,7 @@ pub fn enqueue_playlist(
         return;
     }
 
-    if matches!(
-        action,
-        PickerAction::AppendAndPlay | PickerAction::ReplaceQueue
-    ) {
+    if action == PickerAction::AppendAndPlay {
         tx.send(PlayerCommand::Play(first_id)).ok();
     }
 }

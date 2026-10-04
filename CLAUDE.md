@@ -172,7 +172,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `organize.rs` | Organize modal: pattern picker → preview table → background execute |
 | `media_keys.rs` | macOS Control Center via souvlaki, manual CFRunLoop pump |
 | `enqueue.rs` | `enqueue_playlist()` — build PlaylistItems from track IDs, submit downloads |
-| `remote_bridge.rs` | Remote bridge: connects TUI to a remote koan server via GraphQL |
+| `remote_bridge.rs` | Remote control: mirrors a koan server's now-playing and queue into the TUI over GraphQL and sends its commands there. No local playback |
 
 ### koan-ffi (`crates/koan-ffi/src/`)
 

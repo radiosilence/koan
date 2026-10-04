@@ -377,46 +377,106 @@ struct SeekBar: View {
 
 /// The track, and how much of it has arrived.
 ///
-/// Its own view because the arrived fraction is the fast slice — it moves ten
-/// times a second while anything at all is downloading. Read by `SeekBar`,
-/// every one of those ticks would re-run the bar and re-anchor the progress
-/// animation, which is the animation the anchor exists to hand over once.
+/// Layers fed by `TransferMeter`, as the download rings are: while what is
+/// playing is still arriving, the meter hands this its byte count every frame
+/// of the display, and no SwiftUI body runs for it. The view itself changes
+/// only when what is playing, or whether it is downloading, does.
 private struct FetchedMark: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(TransferMeter.self) private var meter
 
     var body: some View {
-        // How much of what is playing has arrived, while it is still arriving.
-        // `nil` for anything on disk, which is every track most of the time.
-        let fetched = player.fetched
+        // The transfer to follow: what is playing, while its download runs.
+        let downloading = player.currentEntry?.status == .downloading
+        let transfer = downloading ? player.currentTrackId : nil
 
-        Canvas { context, size in
-            // What has not arrived, drawn quieter than the rest.
-            //
-            // The dimming is on the tail rather than the head on purpose: a
-            // track on disk is the ordinary case and should look like the
-            // ordinary bar, so a download finishing changes nothing about what
-            // is drawn. Lighting the downloaded part instead would turn the bar
-            // *dark* the moment a transfer completed.
-            context.opacity = 0.4
-            context.fill(SeekBar.mark(in: size, fraction: 1), with: .style(.quaternary))
-            // What can be played: the whole bar for anything already here, and
-            // as far as the bytes reach for anything still arriving. Where the
-            // track can also be seeked, the engine stops a scrub at this same
-            // extent, so the bar never offers a position playback would refuse.
-            context.opacity = 1
-            context.fill(SeekBar.mark(in: size, fraction: fetched ?? 1), with: .style(.quaternary))
-        }
-        .help(help(fetched))
+        FetchedMarkLayers(transfer: transfer, meter: meter)
+            .help(help(downloading: downloading))
     }
 
-    /// Says which of the three states the bar is in, because a bar that stops
-    /// short or stops responding without saying why reads as broken.
-    private func help(_ fetched: Double?) -> String {
-        guard let fetched else { return "" }
-        let percent = Int(fetched * 100)
+    /// Says which of the states the bar is in, because a bar that stops short
+    /// or stops responding without saying why reads as broken.
+    private func help(downloading: Bool) -> String {
+        guard downloading else { return "" }
         return player.canSeek
-            ? "Downloaded to \(percent)% — seeking stops there until the rest arrives"
-            : "Downloading, \(percent)% — seeking becomes available when it finishes"
+            ? "Downloading — seeking stops where the download has reached until the rest arrives"
+            : "Downloading — seeking becomes available when it finishes"
+    }
+}
+
+private struct FetchedMarkLayers: PlatformViewRepresentable {
+    /// The track whose transfer to draw; `nil` for a track on disk.
+    let transfer: Int64?
+    let meter: TransferMeter
+
+    typealias PlatformViewType = FetchedMarkView
+
+    func makeView(context: Context) -> FetchedMarkView { FetchedMarkView() }
+
+    func updateView(_ view: FetchedMarkView, context: Context) {
+        view.meter = meter
+        if transfer == nil { view.fraction = nil }
+        meter.follow(view, transfer: transfer)
+    }
+
+    static func dismantleView(_ view: FetchedMarkView, coordinator: ()) {
+        view.meter?.follow(view, transfer: nil)
+    }
+}
+
+/// The seek bar's track: the whole length quiet, and what can be played over
+/// it. What can be played is the whole bar for anything already here, and as
+/// far as the bytes reach for anything still arriving. Where the track can
+/// also be seeked, the engine stops a scrub at this same extent, so the bar
+/// never offers a position playback would refuse.
+///
+/// The dimming is on the tail rather than the head on purpose: a track on disk
+/// is the ordinary case and should look like the ordinary bar, so a download
+/// finishing changes nothing about what is drawn. Lighting the downloaded part
+/// instead would turn the bar dark the moment a transfer completed.
+final class FetchedMarkView: LayerView, TransferGauge {
+    private let whole = CALayer()
+    private let arrived = CALayer()
+    weak var meter: TransferMeter?
+
+    /// How much has arrived, or `nil` for a track that is all here.
+    var fraction: Double? {
+        didSet {
+            guard fraction != oldValue else { return }
+            layoutLayers()
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        whole.opacity = 0.4
+        for layer in [whole, arrived] {
+            layer.actions = ["bounds": NSNull(), "position": NSNull(), "backgroundColor": NSNull()]
+            hostLayer.addSublayer(layer)
+        }
+        appearanceChanged()
+    }
+
+    func take(_ figure: TransferFigure) {
+        // No length from the server is no fraction to draw: the whole bar,
+        // as before the transfer was known about.
+        fraction = figure.progress
+    }
+
+    override func layoutLayers() {
+        let thickness = 4.0
+        let y = (bounds.height - thickness) / 2
+        let reach = bounds.width * (fraction ?? 1).clamped()
+        whole.frame = CGRect(x: 0, y: y, width: bounds.width, height: thickness)
+        // Shorter than its own thickness it would draw as a squashed dot.
+        arrived.frame = CGRect(x: 0, y: y, width: reach >= thickness ? reach : 0, height: thickness)
+        whole.cornerRadius = thickness / 2
+        arrived.cornerRadius = thickness / 2
+    }
+
+    override func appearanceChanged() {
+        whole.backgroundColor = resolved(.quaternaryLabel)
+        arrived.backgroundColor = resolved(.quaternaryLabel)
     }
 }
 

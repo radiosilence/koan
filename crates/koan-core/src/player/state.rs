@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 use uuid::Uuid;
 
-use crate::remote::downloads::{ByteFeed, DownloadStore, TransferKey};
+use crate::remote::downloads::{ByteFeed, DownloadStore};
 
 /// Stable identity for a queue entry. UUIDv7 — time-ordered, unique across duplicates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -133,7 +133,7 @@ impl LoadState {
         match &item.state {
             ItemState::Ready => Self::Ready,
             ItemState::Failed(reason) => Self::Failed(reason.clone()),
-            ItemState::Pending => match downloads.live(TransferKey::of(item)) {
+            ItemState::Pending => match item.db_id.and_then(|id| downloads.live(id)) {
                 Some(live) => Self::Downloading {
                     path: live.source,
                     total: live.total,
@@ -1145,11 +1145,11 @@ impl SharedPlayerState {
         let playing_duration_ms = self.track_info.read().as_ref().map(|ti| ti.duration_ms);
         // One pass over the transfers rather than one lookup, and a path
         // cloned, per row.
-        let transfers: HashMap<TransferKey, (u64, u64)> = self
+        let transfers: HashMap<i64, (u64, u64)> = self
             .downloads
             .readings()
             .into_iter()
-            .map(|r| (r.key, (r.written, r.total)))
+            .map(|r| (r.track_id, (r.written, r.total)))
             .collect();
         let pl = self.playlist.read();
 
@@ -1171,7 +1171,7 @@ impl SharedPlayerState {
             // chunk without the playlist lock, so a transfer never bumps the
             // playlist version.
             let dl_progress = match item.state {
-                ItemState::Pending => transfers.get(&TransferKey::of(item)).copied(),
+                ItemState::Pending => item.db_id.and_then(|id| transfers.get(&id).copied()),
                 _ => None,
             };
             let transferring = dl_progress.is_some();
@@ -1280,17 +1280,17 @@ mod tests {
 
     /// Claim, announce and start the transfer for `item`'s track.
     fn start_transfer(state: &SharedPlayerState, item: &PlaylistItem, total: u64) -> Arc<ByteFeed> {
-        let key = TransferKey::of(item);
+        let track_id = item.db_id.expect("a transfer is for a library track");
         let store = state.downloads();
-        store.claim(key, Some(item.id));
+        store.claim(track_id, Some(item.id));
         let feed = store.announce(
-            key,
+            track_id,
             item.title.clone(),
             String::new(),
             PathBuf::from(format!("/cache/{}.flac.part", item.title)),
             PathBuf::from(format!("/cache/{}.flac", item.title)),
         );
-        store.started(key, total);
+        store.started(track_id, total);
         feed
     }
 
@@ -1455,11 +1455,8 @@ mod tests {
         // then say the file is playable. In that order — while the store still
         // says a transfer is running, it is.
         let id = state.cursor().expect("cursor");
-        let _ = crate::remote::downloads::settle(
-            &state,
-            TransferKey::Track(1),
-            &Ok(PathBuf::from("/cache/train.flac")),
-        );
+        let _ =
+            crate::remote::downloads::settle(&state, 1, &Ok(PathBuf::from("/cache/train.flac")));
         assert_eq!(state.item_state(id), Some(ItemState::Ready));
         let info = state.track_info().expect("track info");
         state.set_track_info(Some(TrackInfo {

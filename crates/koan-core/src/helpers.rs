@@ -12,7 +12,6 @@ use crate::player::commands::PlayerCommand;
 use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
 use crate::remote::client::{Credential, SubsonicAuth, SubsonicClient, SubsonicError};
 use crate::remote::download::DownloadError;
-use crate::remote::downloads::TransferKey;
 
 // ---------------------------------------------------------------------------
 // Subsonic client builder
@@ -1719,10 +1718,9 @@ pub(crate) fn download_track(
 
     // 3. Download from remote, into the `.part` file the decoder streams from
     // while the bytes land.
-    let key = TransferKey::Track(db_id);
     let store = state.downloads();
     let bytes_written = store.announce(
-        key,
+        db_id,
         track.title.clone(),
         track.artist_name.clone(),
         crate::remote::download::part_path(&dest),
@@ -1740,7 +1738,7 @@ pub(crate) fn download_track(
             // every 250ms inside, so a chunk landing costs an atomic and a compare.
             store.progressed();
             if announced_total.swap(total, Ordering::Relaxed) != total {
-                store.started(key, total);
+                store.started(db_id, total);
             }
             if !stream_ready_flag.load(Ordering::Relaxed)
                 && downloaded >= crate::player::state::STREAM_THRESHOLD
@@ -1748,7 +1746,7 @@ pub(crate) fn download_track(
                 stream_ready_flag.store(true, Ordering::Relaxed);
                 // Every entry waiting on it: whichever is under the cursor is the
                 // one the player starts streaming.
-                for id in store.waiters(key) {
+                for id in store.waiters(db_id) {
                     progress_tx.send(PlayerCommand::TrackStreamReady(id)).ok();
                 }
             }

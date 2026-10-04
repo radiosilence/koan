@@ -307,15 +307,11 @@ impl TransferState {
     }
 }
 
-// Transfers keyed to a queue entry rather than a track are the TUI remote
-// bridge's, which never shares a process with these bindings; they convert to
-// nothing.
-
 impl Transfer {
-    pub(crate) fn of(d: &koan_core::remote::downloads::Download) -> Option<Self> {
+    pub(crate) fn of(d: &koan_core::remote::downloads::Download) -> Self {
         use koan_core::remote::downloads::DownloadState;
-        Some(Self {
-            track_id: d.key.track_id()?,
+        Self {
+            track_id: d.track_id,
             title: d.title.clone(),
             artist: d.artist.clone(),
             state: match &d.state {
@@ -328,29 +324,29 @@ impl Transfer {
                 DownloadState::Failed(reason) => Some(reason.clone()),
                 _ => None,
             },
-        })
+        }
     }
 }
 
 impl TransferFigure {
-    pub(crate) fn of(d: &koan_core::remote::downloads::Download) -> Option<Self> {
-        Some(Self {
-            track_id: d.key.track_id()?,
+    pub(crate) fn of(d: &koan_core::remote::downloads::Download) -> Self {
+        Self {
+            track_id: d.track_id,
             progress: d.fraction(),
             bytes_written: d.bytes_written(),
             total_bytes: d.total,
             bytes_per_second: d.bytes_per_second,
-        })
+        }
     }
 
-    pub(crate) fn reading(r: &koan_core::remote::downloads::Reading) -> Option<Self> {
-        Some(Self {
-            track_id: r.key.track_id()?,
+    pub(crate) fn reading(r: &koan_core::remote::downloads::Reading) -> Self {
+        Self {
+            track_id: r.track_id,
             progress: r.fraction(),
             bytes_written: r.written,
             total_bytes: r.total,
             bytes_per_second: r.bytes_per_second,
-        })
+        }
     }
 }
 

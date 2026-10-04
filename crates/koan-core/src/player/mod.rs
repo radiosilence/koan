@@ -1611,7 +1611,12 @@ impl Player {
                 self.shared_state.clear_playlist();
                 self.push_undo(UndoEntry::Replaced { items, cursor });
             }
-            PlayerCommand::ReplacePlaylist { items, start } => {
+            PlayerCommand::ReplacePlaylist {
+                items,
+                start,
+                position_ms,
+                play,
+            } => {
                 // Same order as ClearPlaylist: stop and clear display state
                 // before snapshotting, or the snapshot captures an already
                 // emptied playlist and undo restores nothing.
@@ -1628,7 +1633,14 @@ impl Player {
                 }
                 let start_id = items.get(start).unwrap_or(&items[0]).id;
                 self.shared_state.add_items(items);
-                self.play(start_id);
+                if position_ms == 0 && play {
+                    self.play(start_id);
+                } else {
+                    // Opened at the position rather than started and seeked,
+                    // which would let the top of the track be heard first.
+                    let start = if play { Start::Playing } else { Start::Paused };
+                    self.cue(start_id, position_ms, start);
+                }
             }
             PlayerCommand::RemoveFromPlaylist(id) => {
                 let item = self.shared_state.get_item(id);
@@ -2185,6 +2197,45 @@ mod tests {
 
         player.pause_now();
         assert_eq!(player.next_wake(), None, "paused");
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn replacing_the_queue_at_a_position_opens_there_paused_in_one_command() {
+        // What a hand-off from another device sends: the new queue, opened at
+        // the point the source went silent. One command, so the playlist is
+        // never empty in between and no download is dropped for it.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+            starts: starts.clone(),
+        });
+        player.process_command(PlayerCommand::AddToPlaylist(vec![make_item("old")]));
+        let item = PlaylistItem {
+            path,
+            ..make_item("t")
+        };
+        let id = item.id;
+
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items: vec![item],
+            start: 0,
+            position_ms: 3_000,
+            play: false,
+        });
+
+        assert_eq!(player.shared_state.snapshot_playlist().0.len(), 1);
+        assert_eq!(player.shared_state.cursor(), Some(id));
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
+        assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
+        await_queued(&player);
+        let at = player.shared_state.position_ms();
+        assert!((2_750..=3_000).contains(&at), "opened at {at}ms");
         player.process_command(PlayerCommand::Stop);
     }
 
@@ -2915,6 +2966,8 @@ mod tests {
         player.process_command(PlayerCommand::ReplacePlaylist {
             items: replacement,
             start: 0,
+            position_ms: 0,
+            play: true,
         });
         // What `play()` would have left behind if the file existed.
         pretend_playing(&mut player, orphan);

@@ -9,19 +9,12 @@ use crate::config;
 use crate::helpers::download_track;
 use crate::player::commands::PlayerCommand;
 use crate::player::state::{ItemState, QueueItemId, SharedPlayerState};
-use crate::remote::downloads::{self, DownloadStore, TransferKey};
+use crate::remote::downloads::{self, DownloadStore};
 
 /// Concurrent downloads the priority lane may run outside the worker pool.
 /// Small on purpose: its job is to get the track under the cursor playing, and
 /// every extra request competes with it for the same link.
 const PRIORITY_PERMITS: usize = 2;
-
-/// How long a transfer may go wanted by nothing before it is stopped.
-///
-/// Not at once: a front end that replaces the queue by clearing it and then
-/// adding to it leaves the playlist empty for a moment, and a transfer for a
-/// track in both would be thrown away and started again from nothing.
-const ABANDON_GRACE: Duration = Duration::from_secs(2);
 
 /// How often a running transfer asks whether it is still wanted.
 const CANCEL_CHECK: Duration = Duration::from_millis(250);
@@ -119,7 +112,7 @@ fn next_item(
     cursor: Option<(i64, QueueItemId)>,
 ) -> Option<Job> {
     let entry = match cursor {
-        Some((db_id, _)) if store.in_flight(TransferKey::Track(db_id)) => return None,
+        Some((db_id, _)) if store.in_flight(db_id) => return None,
         Some((_, queue_id)) => q
             .pending
             .iter()
@@ -184,12 +177,11 @@ enum Dispatch {
 /// back, through a `Permit`, when the download ends.
 fn claim_priority(q: &mut Queue, store: &DownloadStore, item: (i64, QueueItemId)) -> Dispatch {
     let (db_id, queue_id) = item;
-    let key = TransferKey::Track(db_id);
     q.pending.retain(|(_, qid)| *qid != queue_id);
 
     // Already being fetched: wait on it rather than fetch it again. The entry
     // is remembered so it gets the answer when the one transfer lands.
-    if store.join(key, Some(queue_id)) {
+    if store.join(db_id, Some(queue_id)) {
         return Dispatch::AlreadyRunning;
     }
     if q.priority_active >= PRIORITY_PERMITS {
@@ -197,7 +189,7 @@ fn claim_priority(q: &mut Queue, store: &DownloadStore, item: (i64, QueueItemId)
         return Dispatch::Requeued;
     }
     q.priority_active += 1;
-    store.claim(key, Some(queue_id));
+    store.claim(db_id, Some(queue_id));
     Dispatch::Spawn
 }
 
@@ -290,7 +282,7 @@ fn sync_with(q: &mut Queue, store: &DownloadStore, wanted: &[(i64, QueueItemId)]
     let queued: HashSet<QueueItemId> = q.pending.iter().map(|(_, id)| *id).collect();
     let mut added = false;
     for &(db_id, id) in wanted {
-        if queued.contains(&id) || store.join(TransferKey::Track(db_id), Some(id)) {
+        if queued.contains(&id) || store.join(db_id, Some(id)) {
             continue;
         }
         q.pending.push_back((db_id, id));
@@ -329,7 +321,7 @@ fn dispatch_priority(inner: &Arc<Inner>, item: (i64, QueueItemId)) {
                 log::error!("failed to spawn priority download: {}", e);
                 let mut q = inner.queue.lock();
                 let store = inner.state.downloads();
-                for id in downloads::withdraw(store, TransferKey::Track(item.0)) {
+                for id in downloads::withdraw(store, item.0) {
                     q.pending.push_front((item.0, id));
                 }
                 q.priority_active = q.priority_active.saturating_sub(1);
@@ -348,7 +340,6 @@ fn dispatch_priority(inner: &Arc<Inner>, item: (i64, QueueItemId)) {
 /// the queue lives as long as the process, and signing in, out or elsewhere
 /// has to reach it.
 fn run_download(inner: &Arc<Inner>, db_id: i64) {
-    let key = TransferKey::Track(db_id);
     let store = inner.state.downloads();
     let cfg = config::Config::cached();
     let result = match crate::helpers::subsonic_client(&cfg) {
@@ -357,14 +348,15 @@ fn run_download(inner: &Arc<Inner>, db_id: i64) {
         None => Some(Err(crate::helpers::remote_unavailable(&cfg))),
         Some(client) => {
             // Asked per chunk, answered from the store at most every
-            // `CANCEL_CHECK`: against a two-second grace, sooner buys nothing.
+            // `CANCEL_CHECK`. Replacing the queue is one command, so the
+            // playlist is never momentarily without a track still wanted.
             let checked = std::cell::Cell::new(std::time::Instant::now());
             let cancelled = || {
                 if checked.get().elapsed() < CANCEL_CHECK {
                     return false;
                 }
                 checked.set(std::time::Instant::now());
-                store.abandoned(key, ABANDON_GRACE)
+                store.abandoned(db_id)
             };
             std::panic::catch_unwind(AssertUnwindSafe(|| {
                 download_track(
@@ -388,11 +380,11 @@ fn run_download(inner: &Arc<Inner>, db_id: i64) {
     // transfer and is queued afresh.
     let mut q = inner.queue.lock();
     let settled = match result {
-        Some(result) => Some(downloads::settle(&inner.state, key, &result)),
+        Some(result) => Some(downloads::settle(&inner.state, db_id, &result)),
         // Withdrawn because nothing wanted it, as far as it last looked. An
         // entry that has asked since goes back to the front.
         None => {
-            for id in downloads::withdraw(store, key) {
+            for id in downloads::withdraw(store, db_id) {
                 q.pending.push_front((db_id, id));
             }
             None
@@ -471,7 +463,7 @@ fn worker_loop(inner: Arc<Inner>, index: usize) {
                 // Already being fetched: the entry waits on that transfer
                 // rather than starting a second over it.
                 Some((db_id, entry)) => {
-                    if store.claim(TransferKey::Track(db_id), entry) {
+                    if store.claim(db_id, entry) {
                         break db_id;
                     }
                 }
@@ -563,12 +555,8 @@ mod tests {
         QueueItemId::new()
     }
 
-    fn key(db_id: i64) -> TransferKey {
-        TransferKey::Track(db_id)
-    }
-
     fn waiters(store: &DownloadStore, db_id: i64) -> HashSet<QueueItemId> {
-        store.waiters(key(db_id)).into_iter().collect()
+        store.waiters(db_id).into_iter().collect()
     }
 
     #[test]
@@ -606,7 +594,7 @@ mod tests {
             Dispatch::Requeued
         );
 
-        let _ = downloads::withdraw(&store, key(1));
+        let _ = downloads::withdraw(&store, 1);
         q.priority_active -= 1;
         assert_eq!(claim_priority(&mut q, &store, (4, qid())), Dispatch::Spawn);
         assert!(q.priority_active <= PRIORITY_PERMITS);
@@ -713,14 +701,14 @@ mod tests {
 
         // Pressed play on the third: it jumps the queue.
         assert_eq!(next_item(&mut q, &store, Some((3, c))), Some((3, Some(c))));
-        store.claim(key(3), Some(c));
+        store.claim(3, Some(c));
 
         // While it downloads, nothing else starts.
         assert_eq!(next_item(&mut q, &store, Some((3, c))), None);
         assert_eq!(q.pending.len(), 2, "the rest wait their turn");
 
         // Once it has landed the queue runs in order again.
-        let _ = downloads::withdraw(&store, key(3));
+        let _ = downloads::withdraw(&store, 3);
         assert_eq!(next_item(&mut q, &store, None), Some((1, Some(a))));
         assert_eq!(next_item(&mut q, &store, None), Some((2, Some(b))));
     }
@@ -753,14 +741,14 @@ mod tests {
         let (old, kept, waiter) = (qid(), qid(), qid());
         let (mut q, store) = (Queue::default(), DownloadStore::new());
         q.pending.extend([(1, old), (2, kept)]);
-        store.claim(key(3), Some(waiter));
+        store.claim(3, Some(waiter));
 
         sync_with(&mut q, &store, &[(2, kept)]);
 
         assert_eq!(q.pending, VecDeque::from([(2, kept)]));
         assert!(waiters(&store, 3).is_empty());
         assert!(
-            store.abandoned(key(3), Duration::ZERO),
+            store.abandoned(3),
             "a transfer nothing waits on any more is on its way to being stopped"
         );
     }
@@ -784,7 +772,7 @@ mod tests {
     fn a_new_entry_for_a_track_in_flight_waits_on_that_transfer() {
         let (running, again) = (qid(), qid());
         let (mut q, store) = (Queue::default(), DownloadStore::new());
-        store.claim(key(7), Some(running));
+        store.claim(7, Some(running));
 
         assert!(!sync_with(&mut q, &store, &[(7, running), (7, again)]));
 
@@ -798,12 +786,12 @@ mod tests {
         // transfer serves them and is never wanted by nothing in between.
         let (old, new) = (qid(), qid());
         let (mut q, store) = (Queue::default(), DownloadStore::new());
-        store.claim(key(7), Some(old));
+        store.claim(7, Some(old));
 
         sync_with(&mut q, &store, &[(7, new)]);
 
         assert_eq!(waiters(&store, 7), HashSet::from([new]));
-        assert!(!store.abandoned(key(7), Duration::ZERO));
+        assert!(!store.abandoned(7));
     }
 
     /// A player holding one pending item per track id, the cursor on the
@@ -905,8 +893,8 @@ mod tests {
         let (first, again) = (ids[0].1, ids[1].1);
         inner.state.set_cursor(Some(again));
         let store = inner.state.downloads();
-        store.claim(key(1), Some(first));
-        store.join(key(1), Some(again));
+        store.claim(1, Some(first));
+        store.join(1, Some(again));
         (inner, cmd_rx, first, again)
     }
 
@@ -924,7 +912,7 @@ mod tests {
             matches!(sent.as_slice(), [PlayerCommand::TrackFailed(id)] if *id == again),
             "the cursor's entry is told it failed, not that it is ready: {sent:?}"
         );
-        assert!(!inner.state.downloads().in_flight(key(1)));
+        assert!(!inner.state.downloads().in_flight(1));
     }
 
     #[test]
@@ -943,10 +931,10 @@ mod tests {
         // The entry joined after the download decided nothing wanted it.
         let (inner, ids, _) = queue_over(&[1]);
         let store = inner.state.downloads();
-        store.claim(key(1), Some(ids[0].1));
+        store.claim(1, Some(ids[0].1));
 
         let mut q = inner.queue.lock();
-        for id in downloads::withdraw(store, key(1)) {
+        for id in downloads::withdraw(store, 1) {
             q.pending.push_front((1, id));
         }
         assert_eq!(q.pending, VecDeque::from([ids[0]]));

@@ -481,6 +481,8 @@ impl MutationRoot {
                 PlayerCommand::ReplacePlaylist {
                     items: resolved,
                     start: start_at.unwrap_or(0).max(0) as usize,
+                    position_ms: 0,
+                    play: true,
                 },
             )?;
         }
@@ -843,6 +845,8 @@ impl MutationRoot {
                 PlayerCommand::ReplacePlaylist {
                     items: resolved,
                     start: 0,
+                    position_ms: 0,
+                    play: true,
                 },
             )?;
         }

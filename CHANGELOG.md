@@ -9,8 +9,12 @@
 - **Downloading to the cache works.** "Download" on tracks that are not in the queue (`download_to_cache`) gave up after five seconds without fetching anything.
 - **Replacing a large queue no longer stalls downloads.** Entries from the old queue stayed queued, and each held a download worker for five seconds before it gave up. The download queue now follows the playlist and drops what it no longer holds.
 - **The track under the cursor shows its download progress in the apps.** It showed a static arrow for the whole transfer; it now shows the ring, as every other downloading row does.
-- **The TUI's remote mode no longer stalls on a failed track.** It woke the decoder before saying how the download ended, and never told the player it had failed.
-- **Clearing the queue stops its downloads.** A transfer kept running to the end once started, so clearing a queue mid-album left the workers fetching tracks nobody would play while the new queue waited behind them. A transfer nothing has wanted for two seconds now stops.
+- **Clearing the queue stops its downloads.** A transfer kept running to the end once started, so clearing a queue mid-album left the workers fetching tracks nobody would play while the new queue waited behind them. A transfer nothing wants any more now stops within a quarter of a second.
+- **The seek bar's download mark moves smoothly.** It redrew a few times a second, when the download rate was sampled; it now follows the bytes at the display's rate, like the download rings, without re-running the transport bar.
+
+### Removed
+
+- **`koan play --server` no longer plays audio locally.** It is a remote control for the server, which plays the audio, as `--jukebox` did; `--jukebox` is still accepted and changes nothing. The local mode streamed one track at a time into a cache of its own, outside the download queue, and the queue mirror it shared the TUI with overwrote what it had fetched every 100 ms, so it rarely played. To listen to a koan server's library on this machine, sign in to it as a remote library (`koan remote login`, or Settings in the apps): its tracks then play through the local engine and download into the cache like any other remote library's.
 
 ### Changed
 

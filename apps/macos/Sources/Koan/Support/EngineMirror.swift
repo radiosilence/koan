@@ -209,12 +209,6 @@ final class EngineMirror: Observable {
         figures[track]
     }
 
-    /// 0–1 through a transfer, or `nil` when the server never said how big it
-    /// was and there is no fraction to draw.
-    func progress(for track: Int64) -> Double? {
-        figure(for: track)?.progress
-    }
-
     /// How many transfers are moving. What the sidebar counts.
     var activeTransfers: Int {
         access(\.transfers)
