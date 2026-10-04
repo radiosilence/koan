@@ -48,6 +48,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::LINK, &[1]),
     (koan_core::remote::profile::DEVICES, &[1]),
     (koan_core::remote::profile::INVITE, &[1]),
+    (koan_core::remote::profile::SHARES, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -3887,6 +3888,29 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
                                 let (username, device) = (username.clone(), device.clone());
                                 tokio::task::spawn_blocking(move || {
                                     registry.wake(&username, &device, &to, notify);
+                                });
+                            }
+                            Ok(LinkReport::Share { grantee, allow }) => {
+                                // Only ever about the device sending it: an
+                                // owner shares a device from that device.
+                                let (username, device) = (username.clone(), device.clone());
+                                tokio::task::spawn_blocking(move || {
+                                    let known = koan_core::db::pool::shared()
+                                        .get()
+                                        .ok()
+                                        .and_then(|db| {
+                                            koan_core::db::queries::auth::get_user_by_username(&db.conn, &grantee)
+                                                .ok()
+                                                .flatten()
+                                        })
+                                        .is_some();
+                                    if allow && !known {
+                                        log::info!("share: {username} asked to share with {grantee}, who has no account here");
+                                        return;
+                                    }
+                                    if let Err(e) = registry.share(&username, &device, &grantee, allow) {
+                                        log::info!("share: {e}");
+                                    }
                                 });
                             }
                             Ok(LinkReport::Hello(_)) | Err(_) => {}

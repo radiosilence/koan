@@ -1319,6 +1319,8 @@ pub struct DeviceInfo {
     /// Signed in to the same account: reachable from anywhere, through the
     /// server.
     pub account: bool,
+    /// The account that owns it, for a device shared with this one.
+    pub owner: Option<String>,
     /// Found on the local network.
     pub nearby: bool,
     /// Reachable at once. False for a phone iOS has suspended, which a
@@ -1491,6 +1493,10 @@ pub struct ConnectionInfo {
     pub local_network_blocked: bool,
     /// This device, as others see it.
     pub this_device: String,
+    /// The server lets this device be shared with other accounts on it.
+    pub sharing: bool,
+    /// The accounts this device is shared with.
+    pub shared_with: Vec<String>,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

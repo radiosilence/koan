@@ -134,6 +134,11 @@ pub enum LinkCommand {
     Devices {
         devices: Vec<LinkDevice>,
     },
+    /// The accounts this device lets control it. News, as `Devices` is: sent
+    /// when it links and whenever the list changes.
+    Shares {
+        grantees: Vec<String>,
+    },
     /// Play through this output from now on, carrying on from where the music
     /// is, as the device's own output menu would.
     SetOutput {
@@ -248,6 +253,7 @@ impl LinkCommand {
             | Self::Repeat { .. }
             | Self::HandOff { .. }
             | Self::Devices { .. }
+            | Self::Shares { .. }
             | Self::SetOutput { .. }
             | Self::SetRendererVolume { .. }
             | Self::SetPreset { .. }
@@ -362,7 +368,10 @@ pub enum LinkReport {
     },
     /// Let the account `grantee` control this device, or with `allow` false
     /// stop letting it. Only ever about the device sending it.
-    Share { grantee: String, allow: bool },
+    Share {
+        grantee: String,
+        allow: bool,
+    },
 }
 
 /// How a device introduces itself to one that connected to it over the local
@@ -688,6 +697,9 @@ impl wire::Session for LinkSession<'_> {
         match serde_json::from_str::<LinkCommand>(text) {
             Ok(LinkCommand::Devices { devices }) => {
                 crate::remote::devices::set_account(devices);
+            }
+            Ok(LinkCommand::Shares { grantees }) => {
+                crate::remote::devices::set_shares(grantees);
             }
             Ok(cmd) => (self.local.on_command)(cmd, CommandSource::Account),
             Err(e) => log::warn!("link: not a command ({e}): {text}"),

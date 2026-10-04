@@ -34,6 +34,9 @@ pub struct Device {
     pub platform: String,
     /// Signed in to the same account on the same server.
     pub account: bool,
+    /// Whose it is, for a device another account on the server shares with
+    /// this one: playback and the queue only, as on the local network.
+    pub owner: Option<String>,
     /// Connected to over the local network now.
     pub nearby: bool,
     /// Reachable at once. An account device that is not is one iOS has
@@ -100,6 +103,8 @@ struct Store {
     attempt: Option<(u64, String)>,
     /// Bumped by every wake started or abandoned.
     wake_gen: u64,
+    /// The accounts this device lets control it, as the server says.
+    shares: Vec<String>,
 }
 
 /// A stage of waking a device, in the order they are tried.
@@ -362,7 +367,7 @@ pub fn set_account(devices: Vec<LinkDevice>) {
                 id: old.id.clone(),
                 name: old.name.clone(),
                 platform: old.platform.clone(),
-                account: true,
+                account: old.owner.is_none(),
                 same_library: true,
             })
             .collect();
@@ -379,6 +384,32 @@ pub fn set_account(devices: Vec<LinkDevice>) {
         s.fresh = s.linked;
         s.save();
     });
+}
+
+/// The accounts this device is shared with, as the server last said.
+pub fn set_shares(grantees: Vec<String>) {
+    changed(|s| s.shares = grantees);
+}
+
+pub fn shares() -> Vec<String> {
+    with(|s| s.shares.clone())
+}
+
+/// Let the account `grantee` on this server control this device, or stop.
+/// The server answers with the list as it now stands.
+pub fn share(grantee: &str, allow: bool) -> Result<(), String> {
+    let grantee = grantee.trim();
+    if grantee.is_empty() {
+        return Err("Name an account on your server.".into());
+    }
+    if link::report(LinkReport::Share {
+        grantee: grantee.to_string(),
+        allow,
+    }) {
+        Ok(())
+    } else {
+        Err("Not connected to your server.".into())
+    }
 }
 
 /// The devices reached on this network before, to dial first.
@@ -495,7 +526,8 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                     id: d.id.clone(),
                     name: d.name.clone(),
                     platform: d.platform.clone(),
-                    account: true,
+                    account: d.owner.is_none(),
+                    owner: d.owner.clone(),
                     nearby: near.is_some(),
                     awake,
                     asleep: !awake && !fresh(&d.id),
@@ -529,6 +561,7 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                 name: n.hello.name.clone(),
                 platform: n.hello.platform.clone(),
                 account: false,
+                owner: None,
                 nearby: true,
                 awake: true,
                 asleep: false,
@@ -556,6 +589,7 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                 name: g.name.clone(),
                 platform: g.platform.clone(),
                 account: g.account,
+                owner: None,
                 nearby: false,
                 awake: false,
                 asleep: !fresh(&g.id),
@@ -581,6 +615,7 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                 name: t.name.clone(),
                 platform: t.platform.clone(),
                 account: false,
+                owner: None,
                 nearby: false,
                 awake: false,
                 asleep: true,
@@ -909,7 +944,11 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
     let (nearby, account) = with(|s| {
         (
             s.nearby.iter().any(|n| n.hello.id == id),
-            s.account.iter().any(|(d, _)| d.id == id),
+            // A shared device is another account's: what only an account may
+            // send its own devices does not go to it.
+            s.account
+                .iter()
+                .any(|(d, _)| d.id == id && d.owner.is_none()),
         )
     });
     // The network path proves nothing about who is asking, so a device on it
@@ -961,6 +1000,7 @@ mod tests {
             }),
             last_seen: None,
             wakeable: None,
+            owner: None,
         }
     }
 

@@ -128,6 +128,15 @@ koan auth invite alice --server https://music.example.com
 koan auth delete-user alice
 ```
 
+## Sharing devices between accounts
+
+An account's devices are its own. To let someone with another account on the
+server control one, share it from the device: see
+[Sharing a device with other accounts](devices.md#sharing-a-device-with-other-accounts).
+The grant names the device, its owner and the other account, and the server
+relays only playback and queue commands for it. Deleting either account leaves
+the grant unused; stopping the share removes it.
+
 ## Token lifecycle
 
 - **Access token**: 15 minutes. Sent as `Authorization: Bearer <token>`.

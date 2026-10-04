@@ -726,6 +726,8 @@ private struct DevicesSettings: View {
     @Bindable var model: SettingsModel
     @Environment(EngineMirror.self) private var mirror
     @State private var address = ""
+    @State private var grantee = ""
+    @State private var shareError: String?
 
     var body: some View {
         Form {
@@ -772,8 +774,49 @@ private struct DevicesSettings: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+
+            if mirror.connection?.sharing == true {
+                Section {
+                    ForEach(mirror.connection?.sharedWith ?? [], id: \.self) { account in
+                        HStack {
+                            Text(account)
+                            Spacer()
+                            Button("Stop sharing", role: .destructive) { share(account, allow: false) }
+                                .buttonStyle(.borderless)
+                        }
+                    }
+                    HStack {
+                        TextField("Account", text: $grantee, prompt: Text("Their username on this server"))
+                            .verbatimEntry()
+                            .onSubmit { share(grantee, allow: true) }
+                        Button("Share") { share(grantee, allow: true) }
+                            .disabled(grantee.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    if let shareError {
+                        Text(shareError).font(.caption).foregroundStyle(.orange)
+                    }
+                } header: {
+                    Text("Shared with other accounts")
+                } footer: {
+                    Text("They can play, pause, skip and change the queue on this device, from any network, and see what it is playing. Not its outputs or presets, and nothing of your library, playlists or history.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
         }
         .formStyle(.grouped)
+    }
+
+    private func share(_ account: String, allow: Bool) {
+        let name = account.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        do {
+            try model.shareDevice(with: name, allow: allow)
+            shareError = nil
+            if allow { grantee = "" }
+        } catch {
+            shareError = error.localizedDescription
+        }
     }
 
     private func add() {

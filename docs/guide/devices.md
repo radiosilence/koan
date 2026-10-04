@@ -43,6 +43,21 @@ not that.
   device you are on.
 - **Devices by address.** A tailnet carries no Bonjour; add the other device's
   name and port (`mac-mini:5626`) under Settings → Devices.
+- **Devices shared with you.** Someone with another account on the same kōan
+  server can share a device with yours. It is listed with whose it is, from
+  any network, and woken by push as your own devices are.
+
+### Sharing a device with other accounts
+
+On the device itself, Settings → Devices → **Shared with other accounts** takes
+the username of another account on your server. That account can then play,
+pause, skip and change the queue on this device, from any network, and see
+what it is playing. It cannot change the device's outputs or presets, and
+nothing of your library, playlists or history reaches it. **Stop sharing**
+ends its control at once.
+
+A share is between accounts on one server, recorded by the server. The device
+that is shared is the only one that can share or stop sharing it.
 
 A device that is found but cannot be reached is not listed: there is nothing
 to do with it. On iOS, finding anything on the network needs **Local Network**
@@ -195,6 +210,7 @@ uses one only where the server lists it:
 | Extension | What it is |
 |-----------|------------|
 | `koanLink` | The app's standing WebSocket at `/rest/koanLink`: the server can command it, and it reports what it is playing. |
+| `koanShares` | Sharing a device with other accounts on the server: the grant from the device, and shared devices in each grantee's list, relayed for playback and the queue only. |
 | `koanDevices` | The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. Each device's outputs travel with its state; a server older than the apps drops them, so the Output menu for another device needs the server updated too. |
 
 Settings → Server shows what the server said it is and the extensions it

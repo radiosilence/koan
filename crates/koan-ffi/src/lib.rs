@@ -294,6 +294,19 @@ impl KoanEngine {
         log::info!("app: {message}");
     }
 
+    /// The accounts on this server that may control this device.
+    pub fn device_shares(&self) -> Vec<String> {
+        koan_core::remote::devices::shares()
+    }
+
+    /// Let the account `grantee` control this device, or with `allow` false
+    /// stop letting it: playback and the queue, nothing of this account. The
+    /// list in `device_shares` follows once the server has it.
+    pub fn share_device(&self, grantee: String, allow: bool) -> Result<(), KoanError> {
+        koan_core::remote::devices::share(&grantee, allow)
+            .map_err(|message| KoanError::Remote { message })
+    }
+
     /// Where Apple's push service reaches this app, as the OS issued it. The
     /// link sends it to the server, which can then wake the app once iOS has
     /// suspended it. `sandbox` for a development build.
@@ -3188,6 +3201,7 @@ impl KoanEngine {
                     name: d.name.clone(),
                     platform: d.platform.clone(),
                     account: d.account,
+                    owner: d.owner.clone(),
                     nearby: d.nearby,
                     awake: d.awake,
                     asleep: d.asleep,
@@ -4041,7 +4055,7 @@ impl KoanEngine {
             LinkCommand::Redo => self.send_local(PlayerCommand::Redo),
             LinkCommand::HandOff { to } => self.hand_off_blocking(&to).map(|_| ()),
             // Taken off the link before it gets here.
-            LinkCommand::Devices { .. } => Ok(()),
+            LinkCommand::Devices { .. } | LinkCommand::Shares { .. } => Ok(()),
             LinkCommand::SetOutput { output } => {
                 koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
                     .map_err(|message| KoanError::Audio { message })
@@ -4453,6 +4467,8 @@ fn connection_info() -> ConnectionInfo {
         this_device: devices::local()
             .map(|l| l.identity.name.clone())
             .unwrap_or_default(),
+        sharing: p.as_ref().is_some_and(|p| p.offers(profile::SHARES)),
+        shared_with: devices::shares(),
     }
 }
 
