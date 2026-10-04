@@ -468,10 +468,6 @@ pub struct DevicesConfig {
     /// Devices to connect to by address, `host:port`: for networks that do
     /// not carry Bonjour, such as a tailnet.
     pub addresses: Vec<String>,
-    /// How long a device that has stopped answering, and that nothing can
-    /// wake, stays listed as asleep before it is dropped. One a push can
-    /// wake stays listed.
-    pub asleep_grace_mins: u32,
 }
 
 impl Default for DevicesConfig {
@@ -480,7 +476,6 @@ impl Default for DevicesConfig {
             discoverable: true,
             port: DEVICES_PORT,
             addresses: Vec::new(),
-            asleep_grace_mins: 30,
         }
     }
 }
@@ -736,7 +731,6 @@ pub fn layer_of(path: &str) -> Layer {
         | "devices.discoverable"
         | "devices.port"
         | "devices.addresses"
-        | "devices.asleep_grace_mins"
         // Which koan server this machine signs in to.
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.
