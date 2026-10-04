@@ -134,18 +134,21 @@ pub fn resume(
     let _ = std::thread::Builder::new()
         .name("koan-upnp-resume".into())
         .spawn(move || {
-            if let Some(connection) = resume_onto(&udn, RESUME_WINDOW, choice, &player) {
-                let _ = player.send(crate::player::commands::PlayerCommand::ResumeRenderer(
-                    Box::new(connection),
-                ));
-            }
+            let _ = player.send(match resume_onto(&udn, RESUME_WINDOW, choice, &player) {
+                Some(connection) => {
+                    crate::player::commands::PlayerCommand::ResumeRenderer(Box::new(connection))
+                }
+                None => crate::player::commands::PlayerCommand::ResumeRendererMissed,
+            });
         });
 }
 
 /// The session `resume` hands over, if the renderer is found within `window`,
 /// nothing else has been picked since `choice`, and it is not playing or
 /// paused for something else: whatever is driving it, a phone on the same
-/// amplifier say, is not taken over by a launch nobody asked for.
+/// amplifier say, is not taken over by a launch nobody asked for. Still on a
+/// track a kōan on this machine sent it, a run that ended without stopping
+/// it, it is ours to take back.
 fn resume_onto(
     udn: &str,
     window: std::time::Duration,
@@ -159,16 +162,50 @@ fn resume_onto(
     if CHOICE.load(std::sync::atomic::Ordering::Acquire) != choice {
         return None;
     }
-    if discovery::in_use(&renderer) != Some(false) {
-        log::info!(
-            "upnp: {}, used last time, is busy or not answering; playing here",
-            renderer.name
-        );
-        return None;
+    match discovery::in_use(&renderer) {
+        Some(false) => {}
+        Some(true)
+            if discovery::playing_uri(&renderer)
+                .is_some_and(|uri| served_from_here(&renderer, &uri)) =>
+        {
+            log::info!(
+                "upnp: {} is still on what a kōan here sent it; taking it back",
+                renderer.name
+            );
+        }
+        _ => {
+            log::info!(
+                "upnp: {}, used last time, is busy or not answering; playing here",
+                renderer.name
+            );
+            return None;
+        }
     }
     open(renderer, player)
         .inspect_err(|e| log::info!("upnp: could not go back to {udn}: {e}"))
         .ok()
+}
+
+/// Whether `uri` is one a kōan on this machine served `renderer`: a track's
+/// tokenised path (`serve`'s `/t/<token>`) on this machine's address towards
+/// it. The port is not compared: every run listens on a new one.
+fn served_from_here(renderer: &Renderer, uri: &str) -> bool {
+    let Ok(url) = url::Url::parse(uri) else {
+        return false;
+    };
+    let host = |u: &url::Url| {
+        u.host_str()
+            .and_then(|h| h.parse::<std::net::IpAddr>().ok())
+    };
+    let Some(here) = host(&renderer.location).and_then(serve::local_ip_towards) else {
+        return false;
+    };
+    let token = url
+        .path()
+        .strip_prefix("/t/")
+        .and_then(|t| t.split('.').next())
+        .unwrap_or_default();
+    host(&url) == Some(here) && token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// The renderer `udn` once discovery has found it, waiting at most `window`.
@@ -230,6 +267,11 @@ mod tests {
 
         fake.play_foreign("http://phone/track.flac");
         assert!(resume_onto(&renderer.udn, window, now, &tx).is_none());
+
+        // Still on a track a kōan here sent it, from a run that ended
+        // without stopping it: ours, taken back.
+        fake.play_foreign(&format!("http://127.0.0.1:4/t/{}.flac", "0a".repeat(16)));
+        assert!(resume_onto(&renderer.udn, window, now, &tx).is_some());
 
         fake.press_stop(0);
         assert!(resume_onto(&renderer.udn, window, now, &tx).is_some());

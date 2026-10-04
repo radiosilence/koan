@@ -1902,6 +1902,17 @@ impl KoanEngine {
     }
 
     /// Set the volume of the renderer being played to, 0–100.
+    /// The app is quitting: stop the renderer playing, if one is, waiting at
+    /// most a second and a half for it. Blocks, on purpose: termination does
+    /// not wait for a task. Call it after the last save, which records the
+    /// session as playing, so the next launch carries on there.
+    pub fn release_output(&self) {
+        koan_core::player::commands::release_renderer(
+            &self.tx,
+            std::time::Duration::from_millis(1500),
+        );
+    }
+
     pub async fn set_renderer_volume(self: Arc<Self>, volume: u8) -> Result<(), KoanError> {
         offload::sequenced(move || self.send_local(PlayerCommand::SetRendererVolume(volume))).await
     }
