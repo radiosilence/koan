@@ -241,22 +241,12 @@ pub fn sync_library(
     }
     let albums_short = live_albums.len() > albums.len();
 
-    // An empty listing is far likelier to be a server fault than an empty
-    // library, and would unlink every file. So is one shorter than the count
-    // the server gave: a track deleted mid-walk shifts a later page by one, and
-    // the track it pushes out of view is not gone.
+    // What the server deleted or renumbered: an album gone from the list, or a
+    // track gone from an album. An empty listing is far likelier to be a server
+    // fault than an empty library, and would unlink every file. So is one
+    // shorter than the count the server gave: a track deleted mid-walk shifts a
+    // later page by one, and the track it pushes out of view is not gone.
     let listed_everything = !albums_short && total.is_none_or(|n| song_ids.len() as u64 >= n);
-    if result.is_complete() && !song_ids.is_empty() && listed_everything {
-        match queries::relink_vanished_remote_ids(&db.conn, &song_ids) {
-            Ok(0) => {}
-            Ok(n) => log::info!("{n} files had ids the server no longer knows; relinked"),
-            Err(e) => log::warn!("failed to relink tracks with vanished remote ids: {e}"),
-        }
-    }
-
-    // What the server deleted goes here too: an album gone from the list, or a
-    // track gone from an album. Both are held to the same guards as above: an
-    // empty or short listing is a fault, not a deletion.
     let live_tracks =
         (result.is_complete() && !song_ids.is_empty() && listed_everything).then_some(&song_ids);
     if result.is_complete() && !live_albums.is_empty() {

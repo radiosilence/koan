@@ -334,6 +334,8 @@ pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connect
          DELETE FROM play_history;
          DELETE FROM scan_cache;
          DELETE FROM tracks_fts;
+         DELETE FROM local_files;
+         DELETE FROM remote_entries;
          DELETE FROM tracks;
          DELETE FROM albums;
          DELETE FROM artists;
@@ -480,78 +482,48 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
     let (lower, upper) = queries::folder_prefix_range(folder);
 
     let tx = crate::db::queries::write_transaction(&db.conn)?;
-    // Still on the server: keep the row, drop the local file.
-    tx.execute(
-        "UPDATE tracks SET path = NULL, source = 'remote'
-          WHERE path >= ?1 AND path < ?2 AND remote_id IS NOT NULL",
-        [&lower, &upper],
-    )?;
-
-    let ids: Vec<i64> = {
-        let mut stmt = tx.prepare("SELECT id FROM tracks WHERE path >= ?1 AND path < ?2")?;
+    let paths: Vec<String> = {
+        let mut stmt = tx.prepare("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?;
         let rows = stmt.query_map([&lower, &upper], |r| r.get(0))?;
-        rows.filter_map(Result::ok).collect()
+        rows.collect::<rusqlite::Result<_>>()?
     };
-    delete_track_rows(&tx, &ids)?;
-    prune_empty_albums_and_artists(&tx)?;
-    tx.commit()?;
-    Ok(ids.len() as u64)
-}
-
-fn delete_track_rows(conn: &rusqlite::Connection, ids: &[i64]) -> rusqlite::Result<()> {
-    for id in ids {
-        conn.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", [id])?;
-        conn.execute("DELETE FROM play_history WHERE track_id = ?1", [id])?;
-        conn.execute("DELETE FROM scan_cache WHERE track_id = ?1", [id])?;
-        conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", [id])?;
-        conn.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+    // A track also on the server keeps its row, minus the file.
+    for path in &paths {
+        queries::sources::remove(&tx, queries::sources::Kind::Local, path)?;
     }
-    Ok(())
+    tx.commit()?;
+    Ok(paths.len() as u64)
 }
 
 /// Forget everything that only existed on the server.
 ///
 /// Signing out should leave the library with what is actually on this machine.
-/// A track held both locally and remotely keeps its row and loses its remote id;
-/// one that only ever came from the server goes.
+/// A track held both locally and remotely keeps its row and loses the server's
+/// copy; one that only ever came from the server goes.
 pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbError> {
     let tx = crate::db::queries::write_transaction(&db.conn)?;
-
-    let ids: Vec<i64> = {
-        let mut stmt =
-            tx.prepare("SELECT id FROM tracks WHERE remote_id IS NOT NULL AND path IS NULL")?;
+    let ids: Vec<String> = {
+        let mut stmt = tx.prepare("SELECT remote_id FROM remote_entries")?;
         let rows = stmt.query_map([], |r| r.get(0))?;
-        rows.filter_map(Result::ok).collect()
+        rows.collect::<rusqlite::Result<_>>()?
     };
-    delete_track_rows(&tx, &ids)?;
-    // Local copies stay, minus the server they were also on.
-    tx.execute(
-        "UPDATE tracks SET remote_id = NULL, remote_url = NULL, source = 'local'
-          WHERE remote_id IS NOT NULL",
-        [],
-    )?;
-    prune_empty_albums_and_artists(&tx)?;
+    let mut removed = 0;
+    for id in &ids {
+        let track: i64 = tx.query_row(
+            "SELECT track_id FROM remote_entries WHERE remote_id = ?1",
+            [id],
+            |r| r.get(0),
+        )?;
+        queries::sources::remove(&tx, queries::sources::Kind::Remote, id)?;
+        let kept: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM tracks WHERE id = ?1)",
+            [track],
+            |r| r.get(0),
+        )?;
+        removed += u64::from(!kept);
+    }
     tx.commit()?;
-    Ok(ids.len() as u64)
-}
-
-/// Albums and artists with nothing left in them.
-fn prune_empty_albums_and_artists(
-    tx: &rusqlite::Transaction<'_>,
-) -> Result<(), crate::db::connection::DbError> {
-    tx.execute(
-        "DELETE FROM albums WHERE NOT EXISTS
-           (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)",
-        [],
-    )?;
-    tx.execute(
-        "DELETE FROM artists WHERE NOT EXISTS
-             (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)
-           AND NOT EXISTS
-             (SELECT 1 FROM tracks WHERE tracks.artist_id = artists.id)",
-        [],
-    )?;
-    Ok(())
+    Ok(removed)
 }
 
 /// What clearing the download cache removed.

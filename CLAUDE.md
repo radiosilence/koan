@@ -63,7 +63,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - **Status is derived** — `QueueEntryStatus` computed from cursor + load state, never stored.
 - **Decode cursor ≠ UI cursor** — decode thread peeks ahead for gapless without moving the playlist cursor.
 - **One `derive_visible_queue()` per frame** — cached snapshot, all render/mouse ops see consistent state.
-- **Track dedup across sources** — local file + remote entry = one DB row. Match: path → remote_id → content → MusicBrainz recording + release.
+- **Tracks are derived from sources** — each file is a `local_files` row and each server entry a `remote_entries` row, holding its own tags. A track holds at most one of each; its columns are derived, the file's first. `sources::link` alone decides which track a source is (MusicBrainz recording + release, or album/album artist/disc/number/title with the artist as tie-break; ambiguous → declined). Never write track identity columns outside `db/queries/sources.rs`.
 - **Uids, not row ids, leave the database** — every artist, album, track and playlist has a UUIDv7 `uid`, published by Subsonic, GraphQL and the link. Clients syncing from a koan server adopt its uids, so ids mean the same thing on every device. See `db/queries/uids.rs`.
 - **Figment-layered config** — defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. All writes go through `Config::persist()`, which diffs the mutation and routes each changed key by `config::layer_of` — secrets, this machine's paths/hardware/account and volatile UI state to `config.local.toml`, taste to `config.toml`. Comments survive; untouched keys are never rewritten.
 
@@ -130,7 +130,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `db/schema.rs` | DDL: artists, albums, tracks, scan_cache, remote_servers, organize_log, tracks_fts (FTS5) |
 | `db/connection.rs` | `Database::open()`, WAL mode, pragmas |
 | `db/pool.rs` | Connections opened once and kept. What every front end reads through — `Database::open` checks the schema and checkpoints the WAL, which is not a thing to do per query |
-| `db/queries/` | Row types, upsert (cross-source dedup), FTS5 search, scan cache, stats, playlists, `batch` (SQL-side track filtering, batched parent→child reads) |
+| `db/queries/` | Row types, upsert, `sources` (track identity: source rows, link, derive), FTS5 search, scan cache, stats, playlists, `batch` (SQL-side track filtering, batched parent→child reads) |
 | `index/scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → batched DB transactions. `ScanOptions` carries a cancel flag and an optional progress sink. `import_paths` indexes named files where they lie (Finder drops), removing nothing; `scan_dirs` rescans named directories inside the library, removals included — what the folder watcher runs |
 | `index/watch.rs` | Which filesystem events can change the index, and the directory each one means a scan of. Drops access, metadata, hidden and Syncthing paths, partial downloads |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
@@ -275,7 +275,7 @@ follows the top of the stack in front — see `TabShell`.
 2. **Then:** `koan-core/src/player/mod.rs` — the command loop
 3. **Audio:** `audio/buffer.rs` (decode pipeline) → `audio/engine.rs` (CoreAudio setup)
 4. **TUI:** `koan-tui/src/app.rs` (state machine) → `ui.rs` (render)
-5. **Database:** `db/schema.rs` (tables) → `db/queries/tracks.rs` (dedup logic)
+5. **Database:** `db/schema.rs` (tables) → `db/queries/sources.rs` (track identity)
 
 ## Concurrency patterns to follow
 

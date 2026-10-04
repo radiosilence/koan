@@ -4,11 +4,19 @@
 
 ### Fixed
 
-- **A track held both on disk and on a server keeps the file's names.** Album, artist, disc, number, title, genre and MusicBrainz id were taken from whichever source wrote last, so a track the two credited differently changed between them on every sync and rescan, and each change could delete the album it left, with that album's id and favourite. A tag corrected in the file was also put back by the next sync of a server still holding the old one. The file's tags now win while there is a file; a server's fill only what they leave out.
-- **A corrected MusicBrainz id is stored.** A rescan kept the recording and release ids a track and album already had, so a correction never landed.
-- **Correcting a file's tags merges it with its server copy when the two credit the artist differently.** The second matching pass a corrected file goes through now runs the same steps as the first, including the match that ignores the artist credit.
-- **Merging a file with its server copy keeps the server's track id.** When the server's row was the one folded away, its id went with it, and other devices could not find the track until a full sync ran again.
-- **A database error while matching a track is reported rather than adding a duplicate.** The matching steps read a failed query as "no match" and inserted a second row.
+- **Track identity is rebuilt on source rows.** Each file and each server entry now keeps its own tags in a row of its own, and a track's names, path and server id are derived from them, the file's first. One function decides which file and which server entry are the same track, and it runs whenever either's tags change. This replaces eight separate matching and repair passes, and fixes the problems they shared:
+  - A track held both on disk and on a server no longer changes between the file's names and the server's on every sync and rescan. A tag corrected in the file is no longer put back by the next sync.
+  - Correcting a file's tags pairs it with its server copy, or splits it from one it no longer matches, whatever the artist credit says.
+  - Names match whatever their case or Unicode form, so `SIGUR RÓS` on a server is `Sigur Rós` on disk.
+  - A file and its server copy are not paired when the server has two candidates; they used to be paired with whichever came first.
+  - A moved file takes over the server copy its old path held, along with its history.
+  - A favourite follows its track when the file goes and the track streams from the server.
+  - Merging two rows keeps the older one's id and history, and the koan server's uid.
+  - An album's server id and release id are what most of its tracks say, so two editions held as one album no longer trade the release id on every scan, and a corrected release id is stored.
+  - A server's track number fills in one the file lacks.
+  - A database error while matching is reported rather than adding a duplicate.
+
+  Upgrading builds the source rows from the existing library, so the first scan afterwards reads every file again and the first sync walks the whole server.
 
 ## 0.50.3
 

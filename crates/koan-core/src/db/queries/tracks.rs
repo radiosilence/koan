@@ -5,8 +5,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::connection::DbError;
 
-use super::albums::get_or_create_album;
-use super::artists::get_or_create_artist;
+use super::sources;
 use super::{PlaybackSource, TrackMeta, TrackRow};
 
 /// Map a rusqlite Row to a TrackRow. Expects the standard column order:
@@ -46,130 +45,16 @@ pub(crate) fn row_to_track_row_at(row: &rusqlite::Row, at: usize) -> rusqlite::R
     })
 }
 
-/// Column values already on a row that is being merged into. The incoming
-/// `TrackMeta` fills gaps from here; it never overwrites a populated column with NULL.
-#[derive(Clone)]
-struct ExistingTrack {
-    album_id: Option<i64>,
-    artist_id: Option<i64>,
-    disc: Option<i32>,
-    track_number: Option<i32>,
-    title: String,
-    source: String,
-    path: Option<String>,
-    remote_id: Option<String>,
-    remote_url: Option<String>,
-    cached_path: Option<String>,
-    codec: Option<String>,
-    sample_rate: Option<i32>,
-    bit_depth: Option<i32>,
-    channels: Option<i32>,
-    bitrate: Option<i32>,
-    duration_ms: Option<i64>,
-    size_bytes: Option<i64>,
-    mtime: Option<i64>,
-    genre: Option<String>,
-    mbid: Option<String>,
-}
-
-impl ExistingTrack {
-    fn load(conn: &Connection, id: i64) -> Result<Self, DbError> {
-        Ok(conn
-            .prepare_cached(
-                "SELECT album_id, artist_id, path, remote_id, remote_url, cached_path, codec,
-                        sample_rate, bit_depth, channels, bitrate, duration_ms, size_bytes,
-                        mtime, genre, mbid, disc, track_number, title, source
-                 FROM tracks WHERE id = ?1",
-            )?
-            .query_row(params![id], |row| {
-                Ok(ExistingTrack {
-                    album_id: row.get(0)?,
-                    artist_id: row.get(1)?,
-                    path: row.get(2)?,
-                    remote_id: row.get(3)?,
-                    remote_url: row.get(4)?,
-                    cached_path: row.get(5)?,
-                    codec: row.get(6)?,
-                    sample_rate: row.get(7)?,
-                    bit_depth: row.get(8)?,
-                    channels: row.get(9)?,
-                    bitrate: row.get(10)?,
-                    duration_ms: row.get(11)?,
-                    size_bytes: row.get(12)?,
-                    mtime: row.get(13)?,
-                    genre: row.get(14)?,
-                    mbid: row.get(15)?,
-                    disc: row.get(16)?,
-                    track_number: row.get(17)?,
-                    title: row.get(18)?,
-                    source: row.get(19)?,
-                })
-            })?)
-    }
-
-    /// Absorb a row that is about to be merged away. It fills gaps and never wins:
-    /// the surviving row was matched on its own path or remote id, so where both
-    /// have a value it is the one describing the copy that is actually there.
-    ///
-    /// The one exception is what the track is called. A file's tags outrank a
-    /// server's, so a server-only row taking in a file takes the file's name,
-    /// place and recording id along with it.
-    fn absorb(&mut self, other: ExistingTrack) {
-        if self.path.is_none() && other.path.is_some() {
-            self.album_id = other.album_id;
-            self.artist_id = other.artist_id;
-            self.disc = other.disc;
-            self.track_number = other.track_number;
-            self.title = other.title;
-            self.genre = other.genre.or(self.genre.take());
-            self.mbid = other.mbid.or(self.mbid.take());
-        } else {
-            self.genre = self.genre.take().or(other.genre);
-            self.mbid = self.mbid.take().or(other.mbid);
-        }
-        self.path = self.path.take().or(other.path);
-        self.remote_id = self.remote_id.take().or(other.remote_id);
-        self.remote_url = self.remote_url.take().or(other.remote_url);
-        self.cached_path = self.cached_path.take().or(other.cached_path);
-        self.codec = self.codec.take().or(other.codec);
-        self.sample_rate = self.sample_rate.or(other.sample_rate);
-        self.bit_depth = self.bit_depth.or(other.bit_depth);
-        self.channels = self.channels.or(other.channels);
-        self.bitrate = self.bitrate.or(other.bitrate);
-        self.duration_ms = self.duration_ms.or(other.duration_ms);
-        self.size_bytes = self.size_bytes.or(other.size_bytes);
-        self.mtime = self.mtime.or(other.mtime);
-    }
-}
-
-/// Insert or update a track. Deduplicates local+remote: one row per logical track.
+/// Insert or update a track from what one source says about it.
 ///
-/// Matching priority:
-/// 1. By path (local tracks)
-/// 2. By remote_id (remote tracks)
-/// 3. By content match: same artist_id + album_id + disc + track# + title.
-///    Cross-source only — two rows that both carry a local path, or that both
-///    carry a remote_id, are two tracks, not one. `disc` is part of the identity
-///    because multi-disc releases repeat both title and track number across discs.
-/// 4. The same, minus the artist, when both sides carry a track number. Sources
-///    disagree about how to credit a release; album + disc + track# + title
-///    already names one position on it.
-/// 5. By MusicBrainz recording + release, when both sides carry the ids. Nothing
-///    about the names has to agree — a server that appends the release's disambiguation to the album title still names the same track.
-///
-/// A row matched by path or remote_id is then asked steps 3 to 5 a second time,
-/// against the corrected metadata: strategies 1 and 2 pin a row to one source,
-/// so a file whose tags were bad when it was first indexed could never merge
-/// with its remote copy however good the tags later became. If a counterpart
-/// turns up, it is folded in and deleted rather than left as a duplicate.
-///
-/// A merge never replaces a populated column with NULL: a remote sync that knows
-/// nothing about sample rate or bit depth leaves the locally-scanned values alone.
-/// What the track is called — album, artist, disc, number, title, genre and
-/// MusicBrainz id — follows the file while there is one; a server's tags only
-/// fill its gaps.
-/// An existing path is only repointed at a different file once the old one is gone.
-/// The `source` field reflects what's available: "local" if path exists, "remote" if remote-only.
+/// A `TrackMeta` with a path is a file and one with a server id an entry on
+/// the server; one with both is both. Each source keeps its own tags, and the
+/// track's columns are derived from its sources, the file's first — see
+/// `sources`. Which track a source belongs to is decided in one place,
+/// `sources::link`: the same MusicBrainz recording on the same release, or the
+/// same album, album artist, disc, number and title with the artist as a
+/// tie-break. Two sources of the same kind are never one track, and a match
+/// that is ambiguous is declined.
 pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError> {
     upsert_track_status(conn, meta).map(|(id, _)| id)
 }
@@ -181,10 +66,10 @@ pub fn upsert_track_status(conn: &Connection, meta: &TrackMeta) -> Result<(i64, 
 }
 
 /// `upsert_track` for a remote sync, which knows the server ids it has seen so
-/// far. A row in the same slot whose id the sync has not seen is taken to be
-/// this track under the id it had before: a server that renumbers its library
+/// far. An entry in the same slot whose id the sync has not seen is taken to be
+/// this one under the id it had before: a server that renumbers its library
 /// keeps its rows, history and favourites rather than gaining a second copy of
-/// every track. An id already seen belongs to a track of its own, so two
+/// every track. An id already seen belongs to an entry of its own, so two
 /// entries the server lists with identical tags stay two rows.
 pub fn upsert_synced_track(
     conn: &Connection,
@@ -202,13 +87,17 @@ fn upsert_track_with(
     // Use a savepoint so this works both standalone and inside an existing
     // transaction (e.g. the chunk transactions in scan_folder).
     conn.execute_batch("SAVEPOINT upsert_track")?;
-
-    let result = upsert_track_inner(conn, meta, seen).and_then(|(id, inserted)| {
-        if let Some(rid) = &meta.remote_id {
-            super::adopt_uid(conn, super::UidKind::Track, id, rid)?;
+    let result = (|| {
+        let mut recorded = None;
+        if meta.path.is_some() {
+            recorded = Some(sources::record(conn, sources::Kind::Local, meta, None)?);
         }
-        Ok((id, inserted))
-    });
+        if meta.remote_id.is_some() {
+            let (track, inserted) = sources::record(conn, sources::Kind::Remote, meta, seen)?;
+            recorded = Some((track, recorded.is_some_and(|(_, i)| i) || inserted));
+        }
+        recorded.ok_or(DbError::NoSource)
+    })();
     match &result {
         Ok(_) => conn.execute_batch("RELEASE upsert_track")?,
         Err(_) => conn.execute_batch("ROLLBACK TO upsert_track; RELEASE upsert_track")?,
@@ -216,813 +105,68 @@ fn upsert_track_with(
     result
 }
 
-fn upsert_track_inner(
-    conn: &Connection,
-    meta: &TrackMeta,
-    seen: Option<&HashSet<String>>,
-) -> Result<(i64, bool), DbError> {
-    // Disc 0 is no disc. Taggers write it for a single-disc release and servers
-    // leave the field out, and a zero on one side only splits every track in two.
-    let disc = meta.disc.filter(|d| *d > 0);
-    let album_artist_name = meta.album_artist.as_deref().unwrap_or(&meta.artist);
-    let album_artist_id =
-        get_or_create_artist(conn, album_artist_name, meta.artist_remote_id.as_deref())?;
-    // Track artist — may differ from album artist (e.g. compilations, VA albums).
-    let track_artist_id = if meta.artist == album_artist_name {
-        album_artist_id
-    } else {
-        get_or_create_artist(conn, &meta.artist, None)?
-    };
-    let album_id = get_or_create_album(
-        conn,
-        &meta.album,
-        album_artist_id,
-        meta.date.as_deref(),
-        None,
-        None,
-        meta.codec.as_deref(),
-        meta.label.as_deref(),
-        meta.album_remote_id.as_deref(),
-        meta.album_added_at.as_deref(),
-    )?;
-    if let Some(release) = meta.album_mbid.as_deref().filter(|id| !id.is_empty()) {
-        // A file's tags correct the release's id. A server's only fill a gap, or
-        // speak for an album no file of which is here.
-        conn.prepare_cached(
-            "UPDATE albums SET mbid = ?1
-              WHERE id = ?2 AND mbid IS NOT ?1
-                AND (?3 OR mbid IS NULL
-                     OR NOT EXISTS (SELECT 1 FROM tracks WHERE album_id = ?2 AND path IS NOT NULL))",
-        )?
-        .execute(params![release, album_id, meta.path.is_some()])?;
-    }
-
-    let slot = Slot {
-        album_id,
-        artist_id: track_artist_id,
-        disc,
-    };
-    let track_id = find_track(conn, meta, &slot, seen)?;
-
-    if let Some(id) = track_id {
-        // Merge: the incoming meta fills gaps, it never blanks what is already there.
-        // A local scan supplies path + audio properties; a remote sync supplies
-        // remote_id + remote_url and knows nothing about sample rate or bit depth.
-        let stored = ExistingTrack::load(conn, id)?;
-        let mut existing = stored.clone();
-
-        // Re-merge. Matching by path or remote id pins a row to the source it was
-        // first seen from, so once it exists every later scan updates it in place
-        // and never reconsiders the cross-source merge. That is wrong exactly when
-        // the original tags were bad: correcting them gives the row the identity
-        // that would have matched its counterpart, and without this the library
-        // keeps both copies. Ask the cross-source question again against the
-        // corrected metadata, and fold the counterpart in if it is there.
-        //
-        // Only worth asking while the row is still single-sourced. One already
-        // carrying both a path and a remote id has nothing left to absorb, which is
-        // also what keeps this off the back of a cross-source match.
-        let mut vacated = vec![
-            (existing.album_id, existing.artist_id),
-            (Some(album_id), Some(album_artist_id)),
-            (None, Some(track_artist_id)),
-        ];
-        let have_path = meta.path.is_some() || existing.path.is_some();
-        let have_remote = meta.remote_id.is_some() || existing.remote_id.is_some();
-        if have_path != have_remote
-            && let Some(loser) =
-                cross_source_twin(conn, meta, &slot, Some(id), have_path, have_remote)?
-        {
-            let absorbed = ExistingTrack::load(conn, loser)?;
-            vacated.push((absorbed.album_id, absorbed.artist_id));
-            existing.absorb(absorbed);
-            merge_track_rows(conn, loser, id)?;
-            log::info!(
-                "corrected tags matched track {} with {}; merged them into one row",
-                loser,
-                id
-            );
-        }
-
-        // Only repoint at a different file once the old one is gone, so an upsert
-        // can never make a file that still exists unreachable.
-        let merged_path = match (meta.path.as_ref(), existing.path.as_ref()) {
-            (Some(incoming), Some(current))
-                if incoming != current && Path::new(current).exists() =>
-            {
-                log::warn!(
-                    "track {} already points at {}; not repointing it at {}",
-                    id,
-                    current,
-                    incoming
-                );
-                Some(current)
-            }
-            (Some(incoming), _) => Some(incoming),
-            (None, current) => current,
-        };
-        let merged_remote_id = meta.remote_id.as_ref().or(existing.remote_id.as_ref());
-        let merged_remote_url = meta.remote_url.as_ref().or(existing.remote_url.as_ref());
-        // A track known only by its stream address is favourited by it, so a
-        // new address takes the favourite along.
-        if let (Some(old), Some(new)) = (existing.remote_url.as_ref(), merged_remote_url)
-            && old != new
-        {
-            conn.prepare_cached(
-                "UPDATE OR IGNORE favourites SET track_path = ?1 WHERE track_path = ?2",
-            )?
-            .execute(params![new, old])?;
-        }
-        // Whatever was already downloaded stays reachable; dropping the reference
-        // would leak the file into the cache with nothing left pointing at it.
-        let merged_cached_path = existing.cached_path.as_ref();
-
-        // What the track is called comes from its file when it has one. A server
-        // only names a track nothing on disk names, and otherwise fills gaps: with
-        // the last writer winning, a row merged across differing credits flipped
-        // between the two on every sync and rescan, and a corrected tag was put
-        // back by the next sync of a server still holding the old one.
-        let names = meta.path.is_some() || merged_path.is_none();
-        let (album, artist, disc, track_number, title) = if names {
-            (
-                Some(album_id),
-                Some(track_artist_id),
-                disc,
-                meta.track_number,
-                meta.title.as_str(),
-            )
-        } else {
-            (
-                existing.album_id,
-                existing.artist_id,
-                existing.disc,
-                existing.track_number,
-                existing.title.as_str(),
-            )
-        };
-        let (merged_mbid, merged_genre) = if names {
-            (
-                meta.mbid.as_ref().or(existing.mbid.as_ref()),
-                meta.genre.as_ref().or(existing.genre.as_ref()),
-            )
-        } else {
-            (
-                existing.mbid.as_ref().or(meta.mbid.as_ref()),
-                existing.genre.as_ref().or(meta.genre.as_ref()),
-            )
-        };
-        let merged_codec = meta.codec.as_ref().or(existing.codec.as_ref());
-        let merged_sample_rate = meta.sample_rate.or(existing.sample_rate);
-        let merged_bit_depth = meta.bit_depth.or(existing.bit_depth);
-        let merged_channels = meta.channels.or(existing.channels);
-        let merged_bitrate = meta.bitrate.or(existing.bitrate);
-        let merged_duration_ms = meta.duration_ms.or(existing.duration_ms);
-        let merged_size_bytes = meta.size_bytes.or(existing.size_bytes);
-        let merged_mtime = meta.mtime.or(existing.mtime);
-
-        // Source reflects what's available: local path wins.
-        let source = if merged_path.is_some() {
-            "local"
-        } else {
-            &meta.source
-        };
-
-        // A sync passes every track through here, and almost none of them have
-        // changed. Writing the row regardless rewrites it and all ten of its
-        // index entries; comparing first leaves the WAL alone.
-        let changed = (album, artist, disc, track_number, title, source)
-            != (
-                stored.album_id,
-                stored.artist_id,
-                stored.disc,
-                stored.track_number,
-                stored.title.as_str(),
-                stored.source.as_str(),
-            )
-            || (
-                merged_duration_ms,
-                merged_codec.map(String::as_str),
-                merged_sample_rate,
-                merged_bit_depth,
-                merged_channels,
-                merged_bitrate,
-                merged_size_bytes,
-                merged_mtime,
-                merged_genre.map(String::as_str),
-            ) != (
-                stored.duration_ms,
-                stored.codec.as_deref(),
-                stored.sample_rate,
-                stored.bit_depth,
-                stored.channels,
-                stored.bitrate,
-                stored.size_bytes,
-                stored.mtime,
-                stored.genre.as_deref(),
-            )
-            || (
-                merged_remote_id.map(String::as_str),
-                merged_remote_url.map(String::as_str),
-                merged_path.map(String::as_str),
-                merged_mbid.map(String::as_str),
-                merged_cached_path.map(String::as_str),
-            ) != (
-                stored.remote_id.as_deref(),
-                stored.remote_url.as_deref(),
-                stored.path.as_deref(),
-                stored.mbid.as_deref(),
-                stored.cached_path.as_deref(),
-            );
-        if changed {
-            conn.prepare_cached(
-                "UPDATE tracks SET album_id=?1, artist_id=?2, disc=?3, track_number=?4,
-                 title=?5, duration_ms=?6, codec=?7, sample_rate=?8, bit_depth=?9,
-                 channels=?10, bitrate=?11, size_bytes=?12, mtime=?13, genre=?14,
-                 source=?15, remote_id=?16, remote_url=?17, path=?18, mbid=?19,
-                 cached_path=?20
-                 WHERE id=?21",
-            )?
-            .execute(params![
-                album,
-                artist,
-                disc,
-                track_number,
-                title,
-                merged_duration_ms,
-                merged_codec,
-                merged_sample_rate,
-                merged_bit_depth,
-                merged_channels,
-                merged_bitrate,
-                merged_size_bytes,
-                merged_mtime,
-                merged_genre,
-                source,
-                merged_remote_id,
-                merged_remote_url,
-                merged_path,
-                merged_mbid,
-                merged_cached_path,
-                id
-            ])?;
-        }
-
-        if names {
-            index_for_search(
-                conn,
-                id,
-                &meta.title,
-                &fts_artist(&meta.artist, album_artist_name),
-                &meta.album,
-                merged_genre.map(String::as_str),
-            )?;
-        } else {
-            let (artist_name, album_artist, album_title): (
-                Option<String>,
-                Option<String>,
-                Option<String>,
-            ) = conn
-                .prepare_cached(
-                    "SELECT a.name, aa.name, al.title FROM tracks t
-                       LEFT JOIN artists a ON a.id = t.artist_id
-                       LEFT JOIN albums al ON al.id = t.album_id
-                       LEFT JOIN artists aa ON aa.id = al.artist_id
-                      WHERE t.id = ?1",
-                )?
-                .query_row(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-            let artist_name = artist_name.unwrap_or_default();
-            let album_artist = album_artist.unwrap_or_else(|| artist_name.clone());
-            index_for_search(
-                conn,
-                id,
-                title,
-                &fts_artist(&artist_name, &album_artist),
-                &album_title.unwrap_or_default(),
-                merged_genre.map(String::as_str),
-            )?;
-        }
-
-        // What this row left, and what the incoming tags created for it and
-        // then did not use.
-        for (old_album, old_artist) in vacated {
-            prune_if_empty(
-                conn,
-                old_album.filter(|a| Some(*a) != album),
-                old_artist.filter(|a| Some(*a) != artist),
-            )?;
-        }
-
-        Ok((id, false))
-    } else {
-        let source = if meta.path.is_some() {
-            "local"
-        } else {
-            &meta.source
-        };
-
-        let uid = super::free_uid(conn, super::UidKind::Track, meta.remote_id.as_deref())?;
-        conn.prepare_cached(
-            "INSERT INTO tracks (album_id, artist_id, disc, track_number, title,
-             duration_ms, path, codec, sample_rate, bit_depth, channels, bitrate,
-             size_bytes, mtime, genre, source, remote_id, remote_url, mbid, uid)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
-        )?
-        .execute(params![
-            album_id,
-            track_artist_id,
-            disc,
-            meta.track_number,
-            meta.title,
-            meta.duration_ms,
-            meta.path,
-            meta.codec,
-            meta.sample_rate,
-            meta.bit_depth,
-            meta.channels,
-            meta.bitrate,
-            meta.size_bytes,
-            meta.mtime,
-            meta.genre,
-            source,
-            meta.remote_id,
-            meta.remote_url,
-            meta.mbid,
-            uid
-        ])?;
-
-        let id = conn.last_insert_rowid();
-        index_for_search(
-            conn,
-            id,
-            &meta.title,
-            &fts_artist(&meta.artist, album_artist_name),
-            &meta.album,
-            meta.genre.as_deref(),
-        )?;
-
-        Ok((id, true))
-    }
-}
-
-/// Where a track sits: the album, the credited artist and the disc. The rest
-/// of the position comes from the `TrackMeta`.
-struct Slot {
-    album_id: i64,
-    artist_id: i64,
-    disc: Option<i32>,
-}
-
-/// The existing row an incoming track is, by the cascade `upsert_track`
-/// describes. A failing query is an error, never "no match": read as one, it
-/// inserted a duplicate.
-fn find_track(
-    conn: &Connection,
-    meta: &TrackMeta,
-    slot: &Slot,
-    seen: Option<&HashSet<String>>,
-) -> Result<Option<i64>, DbError> {
-    // 1. Match by path.
-    if let Some(path) = &meta.path {
-        let id = conn
-            .prepare_cached("SELECT id FROM tracks WHERE path = ?1")?
-            .query_row(params![path], |row| row.get(0))
-            .optional()?;
-        if id.is_some() {
-            return Ok(id);
-        }
-    }
-
-    if let Some(rid) = &meta.remote_id {
-        // 2. Match by remote_id.
-        let id = conn
-            .prepare_cached("SELECT id FROM tracks WHERE remote_id = ?1")?
-            .query_row(params![rid], |row| row.get(0))
-            .optional()?;
-        if id.is_some() {
-            return Ok(id);
-        }
-
-        // 2b. The same slot under a server id this sync has not seen: the id this
-        // track had before the server renumbered it. See `upsert_synced_track`.
-        if let Some(seen) = seen {
-            let candidates: Vec<(i64, String)> = conn
-                .prepare_cached(
-                    "SELECT id, remote_id FROM tracks
-                     WHERE album_id = ?1 AND title = ?2
-                       AND COALESCE(track_number, -1) = COALESCE(?3, -1)
-                       AND COALESCE(disc, -1) = COALESCE(?4, -1)
-                       AND remote_id IS NOT NULL AND remote_id != ?5
-                     ORDER BY id",
-                )?
-                .query_map(
-                    params![slot.album_id, meta.title, meta.track_number, slot.disc, rid],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?
-                .collect::<rusqlite::Result<_>>()?;
-            if let Some((id, _)) = candidates.into_iter().find(|(_, old)| !seen.contains(old)) {
-                return Ok(Some(id));
-            }
-        }
-    }
-
-    cross_source_twin(
-        conn,
-        meta,
-        slot,
-        None,
-        meta.path.is_some(),
-        meta.remote_id.is_some(),
-    )
-}
-
-/// Steps 3 to 5 of the cascade: the row from the other kind of source that
-/// holds this track. Asked of every incoming track, and again of a row matched
-/// by path or remote id once its tags may have changed.
-///
-/// The two flags keep this to genuine local<->remote merges: two files on disk
-/// are two tracks however identical their tags, and so are two entries on the
-/// same server. A server that renumbers is step 2b's to recognise, which only a
-/// sync can, since it knows which ids are still live.
-fn cross_source_twin(
-    conn: &Connection,
-    meta: &TrackMeta,
-    slot: &Slot,
-    not: Option<i64>,
-    have_path: bool,
-    have_remote: bool,
-) -> Result<Option<i64>, DbError> {
-    // 3. Same artist + album + disc + track# + title.
-    let id = conn
-        .prepare_cached(
-            "SELECT id FROM tracks
-             WHERE id IS NOT ?1 AND artist_id = ?2 AND album_id = ?3 AND title = ?4
-               AND COALESCE(track_number, -1) = COALESCE(?5, -1)
-               AND COALESCE(disc, -1) = COALESCE(?6, -1)
-               AND (path IS NULL OR ?7 = 0)
-               AND (remote_id IS NULL OR ?8 = 0)",
-        )?
-        .query_row(
-            params![
-                not,
-                slot.artist_id,
-                slot.album_id,
-                meta.title,
-                meta.track_number,
-                slot.disc,
-                have_path,
-                have_remote
-            ],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if id.is_some() {
-        return Ok(id);
-    }
-
-    // 4. Same slot on the same release, whatever each source calls the artist.
-    // A server states the credit its own way — "Booka Shade" locally against
-    // "Booka Shade • Walter Merziger, Arno Kammermeier" over Subsonic, or merely a
-    // different case — and step 3 then reads one track as two. Album, disc, track
-    // number and title already name a single position on a release, so the artist
-    // is what the sources disagree about rather than what distinguishes them.
-    //
-    // A track number is required on both sides: without one every untitled slot
-    // on a release collapses to the same key, and the artist was the only thing
-    // keeping two of them apart.
-    if meta.track_number.is_some() {
-        let id = conn
-            .prepare_cached(
-                "SELECT id FROM tracks
-                 WHERE id IS NOT ?1 AND album_id = ?2 AND title = ?3
-                   AND track_number IS NOT NULL AND track_number = ?4
-                   AND COALESCE(disc, -1) = COALESCE(?5, -1)
-                   AND (path IS NULL OR ?6 = 0)
-                   AND (remote_id IS NULL OR ?7 = 0)",
-            )?
-            .query_row(
-                params![
-                    not,
-                    slot.album_id,
-                    meta.title,
-                    meta.track_number,
-                    slot.disc,
-                    have_path,
-                    have_remote
-                ],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if id.is_some() {
-            return Ok(id);
-        }
-    }
-
-    // 5. The same recording on the same release, however either source names it.
-    musicbrainz_twin(conn, meta, slot.disc, not, have_path, have_remote)
-}
-
-/// What the search index holds as a track's artist: both the track artist and
-/// the album artist, so either finds it.
-fn fts_artist(artist: &str, album_artist: &str) -> String {
-    if artist == album_artist {
-        artist.to_string()
-    } else {
-        format!("{artist} {album_artist}")
-    }
-}
-
-/// Put a track's text in the search index, unless it is there already.
-///
-/// An FTS5 delete and insert is a write to every term's posting list and
-/// eventually a segment merge, so an unchanged track is read and left alone.
-fn index_for_search(
-    conn: &Connection,
-    id: i64,
-    title: &str,
-    artist: &str,
-    album: &str,
-    genre: Option<&str>,
-) -> Result<(), DbError> {
-    // `None` when the track is not indexed, else whether it is indexed as is.
-    let current: Option<bool> = conn
-        .prepare_cached(
-            "SELECT title IS ?2 AND artist_name IS ?3 AND album_title IS ?4 AND genre IS ?5
-               FROM tracks_fts WHERE rowid = ?1",
-        )?
-        .query_row(params![id, title, artist, album, genre], |r| r.get(0))
-        .optional()?;
-    if current == Some(true) {
-        return Ok(());
-    }
-    if current.is_some() {
-        conn.prepare_cached("DELETE FROM tracks_fts WHERE rowid = ?1")?
-            .execute(params![id])?;
-    }
-    conn.prepare_cached(
-        "INSERT INTO tracks_fts (rowid, title, artist_name, album_title, genre)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-    )?
-    .execute(params![id, title, artist, album, genre])?;
-    Ok(())
-}
-
-/// The cross-source row holding the same MusicBrainz recording on the same
-/// release. Both ids are required: a recording recurs on every compilation it
-/// appears on, and those are different tracks.
-///
-/// Position is only a tie-break. Sources disagree about disc numbers — one says
-/// disc 1, the other nothing — and the ids already name the track; a release
-/// carrying one recording twice is the one case where the slot has to decide,
-/// and with no candidate in the same slot the match is declined.
-fn musicbrainz_twin(
-    conn: &Connection,
-    meta: &TrackMeta,
-    disc: Option<i32>,
-    not: Option<i64>,
-    have_path: bool,
-    have_remote: bool,
-) -> Result<Option<i64>, DbError> {
-    // An empty id names nothing, and matches every other empty one.
-    let (Some(recording), Some(release)) = (
-        meta.mbid.as_deref().filter(|id| !id.is_empty()),
-        meta.album_mbid.as_deref().filter(|id| !id.is_empty()),
-    ) else {
-        return Ok(None);
-    };
-    let candidates: Vec<(i64, bool)> = conn
-        .prepare_cached(
-            "SELECT t.id,
-                    COALESCE(t.track_number, -1) = COALESCE(?4, -1)
-                      AND (t.disc IS NULL OR ?5 IS NULL OR t.disc = ?5)
-               FROM tracks t JOIN albums a ON a.id = t.album_id
-              WHERE t.mbid = ?1 AND a.mbid = ?2 AND t.id IS NOT ?3
-                AND (t.path IS NULL OR ?6 = 0)
-                AND (t.remote_id IS NULL OR ?7 = 0)
-              ORDER BY 2 DESC
-              LIMIT 2",
-        )?
-        .query_map(
-            params![
-                recording,
-                release,
-                not,
-                meta.track_number,
-                disc,
-                have_path,
-                have_remote
-            ],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(match candidates.as_slice() {
-        [(id, _)] | [(id, true), ..] => Some(*id),
-        _ => None,
-    })
-}
-
-/// Fold `loser` into `winner`, then delete it. The two rows are the same track
-/// seen from different sources, so everything pointing at one has to end up
-/// pointing at the other.
-///
-/// Play history concatenates: every one of those plays was a play of this track.
-/// Lyrics and the embedding are one per track, so the winner keeps what it has and
-/// inherits only what it is missing. Favourites need no move at all — they are
-/// keyed by path, and the path survives on the winner.
-///
-/// A loser holding its koan server's uid hands it to the winner, unless the
-/// winner holds one of its own: that uid is what every other device knows the
-/// track by, and nothing else would put it back until a sync walked again.
-fn merge_track_rows(conn: &Connection, loser: i64, winner: i64) -> rusqlite::Result<()> {
-    let server_uid: Option<String> = conn
-        .query_row(
-            "SELECT l.uid FROM tracks l, tracks w
-          WHERE l.id = ?1 AND w.id = ?2
-            AND l.uid = l.remote_id AND w.uid IS NOT w.remote_id",
-            params![loser, winner],
-            |row| row.get(0),
-        )
-        .optional()?;
-
-    // Playlist and share entries cascade on the loser's delete; the song is
-    // still in them, under the winner's id.
-    for table in [
-        "play_history",
-        "scan_cache",
-        "organize_log",
-        "playlist_tracks",
-        "share_tracks",
-    ] {
-        conn.execute(
-            &format!("UPDATE {table} SET track_id = ?1 WHERE track_id = ?2"),
-            params![winner, loser],
-        )?;
-    }
-
-    // One row per track: move the loser's across only into a gap, then drop the rest.
-    conn.execute(
-        "UPDATE lyrics_cache SET track_id = ?1 WHERE track_id = ?2
-           AND NOT EXISTS (SELECT 1 FROM lyrics_cache WHERE track_id = ?1)",
-        params![winner, loser],
-    )?;
-    conn.execute(
-        "DELETE FROM lyrics_cache WHERE track_id = ?1",
-        params![loser],
-    )?;
-
-    conn.execute("DELETE FROM tracks WHERE id = ?1", params![loser])?;
-    conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![loser])?;
-    if let Some(uid) = server_uid {
-        conn.execute(
-            "UPDATE tracks SET uid = ?1 WHERE id = ?2",
-            params![uid, winner],
-        )?;
-    }
-    Ok(())
-}
-
-/// Clear the disc numbers stored as 0, which `upsert_track` reads as none.
-/// Run before the cross-source fold, which then finds the pairs a zero on one
-/// side kept apart.
+/// Clear the disc numbers stored as 0, which matching reads as none. Run
+/// before the source rows are built, so their keys agree.
 pub(crate) fn clear_zero_discs(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute("UPDATE tracks SET disc = NULL WHERE disc = 0", [])?;
     Ok(())
 }
 
-/// Fold together the cross-source duplicates an earlier dedup key left behind.
+/// Drop the remote entries the server no longer lists, keeping each track for
+/// whatever else it has: a file keeps its row and only loses the server's copy,
+/// and a server-only track whose entry the server renumbered goes to the live
+/// entry in its slot, history and favourites with it. The rest are deleted
+/// with their downloads.
 ///
-/// Matching on the artist meant a local file and the same recording from a
-/// server parted company the moment the two spelled the credit differently, and
-/// the pair is already in the library by the time the key is fixed: a sync
-/// matches the remote row by its own `remote_id` long before any content match
-/// runs, so nothing after this point would ever bring them back together.
-///
-/// The local row wins. It carries the path and the audio properties read from
-/// the file, and playback prefers it; the remote row contributes the identity
-/// the server knows it by. Only a clean pair is touched — one row with a path
-/// and no remote id, one with a remote id and no path, sharing an album, a
-/// title, a disc and a track number — so anything ambiguous is left visible
-/// rather than guessed at.
-pub(crate) fn merge_split_cross_source_tracks(conn: &Connection) -> rusqlite::Result<()> {
-    let pairs: Vec<(i64, i64)> = {
-        let mut stmt = conn.prepare(
-            "SELECT r.id, l.id
-               FROM tracks l
-               JOIN tracks r
-                 ON r.album_id = l.album_id
-                AND r.title = l.title
-                AND r.track_number = l.track_number
-                AND COALESCE(r.disc, -1) = COALESCE(l.disc, -1)
-              WHERE l.album_id IS NOT NULL
-                AND l.track_number IS NOT NULL
-                AND l.path IS NOT NULL AND l.remote_id IS NULL
-                AND r.path IS NULL AND r.remote_id IS NOT NULL",
-        )?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()?
-    };
-
-    for (loser, winner) in pairs {
-        absorb_remote_row(conn, loser, winner)?;
-    }
-
-    Ok(())
-}
-
-/// Give the file's row `winner` the server identity of the remote-only row
-/// `loser`, then fold the loser into it.
-fn absorb_remote_row(conn: &Connection, loser: i64, winner: i64) -> rusqlite::Result<()> {
-    let stranded: Option<i64> = conn
-        .query_row(
-            "SELECT artist_id FROM tracks WHERE id = ?1",
-            params![loser],
-            |row| row.get(0),
-        )
-        .optional()?;
-
-    conn.execute(
-        "UPDATE tracks SET
-             remote_id = (SELECT remote_id FROM tracks WHERE id = ?2),
-             remote_url = (SELECT remote_url FROM tracks WHERE id = ?2),
-             cached_path = COALESCE(cached_path, (SELECT cached_path FROM tracks WHERE id = ?2)),
-             cache_size_bytes = COALESCE(cache_size_bytes, (SELECT cache_size_bytes FROM tracks WHERE id = ?2)),
-             cache_download_date = COALESCE(cache_download_date, (SELECT cache_download_date FROM tracks WHERE id = ?2)),
-             genre = COALESCE(genre, (SELECT genre FROM tracks WHERE id = ?2)),
-             mbid = COALESCE(mbid, (SELECT mbid FROM tracks WHERE id = ?2))
-           WHERE id = ?1",
-        params![winner, loser],
-    )?;
-
-    merge_track_rows(conn, loser, winner)?;
-    prune_if_empty(conn, None, stranded)
-}
-
-/// Delete the remote-only tracks the server no longer lists, and the albums
-/// and artists that leaves empty. `gone` picks them: tracks whose
-/// `remote_id` is not in `live_tracks`, or whose album's `remote_id` is not in
-/// `live_albums`. A track with a local file is left to
-/// [`relink_vanished_remote_ids`]; the file is what it stands for.
+/// An entry is gone when its id is not in `live_tracks`, or its album's id is
+/// not in `live_albums`. Either may be `None` when the sync cannot vouch for
+/// it: only a sync that listed everything has seen every id the server knows.
 pub fn remove_vanished_remote(
     conn: &Connection,
     live_tracks: Option<&HashSet<String>>,
     live_albums: Option<&HashSet<String>>,
-) -> rusqlite::Result<usize> {
+) -> Result<usize, DbError> {
     conn.execute_batch(
         "SAVEPOINT remove_vanished;
          CREATE TEMP TABLE IF NOT EXISTS live_ids (kind TEXT, id TEXT, PRIMARY KEY (kind, id));
-         DELETE FROM live_ids;",
+         DELETE FROM temp.live_ids;",
     )?;
     let removed = (|| {
         let mut insert =
-            conn.prepare("INSERT OR IGNORE INTO live_ids (kind, id) VALUES (?1, ?2)")?;
+            conn.prepare("INSERT OR IGNORE INTO temp.live_ids (kind, id) VALUES (?1, ?2)")?;
         for (kind, ids) in [("track", live_tracks), ("album", live_albums)] {
             for id in ids.into_iter().flatten() {
                 insert.execute(params![kind, id])?;
             }
         }
         let track_gone = if live_tracks.is_some() {
-            "t.remote_id NOT IN (SELECT id FROM live_ids WHERE kind = 'track')"
+            "remote_id NOT IN (SELECT id FROM temp.live_ids WHERE kind = 'track')"
         } else {
             "0"
         };
         let album_gone = if live_albums.is_some() {
-            "al.remote_id IS NOT NULL
-             AND al.remote_id NOT IN (SELECT id FROM live_ids WHERE kind = 'album')"
+            "album_remote_id IS NOT NULL
+             AND album_remote_id NOT IN (SELECT id FROM temp.live_ids WHERE kind = 'album')"
         } else {
             "0"
         };
-        // Track, album, artist, and where it was downloaded to.
-        type Gone = (i64, Option<i64>, Option<i64>, Option<String>);
-        let gone: Vec<Gone> = conn
+        let gone: Vec<String> = conn
             .prepare(&format!(
-                "SELECT t.id, t.album_id, t.artist_id, t.cached_path FROM tracks t
-                   LEFT JOIN albums al ON al.id = t.album_id
-                  WHERE t.path IS NULL AND t.remote_id IS NOT NULL
-                    AND ({track_gone} OR {album_gone})"
+                "SELECT remote_id FROM remote_entries WHERE {track_gone} OR {album_gone}"
             ))?
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .query_map([], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
-        for (id, album, artist, cached) in &gone {
-            // The downloaded copy goes with the row; nothing would ever play
-            // or clean it up otherwise.
-            if let Some(path) = cached {
-                let _ = std::fs::remove_file(path);
-            }
-            for table in [
-                "tracks_fts WHERE rowid",
-                "lyrics_cache WHERE track_id",
-                "play_history WHERE track_id",
-                "scan_cache WHERE track_id",
-            ] {
-                conn.execute(&format!("DELETE FROM {table} = ?1"), params![id])?;
-            }
-            conn.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
-            prune_if_empty(conn, *album, *artist)?;
-        }
-        Ok(gone.len())
+        let downloads = sources::remove_vanished(conn, &gone, live_tracks.is_some())?;
+        Ok::<_, DbError>((gone.len(), downloads))
     })();
     match removed {
-        Ok(n) => {
+        Ok((n, downloads)) => {
             conn.execute_batch("RELEASE remove_vanished")?;
+            // A downloaded copy goes with its track; nothing would ever play
+            // or clean it up otherwise.
+            for path in downloads {
+                let _ = std::fs::remove_file(path);
+            }
             Ok(n)
         }
         Err(e) => {
@@ -1030,120 +174,6 @@ pub fn remove_vanished_remote(
             Err(e)
         }
     }
-}
-
-/// Unlink the files whose server id the server no longer has, then fold each
-/// into its counterpart under the current id.
-///
-/// A server that rescans or reorganises its library can give every track a new
-/// id. The file keeps the old one, so the sync finds nothing by id and inserts
-/// the recording again, and the content match refuses the pair because both
-/// rows carry a remote id. The library shows every track twice, and the file's
-/// link points at nothing. Only a complete sync that listed everything has
-/// seen every id the server knows, so only one may call this.
-pub fn relink_vanished_remote_ids(
-    conn: &Connection,
-    live: &HashSet<String>,
-) -> rusqlite::Result<usize> {
-    conn.execute_batch(
-        "SAVEPOINT relink_vanished; CREATE TEMP TABLE live_remote_ids (id TEXT PRIMARY KEY)",
-    )?;
-    let unlinked = (|| {
-        let mut insert = conn.prepare("INSERT OR IGNORE INTO live_remote_ids (id) VALUES (?1)")?;
-        for id in live {
-            insert.execute(params![id])?;
-        }
-        let unlinked: Vec<i64> = {
-            let mut stmt = conn.prepare(
-                "UPDATE tracks SET remote_id = NULL, remote_url = NULL
-                  WHERE path IS NOT NULL AND remote_id IS NOT NULL
-                    AND remote_id NOT IN (SELECT id FROM live_remote_ids)
-                  RETURNING id",
-            )?;
-            stmt.query_map([], |row| row.get(0))?
-                .collect::<rusqlite::Result<_>>()?
-        };
-        // The pairing the sync's own upsert would make on its next pass, so one
-        // sync is enough. Then the looser pairing the launch-time fold makes.
-        for &file in &unlinked {
-            let counterpart: Option<i64> = conn
-                .query_row(
-                    "SELECT MIN(r.id) FROM tracks f
-                       JOIN tracks r
-                         ON r.artist_id = f.artist_id AND r.album_id = f.album_id
-                        AND r.title = f.title
-                        AND COALESCE(r.track_number, -1) = COALESCE(f.track_number, -1)
-                        AND COALESCE(r.disc, -1) = COALESCE(f.disc, -1)
-                      WHERE f.id = ?1 AND r.path IS NULL
-                        AND r.remote_id IN (SELECT id FROM live_remote_ids)
-                     HAVING COUNT(*) = 1",
-                    params![file],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            if let Some(remote) = counterpart {
-                absorb_remote_row(conn, remote, file)?;
-            }
-        }
-        merge_split_cross_source_tracks(conn)?;
-        fold_vanished_remote_rows(conn)?;
-        Ok(unlinked.len())
-    })();
-    conn.execute_batch("DROP TABLE temp.live_remote_ids")?;
-    match &unlinked {
-        Ok(_) => conn.execute_batch("RELEASE relink_vanished")?,
-        Err(_) => conn.execute_batch("ROLLBACK TO relink_vanished; RELEASE relink_vanished")?,
-    }
-    unlinked
-}
-
-/// Fold each server-only row whose id has vanished into the row holding the
-/// current id for the same slot. The dead row can no longer be streamed, and
-/// without this it sits beside its replacement as a second copy. Its history
-/// and favourite move across; a slot with more than one live candidate is left
-/// alone. Expects `live_remote_ids` to be populated.
-fn fold_vanished_remote_rows(conn: &Connection) -> rusqlite::Result<()> {
-    let pairs: Vec<(i64, i64)> = {
-        let mut stmt = conn.prepare(
-            "SELECT d.id, MIN(l.id)
-               FROM tracks d
-               JOIN tracks l
-                 ON l.album_id = d.album_id
-                AND l.title = d.title
-                AND l.track_number IS d.track_number
-                AND COALESCE(l.disc, -1) = COALESCE(d.disc, -1)
-                AND l.remote_id IN (SELECT id FROM live_remote_ids)
-              WHERE d.path IS NULL AND d.remote_id IS NOT NULL
-                AND d.remote_id NOT IN (SELECT id FROM live_remote_ids)
-              GROUP BY d.id
-             HAVING COUNT(*) = 1",
-        )?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        rows.collect::<rusqlite::Result<Vec<_>>>()?
-    };
-
-    for (loser, winner) in pairs {
-        let stranded: Option<i64> = conn
-            .query_row(
-                "SELECT artist_id FROM tracks WHERE id = ?1",
-                params![loser],
-                |row| row.get(0),
-            )
-            .optional()?;
-        conn.execute(
-            "UPDATE OR IGNORE favourites
-                SET track_path = (SELECT COALESCE(path, remote_url) FROM tracks WHERE id = ?1)
-              WHERE track_path = (SELECT remote_url FROM tracks WHERE id = ?2)",
-            params![winner, loser],
-        )?;
-        conn.execute(
-            "DELETE FROM favourites WHERE track_path = (SELECT remote_url FROM tracks WHERE id = ?1)",
-            params![loser],
-        )?;
-        merge_track_rows(conn, loser, winner)?;
-        prune_if_empty(conn, None, stranded)?;
-    }
-    Ok(())
 }
 
 /// Fold together the rows one file got by being spelled two ways.
@@ -1207,7 +237,7 @@ pub(crate) fn merge_spelling_twins(conn: &Connection) -> rusqlite::Result<()> {
                WHERE id = ?1",
             params![winner, loser],
         )?;
-        merge_track_rows(conn, *loser, *winner)?;
+        sources::fold_rows(conn, *winner, *loser)?;
         conn.execute("DELETE FROM scan_cache WHERE path = ?1", params![stale])?;
         conn.execute(
             "UPDATE tracks SET path = ?1 WHERE id = ?2",
@@ -1225,7 +255,7 @@ pub(crate) fn merge_spelling_twins(conn: &Connection) -> rusqlite::Result<()> {
 /// Drop an album or artist the last track just left. Correcting a tag moves a row
 /// to a different album, and the one it came from is usually a misreading nobody
 /// wants left in the browser looking like a record with nothing on it.
-fn prune_if_empty(
+pub(crate) fn prune_if_empty(
     conn: &Connection,
     album_id: Option<i64>,
     artist_id: Option<i64>,
@@ -1261,20 +291,16 @@ const STALE_CHECK_MIN_ROWS: i64 = 100;
 /// is treated as a mount failure rather than a deletion.
 const MAX_STALE_FRACTION: f64 = 0.2;
 
-/// Remove scan cache entries and tracks for paths that no longer exist in the given folder.
+/// Forget the files under `folder` that no longer exist.
 ///
-/// Remote-backed tracks (those with a `remote_id`) are demoted to remote-only
-/// instead of deleted: their `path` is nulled, `source` set to "remote", and
-/// local-only fields (`mtime`, `size_bytes`) cleared. This preserves streaming
-/// fallback when a local drive is unplugged. When the drive comes back,
-/// `upsert_track` content-match (strategy 3) re-merges the path automatically.
-///
-/// Pure-local tracks (no `remote_id`) are deleted outright, taking their play
-/// history, lyrics and embedding with them, so a folder that is present but
-/// unreadable must never look like a folder whose files were deleted. Two brakes
-/// enforce that: an IO error is not read as "gone", and a run that would clear
-/// more than [`MAX_STALE_FRACTION`] of a folder holding at least
-/// [`STALE_CHECK_MIN_ROWS`] tracks is refused with [`DbError::UnsafeBulkDelete`].
+/// A track the server also has keeps its row and streams from there; one that
+/// was only the file is deleted, with its play history and lyrics. A server
+/// entry freed this way pairs with a file that turns up under another path —
+/// the same file moved. A folder that is present but unreadable must never look
+/// like a folder whose files were deleted, and two brakes enforce that: an IO
+/// error is not read as "gone", and a run that would clear more than
+/// [`MAX_STALE_FRACTION`] of a folder holding at least [`STALE_CHECK_MIN_ROWS`]
+/// tracks is refused with [`DbError::UnsafeBulkDelete`].
 ///
 /// `force_remove` lifts the second brake only, for the case where the files really
 /// were deleted. The IO-error check still applies, and the caller is still
@@ -1288,36 +314,16 @@ pub fn remove_stale_tracks(
 ) -> Result<Vec<String>, DbError> {
     let (lower, upper) = super::folder_prefix_range(folder);
 
-    let total: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM tracks WHERE path >= ?1 AND path < ?2",
-        params![lower, upper],
-        |row| row.get(0),
-    )?;
-
-    // Find tracks in this folder that no longer exist on disk.
-    // A path below the upper bound is a path in this folder, and NULL is below
-    // nothing — so this catches every track with a local path regardless of its
-    // `source` flag, which a merged local+remote row may still call 'remote'.
-    let mut stmt = conn.prepare(
-        "SELECT t.id, t.path, t.remote_id, t.album_id, t.artist_id FROM tracks t
-         WHERE t.path >= ?1 AND t.path < ?2",
-    )?;
-
-    type Stale = (i64, String, Option<String>, Option<i64>, Option<i64>);
-    let stale: Vec<Stale> = stmt
-        .query_map(params![lower, upper], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<i64>>(3)?,
-                row.get::<_, Option<i64>>(4)?,
-            ))
-        })?
-        .filter_map(|r| r.ok())
+    let paths: Vec<String> = conn
+        .prepare("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?
+        .query_map(params![lower, upper], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let total = paths.len() as i64;
+    let stale: Vec<String> = paths
+        .into_iter()
         // `Ok(false)` only: a permission error or an ailing mount reports Err,
         // which is "cannot tell", not "deleted".
-        .filter(|(_, path, ..)| matches!(Path::new(path).try_exists(), Ok(false)))
+        .filter(|path| matches!(Path::new(path).try_exists(), Ok(false)))
         .collect();
 
     let count = stale.len();
@@ -1345,34 +351,12 @@ pub fn remove_stale_tracks(
         );
     }
 
-    for (id, path, remote_id, album_id, artist_id) in &stale {
-        // Match on track_id as well as path: a row whose path changed since it was
-        // cached leaves an orphan that would otherwise block the delete below.
-        conn.execute(
-            "DELETE FROM scan_cache WHERE track_id = ?1 OR path = ?2",
-            params![id, path],
-        )?;
-
-        if remote_id.is_some() {
-            // Demote to remote-only: null out local fields, keep the row for streaming.
-            conn.execute(
-                "UPDATE tracks SET path = NULL, source = 'remote', mtime = NULL, size_bytes = NULL
-                 WHERE id = ?1",
-                params![id],
-            )?;
-        } else {
-            // Pure local — delete entirely. Clean up all FK references first.
-            conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![id])?;
-            conn.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", params![id])?;
-            conn.execute("DELETE FROM play_history WHERE track_id = ?1", params![id])?;
-            conn.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
-            // An album moved or deleted on disk leaves its row behind otherwise,
-            // listed with nothing in it and served to every client that syncs.
-            prune_if_empty(conn, *album_id, *artist_id)?;
-        }
+    for path in &stale {
+        conn.execute("DELETE FROM scan_cache WHERE path = ?1", params![path])?;
+        sources::remove(conn, sources::Kind::Local, path)?;
     }
 
-    Ok(stale.into_iter().map(|(_, path, ..)| path).collect())
+    Ok(stale)
 }
 
 /// Get all tracks for an artist, ordered chronologically (album date, disc, track#).
@@ -2782,7 +1766,10 @@ mod tests {
         remote.title = "Windowlicker".into();
         let merged = upsert_track(&db.conn, &remote).unwrap();
 
-        assert_eq!(merged, remote_id, "the row holding the remote id survives");
+        assert_eq!(
+            merged, local_id,
+            "the older row survives, with its id and history"
+        );
         assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 1);
         let row = get_track_row(&db.conn, merged).unwrap().unwrap();
         assert_eq!(row.path, local.path);
@@ -2940,7 +1927,7 @@ mod tests {
             .unwrap();
 
         clear_zero_discs(&db.conn).unwrap();
-        merge_split_cross_source_tracks(&db.conn).unwrap();
+        sources::build_from_tracks(&db.conn).unwrap();
 
         let (rows, remote_id): (i64, Option<String>) = db
             .conn
@@ -3140,7 +2127,7 @@ mod tests {
         let loser: i64 = db.conn.last_insert_rowid();
         assert_ne!(loser, winner);
 
-        merge_split_cross_source_tracks(&db.conn).unwrap();
+        sources::build_from_tracks(&db.conn).unwrap();
 
         let rows: i64 = db
             .conn
@@ -3175,7 +2162,7 @@ mod tests {
         let second = upsert_track(&db.conn, &second).unwrap();
         assert_ne!(first, second);
 
-        merge_split_cross_source_tracks(&db.conn).unwrap();
+        sources::build_from_tracks(&db.conn).unwrap();
 
         let rows: i64 = db
             .conn
@@ -3329,13 +2316,8 @@ mod tests {
             let mut m = sample_meta(title, "Tove Lo", album);
             m.path = None;
             m.remote_id = Some(rid.into());
-            let id = upsert_track(&db.conn, &m).unwrap();
-            db.conn
-                .execute(
-                    "UPDATE albums SET remote_id = ?1 WHERE id = (SELECT album_id FROM tracks WHERE id = ?2)",
-                    params![album_rid, id],
-                )
-                .unwrap();
+            m.album_remote_id = Some(album_rid.into());
+            upsert_track(&db.conn, &m).unwrap();
         };
         remote("Habits", "Queen of the Clouds", "t1", "al-1");
         remote("Talking Body", "Queen of the Clouds", "t2", "al-1");
@@ -4150,6 +3132,10 @@ mod tests {
                 .unwrap();
         }
 
+        // The fold runs before the source rows are built from the tracks.
+        db.conn
+            .execute_batch("DELETE FROM local_files; DELETE FROM remote_entries;")
+            .unwrap();
         merge_spelling_twins(&db.conn).unwrap();
 
         let rows: Vec<(i64, String, Option<String>)> = db
@@ -4427,9 +3413,292 @@ mod tests {
             &remote_meta("Archangel", "Burial", "Untrue", &new),
         )
         .unwrap();
-        relink_vanished_remote_ids(&db.conn, &HashSet::from([new.clone()])).unwrap();
+        remove_vanished_remote(&db.conn, Some(&HashSet::from([new.clone()])), None).unwrap();
 
         assert_eq!(track_count(&db), 1);
         assert_eq!(uid_of(&db, "tracks", file_id), new);
+    }
+
+    fn source_names(db: &Database, table: &str) -> Vec<(String, String)> {
+        db.conn
+            .prepare(&format!("SELECT title, artist FROM {table} ORDER BY title"))
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn each_source_keeps_its_own_tags() {
+        let db = test_db();
+        let local = sample_meta("Treading Water", "Petrol Girls", "Talk of Violence");
+        let id = upsert_track(&db.conn, &local).unwrap();
+        let mut remote = remote_meta(
+            "Treading Water",
+            "Petrol Girls • Ren Aldridge",
+            "Talk of Violence",
+            "sub-1",
+        );
+        remote.album_artist = Some("Petrol Girls".into());
+        assert_eq!(upsert_track(&db.conn, &remote).unwrap(), id);
+
+        assert_eq!(
+            source_names(&db, "local_files"),
+            [("Treading Water".into(), "Petrol Girls".into())]
+        );
+        assert_eq!(
+            source_names(&db, "remote_entries"),
+            [(
+                "Treading Water".into(),
+                "Petrol Girls • Ren Aldridge".into()
+            )]
+        );
+    }
+
+    #[test]
+    fn a_file_retagged_as_another_track_leaves_the_server_copy() {
+        let db = test_db();
+        let mut local = sample_meta("Archangel", "Burial", "Untrue");
+        let id = upsert_track(&db.conn, &local).unwrap();
+        let remote = remote_meta("Archangel", "Burial", "Untrue", "sub-1");
+        assert_eq!(upsert_track(&db.conn, &remote).unwrap(), id);
+
+        local.title = "Near Dark".into();
+        local.track_number = Some(2);
+        let moved = upsert_track(&db.conn, &local).unwrap();
+
+        assert_eq!(track_count(&db), 2);
+        let stays = get_track_row(&db.conn, id).unwrap().unwrap();
+        let left = get_track_row(&db.conn, moved).unwrap().unwrap();
+        assert_eq!(
+            (stays.title.as_str(), stays.remote_id.as_deref(), stays.path),
+            ("Archangel", Some("sub-1"), None)
+        );
+        assert_eq!(
+            (left.title.as_str(), left.remote_id, left.path),
+            ("Near Dark", None, local.path)
+        );
+    }
+
+    #[test]
+    fn an_ambiguous_match_is_declined() {
+        let db = test_db();
+        // The server holds the same file twice under two ids.
+        upsert_track(
+            &db.conn,
+            &remote_meta("Archangel", "Burial", "Untrue", "sub-1"),
+        )
+        .unwrap();
+        upsert_track(
+            &db.conn,
+            &remote_meta("Archangel", "Burial", "Untrue", "sub-2"),
+        )
+        .unwrap();
+        upsert_track(&db.conn, &sample_meta("Archangel", "Burial", "Untrue")).unwrap();
+        assert_eq!(track_count(&db), 3, "which copy is the file is a guess");
+    }
+
+    #[test]
+    fn names_match_whatever_their_case_or_normal_form() {
+        use unicode_normalization::UnicodeNormalization;
+        let db = test_db();
+        let local = sample_meta("Sæglópur", "Sigur Rós", "Takk...");
+        let id = upsert_track(&db.conn, &local).unwrap();
+        let mut remote = remote_meta(
+            &"SÆGLÓPUR".nfd().collect::<String>(),
+            "SIGUR RÓS",
+            "TAKK...",
+            "sub-1",
+        );
+        remote.album_artist = Some("SIGUR RÓS".into());
+        assert_eq!(upsert_track(&db.conn, &remote).unwrap(), id);
+    }
+
+    #[test]
+    fn a_moved_file_takes_over_its_server_copy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = test_db();
+        let old = tmp.path().join("old.flac");
+        let new = tmp.path().join("new.flac");
+        std::fs::write(&new, b"").unwrap();
+
+        let mut local = sample_meta("Archangel", "Burial", "Untrue");
+        local.path = Some(old.to_string_lossy().into_owned());
+        let id = upsert_track(&db.conn, &local).unwrap();
+        upsert_track(
+            &db.conn,
+            &remote_meta("Archangel", "Burial", "Untrue", "sub-1"),
+        )
+        .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO play_history (track_id, played_at) VALUES (?1, 1)",
+                params![id],
+            )
+            .unwrap();
+
+        // The scan meets the file at its new path before noticing the old one gone.
+        local.path = Some(new.to_string_lossy().into_owned());
+        upsert_track(&db.conn, &local).unwrap();
+        assert_eq!(track_count(&db), 2);
+        remove_stale_tracks(&db.conn, tmp.path(), false).unwrap();
+
+        assert_eq!(track_count(&db), 1);
+        let row = tracks_by_ids(&db.conn, &[id]).unwrap();
+        let row = row
+            .first()
+            .expect("the older row, with its history, survives");
+        assert_eq!(row.path, local.path);
+        assert_eq!(row.remote_id.as_deref(), Some("sub-1"));
+        let plays: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM play_history WHERE track_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(plays, 1);
+    }
+
+    #[test]
+    fn a_favourite_follows_a_track_whose_file_is_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = test_db();
+        let mut local = sample_meta("Archangel", "Burial", "Untrue");
+        local.path = Some(tmp.path().join("a.flac").to_string_lossy().into_owned());
+        let id = upsert_track(&db.conn, &local).unwrap();
+        upsert_track(
+            &db.conn,
+            &remote_meta("Archangel", "Burial", "Untrue", "sub-1"),
+        )
+        .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO favourites (track_path) VALUES (?1)",
+                params![local.path],
+            )
+            .unwrap();
+
+        remove_stale_tracks(&db.conn, tmp.path(), false).unwrap();
+
+        let favourites =
+            favourite_track_ids_batch(&db.conn, crate::db::queries::LOCAL_USER).unwrap();
+        assert!(favourites.contains(&id), "streamed now, and still starred");
+    }
+
+    #[test]
+    fn the_servers_album_id_lands_on_the_album_the_file_names() {
+        let db = test_db();
+        let id = upsert_track(
+            &db.conn,
+            &with_ids(
+                sample_meta("Hypnotized", "Oliver Koletzki", "Renaissance"),
+                "rec-1",
+                "rel-1",
+            ),
+        )
+        .unwrap();
+        let album_uid = uuid::Uuid::now_v7().to_string();
+        let artist_uid = uuid::Uuid::now_v7().to_string();
+        let mut remote = with_ids(
+            remote_meta(
+                "Hypnotized",
+                "Oliver Koletzki",
+                "Renaissance (Unmixed)",
+                "sub-1",
+            ),
+            "rec-1",
+            "rel-1",
+        );
+        remote.album_remote_id = Some(album_uid.clone());
+        remote.artist_remote_id = Some(artist_uid.clone());
+        upsert_track(&db.conn, &remote).unwrap();
+
+        let (album, artist): (i64, i64) = db
+            .conn
+            .query_row(
+                "SELECT al.id, al.artist_id FROM tracks t JOIN albums al ON al.id = t.album_id
+                  WHERE t.id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        let rid: String = db
+            .conn
+            .query_row("SELECT remote_id FROM albums WHERE id = ?1", [album], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(rid, album_uid, "album favourites reconcile by it");
+        assert_eq!(uid_of(&db, "albums", album), album_uid);
+        assert_eq!(uid_of(&db, "artists", artist), artist_uid);
+    }
+
+    #[test]
+    fn a_server_fills_a_number_the_file_lacks() {
+        let db = test_db();
+        let mut local = with_ids(
+            sample_meta("Archangel", "Burial", "Untrue"),
+            "rec-1",
+            "rel-1",
+        );
+        local.track_number = None;
+        let id = upsert_track(&db.conn, &local).unwrap();
+        let remote = with_ids(
+            remote_meta("Archangel", "Burial", "Untrue", "sub-1"),
+            "rec-1",
+            "rel-1",
+        );
+        assert_eq!(upsert_track(&db.conn, &remote).unwrap(), id);
+        let row = get_track_row(&db.conn, id).unwrap().unwrap();
+        assert_eq!(
+            (row.track_number, row.title.as_str()),
+            (Some(1), "Archangel")
+        );
+    }
+
+    #[test]
+    fn two_editions_held_as_one_album_settle_on_one_release() {
+        let db = test_db();
+        let release = |db: &Database| -> Option<String> {
+            db.conn
+                .query_row("SELECT mbid FROM albums", [], |r| r.get(0))
+                .unwrap()
+        };
+        let mut a = with_ids(
+            sample_meta("Azure", "Paul Kalkbrenner", "Album"),
+            "rec-1",
+            "rel-original",
+        );
+        let mut b = with_ids(
+            sample_meta("Gebrünn", "Paul Kalkbrenner", "Album"),
+            "rec-2",
+            "rel-remaster",
+        );
+        b.track_number = Some(2);
+        let mut c = with_ids(
+            sample_meta("Altes Kamuffel", "Paul Kalkbrenner", "Album"),
+            "rec-3",
+            "rel-remaster",
+        );
+        c.track_number = Some(3);
+        for m in [&a, &b, &c] {
+            upsert_track(&db.conn, m).unwrap();
+        }
+        assert_eq!(
+            release(&db).as_deref(),
+            Some("rel-remaster"),
+            "most of the files"
+        );
+        for _ in 0..2 {
+            a.mtime = a.mtime.map(|t| t + 1);
+            upsert_track(&db.conn, &a).unwrap();
+            assert_eq!(release(&db).as_deref(), Some("rel-remaster"));
+            c.mtime = c.mtime.map(|t| t + 1);
+            upsert_track(&db.conn, &c).unwrap();
+            assert_eq!(release(&db).as_deref(), Some("rel-remaster"));
+        }
     }
 }

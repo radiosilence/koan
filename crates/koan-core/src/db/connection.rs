@@ -20,6 +20,10 @@ pub enum DbError {
     /// deletion, so it was refused. The library is untouched.
     #[error("refused unsafe bulk delete: {0}")]
     UnsafeBulkDelete(String),
+    /// A track was offered with neither a path nor a server id: nothing to
+    /// play it from, and nothing to know it by again.
+    #[error("a track needs a path or a server id")]
+    NoSource,
 }
 
 /// Wrapper around a SQLite connection with koan's schema applied.

@@ -941,6 +941,7 @@ fn rewrite_path_references(conn: &Connection, old: &Path, new: &Path) -> Result<
         "UPDATE tracks SET path = ?1 WHERE path = ?2",
         params![new_path, old_path],
     )?;
+    crate::db::queries::sources::rename_file(conn, old_path, new_path)?;
     conn.execute(
         "UPDATE tracks SET cached_path = ?1 WHERE cached_path = ?2",
         params![new_path, old_path],

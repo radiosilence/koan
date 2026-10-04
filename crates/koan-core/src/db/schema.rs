@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 13;
+pub const SCHEMA_VERSION: i64 = 14;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -389,6 +389,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         DROP INDEX IF EXISTS idx_refresh_tokens_expires;
         ",
     )?;
+    conn.execute_batch(crate::db::queries::sources::SOURCE_TABLES)?;
     apply_migrations(conn, found)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
@@ -624,12 +625,24 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         backfill_uids(conn, table)?;
     }
 
-    // Once: `upsert_track` stores no new zeros, and the sweep reads every track.
-    if found < 3 {
-        crate::db::queries::tracks::clear_zero_discs(conn)?;
+    // Each file and each server entry became a source row of its own. Built
+    // once from what the tracks hold, which is one source's names, then
+    // replaced by each source's own: the next scan reads every file again and
+    // the next sync walks the whole server.
+    if found < 14 {
+        if found < 3 {
+            crate::db::queries::tracks::clear_zero_discs(conn)?;
+        }
+        crate::db::queries::tracks::merge_spelling_twins(conn)?;
+        crate::db::queries::sources::build_from_tracks(conn).map_err(|e| match e {
+            crate::db::connection::DbError::Sqlite(e) => e,
+            other => rusqlite::Error::ToSqlConversionFailure(Box::new(other)),
+        })?;
+        conn.execute_batch(
+            "DELETE FROM scan_cache;
+             UPDATE remote_servers SET library_version = NULL;",
+        )?;
     }
-    crate::db::queries::tracks::merge_split_cross_source_tracks(conn)?;
-    crate::db::queries::tracks::merge_spelling_twins(conn)?;
 
     Ok(())
 }
@@ -1481,6 +1494,53 @@ mod tests {
                 .unwrap();
             assert_eq!(found, 1, "{table}.{column} was not migrated");
         }
+    }
+
+    #[test]
+    fn a_library_from_before_source_rows_gets_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        {
+            let db = Database::open(&path).unwrap();
+            // A local file and the server's copy, left apart by the old
+            // matching because the server spelled the credit differently.
+            db.conn
+                .execute_batch(
+                    "DROP TABLE local_files; DROP TABLE remote_entries;
+                     INSERT INTO artists (id, name) VALUES (1, 'Petrol Girls'), (2, 'Petrol Girls • Ren Aldridge');
+                     INSERT INTO albums (id, title, artist_id) VALUES (1, 'Talk of Violence', 1);
+                     INSERT INTO tracks (id, title, album_id, artist_id, track_number, path) VALUES
+                         (1, 'Treading Water', 1, 1, 1, '/a.flac');
+                     INSERT INTO tracks (id, title, album_id, artist_id, track_number, remote_id, source) VALUES
+                         (2, 'Treading Water', 1, 2, 1, 'sub-1', 'remote');
+                     INSERT INTO play_history (track_id, played_at) VALUES (2, 1);
+                     INSERT INTO scan_cache (path, mtime, size, track_id) VALUES ('/a.flac', 1, 1, 1);
+                     INSERT INTO remote_servers (url, username, library_version)
+                         VALUES ('https://server', 'me', 5);
+                     PRAGMA user_version = 13;",
+                )
+                .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        let one = |sql: &str| -> i64 { db.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(one("SELECT COUNT(*) FROM tracks"), 1);
+        assert_eq!(
+            one(
+                "SELECT COUNT(*) FROM local_files f JOIN remote_entries r ON r.track_id = f.track_id"
+            ),
+            1
+        );
+        assert_eq!(
+            one("SELECT COUNT(*) FROM play_history WHERE track_id = 1"),
+            1
+        );
+        // Read every file and walk the server again, for each source's own tags.
+        assert_eq!(one("SELECT COUNT(*) FROM scan_cache"), 0);
+        assert_eq!(
+            one("SELECT COUNT(*) FROM remote_servers WHERE library_version IS NULL"),
+            1
+        );
     }
 
     #[test]
