@@ -21,6 +21,7 @@ use tungstenite::stream::MaybeTlsStream;
 use crate::config::{self, Config};
 use crate::helpers::{subsonic_auth, subsonic_client};
 use crate::remote::client::SubsonicAuth;
+pub use crate::remote::outputs::{LinkOutput, LinkOutputs, OutputChoice};
 use crate::remote::profile;
 use crate::remote::wire::{self, Waker};
 
@@ -133,6 +134,21 @@ pub enum LinkCommand {
     Devices {
         devices: Vec<LinkDevice>,
     },
+    /// Play through this output from now on, carrying on from where the music
+    /// is, as the device's own output menu would.
+    SetOutput {
+        output: OutputChoice,
+    },
+    /// The volume of the renderer the device plays to, 0–100.
+    SetRendererVolume {
+        volume: u8,
+    },
+    /// Play the output `device` through the DSP profile `profile`, or
+    /// untouched with `None`. A renderer is named by its UDN.
+    SetPreset {
+        device: String,
+        profile: Option<String>,
+    },
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -143,10 +159,18 @@ impl LinkCommand {
     /// Whether a device on the same network, which may belong to anyone, may
     /// send this. Playback and the queue; nothing that touches the library or
     /// the files on disk.
+    ///
+    /// Where the sound goes is not playback: an output switch reaches into
+    /// the room, and a preset into the config. Those are the account's own.
     pub fn allowed_nearby(&self) -> bool {
         !matches!(
             self,
-            Self::Sync { .. } | Self::Evict { .. } | Self::Devices { .. }
+            Self::Sync { .. }
+                | Self::Evict { .. }
+                | Self::Devices { .. }
+                | Self::SetOutput { .. }
+                | Self::SetRendererVolume { .. }
+                | Self::SetPreset { .. }
         )
     }
 
@@ -211,6 +235,9 @@ impl LinkCommand {
             | Self::Repeat { .. }
             | Self::HandOff { .. }
             | Self::Devices { .. }
+            | Self::SetOutput { .. }
+            | Self::SetRendererVolume { .. }
+            | Self::SetPreset { .. }
             | Self::Clear
             | Self::Sync { .. }
             | Self::Seek { .. }
@@ -239,6 +266,9 @@ pub struct LinkState {
     /// The queue, or the part of it around the current track when it is long.
     #[serde(default)]
     pub queue: Vec<LinkQueueEntry>,
+    /// What the device can play through, for the device controlling it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outputs: Option<LinkOutputs>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub shuffle: bool,
     #[serde(default, skip_serializing_if = "crate::player::state::Repeat::is_off")]

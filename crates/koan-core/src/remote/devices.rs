@@ -276,9 +276,15 @@ pub fn list() -> Vec<Device> {
                     nearby: near.is_some(),
                     awake: d.linked || near.is_some(),
                     same_library: true,
-                    state: match near {
-                        Some(n) => n.state.clone(),
-                        None => d.state.clone(),
+                    // The network's state is fresher, but only the server's
+                    // carries the outputs: the network is told none.
+                    state: match (near.and_then(|n| n.state.clone()), &d.state) {
+                        (Some(mut fresh), Some(linked)) => {
+                            fresh.outputs = linked.outputs.clone();
+                            Some(fresh)
+                        }
+                        (Some(fresh), None) => Some(fresh),
+                        (None, linked) => linked.clone(),
                     },
                     heard: near.map_or(*at, |n| n.at),
                     problem: None,
@@ -387,7 +393,13 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
             s.account.iter().any(|(d, _)| d.id == id),
         )
     });
-    if nearby && crate::remote::nearby::send(id, cmd.clone()) {
+    // The network path proves nothing about who is asking, so a device on it
+    // refuses what only the account may send: that goes through the server,
+    // and only to the account's own devices.
+    if !cmd.allowed_nearby() && !account {
+        return Err("Only your own devices can be asked that.".into());
+    }
+    if nearby && cmd.allowed_nearby() && crate::remote::nearby::send(id, cmd.clone()) {
         return Ok(());
     }
     if link::report(LinkReport::Command {

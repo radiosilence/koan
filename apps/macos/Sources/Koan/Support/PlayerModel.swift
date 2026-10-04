@@ -374,6 +374,8 @@ final class PlayerModel {
         deviceRead += 1
         let read = deviceRead
         Task {
+            // The Output menu reads the engine's list, which follows this.
+            await engine.refreshOutputs()
             let found = (try? await engine.devices()) ?? []
             let current = await engine.currentDevice()
             guard read == self.deviceRead else { return }
@@ -448,48 +450,42 @@ final class PlayerModel {
         attempt { try await self.engine.controlDevice(id: id) }
     }
 
-    /// One of this device's outputs: a CoreAudio device by name (`nil` for
-    /// the system default), or a UPnP renderer by UDN.
-    enum Output: Equatable {
-        case system(String?)
-        case renderer(String)
-    }
-
-    /// Whether this device's music is coming out of `output` now.
-    func isPlayingHere(_ output: Output) -> Bool {
-        guard !isControllingAnother else { return false }
-        switch output {
-        case .renderer(let udn): return renderer?.udn == udn
-        case .system(let name): return renderer == nil && currentDevice == name
-        }
-    }
-
-    /// Play this device's own music through `output`, coming back from
-    /// controlling another device if it was.
-    func playHere(_ output: Output) {
-        // Already playing there: reconnecting would stop the music and load
-        // the track again.
-        if isPlayingHere(output) { return }
-        attempt {
-            if self.isControllingAnother {
-                try await self.engine.controlDevice(id: nil)
-            }
-            switch output {
-            case .renderer(let udn):
-                try await self.engine.playToRenderer(udn: udn)
-            case .system(let name?):
-                try await self.engine.setDevice(name: name)
-            case .system(nil):
-                try await self.engine.clearDevice()
-            }
-        }
-        if case .system(let name) = output {
-            currentDevice = name
-        }
-    }
-
     /// The renderer playing this device's music, if one is.
     var renderer: RendererOutput? { mirror.rendererOutput }
+
+    /// What the device in view plays through: this one, or the one being
+    /// controlled.
+    var outputs: OutputsInfo? { mirror.outputs }
+
+    /// Whether the device in view's output can be chosen from here: this
+    /// device's always, another's only if it is one of the account's own.
+    var canChooseOutput: Bool {
+        !isControllingAnother || controlled?.account == true
+    }
+
+    /// Play the device in view through `output`. On another device it
+    /// switches as its own menu would; the music carries on where it is.
+    func selectOutput(_ output: OutputChoice) {
+        if outputs?.current == output { return }
+        attempt { try await self.engine.selectOutput(output: output) }
+        if !isControllingAnother {
+            switch output {
+            case .device(let name): currentDevice = name
+            case .default: currentDevice = nil
+            case .renderer: break
+            }
+        }
+    }
+
+    /// The volume of the renderer the device in view plays to.
+    func setOutputVolume(_ volume: UInt8) {
+        attempt { try await self.engine.setOutputVolume(volume: volume) }
+    }
+
+    /// Play `device`, an output of the device in view, through `profile`.
+    func setOutputPreset(device: String, profile: String?) {
+        attempt { try await self.engine.setOutputPreset(device: device, profile: profile) }
+    }
 
     /// Play to the renderer `udn` in place of this device's output, or back
     /// here with `nil`. The music carries on from where it is.

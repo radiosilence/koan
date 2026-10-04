@@ -63,6 +63,7 @@ final class EngineMirror: Observable {
     private var _connection: ConnectionInfo?
     private var _renderers: [RendererInfo] = []
     private var _rendererOutput: RendererOutput?
+    private var _outputs: OutputsInfo?
 
     /// Everything a transport bar shows other than the position. Changes per
     /// track, per state, per format — not per tick.
@@ -151,6 +152,14 @@ final class EngineMirror: Observable {
     var rendererOutput: RendererOutput? {
         access(\.renderers)
         return _rendererOutput
+    }
+
+    /// What the device in view plays through: this one's outputs, or those of
+    /// the device being controlled, as it published them. Nil while that
+    /// device has said nothing.
+    var outputs: OutputsInfo? {
+        access(\.outputs)
+        return _outputs
     }
 
     /// Bumped by every queue mutation. Observed as `queue`: it arrives with the
@@ -322,6 +331,8 @@ final class EngineMirror: Observable {
                 _renderers = renderers
                 _rendererOutput = output
             }
+        case .outputs(let outputs):
+            mutate(\.outputs) { _outputs = outputs }
         }
     }
 

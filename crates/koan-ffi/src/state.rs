@@ -19,8 +19,8 @@ use std::sync::{Arc, Weak};
 use std::time::Instant;
 
 use crate::types::{
-    ConnectionInfo, DeviceInfo, NowPlaying, QueueItem, QueueLock, RendererInfo, RendererOutput,
-    SyncProgress, Transfer, TransferFigure,
+    ConnectionInfo, DeviceInfo, NowPlaying, OutputsInfo, QueueItem, QueueLock, RendererInfo,
+    RendererOutput, SyncProgress, Transfer, TransferFigure,
 };
 
 /// One slice of engine state, whole.
@@ -107,6 +107,9 @@ pub enum StateSlice {
         renderers: Vec<RendererInfo>,
         output: Option<RendererOutput>,
     },
+    /// What the device in view plays through: this one, or the one being
+    /// controlled. `None` while a controlled device has not said.
+    Outputs { outputs: Option<OutputsInfo> },
 }
 
 /// Which slot a slice occupies. One per variant, in apply order.
@@ -125,9 +128,10 @@ enum Slot {
     Sync,
     Connection,
     Renderers,
+    Outputs,
 }
 
-const SLOTS: usize = 12;
+const SLOTS: usize = 13;
 
 impl StateSlice {
     fn slot(&self) -> Slot {
@@ -144,6 +148,7 @@ impl StateSlice {
             Self::Devices { .. } => Slot::Devices,
             Self::Connection { .. } => Slot::Connection,
             Self::Renderers { .. } => Slot::Renderers,
+            Self::Outputs { .. } => Slot::Outputs,
         }
     }
 }

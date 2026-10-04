@@ -1,3 +1,4 @@
+import KoanFFI
 import SwiftUI
 
 /// The DSP profiles a device can play through, and the one it does. Nil when
@@ -11,7 +12,9 @@ struct Presets {
     let none: String
     let enabled: Bool
     let choose: (String?) -> Void
-    let enable: () -> Void
+    /// Turning processing on, where this device can: nil for another device's
+    /// outputs, which are turned on there.
+    let enable: (() -> Void)?
 
     @MainActor
     init?(dsp: DspModel, device: String, none: String) {
@@ -22,6 +25,18 @@ struct Presets {
         enabled = overview.enabled
         choose = { dsp.assign($0, to: device) }
         enable = { dsp.setEnabled(true) }
+    }
+
+    /// An output of the device in view, from what that device published.
+    @MainActor
+    init?(output: OutputInfo, of outputs: OutputsInfo, none: String, player: PlayerModel, dsp: DspModel) {
+        guard !outputs.profiles.isEmpty else { return nil }
+        current = output.preset
+        profiles = outputs.profiles
+        self.none = none
+        enabled = outputs.dspEnabled
+        choose = { player.setOutputPreset(device: output.id, profile: $0) }
+        enable = outputs.owner == nil ? { dsp.setEnabled(true) } : nil
     }
 
     var summary: String {
@@ -44,7 +59,11 @@ struct PresetMenu<Label: View>: View {
         Menu {
             if !presets.enabled {
                 Section("Processing is off") {
-                    Button("Turn On Processing", action: presets.enable)
+                    if let enable = presets.enable {
+                        Button("Turn On Processing", action: enable)
+                    } else {
+                        Text("Turn it on in that device's Settings")
+                    }
                 }
             }
             if let title {

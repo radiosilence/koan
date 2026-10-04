@@ -3126,6 +3126,51 @@ mod tests {
         assert_eq!(r.state(), PlaybackState::Stopped);
     }
 
+    /// A device controlling this one sees where it plays, sets the
+    /// renderer's volume, and moves the music back to this device's own
+    /// output with the place and the pause kept, all as this device's own
+    /// menu does.
+    #[test]
+    fn a_controlling_device_sets_the_volume_and_moves_the_music() {
+        use crate::remote::outputs::{self, OutputChoice};
+        // Picking this device's output is saved to the config.
+        crate::config::isolate_config_for_tests();
+        let mut r = rig(WAV, true, &["a.wav"]);
+        let udn = r.fake.renderer().udn;
+        upnp::discovery::remember(r.fake.renderer(), Duration::from_secs(60));
+        r.player.process_command(PlayerCommand::Cue {
+            id: r.ids[0],
+            position_ms: 5_000,
+            play: false,
+        });
+
+        let published = outputs::local(&r.player.shared_state);
+        assert_eq!(
+            published.current,
+            OutputChoice::Renderer { udn: udn.clone() }
+        );
+        assert!(published.renderers.iter().any(|o| o.id == udn));
+
+        r.player
+            .process_command(PlayerCommand::SetRendererVolume(42));
+        assert_eq!(r.fake.state.lock().volume, 42);
+        assert_eq!(outputs::local(&r.player.shared_state).volume, Some(42));
+
+        outputs::set(
+            OutputChoice::Default,
+            upnp::choose(),
+            &r.player.command_sender(),
+        )
+        .unwrap();
+        r.pump_until(|p| p.renderer.is_none());
+        assert_eq!(r.state(), PlaybackState::Paused, "paused, as it was");
+        assert_eq!(r.player.shared_state.position_ms(), 5_000, "where it was");
+        assert_eq!(
+            outputs::local(&r.player.shared_state).current,
+            OutputChoice::Default
+        );
+    }
+
     /// Just after launch: this device's own output, the session restored
     /// paused at 5s, and the renderer used last time being looked for.
     fn launched() -> Rig {

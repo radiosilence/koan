@@ -53,7 +53,7 @@ struct TabShell: View {
         .tabViewBottomAccessory {
             MiniPlayer(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices)
         }
-        .devicePickerSheet(isPresented: $showingDevices)
+        .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
         // sidebar; with no sidebar they float above the transport, which is
         // the one part of the screen that is the same wherever you are.

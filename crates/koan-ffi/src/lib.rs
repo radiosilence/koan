@@ -1906,6 +1906,81 @@ impl KoanEngine {
         offload::sequenced(move || self.send_local(PlayerCommand::SetRendererVolume(volume))).await
     }
 
+    /// Play the device in view through `output`: this one, or the device
+    /// being controlled, which switches as its own menu would. The music
+    /// carries on from where it is.
+    ///
+    /// Not on the ordered lane: opening a renderer session is a few round
+    /// trips, as for `play_to_renderer`.
+    pub async fn select_output(self: Arc<Self>, output: OutputChoice) -> Result<(), KoanError> {
+        // Taken now, in the order the person picked: see `upnp::choose`.
+        let choice = koan_core::upnp::choose();
+        match (koan_core::remote::devices::target(), output) {
+            // In order with every other command for that device; it takes
+            // its own choice when it switches.
+            (Some(to), output) => {
+                offload::sequenced(move || {
+                    self.command_target(
+                        &to,
+                        koan_core::remote::link::LinkCommand::SetOutput {
+                            output: output.into(),
+                        },
+                    )
+                })
+                .await
+            }
+            (None, OutputChoice::Renderer { udn }) => {
+                offload::offload(move || {
+                    koan_core::upnp::connect(&udn, choice, &self.tx)
+                        .map_err(|message| KoanError::Audio { message })
+                })
+                .await
+            }
+            (None, output) => {
+                offload::sequenced(move || {
+                    koan_core::remote::outputs::set(output.into(), choice, &self.tx)
+                        .map_err(|message| KoanError::Audio { message })
+                })
+                .await
+            }
+        }
+    }
+
+    /// List this device's audio devices again, when the system says they
+    /// changed or an output menu opens. The `Outputs` slice follows.
+    pub async fn refresh_outputs(self: Arc<Self>) {
+        offload::offload(koan_core::remote::outputs::refresh_devices).await
+    }
+
+    /// The volume of the renderer the device in view plays to, 0–100.
+    pub async fn set_output_volume(self: Arc<Self>, volume: u8) -> Result<(), KoanError> {
+        offload::sequenced(move || match koan_core::remote::devices::target() {
+            Some(to) => self.command_target(
+                &to,
+                koan_core::remote::link::LinkCommand::SetRendererVolume { volume },
+            ),
+            None => self.send_local(PlayerCommand::SetRendererVolume(volume)),
+        })
+        .await
+    }
+
+    /// Play the output `device` of the device in view through `profile`, or
+    /// untouched with `None`. A renderer is named by its UDN.
+    pub async fn set_output_preset(
+        self: Arc<Self>,
+        device: String,
+        profile: Option<String>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || match koan_core::remote::devices::target() {
+            Some(to) => self.command_target(
+                &to,
+                koan_core::remote::link::LinkCommand::SetPreset { device, profile },
+            ),
+            None => self.assign_dsp(profile, &device),
+        })
+        .await
+    }
+
     /// Where the server should push updates to this app's Live Activity
     /// showing the device `device`; `None` once it has ended.
     pub fn set_live_activity(&self, token: Option<String>, device: Option<String>, sandbox: bool) {
@@ -2863,6 +2938,25 @@ impl KoanEngine {
                         }),
                     });
 
+                    // The outputs of the device in view, read where its
+                    // playback is: this one's own, or what the device being
+                    // controlled last published.
+                    out.publish(StateSlice::Outputs {
+                        outputs: match &target {
+                            None => Some(OutputsInfo::of(
+                                None,
+                                koan_core::remote::outputs::local(&engine.state),
+                            )),
+                            // Only the account's own devices say, and take
+                            // being told.
+                            Some(_) => koan_core::remote::devices::target_device()
+                                .filter(|d| d.account)
+                                .and_then(|d| {
+                                    Some(OutputsInfo::of(Some(d.name), d.state?.outputs?))
+                                }),
+                        },
+                    });
+
                     // Compared whole rather than on a signature of a few named
                     // fields: the output sample rate moves when another client
                     // retunes the device, a stream's duration is corrected once
@@ -3507,6 +3601,7 @@ impl KoanEngine {
                     position_ms: state.position_ms(),
                     duration_ms: state.duration_ms(),
                     queue: held.as_ref().map(|(_, q)| q.clone()).unwrap_or_default(),
+                    outputs: Some(koan_core::remote::outputs::local(&state)),
                     shuffle: state.play_mode().shuffle,
                     repeat: state.play_mode().repeat,
                 }
@@ -3698,6 +3793,15 @@ impl KoanEngine {
             .renderer()
             .map(|r| r.udn)
             .or_else(koan_core::audio::dsp::profiles::current_device)
+    }
+
+    /// Send the device being controlled a command of the account's own.
+    fn command_target(
+        &self,
+        to: &str,
+        cmd: koan_core::remote::link::LinkCommand,
+    ) -> Result<(), KoanError> {
+        koan_core::remote::devices::send(to, cmd).map_err(|message| KoanError::Player { message })
     }
 
     fn assign_dsp(&self, profile: Option<String>, device: &str) -> Result<(), KoanError> {
@@ -3904,6 +4008,14 @@ impl KoanEngine {
             LinkCommand::HandOff { to } => self.hand_off_blocking(&to).map(|_| ()),
             // Taken off the link before it gets here.
             LinkCommand::Devices { .. } => Ok(()),
+            LinkCommand::SetOutput { output } => {
+                koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
+                    .map_err(|message| KoanError::Audio { message })
+            }
+            LinkCommand::SetRendererVolume { volume } => {
+                self.send_local(PlayerCommand::SetRendererVolume(volume))
+            }
+            LinkCommand::SetPreset { device, profile } => self.assign_dsp(profile, &device),
             LinkCommand::Enqueue { track_ids } => self.db().and_then(|db| {
                 let ids = resolve_tracks(&db, &track_ids);
                 let items = self.build_items(&db, &ids);

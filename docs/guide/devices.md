@@ -2,22 +2,33 @@
 
 Any kōan app can control another: a phone as the remote for the Mac, the Mac's
 queue carried out of the door on the phone, a heart on the phone for what the
-Mac is playing. The **Play on** button (in the Mac's transport bar and on the
-phone's mini player and Now Playing) lists everywhere music can go, in two
-kinds:
+Mac is playing. Two buttons, in the Mac's transport bar and in the phone's Now
+Playing, make the two choices:
 
-- **Play from this device**: its own outputs. On the Mac that is each audio
-  device (built-in speakers, a USB DAC, a display) and UPnP amplifiers on the
-  network. Picking one keeps the queue and transport here and moves only the
-  sound. AirPlay has its own button beside Play on: the system's picker,
-  since macOS lets no app pick a speaker itself. Playing to the system default,
-  the music moves to the speaker chosen there, from where it was.
-- **Control another kōan**: the other kōan apps this one can reach. Picking
-  one makes the transport and queue that device's.
+- **Control** (a remote) is which kōan the transport, the queue and Now Playing
+  show and command: this device, or another kōan app this one can reach. It
+  appears once there is another to pick, and on the phone it is also the
+  mini player's button.
+- **Output** (a speaker) is where the device in view plays. For this device,
+  that is each of its audio devices (built-in speakers, a USB DAC, a display;
+  on a phone, the route iOS chose) and the UPnP amplifiers it can see. Picking
+  one keeps the queue and transport where they are and moves only the sound.
+  AirPlay has its own button beside it: the system's picker, since no app may
+  pick a speaker itself. Playing to the system default, the music moves to the
+  speaker chosen there, from where it was.
 
-Each row ends in the glyph of what picking it does, a speaker or a remote. The
-button, a speaker, carries the name of the amplifier or device the music is
-going to when it is not this one.
+While another device is controlled, Output lists that device's outputs: its
+audio devices, the amplifiers it can see, which one it plays through and the
+amplifier's volume. Picking one switches that device as its own menu would,
+carrying the music over at the same point, playing or paused. Each output shows
+its EQ and convolution preset, and the slider button beside it changes it there.
+The Output button names the amplifier when that is where the music goes, and
+its help reads, for example, "Controlling MacBook · playing through Arcam".
+
+Only the account's own devices, linked through its server, can change another
+device's output, its amplifier's volume or a preset. A device found on the local
+network without the server can play, pause and change the queue, as before, but
+not that.
 
 ## Which devices are listed
 
@@ -139,7 +150,7 @@ uses one only where the server lists it:
 | Extension | What it is |
 |-----------|------------|
 | `koanLink` | The app's standing WebSocket at `/rest/koanLink`: the server can command it, and it reports what it is playing. |
-| `koanDevices` | The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. |
+| `koanDevices` | The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. Each device's outputs travel with its state; a server older than the apps drops them, so the Output menu for another device needs the server updated too. |
 
 Settings → Server shows what the server said it is and the extensions it
 listed. A server that lists neither, such as Navidrome, still gets every

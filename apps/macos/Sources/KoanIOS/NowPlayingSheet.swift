@@ -16,6 +16,7 @@ struct NowPlayingSheet: View {
     @Environment(AppState.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var showingDevices = false
+    @State private var showingControl = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -43,7 +44,8 @@ struct NowPlayingSheet: View {
         // A link followed from here has moved the navigator to a page behind
         // the sheet; the sheet gets out of the way of it.
         .onChange(of: nav.current) { dismiss() }
-        .devicePickerSheet(isPresented: $showingDevices)
+        .outputSheet(isPresented: $showingDevices)
+        .controlSheet(isPresented: $showingControl)
     }
 
     /// The sleeve, or the words, in the same place — the way a record and its
@@ -153,8 +155,14 @@ struct NowPlayingSheet: View {
 
             Spacer()
 
-            DevicePickerButton(open: $showingDevices, labelled: player.isControllingAnother)
-                .font(.subheadline)
+            if player.hasOtherDevices || player.isControllingAnother {
+                ControlButton(open: $showingControl, labelled: player.isControllingAnother)
+                    .font(.subheadline)
+            }
+            if player.canChooseOutput {
+                OutputButton(open: $showingDevices, labelled: true)
+                    .font(.subheadline)
+            }
 
             if let format = player.currentFormat {
                 Text(Format.quality(format))

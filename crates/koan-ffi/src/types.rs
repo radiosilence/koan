@@ -1358,6 +1358,93 @@ pub struct RendererInfo {
     pub busy: bool,
 }
 
+/// What the device in view plays through: this one's outputs, or those of the
+/// device it controls, as that device published them.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct OutputsInfo {
+    /// The device they belong to, by name, when it is another one.
+    pub owner: Option<String>,
+    /// Its own audio devices: on a phone, the route the system chose.
+    pub devices: Vec<OutputInfo>,
+    pub renderers: Vec<OutputInfo>,
+    pub current: OutputChoice,
+    /// The volume of the renderer it plays to, when it has one.
+    pub volume: Option<u8>,
+    /// Its DSP profiles, and whether processing is on there.
+    pub profiles: Vec<String>,
+    pub dsp_enabled: bool,
+}
+
+/// One output: an audio device by name, or a renderer by UDN.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct OutputInfo {
+    pub id: String,
+    pub name: String,
+    /// How it is connected: `usb`, `bluetooth`, `upnp` and the rest.
+    pub kind: String,
+    /// A renderer's make and model.
+    pub detail: String,
+    /// Playing or paused for something else.
+    pub busy: bool,
+    pub preset: Option<String>,
+}
+
+/// An output to play through.
+#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
+pub enum OutputChoice {
+    /// The system's default output.
+    Default,
+    Device {
+        name: String,
+    },
+    Renderer {
+        udn: String,
+    },
+}
+
+impl From<koan_core::remote::outputs::OutputChoice> for OutputChoice {
+    fn from(c: koan_core::remote::outputs::OutputChoice) -> Self {
+        use koan_core::remote::outputs::OutputChoice as C;
+        match c {
+            C::Default => Self::Default,
+            C::Device { name } => Self::Device { name },
+            C::Renderer { udn } => Self::Renderer { udn },
+        }
+    }
+}
+
+impl From<OutputChoice> for koan_core::remote::outputs::OutputChoice {
+    fn from(c: OutputChoice) -> Self {
+        match c {
+            OutputChoice::Default => Self::Default,
+            OutputChoice::Device { name } => Self::Device { name },
+            OutputChoice::Renderer { udn } => Self::Renderer { udn },
+        }
+    }
+}
+
+impl OutputsInfo {
+    pub(crate) fn of(owner: Option<String>, o: koan_core::remote::outputs::LinkOutputs) -> Self {
+        let output = |o: koan_core::remote::outputs::LinkOutput| OutputInfo {
+            id: o.id,
+            name: o.name,
+            kind: o.kind,
+            detail: o.detail,
+            busy: o.busy,
+            preset: o.preset,
+        };
+        Self {
+            owner,
+            devices: o.devices.into_iter().map(output).collect(),
+            renderers: o.renderers.into_iter().map(output).collect(),
+            current: o.current.into(),
+            volume: o.volume,
+            profiles: o.profiles,
+            dsp_enabled: o.dsp_enabled,
+        }
+    }
+}
+
 /// The renderer this koan is playing to in place of its own output.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct RendererOutput {
