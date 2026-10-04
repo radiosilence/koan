@@ -92,7 +92,6 @@ pub fn cmd_play(
     }
 
     let mut expects_playback = track_ids.is_some() || !paths.is_empty();
-    let mut restored: Option<koan_tui::play::RestoredPosition> = None;
 
     if let Some(ids) = track_ids {
         let tx_bg = tx.clone();
@@ -161,12 +160,18 @@ pub fn cmd_play(
             tx.send(PlayerCommand::AddToPlaylist(items))
                 .expect("player thread died");
             if let Some(cid) = cursor_id {
-                state.set_cursor(Some(cid));
-                restored = Some(koan_tui::play::RestoredPosition {
-                    item: cid,
-                    position_ms: persisted.position_ms,
-                    was_playing: persisted.was_playing,
-                });
+                // The player waits for a track still downloading, and opens it
+                // at the position once it can.
+                if persisted.position_ms > 0 || persisted.was_playing {
+                    tx.send(PlayerCommand::Cue {
+                        id: cid,
+                        position_ms: persisted.position_ms,
+                        play: persisted.was_playing,
+                    })
+                    .expect("player thread died");
+                } else {
+                    state.set_cursor(Some(cid));
+                }
             }
             expects_playback = true;
         }
@@ -186,7 +191,6 @@ pub fn cmd_play(
         log_buffer,
         start_in_library,
         expects_playback,
-        restored,
         callbacks,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
@@ -263,7 +267,6 @@ pub fn cmd_play_remote(server_url: &str) {
         log_buffer,
         true,
         false,
-        None,
         callbacks,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);

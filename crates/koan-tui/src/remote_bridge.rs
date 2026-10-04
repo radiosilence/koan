@@ -235,7 +235,7 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             | PlayerCommand::ReorderPlaylist(_)
             | PlayerCommand::InsertInPlaylist { .. }
             | PlayerCommand::AddToPlaylist(_)
-            | PlayerCommand::DecodeFinished
+            | PlayerCommand::DecodeFinished(_)
             | PlayerCommand::TrackQueued => {
                 log::debug!("ignoring {:?} in remote mode", cmd);
             }

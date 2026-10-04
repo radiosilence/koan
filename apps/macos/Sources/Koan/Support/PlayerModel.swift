@@ -99,13 +99,11 @@ final class PlayerModel {
     // is one account of each of these and no rule about when to refresh it.
 
     var isPlaying: Bool { mirror.playback.state == .playing }
-    /// Asked to play a track that has not arrived yet. The engine parks
-    /// stopped until it can start, which with nothing on screen to say so reads
-    /// as a tap that did nothing. A track paused by hand is paused, not this.
+    /// Asked to play a track that has not arrived yet, which with nothing on
+    /// screen to say so reads as a tap that did nothing. A wait paused by hand
+    /// reads as paused, since it will open paused.
     var isWaitingForTrack: Bool {
-        let playback = mirror.playback
-        guard playback.state == .stopped, let status = playback.entry?.status else { return false }
-        return status == .downloading || status == .priorityPending
+        mirror.playback.waiting && mirror.playback.state == .stopped
     }
     var currentTrackId: Int64? { mirror.playback.entry?.trackId }
     var currentItemId: String? { mirror.playback.queueItemId }

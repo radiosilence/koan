@@ -56,9 +56,10 @@ impl MediaKeyHandler {
                     tx.send(PlayerCommand::Pause).ok();
                 }
                 MediaControlEvent::Toggle => {
-                    let cmd = match state.playback_state() {
-                        PlaybackState::Playing => PlayerCommand::Pause,
-                        _ => PlayerCommand::Resume,
+                    let cmd = if state.wants_to_play() {
+                        PlayerCommand::Pause
+                    } else {
+                        PlayerCommand::Resume
                     };
                     tx.send(cmd).ok();
                 }

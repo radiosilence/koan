@@ -69,7 +69,9 @@ pub enum PlayerCommand {
     /// user action. And between the clear and the add the playlist is empty,
     /// which tells the download queue that nothing is wanted.
     ///
-    /// `start` past the end starts at the beginning.
+    /// `start` past the end starts at the beginning. It opens at
+    /// `position_ms`, playing or paused, as `Cue` does: a hand-off picks up
+    /// where the source stopped without the top of the track being heard.
     ReplacePlaylist {
         items: Vec<PlaylistItem>,
         start: usize,
@@ -104,8 +106,10 @@ pub enum PlayerCommand {
     TrackFailed(QueueItemId),
     /// Fetch these tracks into the cache, with no queue entry to play them.
     CacheTracks(Vec<i64>),
-    /// Decode thread exhausted the playlist — auto-advance or stop.
-    DecodeFinished,
+    /// Decode thread exhausted the playlist — auto-advance or stop. Carries
+    /// the session it came from, so one sent just before a play or seek is
+    /// recognised as stale.
+    DecodeFinished(u64),
     /// The decoder queued the next track, so when the playhead reaches it is
     /// now known.
     TrackQueued,
