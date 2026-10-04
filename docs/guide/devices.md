@@ -2,9 +2,20 @@
 
 Any kōan app can control another: a phone as the remote for the Mac, the Mac's
 queue carried out of the door on the phone, a heart on the phone for what the
-Mac is playing. The **Play on** button (the laptop-and-phone icon, in the Mac's
-transport bar and on the phone's mini player and Now Playing) lists the devices
-this one can reach.
+Mac is playing. The **Play on** button (in the Mac's transport bar and on the
+phone's mini player and Now Playing) lists everywhere music can go, in two
+kinds:
+
+- **Play from this device**: its own outputs. On the Mac that is each audio
+  device (built-in speakers, a USB DAC, a display), AirPlay speakers, and UPnP
+  amplifiers on the network. Picking one keeps the queue and transport here
+  and moves only the sound.
+- **Control another kōan**: the other kōan apps this one can reach. Picking
+  one makes the transport and queue that device's.
+
+Each row ends in the glyph of what picking it does, a speaker or a remote. The
+button itself shows where the music is going: the output's icon, or the device
+being controlled.
 
 ## Which devices are listed
 
@@ -20,9 +31,10 @@ this one can reach.
 - **Devices by address.** A tailnet carries no Bonjour; add the other device's
   name and port (`mac-mini:5626`) under Settings → Devices.
 
-A device that is found but cannot be reached is listed with the reason. On
-iOS, finding anything on the network needs **Local Network** allowed for kōan
-(Settings → Privacy & Security); the picker says so when it is not.
+A device that is found but cannot be reached is not listed: there is nothing
+to do with it. On iOS, finding anything on the network needs **Local Network**
+allowed for kōan (Settings → Privacy & Security); the picker says so when it
+is not.
 
 The device being controlled and the devices last seen are kept between runs,
 so reopening the app shows them at once, still controlling the same device;
@@ -35,7 +47,8 @@ Yamaha MusicCast, Denon and Marantz HEOS, Cambridge, Arcam and most "network
 player" amps) are listed under **Play on** on the Mac, and in the output
 device list (`o`) in the TUI, where they are marked `· UPnP`. Kodi with
 "Allow remote control via UPnP" turned on, gmrender-resurrect and upmpdcli
-are renderers too.
+are renderers too. A speaker that does AirPlay as well is listed twice, once
+for each, with each one's icon.
 
 Picking one makes it this device's output, in the same way a USB DAC is. The
 queue, the transport and history stay on this device, and only the audio goes
@@ -55,6 +68,16 @@ the amplifier's own volume.
 - **Controls on the amplifier work.** Pausing or resuming there shows in kōan.
   Stopping there mid-track pauses kōan at that point, and play loads the track
   again from where it stopped.
+- **In use by something else**: a renderer already playing for another app is
+  marked as such. Picking it takes it over.
+- **The progress bar follows the renderer**, which reports its position in
+  whole seconds: kōan keeps its own count between readings and corrects it when
+  the renderer says otherwise. The bar waits at the start of a track until the
+  renderer says it is playing, since some take a second or more to begin.
+
+AirPlay speakers are listed by name, but macOS gives apps no way to choose one:
+picking an AirPlay row opens the system's AirPlay menu, where the speaker is
+chosen.
 
 kōan finds renderers over SSDP and serves each track from a port it opens
 only while a renderer is the output. Each track has a random URL of its own,
@@ -80,6 +103,13 @@ track the destination has to download waits until the whole file has arrived. A
 paused source arrives paused. On a phone, **Move here** on *This iPhone* brings
 the Mac's music to the phone. Tracks only on the source device, with no server
 id, stay behind, and the app says how many.
+
+A device that receives music moved to it while it was controlling another
+stops controlling it: the music is here now. Move the Mac's music to the phone,
+then later move it back from the phone, and the Mac is playing its own music
+again, through the amplifier if that was its output. A device told to play
+something by another, without a move, keeps controlling whatever it was, so
+two devices can still control each other on purpose.
 
 ## The lock screen
 
