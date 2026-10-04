@@ -37,9 +37,10 @@ pub(super) struct RendererOutput {
     /// A next track the renderer refused, not offered again: some advertise
     /// the action and fault on it.
     next_refused: Option<QueueItemId>,
-    /// Where a track cued paused opens once it is played. Renderers differ on
-    /// whether they will seek a stopped transport, and all of them seek a
-    /// playing one.
+    /// Where the track should be once the renderer is playing it. Sent when
+    /// it first says it is playing: several ignore a seek while they are
+    /// still opening the file, and differ on whether they seek a stopped or
+    /// paused transport, but all of them seek a playing one.
     pending_seek: Option<u64>,
     /// When koan last told it to play.
     started: Instant,
@@ -217,9 +218,7 @@ impl Player {
                     .play()
                     .map_err(|e| PlayerError::Renderer(e.to_string()))?;
                 output.started = Instant::now();
-                if seek_ms > 0 {
-                    let _ = output.session.seek(seek_ms);
-                }
+                output.pending_seek = (seek_ms > 0).then_some(seek_ms);
                 PlaybackState::Playing
             }
             Start::Paused => {
@@ -399,11 +398,9 @@ impl Player {
             return;
         }
         output.started = Instant::now();
-        let mut at = self.shared_state.position_ms();
-        if let Some(seek) = output.pending_seek.take() {
-            let _ = output.session.seek(seek);
-            at = seek;
-        }
+        let at = output
+            .pending_seek
+            .unwrap_or_else(|| self.shared_state.position_ms());
         output.session.look();
         self.shared_state.set_renderer_clock(Some(RendererClock {
             position_ms: at,
@@ -540,6 +537,20 @@ impl Player {
         };
         let state = self.shared_state.playback_state();
         match snap.transport {
+            session::Transport::Playing
+                if state == PlaybackState::Playing && output.pending_seek.is_some() =>
+            {
+                let output = self.renderer.as_mut().expect("checked above");
+                let seek = output.pending_seek.take().expect("checked above");
+                if let Err(e) = output.session.seek(seek) {
+                    log::warn!("upnp: seek refused: {e}");
+                }
+                output.session.look();
+                self.shared_state.set_renderer_clock(Some(RendererClock {
+                    position_ms: seek,
+                    running: Some(Instant::now()),
+                }));
+            }
             session::Transport::Playing => {
                 let at = snap
                     .position_ms
@@ -757,6 +768,19 @@ mod tests {
             self.player.renderer.as_mut().unwrap().started = Instant::now() - START_GRACE;
         }
 
+        /// Run the renderer's answers through until it has been sent
+        /// `action` `n` times.
+        fn await_count(&mut self, action: &str, n: usize) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while self.count(action) < n {
+                let events = self.player.renderer_events().unwrap();
+                match events.recv_deadline(deadline) {
+                    Ok(event) => self.player.on_renderer_event(event),
+                    Err(_) => panic!("never sent {action} ×{n}: {:?}", self.fake.actions()),
+                }
+            }
+        }
+
         fn state(&self) -> PlaybackState {
             self.player.shared_state.playback_state()
         }
@@ -868,6 +892,7 @@ mod tests {
         // Play loads it again, where it was.
         r.player.resume();
         assert_eq!(r.count("SetAVTransportURI"), 2);
+        r.await_count("Seek", 1);
         let seek = r.last_command();
         assert_eq!(seek.0, "Seek");
         assert!(
@@ -917,6 +942,7 @@ mod tests {
         assert_eq!(r.player.shared_state.position_ms(), 4_000);
 
         r.player.resume();
+        r.await_count("Seek", 1);
         let commands = r.commands();
         assert_eq!(&commands[commands.len() - 2..], ["Play", "Seek"]);
         assert_eq!(r.state(), PlaybackState::Playing);
@@ -1022,6 +1048,7 @@ mod tests {
         assert_eq!(r.state(), PlaybackState::Paused, "still paused");
         assert_eq!(r.player.shared_state.position_ms(), 3_000);
         r.player.resume();
+        r.await_count("Seek", 1);
         let commands = r.commands();
         assert_eq!(&commands[commands.len() - 2..], ["Play", "Seek"]);
         store().withdrawn(id);
@@ -1088,6 +1115,7 @@ mod tests {
 
         r.player.resume();
         assert_eq!(r.count("SetAVTransportURI"), 2, "loaded again");
+        r.await_count("Seek", 1);
         let seek = r.last_command();
         assert_eq!(seek.0, "Seek");
         assert!(

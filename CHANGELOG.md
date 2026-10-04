@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-### Added
-
-- **Play to UPnP/DLNA amplifiers and streamers.** Renderers on the network are listed under Play on in the Mac app and in the TUI's output device list. Picking one makes it this device's output, as a DAC would be: the queue, transport and history stay here, and each track goes to the amplifier as the original file, so playback is bit-perfect up to its DAC. Gapless where the renderer takes the next track in advance; its own volume from the picker; formats it does not list are skipped with the reason shown in the queue. Tracks are served from a port opened only while a renderer plays, each under a random URL, so nothing else is reachable through it. See [Playing on another device](docs/guide/devices.md#amplifiers-and-streamers-upnp).
-
 ### Fixed
 
 - **New playlists on iOS.** The Playlists page has a button to make one, and "New Playlist…" in a context menu now asks for a name. The naming dialog was hosted only by the Mac's window, so on iOS the menu item did nothing.
@@ -21,9 +17,12 @@
 
 ### Added
 
+- **Play to UPnP/DLNA amplifiers and streamers.** Renderers on the network are listed under Play on in the Mac app and in the TUI's output device list. Picking one makes it this device's output, as a DAC would be: the queue, transport and history stay here, and each track goes to the amplifier as the original file, so playback is bit-perfect up to its DAC. Gapless where the renderer takes the next track in advance; its own volume from the picker; formats it does not list are skipped with the reason shown in the queue. Tracks are served from a port opened only while a renderer plays, each under a random URL, so nothing else is reachable through it. See [Playing on another device](docs/guide/devices.md#amplifiers-and-streamers-upnp).
 - **The album and artist browsers offer the same filters on every client.** The macOS and iOS apps filter by favourites, lossless, codec, release years and genre, behind one control that shows how many are on; the filters persist across launches and apply to both browsers. The web UI's toolbar gains the name filter the apps had, carried in the URL with the others. Every client narrows in the same SQL query.
 
 ### Changed
+
+- **Music moved back to a device that was controlling another takes control back.** Moving music from the Mac to a phone leaves the Mac controlling the phone; moving it back now returns the Mac to its own playback, on the renderer it was playing to if there was one, instead of it going on showing the phone. Only a hand-off does this: a device told to play something by another keeps whatever it was controlling, so two devices can still control each other on purpose.
 
 - **`koan auth` does not prompt without a terminal.** Run from a script, CI or an agent, its prompts took their defaults: `koan auth setup` saved the new account to 1Password and overwrote an existing `koan@<hostname>` item. With stdin not a terminal, or with `--non-interactive`, credentials come only from `KOAN_USERNAME` and `KOAN_PASSWORD` (`login` now reads `KOAN_PASSWORD` too), and a missing one fails naming it. 1Password is written only with `--save-to-1password`, and `delete-user`, `regenerate-keys` and `reset` need `--yes`.
 - **Download rings and bars in the macOS and iOS apps move smoothly.** They were fed from the engine's transfer figures, which change a few times a second when the download rate is sampled, so they moved in visible steps, and every step reconfigured the rows of the list showing them. They now read the byte counts on each display frame, at up to 60 Hz, while a transfer is running and something on screen shows it, and draw them as layer geometry without SwiftUI or the table redrawing anything. Rings on playlist pages and in search results, which previously did not move at all until something else changed on the row, move too.

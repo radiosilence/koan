@@ -3449,6 +3449,7 @@ impl KoanEngine {
                     track_ids,
                     position_ms: 0,
                     paused: false,
+                    handoff: false,
                 }
             }
             PlayerCommand::RemoveFromPlaylist(id) => LinkCommand::RemoveItems {
@@ -3688,7 +3689,15 @@ impl KoanEngine {
                 start_at,
                 position_ms,
                 paused,
+                handoff,
             } => self.db().and_then(|db| {
+                // The music is coming back here: stop controlling whatever
+                // this was controlling. A renderer this device was playing to
+                // is still its output, so the music resumes there.
+                if handoff && koan_core::remote::devices::target().is_some() {
+                    log::info!("link: handed the music; taking control back");
+                    koan_core::remote::devices::set_target(None);
+                }
                 let ids = resolve_tracks(&db, &track_ids);
                 let (items, pending) = self.build_items(&db, &ids);
                 if items.is_empty() {
@@ -3897,6 +3906,7 @@ impl KoanEngine {
                 start_at: start_at as u32,
                 position_ms,
                 paused,
+                handoff: true,
             },
         );
         if let Err(message) = sent {
