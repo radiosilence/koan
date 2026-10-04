@@ -577,12 +577,18 @@ pub fn cmd_auth_api_key_revoke(id: i64) {
 
 /// `koan auth login --server <url> --username <u>`
 pub fn cmd_auth_login(tty: Tty, server_url: &str, username: &str) {
-    let password = env_password().unwrap_or_else(|| {
-        if !tty.0 {
-            fail("No password: set KOAN_PASSWORD.");
+    // Said aloud at a terminal: a KOAN_PASSWORD left exported from an earlier
+    // setup would otherwise sign in as nobody, with no hint why.
+    let password = match env_password() {
+        Some(pw) => {
+            if tty.0 {
+                eprintln!("{}", "Using KOAN_PASSWORD.".dimmed());
+            }
+            pw
         }
-        prompt_password("Password: ")
-    });
+        None if tty.0 => prompt_password("Password: "),
+        None => fail("No password: set KOAN_PASSWORD."),
+    };
     if password.is_empty() {
         eprintln!("{} Password cannot be empty", "✗".red().bold());
         std::process::exit(1);
@@ -741,11 +747,13 @@ fn prompt(message: &str) -> String {
     input.trim().to_string()
 }
 
-/// A yes-by-default question, for terminals only.
+/// A yes-by-default question, for terminals only. Enter is yes; end of input
+/// is no, so Ctrl-D cannot write to a vault.
 fn ask(question: &str) -> bool {
     eprint!("{} {question} [Y/n] ", "?".cyan().bold());
     let mut input = String::new();
-    stdin().read_line(&mut input).is_ok() && !input.trim().eq_ignore_ascii_case("n")
+    matches!(stdin().read_line(&mut input), Ok(n) if n > 0)
+        && !input.trim().eq_ignore_ascii_case("n")
 }
 
 fn prompt_password(message: &str) -> String {
