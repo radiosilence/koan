@@ -1,12 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Share a device with other accounts on your server.** On the device, Settings → Devices → Shared with other accounts names another account, which then sees the device in its Control menu, labelled with whose it is, and can play, pause, skip and change the queue on it from any network, waking it by push as its own devices are. It cannot change the device's outputs or presets, and nothing of the owner's library, playlists or history reaches it. Stopping the share ends its control at once. Servers list the `koanShares` extension. The library database moves to schema 15 for the new `link_grants` table; a build older than this one refuses it.
+
 ## 0.52.5
 
 ### Changed
 
 - **Devices that stop answering stay listed, asleep.** A device that went quiet dropped out of the Control menu at once, and a phone iOS suspended a moment ago vanished from every other device's list. A device now reads as reconnecting for one heartbeat (45 seconds), so a single missed signal does not mark it asleep, and is then shown asleep with when it was last seen. One a push can wake stays listed and can be chosen. One that nothing can wake from here is shown, cannot be chosen, and is dropped after `devices.asleep_grace_mins` (30 by default). Whether a device can be woken is the server's word: it has the device's push token and a push key to send with. The server sends when an absent device was last seen, which older apps ignore.
 - **Choosing an asleep device wakes it, and says how.** It is dialled on the local network if it was there within the last minute, then sent a background push, and after about six seconds a notification to tap ("Mac wants to play here"), since iOS delays or drops background pushes and never delivers one to an app that was swiped away. The device's row shows the stage, and why if it did not wake. Each step is logged with its timing on the device choosing, the server and the phone, so a failed wake shows where it stopped. Wake pushes carry a collapse id and expire after a minute.
-- **Share a device with other accounts on your server.** On the device, Settings → Devices → Shared with other accounts names another account, which then sees the device in its Control menu, labelled with whose it is, and can play, pause, skip and change the queue on it from any network, waking it by push as its own devices are. It cannot change the device's outputs or presets, and nothing of the owner's library, playlists or history reaches it. Stopping the share ends its control at once. Servers list the `koanShares` extension. The library database moves to schema 15 for the new `link_grants` table; a build older than this one refuses it.
 
 ## 0.52.4
 
