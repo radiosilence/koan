@@ -5,7 +5,7 @@
 ### Added
 
 - **Play to UPnP/DLNA amplifiers and streamers.** Renderers on the network are listed under Play on in the Mac app and in the TUI's output device list. Picking one makes it this device's output, as a DAC would be: the queue, transport and history stay here, and each track goes to the amplifier as the original file, so playback is bit-perfect up to its DAC. Gapless where the renderer takes the next track in advance; its own volume from the picker; formats it does not list are skipped with the reason shown in the queue. The progress bar follows the renderer's own position. Tracks are served from a port opened only while a renderer plays, each under a random URL, so nothing else is reachable through it. See [Playing on another device](docs/guide/devices.md#amplifiers-and-streamers-upnp).
-- **One Play on menu on the Mac.** This Mac's outputs (audio devices, shown by how they are connected, and UPnP amplifiers) and other kōan devices to control are listed together, each row marked with what picking it does. The separate output menu in the transport bar is gone; the menu's button is a speaker, with the name of wherever the music is going when that is not this Mac.
+- **One Play on menu on the Mac.** This Mac's outputs (audio devices, shown by how they are connected, and UPnP amplifiers) and other kōan devices to control are listed together, each row marked with what picking it does. The separate output menu in the transport bar is gone; the menu's button is a speaker, with the name of wherever the music is going when that is not this Mac. Beside it, the system's AirPlay button; playing to the system default, the music follows the output it picks, from where it was.
 
 ### Changed
 

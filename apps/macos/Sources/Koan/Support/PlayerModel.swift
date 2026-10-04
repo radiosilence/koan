@@ -391,6 +391,26 @@ final class PlayerModel {
         ) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.refreshDevices() }
         }
+
+        // The system's output moved: an AirPlay speaker picked from the
+        // AirPlay button, headphones plugged in. Playing to the system
+        // default, the music follows it, where it was. A device picked by
+        // name, a renderer, or another kōan being controlled keep theirs.
+        var defaultOutput = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &defaultOutput, .main
+        ) { [weak self] _, _ in
+            MainActor.assumeIsolated {
+                guard let self, self.currentDevice == nil, self.renderer == nil,
+                      !self.isControllingAnother
+                else { return }
+                self.attempt { try await self.engine.restartOutput() }
+            }
+        }
         #endif
     }
 

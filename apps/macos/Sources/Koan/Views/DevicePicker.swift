@@ -495,7 +495,7 @@ struct DevicePickerButton: View {
             // The icon says where the music is going and takes the tint; the
             // name stays primary, since a dark sleeve's tint vanishes as text.
             HStack(spacing: 5) {
-                Image(systemName: "speaker.wave.2")
+                Image(systemName: "hifispeaker")
                     .foregroundStyle(target.name != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
                 if labelled, let name = target.name {
                     Text(name)

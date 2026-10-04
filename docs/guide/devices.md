@@ -9,9 +9,9 @@ kinds:
 - **Play from this device**: its own outputs. On the Mac that is each audio
   device (built-in speakers, a USB DAC, a display) and UPnP amplifiers on the
   network. Picking one keeps the queue and transport here and moves only the
-  sound. AirPlay is chosen in Control Centre, since macOS lets no app pick a
-  speaker itself; the speaker chosen there appears in this list as the AirPlay
-  output.
+  sound. AirPlay has its own button beside Play on: the system's picker,
+  since macOS lets no app pick a speaker itself. Playing to the system default,
+  the music moves to the speaker chosen there, from where it was.
 - **Control another kōan**: the other kōan apps this one can reach. Picking
   one makes the transport and queue that device's.
 
