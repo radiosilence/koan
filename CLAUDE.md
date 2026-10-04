@@ -119,6 +119,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
 | `audio/device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
 | `audio/replaygain.rs` | EBU R128 loudness scanning, gain application via lofty |
+| `audio/dsp/` | EQ and convolution per output device, on the decode thread. No profile, no chain: bit-perfect stays checkable. Delays trimmed and flushed so the timeline counts output time. `impulse.rs` is the routing matrix (Convolver's model; a WAV is its diagonal); `import.rs` sorts files, folders and zips into one profile through `convolver`, `camilla`, `apo` and `raw`; `profiles.rs` is what every front end calls |
 | `audio/viz.rs` | `VizBuffer` (ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI), `VizLevels` (the spectrum as three bands, for callers that poll often and draw little) |
 | `audio/analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold. Runs at configurable FPS |
 | `audio/streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
@@ -239,6 +240,7 @@ follows the top of the stack in front — see `TabShell`.
 | `Views/PlaylistView.swift` | A playlist, laid out like the queue — grouped or flat, drag reorder, drop to add |
 | `Support/PlaylistsModel.swift` | The playlists and everything done to them. Rows held whole; contents one at a time |
 | `Views/OrganizeSheet.swift` | Organize: pattern + destination pickers, preview table with conflicts flagged per row |
+| `Support/DspModel.swift` | EQ and convolution profiles, and the one import flow Settings, "Open in" and the iOS share extension (`apps/ios/Share`, via `KoanIOS/ShareInbox.swift`) all go through. `Views/DspProfilePage.swift` shows what a profile holds |
 | `Support/OrganizeModel.swift` | Organize sheet state — debounced preview, generation-guarded so a slow plan can't land on a newer one |
 
 ### koan-server (`crates/koan-server/src/`)
@@ -307,6 +309,7 @@ follows the top of the stack in front — see `TabShell`.
 | `rayon` | Data parallelism for scan + sync |
 | `ebur128` | EBU R128 loudness measurement for ReplayGain |
 | `realfft` | FFT for spectrum analyzer |
+| `biquad` / `fft-convolver` / `rubato` | Parametric EQ, FIR convolution, resampling to an impulse response's rate |
 | `async-graphql` | GraphQL schema derivation, execution engine |
 | `axum` | HTTP server for GraphQL/Subsonic API |
 
@@ -315,7 +318,7 @@ follows the top of the stack in front — see `TabShell`.
 Active plans live in `.claude/plans/`. Key upcoming work:
 
 1. **Tag editing** (plan 04) — vimv-style (TSV + $EDITOR) first, TUI inline editor second.
-2. **DSP pipeline** (plan 02) — EQ, headphone profiles, crossfeed. Inserts between decode and ring buffer.
+2. **DSP** (plan 02) — EQ and convolution are in (`audio/dsp/`); AutoEQ search/download, settings in the apps and crossfeed remain.
 3. **Artist metadata** (plan 09) — bios, images, similar artists from MusicBrainz/Last.fm.
 
 See `.claude/plans/README.md` for dependency graph and status.

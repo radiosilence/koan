@@ -4,6 +4,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
+use koan_core::audio::dsp::DspStatus;
 use koan_core::player::state::{PlaybackState, QueueEntry, TrackInfo};
 
 use super::theme::Theme;
@@ -15,14 +16,31 @@ use super::theme::Theme;
 /// `output_rate` is what the device settled at. Where it differs from the
 /// source, the string says so — a device that refused the rate is being fed
 /// resampled audio, and the one claim this player cannot afford to leave
-/// unqualified is the one about what reaches the DAC.
+/// unqualified is the one about what reaches the DAC. DSP is named for the
+/// same reason.
 #[allow(clippy::manual_is_multiple_of)]
-pub fn format_quality(info: &TrackInfo, output_rate: Option<u32>) -> String {
+pub fn format_quality(
+    info: &TrackInfo,
+    output_rate: Option<u32>,
+    dsp: Option<&DspStatus>,
+) -> String {
     let resampled = match output_rate {
         Some(out) if out != info.sample_rate => format!(" → {}", rate_label(out)),
         _ => String::new(),
     };
-    format!("{}{}", format_source(info), resampled)
+    let processed = match dsp {
+        Some(d) => format!(" · {}", dsp_label(d)),
+        None => String::new(),
+    };
+    format!("{}{}{}", format_source(info), resampled, processed)
+}
+
+fn dsp_label(d: &DspStatus) -> &'static str {
+    match (d.eq, d.convolution_rate.is_some()) {
+        (true, true) => "EQ + FIR",
+        (false, true) => "FIR",
+        _ => "EQ",
+    }
 }
 
 fn rate_label(rate: u32) -> String {
@@ -138,6 +156,7 @@ pub struct TransportBar<'a> {
     seekable_ms: Option<u64>,
     /// What the output device settled at. None until a track has started.
     output_rate: Option<u32>,
+    dsp: Option<DspStatus>,
 }
 
 impl<'a> TransportBar<'a> {
@@ -157,6 +176,7 @@ impl<'a> TransportBar<'a> {
             ticker_offset: 0,
             seekable_ms: None,
             output_rate: None,
+            dsp: None,
         }
     }
 
@@ -172,6 +192,11 @@ impl<'a> TransportBar<'a> {
 
     pub fn with_output_rate(mut self, rate: Option<u32>) -> Self {
         self.output_rate = rate;
+        self
+    }
+
+    pub fn with_dsp(mut self, dsp: Option<DspStatus>) -> Self {
+        self.dsp = dsp;
         self
     }
 
@@ -364,7 +389,10 @@ impl Widget for TransportBar<'_> {
                     album_spans.push(Span::styled(format!(" ({})", year), self.theme.hint_desc));
                 }
 
-                let format_info = format!(" \u{00B7} {}", format_quality(info, self.output_rate));
+                let format_info = format!(
+                    " \u{00B7} {}",
+                    format_quality(info, self.output_rate, self.dsp.as_ref())
+                );
                 album_spans.push(Span::styled(format_info, self.theme.hint_desc));
 
                 let album_line = Line::from(album_spans);
@@ -379,7 +407,7 @@ impl Widget for TransportBar<'_> {
                 .to_string_lossy()
                 .to_string();
 
-            let format_info = format_quality(info, self.output_rate);
+            let format_info = format_quality(info, self.output_rate, self.dsp.as_ref());
 
             let info_line = Line::from(vec![
                 Span::raw(" "),

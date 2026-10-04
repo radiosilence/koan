@@ -457,9 +457,9 @@ va = "%album artist%/%album%/%title%"
     /// should not delete the section it does not understand.
     #[test]
     fn sections_this_build_does_not_know_are_kept() {
-        let out = template_from("[dsp]\ncrossfeed = true\n");
-        assert!(out.contains("[dsp]"), "{out}");
-        assert!(out.contains("crossfeed = true"), "{out}");
+        let out = template_from("[crossfeed]\nlevel = 3\n");
+        assert!(out.contains("[crossfeed]"), "{out}");
+        assert!(out.contains("level = 3"), "{out}");
     }
 
     /// Machine-scoped settings belong in config.local.toml; listing them here,

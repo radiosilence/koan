@@ -130,6 +130,9 @@ Symphonia (probe + decode) ─── Decode Thread
 SampleBuffer<f32> (interleaved)
     │
     ▼
+ReplayGain, then the output device's DSP profile, if it has one
+    │
+    ▼
 rtrb::Producer::write_chunk_uninit()
     │
     ▼
@@ -146,6 +149,8 @@ DAC → Speakers
 ```
 
 **No resampling.** On macOS, the device sample rate is switched to match the source file (bit-perfect). On Linux, the sample rate is set at stream creation. Float32 PCM from Symphonia all the way to the platform audio output.
+
+**DSP** (`audio/dsp/`) is the one exception, and only where asked for. A profile names the output devices it applies to; on any other device there is no chain at all, not one at unity gain. The chain is built per session on the decode thread — preamp, a resampler only when the track's rate has no impulse response of its own, biquads at the output rate, then FIR convolution — and carries across gapless boundaries so filter state never resets mid-album. The ring buffer and the engine run at the chain's output rate, so two sources resampled to one response's rate share a session. Delay from the resampler and the response's peak is trimmed from the front and flushed at the end of a session, so output frame *n* is input frame *n*: the timeline counts output time and the playhead needs no correction. The chain runs in 64-bit floats between a conversion in and one out; `null_test_against_direct_convolution` holds the residual against a textbook convolution under −140 dB. What is running lives on the local session and `publish()` derives `SharedPlayerState::dsp` from it, so a renderer session, which is handed the original file, publishes none.
 
 The device rate is not koan's to own — it is one property shared by every client, and Audio MIDI Setup, a vendor control panel or any other app can move it back at any moment, after which the HAL resamples koan to reach it. So the rate the front ends report is not the one read at engine creation: a `SampleRateWatch` (`audio/device.rs`) stays registered on `kAudioDevicePropertyNominalSampleRate` for as long as the engine lives and writes every change into `SharedPlayerState`. koan does not take hog mode, so losing the rate is possible by design — saying so is not.
 
@@ -246,6 +251,7 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 | `device.rs` | CoreAudio device enumeration, sample rate get/set/watch (macOS only) |
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
+| `dsp/` | `Setup` (a profile with its responses loaded), `Chain` (the per-session processing), the derived preamp. `impulse.rs`: responses as routes — a weighted mix of inputs convolved into weighted outputs, with delays — and the convolution stage. Importers for Convolver `.cfg`, CamillaDSP, Equalizer APO/AutoEQ/REW text and raw coefficients; `import.rs` sorts what it is given; `profiles.rs` saves, renames, assigns and describes profiles for every front end |
 | `viz.rs` | `VizBuffer` (lock-protected ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI thread), `VizLevels` (spectrum reduced to low/mid/high, cloning no waveform) |
 | `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold, beat detection (low-band transient). Runs at whatever rate a client sets, decays to flat when the play head stops, and parks when nothing is reading. Publishes to `VizSnapshot`. |
 | `streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
@@ -456,4 +462,9 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 | `reqwest` | HTTP client for Subsonic API (blocking mode, rustls TLS). |
 | `rayon` | Data parallelism for library scanning and remote sync. |
 | `ebur128` | EBU R128 loudness measurement for ReplayGain. |
+| `biquad` | RBJ cookbook biquads for parametric EQ, run in f64. |
+| `fft-convolver` | Uniformly partitioned FFT convolution with no added latency and no allocation after `init`. |
+| `rubato` | FFT resampler, used only to bring a track to the rate of an impulse response. |
+| `zip` | Reading Roon filter packs. Decompression only. |
+| `yaml-rust2` | Reading CamillaDSP configs. |
 | `parking_lot` | Faster RwLock/Mutex than std (no poisoning). |

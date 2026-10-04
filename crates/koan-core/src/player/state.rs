@@ -334,6 +334,9 @@ pub struct SharedPlayerState {
     /// the system's, and not ours to claim.
     output_sample_rate: AtomicU64,
 
+    /// What DSP is doing to the current session's audio. `None` is the
+    /// bit-perfect path.
+    dsp: parking_lot::RwLock<Option<crate::audio::dsp::DspStatus>>,
     /// The playhead of a renderer this koan is playing to, which keeps its
     /// own clock: where it was last heard to be, and since when it has been
     /// running from there. Read in place of the timeline while set.
@@ -372,6 +375,7 @@ impl SharedPlayerState {
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             output_sample_rate: AtomicU64::new(0),
+            dsp: parking_lot::RwLock::new(None),
             renderer_clock: parking_lot::Mutex::new(None),
             renderer: parking_lot::RwLock::new(None),
         })
@@ -674,6 +678,21 @@ impl SharedPlayerState {
     /// an answer for this one.
     pub fn clear_output_sample_rate(&self) {
         self.output_sample_rate.store(0, Ordering::Release);
+    }
+
+    // --- DSP ---
+
+    pub fn dsp(&self) -> Option<crate::audio::dsp::DspStatus> {
+        self.dsp.read().clone()
+    }
+
+    pub fn set_dsp(&self, status: Option<crate::audio::dsp::DspStatus>) {
+        let mut dsp = self.dsp.write();
+        if *dsp != status {
+            *dsp = status;
+            drop(dsp);
+            self.changed();
+        }
     }
 
     // --- Playlist version ---

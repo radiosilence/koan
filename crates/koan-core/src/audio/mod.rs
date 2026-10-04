@@ -7,6 +7,7 @@ pub mod coreaudio_backend;
 pub mod cpal_backend;
 #[cfg(target_os = "macos")]
 pub mod device;
+pub mod dsp;
 // AUHAL on macOS, RemoteIO on iOS — one engine, two output components.
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub mod engine;

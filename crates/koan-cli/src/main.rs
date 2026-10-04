@@ -211,6 +211,11 @@ enum Commands {
     /// Manage the download cache
     #[command(subcommand)]
     Cache(CacheCommands),
+    /// Equalisation and convolution profiles, per output device
+    Dsp {
+        #[command(subcommand)]
+        command: Option<DspCommands>,
+    },
     /// Manage authentication (users, tokens)
     Auth(AuthArgs),
     /// Manage kōan's own Subsonic REST API
@@ -260,6 +265,46 @@ enum CacheCommands {
     },
     /// Evict least-recently-played albums until cache is within limit
     Evict,
+}
+
+#[derive(Subcommand)]
+enum DspCommands {
+    /// List profiles and which one the current output device plays through
+    List,
+    /// Make or update a profile from EQ and filter files: AutoEQ or Equalizer
+    /// APO text, impulse WAVs, Roon zips and Convolver .cfg, CamillaDSP YAML,
+    /// raw or text coefficients. Files, folders or zips; an existing profile of
+    /// the same name keeps what this does not replace
+    Import {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+        /// Profile name (defaults to the first file's name)
+        #[arg(long)]
+        name: Option<String>,
+        /// Sample rate of coefficients that do not say
+        #[arg(long)]
+        rate: Option<u32>,
+        /// Also play this output device through it
+        #[arg(long)]
+        device: Option<String>,
+    },
+    /// Play an output device (the current one by default) through a profile
+    Use {
+        name: String,
+        #[arg(long)]
+        device: Option<String>,
+    },
+    /// Play an output device (the current one by default) untouched
+    Clear {
+        #[arg(long)]
+        device: Option<String>,
+    },
+    /// Delete a profile
+    Remove { name: String },
+    /// Bypass every profile
+    Off,
+    /// Stop bypassing
+    On,
 }
 
 #[derive(Subcommand)]
@@ -490,6 +535,20 @@ fn main() {
             RemoteCommands::Login { url, username } => commands::cmd_remote_login(&url, &username),
             RemoteCommands::Sync { .. } => commands::cmd_remote_sync(),
             RemoteCommands::Status => commands::cmd_remote_status(),
+        },
+        Some(Commands::Dsp { command }) => match command.unwrap_or(DspCommands::List) {
+            DspCommands::List => commands::cmd_dsp_list(),
+            DspCommands::Import {
+                paths,
+                name,
+                rate,
+                device,
+            } => commands::cmd_dsp_import(&paths, name, rate, device),
+            DspCommands::Use { name, device } => commands::cmd_dsp_use(&name, device),
+            DspCommands::Clear { device } => commands::cmd_dsp_clear(device),
+            DspCommands::Remove { name } => commands::cmd_dsp_remove(&name),
+            DspCommands::Off => commands::cmd_dsp_enable(false),
+            DspCommands::On => commands::cmd_dsp_enable(true),
         },
         Some(Commands::Cache(sub)) => match sub {
             CacheCommands::Status => commands::cmd_cache_status(),

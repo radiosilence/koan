@@ -16,6 +16,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Duration, Time, TimeBase, Timestamp};
 use thiserror::Error;
 
+use crate::audio::dsp::{Chain, Setup};
 use crate::audio::opus::OpusBridge;
 use crate::audio::viz::VizBuffer;
 use crate::config::ReplayGainMode;
@@ -108,6 +109,9 @@ pub struct TrackBoundary {
     pub samples_written: u64,
     /// The seek offset in samples for this track (non-zero only if user seeked).
     pub seek_samples: u64,
+    /// The rate the ring buffer's samples play at — the source's, unless DSP
+    /// resampled it to reach an impulse response.
+    pub output_rate: u32,
 }
 
 impl TrackBoundary {
@@ -115,12 +119,13 @@ impl TrackBoundary {
     fn position_ms(&self, played: u64) -> Option<u64> {
         let ch = self.info.channels as u64;
         let rate = self.info.sample_rate as u64;
-        if ch == 0 || rate == 0 {
+        let out = self.output_rate as u64;
+        if ch == 0 || rate == 0 || out == 0 {
             return None;
         }
         // Add seek offset since that's where playback started within the track.
         let track_samples = played.saturating_sub(self.sample_offset);
-        Some((track_samples / ch) * 1000 / rate + (self.seek_samples / ch) * 1000 / rate)
+        Some((track_samples / ch) * 1000 / out + (self.seek_samples / ch) * 1000 / rate)
     }
 }
 
@@ -192,7 +197,7 @@ impl PlaybackTimeline {
         let idx = bounds.partition_point(|b| b.sample_offset <= played);
         let next = bounds.get(idx)?;
         let current = bounds.get(idx.checked_sub(1)?)?;
-        let per_second = current.info.sample_rate as u64 * current.info.channels as u64;
+        let per_second = current.output_rate as u64 * current.info.channels as u64;
         if per_second == 0 {
             return None;
         }
@@ -445,6 +450,32 @@ fn probe_mss(mss: MediaSourceStream<'_>, hint: &Hint) -> Result<StreamInfo, Deco
 // Generic decode API (SourceEntry-based)
 // ---------------------------------------------------------------------------
 
+/// What is done to the samples between the decoder and the ring buffer.
+#[derive(Clone)]
+pub struct Processing {
+    pub rg_mode: ReplayGainMode,
+    pub pre_amp_db: f64,
+    /// The output device's DSP profile. `None` leaves the samples untouched.
+    pub dsp: Option<Arc<Setup>>,
+}
+
+impl Default for Processing {
+    fn default() -> Self {
+        Self {
+            rg_mode: ReplayGainMode::Off,
+            pre_amp_db: 0.0,
+            dsp: None,
+        }
+    }
+}
+
+impl Processing {
+    /// The rate a source at `source` plays at.
+    pub fn output_rate(&self, source: u32) -> u32 {
+        self.dsp.as_ref().map_or(source, |d| d.output_rate(source))
+    }
+}
+
 /// Start decoding from a `SourceEntry` into the ring buffer.
 ///
 /// `first`      — the first track's source entry.
@@ -459,8 +490,7 @@ pub fn start_decode<N, F>(
     next_track: N,
     timeline: Arc<PlaybackTimeline>,
     viz_buffer: Option<Arc<VizBuffer>>,
-    rg_mode: ReplayGainMode,
-    pre_amp_db: f64,
+    processing: Processing,
     on_finished: F,
 ) -> Result<DecodeHandle, DecodeError>
 where
@@ -480,8 +510,7 @@ where
                 &next_track,
                 &timeline.writer(),
                 viz_buffer.as_deref(),
-                rg_mode,
-                pre_amp_db,
+                &processing,
             );
             // Notify the player that the decode loop finished (playlist
             // exhausted or error). Only fire if we weren't explicitly stopped
@@ -526,8 +555,7 @@ fn decode_queue_loop<N>(
     next_track: &N,
     timeline: &TimelineWriter<'_>,
     viz_buffer: Option<&VizBuffer>,
-    rg_mode: ReplayGainMode,
-    pre_amp_db: f64,
+    processing: &Processing,
 ) where
     N: Fn() -> Option<SourceEntry>,
 {
@@ -541,6 +569,7 @@ fn decode_queue_loop<N>(
     let mut seek_ms = initial_seek_ms;
     let mut format: Option<PcmFormat> = None;
     let mut failures: u32 = 0;
+    let mut chain: Option<Chain> = None;
 
     while let Some(entry) = pending.take() {
         if stop.load(Ordering::Relaxed) {
@@ -565,8 +594,8 @@ fn decode_queue_loop<N>(
                 seek_ms,
                 timeline,
                 viz_buffer,
-                rg_mode,
-                pre_amp_db,
+                processing,
+                &mut chain,
                 format,
             )
         });
@@ -606,7 +635,75 @@ fn decode_queue_loop<N>(
         }
     }
 
+    // What the chain still holds is the end of the last track.
+    if let (Some(chain), Some(format)) = (chain.as_mut(), format)
+        && !stop.load(Ordering::Relaxed)
+    {
+        write_ring(&mut producer, chain.flush(), stop, viz_buffer, format);
+    }
+
     wait_for_drain(&producer, stop, format);
+}
+
+/// Write `samples` into the ring, blocking while it is full. False once the
+/// session has been stopped.
+///
+/// The viz buffer is fed inside the loop so it receives samples at the rate
+/// the output consumes them, not in packet-sized bursts. Without this, FLAC
+/// packets (~93ms each at 44.1kHz) would update it only ~11 times a second,
+/// making waveform modes visibly choppy.
+fn write_ring(
+    producer: &mut rtrb::Producer<f32>,
+    samples: &[f32],
+    stop: &AtomicBool,
+    viz_buffer: Option<&VizBuffer>,
+    (sample_rate, channels): PcmFormat,
+) -> bool {
+    let mut offset = 0;
+    while offset < samples.len() {
+        if stop.load(Ordering::Relaxed) {
+            return false;
+        }
+
+        let slots = producer.slots();
+        if slots == 0 {
+            // A full ring is the steady state, so this is the wait playback
+            // spends nearly all its time in: until the output has played
+            // half of it, which leaves the other half — a second or more at
+            // any rate koan plays — to refill against. The viz delay line
+            // is read at the playhead, so a refill arriving in one burst
+            // reads the same as one trickling in. A stop unparks it.
+            let half = producer.buffer().capacity() / 2;
+            thread::park_timeout(time_to_play(half, Some((sample_rate, channels))));
+            continue;
+        }
+
+        let chunk_size = slots.min(samples.len() - offset);
+        if let Ok(mut chunk) = producer.write_chunk_uninit(chunk_size) {
+            let to_write = &samples[offset..offset + chunk_size];
+            let (first, second) = chunk.as_mut_slices();
+            let first_len = first.len().min(to_write.len());
+            for (slot, &val) in first.iter_mut().zip(&to_write[..first_len]) {
+                slot.write(val);
+            }
+            if first_len < to_write.len() {
+                for (slot, &val) in second.iter_mut().zip(&to_write[first_len..]) {
+                    slot.write(val);
+                }
+            }
+            // SAFETY: All slots in the chunk have been initialized by the
+            // two loops above — first.len() + second.len() == chunk_size,
+            // and every slot is written via MaybeUninit::write().
+            unsafe { chunk.commit_all() };
+
+            if let Some(viz) = viz_buffer {
+                viz.push_samples(to_write, channels, sample_rate);
+            }
+
+            offset += chunk_size;
+        }
+    }
+    true
 }
 
 /// How long the output takes to play `samples` interleaved samples. Without a
@@ -669,8 +766,8 @@ fn decode_single(
     seek_ms: u64,
     timeline: &TimelineWriter<'_>,
     viz_buffer: Option<&VizBuffer>,
-    rg_mode: ReplayGainMode,
-    pre_amp_db: f64,
+    processing: &Processing,
+    chain: &mut Option<Chain>,
     expected: Option<PcmFormat>,
 ) -> Result<Decoded, DecodeError> {
     let mut reader = symphonia::default::get_probe()
@@ -731,15 +828,20 @@ fn decode_single(
         duration_ms,
     };
 
+    // The ring holds the output format, which DSP may have moved off the
+    // source's: two sources resampled to one impulse response's rate play
+    // gaplessly on one engine.
+    let out_rate = processing.output_rate(sample_rate);
+    let format = (out_rate, channels);
     if let Some(expected) = expected
-        && expected != (sample_rate, channels)
+        && expected != format
     {
         log::info!(
             "format change at {}: {}Hz/{}ch → {}Hz/{}ch, restarting audio engine",
             path.display(),
             expected.0,
             expected.1,
-            sample_rate,
+            out_rate,
             channels
         );
         return Ok(Decoded::FormatMismatch);
@@ -791,6 +893,21 @@ fn decode_single(
         }
     }
 
+    // The chain carries across a gapless boundary: resetting its filters would
+    // put a transient at every track change. A resampler for the outgoing rate
+    // gives up its tail first, which belongs to the track before.
+    if let Some(setup) = &processing.dsp {
+        match chain {
+            Some(c) => {
+                let tail = c.set_source_rate(sample_rate);
+                if !write_ring(producer, tail, stop, viz_buffer, format) {
+                    return Ok(Decoded::Complete(format));
+                }
+            }
+            None => *chain = Some(Chain::new(setup, sample_rate, channels)),
+        }
+    }
+
     // Record this track's boundary in the timeline.
     let write_offset = timeline.samples_written();
     timeline.push_boundary(TrackBoundary {
@@ -800,9 +917,12 @@ fn decode_single(
         sample_offset: write_offset,
         samples_written: 0,
         seek_samples,
+        output_rate: out_rate,
     });
 
     // Read ReplayGain tags and select the active gain for this track.
+    let rg_mode = processing.rg_mode;
+    let pre_amp_db = processing.pre_amp_db;
     let rg_gain = if rg_mode != ReplayGainMode::Off {
         match crate::audio::replaygain::read_tags(path) {
             Ok(rg_info) => {
@@ -831,12 +951,12 @@ fn decode_single(
 
     loop {
         if stop.load(Ordering::Relaxed) {
-            return Ok(Decoded::Complete((sample_rate, channels)));
+            return Ok(Decoded::Complete(format));
         }
 
         let packet = match reader.next_packet() {
             Ok(Some(p)) => p,
-            Ok(None) => return Ok(Decoded::Complete((sample_rate, channels))),
+            Ok(None) => return Ok(Decoded::Complete(format)),
             Err(e) => return Err(DecodeError::Decode(e.to_string())),
         };
 
@@ -899,59 +1019,14 @@ fn decode_single(
             samples
         };
 
-        // Push samples into ring buffer, blocking if full.
-        // VizBuffer is updated incrementally inside this loop so it receives
-        // samples at the real-time audio consumption rate (paced by the audio
-        // callback draining the rtrb consumer), not in packet-sized bursts.
-        // Without this, FLAC packets (~93ms each at 44.1kHz) would update the
-        // viz buffer only ~11 times/sec, making waveform modes visibly choppy.
-        let mut offset = 0;
-        while offset < samples.len() {
-            if stop.load(Ordering::Relaxed) {
-                return Ok(Decoded::Complete((sample_rate, channels)));
-            }
-
-            let slots = producer.slots();
-            if slots == 0 {
-                // A full ring is the steady state, so this is the wait playback
-                // spends nearly all its time in: until the output has played
-                // half of it, which leaves the other half — a second or more at
-                // any rate koan plays — to refill against. The viz delay line
-                // is read at the playhead, so a refill arriving in one burst
-                // reads the same as one trickling in. A stop unparks it.
-                let half = producer.buffer().capacity() / 2;
-                thread::park_timeout(time_to_play(half, Some((sample_rate, channels))));
-                continue;
-            }
-
-            let chunk_size = slots.min(samples.len() - offset);
-            if let Ok(mut chunk) = producer.write_chunk_uninit(chunk_size) {
-                let to_write = &samples[offset..offset + chunk_size];
-                let (first, second) = chunk.as_mut_slices();
-                let first_len = first.len().min(to_write.len());
-                for (slot, &val) in first.iter_mut().zip(&to_write[..first_len]) {
-                    slot.write(val);
-                }
-                if first_len < to_write.len() {
-                    for (slot, &val) in second.iter_mut().zip(&to_write[first_len..]) {
-                        slot.write(val);
-                    }
-                }
-                // SAFETY: All slots in the chunk have been initialized by the
-                // two loops above — first.len() + second.len() == chunk_size,
-                // and every slot is written via MaybeUninit::write().
-                unsafe { chunk.commit_all() };
-
-                // Feed viz buffer at the same rate as rtrb consumption.
-                if let Some(viz) = viz_buffer {
-                    viz.push_samples(to_write, channels, sample_rate);
-                }
-
-                offset += chunk_size;
-            }
+        let (samples, length) = match chain.as_mut() {
+            Some(c) => c.process(samples),
+            None => (samples, samples.len() as u64),
+        };
+        if !write_ring(producer, samples, stop, viz_buffer, format) {
+            return Ok(Decoded::Complete(format));
         }
-
-        timeline.add_written(samples.len() as u64);
+        timeline.add_written(length);
     }
 }
 
@@ -1075,6 +1150,7 @@ mod tests {
             sample_offset,
             samples_written: 0,
             seek_samples,
+            output_rate: sample_rate,
         }
     }
 
@@ -1350,8 +1426,8 @@ mod tests {
             0,
             &tl,
             None,
-            crate::config::ReplayGainMode::Off,
-            0.0,
+            &Processing::default(),
+            &mut None,
             None,
         );
         assert!(
@@ -1392,6 +1468,15 @@ mod tests {
     /// draining in the background. Returns the boundaries the decode thread
     /// pushed onto the timeline.
     fn run_queue(paths: &[PathBuf]) -> Vec<TrackBoundary> {
+        run_queue_with(paths, &Processing::default()).0
+    }
+
+    /// `run_queue`, through `processing`. Also returns how many samples the
+    /// consumer read and how many the timeline counted.
+    fn run_queue_with(
+        paths: &[PathBuf],
+        processing: &Processing,
+    ) -> (Vec<TrackBoundary>, u64, u64) {
         let (producer, mut consumer) = rtrb::RingBuffer::new(1 << 16);
         let timeline = PlaybackTimeline::new();
         let tl = writer(&timeline);
@@ -1400,15 +1485,18 @@ mod tests {
         let drain_stop = Arc::new(AtomicBool::new(false));
         let drain_flag = drain_stop.clone();
         let drainer = std::thread::spawn(move || {
+            let mut read = 0u64;
             while !drain_flag.load(Ordering::Relaxed) {
                 let n = consumer.slots();
                 if n > 0
                     && let Ok(chunk) = consumer.read_chunk(n)
                 {
+                    read += n as u64;
                     chunk.commit_all();
                 }
                 std::thread::sleep(std::time::Duration::from_micros(200));
             }
+            read
         });
 
         let rest: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(paths[1..].to_vec());
@@ -1428,14 +1516,43 @@ mod tests {
             &next_track,
             &tl,
             None,
-            crate::config::ReplayGainMode::Off,
-            0.0,
+            processing,
         );
 
         drain_stop.store(true, Ordering::Relaxed);
-        drainer.join().unwrap();
+        let read = drainer.join().unwrap();
 
-        timeline.boundaries.read().clone()
+        let written = timeline.samples_written.load(Ordering::Relaxed);
+        (timeline.boundaries.read().clone(), read, written)
+    }
+
+    #[test]
+    fn convolution_at_one_rate_plays_two_source_rates_gaplessly() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.wav");
+        let b = dir.path().join("b.wav");
+        crate::test_utils::generate_wav(&a, 44100, 2, 0.5, 16);
+        crate::test_utils::generate_wav(&b, 96000, 2, 0.5, 16);
+        let mut ir = vec![0.0; 129];
+        ir[64] = 1.0;
+        let processing = Processing {
+            dsp: Some(Arc::new(Setup::new(
+                vec![],
+                vec![crate::audio::dsp::Impulse::from_channels(48000, vec![ir])],
+            ))),
+            ..Processing::default()
+        };
+
+        let (bounds, read, written) = run_queue_with(&[a, b], &processing);
+        assert_eq!(bounds.len(), 2, "both resample to 48 kHz, so one session");
+        assert!(bounds.iter().all(|b| b.output_rate == 48000));
+        assert_eq!(bounds[0].info.sample_rate, 44100);
+        assert_eq!(bounds[1].info.sample_rate, 96000);
+        // Half a second of each at 48 kHz, stereo — and every sample the
+        // timeline counted reached the output, delays trimmed and tails flushed.
+        assert_eq!(written, 2 * 24000 * 2);
+        assert_eq!(read, written);
+        assert_eq!(bounds[1].sample_offset, 24000 * 2);
     }
 
     #[test]
@@ -1586,8 +1703,7 @@ mod tests {
             &next_track,
             &tl,
             None,
-            crate::config::ReplayGainMode::Off,
-            0.0,
+            &Processing::default(),
         );
 
         // The first source plus one per next_track call, capped.
@@ -1705,8 +1821,8 @@ mod tests {
             seek_ms,
             &tl,
             None,
-            ReplayGainMode::Off,
-            0.0,
+            &Processing::default(),
+            &mut None,
             None,
         )
         .unwrap();

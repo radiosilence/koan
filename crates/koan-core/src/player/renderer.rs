@@ -1299,6 +1299,60 @@ mod tests {
         }
     }
 
+    /// A profile for the rig's local device, halving the level. Handed to
+    /// the player directly: changing the process's config would race the rest
+    /// of the suite.
+    fn with_profile(r: &mut Rig) {
+        r.player.dsp_override = Some(Arc::new(
+            crate::audio::dsp::Setup::new(vec![], vec![]).with_preamp(-6.0),
+        ));
+    }
+
+    /// The renderer fetches the original file, so a profile for the local
+    /// device has done nothing to what it plays, and the badge must not say
+    /// it has.
+    #[test]
+    fn a_renderer_session_publishes_no_dsp_status() {
+        let mut r = rig(WAV, true, &["a.wav"]);
+        with_profile(&mut r);
+
+        r.player.process_command(PlayerCommand::UseRenderer(None));
+        r.player.play(r.ids[0]);
+        r.state();
+        let here = r.player.shared_state.dsp().map(|d| d.profile);
+        assert_eq!(
+            here.as_deref(),
+            Some("Half"),
+            "played here, it is processed"
+        );
+
+        r.connect();
+        r.player.play(r.ids[0]);
+        r.state();
+        assert_eq!(r.player.shared_state.dsp(), None);
+    }
+
+    /// A profile change cannot reach what a renderer plays, so it must not
+    /// stop and reload the renderer to apply it.
+    #[test]
+    fn reloading_dsp_leaves_a_renderer_playing() {
+        let mut r = rig(WAV, true, &["a.wav"]);
+        with_profile(&mut r);
+        r.player.play(r.ids[0]);
+        r.settle();
+        let starts = r.player.playback_starts;
+        let before = r.commands();
+
+        r.player.process_command(PlayerCommand::ReloadDsp);
+        r.settle();
+        assert_eq!(
+            r.player.playback_starts, starts,
+            "the session was not reopened"
+        );
+        assert_eq!(r.commands(), before, "the renderer was told nothing");
+        assert_eq!(r.state(), PlaybackState::Playing);
+    }
+
     #[test]
     fn a_track_plays_on_the_renderer_from_a_file_it_fetches() {
         let mut r = rig(WAV, true, &["a.wav", "b.wav"]);

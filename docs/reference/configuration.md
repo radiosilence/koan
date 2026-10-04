@@ -28,7 +28,7 @@ Three kinds of setting are machine-scoped and always land in
 | Kind | Settings |
 |------|----------|
 | Secrets | `remote.password`, `subsonic.password` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username`, `devices.discoverable/port/addresses` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username`, `devices.discoverable/port/addresses`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
@@ -431,6 +431,34 @@ A discoverable device can be seen and controlled by any koan app on the
 network, whoever is signed in there: playback and the queue, never the library
 or the files on disk. If the port is taken, koan listens on another and
 announces that one, so only typed addresses miss it.
+
+---
+
+## `[dsp]`
+
+Equalisation and convolution profiles, each for the output devices it names.
+They describe the listening setup, so all of `[dsp]` belongs to the machine. See
+[Equalisation and convolution](../guide/dsp.md).
+
+```toml
+# config.local.toml
+[dsp]
+enabled = true                      # false bypasses every profile
+
+[[dsp.profiles]]
+name = "Living room"
+devices = ["Topping E30"]           # as `koan devices` names them
+impulses = ["dsp/living-room/48000.wav"]  # WAV or Convolver .cfg per rate; relative to this directory
+# preamp_db = -6.0                  # unset: derived from the filters' peak gain
+filters = [
+    { type = "peaking", freq = 20.0, gain_db = -1.3, q = 2.0 },
+    { type = "gain", freq = 1000.0, gain_db = -2.0, channels = [1] },  # channels from 0; unset is all
+]
+```
+
+Profiles are normally made by importing (`koan dsp import`, or Settings in the
+apps), which reads every format the guide lists and keeps the result under
+`dsp/` here.
 
 ---
 

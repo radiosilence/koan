@@ -220,6 +220,7 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             PlayerCommand::SetOutputDevice(_)
             | PlayerCommand::RestartOutput
             | PlayerCommand::ClearOutputDevice
+            | PlayerCommand::ReloadDsp
             | PlayerCommand::TrackReady(_)
             | PlayerCommand::TrackStreamReady(_)
             | PlayerCommand::StreamProbed { .. }

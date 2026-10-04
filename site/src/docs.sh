@@ -18,6 +18,7 @@ pages=(
   "Library|docs/guide/file-organization.md"
   "Library|docs/format-strings.md"
   "Library|docs/recipes/cache-management.md"
+  "Playback|docs/guide/dsp.md"
   "Automation|docs/guide/mcp-integration.md"
   "Automation|docs/guide/graphql-api.md"
   "Reference|docs/reference/configuration.md"

@@ -136,6 +136,9 @@ pub struct Player {
     session: u64,
     /// Waiting for a pause's fade to reach silence, to hear where it did.
     silence_waiters: Vec<crossbeam_channel::Sender<u64>>,
+    /// The DSP setup last loaded, and the config and device it was loaded
+    /// for. Reading impulse responses off disk on every seek would be wasted.
+    dsp: Option<DspCache>,
     /// The UPnP renderer chosen as the output, when one is: every session
     /// opened while it is set plays there. Not a transport of its own.
     renderer: Option<renderer::RendererLink>,
@@ -143,6 +146,16 @@ pub struct Player {
     /// an operation costs.
     #[cfg(test)]
     playback_starts: usize,
+    /// What `dsp_for` answers in tests, in place of reading the profiles
+    /// from config: config is the process's, and the suite runs in parallel.
+    #[cfg(test)]
+    dsp_override: Option<Arc<crate::audio::dsp::Setup>>,
+}
+
+struct DspCache {
+    config: Arc<crate::config::Config>,
+    device: String,
+    setup: Option<Arc<crate::audio::dsp::Setup>>,
 }
 
 /// Whether a session plays or sits paused, and how a track waited for opens.
@@ -216,6 +229,8 @@ struct Local {
     /// Keeps the device rate subscription alive for as long as this engine is
     /// the one feeding the DAC. Dropped with it.
     _rate_watch: Option<Box<dyn SampleRateWatch>>,
+    /// What the output device's profile does to this session, for the badge.
+    dsp: Option<crate::audio::dsp::DspStatus>,
 }
 
 impl Session {
@@ -291,6 +306,7 @@ impl Player {
             commands,
             transport: Transport::Idle,
             lead_in_ends: None,
+            dsp: None,
             session: 0,
             silence_waiters: Vec::new(),
             renderer: None,
@@ -308,6 +324,8 @@ impl Player {
             in_flight: None,
             #[cfg(test)]
             playback_starts: 0,
+            #[cfg(test)]
+            dsp_override: None,
         }
     }
 
@@ -352,7 +370,17 @@ impl Player {
     ) -> Result<(Box<dyn AudioEngineHandle>, Option<Box<dyn SampleRateWatch>>), PlayerError> {
         let device = self.resolve_device()?;
         let device_rate = self.backend.get_device_sample_rate(&device)?;
-        let source_rate = info.sample_rate as f64;
+        // The setup the decode thread was just handed, not a fresh read: a
+        // config edited in between would put the engine at another rate.
+        let dsp = match &self.dsp {
+            Some(cache) if cache.device == device.name => cache.setup.clone(),
+            _ => self.dsp_for(&device.name),
+        };
+        // The rate the decode thread writes at: the source's, unless DSP
+        // resamples it to reach an impulse response.
+        let source_rate =
+            dsp.as_ref()
+                .map_or(info.sample_rate, |d| d.output_rate(info.sample_rate)) as f64;
 
         // Anything read between here and the switch landing would pair this
         // track with the last one's output rate, and a rate switch is not
@@ -431,6 +459,80 @@ impl Player {
         }
 
         Ok((engine, rate_watch))
+    }
+
+    /// The DSP profile for `device`, loaded once per config and device.
+    fn dsp_for(&mut self, device: &str) -> Option<Arc<crate::audio::dsp::Setup>> {
+        let config = crate::config::Config::cached();
+        #[cfg(test)]
+        if let Some(setup) = &self.dsp_override {
+            self.dsp = Some(DspCache {
+                config,
+                device: device.to_string(),
+                setup: Some(setup.clone()),
+            });
+            return Some(setup.clone());
+        }
+        if let Some(cache) = &self.dsp
+            && Arc::ptr_eq(&cache.config, &config)
+            && cache.device == device
+        {
+            return cache.setup.clone();
+        }
+        let setup = config.dsp.profile_for(device).and_then(|profile| {
+            crate::audio::dsp::Setup::load(profile, &crate::config::config_dir())
+                .inspect_err(|e| {
+                    log::error!(
+                        "dsp: profile '{}' not loaded, playing without it: {e}",
+                        profile.name
+                    )
+                })
+                .ok()
+                .flatten()
+                .map(Arc::new)
+        });
+        self.dsp = Some(DspCache {
+            config,
+            device: device.to_string(),
+            setup: setup.clone(),
+        });
+        setup
+    }
+
+    /// Load the profiles again, and restart where playback is if the output's
+    /// processing was or now is anything at all. The responses on disk can
+    /// change without the config doing so, so this does not compare them.
+    ///
+    /// A renderer is handed the original file, which no profile touches, so
+    /// while one is the output the cache is only dropped: restarting would
+    /// stop and reload it for nothing. The next session here reads the new
+    /// profile.
+    fn reload_dsp(&mut self) {
+        let was = self.dsp.take().is_some_and(|c| c.setup.is_some());
+        if self.renderer.is_some() {
+            return;
+        }
+        let now = match self.resolve_device() {
+            Ok(device) => self.dsp_for(&device.name).is_some(),
+            Err(_) => false,
+        };
+        if was || now {
+            self.restart_on_current_track();
+        }
+    }
+
+    /// ReplayGain and DSP for a session on the output device.
+    fn processing(&mut self) -> buffer::Processing {
+        let cfg = crate::config::Config::cached();
+        let dsp = match self.resolve_device() {
+            Ok(device) => self.dsp_for(&device.name),
+            Err(_) => None,
+        };
+        buffer::Processing {
+            rg_mode: cfg.playback.replaygain,
+            pre_amp_db: cfg.playback.pre_amp_db,
+            dsp,
+        }
     }
 
     /// Resolve the output device: use configured device name if set,
@@ -565,6 +667,18 @@ impl Player {
             state.set_track_info(track.cloned());
         }
         state.set_transport(playback, waiting);
+        // Only a session decoded here can have been processed: a renderer
+        // plays the original file.
+        let dsp = match &self.transport {
+            Transport::Loaded(Session {
+                output: Output::Local(local),
+                ..
+            }) => local.dsp.clone(),
+            _ => None,
+        };
+        if state.dsp() != dsp {
+            state.set_dsp(dsp);
+        }
     }
 
     /// What the listener last asked for: to hear something, to have it
@@ -826,7 +940,9 @@ impl Player {
         self.timeline.reset();
         let lookahead = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let next_track = self.decode_cursor(id, lookahead.clone());
-        let cfg = crate::config::Config::cached();
+        // Files and downloads in progress open here alike, so both get the
+        // output's processing.
+        let processing = self.processing();
         self.session += 1;
         let session = self.session;
         let finish_tx = self.commands.tx.clone();
@@ -840,14 +956,19 @@ impl Player {
             },
             self.timeline.clone(),
             Some(self.viz_buffer.clone()),
-            cfg.playback.replaygain,
-            cfg.playback.pre_amp_db,
+            processing,
             move || {
                 finish_tx.send(PlayerCommand::DecodeFinished(session)).ok();
             },
         )?;
 
         let (engine, rate_watch) = self.create_engine_for(&info, consumer)?;
+        // The setup `create_engine_for` chose the rate by.
+        let dsp = self
+            .dsp
+            .as_ref()
+            .and_then(|c| c.setup.as_ref())
+            .map(|s| s.status(info.sample_rate));
         // A session opened paused leaves the unit stopped: starting it and
         // stopping it again lets a moment of the track out.
         if start == Run::Playing {
@@ -862,6 +983,7 @@ impl Player {
                 decode_handle,
                 stream,
                 _rate_watch: rate_watch,
+                dsp,
             }),
         });
         Ok(())
@@ -1914,6 +2036,7 @@ impl Player {
                 self.restart_on_current_track();
             }
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
+            PlayerCommand::ReloadDsp => self.reload_dsp(),
             PlayerCommand::UseRenderer(connection) => self.use_renderer(connection),
             PlayerCommand::SetRendererVolume(volume) => self.set_renderer_volume(volume),
             PlayerCommand::Renderer { session, event } => self.on_renderer_event(session, event),
@@ -2210,6 +2333,7 @@ mod tests {
                 decode_handle: buffer::DecodeHandle::new_for_test(Default::default()),
                 stream: None,
                 _rate_watch: None,
+                dsp: None,
             }),
         }
     }
@@ -4214,6 +4338,156 @@ mod tests {
                 running: Default::default(),
                 lead_in: Default::default(),
             }))
+        }
+    }
+
+    /// Hands the test every ring buffer an engine is made with, so what
+    /// reaches the device can be read back.
+    struct CaptureBackend {
+        consumers: Arc<std::sync::Mutex<Vec<rtrb::Consumer<f32>>>>,
+    }
+
+    impl AudioBackend for CaptureBackend {
+        fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            Ok(vec![self.default_device()?])
+        }
+        fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
+            Ok(backend::DeviceInfo {
+                name: "Capture DAC".into(),
+                sample_rates: vec![44100.0],
+                platform_id: 0,
+                kind: Default::default(),
+            })
+        }
+        fn supported_sample_rates(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<Vec<f64>, BackendError> {
+            Ok(vec![44100.0])
+        }
+        fn get_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<f64, BackendError> {
+            Ok(44100.0)
+        }
+        fn set_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            rate: f64,
+        ) -> Result<f64, BackendError> {
+            Ok(rate)
+        }
+        fn create_engine(
+            &self,
+            _device: &backend::DeviceInfo,
+            _sample_rate: f64,
+            _channels: u32,
+            consumer: rtrb::Consumer<f32>,
+            _samples_played: Arc<AtomicU64>,
+        ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
+            self.consumers.lock().unwrap().push(consumer);
+            Ok(Box::new(NullEngine {
+                starts: Default::default(),
+                running: Default::default(),
+                lead_in: Default::default(),
+            }))
+        }
+    }
+
+    /// The loudest sample of a session's first `want` samples.
+    fn peak_reaching_the_device(
+        consumers: &std::sync::Mutex<Vec<rtrb::Consumer<f32>>>,
+        want: usize,
+    ) -> f32 {
+        let mut consumer = consumers.lock().unwrap().pop().expect("an engine was made");
+        let mut peak = 0.0f32;
+        let mut got = 0;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while got < want && std::time::Instant::now() < deadline {
+            let n = consumer.slots();
+            if n == 0 {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+                continue;
+            }
+            let chunk = consumer.read_chunk(n).unwrap();
+            let (a, b) = chunk.as_slices();
+            peak = a.iter().chain(b).fold(peak, |p, s| p.max(s.abs()));
+            got += n;
+            chunk.commit_all();
+        }
+        assert!(got >= want, "only {got} of {want} samples arrived");
+        peak
+    }
+
+    /// A file on disk and a download still landing open through the same
+    /// session, so both are processed. The streaming path is the one that
+    /// used to be its own function, and the easy one to leave behind.
+    #[test]
+    fn a_profile_processes_files_and_streams_alike() {
+        let dir = tempfile::tempdir().unwrap();
+        let tone = dir.path().join("tone.wav");
+        crate::test_utils::generate_wav_tone(&tone, 44100, 440.0, 0.5);
+        let want = 22050;
+
+        let consumers = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut player = Player::new();
+        player.backend = Box::new(CaptureBackend {
+            consumers: consumers.clone(),
+        });
+        let mut item = make_item("tone");
+        item.path = tone.clone();
+        let id = item.id;
+        player.shared_state.add_items(vec![item]);
+        player.shared_state.set_cursor(Some(id));
+
+        let stream = || {
+            let feed = crate::remote::downloads::ByteFeed::new();
+            feed.set(std::fs::metadata(&tone).unwrap().len());
+            Source::Stream(StreamSource {
+                path: tone.clone(),
+                bytes_written: feed,
+                total: 0,
+                mode: streaming::ProbeMode::Full,
+            })
+        };
+        let peaks = |player: &mut Player| {
+            let mut out = Vec::new();
+            for source in [Source::File(tone.clone()), stream()] {
+                player
+                    .try_open_session(id, source, None, 0, Run::Playing)
+                    .unwrap();
+                player.publish();
+                out.push((
+                    peak_reaching_the_device(&consumers, want),
+                    player.shared_state.dsp().map(|d| d.profile),
+                ));
+                player.stop_engine();
+            }
+            out
+        };
+
+        let untouched = peaks(&mut player);
+
+        player.dsp_override = Some(Arc::new(
+            crate::audio::dsp::Setup::new(vec![], vec![]).with_preamp(-6.0206),
+        ));
+        let processed = peaks(&mut player);
+
+        for (kind, ((before, none), (after, half))) in ["file", "stream"]
+            .iter()
+            .zip(untouched.iter().zip(&processed))
+        {
+            assert_eq!(
+                none, &None,
+                "{kind}: nothing is published without a profile"
+            );
+            assert_eq!(half.as_deref(), Some("test"), "{kind}: the badge names it");
+            assert!(*before > 0.1, "{kind}: the tone reached the device");
+            assert!(
+                (after / before - 0.5).abs() < 0.01,
+                "{kind}: {before} → {after}, not halved"
+            );
         }
     }
 

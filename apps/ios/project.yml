@@ -54,6 +54,8 @@ targets:
       # The Live Activity for another device this phone controls.
       - target: KoanWidgets
       - target: NotificationService
+      # "Share → kōan" for EQ and filter files and text.
+      - target: KoanShare
     settings:
       base:
         PRODUCT_NAME: koan
@@ -77,6 +79,9 @@ targets:
         # Invite links open the app rather than the join page.
         com.apple.developer.associated-domains:
           - applinks:koan.rocks
+        # Where the share extension leaves what it was handed.
+        com.apple.security.application-groups:
+          - group.cc.blit.koan
     info:
       path: ../../target/ios-project/Info.plist
       properties:
@@ -96,6 +101,19 @@ targets:
         UILaunchScreen:
           UIImageName: LaunchEnso
           UIColorName: LaunchBackground
+        # "Open in kōan" for EQ and correction filters, from Files, Mail or a
+        # chat. Alternate: koan is never the app these files belong to.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: EQ or correction filter
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - com.pkware.zip-archive
+              - public.plain-text
+              - public.yaml
+              - com.microsoft.waveform-audio
+              - public.aiff-audio
+              - org.xiph.flac
+        LSSupportsOpeningDocumentsInPlace: false
         # Without this the process is suspended when the screen locks, and the
         # audio thread with it.
         # `remote-notification`: a background push from the server wakes the
@@ -171,6 +189,41 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+
+  # Takes EQ and filter files, or text, shared from another app and leaves
+  # them in the app group for the app to import. See `ShareViewController`.
+  KoanShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Share
+    settings:
+      base:
+        PRODUCT_NAME: KoanShare
+        PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan.share
+        MARKETING_VERSION: ${KOAN_VERSION}
+        CURRENT_PROJECT_VERSION: ${KOAN_BUILD}
+        TARGETED_DEVICE_FAMILY: "1,2"
+        OTHER_SWIFT_FLAGS: -package-name koan
+        SWIFT_INCLUDE_PATHS: ""
+    entitlements:
+      path: ../../target/ios-project/KoanShare.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.cc.blit.koan
+    info:
+      path: ../../target/ios-project/KoanShare-Info.plist
+      properties:
+        CFBundleDisplayName: kōan
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsFileWithMaxCount: 10
 
   KoanUITests:
     type: bundle.ui-testing

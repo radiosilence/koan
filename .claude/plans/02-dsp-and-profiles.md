@@ -1,5 +1,11 @@
 # DSP Pipeline & Downloadable Headphone Correction Profiles
 
+> **Status:** the chain, parametric EQ, AutoEQ import and convolution are in `audio/dsp/`, configured
+> with `koan dsp` (#641). Where this plan and the code differ, the code is right: profiles live in
+> `config.local.toml` as `[[dsp.profiles]]` naming their output devices, the bands run after any
+> resampling at the output rate, and delays are trimmed rather than subtracted in the timeline.
+> Phase 2's index search and download, and phase 3's device matching, remain.
+
 Feasibility plan for adding a DSP processing stage and headphone/speaker correction profile support to koan.
 
 ## Current Audio Data Flow

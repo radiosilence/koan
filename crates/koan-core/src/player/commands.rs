@@ -125,6 +125,9 @@ pub enum PlayerCommand {
     SetOutputDevice(String),
     /// Clear the configured output device, reverting to system default.
     ClearOutputDevice,
+    /// The DSP profiles, or the device they key on, changed: load them again
+    /// and carry on where playback is.
+    ReloadDsp,
     /// Build the output again on the same device and carry on from where the
     /// current track is, paused if it was. For an output the system stopped
     /// underneath us: an iOS interruption (a call, Siri) or a reset of its
