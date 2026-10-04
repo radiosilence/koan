@@ -97,7 +97,8 @@ fn lengthless_mode_for(path: &Path) -> streaming::ProbeMode {
 pub struct Player {
     shared_state: Arc<SharedPlayerState>,
     commands: CommandChannel,
-    active_playback: Option<ActivePlayback>,
+    /// What the player is doing with the track under the cursor.
+    transport: Transport,
     timeline: Arc<PlaybackTimeline>,
     viz_buffer: Arc<VizBuffer>,
     viz_snapshot: Arc<VizSnapshot>,
@@ -111,8 +112,6 @@ pub struct Player {
     output_device_name: Option<String>,
     /// Platform audio backend (CoreAudio on macOS and iOS, cpal on Linux).
     backend: Box<dyn AudioBackend>,
-    /// Debounce: timestamp of last NextTrack/PrevTrack to suppress key repeat.
-    last_skip: std::time::Instant,
     /// How the file currently streaming had to be opened. A seek reopens it and
     /// must not undo what the probe settled on.
     stream_mode: streaming::ProbeMode,
@@ -123,9 +122,6 @@ pub struct Player {
     in_flight: Option<InFlight>,
     /// When the silence after a rate switch runs out and the track is heard.
     lead_in_ends: Option<std::time::Instant>,
-    /// A track asked for that cannot open yet. Nothing opens a track without
-    /// one of these or a command naming it.
-    waiting: Option<Waiting>,
     /// Identifies the playback session, so that what a torn-down session
     /// reports after the fact is recognised as stale.
     session: u64,
@@ -142,6 +138,20 @@ pub struct Player {
 enum Start {
     Playing,
     Paused,
+}
+
+/// What the player is doing. One value rather than flags beside each other, so
+/// that a track loaded and a track waited for cannot both be true.
+enum Transport {
+    /// Nothing loaded and nothing asked for.
+    Idle,
+    /// A track asked for that cannot open yet. Nothing opens a track without
+    /// one of these or a command naming it.
+    Waiting(Waiting),
+    /// A session is open: decoding into the ring, the engine playing or
+    /// paused. Whether it plays is published as `PlaybackState`; a fade is the
+    /// engine still running while that says paused.
+    Loaded(ActivePlayback),
 }
 
 /// A track that cannot open yet, and how it opens once it can: at the start
@@ -199,7 +209,7 @@ impl Player {
         let viz_buffer = VizBuffer::new();
         let viz_snapshot = VizSnapshot::new();
         let timeline = PlaybackTimeline::new();
-        let cfg = crate::config::Config::load_or_default();
+        let cfg = crate::config::Config::cached();
         let viz_analyzer = VizAnalyzer::spawn_with_snapshot(
             Arc::clone(&viz_buffer),
             &cfg.visualizer,
@@ -218,9 +228,8 @@ impl Player {
         Self {
             shared_state,
             commands,
-            active_playback: None,
+            transport: Transport::Idle,
             lead_in_ends: None,
-            waiting: None,
             session: 0,
             silence_waiters: Vec::new(),
             timeline,
@@ -229,9 +238,8 @@ impl Player {
             _viz_analyzer: viz_analyzer,
             undo_stack: UndoStack::new(),
             batch_buffer: None,
-            output_device_name: cfg.playback.output_device,
+            output_device_name: cfg.playback.output_device.clone(),
             backend: crate::audio::platform_backend(),
-            last_skip: std::time::Instant::now(),
             stream_mode: streaming::ProbeMode::Full,
             history: None,
             in_flight: None,
@@ -344,7 +352,7 @@ impl Player {
         let now = std::time::Instant::now();
         let lead_in = if device_rate > 0.0 && (settled - device_rate).abs() > 0.1 {
             std::time::Duration::from_millis(
-                crate::config::Config::load_or_default()
+                crate::config::Config::cached()
                     .playback
                     .rate_switch_lead_in_ms as u64,
             )
@@ -434,10 +442,30 @@ impl Player {
         self.commands.tx.clone()
     }
 
+    fn playback(&self) -> Option<&ActivePlayback> {
+        match &self.transport {
+            Transport::Loaded(playback) => Some(playback),
+            _ => None,
+        }
+    }
+
+    fn waiting(&self) -> Option<Waiting> {
+        match self.transport {
+            Transport::Waiting(waiting) => Some(waiting),
+            _ => None,
+        }
+    }
+
+    fn forget_waiting(&mut self) {
+        if matches!(self.transport, Transport::Waiting(_)) {
+            self.transport = Transport::Idle;
+        }
+    }
+
     /// Play a specific item in the playlist by ID.
     /// Sets cursor, starts playback if Ready or streaming-ready, otherwise waits for TrackReady.
     pub fn play(&mut self, id: QueueItemId) {
-        self.waiting = None;
+        self.forget_waiting();
         self.shared_state.set_cursor(Some(id));
 
         match self.shared_state.item_playback_source(id) {
@@ -469,7 +497,7 @@ impl Player {
     ///
     /// A track still downloading waits until it can open — see `Waiting`.
     fn cue(&mut self, id: QueueItemId, position_ms: u64, start: Start) {
-        self.waiting = None;
+        self.forget_waiting();
         self.shared_state.set_cursor(Some(id));
         let Some(PlaybackSource::Ready(path)) = self.shared_state.item_playback_source(id) else {
             if position_ms == 0 && start == Start::Playing {
@@ -500,7 +528,7 @@ impl Player {
             Start::Playing => PlaybackState::Stopped,
             Start::Paused => PlaybackState::Paused,
         });
-        self.waiting = Some(Waiting {
+        self.transport = Transport::Waiting(Waiting {
             id,
             position_ms,
             start,
@@ -522,7 +550,7 @@ impl Player {
         {
             self.playback_starts += 1;
         }
-        self.waiting = None;
+        self.forget_waiting();
         let result = self.open_playback(id, path, seek_ms, start);
         if result.is_err() {
             self.stop_playback_and_clear_state();
@@ -579,7 +607,7 @@ impl Player {
         let next_track = self.decode_cursor(id);
 
         // Load ReplayGain config for this playback session.
-        let cfg = crate::config::Config::load_or_default();
+        let cfg = crate::config::Config::cached();
         let rg_mode = cfg.playback.replaygain;
         let pre_amp_db = cfg.playback.pre_amp_db;
 
@@ -613,7 +641,7 @@ impl Player {
         };
         self.shared_state.set_playback_state(state);
 
-        self.active_playback = Some(ActivePlayback {
+        self.transport = Transport::Loaded(ActivePlayback {
             engine,
             decode_handle,
             stream: None,
@@ -775,7 +803,7 @@ impl Player {
     ) {
         // Moved on, or already open — the download landed first, or the user
         // asked for something else.
-        let Some(waiting) = self.waiting.filter(|w| w.may_stream(id)) else {
+        let Some(waiting) = self.waiting().filter(|w| w.may_stream(id)) else {
             return;
         };
         if !self.shared_state.is_cursor(id) {
@@ -840,7 +868,7 @@ impl Player {
         info: buffer::StreamInfo,
         start: Start,
     ) -> Result<(), PlayerError> {
-        self.waiting = None;
+        self.forget_waiting();
         let result = self.open_streaming_playback(id, source, seek_ms, info, start);
         if result.is_err() {
             self.stop_playback_and_clear_state();
@@ -942,7 +970,7 @@ impl Player {
         };
 
         // Load ReplayGain config for this streaming session.
-        let cfg = crate::config::Config::load_or_default();
+        let cfg = crate::config::Config::cached();
         let rg_mode = cfg.playback.replaygain;
         let pre_amp_db = cfg.playback.pre_amp_db;
 
@@ -978,7 +1006,7 @@ impl Player {
         };
         self.shared_state.set_playback_state(state);
 
-        self.active_playback = Some(ActivePlayback {
+        self.transport = Transport::Loaded(ActivePlayback {
             engine,
             decode_handle,
             stream: Some(live),
@@ -1106,17 +1134,14 @@ impl Player {
     ///
     /// A track still on its way opens paused when it arrives.
     pub fn pause(&mut self) {
-        let Some(ref playback) = self.active_playback else {
-            if let Some(waiting) = self.waiting.as_mut() {
+        let Some(playback) = self.playback() else {
+            if let Transport::Waiting(waiting) = &mut self.transport {
                 waiting.start = Start::Paused;
                 self.shared_state.set_playback_state(PlaybackState::Paused);
             }
             return;
         };
-        if crate::config::Config::load_or_default()
-            .playback
-            .fade_on_pause
-        {
+        if crate::config::Config::cached().playback.fade_on_pause {
             playback.engine.fade_out();
             self.shared_state.set_playback_state(PlaybackState::Paused);
         } else {
@@ -1128,7 +1153,7 @@ impl Player {
     /// Pause without a fade — for a restart that should come back paused,
     /// where there is nothing audible to fade.
     fn pause_now(&mut self) {
-        if let Some(ref playback) = self.active_playback {
+        if let Some(playback) = self.playback() {
             if let Err(e) = playback.engine.stop() {
                 log::error!("pause failed: {}", e);
                 return;
@@ -1145,15 +1170,15 @@ impl Player {
     /// position it was waiting to open at.
     pub fn resume(&mut self) {
         self.answer_silence();
-        if self.active_playback.is_none() {
-            if let Some(waiting) = self.waiting {
+        if self.playback().is_none() {
+            if let Some(waiting) = self.waiting() {
                 self.cue(waiting.id, waiting.position_ms, Start::Playing);
             } else if let Some(id) = self.shared_state.cursor() {
                 self.play(id);
             }
             return;
         }
-        if let Some(ref playback) = self.active_playback {
+        if let Transport::Loaded(playback) = &self.transport {
             let engine = &playback.engine;
             let resumed = if engine.is_running() || engine.is_silent() {
                 self.lead_in_ends = None;
@@ -1193,8 +1218,12 @@ impl Player {
     /// drops: tearing CoreAudio down under a live producer is the end-of-queue
     /// crash (#89).
     fn stop_engine(&mut self) {
-        let Some(playback) = self.active_playback.take() else {
-            return;
+        let playback = match std::mem::replace(&mut self.transport, Transport::Idle) {
+            Transport::Loaded(playback) => playback,
+            other => {
+                self.transport = other;
+                return;
+            }
         };
         self.session += 1;
         self.bank_listening();
@@ -1227,7 +1256,7 @@ impl Player {
 
     /// Full stop: tear down engine + clear all display state.
     fn stop_playback_and_clear_state(&mut self) {
-        self.waiting = None;
+        self.forget_waiting();
         self.report(PlaybackReportState::Stopped);
         self.finish_play();
         self.stop_engine();
@@ -1266,15 +1295,13 @@ impl Player {
             return;
         }
 
-        if let Some(waiting) = self.waiting.filter(|w| w.id == id) {
+        if let Some(waiting) = self.waiting().filter(|w| w.id == id) {
             log::info!("track_ready: opening {:?}", id);
             self.cue(id, waiting.position_ms, waiting.start);
             return;
         }
 
-        if self.active_playback.is_some()
-            && self.shared_state.track_info().is_some_and(|t| t.id == id)
-        {
+        if self.playback().is_some() && self.shared_state.track_info().is_some_and(|t| t.id == id) {
             log::info!(
                 "track_ready: download complete while streaming {:?}, refreshing metadata",
                 id
@@ -1286,7 +1313,7 @@ impl Player {
     /// Enough of a download has landed to stream it. Opens the track if it is
     /// waiting to start from the top.
     pub fn track_stream_ready(&mut self, id: QueueItemId) {
-        let Some(waiting) = self.waiting.filter(|w| w.may_stream(id)) else {
+        let Some(waiting) = self.waiting().filter(|w| w.may_stream(id)) else {
             return;
         };
         if !self.shared_state.is_cursor(id) {
@@ -1447,7 +1474,7 @@ impl Player {
     /// Poll the timeline and update shared state with current track/position.
     /// Called from the command loop on each tick.
     pub fn update_playback_state(&mut self) {
-        let Some(playback) = self.active_playback.as_ref() else {
+        let Transport::Loaded(playback) = &self.transport else {
             return;
         };
 
@@ -1509,7 +1536,7 @@ impl Player {
     /// sees the failure in its reads and ends the decode, which advances the
     /// queue.
     pub fn track_failed(&mut self, id: QueueItemId) {
-        let Some(waiting) = self.waiting.filter(|w| w.id == id) else {
+        let Some(waiting) = self.waiting().filter(|w| w.id == id) else {
             return;
         };
         if !self.shared_state.is_cursor(id) {
@@ -1554,7 +1581,7 @@ impl Player {
     /// skipped. A lookahead not yet taken needs nothing: the decoder reads the
     /// queue when it gets there.
     fn revoke_stale_lookahead(&mut self) {
-        if self.active_playback.is_none() {
+        if self.playback().is_none() {
             return;
         }
         self.update_playback_state();
@@ -1623,6 +1650,7 @@ impl Player {
         if edits_queue {
             self.revoke_stale_lookahead();
         }
+        self.shared_state.set_waiting(self.waiting().is_some());
     }
 
     fn apply_command(&mut self, cmd: PlayerCommand) {
@@ -1641,32 +1669,15 @@ impl Player {
             PlayerCommand::PauseAndReport(reply) => {
                 self.pause();
                 self.silence_waiters.push(reply);
-                if self
-                    .active_playback
-                    .as_ref()
-                    .is_none_or(|p| !p.engine.is_running())
-                {
+                if self.playback().is_none_or(|p| !p.engine.is_running()) {
                     self.answer_silence();
                 }
             }
             PlayerCommand::Resume => self.resume(),
             PlayerCommand::Stop => self.stop(),
             PlayerCommand::Seek(pos) => self.seek(pos),
-            PlayerCommand::NextTrack => {
-                // Debounce: suppress key repeat from terminal (150ms window).
-                let now = std::time::Instant::now();
-                if now.duration_since(self.last_skip).as_millis() >= 150 {
-                    self.last_skip = now;
-                    self.next_track();
-                }
-            }
-            PlayerCommand::PrevTrack => {
-                let now = std::time::Instant::now();
-                if now.duration_since(self.last_skip).as_millis() >= 150 {
-                    self.last_skip = now;
-                    self.prev_track();
-                }
-            }
+            PlayerCommand::NextTrack => self.next_track(),
+            PlayerCommand::PrevTrack => self.prev_track(),
             PlayerCommand::AddToPlaylist(items) => {
                 let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
                 self.shared_state.add_items(items);
@@ -1688,33 +1699,24 @@ impl Player {
                 self.shared_state.insert_items_after(items, after);
                 self.push_undo(UndoEntry::Inserted { ids });
             }
-            PlayerCommand::ClearPlaylist => {
-                // Stop engine + clear display state WITHOUT touching the playlist,
-                // then snapshot, then clear. This avoids the race where stop()
-                // would clear the playlist before we capture it for undo.
-                self.stop_playback_and_clear_state();
-                let (items, cursor) = self.shared_state.snapshot_playlist();
-                self.shared_state.clear_playlist();
-                self.push_undo(UndoEntry::Replaced { items, cursor });
-            }
-            PlayerCommand::ReplacePlaylist { items, start } => {
-                // Same order as ClearPlaylist: stop and clear display state
-                // before snapshotting, or the snapshot captures an already
-                // emptied playlist and undo restores nothing.
-                self.stop_playback_and_clear_state();
-                let (old_items, cursor) = self.shared_state.snapshot_playlist();
-                self.shared_state.clear_playlist();
-                self.push_undo(UndoEntry::Replaced {
-                    items: old_items,
-                    cursor,
-                });
-
+            PlayerCommand::ClearPlaylist => self.clear_playlist(),
+            PlayerCommand::ReplacePlaylist {
+                items,
+                start,
+                position_ms,
+                play,
+            } => {
+                self.clear_playlist();
                 if items.is_empty() {
                     return;
                 }
                 let start_id = items.get(start).unwrap_or(&items[0]).id;
                 self.shared_state.add_items(items);
-                self.play(start_id);
+                self.cue(
+                    start_id,
+                    position_ms,
+                    if play { Start::Playing } else { Start::Paused },
+                );
             }
             PlayerCommand::RemoveFromPlaylist(id) => {
                 let item = self.shared_state.get_item(id);
@@ -1801,6 +1803,16 @@ impl Player {
         }
     }
 
+    /// Stop, then clear the playlist as one undoable step. Playback and display
+    /// state go first, without touching the playlist, so the snapshot taken for
+    /// undo is of the playlist as it was.
+    fn clear_playlist(&mut self) {
+        self.stop_playback_and_clear_state();
+        let (items, cursor) = self.shared_state.snapshot_playlist();
+        self.shared_state.clear_playlist();
+        self.push_undo(UndoEntry::Replaced { items, cursor });
+    }
+
     /// Apply an undo/redo entry: mutate the playlist and return the inverse entry.
     fn apply_entry(&mut self, entry: UndoEntry) -> UndoEntry {
         match entry {
@@ -1874,10 +1886,10 @@ impl Player {
     /// would otherwise open when its download lands.
     fn reconcile_playback(&mut self) {
         if self
-            .waiting
+            .waiting()
             .is_some_and(|w| self.shared_state.get_item(w.id).is_none())
         {
-            self.waiting = None;
+            self.forget_waiting();
             self.shared_state.set_playback_state(PlaybackState::Stopped);
         }
         let Some(playing) = self.shared_state.track_info().map(|t| t.id) else {
@@ -1947,7 +1959,7 @@ impl Player {
     /// reaching the next queued track, the silence after a rate switch
     /// running out, or a pause fading to silence.
     fn next_wake(&self) -> Option<std::time::Instant> {
-        let playback = self.active_playback.as_ref()?;
+        let playback = self.playback()?;
         let now = std::time::Instant::now();
         match self.shared_state.playback_state() {
             PlaybackState::Playing => {
@@ -2227,13 +2239,10 @@ mod tests {
         let id = item.id;
         player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
         player.shared_state.set_cursor(Some(id));
-        assert!(player.active_playback.is_none());
+        assert!(player.playback().is_none());
 
         player.process_command(PlayerCommand::Resume);
-        assert!(
-            player.active_playback.is_some(),
-            "the cursor's track started"
-        );
+        assert!(player.playback().is_some(), "the cursor's track started");
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Playing);
         player.process_command(PlayerCommand::Stop);
     }
@@ -2296,7 +2305,7 @@ mod tests {
             position_ms: 2_000,
             play: false,
         });
-        assert!(player.active_playback.is_some(), "loaded");
+        assert!(player.playback().is_some(), "loaded");
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
         // The decoder says where the seek landed when it queues the track,
         // and the playhead reads that from then on: the start of the packet
@@ -2373,7 +2382,7 @@ mod tests {
             position_ms: 6_000,
             play: true,
         });
-        assert!(player.active_playback.is_none(), "nothing opened early");
+        assert!(player.playback().is_none(), "nothing opened early");
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Stopped);
         assert_eq!(starts.load(Ordering::Relaxed), 0);
 
@@ -2419,7 +2428,7 @@ mod tests {
         });
         player.process_command(PlayerCommand::Play(other));
         player.process_command(PlayerCommand::Play(id));
-        assert!(player.waiting.is_some_and(|w| w.position_ms == 0));
+        assert!(player.waiting().is_some_and(|w| w.position_ms == 0));
         player.process_command(PlayerCommand::Stop);
     }
 
@@ -2449,12 +2458,16 @@ mod tests {
         let (mut player, id, starts) = downloading_wav(dir.path());
 
         player.process_command(PlayerCommand::Play(id));
+        assert!(player.shared_state.is_waiting());
+        assert!(player.shared_state.wants_to_play(), "a toggle pauses it");
+        assert!(!player.shared_state.is_idle(), "adding tracks leaves it be");
         player.process_command(PlayerCommand::Pause);
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
+        assert!(!player.shared_state.wants_to_play());
 
         player.shared_state.update_item_state(id, ItemState::Ready);
         player.process_command(PlayerCommand::TrackReady(id));
-        assert!(player.active_playback.is_some(), "loaded");
+        assert!(player.playback().is_some(), "loaded");
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
         assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
         player.process_command(PlayerCommand::Stop);
@@ -2472,7 +2485,7 @@ mod tests {
         });
         player.process_command(PlayerCommand::Pause);
         player.process_command(PlayerCommand::Resume);
-        assert!(player.active_playback.is_none(), "still on its way");
+        assert!(player.playback().is_none(), "still on its way");
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Stopped);
 
         player.shared_state.update_item_state(id, ItemState::Ready);
@@ -2493,8 +2506,46 @@ mod tests {
 
         player.shared_state.update_item_state(id, ItemState::Ready);
         player.process_command(PlayerCommand::TrackReady(id));
-        assert!(player.active_playback.is_none());
+        assert!(player.playback().is_none());
         assert_eq!(starts.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn a_hand_off_opens_paused_at_its_position_in_one_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+            starts: starts.clone(),
+        });
+        seed(&mut player, 2);
+        let item = PlaylistItem {
+            path,
+            ..make_item("t")
+        };
+        let id = item.id;
+
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items: vec![make_item("before"), item],
+            start: 1,
+            position_ms: 4_000,
+            play: false,
+        });
+        assert_eq!(player.shared_state.cursor(), Some(id));
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Paused);
+        assert_eq!(player.playback_starts, 1, "opened once, at the position");
+        assert_eq!(starts.load(Ordering::Relaxed), 0, "not a sample let out");
+        await_queued(&player);
+        let at = player.shared_state.position_ms();
+        assert!((3_750..=4_000).contains(&at), "opened at {at}ms");
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["t0", "t1"], "one undo step");
+        player.process_command(PlayerCommand::Stop);
     }
 
     #[test]
@@ -2633,7 +2684,7 @@ mod tests {
         player.process_command(PlayerCommand::Play(added_id));
 
         player.process_command(PlayerCommand::Undo);
-        assert!(player.waiting.is_none());
+        assert!(player.waiting().is_none());
         assert_eq!(player.shared_state.playback_state(), PlaybackState::Stopped);
 
         // Its download lands anyway; nothing asked for it any more.
@@ -2642,7 +2693,7 @@ mod tests {
             .shared_state
             .update_item_state(added_id, ItemState::Ready);
         player.process_command(PlayerCommand::TrackReady(added_id));
-        assert!(player.active_playback.is_none());
+        assert!(player.playback().is_none());
         assert_eq!(starts.load(Ordering::Relaxed), 0);
     }
 
@@ -2678,7 +2729,7 @@ mod tests {
         let running = Arc::new(AtomicBool::new(true));
         let silent = Arc::new(AtomicBool::new(false));
         let mut player = Player::new();
-        player.active_playback = Some(ActivePlayback {
+        player.transport = Transport::Loaded(ActivePlayback {
             engine: Box::new(FadingEngine {
                 running: running.clone(),
                 silent: silent.clone(),
@@ -2695,10 +2746,7 @@ mod tests {
         let (reply, answer) = crossbeam_channel::bounded(1);
         player.process_command(PlayerCommand::PauseAndReport(reply));
 
-        if crate::config::Config::load_or_default()
-            .playback
-            .fade_on_pause
-        {
+        if crate::config::Config::cached().playback.fade_on_pause {
             assert!(answer.try_recv().is_err(), "not while the fade is audible");
             // The fade plays on, and the playhead with it.
             player.shared_state.set_position_ms(5_150);
@@ -3196,6 +3244,8 @@ mod tests {
         player.process_command(PlayerCommand::ReplacePlaylist {
             items: replacement,
             start: 0,
+            position_ms: 0,
+            play: true,
         });
         // What `play()` would have left behind if the file existed.
         pretend_playing(&mut player, orphan);
@@ -3451,7 +3501,7 @@ mod tests {
         let decode_handle = buffer::DecodeHandle::new_for_test(stop_flag);
 
         let mut player = Player::new();
-        player.active_playback = Some(ActivePlayback {
+        player.transport = Transport::Loaded(ActivePlayback {
             engine: Box::new(MockEngine {
                 dropped: dropped.clone(),
             }),

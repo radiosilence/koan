@@ -251,6 +251,8 @@ pub struct VisibleQueueSnapshot {
 #[derive(Debug)]
 pub struct SharedPlayerState {
     state: AtomicU8,
+    /// The player is waiting for a track it was asked for to arrive.
+    waiting: AtomicBool,
     /// Where a session starts, and where a stopped one stands. While one is
     /// running the playhead is read off the timeline instead.
     position_ms: AtomicU64,
@@ -288,6 +290,7 @@ impl SharedPlayerState {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             state: AtomicU8::new(PlaybackState::Stopped as u8),
+            waiting: AtomicBool::new(false),
             position_ms: AtomicU64::new(0),
             timeline: std::sync::OnceLock::new(),
             track_info: parking_lot::RwLock::new(None),
@@ -309,6 +312,33 @@ impl SharedPlayerState {
     pub fn set_playback_state(&self, state: PlaybackState) {
         self.state.store(state as u8, Ordering::Release);
         self.changed();
+    }
+
+    /// Whether the player is waiting for a track it was asked for to arrive.
+    /// Stopped while waiting, the track opens playing; paused, it opens paused.
+    pub fn is_waiting(&self) -> bool {
+        self.waiting.load(Ordering::Acquire)
+    }
+
+    /// Playing, or waiting for a track that will open playing: what a
+    /// play/pause toggle pauses.
+    pub fn wants_to_play(&self) -> bool {
+        match self.playback_state() {
+            PlaybackState::Playing => true,
+            PlaybackState::Stopped => self.is_waiting(),
+            PlaybackState::Paused => false,
+        }
+    }
+
+    /// Nothing loaded and nothing waited for: where adding tracks starts them.
+    pub fn is_idle(&self) -> bool {
+        self.playback_state() == PlaybackState::Stopped && !self.is_waiting()
+    }
+
+    pub fn set_waiting(&self, waiting: bool) {
+        if self.waiting.swap(waiting, Ordering::AcqRel) != waiting {
+            self.changed();
+        }
     }
 
     /// Where the playhead is, read off the samples the output has played, so

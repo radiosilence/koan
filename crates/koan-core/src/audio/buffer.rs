@@ -134,9 +134,6 @@ pub struct PlaybackTimeline {
     /// Total interleaved samples consumed (played) by the audio engine.
     /// Written by the audio render callback, read by UI.
     pub samples_played: Arc<AtomicU64>,
-    /// Incremented by every `reset()`. A decode thread writes only while the
-    /// generation it started in is still the current one.
-    generation: AtomicU64,
     /// Told when the decoder queues another track, which is when the moment
     /// the playhead reaches it becomes known.
     queued: parking_lot::Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
@@ -146,7 +143,6 @@ impl std::fmt::Debug for PlaybackTimeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PlaybackTimeline")
             .field("samples_played", &self.samples_played)
-            .field("generation", &self.generation)
             .finish_non_exhaustive()
     }
 }
@@ -157,7 +153,6 @@ impl PlaybackTimeline {
             boundaries: parking_lot::RwLock::new(Vec::new()),
             samples_written: AtomicU64::new(0),
             samples_played: Arc::new(AtomicU64::new(0)),
-            generation: AtomicU64::new(0),
             queued: parking_lot::Mutex::new(None),
         })
     }
@@ -217,30 +212,14 @@ impl PlaybackTimeline {
         bounds[idx..].iter().map(|b| b.id).collect()
     }
 
-    /// The current session's generation, to be handed to `writer`.
-    ///
-    /// Read on the player thread between `reset()` and spawning the decode
-    /// thread, so a session can never capture a generation newer than its own.
-    pub fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Acquire)
-    }
-
-    /// Open a write handle for the session identified by `generation`.
-    pub fn writer(&self, generation: u64) -> TimelineWriter<'_> {
-        TimelineWriter {
-            timeline: self,
-            generation,
-        }
+    /// The decode thread's write access.
+    pub fn writer(&self) -> TimelineWriter<'_> {
+        TimelineWriter { timeline: self }
     }
 
     /// Reset for a new playback session.
     pub fn reset(&self) {
-        // The generation bump happens under the boundary lock, which is the
-        // same lock every guarded write takes — so a write either lands wholly
-        // before this reset or sees the new generation and is dropped.
-        let mut bounds = self.boundaries.write();
-        self.generation.fetch_add(1, Ordering::AcqRel);
-        bounds.clear();
+        self.boundaries.write().clear();
         self.samples_written.store(0, Ordering::Relaxed);
         self.samples_played.store(0, Ordering::Relaxed);
     }
@@ -293,29 +272,14 @@ impl PlaybackTimeline {
 
 /// One decode session's write access to the timeline.
 ///
-/// `stop_engine` signals the decode thread and hands the join to a cleanup
-/// thread, so the outgoing thread can still be mid-packet when `reset()` runs
-/// and the next session starts. Without a guard its final `add_written` lands
-/// on the fresh timeline and the first boundary of the new track gets stamped
-/// at that offset instead of 0 — `current_playback()` then finds nothing at
-/// `samples_played = 0` and the transport goes blank for ~50-100ms on every
-/// skip and seek. A late `push_boundary` is worse: the wrong track's metadata
-/// for the rest of the session.
-///
-/// Carrying the generation in the handle rather than passing it per call means
-/// a write cannot be made with the wrong one.
+/// Sessions never overlap: the player joins the outgoing decode thread before
+/// it resets the timeline for the next, so nothing here has to tell an old
+/// session's writes from a new one's.
 pub struct TimelineWriter<'a> {
     timeline: &'a PlaybackTimeline,
-    generation: u64,
 }
 
 impl TimelineWriter<'_> {
-    /// False once another session has started. The decode thread polls this
-    /// alongside its stop flag as a second abort signal.
-    pub fn is_current(&self) -> bool {
-        self.timeline.generation.load(Ordering::Acquire) == self.generation
-    }
-
     /// Cumulative samples written to the ring buffer this session.
     fn samples_written(&self) -> u64 {
         self.timeline.samples_written.load(Ordering::Relaxed)
@@ -323,13 +287,7 @@ impl TimelineWriter<'_> {
 
     /// Called by decode thread when starting a new track.
     fn push_boundary(&self, boundary: TrackBoundary) {
-        {
-            let mut bounds = self.timeline.boundaries.write();
-            if !self.is_current() {
-                return;
-            }
-            bounds.push(boundary);
-        }
+        self.timeline.boundaries.write().push(boundary);
         if let Some(queued) = self.timeline.queued.lock().as_ref() {
             queued();
         }
@@ -338,9 +296,6 @@ impl TimelineWriter<'_> {
     /// Called by decode thread after pushing samples.
     fn add_written(&self, count: u64) {
         let mut bounds = self.timeline.boundaries.write();
-        if !self.is_current() {
-            return;
-        }
         self.timeline
             .samples_written
             .fetch_add(count, Ordering::Relaxed);
@@ -514,11 +469,6 @@ where
 {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = stop.clone();
-    // Captured here rather than on the decode thread: the player has just
-    // reset the timeline, and reading it before the spawn means this session
-    // cannot pick up a generation belonging to a later one.
-    let generation = timeline.generation();
-
     let thread = thread::Builder::new()
         .name("koan-decode".into())
         .spawn(move || {
@@ -528,7 +478,7 @@ where
                 &stop_clone,
                 seek_ms,
                 &next_track,
-                &timeline.writer(generation),
+                &timeline.writer(),
                 viz_buffer.as_deref(),
                 rg_mode,
                 pre_amp_db,
@@ -652,7 +602,7 @@ fn decode_queue_loop<N>(
     let mut failures: u32 = 0;
 
     while let Some(entry) = pending.take() {
-        if stop.load(Ordering::Relaxed) || !timeline.is_current() {
+        if stop.load(Ordering::Relaxed) {
             break;
         }
 
@@ -703,7 +653,7 @@ fn decode_queue_loop<N>(
         }
         // A stop ends the session wherever it lands; looking ahead would peek
         // the playlist and log a transition that never happens.
-        if stop.load(Ordering::Relaxed) || !timeline.is_current() {
+        if stop.load(Ordering::Relaxed) {
             break;
         }
 
@@ -939,7 +889,7 @@ fn decode_single(
     let mut sample_buf: Vec<f32> = Vec::new();
 
     loop {
-        if stop.load(Ordering::Relaxed) || !timeline.is_current() {
+        if stop.load(Ordering::Relaxed) {
             return Ok(Decoded::Complete((sample_rate, channels)));
         }
 
@@ -1016,9 +966,7 @@ fn decode_single(
         // viz buffer only ~11 times/sec, making waveform modes visibly choppy.
         let mut offset = 0;
         while offset < samples.len() {
-            // Also drops out on a stale generation, which keeps a dying thread
-            // from pushing into the viz delay line the next session just reset.
-            if stop.load(Ordering::Relaxed) || !timeline.is_current() {
+            if stop.load(Ordering::Relaxed) {
                 return Ok(Decoded::Complete((sample_rate, channels)));
             }
 
@@ -1189,9 +1137,8 @@ mod tests {
         }
     }
 
-    /// A writer for the timeline's current generation.
     fn writer(timeline: &PlaybackTimeline) -> TimelineWriter<'_> {
-        timeline.writer(timeline.generation())
+        timeline.writer()
     }
 
     // --- PlaybackTimeline tests ---
@@ -1626,62 +1573,6 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(true));
         wait_for_drain(&producer, &stop, None);
         drop(consumer);
-    }
-
-    // --- Generation guard on timeline writes ---
-
-    #[test]
-    fn a_writer_knows_when_its_session_has_ended() {
-        let timeline = PlaybackTimeline::new();
-        let tl = writer(&timeline);
-        assert!(tl.is_current());
-
-        timeline.reset();
-        assert!(!tl.is_current(), "reset must retire the outgoing writer");
-        assert!(writer(&timeline).is_current());
-    }
-
-    #[test]
-    fn stale_writes_are_dropped_after_reset() {
-        let timeline = PlaybackTimeline::new();
-        let dying = writer(&timeline);
-        dying.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
-        dying.add_written(88200);
-
-        timeline.reset();
-
-        // The outgoing decode thread checks `stop` only at the top of its chunk
-        // loop, so its last packet lands after the reset.
-        dying.add_written(4608);
-        dying.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
-
-        assert_eq!(timeline.samples_written.load(Ordering::Relaxed), 0);
-        assert!(timeline.boundaries.read().is_empty());
-    }
-
-    #[test]
-    fn a_dying_decode_thread_cannot_blank_the_transport() {
-        let timeline = PlaybackTimeline::new();
-        let dying = writer(&timeline);
-        dying.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
-        dying.add_written(88200);
-
-        // A skip: reset, then the old thread's final packet, then the new
-        // session stamps its first boundary at whatever the counter now says.
-        timeline.reset();
-        dying.add_written(4608);
-
-        let fresh = writer(&timeline);
-        let id = QueueItemId::new();
-        let write_offset = fresh.samples_written();
-        fresh.push_boundary(make_boundary(id, write_offset, 0, 2, 44100));
-
-        assert_eq!(write_offset, 0, "first boundary must start at 0");
-        let (playing, _, _, position_ms) = timeline
-            .current_playback()
-            .expect("transport must not go blank at samples_played = 0");
-        assert_eq!(playing, id);
-        assert_eq!(position_ms, 0);
     }
 
     // --- Failure handling in the gapless queue ---

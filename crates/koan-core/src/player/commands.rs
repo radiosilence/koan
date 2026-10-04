@@ -67,10 +67,14 @@ pub enum PlayerCommand {
     /// album shows track one playing first. It is also three undo entries for
     /// one user action.
     ///
-    /// `start` past the end starts at the beginning.
+    /// `start` past the end starts at the beginning. It opens at
+    /// `position_ms`, playing or paused, as `Cue` does: a hand-off picks up
+    /// where the source stopped without the top of the track being heard.
     ReplacePlaylist {
         items: Vec<PlaylistItem>,
         start: usize,
+        position_ms: u64,
+        play: bool,
     },
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),
