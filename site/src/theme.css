@@ -40,6 +40,23 @@
   }
 }
 
+/* The server pages' type scale and form widths, so the web UI and the share page stay on one. */
+@theme {
+  --text-fine: 12px;
+  --text-meta: 13px;
+  --text-control: 14px;
+  --text-body: 15px;
+  --text-body--line-height: 1.45;
+  /* iOS zooms into a focused field set smaller than this. */
+  --text-input: 16px;
+  --text-title-sm: 22px;
+  --text-title-sm--line-height: 1.2;
+  --text-title: 26px;
+  --text-title--line-height: 1.2;
+  --container-form: 520px;
+  --container-panel: 560px;
+}
+
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);

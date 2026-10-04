@@ -846,7 +846,7 @@ mod tests {
         // bounded channel means the first track starts before the cursor lands
         // on the one that was asked for.
         match rx.try_recv().unwrap() {
-            PlayerCommand::ReplacePlaylist { items, start } => {
+            PlayerCommand::ReplacePlaylist { items, start, .. } => {
                 assert_eq!(items.len(), 2);
                 assert_eq!(start, 0, "defaults to the first track");
             }
@@ -989,7 +989,7 @@ mod tests {
             .await;
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
         match rx.try_recv().unwrap() {
-            PlayerCommand::ReplacePlaylist { items, start } => {
+            PlayerCommand::ReplacePlaylist { items, start, .. } => {
                 assert_eq!(items.len(), 2);
                 assert_eq!(start, 0);
                 assert!(items.iter().all(|i| i.playlist_entry_id.is_some()));

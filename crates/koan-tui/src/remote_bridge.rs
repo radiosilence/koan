@@ -531,7 +531,7 @@ fn command_loop(
             | PlayerCommand::ReorderPlaylist(_)
             | PlayerCommand::InsertInPlaylist { .. }
             | PlayerCommand::AddToPlaylist(_)
-            | PlayerCommand::DecodeFinished
+            | PlayerCommand::DecodeFinished(_)
             | PlayerCommand::TrackQueued => {
                 log::debug!("ignoring {:?} in remote mode", cmd);
             }

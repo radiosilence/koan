@@ -241,6 +241,9 @@ impl StreamFormat {
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct NowPlaying {
     pub state: PlayState,
+    /// Waiting for the track under the cursor to arrive. With `Stopped` it
+    /// opens playing, with `Paused` it opens paused.
+    pub waiting: bool,
     pub position_ms: u64,
     pub duration_ms: u64,
     /// Queue item currently under the cursor, if any.
