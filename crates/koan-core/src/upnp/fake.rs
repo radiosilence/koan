@@ -39,6 +39,10 @@ pub struct FakeRenderer {
     /// Ignore a seek unless playing, as several renderers do while they
     /// open a file.
     pub seeks_only_playing: std::sync::atomic::AtomicBool,
+    /// Fault `SetNextAVTransportURI`, as Kodi does while it opens a file.
+    pub refuses_next: std::sync::atomic::AtomicBool,
+    /// Switched off: the port is closed, so nothing connects.
+    off: std::sync::atomic::AtomicBool,
     stale_uri: Mutex<Option<String>>,
 }
 
@@ -58,11 +62,17 @@ impl FakeRenderer {
             events,
             lag: Default::default(),
             seeks_only_playing: Default::default(),
+            refuses_next: Default::default(),
+            off: Default::default(),
             stale_uri: Default::default(),
         });
         let serving = fake.clone();
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
+                if serving.off.load(std::sync::atomic::Ordering::Acquire) {
+                    // Dropping the listener closes the port.
+                    return;
+                }
                 let fake = serving.clone();
                 thread::spawn(move || fake.handle(stream));
             }
@@ -140,6 +150,15 @@ impl FakeRenderer {
             s.position_ms = 0;
         }
         self.notify_transport();
+    }
+
+    /// Switch it off: its port closes, and every request after this fails to
+    /// connect.
+    pub fn power_off(&self) {
+        self.off.store(true, std::sync::atomic::Ordering::Release);
+        // Wake the accept loop so it sees the flag and lets the port go.
+        let _ = TcpStream::connect(("127.0.0.1", self.port));
+        thread::sleep(std::time::Duration::from_millis(50));
     }
 
     pub fn set_position(&self, ms: u64) {
@@ -232,6 +251,21 @@ impl FakeRenderer {
                             .collect()
                     })
                     .unwrap_or_default();
+                if action == "SetNextAVTransportURI"
+                    && self.refuses_next.load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    self.state
+                        .lock()
+                        .actions
+                        .push((action.clone(), args.clone()));
+                    let fault = "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><s:Fault><faultcode>s:Client</faultcode><faultstring>UPnPError</faultstring><detail><UPnPError xmlns=\"urn:schemas-upnp-org:control-1-0\"><errorCode>501</errorCode><errorDescription>Action Failed</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>";
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{fault}",
+                        fault.len()
+                    );
+                    return;
+                }
                 let out = self.act(&action, &args);
                 let body: String = out
                     .iter()

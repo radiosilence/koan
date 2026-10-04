@@ -2508,4 +2508,105 @@ mod tests {
             player.process_command(PlayerCommand::Stop);
         }
     }
+
+    #[test]
+    fn a_next_track_refused_after_a_gapless_move_is_offered_again() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let mut r = rig(WAV, true, &["a.wav", "b.wav", "c.wav"]);
+        r.player.process_command(PlayerCommand::Play(r.ids[0]));
+        assert_eq!(r.count("SetNextAVTransportURI"), 1);
+
+        // It refuses the next track while it opens the one it moved on to.
+        r.fake.refuses_next.store(true, Relaxed);
+        r.fake.finish_track();
+        let second = r.ids[1];
+        r.pump_until(|p| p.shared_state.cursor() == Some(second));
+        assert_eq!(r.count("SetNextAVTransportURI"), 2);
+        assert!(
+            r.player.passthrough().unwrap().next_refused.is_none(),
+            "deferred, not given up on"
+        );
+
+        r.fake.refuses_next.store(false, Relaxed);
+        r.play_mut().next_retry = Some(Instant::now());
+        r.player.update_playback_state();
+        assert_eq!(r.count("SetNextAVTransportURI"), 3);
+        assert_eq!(
+            r.player.passthrough().unwrap().next.as_ref().map(|n| n.id),
+            Some(r.ids[2])
+        );
+    }
+
+    #[test]
+    fn a_goodbye_from_a_renderer_left_behind_does_not_drop_its_successor() {
+        let mut r = rig(WAV, false, &["a.wav"]);
+        r.player.process_command(PlayerCommand::Play(r.ids[0]));
+        let first_session = r.player.session;
+        let other = FakeRenderer::start(WAV, false, true);
+        let connection = upnp::open(other.renderer(), &r.player.command_sender()).unwrap();
+        r.player
+            .process_command(PlayerCommand::UseRenderer(Some(Box::new(connection))));
+
+        // The first renderer's goodbye, arriving after the switch.
+        r.player.process_command(PlayerCommand::Renderer {
+            session: first_session,
+            event: session::Event::Gone,
+        });
+        assert_eq!(
+            r.player.shared_state.renderer().map(|o| o.udn),
+            Some(other.renderer().udn)
+        );
+        assert!(r.player.renderer_loaded());
+    }
+
+    #[test]
+    fn a_renderer_gone_while_a_track_opens_leaves_it_here_paused() {
+        let mut r = rig(WAV, false, &["a.wav", "b.wav"]);
+        r.player.process_command(PlayerCommand::Play(r.ids[0]));
+        r.settle();
+        r.fake.power_off();
+
+        r.player.process_command(PlayerCommand::NextTrack);
+        assert!(r.player.renderer.is_none(), "the renderer is left");
+        let session = r.player.session().expect("the track is open here");
+        assert!(matches!(session.output, Output::Local(_)));
+        assert_eq!(session.track.id, r.ids[1]);
+        assert_eq!(r.state(), PlaybackState::Paused);
+    }
+
+    #[test]
+    fn losing_a_renderer_with_the_player_channel_full_does_not_hang() {
+        let (done, finished) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let mut r = rig(WAV, false, &["a.wav"]);
+            r.player.process_command(PlayerCommand::Play(r.ids[0]));
+            r.settle();
+            r.fake.power_off();
+            // Full, as when commands queue while a request to the renderer
+            // waits out its timeout.
+            let tx = r.player.command_sender();
+            while tx.try_send(PlayerCommand::TrackQueued).is_ok() {}
+            // Finds the renderer gone on the player's own thread.
+            r.player.process_command(PlayerCommand::Pause);
+            r.player.update_playback_state();
+            assert!(r.player.renderer.is_none());
+            done.send(()).unwrap();
+        });
+        assert!(
+            finished.recv_timeout(Duration::from_secs(15)).is_ok(),
+            "the player hung"
+        );
+    }
+
+    #[test]
+    fn picking_the_renderer_already_playing_does_nothing() {
+        let mut r = rig(WAV, false, &["a.wav"]);
+        r.player.process_command(PlayerCommand::Play(r.ids[0]));
+        let loads = r.count("SetAVTransportURI");
+        let again = upnp::open(r.fake.renderer(), &r.player.command_sender()).unwrap();
+        r.player
+            .process_command(PlayerCommand::UseRenderer(Some(Box::new(again))));
+        assert_eq!(r.count("SetAVTransportURI"), loads, "not loaded again");
+        assert_eq!(r.count("Stop"), 0);
+    }
 }
