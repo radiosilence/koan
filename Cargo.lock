@@ -2550,6 +2550,7 @@ dependencies = [
  "ring",
  "rtrb",
  "rusqlite",
+ "security-framework",
  "serde",
  "serde_json",
  "subtle",
