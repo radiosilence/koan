@@ -379,6 +379,18 @@ impl KoanEngine {
         offload::sequenced(move || self.send(PlayerCommand::PrevTrack)).await
     }
 
+    /// Shuffle on or off, here or on the device being controlled. On, the
+    /// rest of the queue is reordered at random; off, it goes back as it was.
+    pub async fn set_shuffle(self: Arc<Self>, on: bool) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send(PlayerCommand::SetShuffle(on))).await
+    }
+
+    /// What follows a track at its end, here or on the device being
+    /// controlled.
+    pub async fn set_repeat(self: Arc<Self>, mode: RepeatMode) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send(PlayerCommand::SetRepeat(mode.into()))).await
+    }
+
     pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::Seek(position_ms))).await
     }
@@ -1634,6 +1646,7 @@ impl KoanEngine {
             queries::save_playback_state(
                 &db.conn,
                 &persisted,
+                self.state.play_mode(),
                 cursor_path.as_deref(),
                 self.state.position_ms(),
                 self.state.playback_state() == PlaybackState::Playing,
@@ -1665,6 +1678,10 @@ impl KoanEngine {
     pub async fn restore_session(self: Arc<Self>) -> Result<u32, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
+            // Before the queue and whether there is one: the mode is the
+            // player's, and a queue added under it would be shuffled again.
+            let mode = queries::load_play_mode(&db.conn).map_err(fav_err)?;
+            self.send_local(PlayerCommand::RestorePlayMode(mode))?;
             let Some(saved) = queries::load_playback_state(&db.conn).map_err(fav_err)? else {
                 return Ok(0);
             };
@@ -3195,6 +3212,8 @@ impl KoanEngine {
                 entry,
                 format: None,
                 playlist_version: 0,
+                shuffle: st.shuffle,
+                repeat_mode: st.repeat.into(),
             },
         });
         out.publish(StateSlice::Playhead {
@@ -3450,7 +3469,7 @@ impl KoanEngine {
         drop(db);
         let t_sweep = t0.elapsed();
 
-        let (state, _timeline, viz, tx) = Player::spawn();
+        let (state, _timeline, viz, tx) = Player::spawn_for_listening();
         let t_player = t0.elapsed();
 
         // Bumped by the background tasks below as well as by everything the UI
@@ -3553,6 +3572,8 @@ impl KoanEngine {
                     duration_ms: state.duration_ms(),
                     queue: held.as_ref().map(|(_, q)| q.clone()).unwrap_or_default(),
                     outputs: Some(koan_core::remote::outputs::local(&state)),
+                    shuffle: state.play_mode().shuffle,
+                    repeat: state.play_mode().repeat,
                 }
             }),
         });
@@ -3585,6 +3606,8 @@ impl KoanEngine {
                 .as_ref()
                 .map(|i| StreamFormat::of(i, self.state.output_sample_rate(), self.state.dsp())),
             playlist_version: self.state.playlist_version(),
+            shuffle: self.state.play_mode().shuffle,
+            repeat_mode: self.state.play_mode().repeat.into(),
         }
     }
 
@@ -3603,6 +3626,7 @@ impl KoanEngine {
             .map(|p| p.to_string_lossy().into_owned());
         queries::save_playback_position(
             &db.conn,
+            self.state.play_mode(),
             cursor_path.as_deref(),
             self.state.position_ms(),
             self.state.playback_state() == PlaybackState::Playing,
@@ -3657,6 +3681,8 @@ impl KoanEngine {
             PlayerCommand::Seek(position_ms) => LinkCommand::Seek { position_ms },
             PlayerCommand::NextTrack => LinkCommand::Next,
             PlayerCommand::PrevTrack => LinkCommand::Previous,
+            PlayerCommand::SetShuffle(on) => LinkCommand::Shuffle { on },
+            PlayerCommand::SetRepeat(mode) => LinkCommand::Repeat { mode },
             PlayerCommand::AddToPlaylist(items) => LinkCommand::Enqueue {
                 track_ids: tracks(&items)?,
             },
@@ -4048,6 +4074,8 @@ impl KoanEngine {
             LinkCommand::Resume => self.send_local(PlayerCommand::Resume),
             LinkCommand::Next => self.send_local(PlayerCommand::NextTrack),
             LinkCommand::Previous => self.send_local(PlayerCommand::PrevTrack),
+            LinkCommand::Shuffle { on } => self.send_local(PlayerCommand::SetShuffle(on)),
+            LinkCommand::Repeat { mode } => self.send_local(PlayerCommand::SetRepeat(mode)),
         };
         if let Err(e) = result {
             log::warn!("link: {e}");
@@ -4176,7 +4204,10 @@ fn restore_items(db: &Database, saved: &[PersistedQueueItem]) -> Vec<PlaylistIte
         .iter()
         .zip(ids)
         .map(|(saved_item, id)| match id.and_then(|_| resolved.next()) {
-            Some(item) => item,
+            Some(item) => PlaylistItem {
+                pre_shuffle: saved_item.pre_shuffle,
+                ..item
+            },
             None => saved_item.to_playlist_item(),
         })
         .collect()
@@ -4516,6 +4547,7 @@ mod restore_tests {
             disc: None,
             duration_ms: None,
             db_id,
+            pre_shuffle: None,
         }
     }
 

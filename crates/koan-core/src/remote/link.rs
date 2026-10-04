@@ -114,6 +114,15 @@ pub enum LinkCommand {
     },
     Undo,
     Redo,
+    /// Turn shuffle on or off: the rest of the queue reordered at random, or
+    /// put back as it was.
+    Shuffle {
+        on: bool,
+    },
+    /// What follows a track at its end: `off`, `queue` or `one`.
+    Repeat {
+        mode: crate::player::state::Repeat,
+    },
     /// Send this device's queue and playhead to the device `to`, as a `play`,
     /// and pause here. The device holding the queue does it, so taking music
     /// from another device and sending it there are one command.
@@ -222,6 +231,8 @@ impl LinkCommand {
             | Self::MoveItems { .. }
             | Self::Undo
             | Self::Redo
+            | Self::Shuffle { .. }
+            | Self::Repeat { .. }
             | Self::HandOff { .. }
             | Self::Devices { .. }
             | Self::SetOutput { .. }
@@ -258,6 +269,10 @@ pub struct LinkState {
     /// What the device can play through, for the device controlling it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outputs: Option<LinkOutputs>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shuffle: bool,
+    #[serde(default, skip_serializing_if = "crate::player::state::Repeat::is_off")]
+    pub repeat: crate::player::state::Repeat,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

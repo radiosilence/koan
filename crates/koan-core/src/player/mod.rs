@@ -20,7 +20,10 @@ use crate::remote::client::PlaybackReportState;
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
 use history::{InFlight, PlayEvent, PlayRecorder, PlaybackReport};
-use state::{ItemState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
+use state::{
+    ItemState, PlayMode, PlaybackSource, PlaybackState, QueueItemId, Repeat, SharedPlayerState,
+    TrackInfo,
+};
 use undo::{UndoEntry, UndoStack};
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
@@ -142,6 +145,9 @@ pub struct Player {
     /// The UPnP renderer chosen as the output, when one is: every session
     /// opened while it is set plays there. Not a transport of its own.
     renderer: Option<renderer::RendererLink>,
+    /// Shuffle and repeat. Published by `publish`, which the queue's own
+    /// reads follow.
+    mode: PlayMode,
     /// Playback sessions started — lets tests assert how many engine restarts
     /// an operation costs.
     #[cfg(test)]
@@ -153,6 +159,9 @@ pub struct Player {
     dsp_override: Option<Arc<crate::audio::dsp::Setup>>,
     #[cfg(test)]
     renderer_dsp_override: Option<Arc<crate::audio::dsp::Setup>>,
+    /// The renderer used last time is being looked for, and is to be gone
+    /// back to if it turns up before anyone plays or picks an output.
+    resume_renderer: bool,
 }
 
 struct DspCache {
@@ -312,6 +321,7 @@ impl Player {
             session: 0,
             silence_waiters: Vec::new(),
             renderer: None,
+            mode: PlayMode::default(),
             timeline,
             viz_buffer,
             viz_snapshot,
@@ -330,6 +340,7 @@ impl Player {
             dsp_override: None,
             #[cfg(test)]
             renderer_dsp_override: None,
+            resume_renderer: false,
         }
     }
 
@@ -584,6 +595,8 @@ impl Player {
 
         if let Err(e) = crate::config::Config::persist(|cfg| {
             cfg.playback.output_device = Some(name);
+            cfg.playback.renderer = None;
+            cfg.playback.renderer_name = None;
         }) {
             log::error!("failed to save output device config: {}", e);
         }
@@ -602,6 +615,8 @@ impl Player {
 
         if let Err(e) = crate::config::Config::persist(|cfg| {
             cfg.playback.output_device = None;
+            cfg.playback.renderer = None;
+            cfg.playback.renderer_name = None;
         }) {
             log::error!("failed to save output device config: {}", e);
         }
@@ -702,6 +717,7 @@ impl Player {
         if state.dsp() != dsp {
             state.set_dsp(dsp);
         }
+        state.set_play_mode(self.mode);
     }
 
     /// What the listener last asked for: to hear something, to have it
@@ -732,6 +748,11 @@ impl Player {
     /// Play a specific item in the playlist by ID.
     /// Sets cursor, starts playback if Ready or streaming-ready, otherwise waits for TrackReady.
     pub fn play(&mut self, id: QueueItemId) {
+        // Asked for by name, so a new play even of the item playing: from the
+        // top, not a seek within what was heard.
+        if self.in_flight.as_ref().is_some_and(|f| f.item == id) {
+            self.finish_play();
+        }
         self.forget_waiting();
         self.shared_state.set_cursor(Some(id));
 
@@ -1027,13 +1048,15 @@ impl Player {
         steps: Arc<parking_lot::Mutex<Vec<state::Lookahead>>>,
     ) -> impl Fn() -> Option<(QueueItemId, PathBuf)> + Send + 'static {
         let state = self.shared_state.clone();
+        let timeline = self.timeline.clone();
         move || {
             let mut steps = steps.lock();
             let current = match steps.last() {
                 None => id,
                 Some(step) => step.chosen.as_ref()?.0,
             };
-            let step = state.lookahead_after(current)?;
+            let mut step = state.lookahead_after(current)?;
+            step.boundary = timeline.boundary_count();
             let next = step.chosen.clone();
             steps.push(step);
             next
@@ -1636,21 +1659,32 @@ impl Player {
         }
     }
 
-    /// The needle has moved to `id`. Close out the outgoing track and write
-    /// the new one to history straight away, so history reads in play order
-    /// even for a track that is skipped a moment later.
-    ///
-    /// A seek restarts playback of the same track, so identity is checked
-    /// rather than closing unconditionally — otherwise scrubbing around a
-    /// track would enter it into history once per seek.
+    /// A session has opened on `id`. A seek restarts playback of the same
+    /// track, so the play in flight carries on when it is the same item —
+    /// otherwise scrubbing around a track would enter it into history once
+    /// per seek. Everything that ends a play and opens the same item again,
+    /// as a new one, closes the old play first: `play`, a repeat at the end
+    /// of a session.
     fn on_track_changed(&mut self, id: QueueItemId, position_ms: u64) {
         if let Some(f) = self.in_flight.as_mut().filter(|f| f.item == id) {
             f.jump(position_ms);
+            // The session is new, so the play is its first boundary.
+            f.boundary = 0;
             return;
         }
+        self.begin_play(id, position_ms, 0);
+    }
+
+    /// The needle has moved to a new play of `id`, at `boundary` of the
+    /// session. Close out the outgoing play and write the new one to history
+    /// straight away, so history reads in play order even for a track that
+    /// is skipped a moment later.
+    fn begin_play(&mut self, id: QueueItemId, position_ms: u64, boundary: usize) {
         self.finish_play();
         let track_id = self.shared_state.item_db_id(id);
-        self.in_flight = Some(InFlight::new(id, track_id, position_ms));
+        let mut flight = InFlight::new(id, track_id, position_ms);
+        flight.boundary = boundary;
+        self.in_flight = Some(flight);
         if let (Some(track_id), Some(recorder)) = (track_id, self.history.as_ref()) {
             recorder.record(PlayEvent::Started {
                 track_id,
@@ -1669,7 +1703,7 @@ impl Player {
             .renderer_clock()
             .map(|_| self.shared_state.position_ms());
         if let Some(f) = self.in_flight.as_mut()
-            && let Some(at) = self.timeline.position_of(f.item).or(renderer_at)
+            && let Some(at) = self.timeline.position_in(f.boundary).or(renderer_at)
         {
             f.advance(at);
         }
@@ -1741,16 +1775,22 @@ impl Player {
 
     /// A gapless transition moves the playhead into the next track without
     /// anything on this thread asking, so the play is banked, the session's
-    /// track moved on and the cursor brought along from here.
+    /// track moved on and the cursor brought along from here. A play is its
+    /// boundary: an item repeated runs into itself, and that is a new play.
     fn follow_playhead(&mut self) {
         if self.session().is_none() {
             return;
         }
-        let Some((id, position_ms)) = self.timeline.playhead() else {
+        let Some(playhead) = self.timeline.playhead() else {
             return;
         };
-        if self.in_flight.as_ref().is_none_or(|f| f.item != id) {
-            self.on_track_changed(id, position_ms);
+        let id = playhead.id;
+        if self
+            .in_flight
+            .as_ref()
+            .is_none_or(|f| f.item != id || f.boundary != playhead.boundary)
+        {
+            self.begin_play(id, playhead.position_ms, playhead.boundary);
         }
         let Transport::Loaded(session) = &mut self.transport else {
             return;
@@ -1797,10 +1837,6 @@ impl Player {
     /// Decode thread naturally finished (playlist exhausted or error).
     /// Advance to the next playable track; otherwise stop cleanly.
     ///
-    /// A track that has not finished downloading parks the cursor on it, so its
-    /// `TrackReady`/`TrackStreamReady` resumes the queue instead of being
-    /// discarded as "not the cursor".
-    ///
     /// Ignored from a session already torn down: a play or seek handled after
     /// the message was sent has replaced what it describes.
     fn on_decode_finished(&mut self, session: u64) {
@@ -1808,7 +1844,43 @@ impl Player {
             return;
         }
         log::info!("decode finished, checking for next track");
-        let next = self.shared_state.advance_cursor_loadable();
+        self.track_ended();
+    }
+
+    /// The track under the playhead played out, here or on a renderer. Go on
+    /// as the play mode says: the same item again under repeat one, the next
+    /// otherwise, from the top again when the queue repeats.
+    ///
+    /// A track that has not finished downloading parks the cursor on it, so its
+    /// `TrackReady`/`TrackStreamReady` resumes the queue instead of being
+    /// discarded as "not the cursor".
+    ///
+    /// Opening the item that just ended again — repeating it, or a queue of
+    /// one repeating — closes the play that ended first, so the session that
+    /// opens is a new play rather than a seek within it. A repeat of something
+    /// that played for no time at all — a file that opens but decodes nothing
+    /// — would go round forever, so it stops instead.
+    fn track_ended(&mut self) {
+        self.bank_listening();
+        let ended = self.in_flight.as_ref().map(|f| f.item);
+        let heard = self.in_flight.as_ref().is_some_and(|f| f.listened_ms() > 0);
+        if self.mode.repeat != Repeat::Off && !heard {
+            log::info!("track ended with nothing heard; not repeating it");
+            self.stop_playback_and_clear_state();
+            return;
+        }
+        let again = (self.mode.repeat == Repeat::One)
+            .then(|| self.shared_state.cursor())
+            .flatten()
+            .filter(|id| {
+                self.shared_state
+                    .item_state(*id)
+                    .is_some_and(|s| !matches!(s, ItemState::Failed(_)))
+            });
+        let next = again.or_else(|| self.shared_state.advance_cursor_loadable());
+        if next.is_some() && next == ended {
+            self.finish_play();
+        }
         self.carry_on(next, self.intent());
     }
 
@@ -1826,22 +1898,21 @@ impl Player {
             return;
         }
         self.update_playback_state();
-        let Some((playing, position_ms)) = self.timeline.playhead() else {
+        let Some(playhead) = self.timeline.playhead() else {
             return;
         };
-        let Some(session) = self.session().filter(|s| s.track.id == playing) else {
+        let position_ms = playhead.position_ms;
+        let Some(session) = self.session().filter(|s| s.track.id == playhead.id) else {
             return;
         };
         let stale = {
             let steps = session.lookahead.lock();
-            // The steps the playhead has yet to reach: those after the one
-            // that chose what is playing.
-            let ahead = steps
+            // The steps the playhead has yet to reach: those that open a
+            // boundary past the one it is in. By boundary, not by the item
+            // chosen — an item repeated is chosen by every step.
+            steps
                 .iter()
-                .rposition(|step| step.chosen.as_ref().is_some_and(|(id, _)| *id == playing))
-                .map_or(0, |at| at + 1);
-            steps[ahead..]
-                .iter()
+                .filter(|step| step.boundary > playhead.boundary)
                 .any(|step| !self.shared_state.still_follows(step))
         };
         if !stale {
@@ -1878,6 +1949,20 @@ impl Player {
 
     /// Process a single command.
     pub fn process_command(&mut self, cmd: PlayerCommand) {
+        // Someone wants to hear something, or has picked where: the renderer
+        // remembered from last time is no longer what to go back to. A cue is
+        // how a session is restored at launch, which is what the renderer is
+        // to carry on with, so it is not one of them.
+        if cmd.asks_to_play() && !matches!(cmd, PlayerCommand::Cue { .. })
+            || matches!(
+                cmd,
+                PlayerCommand::UseRenderer(_)
+                    | PlayerCommand::SetOutputDevice(_)
+                    | PlayerCommand::ClearOutputDevice
+            )
+        {
+            self.resume_renderer = false;
+        }
         let edits_queue = matches!(
             cmd,
             PlayerCommand::AddToPlaylist(_)
@@ -1889,6 +1974,9 @@ impl Player {
                 | PlayerCommand::ReorderPlaylist(_)
                 | PlayerCommand::Undo
                 | PlayerCommand::Redo
+                | PlayerCommand::SetShuffle(_)
+                | PlayerCommand::SetRepeat(_)
+                | PlayerCommand::RestorePlayMode(_)
         );
         self.apply_command(cmd);
         if edits_queue {
@@ -1927,7 +2015,15 @@ impl Player {
             PlayerCommand::PrevTrack => self.prev_track(),
             PlayerCommand::AddToPlaylist(items) => {
                 let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
+                let whole = self.shared_state.is_empty();
                 self.shared_state.add_items(items);
+                // Into an empty queue, an add is a queue arriving whole.
+                if whole
+                    && self.mode.shuffle
+                    && let Some(&first) = ids.first()
+                {
+                    self.shared_state.shuffle_from(first);
+                }
                 self.push_undo(UndoEntry::Added { ids });
             }
             PlayerCommand::UpdatePaths(updates) => {
@@ -1960,6 +2056,9 @@ impl Player {
                 // swap one change: see `SharedPlayerState::replace_playlist`.
                 self.stop_playback_and_clear_state();
                 let (old_items, cursor) = self.shared_state.replace_playlist(items);
+                if self.mode.shuffle {
+                    self.shared_state.shuffle_from(start_id);
+                }
                 self.push_undo(UndoEntry::Replaced {
                     items: old_items,
                     cursor,
@@ -2060,10 +2159,54 @@ impl Player {
             }
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
             PlayerCommand::ReloadDsp => self.reload_dsp(),
-            PlayerCommand::UseRenderer(connection) => self.use_renderer(connection),
+            PlayerCommand::UseRenderer(connection) => {
+                self.remember_renderer(connection.as_deref());
+                self.use_renderer(connection);
+            }
+            PlayerCommand::ResumeRenderer(connection) => {
+                if std::mem::take(&mut self.resume_renderer) && self.renderer.is_none() {
+                    log::info!(
+                        "upnp: back to {}, as last time",
+                        connection.session.renderer().name
+                    );
+                    self.use_renderer(Some(connection));
+                } else {
+                    log::info!(
+                        "upnp: not going back to {}: playback or the output moved first",
+                        connection.session.renderer().name
+                    );
+                }
+            }
             PlayerCommand::SetRendererVolume(volume) => self.set_renderer_volume(volume),
             PlayerCommand::Renderer { session, event } => self.on_renderer_event(session, event),
+            PlayerCommand::SetShuffle(on) => self.set_shuffle(on),
+            PlayerCommand::SetRepeat(repeat) => self.mode.repeat = repeat,
+            PlayerCommand::RestorePlayMode(mode) => self.mode = mode,
         }
+    }
+
+    /// Turn shuffle on or off, as one undoable step.
+    ///
+    /// On, the items after the cursor go in a random order, each keeping a
+    /// note of where it stood. Off, they go back where they stood, in the
+    /// places such items occupy now, so an item added meanwhile stays put.
+    /// The queue is the order things play in either way: the lookahead, the
+    /// downloads and every remote queue simply follow it.
+    fn set_shuffle(&mut self, on: bool) {
+        if self.mode.shuffle == on {
+            return;
+        }
+        let order = self.shared_state.shuffle_order();
+        if on {
+            self.shared_state.shuffle_after_cursor();
+        } else {
+            self.shared_state.unshuffle();
+        }
+        self.push_undo(UndoEntry::Shuffled {
+            shuffle: self.mode.shuffle,
+            order,
+        });
+        self.mode.shuffle = on;
     }
 
     /// Stop, then clear the playlist as one undoable step. Playback and display
@@ -2119,6 +2262,15 @@ impl Player {
                     items: current_items,
                     cursor: current_cursor,
                 }
+            }
+            UndoEntry::Shuffled { shuffle, order } => {
+                let inverse = UndoEntry::Shuffled {
+                    shuffle: self.mode.shuffle,
+                    order: self.shared_state.shuffle_order(),
+                };
+                self.shared_state.restore_shuffle_order(&order);
+                self.mode.shuffle = shuffle;
+                inverse
             }
             UndoEntry::Batch(entries) => {
                 // Apply entries in reverse order, collect inverses.
@@ -2246,7 +2398,55 @@ impl Player {
 
     /// Spawn the player on a background thread, returning the shared state,
     /// timeline, visualization snapshot, and command sender.
+    /// Remember the renderer picked as the output, or that this device's own
+    /// was, for the next launch. Only a choice is remembered: a renderer that
+    /// drops off the network is gone back to next time.
+    fn remember_renderer(&self, connection: Option<&crate::upnp::Connection>) {
+        let renderer = connection.map(|c| c.session.renderer());
+        if let Err(e) = crate::config::Config::persist(|cfg| {
+            cfg.playback.renderer = renderer.map(|r| r.udn.clone());
+            cfg.playback.renderer_name = renderer.map(|r| r.name.clone());
+        }) {
+            log::error!("failed to save the output: {e}");
+        }
+    }
+
+    /// Spawn a player for a process that does not own an output of its own:
+    /// `koan serve`, `koan mcp`. It plays where it is told and nowhere else.
     pub fn spawn() -> (
+        Arc<SharedPlayerState>,
+        Arc<PlaybackTimeline>,
+        Arc<VizSnapshot>,
+        crossbeam_channel::Sender<PlayerCommand>,
+    ) {
+        Self::spawn_with(false)
+    }
+
+    /// Spawn the player for an app someone listens through: the macOS and iOS
+    /// apps and `koan play`. It goes back to the renderer used last time if
+    /// that turns up at launch (`upnp::resume`). A headless process must not:
+    /// the config is the machine's, and it would take the amplifier from the
+    /// app.
+    pub fn spawn_for_listening() -> (
+        Arc<SharedPlayerState>,
+        Arc<PlaybackTimeline>,
+        Arc<VizSnapshot>,
+        crossbeam_channel::Sender<PlayerCommand>,
+    ) {
+        Self::spawn_with(true)
+    }
+
+    /// The renderer to go back to at launch: the one used last time, for a
+    /// player someone listens through.
+    fn renderer_to_resume(listening: bool) -> Option<String> {
+        listening
+            .then(|| crate::config::Config::cached().playback.renderer.clone())
+            .flatten()
+    }
+
+    fn spawn_with(
+        listening: bool,
+    ) -> (
         Arc<SharedPlayerState>,
         Arc<PlaybackTimeline>,
         Arc<VizSnapshot>,
@@ -2265,6 +2465,11 @@ impl Player {
             state.clone(),
         ));
 
+        if let Some(udn) = Self::renderer_to_resume(listening) {
+            player.resume_renderer = true;
+            crate::upnp::resume(udn, &tx);
+        }
+
         thread::Builder::new()
             .name("koan-player".into())
             .spawn(move || player.run())
@@ -2276,6 +2481,18 @@ impl Player {
 
 #[cfg(test)]
 mod tests {
+    /// `koan serve` and `koan mcp` read the same config as the app, and must
+    /// not go looking for the app's amplifier.
+    #[test]
+    fn a_headless_player_does_not_go_back_to_a_renderer() {
+        crate::config::isolate_config_for_tests();
+        crate::config::Config::persist(|cfg| {
+            cfg.playback.renderer = Some("uuid:headless-test".into());
+        })
+        .unwrap();
+        assert_eq!(Player::renderer_to_resume(false), None);
+    }
+
     #[test]
     fn a_download_in_progress_is_known_by_its_own_extension() {
         use std::path::Path;
@@ -2323,6 +2540,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             state: ItemState::Ready,
+            pre_shuffle: None,
         }
     }
 
@@ -2960,6 +3178,17 @@ mod tests {
     /// `names` as WAVs of `seconds` each, the first playing. Long enough ones
     /// fill the ring before the decoder reaches the end of the queue.
     fn wavs_playing(dir: &Path, names: &[&str], seconds: f32) -> (Player, Vec<QueueItemId>) {
+        wavs_in(dir, names, seconds, Repeat::Off)
+    }
+
+    /// `wavs_playing`, under `repeat` from the start. Each has a library id,
+    /// its index plus one, so history records it.
+    fn wavs_in(
+        dir: &Path,
+        names: &[&str],
+        seconds: f32,
+        repeat: Repeat,
+    ) -> (Player, Vec<QueueItemId>) {
         let mut player = Player::new();
         player.backend = Box::new(StuckBackend {
             rate: 8_000.0,
@@ -2968,19 +3197,253 @@ mod tests {
         });
         let items: Vec<_> = names
             .iter()
-            .map(|name| {
+            .zip(1..)
+            .map(|(name, track)| {
                 let path = dir.join(format!("{name}.wav"));
                 crate::test_utils::generate_wav(&path, 8_000, 1, seconds, 16);
                 PlaylistItem {
                     path,
+                    db_id: Some(track),
                     ..make_item(name)
                 }
             })
             .collect();
         let ids: Vec<_> = items.iter().map(|i| i.id).collect();
         player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::SetRepeat(repeat));
         player.process_command(PlayerCommand::Play(ids[0]));
         (player, ids)
+    }
+
+    /// What the decoder has queued after the playhead, once it is at least `n`.
+    fn queued_at_least(player: &Player, n: usize) -> Vec<QueueItemId> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let queued = player.timeline.queued_after_playhead();
+            if queued.len() >= n {
+                return queued;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the decoder queued {queued:?}, never {n}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    // --- play modes ---
+
+    #[test]
+    fn repeating_the_queue_runs_the_last_track_into_the_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, ids) = wavs_in(dir.path(), &["a", "b"], 1.0, Repeat::Queue);
+
+        let queued = queued_at_least(&player, 3);
+        assert_eq!(
+            queued[..3],
+            [ids[1], ids[0], ids[1]],
+            "gapless, round again"
+        );
+        let steps = player.session().unwrap().lookahead.lock().clone();
+        assert!(!steps[0].wrapped);
+        let wrap = steps.iter().find(|s| s.after == ids[1]).unwrap();
+        assert_eq!(wrap.next, Some(ids[0]));
+        assert!(wrap.wrapped);
+        assert_eq!(player.playback_starts, 1);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn turning_repeat_off_takes_back_a_wrap_already_queued() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, ids) = wavs_in(dir.path(), &["a"], 1.0, Repeat::Queue);
+        assert_eq!(queued_at_least(&player, 1)[0], ids[0]);
+
+        player.process_command(PlayerCommand::SetRepeat(Repeat::Off));
+        assert_eq!(player.playback_starts, 2, "restarted at the playhead");
+        wait_for_lookahead(&player);
+        assert!(player.timeline.queued_after_playhead().is_empty());
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn repeating_one_track_queues_it_again_and_each_pass_is_a_play() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, ids) = wavs_in(dir.path(), &["a", "b"], 1.0, Repeat::One);
+        let (recorder, events) = history::PlayRecorder::capture();
+        player.history = Some(recorder);
+        // The first pass as a play would have it, now there is somewhere to
+        // record it.
+        player.in_flight = None;
+        player.on_track_changed(ids[0], 0);
+
+        assert_eq!(queued_at_least(&player, 2)[..2], [ids[0], ids[0]]);
+        // Into the second pass: one second of 8 kHz mono and a little more.
+        player
+            .timeline
+            .samples_played
+            .store(8_400, Ordering::Relaxed);
+        player.update_playback_state();
+
+        let flight = player.in_flight.as_ref().unwrap();
+        assert_eq!((flight.item, flight.boundary), (ids[0], 1));
+        assert_eq!(player.shared_state.cursor(), Some(ids[0]));
+        let events: Vec<_> = events.try_iter().collect();
+        let started = events
+            .iter()
+            .filter(|e| matches!(e, PlayEvent::Started { track_id: 1, .. }))
+            .count();
+        assert_eq!(started, 2, "two plays: {events:?}");
+        assert!(
+            events.contains(&PlayEvent::Finished {
+                track_id: 1,
+                listened_ms: 1_000
+            }),
+            "the first pass banked whole: {events:?}"
+        );
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn next_moves_on_from_a_track_repeating() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, ids) = wavs_in(dir.path(), &["a", "b"], 1.0, Repeat::One);
+
+        player.process_command(PlayerCommand::NextTrack);
+        assert_eq!(playing_id(&player), Some(ids[1]));
+        player.process_command(PlayerCommand::NextTrack);
+        assert_eq!(
+            playing_id(&player),
+            Some(ids[0]),
+            "round from the last, as repeating does"
+        );
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn a_repeat_of_nothing_heard_stops_rather_than_going_round() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, _) = wavs_in(dir.path(), &["a"], 1.0, Repeat::One);
+
+        // Nothing plays through the stuck output, so the session that ends
+        // has nothing heard of it: a file that decodes to nothing.
+        player.process_command(PlayerCommand::DecodeFinished(player.session));
+        assert!(matches!(player.transport, Transport::Idle));
+    }
+
+    #[test]
+    fn shuffle_on_and_off_again_puts_the_queue_back() {
+        let mut player = Player::new();
+        let ids = seed(&mut player, 20);
+        pretend_playing(&mut player, ids[3]);
+
+        player.process_command(PlayerCommand::SetShuffle(true));
+        let shuffled = playlist_ids(&player);
+        assert!(player.shared_state.play_mode().shuffle);
+        assert_eq!(
+            shuffled[..4],
+            ids[..4],
+            "nothing up to the playing track moves"
+        );
+        assert_ne!(shuffled, ids);
+        let mut sorted = shuffled.clone();
+        sorted.sort_by_key(|id| ids.iter().position(|i| i == id));
+        assert_eq!(sorted, ids, "the same items");
+
+        let extra = make_item("extra");
+        let extra_id = extra.id;
+        player.process_command(PlayerCommand::InsertInPlaylist {
+            items: vec![extra],
+            after: ids[3],
+        });
+        player.process_command(PlayerCommand::RemoveFromPlaylist(ids[10]));
+        player.process_command(PlayerCommand::SetShuffle(false));
+
+        let mut expected = ids.clone();
+        expected.remove(10);
+        expected.insert(4, extra_id);
+        assert_eq!(playlist_ids(&player), expected, "added since stays put");
+        assert!(!player.shared_state.play_mode().shuffle);
+        assert!(
+            player
+                .shared_state
+                .shuffle_order()
+                .iter()
+                .all(|(_, pre)| pre.is_none())
+        );
+    }
+
+    #[test]
+    fn a_queue_replaced_while_shuffled_plays_shuffled_from_its_start() {
+        let mut player = Player::new();
+        seed(&mut player, 3);
+        player.process_command(PlayerCommand::SetShuffle(true));
+
+        let items: Vec<_> = (0..20).map(|i| make_item(&format!("n{i}"))).collect();
+        let given: Vec<_> = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items,
+            start: 5,
+            position_ms: 0,
+            play: false,
+        });
+        let shuffled = playlist_ids(&player);
+        assert_eq!(shuffled[0], given[5], "the start first");
+        assert_eq!(player.shared_state.cursor(), Some(given[5]));
+        assert_ne!(shuffled, given);
+
+        player.process_command(PlayerCommand::SetShuffle(false));
+        assert_eq!(
+            playlist_ids(&player),
+            given,
+            "off gives the queue as it came"
+        );
+    }
+
+    #[test]
+    fn a_queue_added_to_an_empty_one_while_shuffled_plays_shuffled() {
+        let mut player = Player::new();
+        player.process_command(PlayerCommand::SetShuffle(true));
+        let given = seed(&mut player, 20);
+        assert_eq!(playlist_ids(&player)[0], given[0]);
+        assert_ne!(playlist_ids(&player), given);
+
+        player.process_command(PlayerCommand::SetShuffle(false));
+        assert_eq!(playlist_ids(&player), given);
+    }
+
+    #[test]
+    fn shuffle_is_one_undo_step() {
+        let mut player = Player::new();
+        let ids = seed(&mut player, 10);
+        pretend_playing(&mut player, ids[0]);
+
+        player.process_command(PlayerCommand::SetShuffle(true));
+        let shuffled = playlist_ids(&player);
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_ids(&player), ids);
+        assert!(!player.shared_state.play_mode().shuffle);
+
+        player.process_command(PlayerCommand::Redo);
+        assert_eq!(playlist_ids(&player), shuffled);
+        assert!(player.shared_state.play_mode().shuffle);
+        player.process_command(PlayerCommand::SetShuffle(false));
+        assert_eq!(
+            playlist_ids(&player),
+            ids,
+            "the redone shuffle still unwinds"
+        );
+    }
+
+    #[test]
+    fn removing_the_last_track_playing_carries_on_from_the_top_when_repeating() {
+        let mut player = Player::new();
+        let ids = seed(&mut player, 3);
+        player.process_command(PlayerCommand::SetRepeat(Repeat::Queue));
+        player.shared_state.set_cursor(Some(ids[2]));
+
+        player.process_command(PlayerCommand::RemoveFromPlaylist(ids[2]));
+        assert_eq!(player.shared_state.cursor(), Some(ids[0]));
     }
 
     #[test]
@@ -3223,15 +3686,7 @@ mod tests {
     /// Commands a listener can send that ask for sound. Anything else may only
     /// keep playing what was already playing or on its way to.
     pub(super) fn asks_to_play(cmd: &PlayerCommand) -> bool {
-        matches!(
-            cmd,
-            PlayerCommand::Play(_)
-                | PlayerCommand::Cue { play: true, .. }
-                | PlayerCommand::Resume
-                | PlayerCommand::NextTrack
-                | PlayerCommand::PrevTrack
-                | PlayerCommand::ReplacePlaylist { play: true, .. }
-        )
+        cmd.asks_to_play()
     }
 
     /// Check the invariants #679 sets out, as far as they can be seen from
@@ -3302,6 +3757,25 @@ mod tests {
         if !asked && !wanted_before && state.wants_to_play() {
             return Err("started without being asked".into());
         }
+        if state.play_mode() != player.mode {
+            return Err("the published mode disagrees with the player".into());
+        }
+        if !player.mode.shuffle && state.shuffle_order().iter().any(|(_, pre)| pre.is_some()) {
+            return Err("shuffle is off, but an item remembers a place to go back to".into());
+        }
+        if player.mode.repeat == Repeat::Off
+            && let Some(session) = player.session()
+            && let Some(playhead) = player.timeline.playhead()
+            && session.track.id == playhead.id
+            && session
+                .lookahead
+                .lock()
+                .iter()
+                .filter(|step| step.boundary > playhead.boundary)
+                .any(|step| step.wrapped || step.next == Some(step.after))
+        {
+            return Err("repeat is off, but the decoder has queued a wrap".into());
+        }
         Ok(())
     }
 
@@ -3337,7 +3811,7 @@ mod tests {
             for step in 0..150 {
                 let ids = playlist_ids(&player);
                 let pick = |rng: &mut Rng| ids.get(rng.below(ids.len())).copied();
-                let cmd = match rng.below(20) {
+                let cmd = match rng.below(23) {
                     0 => pick(&mut rng).map(PlayerCommand::Play),
                     1 => pick(&mut rng).map(|id| PlayerCommand::Cue {
                         id,
@@ -3391,6 +3865,10 @@ mod tests {
                         player.session.wrapping_sub(1),
                     )),
                     18 => Some(PlayerCommand::ClearPlaylist),
+                    20 => Some(PlayerCommand::SetShuffle(rng.coin())),
+                    21 => Some(PlayerCommand::SetRepeat(
+                        [Repeat::Off, Repeat::Queue, Repeat::One][rng.below(3)],
+                    )),
                     _ => Some(PlayerCommand::ReplacePlaylist {
                         items: (0..3).map(|_| fresh(&mut rng)).collect(),
                         start: rng.below(4),
@@ -3401,6 +3879,8 @@ mod tests {
                 let Some(cmd) = cmd else { continue };
                 let label = format!("{cmd:?}");
                 let asked = asks_to_play(&cmd);
+                let replaced_shuffled = player.mode.shuffle
+                    && matches!(&cmd, PlayerCommand::ReplacePlaylist { items, .. } if items.len() > 1);
                 let wanted_before = player.shared_state.wants_to_play();
                 player.process_command(cmd);
                 // What the decode threads sent meanwhile, as the loop would
@@ -3411,7 +3891,18 @@ mod tests {
                 }
                 player.update_playback_state();
                 history.push(label);
-                if let Err(broken) = check_invariants(&player, wanted_before, asked) {
+                let broken = check_invariants(&player, wanted_before, asked)
+                    .err()
+                    .or_else(|| {
+                        (replaced_shuffled
+                            && player
+                                .shared_state
+                                .shuffle_order()
+                                .iter()
+                                .all(|(_, pre)| pre.is_none()))
+                        .then(|| "a queue replaced while shuffled plays in order".to_string())
+                    });
+                if let Some(broken) = broken {
                     let tail = history[history.len().saturating_sub(8)..].join("\n  ");
                     panic!("seed {seed}, step {step}: {broken}\nlast commands:\n  {tail}");
                 }

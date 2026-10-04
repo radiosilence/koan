@@ -99,6 +99,8 @@ final class PlayerModel {
     // is one account of each of these and no rule about when to refresh it.
 
     var isPlaying: Bool { mirror.playback.state == .playing }
+    var shuffle: Bool { mirror.playback.shuffle }
+    var repeatMode: RepeatMode { mirror.playback.repeatMode }
     /// Asked to play a track that has not arrived yet, which with nothing on
     /// screen to say so reads as a tap that did nothing. A wait paused by hand
     /// reads as paused, since it will open paused.
@@ -211,6 +213,19 @@ final class PlayerModel {
     func next() { attempt { try await self.engine.next() } }
     func previous() { attempt { try await self.engine.previous() } }
     func stop() { attempt { try await self.engine.stop() } }
+
+    func setShuffle(_ on: Bool) { attempt { try await self.engine.setShuffle(on: on) } }
+    func setRepeat(_ mode: RepeatMode) { attempt { try await self.engine.setRepeat(mode: mode) } }
+    func toggleShuffle() { setShuffle(!shuffle) }
+    /// Off, the queue, one, and round again — the one button's steps.
+    func cycleRepeat() {
+        let next: RepeatMode = switch repeatMode {
+        case .off: .queue
+        case .queue: .one
+        case .one: .off
+        }
+        setRepeat(next)
+    }
 
     func play(itemId: String) { attempt { try await self.engine.play(queueItemId: itemId) } }
 

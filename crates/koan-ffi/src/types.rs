@@ -252,6 +252,41 @@ pub struct NowPlaying {
     pub format: Option<StreamFormat>,
     /// Bumped on every queue mutation — cheap change detection for the UI.
     pub playlist_version: u64,
+    /// Shuffle is on: the queue after the current track was reordered at
+    /// random, and turning it off puts it back.
+    pub shuffle: bool,
+    pub repeat_mode: RepeatMode,
+}
+
+/// What follows a track at its end.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepeatMode {
+    Off,
+    /// The last track runs on into the first.
+    Queue,
+    /// The track plays again. Next and previous still move on.
+    One,
+}
+
+impl From<koan_core::player::state::Repeat> for RepeatMode {
+    fn from(r: koan_core::player::state::Repeat) -> Self {
+        use koan_core::player::state::Repeat;
+        match r {
+            Repeat::Off => Self::Off,
+            Repeat::Queue => Self::Queue,
+            Repeat::One => Self::One,
+        }
+    }
+}
+
+impl From<RepeatMode> for koan_core::player::state::Repeat {
+    fn from(r: RepeatMode) -> Self {
+        match r {
+            RepeatMode::Off => Self::Off,
+            RepeatMode::Queue => Self::Queue,
+            RepeatMode::One => Self::One,
+        }
+    }
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

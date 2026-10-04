@@ -5,18 +5,23 @@
 //! the art itself is often megabytes; doing that per tile made an albums grid
 //! pull tens of megabytes and seconds of server time. Resized covers are kept
 //! on disk under the config directory, keyed by the source file's path, size
-//! and mtime so a re-tag is a new key, and the hottest are also held in
-//! memory. An album with no art is remembered too, so a grid of them does not
-//! reopen every file on every visit.
+//! and mtime so a re-tag is a new key. An album with no art is remembered too,
+//! so a grid of them does not reopen every file on every visit.
+//!
+//! Nothing is held in memory: the kernel's page cache keeps hot files for
+//! free and gives the memory back under pressure, where a cache of our own
+//! would count against the process for as long as it runs. Decoding is the
+//! expensive part — a full-size cover is tens of megabytes of pixels — so it
+//! runs on a few threads of its own. A grid opening asks for hundreds of covers
+//! at once; on the blocking pool each request would decode on its own thread,
+//! and the allocator keeps what every one of those threads used.
 
-use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::LazyLock;
 
 use axum::body::Bytes;
 
 use koan_core::db::queries::TrackRow;
-use lru::LruCache;
 
 /// The sizes a cover is served at. A request is rounded up to one of these,
 /// which bounds what the cache can hold per album.
@@ -26,7 +31,6 @@ pub(crate) const GRID: u32 = 400;
 /// Headers, the player, and link previews.
 pub(crate) const LARGE: u32 = 800;
 
-const MEMORY_ENTRIES: usize = 512;
 /// How many of an album's tracks are opened looking for art before giving up.
 const TRACKS_TRIED: usize = 3;
 const JPEG_QUALITY: u8 = 85;
@@ -39,20 +43,23 @@ pub(crate) fn snap(size: Option<u32>) -> u32 {
         .unwrap_or(SIZES[SIZES.len() - 1])
 }
 
+/// The threads covers are decoded and resized on.
+static DECODE: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+    let threads = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(1, 4));
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .thread_name(|i| format!("koan-covers-{i}"))
+        .build()
+        .expect("cover threads")
+});
+
 pub struct Covers {
     dir: PathBuf,
-    /// `None` is an album with no art.
-    memory: Mutex<LruCache<String, Option<Bytes>>>,
 }
 
 impl Covers {
     pub fn new(dir: PathBuf) -> Self {
-        Self {
-            dir,
-            memory: Mutex::new(LruCache::new(
-                NonZeroUsize::new(MEMORY_ENTRIES).expect("non-zero"),
-            )),
-        }
+        Self { dir }
     }
 
     /// Covers kept under koan's config directory.
@@ -75,22 +82,17 @@ impl Covers {
         // Keyed on the first candidate: that is the file whose art is shown
         // whenever it has any.
         let (_, first_key) = sources.first()?;
-        let first_key = first_key.clone();
-        if let Some(hit) = self.memory.lock().ok()?.get(&first_key).cloned() {
+        if let Some(hit) = self.read_disk(first_key) {
             return hit;
         }
-        let found = self.read_disk(&first_key).or_else(|| {
-            let art = sources.iter().find_map(|(p, _)| {
+        let art = DECODE.install(|| {
+            sources.iter().find_map(|(p, _)| {
                 koan_core::index::metadata::extract_cover_art(p)
                     .and_then(|bytes| encode(&bytes, size))
-            });
-            self.write_disk(&first_key, art.as_deref());
-            Some(art.map(Bytes::from))
-        })?;
-        if let Ok(mut memory) = self.memory.lock() {
-            memory.put(first_key, found.clone());
-        }
-        found
+            })
+        });
+        self.write_disk(first_key, art.as_deref());
+        art.map(Bytes::from)
     }
 
     /// `Some(None)` is a remembered miss.
@@ -100,12 +102,20 @@ impl Covers {
     }
 
     /// An empty file records that there is no art. Failure to write is only a
-    /// lost cache entry.
+    /// lost cache entry. Requests that miss the same cover together each write
+    /// a temporary file of their own, so the one renamed into place last is
+    /// whole rather than another's half-written file.
     fn write_disk(&self, key: &str, art: Option<&[u8]>) {
+        static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let _ = std::fs::create_dir_all(&self.dir);
-        let tmp = self.dir.join(format!("{key}.tmp"));
-        if std::fs::write(&tmp, art.unwrap_or_default()).is_ok() {
-            let _ = std::fs::rename(&tmp, self.dir.join(key));
+        let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = self
+            .dir
+            .join(format!("{key}.{}-{n}.tmp", std::process::id()));
+        if std::fs::write(&tmp, art.unwrap_or_default()).is_ok()
+            && std::fs::rename(&tmp, self.dir.join(key)).is_err()
+        {
+            let _ = std::fs::remove_file(&tmp);
         }
     }
 }
@@ -156,6 +166,24 @@ mod tests {
         assert_eq!(snap(Some(401)), 800);
         assert_eq!(snap(Some(99_999)), 1200);
         assert_eq!(snap(None), LARGE);
+    }
+
+    #[test]
+    fn writers_racing_on_one_cover_leave_it_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let covers = Covers::new(dir.path().to_path_buf());
+        let arts: Vec<Vec<u8>> = (0..8u8).map(|i| vec![i; 256 * 1024]).collect();
+        for _ in 0..20 {
+            std::thread::scope(|s| {
+                for art in &arts {
+                    s.spawn(|| covers.write_disk("k-400.jpg", Some(art)));
+                }
+            });
+            let got = std::fs::read(dir.path().join("k-400.jpg")).unwrap();
+            assert!(arts.contains(&got), "a torn write of {} bytes", got.len());
+        }
+        let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(left.len(), 1, "no temporary files left behind");
     }
 
     #[test]

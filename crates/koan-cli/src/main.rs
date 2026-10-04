@@ -10,6 +10,13 @@ use koan_core::config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
 
+/// glibc's allocator gives each thread that allocates heavily an arena of its
+/// own and rarely returns what is freed in one, so a server that does bursts
+/// of work across many threads only ever grows. mimalloc gives freed memory
+/// back to the system.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 // --- Logger ---
 // All log messages go to ~/.config/koan/koan.log.
 // During playback, they're also buffered for the queue display.

@@ -11,6 +11,8 @@ enum Icon {
     static let playNext = "text.line.first.and.arrowtriangle.forward"
     static let queue = "text.append"
     static let shuffle = "shuffle"
+    static let repeatQueue = "repeat"
+    static let repeatOne = "repeat.1"
     /// Deal the album grid in a new random order. Playback is `shuffle`.
     static let reshuffle = "dice"
     static let next = "forward.fill"

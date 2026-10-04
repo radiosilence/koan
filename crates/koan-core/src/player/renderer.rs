@@ -1288,8 +1288,7 @@ impl Player {
                     {
                         play.loaded = false;
                     }
-                    let next = self.shared_state.advance_cursor_loadable();
-                    self.carry_on(next, self.intent());
+                    self.track_ended();
                 } else {
                     log::info!("upnp: renderer stopped at {at}ms");
                     self.renderer_released();
@@ -1397,7 +1396,9 @@ impl Player {
             running: Some(Instant::now()),
         }));
         self.shared_state.set_cursor(Some(id));
-        self.on_track_changed(id, 0);
+        // A new play even of the same item, repeated: the renderer opened it
+        // again.
+        self.begin_play(id, 0, 0);
         self.queue_next_on_renderer();
     }
 }
@@ -1431,6 +1432,7 @@ mod tests {
             disc: None,
             duration_ms: None,
             state: ItemState::Ready,
+            pre_shuffle: None,
         }
     }
 
@@ -1444,6 +1446,8 @@ mod tests {
     /// A player playing to a fake renderer, with `names` queued as ten-second
     /// WAVs (or MP3s, by extension).
     fn rig(sink: &'static str, gapless: bool, names: &[&str]) -> Rig {
+        // Picking a renderer is remembered in the config.
+        crate::config::isolate_config_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let fake = FakeRenderer::start(sink, gapless, true);
         let mut player = Player::new();
@@ -1730,6 +1734,32 @@ mod tests {
         r.pump_until(|p| p.shared_state.cursor() == Some(second));
         assert_eq!(r.count("SetAVTransportURI"), 2);
         assert_eq!(r.state(), PlaybackState::Playing);
+    }
+
+    #[test]
+    fn repeating_one_track_on_a_renderer_without_next_plays_it_again_as_a_new_play() {
+        let mut r = rig(WAV, false, &["a.wav", "b.wav"]);
+        let (recorder, events) = crate::player::history::PlayRecorder::capture();
+        r.player.history = Some(recorder);
+        r.player
+            .process_command(PlayerCommand::SetRepeat(crate::player::state::Repeat::One));
+        r.player.play(r.ids[0]);
+        r.at(29_500);
+        r.fake.finish_track();
+        r.await_count("SetAVTransportURI", 2);
+        r.settle();
+
+        assert_eq!(
+            r.player.shared_state.cursor(),
+            Some(r.ids[0]),
+            "the same item"
+        );
+        let track = r.player.shared_state.item_db_id(r.ids[0]).unwrap();
+        let started = events
+            .try_iter()
+            .filter(|e| matches!(e, crate::player::history::PlayEvent::Started { track_id, .. } if *track_id == track))
+            .count();
+        assert_eq!(started, 2, "two plays");
     }
 
     #[test]
@@ -2695,6 +2725,7 @@ mod tests {
     fn random_use_with_a_renderer_keeps_the_player_honest() {
         use crate::player::tests::{Rng, asks_to_play, check_invariants, playlist_ids};
 
+        crate::config::isolate_config_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.wav");
         crate::test_utils::generate_wav(&path, 8_000, 1, 30.0, 16);
@@ -2759,7 +2790,7 @@ mod tests {
                         at: Instant::now(),
                     }),
                 };
-                let cmd = match rng.below(23) {
+                let cmd = match rng.below(25) {
                     0 | 1 => pick(&mut rng).map(PlayerCommand::Play),
                     2 => pick(&mut rng).map(|id| PlayerCommand::Cue {
                         id,
@@ -2846,6 +2877,16 @@ mod tests {
                         };
                         Some(PlayerCommand::ReloadDsp)
                     }
+                    // A track ending under repeat one is a renderer finishing
+                    // one (15) while this holds.
+                    21 => Some(PlayerCommand::SetRepeat(
+                        [
+                            crate::player::state::Repeat::Off,
+                            crate::player::state::Repeat::Queue,
+                            crate::player::state::Repeat::One,
+                        ][rng.below(3)],
+                    )),
+                    22 => Some(PlayerCommand::SetShuffle(rng.coin())),
                     _ => Some(PlayerCommand::ReplacePlaylist {
                         items: (0..3).map(|_| fresh(&mut rng)).collect(),
                         start: rng.below(4),
@@ -3123,6 +3164,60 @@ mod tests {
             outputs::local(&r.player.shared_state).current,
             OutputChoice::Default
         );
+    }
+
+    /// Just after launch: this device's own output, the session restored
+    /// paused at 5s, and the renderer used last time being looked for.
+    fn launched() -> Rig {
+        let mut r = rig(WAV, true, &["a.wav", "b.wav"]);
+        r.player.use_renderer(None);
+        r.player.resume_renderer = true;
+        r.player.process_command(PlayerCommand::Cue {
+            id: r.ids[0],
+            position_ms: 5_000,
+            play: false,
+        });
+        r
+    }
+
+    fn found(r: &Rig) -> PlayerCommand {
+        let connection = upnp::open(r.fake.renderer(), &r.player.command_sender()).unwrap();
+        PlayerCommand::ResumeRenderer(Box::new(connection))
+    }
+
+    /// Found before anyone plays or picks an output, the renderer used last
+    /// time takes the restored session where it stands.
+    #[test]
+    fn the_renderer_used_last_time_takes_the_restored_session() {
+        let mut r = launched();
+        let cmd = found(&r);
+        r.player.process_command(cmd);
+        assert!(r.player.renderer.is_some());
+        assert!(r.player.renderer_loaded());
+        assert_eq!(r.player.session().unwrap().track.id, r.ids[0]);
+        assert_eq!(r.state(), PlaybackState::Paused);
+        // Where the restored session stood: the packet holding 5s.
+        let at = r.player.shared_state.position_ms();
+        assert!((4_800..=5_000).contains(&at), "at {at}ms");
+    }
+
+    /// Playing something, or picking an output, before the renderer turns up
+    /// leaves the music where it is.
+    #[test]
+    fn playing_or_picking_first_keeps_the_music_here() {
+        let mut r = launched();
+        r.player.process_command(PlayerCommand::Play(r.ids[1]));
+        let cmd = found(&r);
+        r.player.process_command(cmd);
+        assert!(r.player.renderer.is_none(), "not taken over");
+        assert_eq!(r.state(), PlaybackState::Playing);
+
+        let mut r = launched();
+        r.player.process_command(PlayerCommand::UseRenderer(None));
+        let cmd = found(&r);
+        r.player.process_command(cmd);
+        assert!(r.player.renderer.is_none());
+        assert_eq!(r.state(), PlaybackState::Paused);
     }
 
     #[test]
