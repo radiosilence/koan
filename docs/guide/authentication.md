@@ -132,7 +132,7 @@ koan auth delete-user alice
 
 An account's devices are its own. To let someone with another account on the
 server control one, share it from the device: see
-[Sharing a device with other accounts](devices.md#sharing-a-device-with-other-accounts).
+[What another device may do](devices.md#what-another-device-may-do).
 The grant names the device, its owner and the other account. The server relays
 the playback set for it (play, the queue, the output, the preset, the volume,
 hand-off) as the other account's request, never with the owner's powers, so
