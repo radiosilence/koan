@@ -3341,6 +3341,7 @@ impl KoanEngine {
                     start_at: start_at.min(track_ids.len().saturating_sub(1)) as u32,
                     track_ids,
                     position_ms: 0,
+                    paused: false,
                 }
             }
             PlayerCommand::RemoveFromPlaylist(id) => LinkCommand::RemoveItems {
@@ -3579,6 +3580,7 @@ impl KoanEngine {
                 track_ids,
                 start_at,
                 position_ms,
+                paused,
             } => self.db().and_then(|db| {
                 let ids = resolve_tracks(&db, &track_ids);
                 let (items, pending) = self.build_items(&db, &ids);
@@ -3591,11 +3593,22 @@ impl KoanEngine {
                 }
                 let start = (start_at as usize).min(items.len() - 1);
                 let first = items[start].id;
-                self.send_local(PlayerCommand::ReplacePlaylist { items, start })?;
-                self.download_now(pending);
-                if position_ms > 0 {
-                    self.seek_once_playing(first, position_ms);
+                if position_ms == 0 && !paused {
+                    self.send_local(PlayerCommand::ReplacePlaylist { items, start })?;
+                } else {
+                    // Opened at the position rather than started and seeked,
+                    // which would let the top of the track be heard first.
+                    self.send_local(PlayerCommand::BeginUndoBatch)?;
+                    self.send_local(PlayerCommand::ClearPlaylist)?;
+                    self.send_local(PlayerCommand::AddToPlaylist(items))?;
+                    self.send_local(PlayerCommand::EndUndoBatch)?;
+                    self.send_local(PlayerCommand::Cue {
+                        id: first,
+                        position_ms,
+                        play: !paused,
+                    })?;
                 }
+                self.download_now(pending);
                 Ok(())
             }),
             LinkCommand::PlayItem { id } => {
@@ -3756,48 +3769,37 @@ impl KoanEngine {
             });
         }
         let start_at = kept.iter().position(|(n, _)| *n >= at).unwrap_or(0);
+        // Silent here first, and the playhead read where it went silent:
+        // anything heard while the command travels would be heard twice.
+        let paused = self.state.playback_state() == PlaybackState::Paused;
+        let (reply, silent) = crossbeam_channel::bounded(1);
+        self.send_local(PlayerCommand::PauseAndReport(reply))?;
+        let position_ms = silent
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap_or_else(|_| self.state.position_ms());
         let position_ms = if kept.get(start_at).is_some_and(|(n, _)| *n == at) {
-            self.state.position_ms()
+            position_ms
         } else {
             0
         };
         let dropped = (items.len() - kept.len()) as u32;
-        let send = |cmd| {
-            koan_core::remote::devices::send(to, cmd)
-                .map_err(|message| KoanError::Remote { message })
-        };
-        send(LinkCommand::Play {
-            track_ids: kept.into_iter().map(|(_, r)| r).collect(),
-            start_at: start_at as u32,
-            position_ms,
-        })?;
-        self.send_local(PlayerCommand::Pause)?;
+        let sent = koan_core::remote::devices::send(
+            to,
+            LinkCommand::Play {
+                track_ids: kept.into_iter().map(|(_, r)| r).collect(),
+                start_at: start_at as u32,
+                position_ms,
+                paused,
+            },
+        );
+        if let Err(message) = sent {
+            if !paused {
+                self.send_local(PlayerCommand::Resume)?;
+            }
+            return Err(KoanError::Remote { message });
+        }
         log::info!("devices: handed the queue to {to}, {dropped} left out");
         Ok(dropped)
-    }
-
-    /// Seek to `position_ms` once `id` is playing: what arrived in a handoff
-    /// is loading, maybe downloading, and a seek before it opens is lost.
-    fn seek_once_playing(&self, id: QueueItemId, position_ms: u64) {
-        let (state, tx) = (self.state.clone(), self.tx.clone());
-        let _ = std::thread::Builder::new()
-            .name("koan-handoff-seek".into())
-            .spawn(move || {
-                let wake = koan_core::signal::engine_changed();
-                let mut seen = wake.generation();
-                let deadline = Instant::now() + std::time::Duration::from_secs(60);
-                while Instant::now() < deadline {
-                    if state.cursor() != Some(id) {
-                        return;
-                    }
-                    if state.playback_state() == PlaybackState::Playing {
-                        let _ = tx.send(PlayerCommand::Seek(position_ms));
-                        return;
-                    }
-                    seen =
-                        wake.wait_until(seen, deadline.saturating_duration_since(Instant::now()));
-                }
-            });
     }
 
     /// Rows arrived by some route the UI did not start; have its pages read

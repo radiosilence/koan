@@ -115,6 +115,7 @@ impl MutationRoot {
                 track_ids,
                 start_at: start_at.unwrap_or(0),
                 position_ms: 0,
+                paused: false,
             }
         };
         let sent = send_to_client(ctx, client.as_deref(), cmd).await?;
