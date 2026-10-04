@@ -11,17 +11,21 @@ use crate::db::queries;
 use crate::db::queries::shares::{ShareKind, Slice};
 use crate::player::commands::PlayerCommand;
 use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
-use crate::remote::client::{SubsonicAuth, SubsonicClient, SubsonicError};
+use crate::remote::client::{Credential, SubsonicAuth, SubsonicClient, SubsonicError};
 use crate::remote::download::DownloadError;
 
 // ---------------------------------------------------------------------------
 // Subsonic client builder
 // ---------------------------------------------------------------------------
 
-/// The remote password, from `config.local.toml` or a `KOAN_REMOTE__PASSWORD`
-/// layered over it.
-pub fn get_remote_password(cfg: &Config) -> Option<String> {
-    (!cfg.remote.password.is_empty()).then(|| cfg.remote.password.clone())
+/// What signs in to the remote server, from `config.local.toml` or a
+/// `KOAN_REMOTE__*` variable layered over it: the API key when there is one,
+/// else the password.
+pub fn remote_credential(cfg: &Config) -> Option<Credential> {
+    if !cfg.remote.api_key.is_empty() {
+        return Some(Credential::ApiKey(cfg.remote.api_key.clone()));
+    }
+    (!cfg.remote.password.is_empty()).then(|| Credential::Password(cfg.remote.password.clone()))
 }
 
 /// Index files that appear in the library folders while koan is running.
@@ -989,8 +993,9 @@ pub enum SignInError {
 ///
 /// The password goes to `config.local.toml`, which is gitignored and written
 /// `0600`. Subsonic authenticates every request with the password or a salted
-/// MD5 of it, so there is no token to hold instead — whatever koan keeps is
-/// password-equivalent wherever it is kept.
+/// MD5 of it, so what koan keeps is password-equivalent wherever it is kept.
+/// An invite (`join_with_invite`) stores an API key instead, which belongs to
+/// this device alone and can be revoked on its own.
 ///
 /// The credentials are checked against the server before anything is written; a
 /// stored password that does not work is worse than none.
@@ -1005,11 +1010,64 @@ pub fn set_remote_credentials(
     let url = url.trim_end_matches('/');
     SubsonicClient::new(url, username, password).ping()?;
 
+    remember_remote(url, username, Credential::Password(password.to_string()))
+}
+
+/// Join a server with an invite. A token is traded for an API key named after
+/// this device; an address with the account in it carries the password, which
+/// signs in as `set_remote_credentials` does.
+pub fn join_with_invite(invite: &crate::invite::Invite) -> Result<(), SignInError> {
+    let url = invite.server.trim_end_matches('/');
+    match (&invite.token, &invite.password) {
+        (Some(token), _) => {
+            let device = crate::remote::link::LinkIdentity::this_device(None).name;
+            let joined = crate::remote::client::redeem_invite(url, token, &device)?;
+            // The key this device held on the same account, which the new one
+            // replaces: left valid, it would sit in the key list unused.
+            let replaced = Config::load()
+                .ok()
+                .filter(|c| c.remote.url.trim_end_matches('/') == url)
+                .filter(|c| c.remote.username == joined.username)
+                .map(|c| c.remote.api_key)
+                .filter(|k| !k.is_empty() && *k != joined.api_key);
+            // Revoked best-effort: a key signs in to give itself up.
+            let revoke = |key: &str| {
+                let credential = Credential::ApiKey(key.to_string());
+                let client = SubsonicClient::from_auth(SubsonicAuth::with(
+                    url,
+                    &joined.username,
+                    credential,
+                ));
+                if let Err(e) = client.koan_revoke_own_key() {
+                    log::warn!("could not revoke an unused API key: {e}");
+                }
+            };
+            let credential = Credential::ApiKey(joined.api_key.clone());
+            if let Err(e) = remember_remote(url, &joined.username, credential) {
+                revoke(&joined.api_key);
+                return Err(e);
+            }
+            if let Some(old) = replaced {
+                revoke(&old);
+            }
+            Ok(())
+        }
+        (None, Some(password)) => set_remote_credentials(url, &invite.username, password),
+        (None, None) => Err(SignInError::Rejected(SubsonicError::BadResponse)),
+    }
+}
+
+/// Store a credential already checked against the server, replacing whichever
+/// kind was there.
+fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<(), SignInError> {
     Config::persist(|cfg| {
         cfg.remote.enabled = true;
         cfg.remote.url = url.to_string();
         cfg.remote.username = username.to_string();
-        cfg.remote.password = password.to_string();
+        (cfg.remote.password, cfg.remote.api_key) = match &credential {
+            Credential::Password(p) => (p.clone(), String::new()),
+            Credential::ApiKey(k) => (String::new(), k.clone()),
+        };
     })?;
     // The link rests for up to a minute while signed out; the profile Settings
     // shows is probed when it wakes.
@@ -1019,7 +1077,7 @@ pub fn set_remote_credentials(
 
 /// Shared secret for koan's own Subsonic API.
 ///
-/// Deliberately not the same secret as `get_remote_password` — see `SubsonicConfig`.
+/// Deliberately not the same secret as `remote_credential` — see `SubsonicConfig`.
 pub fn get_subsonic_password(cfg: &Config) -> Option<String> {
     (!cfg.subsonic.password.is_empty()).then(|| cfg.subsonic.password.clone())
 }
@@ -1034,11 +1092,10 @@ pub fn subsonic_auth(cfg: &Config) -> Option<SubsonicAuth> {
     if !cfg.remote.enabled || cfg.remote.url.is_empty() {
         return None;
     }
-    let password = get_remote_password(cfg)?;
-    Some(SubsonicAuth::new(
+    Some(SubsonicAuth::with(
         &cfg.remote.url,
         &cfg.remote.username,
-        &password,
+        remote_credential(cfg)?,
     ))
 }
 
@@ -1859,10 +1916,10 @@ pub fn remote_unavailable(cfg: &Config) -> String {
     if cfg.remote.url.is_empty() {
         return "the remote server has no address".into();
     }
-    if get_remote_password(cfg).is_none() {
-        return "no password is stored for the remote server".into();
+    if remote_credential(cfg).is_none() {
+        return "no password or API key is stored for the remote server".into();
     }
-    // A password resolved, so the client should have built. Nothing else
+    // A credential resolved, so the client should have built. Nothing else
     // returns `None`, but saying so beats claiming a cause that is wrong.
     "the remote server could not be reached".into()
 }

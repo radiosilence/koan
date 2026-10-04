@@ -15,8 +15,16 @@
 
 ### Changed
 
+- **Invites carry a token, not the password.** The link holds a JWT signed with the server's key, good for a week on any number of devices. The app trades it for an API key of its own (`/rest/koanJoin`, the `koanInvite` extension), so each invited device appears under API keys and can be revoked alone. Creating an account still generates a password and shows it once in the email, for the web UI and other Subsonic apps; inviting an existing account sends only the link. A password change withdraws every link sent before it, so a reset takes back a link that went to the wrong place. Opening a link again on the same device replaces its key rather than adding another (`/rest/koanRevokeKey`). Links made by older servers, which carried the password, are no longer read, and an app older than this cannot read the new ones.
+- **Admins set passwords.** The Users page and GraphQL (`setUserPassword`) set a chosen password; inviting with a reset generates one. Either signs the account out everywhere.
+- **The apps can sign in with an API key** (`remote.api_key` in `config.local.toml`), which is what an invite stores.
 - **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
+
+### Removed
+
+- **Recoverable passwords.** The server no longer keeps each account's password encrypted beside its hash, which let an admin read it back through an invite. Schema version 13 drops `users.sealed_password`; a database opened by this version is refused by older ones. The key they were encrypted with, `subsonic.key` in the auth directory, is deleted when the server starts.
+- **Subsonic token auth (`t`/`s`) for accounts.** It needed that readable copy. Clients get error 41 and should send the password (`p=`, over HTTPS) or an API key; the `[subsonic]` shared secret still accepts it. A koan app signed in to a koan server over plain HTTP needs signing in again, or an invite.
 
 ## 0.50.2
 

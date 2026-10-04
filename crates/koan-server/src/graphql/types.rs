@@ -1151,13 +1151,15 @@ pub(super) struct GqlUser {
 
 /// An account as one link. `link` opens koan and signs it in; the email is
 /// for the admin to send from their own client, since the server sends no
-/// mail. The details also work in any Subsonic app.
+/// mail. A password, when present, also works in any Subsonic app.
 #[derive(SimpleObject)]
 #[graphql(name = "Invite")]
 pub(super) struct GqlInvite {
     pub server: String,
     pub username: String,
-    pub password: String,
+    /// The account's password, when it was just made or reset. Shown here
+    /// once: the server keeps only its hash.
+    pub password: Option<String>,
     pub link: String,
     pub email_subject: String,
     pub email_text: String,

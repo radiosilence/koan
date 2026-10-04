@@ -1839,7 +1839,7 @@ impl KoanEngine {
                 remote_enabled: cfg.remote.enabled,
                 remote_url: cfg.remote.url.clone(),
                 remote_username: cfg.remote.username.clone(),
-                remote_signed_in: koan_core::helpers::get_remote_password(&cfg).is_some(),
+                remote_signed_in: koan_core::helpers::remote_credential(&cfg).is_some(),
                 remote_tracks: db
                     .as_ref()
                     .map(|db| koan_core::helpers::tracks_from_server(db))
@@ -1942,6 +1942,24 @@ impl KoanEngine {
         .await
     }
 
+    /// Join a server with an invite: its token traded for an API key of this
+    /// device's own, or the password a pasted address carries. Checked against
+    /// the server before anything is written.
+    pub async fn join_invite(self: Arc<Self>, invite: Invite) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let invite = koan_core::invite::Invite {
+                server: invite.server,
+                username: invite.username,
+                token: invite.token,
+                password: invite.password,
+            };
+            koan_core::helpers::join_with_invite(&invite).map_err(|e| KoanError::BadArgument {
+                message: e.to_string(),
+            })
+        })
+        .await
+    }
+
     /// Read an invite: the koan.rocks link, `koan://join`, or a server address
     /// with the account in it. `None` for anything else, so a field can offer
     /// to join only when what was pasted is one.
@@ -1976,32 +1994,26 @@ impl KoanEngine {
         role: AccountRole,
     ) -> Result<Invite, KoanError> {
         offload::offload(move || {
-            let client = account_client()?;
+            let client = invite_client()?;
             let made = client
                 .koan_create_user(&username, role.as_str())
                 .map_err(remote_error)?;
-            Ok(
-                koan_core::invite::Invite::new(client.base_url(), &made.username, &made.password)
-                    .into(),
-            )
+            Ok(account_invite(client.base_url(), made).into())
         })
         .await
     }
 
-    /// An invite for an existing account. `reset` gives it a new password,
-    /// signing its devices out.
+    /// An invite for an existing account. `reset` also gives it a new
+    /// password, which comes back in the invite, signing its devices out.
     pub async fn invite_server_account(
         self: Arc<Self>,
         username: String,
         reset: bool,
     ) -> Result<Invite, KoanError> {
         offload::offload(move || {
-            let client = account_client()?;
+            let client = invite_client()?;
             let made = client.koan_invite(&username, reset).map_err(remote_error)?;
-            Ok(
-                koan_core::invite::Invite::new(client.base_url(), &made.username, &made.password)
-                    .into(),
-            )
+            Ok(account_invite(client.base_url(), made).into())
         })
         .await
     }
@@ -2035,6 +2047,7 @@ impl KoanEngine {
             Config::persist(|cfg| {
                 cfg.remote.enabled = false;
                 cfg.remote.password = String::new();
+                cfg.remote.api_key = String::new();
             })
             .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
@@ -4095,6 +4108,35 @@ fn link_queue(state: &SharedPlayerState) -> Vec<koan_core::remote::link::LinkQue
             current: Some(i.id) == cursor,
         })
         .collect()
+}
+
+/// The account client, on a server whose invites this app can open. Checked
+/// before anything is made: a server older than invite tokens would create
+/// the account and answer with nothing this app reads.
+fn invite_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    let client = account_client()?;
+    let offers = koan_core::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| p.offers(koan_core::remote::profile::INVITE));
+    if !offers {
+        return Err(KoanError::BadArgument {
+            message: "this server is older than this app: update it to invite people".into(),
+        });
+    }
+    Ok(client)
+}
+
+/// The invite a koan server answered with, as a link to the address this
+/// client reaches it at.
+fn account_invite(
+    server: &str,
+    made: koan_core::remote::client::KoanInvite,
+) -> koan_core::invite::Invite {
+    koan_core::invite::Invite::with_token(
+        server,
+        &made.username,
+        &made.token,
+        made.password.as_deref(),
+    )
 }
 
 fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {

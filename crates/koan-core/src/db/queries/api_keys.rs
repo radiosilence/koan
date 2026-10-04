@@ -84,6 +84,16 @@ pub fn revoke_api_key(
     Ok(n > 0)
 }
 
+/// Revoke the key `key` itself: for a client giving up a key it holds, signed
+/// in with that key. Returns whether one went.
+pub fn revoke_api_key_value(conn: &Connection, key: &str) -> Result<bool, rusqlite::Error> {
+    let n = conn.execute(
+        "DELETE FROM api_keys WHERE key_hash = ?1",
+        params![auth::sha256_hex(key)],
+    )?;
+    Ok(n > 0)
+}
+
 /// Revoke every key a user has. Returns how many went.
 pub fn revoke_user_api_keys(conn: &Connection, user_id: i64) -> Result<usize, rusqlite::Error> {
     conn.execute("DELETE FROM api_keys WHERE user_id = ?1", params![user_id])
