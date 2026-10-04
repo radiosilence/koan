@@ -16,7 +16,7 @@
 
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -33,6 +33,7 @@ const SUBSCRIPTION_SECONDS: u64 = 1800;
 /// none.
 const INITIAL_EVENT: Duration = Duration::from_secs(3);
 const POLL: Duration = Duration::from_secs(1);
+const UNKNOWN_VOLUME: u16 = u16::MAX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
@@ -89,6 +90,8 @@ struct Shared {
     look: Sender<()>,
     polling: AtomicBool,
     playing: AtomicBool,
+    /// Its volume as last read or heard, `UNKNOWN_VOLUME` until then.
+    volume: Arc<AtomicU16>,
     subscriptions: Mutex<Vec<Subscription>>,
     trust: Arc<Trust>,
     callback: String,
@@ -136,11 +139,13 @@ impl Session {
         let (look_tx, look_rx) = crossbeam_channel::bounded::<()>(1);
         let seen = Arc::new(AtomicBool::new(false));
         let trust = Arc::new(Trust::default());
+        let volume = Arc::new(AtomicU16::new(UNKNOWN_VOLUME));
         let listener = {
             let look = look_tx.clone();
             let on_event = on_event.clone();
             let seen = seen.clone();
             let trust = trust.clone();
+            let heard = volume.clone();
             Listener::start(Box::new(move |sid, body| {
                 let known = trust.sids.lock().iter().any(|s| s == sid);
                 if !known && !trust.subscribing.load(Ordering::Acquire) {
@@ -149,6 +154,7 @@ impl Session {
                 seen.store(true, Ordering::Release);
                 let change = parse_notify(&body);
                 if let Some(volume) = change.volume.filter(|_| known) {
+                    heard.store(u16::from(volume), Ordering::Release);
                     on_event(Event::Volume(volume));
                 }
                 if change.transport {
@@ -189,6 +195,7 @@ impl Session {
             look: look_tx,
             polling: AtomicBool::new(false),
             playing: AtomicBool::new(false),
+            volume: volume.clone(),
             subscriptions: Mutex::new(Vec::new()),
             trust,
             callback: format!("<{base}/events/>"),
@@ -225,8 +232,10 @@ impl Session {
             })
         };
 
-        if let Some(volume) = shared.volume() {
-            on_event(Event::Volume(volume));
+        // Kept rather than sent: nothing plays to this renderer yet, and an
+        // event now would land on whatever output the player has before it.
+        if let Some(v) = shared.volume() {
+            volume.store(u16::from(v), Ordering::Release);
         }
 
         let (stop_tx, stop_rx) = crossbeam_channel::bounded::<()>(1);
@@ -328,10 +337,23 @@ impl Session {
         )
     }
 
+    /// Its volume, 0–100, as last read or heard; `None` when it has no
+    /// volume control or has not said.
+    pub fn volume(&self) -> Option<u8> {
+        match self.shared.volume.load(Ordering::Acquire) {
+            UNKNOWN_VOLUME => None,
+            v => Some(v as u8),
+        }
+    }
+
     pub fn set_volume(&self, volume: u8) -> Result<(), SoapError> {
         let Some(rc) = &self.shared.renderer.rendering_control else {
             return Ok(());
         };
+        let volume = volume.min(100);
+        self.shared
+            .volume
+            .store(u16::from(volume), Ordering::Release);
         soap::call(
             &self.shared.http,
             rc,

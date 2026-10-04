@@ -324,7 +324,7 @@ impl Player {
                 self.shared_state.set_renderer(Some(upnp::Output {
                     udn: session.renderer().udn.clone(),
                     name: session.renderer().name.clone(),
-                    volume: None,
+                    volume: session.volume(),
                     problem: None,
                 }));
                 self.renderer = Some(RendererLink {
@@ -717,9 +717,13 @@ impl Player {
     /// rest is about a session, and is dropped once that is over.
     pub(super) fn on_renderer_event(&mut self, session: u64, event: session::Event) {
         match event {
-            session::Event::Volume(volume) => self
-                .shared_state
-                .update_renderer(|o| o.volume = Some(volume)),
+            // Read from the renderer now playing rather than taken from the
+            // event, which may come from a connection already left behind.
+            session::Event::Volume(_) => {
+                if let Some(volume) = self.renderer.as_ref().map(|l| l.session.volume()) {
+                    self.shared_state.update_renderer(|o| o.volume = volume);
+                }
+            }
             session::Event::Gone => self.renderer_gone(),
             session::Event::Snapshot(snapshot) if session == self.session => {
                 self.on_renderer_snapshot(snapshot)
