@@ -189,12 +189,6 @@ fn is_zero(n: &u64) -> bool {
 }
 
 impl LinkCommand {
-    /// Whether a device on the same network, which may belong to anyone, may
-    /// send this. Playback and the queue; nothing that touches the library or
-    /// the files on disk.
-    ///
-    /// Where the sound goes is not playback: an output switch reaches into
-    /// the room, and a preset into the config. Those are the account's own.
     /// What a device that is not this account's may have it do: play, pause,
     /// skip and seek, change the queue, jump, set the volume, choose the
     /// output and the preset, and move the music here or away. What it asks
@@ -236,6 +230,7 @@ impl LinkCommand {
             | Self::Devices { .. }
             | Self::Shares { .. }
             | Self::Shared { .. }
+            | Self::Forgotten { .. }
             | Self::Levels { .. } => false,
         }
     }
@@ -251,6 +246,12 @@ impl LinkCommand {
         }
     }
 
+    /// Whether a device on the same network, which may belong to anyone, may
+    /// send this under Playback only. Playback and the queue; nothing that touches the library or
+    /// the files on disk.
+    ///
+    /// Where the sound goes is not playback: an output switch reaches into
+    /// the room, and a preset into the config. Those are the account's own.
     pub fn allowed_nearby(&self) -> bool {
         !matches!(
             self,
