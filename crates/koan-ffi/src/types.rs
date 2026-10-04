@@ -954,16 +954,95 @@ pub struct DspProfileDetail {
     pub problem: Option<String>,
 }
 
+/// One of a profile's filters, in the order they run.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct DspBand {
-    /// `peaking`, `low_shelf`, `high_shelf`, `low_pass`, `high_pass`,
-    /// `notch`, `band_pass`, `all_pass` or `gain`.
+    /// A band — `peaking`, `low_shelf`, `high_shelf`, `low_pass`,
+    /// `high_pass`, `notch`, `band_pass`, `all_pass`, `gain`, or one of the
+    /// shelves and passes with `_first_order` — or `delay`, `mix` or `graphic`.
     pub kind: String,
     pub freq: f64,
     pub gain_db: f64,
     pub q: f64,
     /// From 0. Empty is every channel.
     pub channels: Vec<u16>,
+    /// A delay's length: `delay_ms` and `delay_samples` added together.
+    pub delay_ms: f64,
+    pub delay_samples: f64,
+    /// A mix's outputs, from channel 0.
+    pub mix: Vec<DspMixOutput>,
+    /// A graphic EQ's points.
+    pub curve: Vec<DspPoint>,
+}
+
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DspMixOutput {
+    /// `(channel, linear gain)` summed into this output. Empty is silence.
+    pub sources: Vec<DspMixSource>,
+}
+
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DspMixSource {
+    pub channel: u16,
+    pub gain: f64,
+}
+
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DspPoint {
+    pub hz: f64,
+    pub db: f64,
+}
+
+impl From<koan_core::config::DspFilter> for DspBand {
+    fn from(f: koan_core::config::DspFilter) -> Self {
+        use koan_core::config::DspFilter;
+        let mut band = Self {
+            kind: String::new(),
+            freq: 0.0,
+            gain_db: 0.0,
+            q: 0.0,
+            channels: f.channels().to_vec(),
+            delay_ms: 0.0,
+            delay_samples: 0.0,
+            mix: Vec::new(),
+            curve: Vec::new(),
+        };
+        match f {
+            DspFilter::Band(b) => {
+                band.kind = b.kind.name().to_string();
+                band.freq = b.freq;
+                band.gain_db = b.gain_db;
+                band.q = b.q;
+            }
+            DspFilter::Delay(d) => {
+                band.kind = "delay".into();
+                band.delay_ms = d.ms;
+                band.delay_samples = d.samples;
+            }
+            DspFilter::Mix(m) => {
+                band.kind = "mix".into();
+                band.mix = m
+                    .outputs
+                    .into_iter()
+                    .map(|row| DspMixOutput {
+                        sources: row
+                            .into_iter()
+                            .map(|(channel, gain)| DspMixSource { channel, gain })
+                            .collect(),
+                    })
+                    .collect();
+            }
+            DspFilter::Graphic(g) => {
+                band.kind = "graphic".into();
+                band.curve = g
+                    .points
+                    .into_iter()
+                    .map(|(hz, db)| DspPoint { hz, db })
+                    .collect();
+            }
+        }
+        band
+    }
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
@@ -988,17 +1067,7 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
             name: d.name,
             devices: d.devices,
             source: d.source,
-            bands: d
-                .filters
-                .into_iter()
-                .map(|f| DspBand {
-                    kind: f.kind.name().to_string(),
-                    freq: f.freq,
-                    gain_db: f.gain_db,
-                    q: f.q,
-                    channels: f.channels,
-                })
-                .collect(),
+            bands: d.filters.into_iter().map(DspBand::from).collect(),
             impulses: d
                 .impulses
                 .into_iter()

@@ -17,7 +17,7 @@ use thiserror::Error;
 use super::impulse::{Impulse, read_audio};
 use super::raw::{self, RawFormat};
 use super::{apo, camilla, convolver};
-use crate::config::EqFilter;
+use crate::config::DspFilter;
 
 #[derive(Debug, Error)]
 pub enum ImportError {
@@ -40,7 +40,7 @@ pub struct Imported {
     pub name: String,
     /// What it was imported from, by file name.
     pub source: Vec<String>,
-    pub filters: Vec<EqFilter>,
+    pub filters: Vec<DspFilter>,
     pub impulses: Vec<Impulse>,
 }
 
@@ -143,7 +143,7 @@ fn sort(files: Vec<Found>, rate: Option<u32>) -> Result<Imported, ImportError> {
     let mut configured = false;
     let mut loose_audio = Vec::new();
     let mut loose_raw = Vec::new();
-    let mut eq_files: Vec<(PathBuf, Vec<EqFilter>)> = Vec::new();
+    let mut eq_files: Vec<(PathBuf, Vec<DspFilter>)> = Vec::new();
 
     for Found { path, named } in files {
         let ext = extension(&path);
@@ -191,13 +191,16 @@ fn sort(files: Vec<Found>, rate: Option<u32>) -> Result<Imported, ImportError> {
     // none choosing channels itself, are each that side's.
     let per_side = eq_files.len() > 1
         && eq_files.iter().all(|(path, filters)| {
-            side_in_name(path).is_some() && filters.iter().all(|f| f.channels.is_empty())
+            side_in_name(path).is_some()
+                && filters
+                    .iter()
+                    .all(|f| !matches!(f, DspFilter::Mix(_)) && f.channels().is_empty())
         });
     for (path, mut filters) in eq_files {
         if per_side {
             let side = side_in_name(&path).expect("checked above") as u16;
-            for f in &mut filters {
-                f.channels = vec![side];
+            for c in filters.iter_mut().filter_map(DspFilter::channels_mut) {
+                *c = vec![side];
             }
         }
         imported.filters.extend(filters);
@@ -500,8 +503,8 @@ mod tests {
         std::fs::write(&l, "Filter 1: ON PK Fc 50 Hz Gain -6 dB Q 4\n").unwrap();
         std::fs::write(&r, "Filter 1: ON PK Fc 60 Hz Gain -3 dB Q 4\n").unwrap();
         let imported = import(&[l, r], None).unwrap();
-        assert_eq!(imported.filters[0].channels, vec![0]);
-        assert_eq!(imported.filters[1].channels, vec![1]);
+        assert_eq!(imported.filters[0].channels(), [0]);
+        assert_eq!(imported.filters[1].channels(), [1]);
     }
 
     #[test]

@@ -3,9 +3,12 @@
 //! <https://github.com/HEnquist/camilladsp>.
 //!
 //! Pipeline steps name the channels a filter applies to as `channel: 0` up to
-//! v2 and `channels: [0, 1]` from v3; both are read. A mixer, or a filter koan
-//! does not build, is refused by name: a config that half-imports corrects
-//! something other than what it was measured for.
+//! v2 and `channels: [0, 1]` from v3; both are read. Mixers and delays keep
+//! their place in the pipeline. What koan does not build is refused by name: a
+//! config that half-imports corrects something other than what it was
+//! measured for. That includes a mixer that changes the channel count, since
+//! koan plays as many channels as the source has, and a mixer after a `Conv`,
+//! since responses run last.
 
 use std::path::Path;
 
@@ -14,7 +17,7 @@ use yaml_rust2::{Yaml, YamlLoader};
 use super::apo::{Convolutions, Parsed, q_from_bandwidth, q_from_slope};
 use super::impulse::read_audio;
 use super::raw::{self, RawFormat};
-use crate::config::{EqFilter, EqFilterKind};
+use crate::config::{Delay, DspFilter, EqFilter, EqFilterKind, Mix};
 
 pub fn read(path: &Path) -> Result<Parsed, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -51,6 +54,7 @@ pub fn parse(text: &str, dir: Option<&Path>) -> Result<Parsed, String> {
 
     let mut parsed = Parsed::default();
     let mut convolutions = Convolutions::default();
+    let mut convolved = false;
     let steps = doc["pipeline"].as_vec().cloned().unwrap_or_default();
     for (n, step) in steps.iter().enumerate() {
         let fail = |why: String| format!("pipeline step {}: {why}", n + 1);
@@ -59,6 +63,20 @@ pub fn parse(text: &str, dir: Option<&Path>) -> Result<Parsed, String> {
         }
         match step["type"].as_str() {
             Some("Filter") => {}
+            Some("Mixer") => {
+                if convolved {
+                    return Err(fail(
+                        "a mixer after a Conv filter is not supported: responses run last".into(),
+                    ));
+                }
+                let name = step["name"]
+                    .as_str()
+                    .ok_or_else(|| fail("no mixer name".into()))?;
+                let m =
+                    mixer(&doc["mixers"][name]).map_err(|e| fail(format!("mixer {name}: {e}")))?;
+                parsed.filters.push(DspFilter::Mix(m));
+                continue;
+            }
             Some(other) => return Err(fail(format!("{other} steps are not supported"))),
             None => return Err(fail("no type".into())),
         }
@@ -91,7 +109,7 @@ pub fn parse(text: &str, dir: Option<&Path>) -> Result<Parsed, String> {
                 Some("Biquad") => {
                     let mut band = biquad(p).map_err(fail)?;
                     band.channels = band_channels.clone();
-                    parsed.filters.push(band);
+                    parsed.filters.push(band.into());
                 }
                 Some("Gain") => {
                     if p["inverted"].as_bool() == Some(true) || p["mute"].as_bool() == Some(true) {
@@ -103,18 +121,24 @@ pub fn parse(text: &str, dir: Option<&Path>) -> Result<Parsed, String> {
                     } else {
                         gain
                     };
-                    parsed.filters.push(EqFilter {
+                    parsed.filters.push(DspFilter::Band(EqFilter {
                         kind: EqFilterKind::Gain,
                         freq: 1000.0,
                         gain_db,
                         q: 1.0,
                         channels: band_channels.clone(),
-                    });
+                    }));
+                }
+                Some("Delay") => {
+                    let mut d = delay(p, rate).map_err(fail)?;
+                    d.channels = band_channels.clone();
+                    parsed.filters.push(DspFilter::Delay(d));
                 }
                 Some("Conv") => {
                     let ir = conv(p, dir, rate, channels).map_err(fail)?;
                     if let Some(ir) = ir {
                         convolutions.add(rate, vec![ir], Some(&selected));
+                        convolved = true;
                     }
                 }
                 Some(other) => return Err(fail(format!("{other} filters are not supported"))),
@@ -137,6 +161,11 @@ fn biquad(p: &Yaml) -> Result<EqFilter, String> {
         "Notch" => EqFilterKind::Notch,
         "Bandpass" => EqFilterKind::BandPass,
         "Allpass" => EqFilterKind::AllPass,
+        "LowshelfFO" => EqFilterKind::LowShelfFirstOrder,
+        "HighshelfFO" => EqFilterKind::HighShelfFirstOrder,
+        "LowpassFO" => EqFilterKind::LowPassFirstOrder,
+        "HighpassFO" => EqFilterKind::HighPassFirstOrder,
+        "AllpassFO" => EqFilterKind::AllPassFirstOrder,
         other => return Err(format!("{other} biquads are not supported")),
     };
     let freq = number(&p["freq"]).ok_or("no freq")?;
@@ -158,6 +187,64 @@ fn biquad(p: &Yaml) -> Result<EqFilter, String> {
         q,
         channels: Vec::new(),
     })
+}
+
+/// `delay` in `unit`: ms (the default), mm of sound at 343 m/s, or samples at
+/// the config's rate.
+fn delay(p: &Yaml, rate: u32) -> Result<Delay, String> {
+    let value = number(&p["delay"]).ok_or("no delay")?;
+    let ms = match p["unit"].as_str().unwrap_or("ms") {
+        "ms" => value,
+        "mm" => value / 343.0,
+        "samples" => value * 1000.0 / rate as f64,
+        other => return Err(format!("{other} is not a delay unit")),
+    };
+    Ok(Delay {
+        ms,
+        subsample: p["subsample"].as_bool() == Some(true),
+        ..Default::default()
+    })
+}
+
+/// A mixer's mapping. A destination no mapping names is silent, as it is in
+/// CamillaDSP.
+fn mixer(m: &Yaml) -> Result<Mix, String> {
+    if m.is_badvalue() {
+        return Err("not defined".into());
+    }
+    let count = |k: &str| m["channels"][k].as_i64().ok_or(format!("no channels.{k}"));
+    let (inputs, outputs) = (count("in")?, count("out")?);
+    if inputs != outputs {
+        return Err(format!(
+            "{inputs} channels in and {outputs} out; koan plays as many channels as the source has"
+        ));
+    }
+    let mut rows = vec![Vec::new(); outputs as usize];
+    for map in m["mapping"].as_vec().into_iter().flatten() {
+        let dest = map["dest"].as_i64().ok_or("a mapping has no dest")?;
+        let row = rows
+            .get_mut(dest as usize)
+            .ok_or(format!("dest {dest} is past the mixer's outputs"))?;
+        if map["mute"].as_bool() == Some(true) {
+            continue;
+        }
+        for src in map["sources"].as_vec().into_iter().flatten() {
+            if src["mute"].as_bool() == Some(true) {
+                continue;
+            }
+            let channel = src["channel"].as_i64().ok_or("a source has no channel")?;
+            let gain = number(&src["gain"]).unwrap_or(0.0);
+            let mut gain = match src["scale"].as_str().unwrap_or("dB") {
+                "linear" => gain,
+                _ => 10f64.powf(gain / 20.0),
+            };
+            if src["inverted"].as_bool() == Some(true) {
+                gain = -gain;
+            }
+            row.push((channel as u16, gain));
+        }
+    }
+    Ok(Mix { outputs: rows })
 }
 
 /// A `Conv` filter's response. `None` for `Dummy`, which passes audio as it is.
@@ -289,14 +376,12 @@ pipeline:
             .collect();
         std::fs::write(dir.path().join("room_l_96000.txt"), coeffs).unwrap();
         let p = parse(V3, Some(dir.path())).unwrap();
-        assert_eq!(p.filters.len(), 3);
-        assert!(
-            p.filters[0].channels.is_empty(),
-            "both channels is every channel"
-        );
-        assert!((p.filters[0].q - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9);
-        assert_eq!(p.filters[1].channels, vec![1]);
-        assert_eq!(p.filters[2].kind, EqFilterKind::Gain);
+        let b = bands(&p);
+        assert_eq!(b.len(), 3);
+        assert!(b[0].channels.is_empty(), "both channels is every channel");
+        assert!((b[0].q - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9);
+        assert_eq!(b[1].channels, vec![1]);
+        assert_eq!(b[2].kind, EqFilterKind::Gain);
         let ir = &p.impulses[0];
         assert_eq!(ir.rate, 96000);
         let chans = ir.as_channels().unwrap();
@@ -308,14 +393,79 @@ pipeline:
     fn a_v1_step_names_one_channel() {
         let text = "devices: { samplerate: 44100 }\nfilters:\n  p: { type: Biquad, parameters: { type: Peaking, freq: 100, gain: 1, q: 1 } }\npipeline:\n  - type: Filter\n    channel: 1\n    names: [p]\n";
         let p = parse(text, None).unwrap();
-        assert_eq!(p.filters[0].channels, vec![1]);
+        assert_eq!(p.filters[0].channels(), [1]);
+    }
+
+    fn bands(p: &Parsed) -> Vec<&EqFilter> {
+        p.filters
+            .iter()
+            .filter_map(|f| match f {
+                DspFilter::Band(b) => Some(b),
+                _ => None,
+            })
+            .collect()
+    }
+
+    const MIXED: &str = r#"
+devices: { samplerate: 48000, capture: { channels: 2 } }
+mixers:
+  blend:
+    channels: { in: 2, out: 2 }
+    mapping:
+      - dest: 0
+        sources:
+          - { channel: 0, gain: 0 }
+          - { channel: 1, gain: -6, inverted: true }
+      - dest: 1
+        sources:
+          - { channel: 1, gain: 0.5, scale: linear }
+  up:
+    channels: { in: 2, out: 4 }
+    mapping: []
+filters:
+  d: { type: Delay, parameters: { delay: 96, unit: samples, subsample: true } }
+  s: { type: Biquad, parameters: { type: LowshelfFO, freq: 300, gain: 2 } }
+  c: { type: Conv, parameters: { type: Values, values: [1.0] } }
+pipeline:
+  - type: Filter
+    channels: [1]
+    names: [d]
+  - type: Mixer
+    name: blend
+  - type: Filter
+    names: [s, c]
+"#;
+
+    #[test]
+    fn mixers_and_delays_keep_their_place() {
+        let p = parse(MIXED, None).unwrap();
+        let DspFilter::Delay(d) = &p.filters[0] else {
+            panic!("{:?}", p.filters[0])
+        };
+        assert_eq!(
+            (d.ms, d.subsample, d.channels.clone()),
+            (2.0, true, vec![1])
+        );
+        let DspFilter::Mix(m) = &p.filters[1] else {
+            panic!("{:?}", p.filters[1])
+        };
+        assert_eq!(m.outputs[0][0], (0, 1.0));
+        assert!((m.outputs[0][1].1 + 0.501187).abs() < 1e-6);
+        assert_eq!(m.outputs[1], vec![(1, 0.5)]);
+        assert_eq!(bands(&p)[0].kind, EqFilterKind::LowShelfFirstOrder);
+        assert_eq!(p.impulses.len(), 1);
     }
 
     #[test]
-    fn mixers_and_unknown_filters_are_refused() {
-        let mixer = "devices: { samplerate: 44100 }\npipeline:\n  - type: Mixer\n    name: up\n";
-        assert!(parse(mixer, None).unwrap_err().contains("Mixer"));
-        let delay = "devices: { samplerate: 44100 }\nfilters:\n  d: { type: Delay, parameters: { delay: 1 } }\npipeline:\n  - type: Filter\n    channel: 0\n    names: [d]\n";
-        assert!(parse(delay, None).unwrap_err().contains("Delay"));
+    fn what_koan_cannot_do_is_refused() {
+        let more = MIXED.replace("name: blend", "name: up");
+        assert!(parse(&more, None).unwrap_err().contains("4 out"));
+        let late = MIXED.replace(
+            "  - type: Mixer\n    name: blend\n  - type: Filter\n    names: [s, c]\n",
+            "  - type: Filter\n    names: [s, c]\n  - type: Mixer\n    name: blend\n",
+        );
+        assert!(parse(&late, None).unwrap_err().contains("after a Conv"));
+        let free = "devices: { samplerate: 44100 }\nfilters:\n  f: { type: Biquad, parameters: { type: Free, a1: 0, a2: 0, b0: 1, b1: 0, b2: 0 } }\npipeline:\n  - type: Filter\n    names: [f]\n";
+        assert!(parse(free, None).unwrap_err().contains("Free"));
     }
 }

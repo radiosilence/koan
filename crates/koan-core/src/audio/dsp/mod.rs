@@ -6,9 +6,10 @@
 //! something that can be checked.
 //!
 //! Order: preamp, resampling (only to reach an impulse response's rate), the
-//! parametric bands at the output rate, then convolution. Running the bands
-//! after resampling means their coefficients belong to the session rather than
-//! the track, so a gapless change of source rate keeps the filters' state.
+//! profile's filters at the output rate in the order listed (`steps`), then
+//! convolution. Running the filters after resampling means their coefficients
+//! belong to the session rather than the track, so a gapless change of source
+//! rate keeps the filters' state.
 //!
 //! Stages that delay the audio — the resampler, and a linear-phase response's
 //! pre-ringing — have that delay trimmed from the front of the session and
@@ -22,11 +23,11 @@ pub mod import;
 pub mod impulse;
 pub mod profiles;
 pub mod raw;
+mod steps;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use biquad::{Biquad, Coefficients, DirectForm2Transposed, Hertz, Type};
 use realfft::RealFftPlanner;
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Indexing, Resampler};
@@ -35,7 +36,9 @@ use thiserror::Error;
 use impulse::{Convolve, read_audio};
 pub use impulse::{Impulse, Route};
 
-use crate::config::{DspProfile, EqFilter, EqFilterKind};
+use steps::{Planned, Steps, gain_matrix, plan};
+
+use crate::config::{DspFilter, DspProfile};
 
 #[derive(Debug, Error)]
 pub enum DspError {
@@ -47,7 +50,8 @@ pub enum DspError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DspStatus {
     pub profile: String,
-    /// Parametric bands are running.
+    /// Filters ahead of convolution are running: bands, delays, mixes or
+    /// a graphic curve.
     pub eq: bool,
     /// The rate the impulse response in use was designed at, which is the
     /// rate the output runs at. A source at another rate was resampled to
@@ -60,7 +64,7 @@ pub struct DspStatus {
 pub struct Setup {
     pub name: String,
     preamp_db: Option<f64>,
-    filters: Vec<EqFilter>,
+    filters: Vec<DspFilter>,
     /// By rate. More than one at a rate where they are for different channel
     /// counts.
     impulses: BTreeMap<u32, Vec<Impulse>>,
@@ -96,21 +100,10 @@ impl Setup {
             .impulses
             .get(&rate)
             .and_then(|at_rate| at_rate.iter().find(|i| i.fits(channels)));
-        let bands = self.bands(rate, channels);
-        self.preamp_db
-            .unwrap_or_else(|| -20.0 * peak_gain(&bands, impulse, channels, rate).log10().max(0.0))
-    }
-
-    fn bands(&self, rate: u32, channels: usize) -> Vec<Vec<Coefficients<f64>>> {
-        (0..channels)
-            .map(|c| {
-                self.filters
-                    .iter()
-                    .filter(|f| f.channels.is_empty() || f.channels.contains(&(c as u16)))
-                    .filter_map(|f| coefficients(f, rate))
-                    .collect()
-            })
-            .collect()
+        self.preamp_db.unwrap_or_else(|| {
+            let plan = plan(&self.filters, rate, channels);
+            -20.0 * peak_gain(&plan, impulse, channels, rate).log10().max(0.0)
+        })
     }
 
     #[cfg(test)]
@@ -120,7 +113,7 @@ impl Setup {
     }
 
     #[cfg(test)]
-    pub(crate) fn new(filters: Vec<EqFilter>, impulses: Vec<Impulse>) -> Self {
+    pub(crate) fn new(filters: Vec<DspFilter>, impulses: Vec<Impulse>) -> Self {
         Self {
             name: "test".into(),
             preamp_db: None,
@@ -181,7 +174,7 @@ pub fn load_impulses(path: &Path, base: &Path) -> Result<Vec<Impulse>, DspError>
 /// The processing for one session, built for the first track's format.
 ///
 /// Samples become 64-bit floats on the way in and 32-bit on the way out, and
-/// nothing is rounded between: resampling, bands and convolution all run in
+/// nothing is rounded between: resampling, filters and convolution all run in
 /// 64-bit, as CamillaDSP and Roon do. `null_test_against_direct_convolution`
 /// measures what is left.
 pub struct Chain {
@@ -189,8 +182,7 @@ pub struct Chain {
     out_rate: u32,
     gain: f64,
     resample: Option<Resample>,
-    /// Each channel's bands, in order.
-    eq: Vec<Vec<DirectForm2Transposed<f64>>>,
+    steps: Steps,
     convolve: Option<Convolve>,
     input: Vec<f64>,
     work: Vec<f64>,
@@ -211,10 +203,9 @@ impl Chain {
             fitting
         });
 
-        let bands = setup.bands(out_rate, channels);
         let preamp_db = setup.preamp_db(out_rate, channels);
         log::info!(
-            "dsp: '{}' at {out_rate}Hz — {} bands, preamp {preamp_db:.2} dB{}",
+            "dsp: '{}' at {out_rate}Hz — {} filters, preamp {preamp_db:.2} dB{}",
             setup.name,
             setup.filters.len(),
             impulse.map_or(String::new(), |i| format!(
@@ -230,10 +221,7 @@ impl Chain {
             out_rate,
             gain: 10f64.powf(preamp_db / 20.0),
             resample: Resample::new(source_rate, out_rate, channels),
-            eq: bands
-                .iter()
-                .map(|b| b.iter().map(|&c| DirectForm2Transposed::new(c)).collect())
-                .collect(),
+            steps: Steps::new(plan(&setup.filters, out_rate, channels), out_rate, channels),
             convolve: impulse.map(|i| Convolve::new(i, channels)),
             input: Vec::new(),
             work: Vec::new(),
@@ -294,18 +282,15 @@ impl Chain {
         self.emit()
     }
 
-    /// Gain, bands and convolution over `self.work`, at the output rate.
+    /// Gain, filters and convolution over `self.work`, at the output rate.
     fn post(&mut self) {
-        if self.gain != 1.0 || self.eq.iter().any(|b| !b.is_empty()) {
-            for frame in self.work.chunks_exact_mut(self.channels) {
-                for (s, bands) in frame.iter_mut().zip(&mut self.eq) {
-                    let mut x = *s * self.gain;
-                    for f in bands {
-                        x = f.run(x);
-                    }
-                    *s = x;
-                }
+        if self.gain != 1.0 {
+            for s in &mut self.work {
+                *s *= self.gain;
             }
+        }
+        if !self.steps.is_empty() {
+            self.steps.run(&mut self.work);
         }
         if let Some(c) = self.convolve.as_mut() {
             c.run(&mut self.work);
@@ -320,60 +305,18 @@ impl Chain {
     }
 }
 
-fn coefficients(f: &EqFilter, rate: u32) -> Option<Coefficients<f64>> {
-    let kind = match f.kind {
-        EqFilterKind::Gain => {
-            return Some(Coefficients {
-                a1: 0.0,
-                a2: 0.0,
-                b0: 10f64.powf(f.gain_db / 20.0),
-                b1: 0.0,
-                b2: 0.0,
-            });
-        }
-        EqFilterKind::Notch => Type::Notch,
-        EqFilterKind::BandPass => Type::BandPass,
-        EqFilterKind::AllPass => Type::AllPass,
-        EqFilterKind::Peaking => Type::PeakingEQ(f.gain_db),
-        EqFilterKind::LowShelf => Type::LowShelf(f.gain_db),
-        EqFilterKind::HighShelf => Type::HighShelf(f.gain_db),
-        EqFilterKind::LowPass => Type::LowPass,
-        EqFilterKind::HighPass => Type::HighPass,
-    };
-    Hertz::from_hz(f.freq)
-        .and_then(|f0| Coefficients::from_params(kind, Hertz::from_hz(rate as f64)?, f0, f.q))
-        .inspect_err(|e| {
-            log::warn!(
-                "dsp: {:?} at {}Hz skipped at {rate}Hz: {e:?}",
-                f.kind,
-                f.freq
-            );
-        })
-        .ok()
-}
-
-/// The magnitude of a biquad's response at `w` radians per sample.
-fn magnitude(c: &Coefficients<f64>, w: f64) -> f64 {
-    let (c1, s1, c2, s2) = (w.cos(), w.sin(), (2.0 * w).cos(), (2.0 * w).sin());
-    let num = (c.b0 + c.b1 * c1 + c.b2 * c2).hypot(c.b1 * s1 + c.b2 * s2);
-    let den = (1.0 + c.a1 * c1 + c.a2 * c2).hypot(c.a1 * s1 + c.a2 * s2);
-    num / den
-}
-
-/// The largest gain, linear, the bands and the response apply to any channel
+/// The largest gain, linear, the filters and the response apply to any channel
 /// at any frequency. A preamp of its inverse keeps a full-scale sine at that
-/// frequency at full scale, as AutoEQ's `Preamp` line does. Routes summing
-/// into one output are added by magnitude, which bounds what they can reach.
-fn peak_gain(
-    bands: &[Vec<Coefficients<f64>>],
-    impulse: Option<&Impulse>,
-    channels: usize,
-    rate: u32,
-) -> f64 {
-    let eq = |c: usize, w: f64| {
-        bands
-            .get(c)
-            .map_or(1.0, |b| b.iter().map(|c| magnitude(c, w)).product::<f64>())
+/// frequency at full scale, as AutoEQ's `Preamp` line does. Whatever sums into
+/// one channel — a mix, routes into one output — is added by magnitude, which
+/// bounds what it can reach.
+fn peak_gain(plan: &[Planned], impulse: Option<&Impulse>, channels: usize, rate: u32) -> f64 {
+    // Each channel's gain at `w` with every input at full scale, in phase.
+    let channel_gains = |w: f64| -> Vec<f64> {
+        gain_matrix(plan, channels.max(1), w, rate)
+            .iter()
+            .map(|row| row.iter().sum())
+            .collect()
     };
     let Some(impulse) = impulse else {
         let (lo, hi) = (10f64.ln(), (rate as f64 * 0.499).ln());
@@ -381,7 +324,7 @@ fn peak_gain(
             .flat_map(|i| {
                 let f = (lo + (hi - lo) * i as f64 / 4096.0).exp();
                 let w = std::f64::consts::TAU * f / rate as f64;
-                (0..channels.max(1)).map(move |c| eq(c, w))
+                channel_gains(w)
             })
             .fold(0.0, f64::max);
     };
@@ -390,6 +333,13 @@ fn peak_gain(
     let fft = RealFftPlanner::<f64>::new().plan_fft_forward(size);
     let mut spectrum = fft.make_output_vec();
     let mut per_output = vec![vec![0.0f64; spectrum.len()]; channels];
+    let gains: Vec<Vec<f64>> = if plan.is_empty() {
+        Vec::new()
+    } else {
+        (0..spectrum.len())
+            .map(|k| channel_gains(std::f64::consts::TAU * k as f64 / size as f64))
+            .collect()
+    };
     for r in &routes {
         let mut input = fft.make_input_vec();
         for (d, &s) in input.iter_mut().zip(&r.ir) {
@@ -399,11 +349,12 @@ fn peak_gain(
             continue;
         }
         for (k, bin) in spectrum.iter().enumerate() {
-            let w = std::f64::consts::TAU * k as f64 / size as f64;
             let fed: f64 = r
                 .inputs
                 .iter()
-                .map(|&(c, g)| g.abs() as f64 * eq(c, w))
+                .map(|&(c, g)| {
+                    g.abs() as f64 * gains.get(k).and_then(|g| g.get(c)).map_or(1.0, |&g| g)
+                })
                 .sum();
             for &(o, g) in &r.outputs {
                 if let Some(out) = per_output.get_mut(o) {
@@ -539,6 +490,7 @@ impl Resample {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{EqFilter, EqFilterKind};
 
     fn band(kind: EqFilterKind, freq: f64, gain_db: f64, q: f64) -> EqFilter {
         EqFilter {
@@ -669,7 +621,10 @@ mod tests {
 
     #[test]
     fn a_peaking_band_boosts_its_frequency_and_the_preamp_pays_for_it() {
-        let setup = Setup::new(vec![band(EqFilterKind::Peaking, 1000.0, 6.0, 1.0)], vec![]);
+        let setup = Setup::new(
+            vec![band(EqFilterKind::Peaking, 1000.0, 6.0, 1.0).into()],
+            vec![],
+        );
         let mut chain = Chain::new(&setup, 48000, 2);
         let input = sine(48000, 1000.0, 48000, 2, 0.5);
         let (out, counted) = run_all(&mut chain, &input, 4096);
@@ -689,7 +644,10 @@ mod tests {
 
     #[test]
     fn a_band_past_nyquist_is_skipped_not_fatal() {
-        let setup = Setup::new(vec![band(EqFilterKind::Peaking, 30000.0, 6.0, 1.0)], vec![]);
+        let setup = Setup::new(
+            vec![band(EqFilterKind::Peaking, 30000.0, 6.0, 1.0).into()],
+            vec![],
+        );
         let mut chain = Chain::new(&setup, 44100, 2);
         let input = sine(44100, 1000.0, 4410, 2, 0.5);
         let (out, _) = run_all(&mut chain, &input, 1024);
@@ -790,7 +748,7 @@ mod tests {
     fn bands_for_one_channel_leave_the_other_alone() {
         let mut b = band(EqFilterKind::Gain, 1000.0, -6.0, 1.0);
         b.channels = vec![1];
-        let mut setup = Setup::new(vec![b], vec![]);
+        let mut setup = Setup::new(vec![b.into()], vec![]);
         setup.preamp_db = Some(0.0);
         let mut chain = Chain::new(&setup, 48000, 2);
         let (out, _) = run_all(&mut chain, &[0.5, 0.5, 0.5, 0.5], 4);

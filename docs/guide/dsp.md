@@ -49,16 +49,31 @@ room's responses and a headphone EQ can live in one profile.
 | WAV, AIFF, FLAC or ALAC impulse responses | REW, rePhase, Acourate, AutoEQ's FIR export, Roon packs | Each file's own rate. A mono file applies to every channel; otherwise one channel per output channel. Mono files at one rate are matched to channels by `L`/`R` in their names |
 | Roon zip | Roon, Home Audio Fidelity | Unpacked and read as the files inside: responses as above, or `.cfg` files |
 | Convolver `.cfg` | Roon, JRiver, Acourate, Audiolense | The header's rate; routes say which response feeds which channel, at what weight and delay. Crossfeed works; a crossover to more outputs than inputs is refused |
-| CamillaDSP YAML | CamillaDSP | `devices.samplerate`. Biquads become bands and `Conv` filters responses, on the channels the pipeline gives them. Mixers are refused |
-| Equalizer APO `config.txt`, AutoEQ `ParametricEQ.txt`, squig.link `Filters.txt`, REW filter settings | Equalizer APO, AutoEQ, squig.link, REW | Bands on the channels `Channel:` selects; `Convolution:` responses at their own rate; `Include:` followed. REW's per-speaker files go to the channel their name says |
+| CamillaDSP YAML | CamillaDSP | `devices.samplerate`. Biquads, gains, delays and mixers keep their place in the pipeline, on the channels it gives them; `Conv` filters become responses |
+| Equalizer APO `config.txt`, AutoEQ `ParametricEQ.txt` and `GraphicEQ.txt`, squig.link exports, REW filter settings | Equalizer APO, AutoEQ, squig.link, REW | Bands, `Delay:`, `Copy:` and `GraphicEQ:` in order, on the channels `Channel:` selects; `Convolution:` responses at their own rate; `Include:` followed. REW's per-speaker files go to the channel their name says |
 | Raw or text coefficients | CamillaDSP, BruteFIR, REW text export | A rate in the file name (`room-48k.txt`), or asked for |
 
-Anything in these that kōan cannot do — a mixer, a delay filter, a first-order
-shelf, Equalizer APO's `Copy:` — stops the import with its name, rather than
-being dropped and leaving the correction different from what was designed.
-A `GraphicEQ:` file — AutoEQ's `GraphicEQ.txt`, squig.link's "Export Graphic
-EQ" — is a curve sampled from filters; import the parametric version, which
-holds the filters themselves.
+Filters run in the order the configuration lists them, because a mixer makes
+channels out of others: a band before it is not the same as one after it.
+Impulse responses run after everything else. Bands and delays act on one
+channel at a time, so they give the same result on either side of a response;
+a mixer does not, and one placed after a response is refused.
+
+A `GraphicEQ:` curve, as AutoEQ's `GraphicEQ.txt` and squig.link's "Export
+Graphic EQ" write one, becomes a minimum-phase FIR designed for the rate
+playback runs at, with the gain between points interpolated against log
+frequency. Minimum phase is what the parametric filters such a curve is
+sampled from have: no pre-ringing, and no delay. Where the parametric version
+is to hand it is still the better import, being the filters themselves rather
+than a sampling of them.
+
+Anything in these that kōan cannot do stops the import with its name, rather
+than being dropped and leaving the correction different from what was designed.
+That covers a mixer with more outputs than inputs (kōan plays as many channels
+as the source has, so a crossover to four outputs has nowhere to go), a mixer
+after a convolution, settings that depend on the sample rate (Equalizer APO's
+`If:`), and filter types with no equivalent here, such as raw IIR
+coefficients.
 
 kōan keeps what it imported under `dsp/<profile>/` beside the config, as one
 32-bit float WAV per rate, with a `.cfg` where the routes mix or delay channels.
@@ -138,11 +153,25 @@ impulses = ["dsp/living-room/44100.wav", "dsp/living-room/48000.cfg"]
 filters = [
     { type = "peaking", freq = 46.5, gain_db = -9.4, q = 4.47 },
     { type = "low_shelf", freq = 105.0, gain_db = 5.5, q = 0.7, channels = [1] },
+    { type = "delay", ms = 0.25, channels = [0] },
+    { type = "mix", outputs = [[[0, 0.9], [1, 0.1]], [[0, 0.1], [1, 0.9]]] },
+    { type = "graphic", points = [[20.0, -1.5], [1000.0, 0.0], [10000.0, 2.0]] },
 ]
 ```
 
 `impulses` entries are WAVs (any audio file) or Convolver `.cfg` files, relative
-to the config directory. Filter types are `peaking`, `low_shelf`, `high_shelf`,
-`low_pass`, `high_pass`, `notch`, `band_pass`, `all_pass` and `gain`; `channels`
-counts from 0 and, left out, means every channel. A band at or above half the
-sample rate cannot be built and is skipped at that rate, with a line in the log.
+to the config directory. `filters` run in order, before the responses.
+`channels` counts from 0 and, left out, means every channel.
+
+| Type | Fields |
+|---|---|
+| `peaking`, `low_shelf`, `high_shelf`, `low_pass`, `high_pass`, `notch`, `band_pass`, `all_pass` | `freq`, `gain_db`, `q` |
+| `low_shelf_first_order`, `high_shelf_first_order` | `freq`, `gain_db`: 6 dB per octave, half the gain at `freq` |
+| `low_pass_first_order`, `high_pass_first_order`, `all_pass_first_order` | `freq` |
+| `gain` | `gain_db` |
+| `delay` | `ms` and `samples`, added together; `subsample = true` keeps the fraction of a sample rather than rounding it |
+| `mix` | `outputs`: for each channel from 0, the `[input, linear gain]` pairs it is made of, every input read before any is written. An empty list is silence; channels past the list pass unchanged |
+| `graphic` | `points`: `[Hz, dB]` pairs |
+
+A filter at or above half the sample rate cannot be built and is skipped at
+that rate, with a line in the log.
