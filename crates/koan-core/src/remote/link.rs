@@ -162,6 +162,18 @@ pub enum LinkCommand {
         device: String,
         profile: Option<String>,
     },
+    /// Send this device's audio levels (`LinkReport::Levels`) while `on`: a
+    /// controller has playing bars on screen. A device on the same network may
+    /// ask; levels say no more than the now-playing it already sees.
+    WatchLevels {
+        on: bool,
+    },
+    /// A frame of the levels of `from`, a device this one watches, relayed by
+    /// the server. News, like `Devices`.
+    Levels {
+        from: String,
+        f: crate::remote::levels::Frame,
+    },
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -208,7 +220,10 @@ impl LinkCommand {
             | Self::Shared { .. }
             | Self::SetOutput { .. }
             | Self::SetRendererVolume { .. }
-            | Self::SetPreset { .. } => false,
+            | Self::SetPreset { .. }
+            // Relayed only between an account's live links, never by grant.
+            | Self::WatchLevels { .. }
+            | Self::Levels { .. } => false,
         }
     }
 
@@ -218,6 +233,7 @@ impl LinkCommand {
             Self::Sync { .. }
                 | Self::Evict { .. }
                 | Self::Devices { .. }
+                | Self::Levels { .. }
                 | Self::SetOutput { .. }
                 | Self::SetRendererVolume { .. }
                 | Self::SetPreset { .. }
@@ -305,6 +321,8 @@ impl LinkCommand {
             | Self::HandOff { .. }
             | Self::Devices { .. }
             | Self::Shares { .. }
+            | Self::WatchLevels { .. }
+            | Self::Levels { .. }
             | Self::SetOutput { .. }
             | Self::SetRendererVolume { .. }
             | Self::SetPreset { .. }
@@ -422,6 +440,11 @@ pub enum LinkReport {
     Share {
         grantee: String,
         allow: bool,
+    },
+    /// A frame of this device's audio levels, while it is watched: see
+    /// `LinkCommand::WatchLevels`. Sent at the analyser's rate, so short.
+    Levels {
+        f: crate::remote::levels::Frame,
     },
 }
 
@@ -682,6 +705,7 @@ fn link_url(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<String, Stri
 
 fn serve(socket: &mut Socket, fd: RawFd, local: &Local) -> Result<(), String> {
     let waker = Waker::new().map_err(|e| e.to_string())?;
+    let watcher = waker.clone();
     wire::wake_on_engine_change(&waker);
     *LINK.lock() = Some(Up {
         waker: waker.clone(),
@@ -693,6 +717,8 @@ fn serve(socket: &mut Socket, fd: RawFd, local: &Local) -> Result<(), String> {
         sent: None,
         sent_push: None,
         sent_activity: None,
+        waker: watcher,
+        levels: None,
     };
     wire::drive(socket, fd, &waker, &mut session)
 }
@@ -702,6 +728,10 @@ struct LinkSession<'a> {
     sent: Option<(LinkState, Instant)>,
     sent_push: Option<(String, bool)>,
     sent_activity: Option<Option<ActivityToken>>,
+    waker: Arc<Waker>,
+    /// Set while the server says a device of the account is watching this
+    /// one's levels. It counts the watchers; this link holds one watch.
+    levels: Option<crate::remote::levels::Watch>,
 }
 
 impl wire::Session for LinkSession<'_> {
@@ -739,6 +769,9 @@ impl wire::Session for LinkSession<'_> {
             out.push(LinkReport::State(now.clone()));
             self.sent = Some((now, Instant::now()));
         }
+        if let Some(f) = self.levels.as_mut().and_then(|w| w.take()) {
+            out.push(LinkReport::Levels { f });
+        }
         out.iter()
             .filter_map(|r| serde_json::to_string(r).ok())
             .collect()
@@ -760,6 +793,12 @@ impl wire::Session for LinkSession<'_> {
                 } else {
                     log::warn!("link: refused from a shared account: {command:?}");
                 }
+            }
+            Ok(LinkCommand::WatchLevels { on }) => {
+                self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
+            }
+            Ok(LinkCommand::Levels { from, f }) => {
+                crate::remote::levels::remote().received(&from, f);
             }
             Ok(cmd) => (self.local.on_command)(cmd, CommandSource::Account),
             Err(e) => log::warn!("link: not a command ({e}): {text}"),
@@ -917,6 +956,33 @@ fn percent_encode(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn levels_cross_the_link_compactly() {
+        use crate::remote::levels::Frame;
+        let f = Frame(61_250, 512, 300, 40);
+
+        let report = serde_json::to_string(&LinkReport::Levels { f }).unwrap();
+        assert_eq!(report, r#"{"type":"levels","f":[61250,512,300,40]}"#);
+        assert_eq!(
+            serde_json::from_str::<LinkReport>(&report).unwrap(),
+            LinkReport::Levels { f }
+        );
+
+        let relayed = LinkCommand::Levels {
+            from: "dev-phone".into(),
+            f,
+        };
+        let text = serde_json::to_string(&relayed).unwrap();
+        assert!(text.len() < 80, "{} bytes: {text}", text.len());
+        assert_eq!(serde_json::from_str::<LinkCommand>(&text).unwrap(), relayed);
+
+        let watch = LinkCommand::WatchLevels { on: true };
+        let text = serde_json::to_string(&watch).unwrap();
+        assert_eq!(serde_json::from_str::<LinkCommand>(&text).unwrap(), watch);
+        assert!(watch.allowed_nearby(), "a stranger may watch the bars");
+        assert!(!relayed.allowed_nearby(), "only the server relays frames");
+    }
     use super::*;
 
     /// What another account may ask of a shared device is a subset of what a

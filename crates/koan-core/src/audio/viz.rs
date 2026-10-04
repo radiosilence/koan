@@ -77,11 +77,12 @@ pub struct VizSnapshot {
     /// ever opening a visualiser, and an FFT sixty times a second for nobody
     /// is a percent of a core.
     reads: AtomicU64,
-    /// Bumped by every published frame, and the thing a subscriber waits on.
-    /// Nothing is sent through the channel but the count: a frame is a whole
-    /// snapshot behind a lock, so a waiter that misses two publishes wants the
-    /// newest one, not the two it slept through.
-    published: watch::Sender<u64>,
+    /// Bumped by every published frame, and the thing a subscriber waits on:
+    /// a task through its channel, a thread on its condvar. Nothing is sent
+    /// but the count: a frame is a whole snapshot behind a lock, so a waiter
+    /// that misses two publishes wants the newest one, not the two it slept
+    /// through.
+    published: crate::signal::Wake,
     /// Where the analyser waits when there is nothing to analyse for, and how
     /// it is woken. Parking rather than looking again on a timer is what makes
     /// an idle koan cost nothing at all: the thread is not scheduled until a
@@ -113,7 +114,7 @@ impl VizSnapshot {
         Arc::new(Self {
             inner: RwLock::new(VizFrame::default()),
             reads: AtomicU64::new(0),
-            published: watch::Sender::new(0),
+            published: crate::signal::Wake::new(),
             park: Mutex::new(false),
             unpark: Condvar::new(),
             parked: AtomicBool::new(false),
@@ -174,6 +175,11 @@ impl VizSnapshot {
         self.published.subscribe()
     }
 
+    /// The same, for a thread: see `published`.
+    pub fn frames(&self) -> &crate::signal::Wake {
+        &self.published
+    }
+
     /// How many times the frame has been looked at, by either route. Only the
     /// analyser cares — a count that stops moving means nothing is watching,
     /// and there is nothing to analyse for.
@@ -210,7 +216,7 @@ impl VizSnapshot {
         *self.inner.write() = frame;
         // After the frame is in place, so a woken subscriber reads the frame
         // it was told about rather than the one before it.
-        self.published.send_modify(|version| *version += 1);
+        self.published.bump();
     }
 
     /// Reduce the latest frame to three bands.

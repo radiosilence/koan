@@ -169,6 +169,8 @@ and what is playing become that device's until you pick another: skip, seek,
 reorder, add an album, favourite the track. Library pages are still this
 device's library; what you add goes to the other device's queue by the
 server's id for each track.
+The bars beside the playing track show the controlled device's levels, sent
+only while they are on screen.
 
 **Move here** on a row pauses the controlled device, then sends what it was
 playing (its whole queue, and the point in the current track where it went
