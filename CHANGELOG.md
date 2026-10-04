@@ -4,7 +4,11 @@
 
 ### Added
 
-- **Share a device with other accounts on your server.** On the device, Settings → Devices → Shared with other accounts names another account, which then sees the device in its Control menu, labelled with whose it is, and can play, pause, skip and change the queue on it from any network, waking it by push as its own devices are. It cannot change the device's outputs or presets, and nothing of the owner's library, playlists or history reaches it. Stopping the share ends its control at once. Servers list the `koanShares` extension. The library database moves to schema 15 for the new `link_grants` table; a build older than this one refuses it.
+- **Share a device with other accounts on your server.** On the device, Settings → Devices → Shared with other accounts names another account, offered from the server's accounts as you type. That account then sees the device in its Control menu from any network, labelled with whose it is, and controls it as a device on your own network would: play, pause, skip, the queue, the output, preset and volume, and moving the music to its own devices and back, waking it by push as its own. It acts as itself, never with the owner's powers: nothing of the owner's library, settings, favourites, playlists or history. Stopping the share ends its control at once. Servers list the `koanShares` extension. The library database moves to schema 15 for the new `link_grants` table; a build older than this one refuses it.
+
+### Changed
+
+- **Devices on the same network get Full control by default.** A kōan on the same network can now choose this device's output, preset and volume, and move its music here or away, not only play and change the queue; on a household network that is what is wanted. It still acts as itself: nothing reaches this device's library, files, settings beyond what plays where, or the account's favourites, playlists and history, and music it moves away goes over the network or to its own devices, never to this account's other devices. Settings → Devices → Devices on this network → Playback only restores the narrower rules, for a network shared with strangers.
 
 ## 0.52.5
 

@@ -1187,6 +1187,10 @@ pub struct Settings {
     pub devices_discoverable: bool,
     /// Devices to reach by address where Bonjour does not: `host:port`.
     pub devices_addresses: Vec<String>,
+    /// What devices on the local network may do with this one: `full`
+    /// (playback, outputs, presets, volume, hand-off) or `playback` (play and
+    /// the queue only).
+    pub devices_nearby_control: String,
 }
 
 /// A scanned folder, and what it contributed.
@@ -1499,6 +1503,8 @@ pub struct ConnectionInfo {
     pub shared_with: Vec<String>,
     /// Why the server refused the last change to them.
     pub share_error: Option<String>,
+    /// The server's other accounts, to share with.
+    pub share_accounts: Vec<String>,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

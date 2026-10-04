@@ -24,7 +24,9 @@ use std::time::{Duration, Instant};
 use parking_lot::{Condvar, Mutex};
 
 use crate::config::Config;
-use crate::remote::link::{self, LinkCommand, LinkDevice, LinkHello, LinkReport, LinkState, Local};
+use crate::remote::link::{
+    self, CommandSource, LinkCommand, LinkDevice, LinkHello, LinkReport, LinkState, Local,
+};
 
 /// Another device, as the app shows it.
 #[derive(Debug, Clone, PartialEq)]
@@ -107,6 +109,8 @@ struct Store {
     shares: Vec<String>,
     /// Why the server refused the last change to them.
     share_error: Option<String>,
+    /// Every account on the server, to share with.
+    accounts: Vec<String>,
 }
 
 /// A stage of waking a device, in the order they are tried.
@@ -394,11 +398,17 @@ pub fn set_account(devices: Vec<LinkDevice>) {
 
 /// The accounts this device is shared with, as the server last said, and
 /// why it refused the last change, if it did.
-pub fn set_shares(grantees: Vec<String>, error: Option<String>) {
+pub fn set_shares(grantees: Vec<String>, error: Option<String>, accounts: Vec<String>) {
     changed(|s| {
         s.shares = grantees;
         s.share_error = error;
+        s.accounts = accounts;
     });
+}
+
+/// The server's accounts, to share this device with.
+pub fn accounts() -> Vec<String> {
+    with(|s| s.accounts.clone())
 }
 
 pub fn shares() -> Vec<String> {
@@ -411,7 +421,36 @@ pub fn share_error() -> Option<String> {
 
 /// Signed out, or signed in elsewhere: the shares were that server's.
 pub fn forget_shares() {
-    set_shares(Vec::new(), None);
+    set_shares(Vec::new(), None, Vec::new());
+}
+
+/// Send `cmd` to `id` because `source` asked this device to: a hand-off.
+///
+/// The account's own request goes anywhere. Anyone else's acts as the asker,
+/// never with this account's powers, so it does not reach this account's own
+/// devices up its link: a stranger's (Playback only) goes over the network or
+/// nowhere; a sharing account's, or a trusted network device's, goes over the
+/// network or to a device that is not this account's (the asker's own,
+/// through the server).
+pub fn send_for(source: CommandSource, id: &str, cmd: LinkCommand) -> Result<(), String> {
+    match source {
+        CommandSource::Account => send(id, cmd),
+        CommandSource::Stranger => send_nearby(id, cmd),
+        CommandSource::Shared | CommandSource::Nearby => {
+            let (nearby, own) = with(|s| {
+                (
+                    s.nearby.iter().any(|n| n.hello.id == id),
+                    s.account
+                        .iter()
+                        .any(|(d, _)| d.id == id && d.owner.is_none()),
+                )
+            });
+            if own && !nearby {
+                return Err(format!("{id} is this account's, not the asker's"));
+            }
+            send(id, cmd)
+        }
+    }
 }
 
 /// Send `cmd` to `id` over the local network only, never up this device's
@@ -1020,25 +1059,24 @@ pub fn send_live(id: &str, cmd: LinkCommand) -> bool {
 /// Activity's button has while iOS keeps the app's link down.
 pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
     choosable(id)?;
-    let (nearby, account) = with(|s| {
+    let (nearby, own, shared) = with(|s| {
+        let listed = s.account.iter().find(|(d, _)| d.id == id);
         (
             s.nearby.iter().any(|n| n.hello.id == id),
-            // A shared device is another account's: what only an account may
-            // send its own devices does not go to it.
-            s.account
-                .iter()
-                .any(|(d, _)| d.id == id && d.owner.is_none()),
+            listed.is_some_and(|(d, _)| d.owner.is_none()),
+            listed.is_some_and(|(d, _)| d.owner.is_some()),
         )
     });
-    // The network path proves nothing about who is asking, so a device on it
-    // refuses what only the account may send: that goes through the server,
-    // and only to the account's own devices.
-    if !cmd.allowed_nearby() && !account {
+    // Another account's device, or one on the network, takes the playback
+    // set at most, and decides for itself; what only an account may send its
+    // own devices goes to them alone.
+    if !own && !cmd.allowed_playback() {
         return Err("Only your own devices can be asked that.".into());
     }
-    if nearby && cmd.allowed_nearby() && crate::remote::nearby::send(id, cmd.clone()) {
+    if nearby && crate::remote::nearby::send(id, cmd.clone()) {
         return Ok(());
     }
+    let account = own || shared;
     if link::report(LinkReport::Command {
         to: id.to_string(),
         command: cmd.clone(),
@@ -1385,6 +1423,36 @@ mod tests {
             send_nearby("mac", play).is_err(),
             "the account's Mac is reached only through the link"
         );
+        with(|s| *s = Store::default());
+    }
+
+    /// A hand-off asked by anyone but the account acts as the asker: never up
+    /// this device's link to the account's own devices.
+    #[test]
+    fn a_hand_off_for_someone_else_never_reaches_the_accounts_own_devices() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        set_linked(true);
+        set_account(vec![device("mac", false)]);
+        let play = || LinkCommand::Play {
+            track_ids: vec!["t".into()],
+            start_at: 0,
+            position_ms: 0,
+            paused: false,
+            handoff: true,
+        };
+        for source in [
+            CommandSource::Shared,
+            CommandSource::Nearby,
+            CommandSource::Stranger,
+        ] {
+            let refused = send_for(source, "mac", play()).unwrap_err();
+            assert!(
+                refused.contains("this account's") || refused.contains("not on this network"),
+                "{source:?}: {refused}"
+            );
+        }
         with(|s| *s = Store::default());
     }
 

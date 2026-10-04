@@ -28,7 +28,7 @@ Three kinds of setting are machine-scoped and always land in
 | Kind | Settings |
 |------|----------|
 | Secrets | `remote.password`, `subsonic.password` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username`, `devices.discoverable/port/addresses`, everything under `dsp` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username`, `devices.discoverable/port/addresses/nearby_control`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
@@ -425,12 +425,18 @@ reach each other through the server whatever this says. See
 discoverable = true                 # listen, and announce this device over Bonjour
 port = 5626                         # fixed, so a typed address keeps working
 addresses = ["mac-mini:5626"]       # dialled directly: for a tailnet, which carries no Bonjour
+nearby_control = "full"             # "full" or "playback": what devices on the network may do here
 ```
 
 A discoverable device can be seen and controlled by any koan app on the
-network, whoever is signed in there: playback and the queue, never the library
-or the files on disk. If the port is taken, koan listens on another and
-announces that one, so only typed addresses miss it.
+network, whoever is signed in there, never with this device's account's
+powers: nothing reaches the library, the files on disk, or the account's
+playlists, favourites or history. `nearby_control = "full"`, the default, is
+for a household network: they may also choose the output, the preset and the
+volume, and move the music here or away. `"playback"` is for a network shared
+with strangers: play and the queue only, and a hand-off that stays on the
+network. If the port is taken, koan listens on another and announces that one,
+so only typed addresses miss it.
 
 ---
 

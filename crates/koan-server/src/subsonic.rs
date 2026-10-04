@@ -3881,9 +3881,9 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
                             }
                             Ok(LinkReport::Command { to, command }) => {
                                 // Relaying may push to a phone, which blocks.
-                                let username = username.clone();
+                                let (username, device) = (username.clone(), device.clone());
                                 tokio::task::spawn_blocking(move || {
-                                    if let Err(e) = registry.relay(&username, &to, command) {
+                                    if let Err(e) = registry.relay_from(&username, Some(&device), &to, command) {
                                         log::info!("link: relay to {to}: {e}");
                                     }
                                 });

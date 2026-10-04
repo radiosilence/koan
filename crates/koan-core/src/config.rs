@@ -472,6 +472,22 @@ pub struct DevicesConfig {
     /// wake, stays listed as asleep before it is dropped. One a push can
     /// wake stays listed.
     pub asleep_grace_mins: u32,
+    /// What a kōan on the local network may have this device do, whoever is
+    /// signed in there.
+    pub nearby_control: NearbyControl,
+}
+
+/// What devices on the local network may do with this one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NearbyControl {
+    /// Play, the queue, the output, the preset and the volume, and moving the
+    /// music here or away: what a household network wants.
+    #[default]
+    Full,
+    /// Play and the queue only, and a hand-off that stays on the network: for
+    /// a network shared with strangers.
+    Playback,
 }
 
 impl Default for DevicesConfig {
@@ -481,6 +497,7 @@ impl Default for DevicesConfig {
             port: DEVICES_PORT,
             addresses: Vec::new(),
             asleep_grace_mins: 30,
+            nearby_control: NearbyControl::Full,
         }
     }
 }
@@ -737,6 +754,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "devices.port"
         | "devices.addresses"
         | "devices.asleep_grace_mins"
+        | "devices.nearby_control"
         // Which koan server this machine signs in to.
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.

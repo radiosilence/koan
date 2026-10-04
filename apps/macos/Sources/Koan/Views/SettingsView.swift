@@ -733,6 +733,10 @@ private struct DevicesSettings: View {
         Form {
             Section {
                 Toggle("Discoverable on this network", isOn: model.binding(\.devicesDiscoverable))
+                Picker("Devices on this network", selection: model.binding(\.devicesNearbyControl)) {
+                    Text("Full control").tag("full")
+                    Text("Playback only").tag("playback")
+                }
                 if let port = mirror.connection?.listeningPort {
                     LabeledContent("Listening on port", value: String(port))
                 }
@@ -744,7 +748,7 @@ private struct DevicesSettings: View {
             } header: {
                 Text("This device")
             } footer: {
-                Text("Any kōan app on this network can then see what is playing here and control it, whoever is signed in there. Your own devices reach each other through your server either way.")
+                Text("Any kōan app on this network can then see what is playing here and control it, whoever is signed in there: with Full control, the output, preset and volume too, and move the music here or away; with Playback only, play and the queue. Neither reaches your library, playlists or history. Choose Playback only on a network you share with strangers. Your own devices reach each other through your server either way.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -788,6 +792,11 @@ private struct DevicesSettings: View {
                     HStack {
                         TextField("Account", text: $grantee, prompt: Text("Their username on this server"))
                             .verbatimEntry()
+                            .textInputSuggestions {
+                                ForEach(suggestions, id: \.self) { account in
+                                    Text(account).textInputCompletion(account)
+                                }
+                            }
                             .onSubmit { share(grantee, allow: true) }
                         Button("Share") { share(grantee, allow: true) }
                             .disabled(grantee.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -799,13 +808,22 @@ private struct DevicesSettings: View {
                 } header: {
                     Text("Shared with other accounts")
                 } footer: {
-                    Text("They can play, pause, skip and change the queue on this device, from any network, and see what it is playing. Not its outputs or presets, and nothing of your library, playlists or history.")
+                    Text("From any network, they can see what this device is playing and control its playback as on your own network: play, pause, skip, the queue, the output, preset and volume, and moving the music here or to their own devices. Each does it as their own account: nothing of your library, playlists, favourites or history, and nothing of your settings beyond what is playing and where.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// The server's accounts matching what is typed, not shared with yet.
+    private var suggestions: [String] {
+        let shared = Set(mirror.connection?.sharedWith ?? [])
+        let typed = grantee.trimmingCharacters(in: .whitespaces).lowercased()
+        return (mirror.connection?.shareAccounts ?? []).filter {
+            !shared.contains($0) && (typed.isEmpty || $0.lowercased().hasPrefix(typed))
+        }
     }
 
     private func share(_ account: String, allow: Bool) {
