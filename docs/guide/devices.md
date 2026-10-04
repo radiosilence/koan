@@ -112,6 +112,14 @@ The row says which it is on, and says so if none worked.
 3. **A notification** on the device, after about six seconds, saying this
    device wants to play there. Tapping it opens kōan, which connects.
 
+A device of another account on your server can be woken too: one shared with
+you, from anywhere, and any other when you are behind the same router as it
+was when it last connected. The server compares the address each device
+connects from, so it treats everyone behind one router as one household: on a
+home network that is the point, and nothing else is granted by it, since what
+may then be done to the device follows the network and sharing rules above. A
+phone on mobile data has another address; sharing covers that.
+
 Each step is logged, on the device choosing (`wake: <name>: Push at +12ms`),
 on the server (`wake: wake push for <name> answered by APNs in 140ms`,
 `wake: <name> linked 2310ms after its wake push`) and on the phone woken

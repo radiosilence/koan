@@ -126,6 +126,9 @@ pub struct Registry {
     /// Which devices have another's playing bars on screen. Held in memory
     /// only, and forgotten with the watcher's link.
     level_watches: Mutex<Vec<LevelWatch>>,
+    /// Where each device last linked from, by device id: its account and
+    /// address. In memory: a restart forgets it until each links again.
+    addresses: Mutex<std::collections::HashMap<String, (String, std::net::IpAddr)>>,
 }
 
 /// `watcher`, a device of `watcher_user`, has `target`'s playing bars on
@@ -534,6 +537,34 @@ impl Registry {
         }
     }
 
+    /// `device`, of `username`'s, linked from `addr`.
+    pub fn seen_at(&self, device: &str, username: &str, addr: std::net::IpAddr) {
+        self.addresses
+            .lock()
+            .insert(device.to_string(), (username.to_string(), addr));
+    }
+
+    /// Whose push token wakes `to` when `username`'s device `from` asks: the
+    /// owner of a device shared with `username`; the account of one last seen
+    /// at the same address as `from` is now, which is to say behind the same
+    /// router, a household's; else `username`'s own. A wake grants nothing
+    /// else: what may then be done to the device follows the share or the
+    /// network as ever.
+    fn wake_owner(&self, username: &str, from: &str, to: &str) -> String {
+        if let Some(owner) = self.shared_owner(username, to) {
+            return owner;
+        }
+        let addresses = self.addresses.lock();
+        let here = addresses
+            .get(from)
+            .filter(|(user, _)| user == username)
+            .map(|(_, addr)| *addr);
+        match (here, addresses.get(to)) {
+            (Some(here), Some((owner, there))) if *there == here => owner.clone(),
+            _ => username.to_string(),
+        }
+    }
+
     /// The account `to` belongs to, when `from`, a device of `owner`'s, is
     /// shared with it.
     fn grantee_of(&self, owner: &str, from: &str, to: &str) -> Option<String> {
@@ -566,15 +597,16 @@ impl Registry {
     /// round trip, and remembered so the link that follows is logged with how
     /// long it took.
     pub fn wake(&self, username: &str, from: &str, to: &str, notify: bool) {
-        // Whose device it is: the asker's own, or one shared with it.
         let from_name = self
             .list(Some(username))
             .into_iter()
             .find(|c| c.device == from)
             .map_or_else(|| "Another device".to_string(), |c| c.name);
-        let username = &self
-            .shared_owner(username, to)
-            .unwrap_or_else(|| username.to_string());
+        let owner = self.wake_owner(username, from, to);
+        if owner != username {
+            log::info!("wake: {to} is {owner}'s, woken for {username}");
+        }
+        let username = &owner;
         if self.list(Some(username)).iter().any(|c| c.device == to) {
             log::info!("wake: {to} is already linked");
             return;
@@ -2168,6 +2200,38 @@ mod tests {
             reg.share("j", "dev-phone", "j", true).is_err(),
             "not with itself"
         );
+    }
+
+    /// Whose token wakes a device: another account's, behind the same router
+    /// as the asker; a shared one's owner from anywhere; and otherwise only
+    /// the asker's own, so a device elsewhere of another account is refused.
+    #[test]
+    fn a_device_is_woken_for_another_account_on_its_network_or_by_grant() {
+        let reg = Registry::default();
+        let home: std::net::IpAddr = "203.0.113.7".parse().unwrap();
+        let away: std::net::IpAddr = "198.51.100.2".parse().unwrap();
+        reg.seen_at("dev-ipad", "sarita", home);
+        reg.seen_at("dev-phone", "admin", home);
+        assert_eq!(
+            reg.wake_owner("admin", "dev-phone", "dev-ipad"),
+            "sarita",
+            "same address: the iPad's own token"
+        );
+        reg.seen_at("dev-phone", "admin", away);
+        assert_eq!(
+            reg.wake_owner("admin", "dev-phone", "dev-ipad"),
+            "admin",
+            "elsewhere, with no grant: only admin's own, which it is not"
+        );
+        reg.share("sarita", "dev-ipad", "admin", true).unwrap();
+        assert_eq!(
+            reg.wake_owner("admin", "dev-phone", "dev-ipad"),
+            "sarita",
+            "shared: from anywhere"
+        );
+        // An address is believed only for the account that linked from it.
+        reg.seen_at("dev-other", "mallory", home);
+        assert_eq!(reg.wake_owner("admin", "dev-other", "dev-tv"), "admin");
     }
 
     #[test]

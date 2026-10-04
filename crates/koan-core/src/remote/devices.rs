@@ -665,7 +665,10 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                 nearby: false,
                 awake: false,
                 asleep: !fresh(&g.id),
-                wakeable: false,
+                // A stranger met on this network may be woken by the server,
+                // which does so for a device behind the same router as this
+                // one; one of the account's that left the list has no token.
+                wakeable: !g.account && s.linked,
                 last_seen: last,
                 waking: None,
                 same_library: g.same_library,
@@ -1383,8 +1386,11 @@ mod tests {
         with(|s| *s = Store::default());
     }
 
+    /// A device met only on the network, asleep, is woken through the
+    /// server, which decides whether it may by where the two devices are; with
+    /// no server to ask, it is not woken at all.
     #[test]
-    fn a_stranger_asleep_on_the_network_is_never_woken() {
+    fn a_stranger_asleep_on_the_network_is_woken_through_the_server_if_linked() {
         let _held = STORE_LOCK.lock();
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
@@ -1394,11 +1400,20 @@ mod tests {
             *s.live.get_mut("stranger").unwrap() -= 10 * 60;
             *s.lan_heard.get_mut("stranger").unwrap() -= 10 * 60;
         });
+        let listed = list().into_iter().find(|d| d.id == "stranger").unwrap();
+        assert!(listed.asleep && !listed.wakeable, "no server to ask");
         wake("stranger");
         assert!(
             with(|s| s.attempt.is_none() && s.waking.is_empty()),
-            "no push, and too long gone for the network"
+            "too long gone for the network, and no server"
         );
+
+        set_linked(true);
+        let listed = list().into_iter().find(|d| d.id == "stranger").unwrap();
+        assert!(listed.asleep && listed.wakeable);
+        assert!(choosable("stranger").is_ok());
+        let plan = wake_plan(false, listed.wakeable);
+        assert_eq!(plan[0].0, Waking::Push, "asks the server");
         with(|s| *s = Store::default());
     }
 

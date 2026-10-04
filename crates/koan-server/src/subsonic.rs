@@ -3728,7 +3728,11 @@ async fn koan_link(
     State(state): State<Arc<AppState>>,
     RawQuery(raw): RawQuery,
     ws: axum::extract::WebSocketUpgrade,
+    request: axum::extract::Request,
 ) -> Response {
+    // Where the device is, as the rate limits see it: what lets a device wake
+    // another account's on the same network.
+    let addr = crate::auth::routes::client_ip(&request);
     let params = RawParams::parse(raw.as_deref());
     let json = params.auth().wants_json();
     let caller = {
@@ -3756,6 +3760,7 @@ async fn koan_link(
                 platform,
                 device,
                 wants_devices,
+                addr,
             },
         )
     })
@@ -3767,6 +3772,8 @@ struct LinkPeer {
     platform: String,
     device: String,
     wants_devices: bool,
+    /// The client's address, through a trusted proxy if there is one.
+    addr: std::net::IpAddr,
 }
 
 /// Hand a link command to another of the caller's devices, in one request:
@@ -3805,6 +3812,7 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
         platform,
         device,
         wants_devices,
+        addr,
     } = peer;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let registry = crate::clients::registry();
@@ -3819,6 +3827,7 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
             device.clone(),
         );
         let registered = tokio::task::spawn_blocking(move || {
+            registry.seen_at(&device, &username, addr);
             registry.register(&username, &name, &platform, &device, tx, wants_devices)
         })
         .await;
