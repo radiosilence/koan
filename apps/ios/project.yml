@@ -9,6 +9,7 @@ name: Koan
 options:
   deploymentTarget:
     iOS: "26.0"
+    tvOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: false
 
@@ -155,7 +156,6 @@ targets:
   KoanTV:
     type: application
     platform: tvOS
-    deploymentTarget: "26.0"
     sources:
       - path: ../macos/Sources/KoanIOS
         excludes:
