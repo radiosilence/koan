@@ -173,6 +173,8 @@ mod tests {
     /// still parses.
     #[test]
     fn the_interval_arguments_are_still_in_the_schema() {
+        // The player's history writer opens the library in the config dir.
+        koan_core::config::isolate_config_for_tests();
         let (state, _timeline, _viz, cmd_tx) = koan_core::player::Player::spawn();
         let schema = crate::graphql::build_schema(
             state,

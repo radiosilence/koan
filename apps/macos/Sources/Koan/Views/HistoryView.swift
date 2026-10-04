@@ -22,6 +22,7 @@ struct HistoryView: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
+    @Environment(TransferMeter.self) private var meter
     @Environment(UIState.self) private var ui
     @Environment(\.roomTint) private var tint
     #endif
@@ -90,7 +91,7 @@ struct HistoryView: View {
                     tint: NSColor(tint),
                     favourites: [],
                     queued: [:],
-                    progress: { _ in nil },
+                    meter: meter,
                     art: art,
                     levels: levels,
                     play: { line in if let track = line.track { player.playNow(trackIds: [track.id]) } },

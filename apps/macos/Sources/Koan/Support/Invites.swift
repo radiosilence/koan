@@ -3,7 +3,9 @@ import SwiftUI
 
 /// Invites: a link that carries an account, opened in one tap.
 ///
-/// The link arrives as a universal link (`koan.rocks/join/`), as `koan://join`
+/// The link carries a token, which is traded for an API key of this device's
+/// own. The link
+/// arrives as a universal link (`koan.rocks/join/`), as `koan://join`
 /// from the join page, or pasted into Settings. Opening it signs in, syncs the
 /// whole library and shows it, with nothing asked — except when it would
 /// replace an account already signed in, which is not a thing to do to
@@ -31,8 +33,7 @@ extension AppState {
         let host = Self.host(of: invite)
         Task {
             let signedIn = await activity.run("Signing in to \(host)") {
-                try await engine.signInRemote(
-                    url: invite.server, username: invite.username, password: invite.password)
+                try await engine.joinInvite(invite: invite)
             }
             if case .failure(let error) = signedIn {
                 player.lastError = "Could not sign in to \(host): \(SettingsModel.describe(error))"

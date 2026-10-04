@@ -26,6 +26,8 @@ figment = { version = "0.10", features = ["toml", "env"] }
 # Credentials (cross-platform: macOS Keychain, Linux secret-service)
 # Metadata
 lofty = "0.25"
+# Format strings, shared with sift's importer. Published as `sift-music`.
+sift = { package = "sift-music", version = "0.4" }
 unicode-normalization = "0.1"
 log = "0.4"
 # Subsonic/Navidrome

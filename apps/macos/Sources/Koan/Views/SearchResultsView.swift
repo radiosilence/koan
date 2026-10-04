@@ -15,6 +15,7 @@ struct SearchResultsView: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
+    @Environment(TransferMeter.self) private var meter
     @Environment(\.roomTint) private var tint
     @AppStorage("graphics") private var graphics = Graphics.full
     #endif
@@ -127,7 +128,7 @@ struct SearchResultsView: View {
                     tint: NSColor(tint),
                     favourites: [],
                     queued: queued,
-                    progress: { mirror.progress(for: $0) },
+                    meter: meter,
                     art: art,
                     levels: levels,
                     play: { line in if let track = line.track { player.playNow(trackIds: [track.id]) } },

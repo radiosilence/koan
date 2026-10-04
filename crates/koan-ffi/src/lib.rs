@@ -9,8 +9,8 @@
 //!
 //! Threading: anything that can block is `async` and runs on a worker thread,
 //! so no caller ever holds a thread while koan-core reads a file or waits on a
-//! socket. The few methods that stay synchronous read one atomic and nothing
-//! else. See `offload` for where the work goes, and why ordering has a lane of
+//! socket. The few methods that stay synchronous read an atomic or two, or
+//! hold an in-memory lock for one short pass. See `offload` for where the work goes, and why ordering has a lane of
 //! its own.
 //!
 //! DB connections are borrowed from `koan_core::db::pool`, not opened per call:
@@ -404,6 +404,21 @@ impl KoanEngine {
         koan_core::remote::downloads::store().clear_settled();
     }
 
+    /// The byte counts of every transfer still going, read now.
+    ///
+    /// For a client drawing progress at its display's rate, which the `Figures`
+    /// slice is not: it moves when a rate sample is taken, a few times a
+    /// second. Synchronous because a display link has a frame to fill and no
+    /// time to await one; it holds the download list's read lock for one pass
+    /// over a few dozen entries and touches nothing else.
+    pub fn transfer_readings(&self) -> Vec<TransferFigure> {
+        koan_core::remote::downloads::store()
+            .readings()
+            .iter()
+            .map(TransferFigure::from)
+            .collect()
+    }
+
     /// Whether the player is playing, read from the engine now. For code that
     /// runs with the app in the background, where the mirror, refreshed for
     /// what is on screen, can still say what it said before.
@@ -575,6 +590,7 @@ impl KoanEngine {
     pub async fn artists(
         self: Arc<Self>,
         search: Option<String>,
+        filter: BrowseFilter,
     ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -582,6 +598,8 @@ impl KoanEngine {
                 &db.conn,
                 &queries::ArtistQuery {
                     search: trimmed(&search),
+                    favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
+                    filter: album_filter(&filter),
                     ..Default::default()
                 },
             )
@@ -601,7 +619,8 @@ impl KoanEngine {
         .await
     }
 
-    /// The library's albums, narrowed by `search` and ordered by `sort`.
+    /// The library's albums, narrowed by `search` and `filter` and ordered by
+    /// `sort`.
     ///
     /// Both run in SQL. A client that narrows or sorts what it has already been
     /// handed pays to read and marshal every album in the library on each
@@ -619,6 +638,7 @@ impl KoanEngine {
         sort: AlbumSort,
         seed: i64,
         search: Option<String>,
+        filter: BrowseFilter,
     ) -> Result<Vec<Album>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -628,11 +648,25 @@ impl KoanEngine {
                     artist_id,
                     search: trimmed(&search),
                     order: album_order(sort, seed),
+                    favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
+                    filter: album_filter(&filter),
                     ..Default::default()
                 },
             )
             .map_err(db_err)?;
             Ok(rows.into_iter().map(Album::from).collect())
+        })
+        .await
+    }
+
+    /// What the browsers' codec and genre filters offer.
+    pub async fn browse_choices(self: Arc<Self>) -> Result<BrowseChoices, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(BrowseChoices {
+                codecs: queries::album_codecs(&db.conn).map_err(db_err)?,
+                genres: queries::genres(&db.conn, GENRES_OFFERED).map_err(db_err)?,
+            })
         })
         .await
     }
@@ -1839,7 +1873,7 @@ impl KoanEngine {
                 remote_enabled: cfg.remote.enabled,
                 remote_url: cfg.remote.url.clone(),
                 remote_username: cfg.remote.username.clone(),
-                remote_signed_in: koan_core::helpers::get_remote_password(&cfg).is_some(),
+                remote_signed_in: koan_core::helpers::remote_credential(&cfg).is_some(),
                 remote_tracks: db
                     .as_ref()
                     .map(|db| koan_core::helpers::tracks_from_server(db))
@@ -1942,6 +1976,24 @@ impl KoanEngine {
         .await
     }
 
+    /// Join a server with an invite: its token traded for an API key of this
+    /// device's own, or the password a pasted address carries. Checked against
+    /// the server before anything is written.
+    pub async fn join_invite(self: Arc<Self>, invite: Invite) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let invite = koan_core::invite::Invite {
+                server: invite.server,
+                username: invite.username,
+                token: invite.token,
+                password: invite.password,
+            };
+            koan_core::helpers::join_with_invite(&invite).map_err(|e| KoanError::BadArgument {
+                message: e.to_string(),
+            })
+        })
+        .await
+    }
+
     /// Read an invite: the koan.rocks link, `koan://join`, or a server address
     /// with the account in it. `None` for anything else, so a field can offer
     /// to join only when what was pasted is one.
@@ -1976,32 +2028,26 @@ impl KoanEngine {
         role: AccountRole,
     ) -> Result<Invite, KoanError> {
         offload::offload(move || {
-            let client = account_client()?;
+            let client = invite_client()?;
             let made = client
                 .koan_create_user(&username, role.as_str())
                 .map_err(remote_error)?;
-            Ok(
-                koan_core::invite::Invite::new(client.base_url(), &made.username, &made.password)
-                    .into(),
-            )
+            Ok(account_invite(client.base_url(), made).into())
         })
         .await
     }
 
-    /// An invite for an existing account. `reset` gives it a new password,
-    /// signing its devices out.
+    /// An invite for an existing account. `reset` also gives it a new
+    /// password, which comes back in the invite, signing its devices out.
     pub async fn invite_server_account(
         self: Arc<Self>,
         username: String,
         reset: bool,
     ) -> Result<Invite, KoanError> {
         offload::offload(move || {
-            let client = account_client()?;
+            let client = invite_client()?;
             let made = client.koan_invite(&username, reset).map_err(remote_error)?;
-            Ok(
-                koan_core::invite::Invite::new(client.base_url(), &made.username, &made.password)
-                    .into(),
-            )
+            Ok(account_invite(client.base_url(), made).into())
         })
         .await
     }
@@ -2035,6 +2081,7 @@ impl KoanEngine {
             Config::persist(|cfg| {
                 cfg.remote.enabled = false;
                 cfg.remote.password = String::new();
+                cfg.remote.api_key = String::new();
             })
             .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
@@ -3939,6 +3986,19 @@ fn trimmed(search: &Option<String>) -> Option<&str> {
     search.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
+/// How many genres the browsers' genre filter offers, most common first.
+const GENRES_OFFERED: u32 = 80;
+
+fn album_filter(f: &BrowseFilter) -> queries::AlbumFilter<'_> {
+    queries::AlbumFilter {
+        lossless: f.lossless,
+        codec: trimmed(&f.codec),
+        year_from: f.year_from,
+        year_to: f.year_to,
+        genre: trimmed(&f.genre),
+    }
+}
+
 /// The browser's sort as an order the database can apply.
 fn album_order(sort: AlbumSort, seed: i64) -> queries::AlbumOrder {
     match sort {
@@ -4095,6 +4155,35 @@ fn link_queue(state: &SharedPlayerState) -> Vec<koan_core::remote::link::LinkQue
             current: Some(i.id) == cursor,
         })
         .collect()
+}
+
+/// The account client, on a server whose invites this app can open. Checked
+/// before anything is made: a server older than invite tokens would create
+/// the account and answer with nothing this app reads.
+fn invite_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    let client = account_client()?;
+    let offers = koan_core::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| p.offers(koan_core::remote::profile::INVITE));
+    if !offers {
+        return Err(KoanError::BadArgument {
+            message: "this server is older than this app: update it to invite people".into(),
+        });
+    }
+    Ok(client)
+}
+
+/// The invite a koan server answered with, as a link to the address this
+/// client reaches it at.
+fn account_invite(
+    server: &str,
+    made: koan_core::remote::client::KoanInvite,
+) -> koan_core::invite::Invite {
+    koan_core::invite::Invite::with_token(
+        server,
+        &made.username,
+        &made.token,
+        made.password.as_deref(),
+    )
 }
 
 fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {

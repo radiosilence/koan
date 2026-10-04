@@ -627,17 +627,25 @@ private struct PageToolbar: ToolbarContent {
         }
         .sharedBackgroundVisibility(nav.section?.filterPlaceholder == nil ? .hidden : .automatic)
 
-        // Sort belongs next to what it sorts, so it only appears there.
-        // Filtering and sorting are different questions, so they get
-        // different panes of glass rather than one joined control.
+        // Sort and filters belong next to what they narrow, so they only
+        // appear there. Typing a name and picking from a menu are different
+        // gestures, so the field gets its own pane of glass and the two
+        // buttons share another.
         ToolbarSpacer(.fixed, placement: .primaryAction)
 
         ToolbarItem(placement: .primaryAction) {
-            if nav.section == .albums {
-                AlbumSortControls()
+            if nav.section == .albums || nav.section == .artists {
+                HStack(spacing: 2) {
+                    BrowseFilterButton()
+                    if nav.section == .albums {
+                        AlbumSortControls()
+                    }
+                }
             }
         }
-        .sharedBackgroundVisibility(nav.section == .albums ? .automatic : .hidden)
+        .sharedBackgroundVisibility(
+            nav.section == .albums || nav.section == .artists ? .automatic : .hidden
+        )
 
         // Last, and apart from the filter: what you do with a pick is not part
         // of narrowing the grid, and next to the field the two read as one

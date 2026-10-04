@@ -35,6 +35,7 @@ struct KoanIOSApp: App {
                         .environment(state.playlists)
                         .environment(state.activity)
                         .environment(state.levels)
+                        .environment(state.meter)
                         .environment(state.ui)
                         .environment(state.mirror)
                         .environment(\.powerSaving, powerSaving)
