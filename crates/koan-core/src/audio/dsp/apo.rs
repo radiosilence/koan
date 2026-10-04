@@ -99,7 +99,6 @@ fn parse_into(
     // Inside an `If:`: a sample-rate condition, which only a response can
     // honour, since a response already belongs to one rate.
     let mut conditional = 0usize;
-    let mut convolved = false;
     // REW's "Filter Settings file" opens with lines of its own — the version,
     // `Dated:`, `Notes:`, `Equaliser:` — which say nothing about the sound.
     let rew = text
@@ -173,7 +172,8 @@ fn parse_into(
                 parsed.filters.push(DspFilter::Delay(delay));
             }
             "Copy" => {
-                if convolved {
+                // Shared across `Include:`, so a response in any file counts.
+                if convolutions.holds_any() {
                     return Err(fail(
                         "a Copy after a Convolution is not supported: responses run last",
                     ));
@@ -193,7 +193,6 @@ fn parse_into(
                 let (rate, chans) =
                     read_audio(&path).map_err(|e| fail(&format!("{}: {e}", path.display())))?;
                 convolutions.add(rate, chans, selection.as_deref());
-                convolved = true;
             }
             "Include" => read_into(&file(rest)?, parsed, convolutions, depth + 1)?,
             "If" => conditional += 1,
@@ -208,6 +207,10 @@ fn parse_into(
 }
 
 impl Convolutions {
+    pub(super) fn holds_any(&self) -> bool {
+        !self.0.is_empty()
+    }
+
     pub(super) fn add(&mut self, rate: u32, chans: Vec<Vec<f32>>, selection: Option<&[u16]>) {
         let (all, per) = self.0.entry(rate).or_default();
         match selection {
@@ -656,6 +659,15 @@ mod tests {
         assert!(read(&config).unwrap_err().contains("Copy"));
         std::fs::write(&config, "Copy: L=R\nConvolution: l.wav\n").unwrap();
         assert!(read(&config).is_ok());
+
+        // Across an `Include:`, in either direction.
+        let room = dir.path().join("room.txt");
+        std::fs::write(&room, "Convolution: l.wav\n").unwrap();
+        std::fs::write(&config, "Include: room.txt\nCopy: L=R\n").unwrap();
+        assert!(read(&config).unwrap_err().contains("Copy"));
+        std::fs::write(&room, "Copy: L=R\n").unwrap();
+        std::fs::write(&config, "Convolution: l.wav\nInclude: room.txt\n").unwrap();
+        assert!(read(&config).unwrap_err().contains("Copy"));
     }
 
     #[test]
