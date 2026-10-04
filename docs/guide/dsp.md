@@ -125,7 +125,11 @@ mixes or delays channels, any bands, the headroom, and where it was imported
 from. Changes apply straight away, where playback is.
 
 On iOS, profiles follow the route: AirPods, wired headphones and the speaker are
-each their own output.
+each their own output. Now Playing shows the preset of the output playing, beside
+the AirPlay button: the route's, or a UPnP renderer's while the phone plays to
+one. Tapping it picks another for that output, which applies at once. It changes
+when the output does. While processing is off everywhere,
+the preset menu says so on both platforms and offers to turn it back on.
 
 ```bash
 koan dsp                        # list; * marks the current output's profile

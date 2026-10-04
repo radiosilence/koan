@@ -59,6 +59,18 @@
         <a class="rounded-full border border-rule px-4 py-2 text-ink no-underline hover:border-muted hover:text-ink" href="#install">Other ways to install</a>
         <span class="text-sm text-muted">macOS and iOS 26+ apps · macOS and Linux terminal UI · server · MIT</span>
       </p>
+
+      <h2 class="mt-12">What is unusual about it</h2>
+      <ul>
+        <li><strong>The DAC runs at the track's rate.</strong> Each track switches the device to its own sample rate; nothing is resampled to suit the device, and the format badge says so when a device refuses. <a href="#features">Playback</a></li>
+        <li><strong>Gapless survives editing the queue.</strong> The decoder queues the next track early, and if you then reorder or remove it, playback restarts at the playhead with your edit rather than playing what was queued. <a href="#features">Playback</a></li>
+        <li><strong>Room and headphone correction per output.</strong> Roon filter packs, REW and rePhase impulses, CamillaDSP and Equalizer APO configs and AutoEQ import as they are, and a device without a profile runs nothing at all. <a href="/docs/dsp/">Equalisation and convolution</a></li>
+        <li><strong>Network amplifiers get the original file.</strong> A UPnP/DLNA renderer is handed the file itself, or, with a correction profile, one FLAC stream for the whole queue, gapless whether or not the amplifier can do gapless. <a href="/docs/devices/#amplifiers-and-streamers-upnp">Amplifiers and streamers</a></li>
+        <li><strong>Music moves between devices mid-track.</strong> Move the Mac's queue to the phone and it starts where the Mac went silent, opened at that point rather than seeked to, and paused if it was paused. <a href="/docs/devices/#controlling-and-moving">Controlling and moving</a></li>
+        <li><strong>A cache limit that a long queue cannot break.</strong> Local folders and a Subsonic server are one library; remote tracks play while they download, and only as much of the queue is fetched ahead as the limit allows. <a href="/docs/cache-management/">Cache management</a></li>
+        <li><strong>An assistant as a remote.</strong> Over MCP it plays on the phone or the Mac you name, and builds playlists that hold places for albums still downloading, filled when they reach the library. <a href="#assistants">With an assistant</a></li>
+        <li><strong>One Rust core, linked in.</strong> The SwiftUI apps on macOS and iOS call the audio engine in-process: no Electron, and no daemon or port between the interface and the sound. <a href="#pieces">The pieces</a></li>
+      </ul>
     </section>
 
     <figure class="mx-auto my-8 max-w-5xl px-5">
