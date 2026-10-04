@@ -7,23 +7,27 @@
 //! Filter 1: ON PK Fc 20 Hz Gain -1.3 dB Q 2.000
 //! Channel: R
 //! Filter: ON LSC 6 dB Fc 105 Hz Gain 5.5 dB
+//! Delay: 0.3 ms
+//! Copy: L=0.9*L+0.1*R R=0.1*L+0.9*R
 //! Convolution: room-48k.wav
 //! ```
 //!
 //! What has no equivalent in koan is refused by name rather than skipped:
 //! dropping a band, or a delay, changes the correction without saying so.
+//! Responses run after every other step, so a `Copy:` after a `Convolution:`
+//! is refused too; bands and delays act per channel and commute with them.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use super::impulse::{Impulse, Route, read_audio};
-use crate::config::{EqFilter, EqFilterKind};
+use crate::config::{Delay, DspFilter, EqFilter, EqFilterKind, GraphicEq, Mix};
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Parsed {
     /// What `Preamp:` asked for across every channel.
     pub preamp_db: Option<f64>,
-    pub filters: Vec<EqFilter>,
+    pub filters: Vec<DspFilter>,
     pub impulses: Vec<Impulse>,
 }
 
@@ -56,9 +60,16 @@ pub fn parse(text: &str) -> Result<Parsed, String> {
 pub fn looks_like(text: &str) -> bool {
     text.lines().map(str::trim).any(|l| {
         (l.starts_with("Filter") && l.contains(':'))
-            || l.starts_with("Preamp:")
-            || l.starts_with("Convolution:")
-            || l.starts_with("Include:")
+            || [
+                "Preamp:",
+                "Convolution:",
+                "Include:",
+                "GraphicEQ:",
+                "Copy:",
+                "Delay:",
+            ]
+            .iter()
+            .any(|c| l.starts_with(c))
     })
 }
 
@@ -120,7 +131,13 @@ fn parse_into(
                 dir.ok_or_else(|| fail("names a file, and this text has no folder to find it in"))?;
             Ok(dir.join(name.replace('\\', "/")))
         };
-        match command.split_whitespace().next().unwrap_or("") {
+        let word = command.split_whitespace().next().unwrap_or("");
+        if conditional > 0 && matches!(word, "Filter" | "Delay" | "Copy" | "GraphicEQ") {
+            return Err(fail(&format!(
+                "{word} that depends on the sample rate is not supported"
+            )));
+        }
+        match word {
             "Preamp" => {
                 if conditional > 0 {
                     return Err(fail(
@@ -134,25 +151,41 @@ fn parse_into(
                     .map_err(|_| fail("bad preamp"))?;
                 match &selection {
                     None => *parsed.preamp_db.get_or_insert(0.0) += db,
-                    Some(channels) => parsed.filters.push(EqFilter {
+                    Some(channels) => parsed.filters.push(DspFilter::Band(EqFilter {
                         kind: EqFilterKind::Gain,
                         freq: 1000.0,
                         gain_db: db,
                         q: 1.0,
                         channels: channels.clone(),
-                    }),
+                    })),
                 }
             }
             "Filter" => {
-                if conditional > 0 {
-                    return Err(fail(
-                        "bands that depend on the sample rate are not supported",
-                    ));
-                }
                 if let Some(mut filter) = filter(rest).map_err(|e| fail(&e))? {
                     filter.channels = selection.clone().unwrap_or_default();
-                    parsed.filters.push(filter);
+                    parsed.filters.push(filter.into());
                 }
+            }
+            "Delay" => {
+                let mut delay = delay(rest).map_err(|e| fail(&e))?;
+                delay.channels = selection.clone().unwrap_or_default();
+                parsed.filters.push(DspFilter::Delay(delay));
+            }
+            "Copy" => {
+                // Shared across `Include:`, so a response in any file counts.
+                if convolutions.holds_any() {
+                    return Err(fail(
+                        "a Copy after a Convolution is not supported: responses run last",
+                    ));
+                }
+                parsed
+                    .filters
+                    .push(DspFilter::Mix(copy(rest).map_err(|e| fail(&e))?));
+            }
+            "GraphicEQ" => {
+                let mut graphic = graphic(rest).map_err(|e| fail(&e))?;
+                graphic.channels = selection.clone().unwrap_or_default();
+                parsed.filters.push(DspFilter::Graphic(graphic));
             }
             "Channel" => selection = channels(rest).map_err(|e| fail(&e))?,
             "Convolution" => {
@@ -167,11 +200,6 @@ fn parse_into(
             "EndIf" => conditional = conditional.saturating_sub(1),
             // Which device the settings are for is koan's to decide.
             "Device" => {}
-            "GraphicEQ" => {
-                return Err(fail(
-                    "GraphicEQ is a curve, not filters; import the parametric version instead (AutoEQ's ParametricEQ.txt, or squig.link's Export rather than Export Graphic EQ)",
-                ));
-            }
             other => return Err(fail(&format!("{other} is not supported"))),
         }
     }
@@ -179,6 +207,10 @@ fn parse_into(
 }
 
 impl Convolutions {
+    pub(super) fn holds_any(&self) -> bool {
+        !self.0.is_empty()
+    }
+
     pub(super) fn add(&mut self, rate: u32, chans: Vec<Vec<f32>>, selection: Option<&[u16]>) {
         let (all, per) = self.0.entry(rate).or_default();
         match selection {
@@ -219,6 +251,114 @@ impl Convolutions {
             })
             .collect()
     }
+}
+
+/// `10 ms`, `441 samples`.
+fn delay(body: &str) -> Result<Delay, String> {
+    let split = body
+        .find(|c: char| c.is_ascii_alphabetic())
+        .ok_or("expected ms or samples")?;
+    let value: f64 = body[..split]
+        .trim()
+        .parse()
+        .map_err(|_| "bad delay".to_string())?;
+    match body[split..].trim() {
+        "ms" => Ok(Delay {
+            ms: value,
+            ..Default::default()
+        }),
+        "samples" => Ok(Delay {
+            samples: value,
+            ..Default::default()
+        }),
+        unit => Err(format!("{unit} is not a delay unit")),
+    }
+}
+
+/// `L=0.5*L+0.5*R R=L C=-6dB*L+-6dB*R`. Every source is read before any
+/// target is written; channels no assignment names keep what they had.
+fn copy(body: &str) -> Result<Mix, String> {
+    // Spaces around operators, and before `dB`, belong to the term beside them.
+    let mut joined = String::new();
+    let mut chars = body.trim().chars().peekable();
+    while let Some(c) = chars.next() {
+        if c.is_whitespace() {
+            while chars.peek().is_some_and(|c| c.is_whitespace()) {
+                chars.next();
+            }
+            let next_joins = chars.peek().is_some_and(|&n| "=+*".contains(n) || n == 'd');
+            if !next_joins && !joined.ends_with(['=', '+', '*']) {
+                joined.push(' ');
+            }
+        } else {
+            joined.push(c);
+        }
+    }
+    let mut targets: BTreeMap<u16, Vec<(u16, f64)>> = BTreeMap::new();
+    for assignment in joined.split_whitespace() {
+        let (target, expr) = assignment
+            .split_once('=')
+            .ok_or_else(|| format!("expected target=sources, got {assignment}"))?;
+        let mut sources = Vec::new();
+        for term in expr.split('+').filter(|t| !t.is_empty()) {
+            let (factor, channel) = match term.split_once('*') {
+                Some((f, c)) => (factor(f)?, c),
+                None => match term.strip_prefix('-') {
+                    Some(c) => (-1.0, c),
+                    None => (1.0, term),
+                },
+            };
+            if let Ok(constant) = channel.parse::<f64>() {
+                if constant == 0.0 {
+                    continue;
+                }
+                return Err(format!("a constant ({term}) is not supported"));
+            }
+            sources.push((one_channel(channel)?, factor));
+        }
+        targets.insert(one_channel(target)?, sources);
+    }
+    let n = targets.keys().max().map_or(0, |&m| m as usize + 1);
+    Ok(Mix {
+        outputs: (0..n as u16)
+            .map(|c| targets.remove(&c).unwrap_or_else(|| vec![(c, 1.0)]))
+            .collect(),
+    })
+}
+
+/// `0.5` or `-6dB`.
+fn factor(text: &str) -> Result<f64, String> {
+    let bad = || format!("bad factor {text}");
+    match text.strip_suffix("dB") {
+        Some(db) => Ok(10f64.powf(db.trim().parse::<f64>().map_err(|_| bad())? / 20.0)),
+        None => text.parse().map_err(|_| bad()),
+    }
+}
+
+fn one_channel(name: &str) -> Result<u16, String> {
+    match channels(name)? {
+        Some(list) if list.len() == 1 => Ok(list[0]),
+        _ => Err(format!("{name} is not one channel")),
+    }
+}
+
+/// `20 -1.5; 21 -1.4; …`: Hz and dB pairs.
+fn graphic(body: &str) -> Result<GraphicEq, String> {
+    let mut points = Vec::new();
+    for pair in body.split(';').map(str::trim).filter(|p| !p.is_empty()) {
+        let mut it = pair.split_whitespace().map(str::parse::<f64>);
+        match (it.next(), it.next(), it.next()) {
+            (Some(Ok(hz)), Some(Ok(db)), None) => points.push((hz, db)),
+            _ => return Err(format!("bad point {pair}")),
+        }
+    }
+    if points.is_empty() {
+        return Err("no points".into());
+    }
+    Ok(GraphicEq {
+        points,
+        channels: Vec::new(),
+    })
 }
 
 fn channels(spec: &str) -> Result<Option<Vec<u16>>, String> {
@@ -274,14 +414,15 @@ fn filter(body: &str) -> Result<Option<EqFilter>, String> {
         other => return Err(format!("{other} filters are not supported")),
     };
     // `LS 12dB` and `HS 12dB` are second-order shelves at the corner; the
-    // 6 dB ones are first-order, which koan does not build.
-    if matches!(kind_word, "LS" | "HS") {
-        match words.get(2) {
-            Some(&"6dB") => return Err("first-order (6dB) shelves are not supported".into()),
-            Some(&"12dB") => {}
-            _ => {}
-        }
-    }
+    // 6 dB ones are first-order.
+    let first_order = matches!(kind_word, "LS" | "HS")
+        && (words.get(2) == Some(&"6dB")
+            || (words.get(2) == Some(&"6") && words.get(3) == Some(&"dB")));
+    let kind = match kind {
+        EqFilterKind::LowShelf if first_order => EqFilterKind::LowShelfFirstOrder,
+        EqFilterKind::HighShelf if first_order => EqFilterKind::HighShelfFirstOrder,
+        k => k,
+    };
     let value = |key: &str| -> Result<Option<f64>, String> {
         match words.iter().position(|w| *w == key) {
             Some(i) => {
@@ -354,7 +495,7 @@ mod tests {
         assert_eq!(parsed.preamp_db, Some(-6.8));
         assert_eq!(
             parsed.filters,
-            vec![
+            [
                 band(EqFilterKind::Peaking, 20.0, -1.3, 2.0),
                 band(EqFilterKind::LowShelf, 105.0, 5.5, 0.7),
                 band(
@@ -364,6 +505,7 @@ mod tests {
                     std::f64::consts::FRAC_1_SQRT_2
                 ),
             ]
+            .map(DspFilter::from)
         );
     }
 
@@ -372,15 +514,14 @@ mod tests {
         let text = "Channel: L\nFilter: ON PK Fc 100 Hz Gain -3 dB BW Oct 1.0\n\
             Channel: 2\nPreamp: -2 dB\nFilter: ON HSC 12 dB Fc 8000 Hz Gain 3 dB\n\
             Channel: all\nFilter: ON PK Fc 1000 Hz Gain 1 dB Q 1\n";
-        let p = parse(text).unwrap();
-        assert_eq!(p.preamp_db, None);
-        assert_eq!(p.filters[0].channels, vec![0]);
-        assert!((p.filters[0].q - std::f64::consts::SQRT_2).abs() < 1e-3);
-        assert_eq!(p.filters[1].kind, EqFilterKind::Gain);
-        assert_eq!(p.filters[1].channels, vec![1]);
+        let p = bands(parse(text).unwrap());
+        assert_eq!(p[0].channels, vec![0]);
+        assert!((p[0].q - std::f64::consts::SQRT_2).abs() < 1e-3);
+        assert_eq!(p[1].kind, EqFilterKind::Gain);
+        assert_eq!(p[1].channels, vec![1]);
         // 12 dB/oct is RBJ's S = 1, whatever the gain.
-        assert!((p.filters[2].q - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9);
-        assert!(p.filters[3].channels.is_empty());
+        assert!((p[2].q - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-9);
+        assert!(p[3].channels.is_empty());
     }
 
     #[test]
@@ -393,7 +534,7 @@ mod tests {
         let p = parse(text).unwrap();
         assert_eq!(
             p.filters,
-            vec![band(EqFilterKind::Peaking, 46.5, -9.4, 4.47)]
+            vec![band(EqFilterKind::Peaking, 46.5, -9.4, 4.47).into()]
         );
     }
 
@@ -406,9 +547,10 @@ mod tests {
             Filter 2: ON PK Fc 3200 Hz Gain -2.25 dB Q 1.41\r\nFilter 3: ON HSC Fc 10000 Hz Gain 1 dB Q 0.7\r\n";
         let p = parse(one).unwrap();
         assert_eq!(p.preamp_db, Some(-4.1));
-        assert_eq!(p.filters.len(), 3);
-        assert_eq!(p.filters[0].kind, EqFilterKind::LowShelf);
-        assert_eq!(p.filters[2].kind, EqFilterKind::HighShelf);
+        let b = bands(p);
+        assert_eq!(b.len(), 3);
+        assert_eq!(b[0].kind, EqFilterKind::LowShelf);
+        assert_eq!(b[2].kind, EqFilterKind::HighShelf);
 
         let two = "Channel: L\r\nPreamp: -3 dB\r\nFilter 1: ON PK Fc 3000 Hz Gain -2 dB Q 1\r\n\r\n\
             Channel: R\r\nPreamp: -2.5 dB\r\nFilter 1: ON PK Fc 3100 Hz Gain -1.5 dB Q 1\r\n\r\n";
@@ -417,7 +559,7 @@ mod tests {
         let on = |c: u16| {
             p.filters
                 .iter()
-                .filter(move |f| f.channels == vec![c])
+                .filter(move |f| f.channels() == [c])
                 .count()
         };
         assert_eq!(
@@ -427,17 +569,105 @@ mod tests {
         );
     }
 
+    fn bands(p: Parsed) -> Vec<EqFilter> {
+        p.filters
+            .into_iter()
+            .map(|f| match f {
+                DspFilter::Band(b) => b,
+                other => panic!("not a band: {other:?}"),
+            })
+            .collect()
+    }
+
     #[test]
     fn what_koan_cannot_do_is_refused_by_name() {
         for text in [
             "Filter 1: ON IIR Order 1 Coefficients 1 0 1 0",
-            "Delay: 10 ms",
-            "Copy: L=R",
-            "GraphicEQ: 20 -1; 30 0",
+            "Copy: L=0.5",
+            "Delay: 3 furlongs",
             "If: sampleRate == 44100\nFilter: ON PK Fc 100 Hz Gain 1 dB Q 1\nEndIf:",
+            "If: sampleRate == 44100\nDelay: 1 ms\nEndIf:",
         ] {
             assert!(parse(text).is_err(), "{text}");
         }
+    }
+
+    #[test]
+    fn first_order_shelves() {
+        let b = bands(
+            parse("Filter: ON LS 6dB Fc 100 Hz Gain 3 dB\nFilter: ON HS 6 dB Fc 9000 Hz Gain -2 dB\nFilter: ON LS 12dB Fc 100 Hz Gain 3 dB")
+                .unwrap(),
+        );
+        assert_eq!(b[0].kind, EqFilterKind::LowShelfFirstOrder);
+        assert_eq!(b[1].kind, EqFilterKind::HighShelfFirstOrder);
+        assert_eq!(b[2].kind, EqFilterKind::LowShelf);
+    }
+
+    #[test]
+    fn delays_on_the_selected_channels() {
+        let p = parse("Channel: R\nDelay: 0.5 ms\nChannel: all\nDelay: 12 samples").unwrap();
+        assert_eq!(
+            p.filters,
+            vec![
+                DspFilter::Delay(Delay {
+                    ms: 0.5,
+                    channels: vec![1],
+                    ..Default::default()
+                }),
+                DspFilter::Delay(Delay {
+                    samples: 12.0,
+                    ..Default::default()
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn copy_becomes_a_mix() {
+        let mix = |text: &str| match parse(text).unwrap().filters.remove(0) {
+            DspFilter::Mix(m) => m.outputs,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(mix("Copy: L=R R=L"), vec![vec![(1, 1.0)], vec![(0, 1.0)]]);
+        let o = mix("Copy: R = 0.25*L + -6 dB*R");
+        assert_eq!(o[0], vec![(0, 1.0)], "L is left as it was");
+        assert_eq!(o[1][0], (0, 0.25));
+        assert!((o[1][1].1 - 0.501187).abs() < 1e-6);
+        assert_eq!(mix("Copy: L=-R")[0], vec![(1, -1.0)]);
+        assert_eq!(mix("Copy: L=0")[0], vec![]);
+    }
+
+    #[test]
+    fn graphic_eq_is_a_curve() {
+        let p = parse("GraphicEQ: 20 -1.5; 1000 0; 20000 2.25").unwrap();
+        assert_eq!(
+            p.filters,
+            vec![DspFilter::Graphic(GraphicEq {
+                points: vec![(20.0, -1.5), (1000.0, 0.0), (20000.0, 2.25)],
+                channels: vec![],
+            })]
+        );
+        assert!(looks_like("GraphicEQ: 20 -1.5; 1000 0"));
+    }
+
+    #[test]
+    fn a_copy_after_a_convolution_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        write_wav(&dir.path().join("l.wav"), 48000, &[vec![0.5]]).unwrap();
+        let config = dir.path().join("config.txt");
+        std::fs::write(&config, "Convolution: l.wav\nCopy: L=R\n").unwrap();
+        assert!(read(&config).unwrap_err().contains("Copy"));
+        std::fs::write(&config, "Copy: L=R\nConvolution: l.wav\n").unwrap();
+        assert!(read(&config).is_ok());
+
+        // Across an `Include:`, in either direction.
+        let room = dir.path().join("room.txt");
+        std::fs::write(&room, "Convolution: l.wav\n").unwrap();
+        std::fs::write(&config, "Include: room.txt\nCopy: L=R\n").unwrap();
+        assert!(read(&config).unwrap_err().contains("Copy"));
+        std::fs::write(&room, "Copy: L=R\n").unwrap();
+        std::fs::write(&config, "Convolution: l.wav\nInclude: room.txt\n").unwrap();
+        assert!(read(&config).unwrap_err().contains("Copy"));
     }
 
     #[test]
