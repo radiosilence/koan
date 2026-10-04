@@ -538,17 +538,25 @@ struct RepeatButton: View {
                 .foregroundStyle(mode == .off ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                 .contentTransition(.symbolEffect(.replace))
         }
-        .help(switch mode {
+        .help(help(mode))
+        .accessibilityLabel("Repeat")
+        .accessibilityValue(value(mode))
+    }
+
+    private func help(_ mode: RepeatMode) -> String {
+        switch mode {
         case .off: "Repeat the queue"
         case .queue: "Repeating the queue: repeat this track instead"
         case .one: "Repeating this track: turn repeat off"
-        })
-        .accessibilityLabel("Repeat")
-        .accessibilityValue(switch mode {
+        }
+    }
+
+    private func value(_ mode: RepeatMode) -> String {
+        switch mode {
         case .off: "Off"
         case .queue: "Queue"
         case .one: "One track"
-        })
+        }
     }
 }
 

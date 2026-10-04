@@ -219,11 +219,12 @@ final class PlayerModel {
     func toggleShuffle() { setShuffle(!shuffle) }
     /// Off, the queue, one, and round again — the one button's steps.
     func cycleRepeat() {
-        setRepeat(switch repeatMode {
+        let next: RepeatMode = switch repeatMode {
         case .off: .queue
         case .queue: .one
         case .one: .off
-        })
+        }
+        setRepeat(next)
     }
 
     func play(itemId: String) { attempt { try await self.engine.play(queueItemId: itemId) } }
