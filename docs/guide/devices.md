@@ -7,15 +7,17 @@ phone's mini player and Now Playing) lists everywhere music can go, in two
 kinds:
 
 - **Play from this device**: its own outputs. On the Mac that is each audio
-  device (built-in speakers, a USB DAC, a display), AirPlay speakers, and UPnP
-  amplifiers on the network. Picking one keeps the queue and transport here
-  and moves only the sound.
+  device (built-in speakers, a USB DAC, a display) and UPnP amplifiers on the
+  network. Picking one keeps the queue and transport here and moves only the
+  sound. AirPlay is chosen in Control Centre, since macOS lets no app pick a
+  speaker itself; the speaker chosen there appears in this list as the AirPlay
+  output.
 - **Control another kōan**: the other kōan apps this one can reach. Picking
   one makes the transport and queue that device's.
 
 Each row ends in the glyph of what picking it does, a speaker or a remote. The
-button itself shows where the music is going: the output's icon, or the device
-being controlled.
+button, a speaker, carries the name of the amplifier or device the music is
+going to when it is not this one.
 
 ## Which devices are listed
 
@@ -47,8 +49,7 @@ Yamaha MusicCast, Denon and Marantz HEOS, Cambridge, Arcam and most "network
 player" amps) are listed under **Play on** on the Mac, and in the output
 device list (`o`) in the TUI, where they are marked `· UPnP`. Kodi with
 "Allow remote control via UPnP" turned on, gmrender-resurrect and upmpdcli
-are renderers too. A speaker that does AirPlay as well is listed twice, once
-for each, with each one's icon.
+are renderers too.
 
 Picking one makes it this device's output, in the same way a USB DAC is. The
 queue, the transport and history stay on this device, and only the audio goes
@@ -75,9 +76,6 @@ the amplifier's own volume.
   the renderer says otherwise. The bar waits at the start of a track until the
   renderer says it is playing, since some take a second or more to begin.
 
-AirPlay speakers are listed by name, but macOS gives apps no way to choose one:
-picking an AirPlay row opens the system's AirPlay menu, where the speaker is
-chosen.
 
 kōan finds renderers over SSDP and serves each track from a port it opens
 only while a renderer is the output. Each track has a random URL of its own,

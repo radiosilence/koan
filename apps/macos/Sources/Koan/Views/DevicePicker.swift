@@ -2,15 +2,13 @@ import KoanFFI
 import SwiftUI
 #if os(iOS)
 import UIKit
-#else
-import AVKit
-import Network
 #endif
 
 /// Where music plays, in one place, in two kinds.
 ///
 /// **Outputs** are where this device's own music comes out: its speakers, a
-/// DAC, AirPlay, a UPnP amplifier. Picking one keeps the queue and transport
+/// DAC, a UPnP amplifier. AirPlay is the system's: a speaker chosen there
+/// appears here as the AirPlay output, since apps cannot pick one themselves. Picking one keeps the queue and transport
 /// here and moves only the sound.
 ///
 /// **Other kōan devices** are controlled: picking one pauses this device and
@@ -23,9 +21,6 @@ import Network
 struct DevicePicker: View {
     @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
-    #if os(macOS)
-    @State private var airPlay = AirPlaySpeakers()
-    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -61,13 +56,7 @@ struct DevicePicker: View {
         .onAppear {
             player.searchRenderers()
             player.refreshDevices()
-            #if os(macOS)
-            airPlay.start()
-            #endif
         }
-        #if os(macOS)
-        .onDisappear { airPlay.stop() }
-        #endif
     }
 
     @ViewBuilder private var outputs: some View {
@@ -96,13 +85,6 @@ struct DevicePicker: View {
                 selected: player.isPlayingHere(.system(device.name)),
                 onSelect: { player.playHere(.system(device.name)) }
             )
-        }
-        if airPlay.names.isEmpty {
-            AirPlayRow(name: "AirPlay", detail: "Choose a speaker")
-        } else {
-            ForEach(airPlay.names, id: \.self) { name in
-                AirPlayRow(name: name, detail: "AirPlay · picked in the system's AirPlay menu")
-            }
         }
         #else
         OutputRow(
@@ -375,88 +357,6 @@ private struct OutputRow: View {
     }
 }
 
-#if os(macOS)
-/// The AirPlay speakers on the network, as they advertise themselves.
-///
-/// Listed so each is visible for what it is, including a speaker that also
-/// answers as a UPnP renderer and so appears twice. Choosing one is the
-/// system's: macOS gives apps no way to route to a given AirPlay speaker, only
-/// its own picker.
-@MainActor @Observable
-final class AirPlaySpeakers {
-    private(set) var names: [String] = []
-    @ObservationIgnored private var browser: NWBrowser?
-
-    func start() {
-        guard browser == nil else { return }
-        let browser = NWBrowser(for: .bonjour(type: "_airplay._tcp", domain: nil), using: .tcp)
-        browser.browseResultsChangedHandler = { [weak self] results, _ in
-            let names = results.compactMap { result -> String? in
-                guard case .service(let name, _, _, _) = result.endpoint else { return nil }
-                return name
-            }
-            Task { @MainActor in
-                self?.names = Array(Set(names)).sorted {
-                    $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
-                }
-            }
-        }
-        browser.start(queue: .main)
-        self.browser = browser
-    }
-
-    func stop() {
-        browser?.cancel()
-        browser = nil
-    }
-}
-
-/// AirPlay speakers are chosen by the system, not listed by CoreAudio, so the
-/// row hands over to the system's own picker. What it picks shows up above as
-/// the AirPlay output.
-private struct AirPlayRow: View {
-    let name: String
-    let detail: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "airplayaudio")
-                .font(.title3)
-                .frame(width: 28)
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(name)
-                    .lineLimit(1)
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: Action.output.glyph)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .contentShape(Rectangle())
-        // The system's button over the whole row, nearly transparent: it is
-        // what opens the AirPlay menu, and it cannot be opened any other way.
-        .overlay { RoutePicker().opacity(0.02) }
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isButton)
-    }
-}
-
-private struct RoutePicker: NSViewRepresentable {
-    func makeNSView(context: Context) -> AVRoutePickerView {
-        let picker = AVRoutePickerView()
-        picker.isRoutePickerButtonBordered = false
-        return picker
-    }
-
-    func updateNSView(_ view: AVRoutePickerView, context: Context) {}
-}
-#endif
 
 /// One device: tap to control it, and a button to move the music there.
 private struct DeviceChoiceRow: View {
@@ -595,7 +495,7 @@ struct DevicePickerButton: View {
             // The icon says where the music is going and takes the tint; the
             // name stays primary, since a dark sleeve's tint vanishes as text.
             HStack(spacing: 5) {
-                Image(systemName: target.icon)
+                Image(systemName: "speaker.wave.2")
                     .foregroundStyle(target.name != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
                 if labelled, let name = target.name {
                     Text(name)
@@ -612,25 +512,21 @@ struct DevicePickerButton: View {
         #endif
     }
 
-    /// Where the music is going: another kōan being controlled, a renderer,
-    /// one of this device's own outputs, or the default.
-    private var target: (icon: String, name: String?, help: String) {
+    /// Where the music is going, when it is not this device's default
+    /// output: another kōan being controlled, or a renderer. A local device is
+    /// left to the help text; its name beside the button would be noise.
+    private var target: (name: String?, help: String) {
         if player.isControllingAnother {
             let name = player.controlled?.name ?? "another device"
-            return (
-                DevicePicker.icon(for: player.controlled?.platform ?? ""),
-                name,
-                "Controlling \(name)"
-            )
+            return (name, "Controlling \(name)")
         }
         if let renderer = player.renderer {
-            return ("hifispeaker", renderer.name, "Playing through \(renderer.name)")
+            return (renderer.name, "Playing through \(renderer.name)")
         }
-        if let name = player.currentDevice,
-           let device = player.devices.first(where: { $0.name == name }) {
-            return (DevicePicker.icon(forOutput: device.kind), nil, "Playing through \(name)")
+        if let name = player.currentDevice {
+            return (nil, "Playing through \(name)")
         }
-        return ("laptopcomputer.and.iphone", nil, "Play on")
+        return (nil, "Play on")
     }
 }
 
