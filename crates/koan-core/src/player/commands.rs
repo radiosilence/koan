@@ -98,8 +98,10 @@ pub enum PlayerCommand {
     /// only thing it listens for, and a track that cannot be fetched never
     /// becomes Ready. That is the offline-library stall.
     TrackFailed(QueueItemId),
-    /// Decode thread exhausted the playlist — auto-advance or stop.
-    DecodeFinished,
+    /// Decode thread exhausted the playlist — auto-advance or stop. Carries
+    /// the session it came from, so one sent just before a play or seek is
+    /// recognised as stale.
+    DecodeFinished(u64),
     /// The decoder queued the next track, so when the playhead reaches it is
     /// now known.
     TrackQueued,

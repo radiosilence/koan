@@ -201,6 +201,8 @@ struct Playlist {
 
 Advancing parks on the next item that is not `Failed`, including one still downloading — playback stops until its `TrackReady`/`TrackStreamReady` arrives, which only reaches the player because the cursor is sitting on it. Skipping ahead to the next `Ready` item instead would drop the track from the queue permanently. Both advance and peek treat a reference item that is no longer in the playlist as "nothing follows": restarting from index 0 would silently replay the queue from the top.
 
+What the player is waiting for is held as `Waiting { id, position_ms, start }`: set by a play or cue on a track that cannot open yet, and the only thing that lets `TrackReady`, `TrackStreamReady` or a stream probe open one. A cursor merely sitting on a downloading track — a session restored stopped — therefore stays stopped when the download lands. Pause and resume while waiting change how the track will open, so a track paused on its way arrives paused. A wait at a position other than zero holds out for the whole file, since a stream cannot reach the position before it plays the part ahead of it.
+
 A download that gives up sends `TrackFailed` instead, and the parked cursor advances past the item rather than waiting for a `TrackReady` that cannot come. The reason rides on the item as `LoadState::Failed(reason)` and out through `QueueEntry::error`, because a queue of unplayable tracks and a queue still fetching look identical without it.
 
 **Download progress is not a queue mutation.** `LoadState::Downloading` says *that* a transfer is running and carries the `Arc<AtomicU64>` the download thread writes bytes into; the state itself is set once per attempt. Progress therefore moves without the playlist lock and without bumping `playlist_version` — which matters because every front end reads that version as "refetch the queue", and a transfer produces a byte count several hundred times a second. Anything that wants to *watch* progress reads `downloads_in_flight()` on its own poll rather than waiting for a version change.
@@ -383,7 +385,7 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **Status is derived:** `QueueEntryStatus` (Playing/Queued/Played/Downloading/Failed) is computed from cursor position + load state, not stored.
 
-**Decode cursor ≠ UI cursor:** The decode thread peeks ahead for gapless without moving the playlist cursor. The player thread syncs them on boundary crossing.
+**Decode cursor ≠ UI cursor:** The decode thread peeks ahead for gapless without moving the playlist cursor. The player thread syncs them on boundary crossing. What it has queued is in the ring and cannot be taken out, so a queue edit that no longer agrees with it — removing, moving or inserting before a queued track — restarts the session at the playhead. `DecodeFinished` carries its session's id and is dropped once that session has been replaced.
 
 **Atomic visible queue snapshot:** One `derive_visible_queue()` call per frame, cached in `vq_cache`. All render/mouse operations see consistent state within a frame.
 

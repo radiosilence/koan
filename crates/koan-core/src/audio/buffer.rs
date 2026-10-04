@@ -207,6 +207,16 @@ impl PlaybackTimeline {
         ))
     }
 
+    /// The tracks the decoder has queued after the one under the playhead, in
+    /// order. Committed: the ring cannot be truncated, so only a new session
+    /// takes them back.
+    pub fn queued_after_playhead(&self) -> Vec<QueueItemId> {
+        let bounds = self.boundaries.read();
+        let played = self.samples_played.load(Ordering::Acquire);
+        let idx = bounds.partition_point(|b| b.sample_offset <= played);
+        bounds[idx..].iter().map(|b| b.id).collect()
+    }
+
     /// The current session's generation, to be handed to `writer`.
     ///
     /// Read on the player thread between `reset()` and spawning the decode

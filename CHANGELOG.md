@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Pausing a track that is still downloading keeps it paused.** The pause was ignored while the player waited for the track, which then started playing when it arrived; a paused stream also restarted from the beginning, playing, when its download completed. Resuming a restored position that was still downloading no longer loses the position.
+- **A restored session that was stopped stays stopped** when the download of its current track completes.
+- **Edits near the end of a track take effect.** About four seconds before a track ends the decoder has already queued the next one, and removing, moving or inserting a track in that window had no effect: a track added with "play next" was skipped and shown as played. The player now restarts at the current position when an edit contradicts what was queued.
+- **A skip or seek arriving as a track finished decoding no longer jumps a track further.**
+- **Undoing the add of a track the player was waiting for** no longer leaves it to start when its download lands.
 - **New playlists on iOS.** The Playlists page has a button to make one, and "New Playlist…" in a context menu now asks for a name. The naming dialog was hosted only by the Mac's window, so on iOS the menu item did nothing.
 - **A reinstalled iOS app keeps its device id.** The id lived only in the app's container, which iOS empties when the app is deleted, so each reinstall appeared on the server as a new "iPhone" beside the old one. It is now kept in the Keychain as well, which survives a reinstall. The app also reports the phone's own name; iOS returns "iPhone" for it until the app holds Apple's user-assigned-device-name entitlement.
 - **Move here resumes where the source stopped.** The source read its playhead before sending and paused afterwards, so whatever played during the send and the fade was heard again on the destination; the destination then started the track from the top and seeked, letting its opening through. The source now pauses first and reports where the fade went silent, and the destination opens the track at that point. A track the destination has to download waits for the whole file rather than starting early, and a paused source arrives paused.
