@@ -1,7 +1,7 @@
 //! The web UI: sign in, browse the library and play it in the browser.
 //!
 //! Server-rendered HTML, with Datastar for the parts that change in place
-//! (search as you type, loading more, the share button) and a small script of
+//! (search as you type, the share button) and a small script of
 //! its own that swaps only the page content on navigation, so the player keeps
 //! playing. Playback happens in the browser, streaming from `/ui/stream`: a
 //! headless server has no speakers.
@@ -27,7 +27,7 @@ pub use oauth::RESOURCE_METADATA;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::extract::{Path, Request, State};
+use axum::extract::{Path, RawQuery, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::{Next, from_fn, from_fn_with_state};
 use axum::response::sse::{Event, Sse};
@@ -54,6 +54,27 @@ const PARTIAL: &str = "x-koan-partial";
 const UI_CSS: &str = include_str!("../../assets/ui.css");
 const UI_JS: &str = include_str!("../../assets/ui.js");
 const DATASTAR_JS: &str = include_str!("../../assets/datastar.js");
+const NO_COVER_SVG: &str = include_str!("../../assets/no-cover.svg");
+
+/// The page's stylesheet and scripts, each URL carrying a hash of its asset.
+pub(super) struct AssetUrls {
+    pub css: String,
+    pub css_hash: String,
+    pub ui_js: String,
+    pub player_js: String,
+    pub datastar_js: String,
+}
+
+pub(super) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::new(|| {
+    use crate::share::versioned;
+    AssetUrls {
+        css: versioned("/ui/assets/ui.css", UI_CSS),
+        css_hash: crate::share::content_hash(UI_CSS),
+        ui_js: versioned("/ui/assets/ui.js", UI_JS),
+        player_js: versioned("/ui/assets/player.js", crate::share::ENGINE_JS),
+        datastar_js: versioned("/ui/assets/datastar.js", DATASTAR_JS),
+    }
+});
 
 #[derive(Clone)]
 pub struct UiState {
@@ -92,12 +113,10 @@ pub fn router(
     let gated = axum::Router::new()
         .route("/", get(pages::albums))
         .route("/albums", get(pages::albums))
-        .route("/albums/more", get(pages::albums_more))
         .route("/album/{id}", get(pages::album))
         .route("/album/{id}/share", post(pages::share_album))
         .route("/artist/{id}/share", post(pages::share_artist))
         .route("/artists", get(pages::artists))
-        .route("/artists/more", get(pages::artists_more))
         .route("/artist/{id}", get(pages::artist))
         .route("/playlists", get(pages::playlists))
         .route("/playlist/{id}", get(pages::playlist))
@@ -116,7 +135,8 @@ pub fn router(
         .route("/ui/stream/{id}", get(stream))
         .route("/ui/cover/{id}", get(cover))
         .layer(from_fn(require_datastar_on_post))
-        .layer(from_fn_with_state(state.clone(), gate));
+        .layer(from_fn_with_state(state.clone(), gate))
+        .layer(axum::middleware::map_response(stamp_stylesheet));
     // A plain form, since it answers with a redirect to the client: it proves
     // its origin the way the sign-in form does.
     let consent = axum::Router::new()
@@ -172,22 +192,32 @@ pub fn router(
         // domain's.
         .route(
             "/favicon.ico",
-            get(|| ui_asset(Path("icon-192.png".into()))),
+            get(|| ui_asset(Path("icon-192.png".into()), RawQuery(None))),
         )
         .route(
             "/apple-touch-icon.png",
-            get(|| ui_asset(Path("apple-touch-icon.png".into()))),
+            get(|| ui_asset(Path("apple-touch-icon.png".into()), RawQuery(None))),
         )
         .with_state(state)
 }
 
-async fn ui_asset(Path(name): Path<String>) -> Response {
+/// Which stylesheet the markup was written for. A tab open across an upgrade
+/// keeps the old one while navigation and patches bring new markup; ui.js
+/// swaps the stylesheet when this names another.
+async fn stamp_stylesheet(mut res: Response) -> Response {
+    if let Ok(v) = HeaderValue::from_str(&ASSETS.css_hash) {
+        res.headers_mut().insert("x-koan-css", v);
+    }
+    res
+}
+
+async fn ui_asset(Path(name): Path<String>, query: RawQuery) -> Response {
     const JS: &str = "text/javascript; charset=utf-8";
     match name.as_str() {
-        "ui.css" => asset(UI_CSS, "text/css; charset=utf-8"),
-        "ui.js" => asset(UI_JS, JS),
-        "player.js" => asset(crate::share::ENGINE_JS, JS),
-        "datastar.js" => asset(DATASTAR_JS, JS),
+        "ui.css" => asset(UI_CSS, "text/css; charset=utf-8", query),
+        "ui.js" => asset(UI_JS, JS, query),
+        "player.js" => asset(crate::share::ENGINE_JS, JS, query),
+        "datastar.js" => asset(DATASTAR_JS, JS, query),
         other => crate::share::binary_asset(other).unwrap_or_else(not_found),
     }
 }
@@ -370,10 +400,24 @@ async fn cover(
     axum::extract::Query(q): axum::extract::Query<CoverQuery>,
 ) -> Response {
     let size = crate::covers::snap(q.size);
-    let art = blocking(move || {
+    let found = blocking(move || {
         let tracks = queries::tracks_for_album(&open(&s.pool)?.conn, id).ok()?;
-        s.covers.cover(&tracks, size)
+        (!tracks.is_empty()).then(|| s.covers.cover(&tracks, size))
     })
     .await;
-    crate::share::jpeg(art, q.v.is_some())
+    match found {
+        Some(Some(art)) => crate::share::jpeg(Some(art), q.v.is_some()),
+        // A record with no artwork draws what the apps draw, not a broken
+        // image. Not kept for good: art added beside the files changes no
+        // track's mtime, so the URL stays the same when it arrives.
+        Some(None) => (
+            [
+                (header::CONTENT_TYPE, "image/svg+xml"),
+                (header::CACHE_CONTROL, "private, max-age=3600"),
+            ],
+            NO_COVER_SVG,
+        )
+            .into_response(),
+        None => not_found(),
+    }
 }

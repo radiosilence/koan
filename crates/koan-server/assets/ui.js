@@ -26,11 +26,23 @@
     new URL(typeof input === "string" ? input : input.url, location.href).origin === location.origin;
   // Every request this page makes, Datastar's included, renews once on a 401
   // and retries; a session that cannot be renewed reloads into the sign-in form.
+  // Responses name the stylesheet their markup was written for. A tab open
+  // across an upgrade swaps it in rather than drawing new markup with the old
+  // one, and keeps playing.
+  const sheet = document.querySelector('link[rel=stylesheet][href^="/ui/assets/ui.css"]');
+  function freshen(r) {
+    const v = r.headers.get("X-Koan-Css");
+    if (sheet && v && new URL(sheet.href).searchParams.get("v") !== v) {
+      sheet.href = `/ui/assets/ui.css?v=${v}`;
+    }
+  }
   window.fetch = async (input, init) => {
     const r = await rawFetch(input, init);
+    if (sameOrigin(input)) freshen(r);
     if (r.status !== 401 || !sameOrigin(input)) return r;
     if (await renew()) {
       const again = await rawFetch(input, init);
+      freshen(again);
       if (again.status !== 401) return again;
     }
     location.reload();
@@ -303,13 +315,50 @@
   }
   document.addEventListener("change", (e) => {
     const form = e.target.closest && e.target.closest("form.toolbar");
-    if (form && wide.matches) navigate(formUrl(form), true);
+    if (!form || !wide.matches || e.target.matches(TYPED)) return;
+    navigate(formUrl(form), true);
   });
   document.addEventListener("submit", (e) => {
     if (!e.target.matches("form.toolbar")) return;
     e.preventDefault();
+    clearTimeout(typing);
     navigate(formUrl(e.target), true);
   });
+  // Typing filters as it goes, once the keys pause. Only the listing below the
+  // toolbar is replaced, so the field keeps its focus and caret; the URL is
+  // replaced rather than pushed, so back does not step through every keystroke.
+  // A year applies only when it is whole, or cleared.
+  const TYPED = "form.toolbar input[name=q], form.toolbar input[name=from], form.toolbar input[name=to]";
+  let typing;
+  document.addEventListener("input", (e) => {
+    if (!wide.matches || !e.target.matches(TYPED)) return;
+    const v = e.target.value.trim();
+    if (e.target.name !== "q" && v && !/^\d{4}$/.test(v)) return;
+    clearTimeout(typing);
+    const form = e.target.form;
+    typing = setTimeout(() => refilter(formUrl(form)), 250);
+  });
+  async function refilter(url) {
+    const n = ++navigating;
+    let r;
+    try {
+      r = await fetch(url, { headers: { "X-Koan-Partial": "1" }, credentials: "same-origin" });
+    } catch {
+      return;
+    }
+    if (n !== navigating || !r.ok) return;
+    const html = await r.text();
+    if (n !== navigating) return;
+    const next = document.createElement("template");
+    next.innerHTML = html;
+    const bar = main.querySelector("details.browse");
+    const fresh = next.content.querySelector("details.browse");
+    if (!bar || !fresh) return;
+    while (bar.nextSibling) bar.nextSibling.remove();
+    while (fresh.nextSibling) bar.parentNode.append(fresh.nextSibling);
+    history.replaceState(null, "", url);
+    render(player.state());
+  }
   // The search view's query lives in the URL too, so reload and back find it.
   document.addEventListener("input", (e) => {
     if (!e.target.matches(".search input[name=q]")) return;

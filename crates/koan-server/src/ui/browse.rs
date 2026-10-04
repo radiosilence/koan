@@ -2,7 +2,7 @@
 //!
 //! The state is the page's query string and nothing else: a reload, the back
 //! button and a copied link all land on the same listing, and the server reads
-//! it straight into the SQL that narrows, orders and pages the library.
+//! it straight into the SQL that narrows and orders the library.
 
 use std::fmt::Write as _;
 
@@ -17,7 +17,7 @@ use crate::share::escape;
 #[serde(default)]
 pub(super) struct Browse {
     sort: String,
-    /// Fixes a random order, so paging through it stays one shuffle.
+    /// Fixes a random order, so a reload or a link lands on the same shuffle.
     seed: Option<i64>,
     /// The name filter: album title or artist name on the album browser, the
     /// artist's name on the artist browser.
@@ -28,7 +28,6 @@ pub(super) struct Browse {
     from: String,
     to: String,
     genre: String,
-    pub(super) offset: u32,
 }
 
 /// Album sorts, as the macOS app offers them.
@@ -74,7 +73,7 @@ impl Browse {
     }
 
     /// `user` is whose favourites the favourites toggle narrows to.
-    pub(super) fn albums(&self, user: i64, limit: u32) -> AlbumQuery<'_> {
+    pub(super) fn albums(&self, user: i64) -> AlbumQuery<'_> {
         let order = match self.sort.as_str() {
             "title" => AlbumOrder::Title,
             "artist" => AlbumOrder::ArtistThenDate,
@@ -87,14 +86,12 @@ impl Browse {
             search: set(&self.q),
             favourites_of: set(&self.fav).map(|_| user),
             filter: self.filter(),
-            limit: Some(limit),
-            offset: self.offset,
             ..Default::default()
         }
     }
 
     /// `user` is whose favourites the favourites toggle narrows to.
-    pub(super) fn artists(&self, user: i64, limit: u32) -> ArtistQuery<'_> {
+    pub(super) fn artists(&self, user: i64) -> ArtistQuery<'_> {
         let order = match self.sort.as_str() {
             "albums" => ArtistOrder::AlbumCount,
             "recent" => ArtistOrder::RecentlyAdded,
@@ -105,8 +102,6 @@ impl Browse {
             search: set(&self.q),
             favourites_of: set(&self.fav).map(|_| user),
             filter: self.filter(),
-            limit: Some(limit),
-            offset: self.offset,
             ..Default::default()
         }
     }
@@ -120,17 +115,12 @@ impl Browse {
             + usize::from(set(&self.from).is_some() || set(&self.to).is_some())
     }
 
-    /// The query string for this state at `offset`, blank values dropped.
+    /// The query string for this state, blank values dropped.
     /// Percent-encoded throughout, so it is safe inside an attribute and a
     /// quoted script string alike.
-    pub(super) fn query(&self, offset: u32) -> String {
+    pub(super) fn query(&self) -> String {
         let mut q = form_urlencoded::Serializer::new(String::new());
         let seed = self.seed.map(|s| s.to_string()).unwrap_or_default();
-        let offset = if offset > 0 {
-            offset.to_string()
-        } else {
-            String::new()
-        };
         for (k, v) in [
             ("sort", self.sort.as_str()),
             ("seed", &seed),
@@ -141,7 +131,6 @@ impl Browse {
             ("from", &self.from),
             ("to", &self.to),
             ("genre", &self.genre),
-            ("offset", &offset),
         ] {
             if let Some(v) = set(v) {
                 q.append_pair(k, v);
@@ -151,8 +140,16 @@ impl Browse {
     }
 }
 
+/// A labelled control in the toolbar; on a phone, label and control at either
+/// end of a row of the sheet.
+const LABEL: &str = "inline-flex items-center gap-1.5 max-wide:justify-between";
+/// The toolbar's selects and year fields, smaller than a form's.
+const FIELD: &str = "bg-surface px-2 py-[5px] text-meta max-wide:text-input";
+
 fn select(name: &str, label: &str, options: &[(String, String)], current: &str) -> String {
-    let mut out = format!("<label>{label}<select name={name}>");
+    let mut out = format!(
+        "<label class=\"{LABEL}\">{label}<select class=\"max-w-[12em] {FIELD}\" name={name}>"
+    );
     for (value, text) in options {
         let _ = write!(
             out,
@@ -168,7 +165,8 @@ fn select(name: &str, label: &str, options: &[(String, String)], current: &str) 
 
 fn check(name: &str, label: &str, on: &str) -> String {
     format!(
-        "<label class=check><input type=checkbox name={name} value=1{}>{label}</label>",
+        "<label class=\"inline-flex items-center gap-1.5\"><input class=\"accent-brand\" type=checkbox name={name} \
+value=1{}>{label}</label>",
         if set(on).is_some() { " checked" } else { "" }
     )
 }
@@ -222,26 +220,36 @@ pub(super) fn toolbar(
             ..b.clone()
         };
         format!(
-            "<a class=reshuffle href=\"{path}?{}\">Reshuffle</a>",
-            fresh.query(0)
+            "<a class=\"text-muted\" href=\"{path}?{}\">Reshuffle</a>",
+            fresh.query()
         )
     } else {
         String::new()
     };
     let active = b.active();
     let label = if active > 0 {
-        format!("Sort · Filter <span class=badge>{active}</span>")
+        format!(
+            "Sort · Filter <span class=\"inline-block min-w-[1.5em] rounded-full bg-brand px-[5px] text-center \
+text-[11px] font-bold text-bg\">{active}</span>"
+        )
     } else {
         "Sort · Filter".into()
     };
     format!(
-        "<details class=browse><summary>{label}</summary>\
-<form class=toolbar method=get action=\"{path}\">\
-<label class=name>Name<input type=search name=q placeholder=\"{name_hint}\" value=\"{q}\" aria-label=\"Filter by name\"></label>{sort_select}{seed}{reshuffle}{fav}{lossless}{codec}\
-<label class=years>Years<input name=from inputmode=numeric maxlength=4 placeholder=From value=\"{from}\" aria-label=\"From year\">\
-<span>–</span><input name=to inputmode=numeric maxlength=4 placeholder=To value=\"{to}\" aria-label=\"To year\"></label>\
-{genre}<div class=toolbar-actions><button class=\"primary apply\">Apply</button><a class=reset href=\"{path}\">Reset</a></div>\
-</form></details>",
+        "<details class=\"browse group -mt-1 mb-5\"><summary class=\"hidden cursor-pointer list-none items-center gap-1.5 \
+rounded-md border border-rule bg-surface px-3 py-[7px] text-control text-ink group-open:border-brand \
+max-wide:inline-flex [&::-webkit-details-marker]:hidden\">{label}</summary>\
+<form class=\"toolbar flex flex-wrap items-center gap-x-3.5 gap-y-2 text-meta text-muted max-wide:mt-2.5 \
+max-wide:flex-col max-wide:items-stretch max-wide:gap-3 max-wide:rounded-[10px] max-wide:border \
+max-wide:border-rule max-wide:bg-surface max-wide:p-3.5 max-wide:text-body\" method=get action=\"{path}\">\
+<label class=\"{LABEL}\">Name<input class=\"w-[12em] {FIELD} max-wide:w-auto max-wide:flex-1\" type=search \
+name=q placeholder=\"{name_hint}\" value=\"{q}\" aria-label=\"Filter by name\"></label>{sort_select}{seed}{reshuffle}{fav}{lossless}{codec}\
+<label class=\"{LABEL}\">Years<input class=\"w-[4.5em] {FIELD}\" name=from inputmode=numeric maxlength=4 \
+placeholder=From value=\"{from}\" aria-label=\"From year\"><span>–</span><input class=\"w-[4.5em] {FIELD}\" \
+name=to inputmode=numeric maxlength=4 placeholder=To value=\"{to}\" aria-label=\"To year\"></label>\
+{genre}<div class=\"inline-flex items-center gap-2.5 max-wide:justify-between\">\
+<button class=\"primary px-3 py-[5px] in-[.js]:hidden max-wide:in-[.js]:inline-block\">Apply</button>\
+<a class=\"text-muted\" href=\"{path}\">Reset</a></div></form></details>",
         sort_select = select("sort", "Sort", &sorts, &sort),
         fav = check("fav", "Favourites", &b.fav),
         lossless = check("lossless", "Lossless", &b.lossless),
@@ -269,9 +277,9 @@ mod tests {
     fn blank_fields_are_unset_and_the_query_round_trips() {
         let b =
             browse("sort=year&q=+aphex+&fav=&lossless=1&codec=&from=1990&to=&genre=Drum+%26+Bass");
-        let q = b.albums(0, 60);
+        let q = b.albums(0);
         assert_eq!(q.search, Some("aphex"));
-        assert_eq!(b.artists(0, 60).search, Some("aphex"));
+        assert_eq!(b.artists(0).search, Some("aphex"));
         assert_eq!(q.order, AlbumOrder::YearDesc);
         assert!(q.favourites_of.is_none() && q.filter.lossless);
         assert_eq!(
@@ -280,8 +288,8 @@ mod tests {
         );
         assert_eq!(q.filter.genre, Some("Drum & Bass"));
         assert_eq!(
-            b.query(60),
-            "sort=year&q=aphex&lossless=1&from=1990&genre=Drum+%26+Bass&offset=60"
+            b.query(),
+            "sort=year&q=aphex&lossless=1&from=1990&genre=Drum+%26+Bass"
         );
         assert_eq!(b.active(), 4);
     }
@@ -290,10 +298,10 @@ mod tests {
     fn a_random_order_keeps_its_seed_and_hostile_values_stay_encoded() {
         let b = browse("sort=random").seeded();
         let seed = b.seed.unwrap();
-        assert_eq!(b.albums(0, 1).order, AlbumOrder::Random(seed));
-        assert!(b.query(0).contains(&format!("seed={seed}")));
+        assert_eq!(b.albums(0).order, AlbumOrder::Random(seed));
+        assert!(b.query().contains(&format!("seed={seed}")));
         let evil = browse("genre=%27%29%3Balert(1)%2F%2F%22%3E%3C");
-        let q = evil.query(0);
+        let q = evil.query();
         assert!(
             !q.contains('\'') && !q.contains('"') && !q.contains('<'),
             "{q}"
