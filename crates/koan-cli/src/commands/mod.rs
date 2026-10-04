@@ -12,10 +12,10 @@ mod search;
 mod subsonic;
 
 pub use auth::{
-    cmd_auth_api_key_create, cmd_auth_api_key_list, cmd_auth_api_key_revoke, cmd_auth_create_user,
-    cmd_auth_delete_user, cmd_auth_invite, cmd_auth_list_users, cmd_auth_login, cmd_auth_logout,
-    cmd_auth_regenerate_keys, cmd_auth_reset, cmd_auth_reset_password, cmd_auth_set_role,
-    cmd_auth_setup,
+    Tty, cmd_auth_api_key_create, cmd_auth_api_key_list, cmd_auth_api_key_revoke,
+    cmd_auth_create_user, cmd_auth_delete_user, cmd_auth_invite, cmd_auth_list_users,
+    cmd_auth_login, cmd_auth_logout, cmd_auth_regenerate_keys, cmd_auth_reset,
+    cmd_auth_reset_password, cmd_auth_set_role, cmd_auth_setup,
 };
 pub use cache::{cmd_cache_clear, cmd_cache_status, evict_cache};
 pub use config::{cmd_config, cmd_init};

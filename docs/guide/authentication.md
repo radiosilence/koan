@@ -28,15 +28,17 @@ curl -s -X POST http://localhost:4000/auth/refresh \
 ### Non-interactive setup (scripting/CI)
 
 ```bash
-# Use environment variables to skip interactive prompts
 KOAN_USERNAME=admin KOAN_PASSWORD=secret koan auth setup
 KOAN_PASSWORD=secret koan auth create-user --username alice --role user
+koan auth delete-user alice --yes
 ```
+
+`koan auth` never prompts when stdin is not a terminal, or with `--non-interactive`. Credentials come from `KOAN_USERNAME` and `KOAN_PASSWORD`, and a command missing one fails and names it rather than generating a password nobody sees. Deleting a user, regenerating the keypair and `koan auth reset` need `--yes`. Nothing is saved to 1Password unless `--save-to-1password` is passed, since an unanswered prompt is not consent to write to someone's vault.
 
 ## CLI authentication
 
 ```bash
-# Sign in to a kōan server; prompts for the password and keeps the refresh token in config.local.toml
+# Sign in to a kōan server; asks for the password (or reads KOAN_PASSWORD) and keeps the refresh token in config.local.toml
 koan auth login --server http://localhost:4000 --username admin
 ```
 
@@ -154,7 +156,7 @@ The playground page only renders with the correct `?introspection-key=` param (4
 
 ## 1Password integration
 
-With the `op` CLI installed, creating a user offers to generate a 32-character password and to save it to 1Password as `koan@hostname`, updating that item if it already exists.
+With the `op` CLI installed, creating a user or resetting a password at a terminal offers to generate a 32-character password and to save it to 1Password as `koan@hostname`, asking again before updating an existing item. `--save-to-1password` saves without asking, and is the only way it happens without a terminal.
 
 ## Keypair
 
