@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.52.6
 
 ### Added
 
@@ -9,7 +9,12 @@
 ### Changed
 
 - **Devices on the same network get Full control by default.** A kōan on the same network can now choose this device's output, preset and volume, and move its music here or away, not only play and change the queue; on a household network that is what is wanted. It still acts as itself: nothing reaches this device's library, files, settings beyond what plays where, or the account's favourites, playlists and history, and music it moves away goes over the network or to its own devices, never to this account's other devices. Settings → Devices → Devices on this network → Playback only restores the narrower rules, for a network shared with strangers.
+- **An asleep device signed in to another account can be woken from the same network.** Choosing a suspended iPad signed in as someone else on your server now wakes it by push, through its own account, when your device links from the same address as it last did: everyone behind one router is treated as one household. The address is kept in the database, so this holds across server restarts. A device on mobile data does not match; sharing it covers that case. A wake grants nothing beyond the network's playback rules.
 - **Asleep devices stay listed until you forget them.** A device out of reach no longer drops off the Control menu after 30 minutes; it stays, asleep, with when it was last seen. **Forget**, from its context menu on the Mac or a long press on iOS, removes it: from this device, and for one of your account's from the server too, with its push token, and from your other devices. A forgotten device that comes back is listed again. The server still forgets an account device unseen for 30 days on its own. `devices.asleep_grace_mins` is gone.
+
+### Fixed
+
+- **The queue's follow button goes plain when following stops on iOS.** A second tap stopped following but the button could stay lit. It is now drawn plain when off and sits on a tinted disc while following, on the Mac as well.
 
 ## 0.52.5
 
@@ -17,10 +22,6 @@
 
 - **Devices that stop answering stay listed, asleep.** A device that went quiet dropped out of the Control menu at once, and a phone iOS suspended a moment ago vanished from every other device's list. A device now reads as reconnecting for one heartbeat (45 seconds), so a single missed signal does not mark it asleep, and is then shown asleep with when it was last seen. One a push can wake stays listed and can be chosen. One that nothing can wake from here is shown, cannot be chosen, and is dropped after `devices.asleep_grace_mins` (30 by default). Whether a device can be woken is the server's word: it has the device's push token and a push key to send with. The server sends when an absent device was last seen, which older apps ignore.
 - **Choosing an asleep device wakes it, and says how.** It is dialled on the local network if it was there within the last minute, then sent a background push, and after about six seconds a notification to tap ("Mac wants to play here"), since iOS delays or drops background pushes and never delivers one to an app that was swiped away. The device's row shows the stage, and why if it did not wake. Each step is logged with its timing on the device choosing, the server and the phone, so a failed wake shows where it stopped. Wake pushes carry a collapse id and expire after a minute.
-
-### Fixed
-
-- **The queue's follow button goes plain when following stops on iOS.** A second tap stopped following but the button could stay lit. It is now drawn plain when off and sits on a tinted disc while following, on the Mac as well.
 
 ## 0.52.4
 
