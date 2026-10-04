@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The route's preset in iOS Now Playing.** Beside the AirPlay button, the preset of the route playing (AirPods, headphones, the speaker), or "Off"; tapping it picks another for that route. It follows the route as it changes, shows a UPnP renderer's preset while the phone plays to one, and is tinted while what is heard is processed.
+
+### Changed
+
+- **The preset menu says when processing is off.** With DSP off everywhere, choosing a preset on the Mac or the phone did nothing audible; the menu now says processing is off and offers to turn it on.
+
 ## 0.52.0
 
 ### Added

@@ -18,6 +18,9 @@ final class DspModel {
     private(set) var version = 0
     /// The last import, to offer for the output in use.
     var imported: String?
+    /// The port iOS is routing audio to, which profiles are chosen by on a
+    /// phone. Set on each route change; nil on the Mac.
+    private(set) var route: String?
     var lastError: String?
     /// An import waiting on the rate of what it was given.
     var needsRate: Pending?
@@ -33,6 +36,13 @@ final class DspModel {
 
     func reload() {
         Task { overview = await engine.dspOverview() }
+    }
+
+    /// The route changed: what the Now Playing preset names and assigns to
+    /// follows it. The engine has been told already.
+    func follow(route: String) {
+        self.route = route
+        reload()
     }
 
     // MARK: - Importing

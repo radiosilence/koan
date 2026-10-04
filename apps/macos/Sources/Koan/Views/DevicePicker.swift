@@ -288,64 +288,6 @@ extension RendererVolume {
     }
 }
 
-/// The DSP profiles a device can play through, and the one it does. Nil when
-/// there are no profiles to choose from, so rows without a choice say
-/// nothing.
-struct Presets {
-    let current: String?
-    let profiles: [String]
-    /// What a device with no profile is said to play: "Off" for one of this
-    /// device's own, "Original file" for a renderer.
-    let none: String
-    let enabled: Bool
-    let choose: (String?) -> Void
-
-    @MainActor
-    init?(dsp: DspModel, device: String, none: String) {
-        guard let overview = dsp.overview, !overview.profiles.isEmpty else { return nil }
-        current = dsp.profile(for: device)
-        profiles = overview.profiles.map(\.name)
-        self.none = none
-        enabled = overview.enabled
-        choose = { dsp.assign($0, to: device) }
-    }
-
-    var summary: String {
-        guard let current else { return none }
-        return enabled ? current : "\(current), processing off"
-    }
-}
-
-/// The preset submenu at a row's end.
-private struct PresetMenu: View {
-    let presets: Presets
-
-    var body: some View {
-        Menu {
-            Picker("Preset", selection: Binding(
-                get: { presets.current ?? "" },
-                set: { presets.choose($0.isEmpty ? nil : $0) }
-            )) {
-                Text(presets.none).tag("")
-                Divider()
-                ForEach(presets.profiles, id: \.self) { Text($0).tag($0) }
-            }
-            .pickerStyle(.inline)
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.caption)
-                .foregroundStyle(presets.current == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
-        }
-        #if os(macOS)
-        .menuStyle(.borderlessButton)
-        #endif
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Preset")
-        .accessibilityLabel("Preset: \(presets.summary)")
-    }
-}
-
 /// What picking a row does.
 enum Action {
     /// This device's music comes out there.
@@ -508,7 +450,17 @@ private struct DeviceChoiceRow: View {
             .disabled(unreachable && !selected)
 
             if let presets {
-                PresetMenu(presets: presets)
+                PresetMenu(presets: presets) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.caption)
+                        .foregroundStyle(presets.current == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+                }
+                #if os(macOS)
+                .menuStyle(.borderlessButton)
+                #endif
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Preset")
             }
 
             if canMove {
