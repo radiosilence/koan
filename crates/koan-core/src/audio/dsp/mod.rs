@@ -114,6 +114,12 @@ impl Setup {
     }
 
     #[cfg(test)]
+    pub(crate) fn with_preamp(mut self, db: f64) -> Self {
+        self.preamp_db = Some(db);
+        self
+    }
+
+    #[cfg(test)]
     pub(crate) fn new(filters: Vec<EqFilter>, impulses: Vec<Impulse>) -> Self {
         Self {
             name: "test".into(),

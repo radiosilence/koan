@@ -146,6 +146,10 @@ pub struct Player {
     /// an operation costs.
     #[cfg(test)]
     playback_starts: usize,
+    /// What `dsp_for` answers in tests, in place of reading the profiles
+    /// from config: config is the process's, and the suite runs in parallel.
+    #[cfg(test)]
+    dsp_override: Option<Arc<crate::audio::dsp::Setup>>,
 }
 
 struct DspCache {
@@ -320,6 +324,8 @@ impl Player {
             in_flight: None,
             #[cfg(test)]
             playback_starts: 0,
+            #[cfg(test)]
+            dsp_override: None,
         }
     }
 
@@ -458,6 +464,15 @@ impl Player {
     /// The DSP profile for `device`, loaded once per config and device.
     fn dsp_for(&mut self, device: &str) -> Option<Arc<crate::audio::dsp::Setup>> {
         let config = crate::config::Config::cached();
+        #[cfg(test)]
+        if let Some(setup) = &self.dsp_override {
+            self.dsp = Some(DspCache {
+                config,
+                device: device.to_string(),
+                setup: Some(setup.clone()),
+            });
+            return Some(setup.clone());
+        }
         if let Some(cache) = &self.dsp
             && Arc::ptr_eq(&cache.config, &config)
             && cache.device == device
@@ -4410,9 +4425,6 @@ mod tests {
     /// used to be its own function, and the easy one to leave behind.
     #[test]
     fn a_profile_processes_files_and_streams_alike() {
-        let _guard = crate::config::tests::PERSIST_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().unwrap();
         let tone = dir.path().join("tone.wav");
         crate::test_utils::generate_wav_tone(&tone, 44100, 440.0, 0.5);
@@ -4455,17 +4467,12 @@ mod tests {
             out
         };
 
-        crate::config::set_config_dir(dir.path());
         let untouched = peaks(&mut player);
 
-        std::fs::write(
-            dir.path().join("config.local.toml"),
-            "[[dsp.profiles]]\nname = \"Half\"\ndevices = [\"Capture DAC\"]\npreamp_db = -6.0206\n",
-        )
-        .unwrap();
-        crate::config::Config::invalidate_cache();
+        player.dsp_override = Some(Arc::new(
+            crate::audio::dsp::Setup::new(vec![], vec![]).with_preamp(-6.0206),
+        ));
         let processed = peaks(&mut player);
-        crate::config::isolate_config_for_tests();
 
         for (kind, ((before, none), (after, half))) in ["file", "stream"]
             .iter()
@@ -4475,7 +4482,7 @@ mod tests {
                 none, &None,
                 "{kind}: nothing is published without a profile"
             );
-            assert_eq!(half.as_deref(), Some("Half"), "{kind}: the badge names it");
+            assert_eq!(half.as_deref(), Some("test"), "{kind}: the badge names it");
             assert!(*before > 0.1, "{kind}: the tone reached the device");
             assert!(
                 (after / before - 0.5).abs() < 0.01,

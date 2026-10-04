@@ -1299,36 +1299,13 @@ mod tests {
         }
     }
 
-    /// A DSP profile for the rig's local device, for as long as the guard
-    /// lives. Config is the process's, so tests that change it take turns.
-    struct LocalProfile {
-        _lock: std::sync::MutexGuard<'static, ()>,
-        _dir: tempfile::TempDir,
-    }
-
-    impl LocalProfile {
-        fn half() -> Self {
-            let lock = crate::config::tests::PERSIST_LOCK
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            let dir = tempfile::tempdir().unwrap();
-            std::fs::write(
-                dir.path().join("config.local.toml"),
-                "[[dsp.profiles]]\nname = \"Half\"\ndevices = [\"Stuck DAC\"]\npreamp_db = -6.0\n",
-            )
-            .unwrap();
-            crate::config::set_config_dir(dir.path());
-            Self {
-                _lock: lock,
-                _dir: dir,
-            }
-        }
-    }
-
-    impl Drop for LocalProfile {
-        fn drop(&mut self) {
-            crate::config::isolate_config_for_tests();
-        }
+    /// A profile for the rig's local device, halving the level. Handed to
+    /// the player directly: changing the process's config would race the rest
+    /// of the suite.
+    fn with_profile(r: &mut Rig) {
+        r.player.dsp_override = Some(Arc::new(
+            crate::audio::dsp::Setup::new(vec![], vec![]).with_preamp(-6.0),
+        ));
     }
 
     /// The renderer fetches the original file, so a profile for the local
@@ -1336,8 +1313,8 @@ mod tests {
     /// it has.
     #[test]
     fn a_renderer_session_publishes_no_dsp_status() {
-        let _profile = LocalProfile::half();
         let mut r = rig(WAV, true, &["a.wav"]);
+        with_profile(&mut r);
 
         r.player.process_command(PlayerCommand::UseRenderer(None));
         r.player.play(r.ids[0]);
@@ -1359,8 +1336,8 @@ mod tests {
     /// stop and reload the renderer to apply it.
     #[test]
     fn reloading_dsp_leaves_a_renderer_playing() {
-        let _profile = LocalProfile::half();
         let mut r = rig(WAV, true, &["a.wav"]);
+        with_profile(&mut r);
         r.player.play(r.ids[0]);
         r.settle();
         let starts = r.player.playback_starts;
