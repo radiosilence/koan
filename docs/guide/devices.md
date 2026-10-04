@@ -64,6 +64,24 @@ at once.
   chosen. It is dropped after `devices.asleep_grace_mins` (30 by default), a
   setting of this machine's kept in `config.local.toml`.
 
+### Waking a device
+
+Choosing an asleep device wakes it, trying each of these until it answers.
+The row says which it is on, and says so if none worked.
+
+1. **The local network**, if the device was seen there within the last minute:
+   it may not be suspended yet.
+2. **A background push** through your server. iOS delivers these when it sees
+   fit. It delays or drops them to save battery and in Low Power Mode, and
+   never delivers one to an app that was swiped away.
+3. **A notification** on the device, after about six seconds, saying this
+   device wants to play there. Tapping it opens kōan, which connects.
+
+Each step is logged, on the device choosing (`wake: <name>: Push at +12ms`),
+on the server (`wake: wake push for <name> answered by APNs in 140ms`,
+`wake: <name> linked 2310ms after its wake push`) and on the phone woken
+(`app: push: woken`), so a wake that did not happen shows where it stopped.
+
 iOS gives an app no way to wake itself on a schedule, so a suspended phone
 stops announcing itself on the network within seconds of going idle. A phone
 that is playing stays reachable, since its audio keeps it running.

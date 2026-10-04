@@ -1331,6 +1331,11 @@ pub struct DeviceInfo {
     pub wakeable: bool,
     /// Unix seconds when it was last reachable.
     pub last_seen: Option<i64>,
+    /// While it is being woken, the stage: `network`, `push` or
+    /// `notification`.
+    pub waking: Option<String>,
+    /// Why the last attempt to wake it failed.
+    pub wake_failed: Option<String>,
     /// Plays from the same library, so music can be handed between the two.
     pub same_library: bool,
     pub state: PlayState,

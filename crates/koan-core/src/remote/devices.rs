@@ -46,6 +46,8 @@ pub struct Device {
     pub wakeable: bool,
     /// Unix seconds when it was last reachable; `None` if never, here.
     pub last_seen: Option<i64>,
+    /// How far waking it has got, while it is being woken or once it failed.
+    pub waking: Option<Waking>,
     /// Plays from the same library, so music can be handed between the two.
     pub same_library: bool,
     /// What it last reported.
@@ -85,6 +87,23 @@ struct Store {
     live: HashMap<String, i64>,
     /// Devices no list carries any more, kept until the grace period ends.
     departed: Vec<Departed>,
+    /// Devices being woken, or that did not wake, by id.
+    waking: HashMap<String, Waking>,
+}
+
+/// A stage of waking a device, in the order they are tried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Waking {
+    /// Dialling it on the local network: seen there a moment ago, it may not
+    /// be suspended yet.
+    Network,
+    /// A background push sent through the server. iOS delays or drops these
+    /// as it sees fit, and never delivers one to an app swiped away.
+    Push,
+    /// A notification on the device, asking to be tapped.
+    Notification,
+    /// None of it worked; why, for the device's row.
+    Failed(String),
 }
 
 /// A device that dropped out of every list: as it was when last reachable.
@@ -293,6 +312,7 @@ pub fn set_account(devices: Vec<LinkDevice>) {
         for d in &devices {
             if d.linked {
                 s.live.insert(d.id.clone(), unix);
+                s.waking.remove(&d.id);
             } else if let Some(seen) = d.last_seen {
                 // Whichever is later: this device may have reached it over
                 // the network since.
@@ -346,6 +366,7 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
         s.live
             .insert(hello.id.clone(), chrono::Utc::now().timestamp());
         s.departed.retain(|g| g.id != hello.id);
+        s.waking.remove(&hello.id);
         s.nearby.retain(|n| n.hello.id != hello.id);
         s.nearby.push(Nearby {
             hello,
@@ -446,6 +467,7 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                     // can wake it.
                     wakeable: true,
                     last_seen: live(&d.id),
+                    waking: None,
                     same_library: true,
                     // The network's state is fresher, but only the server's
                     // carries the outputs: the network is told none.
@@ -476,6 +498,7 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                 asleep: false,
                 wakeable: false,
                 last_seen: live(&n.hello.id),
+                waking: None,
                 same_library: ours.is_some() && n.hello.library == ours,
                 state: n.state.clone(),
                 heard: n.at,
@@ -501,6 +524,7 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                 asleep: !awake,
                 wakeable: false,
                 last_seen: last,
+                waking: None,
                 same_library: g.same_library,
                 // What it was doing is not what it is doing now.
                 state: awake.then(|| g.state.clone()).flatten(),
@@ -525,11 +549,17 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                 asleep: true,
                 wakeable: false,
                 last_seen: live(&t.id),
+                waking: None,
                 same_library: true,
                 state: None,
                 heard: Instant::now(),
                 problem: Some("Out of reach".into()),
             });
+        }
+        for d in &mut out {
+            if !d.awake {
+                d.waking = s.waking.get(&d.id).cloned();
+            }
         }
         out.sort_by_key(|d| {
             (
@@ -569,6 +599,134 @@ pub fn choosable(id: &str) -> Result<(), String> {
         )),
         _ => Ok(()),
     }
+}
+
+/// A device seen on the local network this recently is dialled there first.
+const NETWORK_RECENT: i64 = 60;
+/// How long each stage is given to bring the device in before the next.
+const NETWORK_WAIT: Duration = Duration::from_secs(3);
+const PUSH_WAIT: Duration = Duration::from_secs(6);
+const NOTIFICATION_WAIT: Duration = Duration::from_secs(45);
+
+/// The stages to try, each with how long to wait on it.
+fn wake_plan(seen_nearby_recently: bool) -> Vec<(Waking, Duration)> {
+    let mut plan = Vec::new();
+    if seen_nearby_recently {
+        plan.push((Waking::Network, NETWORK_WAIT));
+    }
+    plan.push((Waking::Push, PUSH_WAIT));
+    plan.push((Waking::Notification, NOTIFICATION_WAIT));
+    plan
+}
+
+/// Walk `plan`: `act` starts each stage, `wait` blocks until the device is
+/// reachable or the stage's time is up, saying which. The stage it was
+/// reached in, or the failure to show.
+fn run_wake(
+    plan: &[(Waking, Duration)],
+    mut act: impl FnMut(&Waking) -> Result<(), String>,
+    mut wait: impl FnMut(Duration) -> bool,
+) -> Result<Waking, Waking> {
+    let mut last = None;
+    for (stage, time) in plan {
+        if let Err(why) = act(stage) {
+            return Err(Waking::Failed(why));
+        }
+        last = Some(stage);
+        if wait(*time) {
+            return Ok(stage.clone());
+        }
+    }
+    Err(Waking::Failed(match last {
+        Some(Waking::Notification) => {
+            "Did not wake. A notification is waiting on it to be tapped.".into()
+        }
+        _ => "Did not wake.".into(),
+    }))
+}
+
+fn reachable(id: &str) -> bool {
+    with(|s| {
+        s.nearby.iter().any(|n| n.hello.id == id)
+            || s.account.iter().any(|(d, _)| d.id == id && d.linked)
+    })
+}
+
+/// Wake the asleep device `id`, in the background: on the local network if it
+/// was there a moment ago, then a background push, then a notification on it
+/// to tap. The device's row says which stage it is at, and why it failed if it
+/// did. Each step is logged with its time from the start, so a wake that did
+/// not happen shows where it stopped.
+pub fn wake(id: &str) {
+    let id = id.to_string();
+    // Only what this device may wake: its account's, through the server. A
+    // stranger on the network has nothing to answer a push with.
+    let Some(device) = list()
+        .into_iter()
+        .find(|d| d.id == id && d.asleep && d.wakeable)
+    else {
+        return;
+    };
+    let name = device.name;
+    let now = chrono::Utc::now().timestamp();
+    let recent = remembered_nearby()
+        .iter()
+        .any(|n| n.id == id && now - n.at <= NETWORK_RECENT);
+    let _ = std::thread::Builder::new()
+        .name("koan-wake".into())
+        .spawn(move || {
+            let started = Instant::now();
+            let ms = || started.elapsed().as_millis();
+            let plan = wake_plan(recent);
+            let outcome = run_wake(
+                &plan,
+                |stage| {
+                    log::info!("wake: {name}: {stage:?} at +{}ms", ms());
+                    changed(|s| s.waking.insert(id.clone(), stage.clone()));
+                    match stage {
+                        Waking::Network => {
+                            crate::remote::nearby::dial_now();
+                            Ok(())
+                        }
+                        Waking::Push | Waking::Notification => {
+                            let notify = *stage == Waking::Notification;
+                            if link::report(LinkReport::Wake {
+                                to: id.clone(),
+                                notify,
+                            }) {
+                                Ok(())
+                            } else {
+                                Err("Not connected to your server, which wakes it.".into())
+                            }
+                        }
+                        Waking::Failed(_) => Ok(()),
+                    }
+                },
+                |time| {
+                    let until = Instant::now() + time;
+                    let signal = crate::signal::engine_changed();
+                    let mut seen = signal.generation();
+                    while !reachable(&id) {
+                        let left = until.saturating_duration_since(Instant::now());
+                        if left.is_zero() {
+                            return false;
+                        }
+                        seen = signal.wait_until(seen, left);
+                    }
+                    true
+                },
+            );
+            match outcome {
+                Ok(stage) => {
+                    log::info!("wake: {name}: reached at +{}ms, after {stage:?}", ms());
+                    changed(|s| s.waking.remove(&id));
+                }
+                Err(failed) => {
+                    log::warn!("wake: {name}: did not wake in {}ms ({failed:?})", ms());
+                    changed(|s| s.waking.insert(id.clone(), failed));
+                }
+            }
+        });
 }
 
 /// The device the app is controlling; `None` for this one.
@@ -756,6 +914,78 @@ mod tests {
         let asleep = mac(left + STALE_SECS + 1).unwrap();
         assert!(asleep.asleep && !asleep.wakeable && asleep.account);
         assert!(mac(left + STALE_SECS + grace + 1).is_none());
+        with(|s| *s = Store::default());
+    }
+
+    /// Run a wake with a device that answers in stage `answers_in`, if any:
+    /// the stages started, and how it ended.
+    fn walk(recent: bool, answers_in: Option<Waking>) -> (Vec<Waking>, Result<Waking, Waking>) {
+        let plan = wake_plan(recent);
+        let mut started = Vec::new();
+        let current = std::cell::RefCell::new(None);
+        let outcome = run_wake(
+            &plan,
+            |stage| {
+                started.push(stage.clone());
+                *current.borrow_mut() = Some(stage.clone());
+                Ok(())
+            },
+            |_| *current.borrow() == answers_in,
+        );
+        (started, outcome)
+    }
+
+    #[test]
+    fn waking_tries_the_network_first_only_when_it_was_there_a_moment_ago() {
+        let (tried, _) = walk(true, None);
+        assert_eq!(tried, [Waking::Network, Waking::Push, Waking::Notification]);
+        let (tried, _) = walk(false, None);
+        assert_eq!(tried, [Waking::Push, Waking::Notification]);
+    }
+
+    #[test]
+    fn a_wake_stops_at_the_stage_that_reached_it() {
+        let (tried, outcome) = walk(true, Some(Waking::Network));
+        assert_eq!(tried, [Waking::Network], "no push for a phone still awake");
+        assert_eq!(outcome, Ok(Waking::Network));
+        let (tried, outcome) = walk(false, Some(Waking::Push));
+        assert_eq!(
+            tried,
+            [Waking::Push],
+            "no notification once the push worked"
+        );
+        assert_eq!(outcome, Ok(Waking::Push));
+    }
+
+    #[test]
+    fn a_push_that_does_not_wake_it_falls_back_to_a_notification_then_says_so() {
+        let (tried, outcome) = walk(false, None);
+        assert_eq!(tried.last(), Some(&Waking::Notification));
+        assert!(matches!(outcome, Err(Waking::Failed(why)) if why.contains("notification")));
+        // The stages' times: the notification comes after a short wait on the push.
+        let plan = wake_plan(false);
+        assert!(plan[0].1 <= Duration::from_secs(8) && plan[0].1 >= Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_stage_that_cannot_start_ends_the_wake_with_why() {
+        let outcome = run_wake(&wake_plan(false), |_| Err("Not connected".into()), |_| true);
+        assert_eq!(outcome, Err(Waking::Failed("Not connected".into())));
+    }
+
+    #[test]
+    fn a_stranger_asleep_on_the_network_is_never_woken() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        nearby_hello(hello("stranger"), "10.0.0.5:5626");
+        nearby_gone("stranger");
+        with(|s| *s.live.get_mut("stranger").unwrap() -= STALE_SECS + 10);
+        wake("stranger");
+        assert!(
+            with(|s| s.waking.is_empty()),
+            "not wakeable: no stage starts"
+        );
         with(|s| *s = Store::default());
     }
 

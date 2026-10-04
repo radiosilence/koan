@@ -67,6 +67,12 @@ pub enum Outcome {
 pub enum Push {
     /// Wake the app to link; whatever waits in the outbox follows.
     Wake,
+    /// Wake the app because someone chose it in the Control menu: no use an
+    /// hour late, unlike `Wake`'s sync.
+    WakeNow,
+    /// A notification asking to be tapped, for a device a push did not wake.
+    /// Tapping it opens the app, which links.
+    Summon { title: String, body: String },
     /// Show this, and carry `command` for the app to run when it is tapped.
     Notify {
         title: String,
@@ -158,29 +164,30 @@ impl Pusher {
         } else {
             "api.push.apple.com"
         };
-        let (kind, priority, expires_in) = match push {
-            // Low priority is the only priority a background push may have.
-            Push::Wake => ("background", "5", 60 * 60),
-            // "Play this" an hour late is not what anyone asked for.
-            Push::Notify { .. } => ("alert", "10", 10 * 60),
-            // Stale within the minute: the device will have moved on.
-            Push::Activity(_) => ("liveactivity", "10", 60),
-        };
+        let Headers {
+            kind,
+            priority,
+            expires_in,
+            collapse,
+        } = headers(push);
         // A Live Activity's pushes go to the app's topic with a suffix.
         let topic = match push {
             Push::Activity(_) => format!("{}.push-type.liveactivity", self.topic),
             _ => self.topic.clone(),
         };
         let expiration = unix_now() + expires_in;
-        let response = http
+        let request = http
             .post(format!("https://{host}/3/device/{token}"))
             .bearer_auth(bearer)
             .header("apns-topic", topic)
             .header("apns-push-type", kind)
             .header("apns-priority", priority)
-            .header("apns-expiration", expiration.to_string())
-            .json(&payload(push))
-            .send();
+            .header("apns-expiration", expiration.to_string());
+        let request = match collapse {
+            Some(id) => request.header("apns-collapse-id", id),
+            None => request,
+        };
+        let response = request.json(&payload(push)).send();
         match response {
             Ok(r) if r.status().is_success() => Outcome::Sent,
             Ok(r) => {
@@ -206,6 +213,33 @@ impl Pusher {
     }
 }
 
+struct Headers {
+    kind: &'static str,
+    priority: &'static str,
+    expires_in: u64,
+    /// Pushes with one id replace each other on the way, rather than queue.
+    collapse: Option<&'static str>,
+}
+
+fn headers(push: &Push) -> Headers {
+    let (kind, priority, expires_in, collapse) = match push {
+        // Low priority is the only priority a background push may have.
+        Push::Wake => ("background", "5", 60 * 60, Some("koan-wake")),
+        Push::WakeNow => ("background", "5", 60, Some("koan-wake")),
+        // "Play this" an hour late is not what anyone asked for.
+        Push::Notify { .. } => ("alert", "10", 10 * 60, None),
+        Push::Summon { .. } => ("alert", "10", 2 * 60, Some("koan-summon")),
+        // Stale within the minute: the device will have moved on.
+        Push::Activity(_) => ("liveactivity", "10", 60, None),
+    };
+    Headers {
+        kind,
+        priority,
+        expires_in,
+        collapse,
+    }
+}
+
 /// The JSON a push carries. The command rides under `koan`, beside Apple's
 /// `aps`, so the app can act on it without asking the server first.
 pub fn payload(push: &Push) -> Value {
@@ -219,7 +253,14 @@ pub fn payload(push: &Push) -> Value {
                 "stale-date": state.at as u64 + ACTIVITY_STALE_SECS,
             },
         }),
-        Push::Wake => json!({ "aps": { "content-available": 1 } }),
+        Push::Wake | Push::WakeNow => json!({ "aps": { "content-available": 1 } }),
+        Push::Summon { title, body } => json!({
+            "aps": {
+                "alert": { "title": title, "body": body },
+                "sound": "default",
+                "interruption-level": "time-sensitive",
+            },
+        }),
         Push::Notify {
             title,
             body,
@@ -476,6 +517,41 @@ AtQSJr6Wg9OtOkzZdoOhdRVcNFW8q9peFQ+S7qIcWNbXlhi+cAlpf0ce
             team_id: "TEAM123456".into(),
             ..PushConfig::default()
         }
+    }
+
+    /// Apple delivers a background push only at priority 5, and holds one
+    /// collapse id's pushes as one rather than queueing every retry.
+    #[test]
+    fn wakes_are_background_low_priority_and_collapse() {
+        for push in [Push::Wake, Push::WakeNow] {
+            let h = headers(&push);
+            assert_eq!(
+                (h.kind, h.priority, h.collapse),
+                ("background", "5", Some("koan-wake"))
+            );
+            assert_eq!(payload(&push)["aps"]["content-available"], 1);
+        }
+        assert!(
+            headers(&Push::WakeNow).expires_in <= 60,
+            "a late wake is no wake"
+        );
+        let summon = Push::Summon {
+            title: "Mac wants to play here".into(),
+            body: "Tap to let it".into(),
+        };
+        let h = headers(&summon);
+        assert_eq!(
+            (h.kind, h.priority, h.collapse),
+            ("alert", "10", Some("koan-summon"))
+        );
+        assert_eq!(
+            payload(&summon)["aps"]["alert"]["title"],
+            "Mac wants to play here"
+        );
+        assert!(
+            payload(&summon).get("koan").is_none(),
+            "tapping it only opens the app"
+        );
     }
 
     #[test]

@@ -71,6 +71,7 @@ private struct DeviceRow: View {
             canMove: player.canMoveMusic(to: device),
             // Asleep with nothing able to wake it: a command would go nowhere.
             unreachable: device.problem != nil || (device.asleep && !device.wakeable),
+            warning: device.waking != nil || device.wakeFailed != nil,
             onSelect: { player.control(device.id) },
             onMove: { player.moveMusic(to: device.id) }
         )
@@ -80,8 +81,18 @@ private struct DeviceRow: View {
         if let problem = device.problem {
             return problem
         }
+        if let stage = device.waking {
+            return switch stage {
+            case "network": "Waking… trying it on this network"
+            case "push": "Waking… sent a wake through your server"
+            default: "Waking… tap the notification on \(device.name)"
+            }
+        }
         if !device.awake {
             let seen = Self.seen(device.lastSeen).map { " · seen \($0)" } ?? ""
+            if let failed = device.wakeFailed {
+                return "\(failed) Asleep\(seen)."
+            }
             return device.wakeable
                 ? "Asleep\(seen). Choosing it wakes it; music sent here arrives as a notification to tap."
                 : "Asleep\(seen)"

@@ -3883,6 +3883,12 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
                                     registry.set_activity(&username, &device, activity);
                                 });
                             }
+                            Ok(LinkReport::Wake { to, notify }) => {
+                                let (username, device) = (username.clone(), device.clone());
+                                tokio::task::spawn_blocking(move || {
+                                    registry.wake(&username, &device, &to, notify);
+                                });
+                            }
                             Ok(LinkReport::Hello(_)) | Err(_) => {}
                         }
                     }
