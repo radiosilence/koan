@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The Mac app takes the record's colour again.** Opening an album could leave the play button and the page's controls in koan's mint while the window behind them was washed in the sleeve's colour. The colour was worked out while the page drew, and when it landed just before the room went to look for it, nothing told the room, so it kept the accent until something else redrew it. Mint is now only for a record with no artwork or no colour in its sleeve.
+
 ## 0.52.1
 
 ### Added
