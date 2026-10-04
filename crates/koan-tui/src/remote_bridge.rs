@@ -501,6 +501,7 @@ fn command_loop(
             | PlayerCommand::Cue { .. }
             | PlayerCommand::PauseAndReport(_)
             | PlayerCommand::TrackFailed(_)
+            | PlayerCommand::CacheTracks(_)
             | PlayerCommand::BeginUndoBatch
             | PlayerCommand::EndUndoBatch
             | PlayerCommand::UpdatePaths(_)

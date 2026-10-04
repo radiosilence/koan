@@ -117,6 +117,10 @@ pub struct Player {
     /// Writes plays away from this thread. None when there is no database to
     /// write to, and in tests, which must not touch the real library.
     history: Option<PlayRecorder>,
+    /// This player's download queue, which follows its playlist. Held here so
+    /// it lives as long as the player it fetches for. `None` for a player
+    /// made without `spawn`, which fetches nothing.
+    downloads: Option<crate::remote::queue::DownloadQueue>,
     /// How much of the current track has been heard so far.
     in_flight: Option<InFlight>,
     /// When the silence after a rate switch runs out and the track is heard.
@@ -211,6 +215,7 @@ impl Player {
             last_skip: std::time::Instant::now(),
             stream_mode: streaming::ProbeMode::Full,
             history: None,
+            downloads: None,
             in_flight: None,
             #[cfg(test)]
             playback_starts: 0,
@@ -1686,6 +1691,11 @@ impl Player {
             PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),
             PlayerCommand::StreamProbed { id, info, mode } => self.stream_probed(id, *info, mode),
             PlayerCommand::TrackFailed(id) => self.track_failed(id),
+            PlayerCommand::CacheTracks(ids) => {
+                if let Some(downloads) = &self.downloads {
+                    downloads.cache(ids);
+                }
+            }
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),
             PlayerCommand::BeginUndoBatch => {
@@ -1880,15 +1890,17 @@ impl Player {
         let timeline = player.timeline();
         let viz_snapshot = player.viz_snapshot();
         let tx = player.command_sender();
+        // Downloads follow the playlist, so they come with the player rather
+        // than being something each front end has to remember to ask for.
+        player.downloads = Some(crate::remote::queue::DownloadQueue::spawn(
+            tx.clone(),
+            state.clone(),
+        ));
 
         thread::Builder::new()
             .name("koan-player".into())
             .spawn(move || player.run())
             .expect("failed to spawn player thread");
-
-        // Downloads follow the playlist, so they come with the player rather
-        // than being something each front end has to remember to ask for.
-        crate::remote::queue::shared(&tx, &state);
 
         (state, timeline, viz_snapshot, tx)
     }

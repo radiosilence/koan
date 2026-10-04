@@ -2179,8 +2179,8 @@ impl KoanEngine {
     /// store and nowhere else.
     pub async fn download_to_cache(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
         offload::offload(move || {
-            koan_core::remote::queue::shared(&self.tx, &self.state).cache(track_ids);
-            Ok(())
+            // This device's cache, whichever device is being controlled.
+            self.send_local(PlayerCommand::CacheTracks(track_ids))
         })
         .await
     }

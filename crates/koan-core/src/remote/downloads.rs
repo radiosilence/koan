@@ -376,10 +376,19 @@ impl DownloadStore {
         true
     }
 
-    /// Let go of every waiter not in `wanted`. A transfer left wanted by
-    /// nothing starts counting towards being abandoned.
+    /// Let go of every waiter on a track's transfer that is not in `wanted`.
+    /// A transfer left wanted by nothing starts counting towards being
+    /// abandoned.
+    ///
+    /// Track transfers only: they are the download queue's, and `wanted` is
+    /// its account of the playlist. A transfer for a queue entry is whoever
+    /// claimed it's to settle, and its waiter is never in that account.
     pub fn retain_waiters(&self, wanted: &HashSet<QueueItemId>) {
-        for entry in self.entries.write().iter_mut().filter(|e| e.is_live()) {
+        let mut entries = self.entries.write();
+        let tracks = entries
+            .iter_mut()
+            .filter(|e| e.is_live() && matches!(e.download.key, TransferKey::Track(_)));
+        for entry in tracks {
             entry.waiters.retain(|id| wanted.contains(id));
             entry.note_wanted();
         }
@@ -954,6 +963,21 @@ mod tests {
 
         store.join(key, Some(waiter));
         assert!(!store.abandoned(key, Duration::ZERO), "wanted again");
+    }
+
+    #[test]
+    fn letting_go_of_waiters_leaves_an_entrys_own_transfer_alone() {
+        // The remote bridge's transfer answers its entry when it settles; a
+        // queue sync that stripped the waiter would leave the entry pending.
+        let store = DownloadStore::new();
+        let entry = QueueItemId::new();
+        let key = TransferKey::Entry(entry);
+        store.claim(key, Some(entry));
+
+        store.retain_waiters(&HashSet::new());
+
+        assert_eq!(store.waiters(key), vec![entry]);
+        assert!(!store.abandoned(key, Duration::ZERO));
     }
 
     #[test]

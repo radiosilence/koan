@@ -98,6 +98,8 @@ pub enum PlayerCommand {
     /// only thing it listens for, and a track that cannot be fetched never
     /// becomes Ready. That is the offline-library stall.
     TrackFailed(QueueItemId),
+    /// Fetch these tracks into the cache, with no queue entry to play them.
+    CacheTracks(Vec<i64>),
     /// Decode thread exhausted the playlist — auto-advance or stop.
     DecodeFinished,
     /// The decoder queued the next track, so when the playhead reaches it is

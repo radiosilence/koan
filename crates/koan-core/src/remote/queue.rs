@@ -554,20 +554,6 @@ fn promote_cursor(inner: &Arc<Inner>, cursor_id: QueueItemId) {
     }
 }
 
-/// The process's download queue.
-///
-/// One player means one pool, one priority lane and one playlist watcher; a
-/// second set would compete with the first for the same link and the same
-/// cursor. Made by `Player::spawn`, so whatever front end runs the player
-/// gets downloads with it.
-pub fn shared(
-    cmd_tx: &crossbeam_channel::Sender<PlayerCommand>,
-    state: &Arc<SharedPlayerState>,
-) -> &'static DownloadQueue {
-    static QUEUE: std::sync::OnceLock<DownloadQueue> = std::sync::OnceLock::new();
-    QUEUE.get_or_init(|| DownloadQueue::spawn(cmd_tx.clone(), state.clone()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
