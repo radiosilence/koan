@@ -333,6 +333,13 @@ fn peak_gain(plan: &[Planned], impulse: Option<&Impulse>, channels: usize, rate:
     let fft = RealFftPlanner::<f64>::new().plan_fft_forward(size);
     let mut spectrum = fft.make_output_vec();
     let mut per_output = vec![vec![0.0f64; spectrum.len()]; channels];
+    let gains: Vec<Vec<f64>> = if plan.is_empty() {
+        Vec::new()
+    } else {
+        (0..spectrum.len())
+            .map(|k| channel_gains(std::f64::consts::TAU * k as f64 / size as f64))
+            .collect()
+    };
     for r in &routes {
         let mut input = fft.make_input_vec();
         for (d, &s) in input.iter_mut().zip(&r.ir) {
@@ -345,7 +352,9 @@ fn peak_gain(plan: &[Planned], impulse: Option<&Impulse>, channels: usize, rate:
             let fed: f64 = r
                 .inputs
                 .iter()
-                .map(|&(c, g)| g.abs() as f64 * gains.get(k).map_or(1.0, |g| g[c]))
+                .map(|&(c, g)| {
+                    g.abs() as f64 * gains.get(k).and_then(|g| g.get(c)).map_or(1.0, |&g| g)
+                })
                 .sum();
             for &(o, g) in &r.outputs {
                 if let Some(out) = per_output.get_mut(o) {
