@@ -71,9 +71,9 @@ private struct BrowseFilterForm: View {
                 }
                 LabeledContent("Years") {
                     HStack(spacing: 4) {
-                        year("From", $library.browseFilter.yearFrom)
+                        YearField(prompt: "From", value: $library.browseFilter.yearFrom)
                         Text("–").foregroundStyle(.secondary)
-                        year("To", $library.browseFilter.yearTo)
+                        YearField(prompt: "To", value: $library.browseFilter.yearTo)
                     }
                 }
             }
@@ -95,14 +95,38 @@ private struct BrowseFilterForm: View {
         guard let current, !choices.contains(current) else { return choices }
         return choices + [current]
     }
+}
 
-    private func year(_ prompt: String, _ value: Binding<Int32?>) -> some View {
-        TextField(prompt, value: value, format: .number.grouping(.never), prompt: Text(prompt))
+/// A year, applied as it is typed rather than on Return: the phone's number
+/// pad has none, and closing the sheet or popover with the field focused would
+/// otherwise drop it. Only a whole year or an empty field is applied, so
+/// typing 1990 is one query rather than four.
+private struct YearField: View {
+    let prompt: String
+    @Binding var value: Int32?
+    @State private var text = ""
+
+    var body: some View {
+        TextField(prompt, text: $text, prompt: Text(prompt))
             .labelsHidden()
             .multilineTextAlignment(.center)
             .frame(width: 60)
             #if os(iOS)
             .keyboardType(.numberPad)
             #endif
+            .onAppear { text = value.map(String.init) ?? "" }
+            .onChange(of: text) { _, typed in
+                let digits = String(typed.filter(\.isASCII).filter(\.isNumber).prefix(4))
+                if digits != typed { text = digits; return }
+                if digits.isEmpty {
+                    value = nil
+                } else if digits.count == 4 {
+                    value = Int32(digits)
+                }
+            }
+            // Reset, from outside the field.
+            .onChange(of: value) { _, now in
+                if now == nil, text.count == 4 { text = "" }
+            }
     }
 }
