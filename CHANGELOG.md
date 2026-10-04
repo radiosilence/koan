@@ -4,7 +4,14 @@
 
 ### Fixed
 
+- **A reinstalled iOS app keeps its device id.** The id lived only in the app's container, which iOS empties when the app is deleted, so each reinstall appeared on the server as a new "iPhone" beside the old one. It is now kept in the Keychain as well, which survives a reinstall. The app also reports the phone's own name; iOS returns "iPhone" for it until the app holds Apple's user-assigned-device-name entitlement.
 - **Move here resumes where the source stopped.** The source read its playhead before sending and paused afterwards, so whatever played during the send and the fade was heard again on the destination; the destination then started the track from the top and seeked, letting its opening through. The source now pauses first and reports where the fade went silent, and the destination opens the track at that point. A track the destination has to download waits for the whole file rather than starting early, and a paused source arrives paused.
+- **A command reaches a suspended iPhone after the app has been reinstalled.** A reinstall gives the app a new device id and leaves the old one's push token behind under the same name, so the server answered "several can be reached: iPhone, iPhone" and sent no push. It now wakes the device seen most recently.
+- **ALAC tracks from a koan server no longer show as "BIN".** The server had no suffix or content type for ALAC, PCM or `.aif`, so it published those tracks as `bin`, `application/octet-stream`, and an app syncing from it stored `bin` as the codec. Every codec the indexer records now has its suffix and content type. Since a suffix cannot tell ALAC from AAC (both are `m4a`), a koan server also sends the stored codec in a `codec` attribute, which koan clients prefer over the suffix. Tracks already synced pick up the correct codec on the next full library sync.
+- **The macOS app's output device menu works on macOS 27.** Its button in the transport bar was not drawn in dark mode, and the menu showed no checkmark against the output in use. The button is now drawn by SwiftUI and the menu is a picker.
+- **An output device connected while the macOS app is running appears in the device menu.** The list was read once at launch; it is now re-read whenever CoreAudio's device list changes.
+- **The macOS window can be tiled to half of a 2560pt display.** Its minimum width was 1320pt; it is now 1260pt, with the lyrics panel opening at 280pt rather than 320pt.
+- **No white or black band above the sidebar in full screen.** In full screen the toolbar moves into a separate window, where AppKit backs the sidebar's part of it with an opaque view; koan now hides that view so the sidebar's wash shows through.
 
 ### Changed
 
@@ -14,15 +21,10 @@
 - **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.
 - **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
 
-
 ### Removed
 
 - **Recoverable passwords.** The server no longer keeps each account's password encrypted beside its hash, which let an admin read it back through an invite. Schema version 13 drops `users.sealed_password`; a database opened by this version is refused by older ones. The key they were encrypted with, `subsonic.key` in the auth directory, is deleted when the server starts.
 - **Subsonic token auth (`t`/`s`) for accounts.** It needed that readable copy. Clients get error 41 and should send the password (`p=`, over HTTPS) or an API key; the `[subsonic]` shared secret still accepts it. A koan app signed in to a koan server over plain HTTP needs signing in again, or an invite.
-
-### Fixed
-
-- **A command reaches a suspended iPhone after the app has been reinstalled.** A reinstall gives the app a new device id and leaves the old one's push token behind under the same name, so the server answered "several can be reached: iPhone, iPhone" and sent no push. It now wakes the device seen most recently.
 
 ## 0.50.2
 

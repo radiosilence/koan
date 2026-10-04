@@ -247,9 +247,11 @@ const LANDING_COALESCE: std::time::Duration = std::time::Duration::from_secs(2);
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
+    /// `device_name` is what this device calls itself to the account's other
+    /// devices; without one, the hostname.
     #[uniffi::constructor]
-    pub async fn new() -> Result<Arc<Self>, KoanError> {
-        offload::offload(Self::build).await
+    pub async fn new(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
+        offload::offload(move || Self::build(device_name)).await
     }
     // --- Transport ---------------------------------------------------------
 
@@ -3107,7 +3109,7 @@ impl KoanEngine {
         Ok(summary)
     }
 
-    fn build() -> Result<Arc<Self>, KoanError> {
+    fn build(device_name: Option<String>) -> Result<Arc<Self>, KoanError> {
         let t0 = std::time::Instant::now();
         init_logging();
         let db_path = config::db_path();
@@ -3201,7 +3203,7 @@ impl KoanEngine {
         let held =
             std::sync::Mutex::new(None::<(u64, Vec<koan_core::remote::link::LinkQueueEntry>)>);
         koan_core::remote::devices::start(koan_core::remote::link::Local {
-            identity: koan_core::remote::link::LinkIdentity::this_device(None),
+            identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
             // Only the account may cost a sync: anyone on the network can send
             // a track id this library has never heard of.
             on_command: Arc::new(move |cmd, source| {

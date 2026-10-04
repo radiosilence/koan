@@ -705,8 +705,30 @@ pub fn sync(db: &crate::db::connection::Database, walk: crate::helpers::Walk) {
     }
 }
 
-/// A random id kept in the config directory.
+/// A random id kept in the config directory, and on iOS in the Keychain as
+/// well: deleting an app empties its container but not its Keychain items, so
+/// a reinstalled app keeps its id rather than appearing as a second device.
 fn device_id(dir: &Path) -> String {
+    #[cfg(target_os = "ios")]
+    {
+        use security_framework::passwords::{get_generic_password, set_generic_password};
+        const SERVICE: &str = "cc.blit.koan.link";
+        if let Some(id) = get_generic_password(SERVICE, "device-id")
+            .ok()
+            .and_then(|b| String::from_utf8(b).ok())
+            .filter(|id| !id.trim().is_empty())
+        {
+            return id;
+        }
+        let id = file_device_id(dir);
+        let _ = set_generic_password(SERVICE, "device-id", id.as_bytes());
+        id
+    }
+    #[cfg(not(target_os = "ios"))]
+    file_device_id(dir)
+}
+
+fn file_device_id(dir: &Path) -> String {
     let path = dir.join("device-id");
     if let Ok(id) = std::fs::read_to_string(&path) {
         let id = id.trim();
