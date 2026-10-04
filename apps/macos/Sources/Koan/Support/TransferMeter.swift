@@ -31,13 +31,13 @@ protocol TransferGauge: AnyObject {
 final class TransferMeter: Observable {
     private let engine: KoanEngine
 
-    /// Each gauge and the transfer it draws. Weak keys, so a row that scrolls
-    /// away is forgotten without having to say goodbye.
-    private let gauges = NSMapTable<AnyObject, NSString>.weakToStrongObjects()
+    /// Each gauge and the transfer it draws, by track. Weak keys, so a row
+    /// that scrolls away is forgotten without having to say goodbye.
+    private let gauges = NSMapTable<AnyObject, NSNumber>.weakToStrongObjects()
 
     /// The last figure handed out per transfer, so a frame in which nothing
     /// arrived touches no layer.
-    private var latest: [String: TransferFigure] = [:]
+    private var latest: [Int64: TransferFigure] = [:]
 
     private var running = false
     private var away = false
@@ -73,26 +73,29 @@ final class TransferMeter: Observable {
     /// so it never draws an old one while waiting for a frame. A row that is
     /// mounted but off stage — the queue behind another page — passes `nil`,
     /// or the link would run for a ring nobody can see.
-    func follow(_ gauge: TransferGauge, transfer: String?) {
+    func follow(_ gauge: TransferGauge, transfer: Int64?) {
         guard let transfer else {
             gauges.removeObject(forKey: gauge)
             relink()
             return
         }
-        gauges.setObject(transfer as NSString, forKey: gauge)
+        gauges.setObject(NSNumber(value: transfer), forKey: gauge)
         if let figure = figure(for: transfer) { gauge.take(figure) }
         relink()
     }
 
     /// How far a transfer has got, for a row deciding how to draw it. The last
     /// frame's figure while the link runs, otherwise read now.
-    func figure(for transfer: String) -> TransferFigure? {
+    func figure(for transfer: Int64) -> TransferFigure? {
         if link == nil { read() }
         return latest[transfer]
     }
 
     private func read() {
-        latest = TransferFigure.keyed(engine.transferReadings())
+        latest = Dictionary(
+            engine.transferReadings().map { ($0.trackId, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     /// The gauges still alive. A weak-keyed map table drops a dead key
@@ -135,7 +138,7 @@ final class TransferMeter: Observable {
         let before = latest
         read()
         for gauge in gauges {
-            guard let transfer = self.gauges.object(forKey: gauge) as String?,
+            guard let transfer = self.gauges.object(forKey: gauge)?.int64Value,
                   let figure = latest[transfer], figure != before[transfer]
             else { continue }
             gauge.take(figure)

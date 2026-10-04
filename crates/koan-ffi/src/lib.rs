@@ -400,7 +400,7 @@ impl KoanEngine {
     /// Forget the transfers that have already settled. Running ones are left
     /// alone — stopping one is a different verb.
     pub fn clear_settled_downloads(&self) {
-        koan_core::remote::downloads::store().clear_settled();
+        self.state.downloads().clear_settled();
     }
 
     /// The byte counts of every transfer still going, read now.
@@ -411,10 +411,11 @@ impl KoanEngine {
     /// time to await one; it holds the download list's read lock for one pass
     /// over a few dozen entries and touches nothing else.
     pub fn transfer_readings(&self) -> Vec<TransferFigure> {
-        koan_core::remote::downloads::store()
+        self.state
+            .downloads()
             .readings()
             .iter()
-            .map(TransferFigure::from)
+            .filter_map(TransferFigure::reading)
             .collect()
     }
 
@@ -2554,7 +2555,8 @@ impl KoanEngine {
                 // this set has landed on disk, which wrote a cached path onto a
                 // library row — and nothing else says so, because the download
                 // ran in koan-core, which has no notion of that version.
-                let mut running: HashSet<String> = HashSet::new();
+                let mut running: HashSet<koan_core::remote::downloads::TransferKey> =
+                    HashSet::new();
                 // A transfer landed since the library last said so.
                 let mut landed = false;
                 let mut last_landing = Instant::now();
@@ -2660,7 +2662,7 @@ impl KoanEngine {
                     // a koan with nothing downloading is never. The list is
                     // read once and only when one of the two has moved: it is a
                     // clone of every transfer koan knows about.
-                    let store = koan_core::remote::downloads::store();
+                    let store = engine.state.downloads();
                     let store_version = store.version();
                     let figures_version = store.figures();
                     if figures_version != last_figures || store_version != last_store {
@@ -2671,19 +2673,19 @@ impl KoanEngine {
                         if figures_version != last_figures {
                             last_figures = figures_version;
                             out.publish(StateSlice::Figures {
-                                figures: transfers.iter().map(TransferFigure::from).collect(),
+                                figures: transfers.iter().filter_map(TransferFigure::of).collect(),
                             });
                         }
                         if store_version != last_store {
                             last_store = store_version;
                             out.publish(StateSlice::Transfers {
-                                transfers: transfers.iter().map(Transfer::from).collect(),
+                                transfers: transfers.iter().filter_map(Transfer::of).collect(),
                             });
                         }
-                        let now_running: HashSet<String> = transfers
+                        let now_running: HashSet<_> = transfers
                             .iter()
                             .filter(|d| !d.state.is_settled())
-                            .map(|d| d.id.0.to_string())
+                            .map(|d| d.key)
                             .collect();
                         if running.difference(&now_running).next().is_some() {
                             landed = true;
@@ -3274,7 +3276,7 @@ impl KoanEngine {
         let play_state = self.state.playback_state();
         let entry = cursor
             .and_then(|cid| self.state.get_item(cid))
-            .map(|item| QueueItem::from_cursor_item(&item, play_state));
+            .map(|item| QueueItem::from_cursor_item(&item, play_state, self.state.downloads()));
 
         NowPlaying {
             state: play_state.into(),

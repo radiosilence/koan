@@ -1,23 +1,54 @@
-//! The download store — what koan is fetching, and what it just fetched.
+//! The download store: every transfer koan is running or has just run, and
+//! what each one is for.
 //!
-//! One place every front end reads, rather than each deriving its own answer
-//! from the queue. The queue only knows about transfers for tracks that are in
-//! it, and it forgets a download the instant it lands — which is exactly when
-//! somebody wants to see that it did.
+//! This is the one table of transfers. A transfer is keyed by the track it
+//! fetches, because the track decides which file it writes; it records every
+//! queue entry waiting on it, so a track queued twice is fetched once and both
+//! entries hear how it ended. The download queue decides *when* to fetch;
+//! everything about a transfer once started lives here.
 //!
 //! Progress and structure are deliberately separate. The byte counter is a
 //! [`ByteFeed`] the downloader writes without taking any lock, because it
 //! moves hundreds of times a second; `version` moves only when an entry is
-//! added, finishes or fails. A client polls the counter and watches the
+//! listed, finishes or fails. A client polls the counter and watches the
 //! version, and neither costs the download anything.
+//!
+//! Who may change which entries wait on what is the download queue's to
+//! serialise: it does so under its own lock, which it may hold while it takes
+//! this store's. This store never takes another lock while holding its own.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::player::state::QueueItemId;
+use crate::player::commands::PlayerCommand;
+use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
+
+/// What a transfer fetches, and so what identifies it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransferKey {
+    /// A library track. Every queue entry for it shares the one transfer.
+    Track(i64),
+    /// A queue entry with no library row behind it — the TUI's remote bridge
+    /// streaming another server's track — fetched for that entry alone.
+    Entry(QueueItemId),
+}
+
+impl TransferKey {
+    /// The transfer an item's file would come from.
+    pub fn of(item: &PlaylistItem) -> Self {
+        item.db_id.map_or(Self::Entry(item.id), Self::Track)
+    }
+
+    pub fn track_id(self) -> Option<i64> {
+        match self {
+            Self::Track(id) => Some(id),
+            Self::Entry(_) => None,
+        }
+    }
+}
 
 /// Where a transfer has got to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,13 +70,10 @@ impl DownloadState {
     }
 }
 
-/// One transfer.
+/// One transfer, as readers see it.
 #[derive(Debug, Clone)]
 pub struct Download {
-    /// The queue item this is being fetched for. Also the identity of the
-    /// transfer, because a track wanted twice is wanted by two queue entries.
-    pub id: QueueItemId,
-    pub track_id: i64,
+    pub key: TransferKey,
     pub title: String,
     pub artist: String,
     /// Where the bytes are being written — the `.part` file.
@@ -76,35 +104,18 @@ impl Download {
     }
 }
 
-/// What a transfer is doing, in a form cheap enough to ask about per row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Phase {
-    pub state: PhaseKind,
-    pub written: u64,
+/// A transfer in progress, as a player reading its bytes needs it.
+#[derive(Debug, Clone)]
+pub struct Live {
+    pub source: PathBuf,
     pub total: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PhaseKind {
-    Queued,
-    Running,
-    Done,
-    Failed,
-}
-
-impl Phase {
-    pub fn is_running(&self) -> bool {
-        matches!(self.state, PhaseKind::Queued | PhaseKind::Running)
-    }
+    pub written: Arc<ByteFeed>,
 }
 
 /// One transfer's figures at the moment they were read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Reading {
-    pub id: QueueItemId,
-    /// The track being fetched — what a queue entry other than `id` waiting on
-    /// the same transfer finds it by.
-    pub track_id: i64,
+    pub key: TransferKey,
     pub written: u64,
     /// 0 when the server sent no Content-Length.
     pub total: u64,
@@ -186,16 +197,74 @@ impl ByteFeed {
     }
 }
 
+/// A transfer and what it is for.
+#[derive(Debug)]
+struct Entry {
+    download: Download,
+    /// Shown to readers. Not while the transfer is only claimed: its track is
+    /// still being looked up, and may turn out to be on disk already, which is
+    /// no download at all.
+    listed: bool,
+    /// Every queue entry waiting on it.
+    waiters: HashSet<QueueItemId>,
+    /// Wanted in the cache for its own sake, whatever the playlist does.
+    keep: bool,
+    /// Since when nothing has wanted it.
+    abandoned_at: Option<Instant>,
+}
+
+impl Entry {
+    fn is_live(&self) -> bool {
+        !self.download.state.is_settled()
+    }
+
+    fn wanted(&self) -> bool {
+        self.keep || !self.waiters.is_empty()
+    }
+
+    fn note_wanted(&mut self) {
+        self.abandoned_at =
+            (!self.wanted()).then(|| self.abandoned_at.unwrap_or_else(Instant::now));
+    }
+}
+
+fn join_in(entries: &mut [Entry], key: TransferKey, waiter: Option<QueueItemId>) -> bool {
+    let Some(entry) = entries
+        .iter_mut()
+        .find(|e| e.download.key == key && e.is_live())
+    else {
+        return false;
+    };
+    match waiter {
+        Some(id) => {
+            entry.waiters.insert(id);
+        }
+        None => entry.keep = true,
+    }
+    entry.note_wanted();
+    true
+}
+
+/// How a transfer ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    Done,
+    Failed(String),
+    /// Stopped because nothing wanted it. Leaves no row behind.
+    Withdrawn,
+}
+
 /// Every transfer koan knows about.
 #[derive(Debug, Default)]
 pub struct DownloadStore {
-    entries: parking_lot::RwLock<Vec<Download>>,
+    /// Live transfers first, then the settled tail, most recent first.
+    entries: parking_lot::RwLock<Vec<Entry>>,
     version: AtomicU64,
     /// The last reading taken of each transfer, for working out a rate.
     /// Separate from the entries so taking a sample does not touch the list
     /// every client is reading.
-    samples: parking_lot::Mutex<HashMap<QueueItemId, Sample>>,
-    /// When the last reading was taken, and the count that goes with it.
+    samples: parking_lot::Mutex<HashMap<TransferKey, Sample>>,
+    /// When the last reading was taken.
     ///
     /// Readings are taken as bytes land rather than on a timer — the thing
     /// that knows a transfer moved is the code moving it — and a chunk lands
@@ -203,24 +272,18 @@ pub struct DownloadStore {
     /// them to `MIN_SAMPLE_GAP`.
     last_sample: parking_lot::Mutex<Option<Instant>>,
     figures: AtomicU64,
-    /// How many settled entries to keep. This is a view of now, not an archive,
-    /// and old rows would push the live ones off the end of it.
-    settled_limit: usize,
 }
+
+/// How many settled entries to keep. This is a view of now, not an archive,
+/// and old rows would push the live ones off the end of it.
+const SETTLED_LIMIT: usize = 50;
 
 impl DownloadStore {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            entries: parking_lot::RwLock::new(Vec::new()),
-            version: AtomicU64::new(0),
-            samples: parking_lot::Mutex::new(HashMap::new()),
-            last_sample: parking_lot::Mutex::new(None),
-            figures: AtomicU64::new(0),
-            settled_limit: 50,
-        })
+        Arc::new(Self::default())
     }
 
-    /// Bumped when an entry appears, settles or is forgotten — not when its
+    /// Bumped when an entry is listed, settles or is forgotten — not when its
     /// byte count moves. A client redraws its list on this and reads the
     /// counters every frame regardless.
     pub fn version(&self) -> u64 {
@@ -234,75 +297,225 @@ impl DownloadStore {
         self.figures.load(Ordering::Acquire)
     }
 
-    /// Everything, running first, then whatever settled most recently.
-    pub fn all(&self) -> Vec<Download> {
-        self.entries.read().clone()
+    // --- What the download queue asks and decides ---
+
+    /// Have `waiter` wait on the live transfer for `key`, if there is one —
+    /// `None` for a fetch wanted only in the cache. Whether there was.
+    pub fn join(&self, key: TransferKey, waiter: Option<QueueItemId>) -> bool {
+        join_in(&mut self.entries.write(), key, waiter)
     }
 
-    /// The transfer for one queue item, if there is one.
+    /// Join the live transfer for `key`, or start one. `true` when this call
+    /// started it, and the caller is to run it. One lock for both, so two
+    /// callers can never both start it.
     ///
-    /// A scan, deliberately: entries are bounded by the number of download
-    /// workers plus the settled tail, because a transfer only appears here
-    /// when a worker picks it up. Indexing tens of rows would cost more to
-    /// maintain than it saves.
-    pub fn get(&self, id: QueueItemId) -> Option<Download> {
-        self.entries.read().iter().find(|d| d.id == id).cloned()
+    /// A new transfer is not listed until [`announce`](Self::announce) says
+    /// bytes are to be fetched; it replaces any settled row for the same key,
+    /// because a track fetched again is the same row starting over.
+    pub fn claim(&self, key: TransferKey, waiter: Option<QueueItemId>) -> bool {
+        let mut entries = self.entries.write();
+        if join_in(&mut entries, key, waiter) {
+            return false;
+        }
+        let had_row = entries.iter().any(|e| e.download.key == key && e.listed);
+        entries.retain(|e| e.download.key != key);
+        entries.insert(
+            0,
+            Entry {
+                download: Download {
+                    key,
+                    title: String::new(),
+                    artist: String::new(),
+                    source: PathBuf::new(),
+                    dest: PathBuf::new(),
+                    total: 0,
+                    written: ByteFeed::new(),
+                    state: DownloadState::Queued,
+                    bytes_per_second: 0,
+                },
+                listed: false,
+                waiters: waiter.into_iter().collect(),
+                keep: waiter.is_none(),
+                abandoned_at: None,
+            },
+        );
+        drop(entries);
+        if had_row {
+            self.bump();
+        }
+        true
     }
 
-    /// The transfer a queue item reads: its own, or else the one running for
-    /// its track. A track queued twice is fetched once, under the entry that
-    /// asked first, and the second entry streams and reports from that same
-    /// transfer.
-    pub fn for_item(&self, id: QueueItemId, track_id: Option<i64>) -> Option<Download> {
-        let entries = self.entries.read();
-        entries
-            .iter()
-            .find(|d| d.id == id)
-            .or_else(|| {
-                let track_id = track_id?;
-                entries
-                    .iter()
-                    .find(|d| d.track_id == track_id && !d.state.is_settled())
-            })
-            .cloned()
+    /// Let go of every waiter not in `wanted`. A transfer left wanted by
+    /// nothing starts counting towards being abandoned.
+    pub fn retain_waiters(&self, wanted: &HashSet<QueueItemId>) {
+        for entry in self.entries.write().iter_mut().filter(|e| e.is_live()) {
+            entry.waiters.retain(|id| wanted.contains(id));
+            entry.note_wanted();
+        }
     }
 
-    /// Whether a transfer exists for this item and what it is doing, without
-    /// cloning its paths and titles — what deriving a queue row needs, per row
-    /// per frame.
-    pub fn phase_of(&self, id: QueueItemId) -> Option<Phase> {
+    /// Whether a transfer for `key` is live.
+    pub fn in_flight(&self, key: TransferKey) -> bool {
         self.entries
             .read()
             .iter()
-            .find(|d| d.id == id)
-            .map(|d| Phase {
-                state: match &d.state {
-                    DownloadState::Queued => PhaseKind::Queued,
-                    DownloadState::Running => PhaseKind::Running,
-                    DownloadState::Done => PhaseKind::Done,
-                    DownloadState::Failed(_) => PhaseKind::Failed,
-                },
-                written: d.bytes_written(),
-                total: d.total,
+            .any(|e| e.download.key == key && e.is_live())
+    }
+
+    /// The queue entries waiting on the live transfer for `key`.
+    pub fn waiters(&self, key: TransferKey) -> Vec<QueueItemId> {
+        self.entries
+            .read()
+            .iter()
+            .find(|e| e.download.key == key && e.is_live())
+            .map(|e| e.waiters.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether nothing has wanted the transfer for `key` for at least `grace`,
+    /// or there is no live transfer for it at all.
+    pub fn abandoned(&self, key: TransferKey, grace: Duration) -> bool {
+        self.entries
+            .read()
+            .iter()
+            .find(|e| e.download.key == key && e.is_live())
+            .is_none_or(|e| e.abandoned_at.is_some_and(|at| at.elapsed() >= grace))
+    }
+
+    // --- What the downloader reports ---
+
+    /// Bytes are to be fetched: list the transfer, so a queue of six shows six
+    /// rows rather than one row and five tracks that look like nothing is
+    /// happening to them. Returns the feed to write the byte count into.
+    pub fn announce(
+        &self,
+        key: TransferKey,
+        title: String,
+        artist: String,
+        source: PathBuf,
+        dest: PathBuf,
+    ) -> Arc<ByteFeed> {
+        let mut entries = self.entries.write();
+        let feed = match entries
+            .iter_mut()
+            .find(|e| e.download.key == key && e.is_live())
+        {
+            Some(entry) => {
+                let d = &mut entry.download;
+                (d.title, d.artist, d.source, d.dest) = (title, artist, source, dest);
+                entry.listed = true;
+                d.written.clone()
+            }
+            None => ByteFeed::new(),
+        };
+        drop(entries);
+        self.bump();
+        feed
+    }
+
+    /// Bytes have started arriving, and this is how many there are in total.
+    pub fn started(&self, key: TransferKey, total: u64) {
+        let mut entries = self.entries.write();
+        if let Some(entry) = entries
+            .iter_mut()
+            .find(|e| e.download.key == key && e.is_live())
+        {
+            entry.download.total = total;
+            entry.download.state = DownloadState::Running;
+        }
+        drop(entries);
+        self.bump();
+    }
+
+    /// End the live transfer for `key`. Returns who was waiting on it, and the
+    /// feed a decoder reading it may be parked on.
+    ///
+    /// A transfer that never listed — its file was found on disk, or it failed
+    /// before fetching anything — leaves no row. Nor does a withdrawn one.
+    fn end(&self, key: TransferKey, outcome: Outcome) -> Option<(Vec<QueueItemId>, Arc<ByteFeed>)> {
+        let mut entries = self.entries.write();
+        let ix = entries
+            .iter()
+            .position(|e| e.download.key == key && e.is_live())?;
+        let entry = &mut entries[ix];
+        let waiters = std::mem::take(&mut entry.waiters).into_iter().collect();
+        let feed = entry.download.written.clone();
+        let listed = entry.listed;
+        match outcome {
+            Outcome::Done if listed => entry.download.state = DownloadState::Done,
+            Outcome::Failed(reason) if listed => {
+                entry.download.state = DownloadState::Failed(reason)
+            }
+            _ => {
+                entries.remove(ix);
+            }
+        }
+        if let Some(entry) = entries.get_mut(ix).filter(|e| e.download.key == key) {
+            // Said here rather than at the next reading: a transfer that has
+            // finished takes no more readings, and a row left showing the rate
+            // it managed on its last chunk is a row that never stops.
+            entry.download.bytes_per_second = 0;
+        }
+        // Live first, then the settled tail, most recent first. Stable, so a
+        // list being watched does not shuffle under the pointer.
+        let (mut live, settled): (Vec<_>, Vec<_>) = entries.drain(..).partition(Entry::is_live);
+        let (now, older): (Vec<_>, Vec<_>) =
+            settled.into_iter().partition(|e| e.download.key == key);
+        live.extend(now);
+        live.extend(older.into_iter().take(SETTLED_LIMIT.saturating_sub(1)));
+        *entries = live;
+        drop(entries);
+        self.samples.lock().remove(&key);
+        if listed {
+            self.figures.fetch_add(1, Ordering::Release);
+            self.bump();
+        }
+        Some((waiters, feed))
+    }
+
+    // --- What readers ask ---
+
+    /// Every listed transfer, live first, then whatever settled most recently.
+    pub fn all(&self) -> Vec<Download> {
+        self.entries
+            .read()
+            .iter()
+            .filter(|e| e.listed)
+            .map(|e| e.download.clone())
+            .collect()
+    }
+
+    /// The listed, live transfer for `key`, as a player reading its bytes
+    /// needs it.
+    pub fn live(&self, key: TransferKey) -> Option<Live> {
+        self.entries
+            .read()
+            .iter()
+            .find(|e| e.download.key == key && e.listed && e.is_live())
+            .map(|e| Live {
+                source: e.download.source.clone(),
+                total: e.download.total,
+                written: e.download.written.clone(),
             })
     }
 
-    /// The byte counts of every transfer still going, read now — for a client
-    /// drawing progress at its display's rate rather than at `figures`'.
+    /// The byte counts of every listed transfer still going, read now — for a
+    /// client drawing progress at its display's rate, and for deriving a queue
+    /// without cloning a path per row.
     ///
-    /// Clones no paths or titles, and holds the list's read lock for one pass
-    /// over it, which is bounded by the download workers.
+    /// Holds the list's read lock for one pass over it, which is bounded by
+    /// the download workers.
     pub fn readings(&self) -> Vec<Reading> {
         self.entries
             .read()
             .iter()
-            .filter(|d| !d.state.is_settled())
-            .map(|d| Reading {
-                id: d.id,
-                track_id: d.track_id,
-                written: d.bytes_written(),
-                total: d.total,
-                bytes_per_second: d.bytes_per_second,
+            .filter(|e| e.listed && e.is_live())
+            .map(|e| Reading {
+                key: e.download.key,
+                written: e.download.bytes_written(),
+                total: e.download.total,
+                bytes_per_second: e.download.bytes_per_second,
             })
             .collect()
     }
@@ -312,50 +525,8 @@ impl DownloadStore {
         self.entries
             .read()
             .iter()
-            .filter(|d| !d.state.is_settled())
+            .filter(|e| e.listed && e.is_live())
             .count()
-    }
-
-    /// Note that a transfer is wanted. Replaces any earlier entry for the same
-    /// queue item — a track cleared and fetched again is the same row starting
-    /// over, not a second one.
-    pub fn queued(&self, download: Download) {
-        let mut entries = self.entries.write();
-        entries.retain(|d| d.id != download.id);
-        entries.insert(0, download);
-        drop(entries);
-        self.settle();
-    }
-
-    /// Bytes have started arriving, and this is how many there are in total.
-    pub fn started(&self, id: QueueItemId, total: u64, written: Arc<ByteFeed>) {
-        let mut entries = self.entries.write();
-        if let Some(entry) = entries.iter_mut().find(|d| d.id == id) {
-            entry.total = total;
-            entry.written = written;
-            entry.state = DownloadState::Running;
-        }
-        drop(entries);
-        self.bump();
-    }
-
-    /// It landed.
-    pub fn finished(&self, id: QueueItemId) {
-        self.settle_one(id, DownloadState::Done);
-    }
-
-    /// It did not.
-    pub fn failed(&self, id: QueueItemId, reason: String) {
-        self.settle_one(id, DownloadState::Failed(reason));
-    }
-
-    /// It stopped because nothing wants it any more. Not a failure, so it
-    /// leaves no row behind.
-    pub fn withdrawn(&self, id: QueueItemId) {
-        self.entries.write().retain(|d| d.id != id);
-        self.samples.lock().remove(&id);
-        self.figures.fetch_add(1, Ordering::Release);
-        self.bump();
     }
 
     /// Drop everything that has already settled. The running ones are not this
@@ -363,7 +534,7 @@ impl DownloadStore {
     pub fn clear_settled(&self) {
         let mut entries = self.entries.write();
         let before = entries.len();
-        entries.retain(|d| !d.state.is_settled());
+        entries.retain(Entry::is_live);
         let changed = entries.len() != before;
         drop(entries);
         if changed {
@@ -371,37 +542,87 @@ impl DownloadStore {
         }
     }
 
-    fn settle_one(&self, id: QueueItemId, state: DownloadState) {
-        let mut entries = self.entries.write();
-        if let Some(entry) = entries.iter_mut().find(|d| d.id == id) {
-            entry.state = state;
-            // Said here rather than at the next reading: a transfer that has
-            // finished takes no more readings, and a row left showing the rate
-            // it managed on its last chunk is a row that never stops.
-            entry.bytes_per_second = 0;
-        }
-        drop(entries);
-        self.samples.lock().remove(&id);
-        self.figures.fetch_add(1, Ordering::Release);
-        // `settle` bumps the version, which says so for both.
-        self.settle();
-    }
-
-    /// Keep running transfers at the top and the settled tail bounded.
-    fn settle(&self) {
-        let mut entries = self.entries.write();
-        // Stable, so a list being watched does not shuffle under the pointer.
-        let (mut running, settled): (Vec<_>, Vec<_>) =
-            entries.drain(..).partition(|d| !d.state.is_settled());
-        running.extend(settled.into_iter().take(self.settled_limit));
-        *entries = running;
-        drop(entries);
-        self.bump();
-    }
-
     fn bump(&self) {
         self.version.fetch_add(1, Ordering::Release);
         crate::signal::engine_changed().bump();
+    }
+}
+
+/// What is left to do once a transfer has settled, after whatever lock the
+/// caller settled it under is released.
+#[must_use = "announce wakes a decoder parked on the transfer and tells the player"]
+pub struct Settled {
+    feed: Option<Arc<ByteFeed>>,
+    tell: Vec<PlayerCommand>,
+}
+
+impl Settled {
+    /// Wake a decoder parked at the write head, then tell the player about any
+    /// entry under the cursor. The rest it picks up when the cursor reaches
+    /// them.
+    pub fn announce(self, tx: &crossbeam_channel::Sender<PlayerCommand>) {
+        if let Some(feed) = self.feed {
+            feed.done();
+        }
+        for cmd in self.tell {
+            tx.send(cmd).ok();
+        }
+    }
+}
+
+/// End the transfer for `key` and give every entry waiting on it the one
+/// result.
+///
+/// The order is the point. Each entry's state is written first, then the
+/// store's row, and only after both does [`Settled::announce`] wake the feed:
+/// a decoder parked at the `.part` file's write head reads the entry's state
+/// once woken, to learn whether the file is complete or has failed. Woken
+/// before that state is written, it sees a download still running and parks
+/// again with nothing left to wake it.
+///
+/// The download queue calls this under its own lock, so no entry can join the
+/// transfer between being told and the transfer ending.
+pub fn settle(
+    state: &SharedPlayerState,
+    key: TransferKey,
+    result: &Result<PathBuf, String>,
+) -> Settled {
+    let store = state.downloads();
+    let waiters = store.waiters(key);
+    for &id in &waiters {
+        match result {
+            Ok(path) => {
+                state.update_paths(&[(id, path.clone())]);
+                state.update_item_state(id, ItemState::Ready);
+            }
+            Err(reason) => state.update_item_state(id, ItemState::Failed(reason.clone())),
+        }
+    }
+    let outcome = match result {
+        Ok(_) => Outcome::Done,
+        Err(reason) => Outcome::Failed(reason.clone()),
+    };
+    let feed = store.end(key, outcome).map(|(_, feed)| feed);
+    let tell = waiters
+        .into_iter()
+        .filter(|id| state.is_cursor(*id))
+        .map(|id| match result {
+            Ok(_) => PlayerCommand::TrackReady(id),
+            Err(_) => PlayerCommand::TrackFailed(id),
+        })
+        .collect();
+    Settled { feed, tell }
+}
+
+/// Withdraw the transfer for `key`: nothing wanted it. Returns whoever asked
+/// for it in the meantime, to be queued again, and wakes its feed.
+pub fn withdraw(store: &DownloadStore, key: TransferKey) -> Vec<QueueItemId> {
+    match store.end(key, Outcome::Withdrawn) {
+        Some((waiters, feed)) => {
+            feed.done();
+            waiters
+        }
+        None => Vec::new(),
     }
 }
 
@@ -456,13 +677,15 @@ impl DownloadStore {
         let mut samples = self.samples.lock();
 
         for entry in entries.iter_mut() {
+            let key = entry.download.key;
+            let entry = &mut entry.download;
             if entry.state.is_settled() {
                 entry.bytes_per_second = 0;
-                samples.remove(&entry.id);
+                samples.remove(&key);
                 continue;
             }
             let bytes = entry.written.load(Ordering::Relaxed);
-            match samples.get_mut(&entry.id) {
+            match samples.get_mut(&key) {
                 Some(previous) => {
                     let elapsed = now.saturating_duration_since(previous.at);
                     if elapsed < MIN_SAMPLE_GAP {
@@ -478,7 +701,7 @@ impl DownloadStore {
                 }
                 None => {
                     samples.insert(
-                        entry.id,
+                        key,
                         Sample {
                             at: now,
                             bytes,
@@ -491,8 +714,8 @@ impl DownloadStore {
         }
 
         // A transfer that left the list leaves its reading behind with it.
-        let live: std::collections::HashSet<QueueItemId> = entries.iter().map(|e| e.id).collect();
-        samples.retain(|id, _| live.contains(id));
+        let live: HashSet<TransferKey> = entries.iter().map(|e| e.download.key).collect();
+        samples.retain(|key, _| live.contains(key));
 
         // Said once for the whole reading, so a client redraws every figure
         // from one moment rather than a row at a time.
@@ -501,72 +724,112 @@ impl DownloadStore {
     }
 }
 
-/// The process's download store.
-///
-/// A singleton for the same reason the download queue is one: there is one set
-/// of transfers happening, and everything that reports on them — the queue, the
-/// front ends, the downloader itself — has to be looking at the same set.
-pub fn store() -> &'static Arc<DownloadStore> {
-    static STORE: std::sync::OnceLock<Arc<DownloadStore>> = std::sync::OnceLock::new();
-    STORE.get_or_init(DownloadStore::new)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn download(title: &str) -> Download {
-        Download {
-            id: QueueItemId::new(),
-            track_id: 1,
-            title: title.into(),
-            artist: "Artist".into(),
-            source: PathBuf::from(format!("/cache/{title}.opus.part")),
-            dest: PathBuf::from(format!("/cache/{title}.opus")),
-            total: 0,
-            written: ByteFeed::new(),
-            state: DownloadState::Queued,
-            bytes_per_second: 0,
-        }
+    /// A transfer for track `id`, claimed for one entry and announced.
+    fn running(
+        store: &DownloadStore,
+        id: i64,
+        title: &str,
+    ) -> (TransferKey, QueueItemId, Arc<ByteFeed>) {
+        let key = TransferKey::Track(id);
+        let waiter = QueueItemId::new();
+        assert!(store.claim(key, Some(waiter)));
+        let feed = store.announce(
+            key,
+            title.into(),
+            "Artist".into(),
+            PathBuf::from(format!("/cache/{title}.opus.part")),
+            PathBuf::from(format!("/cache/{title}.opus")),
+        );
+        (key, waiter, feed)
+    }
+
+    #[test]
+    fn a_track_wanted_twice_is_one_transfer_with_two_waiters() {
+        let store = DownloadStore::new();
+        let key = TransferKey::Track(7);
+        let (first, again) = (QueueItemId::new(), QueueItemId::new());
+        assert!(store.claim(key, Some(first)), "the first claim starts it");
+        assert!(!store.claim(key, Some(again)), "the second joins it");
+
+        let waiters: HashSet<_> = store.waiters(key).into_iter().collect();
+        assert_eq!(waiters, HashSet::from([first, again]));
+    }
+
+    #[test]
+    fn a_claim_is_not_listed_until_bytes_are_to_be_fetched() {
+        // Its track may turn out to be on disk, which is no download at all.
+        let store = DownloadStore::new();
+        let key = TransferKey::Track(1);
+        store.claim(key, Some(QueueItemId::new()));
+        assert!(store.all().is_empty());
+        assert!(store.live(key).is_none());
+        assert!(
+            store.in_flight(key),
+            "but it is in flight: nothing fetches it twice"
+        );
+
+        let version = store.version();
+        let _ = withdraw(&store, key);
+        assert_eq!(store.version(), version, "and it leaves without a trace");
+        assert!(!store.in_flight(key));
     }
 
     #[test]
     fn a_transfer_runs_then_settles() {
         let store = DownloadStore::new();
-        let entry = download("train");
-        let id = entry.id;
-        store.queued(entry);
+        let (key, _, feed) = running(&store, 1, "train");
         assert_eq!(store.active(), 1);
 
-        let written = ByteFeed::new();
-        store.started(id, 400, written.clone());
-        written.set(100);
+        store.started(key, 400);
+        feed.set(100);
         assert_eq!(store.all()[0].fraction(), Some(0.25));
+        assert_eq!(store.live(key).map(|l| l.total), Some(400));
 
-        store.finished(id);
+        store.end(key, Outcome::Done);
         assert_eq!(store.active(), 0);
         assert_eq!(store.all()[0].state, DownloadState::Done);
+        assert!(store.live(key).is_none());
+    }
+
+    #[test]
+    fn settling_hands_back_every_waiter_and_the_feed() {
+        let store = DownloadStore::new();
+        let (key, first, feed) = running(&store, 1, "train");
+        let again = QueueItemId::new();
+        store.join(key, Some(again));
+
+        let (waiters, settled_feed) = store.end(key, Outcome::Failed("404".into())).unwrap();
+        assert_eq!(
+            waiters.into_iter().collect::<HashSet<_>>(),
+            HashSet::from([first, again])
+        );
+        assert!(Arc::ptr_eq(&feed, &settled_feed));
+        assert!(
+            !store.join(key, Some(QueueItemId::new())),
+            "nothing to join once settled"
+        );
     }
 
     #[test]
     fn readings_are_live_and_leave_settled_transfers_out() {
         let store = DownloadStore::new();
-        let (going, landed) = (download("going"), download("landed"));
-        let (going_id, landed_id) = (going.id, landed.id);
-        store.queued(going);
-        store.queued(landed);
-        let written = ByteFeed::new();
-        store.started(going_id, 400, written.clone());
-        store.finished(landed_id);
+        let (going, _, feed) = running(&store, 1, "going");
+        let (landed, _, _) = running(&store, 2, "landed");
+        store.started(going, 400);
+        store.end(landed, Outcome::Done);
 
-        written.set(100);
+        feed.set(100);
         let readings = store.readings();
         assert_eq!(readings.len(), 1);
-        assert_eq!(readings[0].id, going_id);
+        assert_eq!(readings[0].key, going);
         assert_eq!(readings[0].fraction(), Some(0.25));
 
         // No sample taken in between: a reading sees the bytes as they land.
-        written.set(300);
+        feed.set(300);
         assert_eq!(store.readings()[0].fraction(), Some(0.75));
     }
 
@@ -576,14 +839,11 @@ mod tests {
         // version; if bytes bumped it, every client would rebuild at the rate
         // the download writes.
         let store = DownloadStore::new();
-        let entry = download("train");
-        let id = entry.id;
-        store.queued(entry);
-        let written = ByteFeed::new();
-        store.started(id, 1000, written.clone());
+        let (key, _, feed) = running(&store, 1, "train");
+        store.started(key, 1000);
 
         let before = store.version();
-        written.set(500);
+        feed.set(500);
         assert_eq!(store.version(), before);
         assert_eq!(store.all()[0].bytes_written(), 500);
     }
@@ -592,32 +852,22 @@ mod tests {
     fn no_content_length_means_no_fraction() {
         // A bar drawn at zero for a transfer that is going fine reads as stuck.
         let store = DownloadStore::new();
-        let entry = download("chunked");
-        let id = entry.id;
-        store.queued(entry);
-        store.started(id, 0, {
-            let feed = ByteFeed::new();
-            feed.set(9000);
-            feed
-        });
+        let (key, _, feed) = running(&store, 1, "chunked");
+        store.started(key, 0);
+        feed.set(9000);
         assert_eq!(store.all()[0].fraction(), None);
         assert_eq!(store.all()[0].bytes_written(), 9000);
     }
 
     #[test]
-    fn fetching_the_same_item_again_restarts_its_row() {
+    fn fetching_the_same_track_again_restarts_its_row() {
         // Clearing a download and playing the track again is the same transfer
         // starting over, not a second one to scroll past.
         let store = DownloadStore::new();
-        let first = download("train");
-        let id = first.id;
-        store.queued(first);
-        store.finished(id);
+        let (key, _, _) = running(&store, 1, "train");
+        store.end(key, Outcome::Done);
 
-        let mut again = download("train");
-        again.id = id;
-        store.queued(again);
-
+        running(&store, 1, "train");
         assert_eq!(store.all().len(), 1);
         assert_eq!(store.all()[0].state, DownloadState::Queued);
     }
@@ -625,12 +875,9 @@ mod tests {
     #[test]
     fn running_transfers_sort_above_settled_ones() {
         let store = DownloadStore::new();
-        let done = download("done");
-        let done_id = done.id;
-        store.queued(done);
-        let running = download("running");
-        store.queued(running);
-        store.finished(done_id);
+        let (done, _, _) = running(&store, 1, "done");
+        running(&store, 2, "running");
+        store.end(done, Outcome::Done);
 
         let all = store.all();
         assert_eq!(all[0].title, "running");
@@ -640,10 +887,8 @@ mod tests {
     #[test]
     fn a_failure_keeps_its_reason() {
         let store = DownloadStore::new();
-        let entry = download("gone");
-        let id = entry.id;
-        store.queued(entry);
-        store.failed(id, "server returned 404".into());
+        let (key, _, _) = running(&store, 1, "gone");
+        store.end(key, Outcome::Failed("server returned 404".into()));
         assert_eq!(
             store.all()[0].state,
             DownloadState::Failed("server returned 404".into())
@@ -651,12 +896,44 @@ mod tests {
     }
 
     #[test]
+    fn a_withdrawn_transfer_leaves_no_row_and_returns_late_waiters() {
+        let store = DownloadStore::new();
+        let (key, first, _) = running(&store, 1, "train");
+        assert_eq!(withdraw(&store, key), vec![first]);
+        assert!(store.all().is_empty());
+    }
+
+    #[test]
+    fn a_transfer_nothing_waits_on_is_abandoned_after_the_grace() {
+        let store = DownloadStore::new();
+        let (key, waiter, _) = running(&store, 1, "train");
+        assert!(!store.abandoned(key, Duration::ZERO));
+
+        store.retain_waiters(&HashSet::new());
+        assert!(store.abandoned(key, Duration::ZERO));
+        assert!(
+            !store.abandoned(key, Duration::from_secs(60)),
+            "a queue cleared and refilled is not abandonment"
+        );
+
+        store.join(key, Some(waiter));
+        assert!(!store.abandoned(key, Duration::ZERO), "wanted again");
+    }
+
+    #[test]
+    fn a_transfer_kept_for_the_cache_is_never_abandoned() {
+        let store = DownloadStore::new();
+        let key = TransferKey::Track(5);
+        assert!(store.claim(key, None));
+        store.retain_waiters(&HashSet::new());
+        assert!(!store.abandoned(key, Duration::ZERO));
+    }
+
+    #[test]
     fn a_rate_needs_two_readings_and_a_gap_between_them() {
         let store = DownloadStore::new();
-        let entry = download("train");
-        let (id, written) = (entry.id, entry.written.clone());
-        store.queued(entry);
-        store.started(id, 1_000_000, written.clone());
+        let (key, _, feed) = running(&store, 1, "train");
+        store.started(key, 1_000_000);
 
         let start = Instant::now();
         store.sample_rates_at(start);
@@ -667,7 +944,7 @@ mod tests {
         );
 
         // A second too close to the first says nothing.
-        written.set(100_000);
+        feed.set(100_000);
         store.sample_rates_at(start + Duration::from_millis(50));
         assert_eq!(store.all()[0].bytes_per_second, 0);
 
@@ -682,54 +959,39 @@ mod tests {
     fn a_settled_transfer_has_no_rate() {
         // Zero, not the speed it happened to be going when it stopped.
         let store = DownloadStore::new();
-        let entry = download("train");
-        let (id, written) = (entry.id, entry.written.clone());
-        store.queued(entry);
-        store.started(id, 1000, written.clone());
+        let (key, _, feed) = running(&store, 1, "train");
+        store.started(key, 1000);
         let start = Instant::now();
         store.sample_rates_at(start);
-        written.set(500);
+        feed.set(500);
         store.sample_rates_at(start + Duration::from_secs(1));
         assert!(store.all()[0].bytes_per_second > 0);
 
-        store.finished(id);
+        store.end(key, Outcome::Done);
         store.sample_rates_at(start + Duration::from_secs(2));
         assert_eq!(store.all()[0].bytes_per_second, 0);
     }
 
     #[test]
-    fn a_transfer_can_be_found_by_its_queue_item() {
-        let store = DownloadStore::new();
-        let entry = download("train");
-        let (id, written) = (entry.id, entry.written.clone());
-        store.queued(entry);
-        store.started(id, 400, written.clone());
-        written.set(100);
-
-        let phase = store.phase_of(id).expect("the transfer is there");
-        assert_eq!(phase.state, PhaseKind::Running);
-        assert_eq!(phase.written, 100);
-        assert_eq!(phase.total, 400);
-        assert!(phase.is_running());
-
-        assert!(
-            store.phase_of(QueueItemId::new()).is_none(),
-            "and only that one"
-        );
-    }
-
-    #[test]
     fn clearing_settled_leaves_the_running_alone() {
         let store = DownloadStore::new();
-        let done = download("done");
-        let done_id = done.id;
-        store.queued(done);
-        store.queued(download("running"));
-        store.finished(done_id);
+        let (done, _, _) = running(&store, 1, "done");
+        running(&store, 2, "running");
+        store.end(done, Outcome::Done);
 
         store.clear_settled();
         let all = store.all();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].title, "running");
+    }
+
+    #[test]
+    fn the_settled_tail_is_bounded() {
+        let store = DownloadStore::new();
+        for id in 0..(SETTLED_LIMIT as i64 + 10) {
+            let (key, _, _) = running(&store, id, "t");
+            store.end(key, Outcome::Done);
+        }
+        assert_eq!(store.all().len(), SETTLED_LIMIT);
     }
 }

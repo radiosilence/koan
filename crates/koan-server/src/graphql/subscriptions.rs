@@ -95,7 +95,7 @@ impl SubscriptionRoot {
 
             loop {
                 let version = state.playlist_version();
-                let downloading = !state.downloads_in_flight().is_empty();
+                let downloading = state.downloads().active() > 0;
 
                 if version != last_version || downloading {
                     last_version = version;

@@ -19,7 +19,7 @@ use crate::remote::client::PlaybackReportState;
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
 use history::{InFlight, PlayEvent, PlayRecorder, PlaybackReport};
-use state::{LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
+use state::{ItemState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
 use undo::{UndoEntry, UndoStack};
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
@@ -782,10 +782,13 @@ impl Player {
         &self,
         id: QueueItemId,
     ) -> Arc<dyn Fn() -> streaming::StreamStatus + Send + Sync> {
+        // The item's own state, which a transfer's end writes before it wakes
+        // anyone: asked twice per read of a file still arriving, so nothing
+        // else is looked up.
         let state = self.shared_state.clone();
-        Arc::new(move || match state.item_load_state(id) {
-            Some(LoadState::Ready) => streaming::StreamStatus::Complete,
-            Some(LoadState::Failed(_)) => streaming::StreamStatus::Failed,
+        Arc::new(move || match state.item_state(id) {
+            Some(ItemState::Ready) => streaming::StreamStatus::Complete,
+            Some(ItemState::Failed(_)) => streaming::StreamStatus::Failed,
             _ => streaming::StreamStatus::Downloading,
         })
     }
@@ -1920,7 +1923,7 @@ mod tests {
     }
 
     use super::*;
-    use state::{ItemState, PlaylistItem};
+    use state::PlaylistItem;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
 

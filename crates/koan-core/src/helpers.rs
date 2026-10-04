@@ -12,6 +12,7 @@ use crate::player::commands::PlayerCommand;
 use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
 use crate::remote::client::{Credential, SubsonicAuth, SubsonicClient, SubsonicError};
 use crate::remote::download::DownloadError;
+use crate::remote::downloads::TransferKey;
 
 // ---------------------------------------------------------------------------
 // Subsonic client builder
@@ -1643,31 +1644,6 @@ fn is_cached_audio(path: &std::path::Path) -> bool {
     }
 }
 
-/// How fetching a track ended.
-pub(crate) struct Fetched {
-    /// The playable file, or why there is none.
-    pub result: Result<PathBuf, String>,
-    /// The store entry and byte feed, when bytes had to be fetched. A track
-    /// found on disk has neither.
-    pub transfer: Option<(QueueItemId, Arc<crate::remote::downloads::ByteFeed>)>,
-}
-
-impl Fetched {
-    fn found(path: PathBuf) -> Self {
-        Self {
-            result: Ok(path),
-            transfer: None,
-        }
-    }
-
-    fn failed(reason: impl Into<String>) -> Self {
-        Self {
-            result: Err(reason.into()),
-            transfer: None,
-        }
-    }
-}
-
 /// Resolve a track to a playable file, downloading from remote if needed.
 ///
 /// Resolution order:
@@ -1675,32 +1651,28 @@ impl Fetched {
 /// 2. Cache path -- use if already downloaded
 /// 3. Download from remote to cache -- stream while downloading
 ///
-/// `lead` names the transfer in the download store; it is the first queue
-/// entry that asked, or an id of its own for a track fetched only to cache.
-/// `waiting` is every queue entry the transfer is for right now, or `None`
-/// once nothing wants it. `None` returned means the transfer was withdrawn.
-///
-/// Says nothing to the queue entries: the caller settles them, all at once,
-/// with [`settle_transfer`].
+/// Runs the transfer the download queue claimed for this track in the
+/// player's store. `cancelled` says when nothing wants it any more; `None` is
+/// returned then. Says nothing to the queue entries waiting on it: the caller
+/// settles them, all at once, with [`crate::remote::downloads::settle`].
 pub(crate) fn download_track(
     db_id: i64,
-    lead: QueueItemId,
-    waiting: &dyn Fn() -> Option<Vec<QueueItemId>>,
+    cancelled: &dyn Fn() -> bool,
     tx: &crossbeam_channel::Sender<PlayerCommand>,
     state: &SharedPlayerState,
     cfg: &Config,
     client: &SubsonicClient,
-) -> Option<Fetched> {
+) -> Option<Result<PathBuf, String>> {
     // From the pool. This runs once per track fetched, and opening a
     // connection runs the schema DDL and a WAL checkpoint — with several
     // transfers going, several init cycles would contend with each other and
     // with library reads.
     let db = match crate::db::pool::shared().get() {
         Ok(db) => db,
-        Err(e) => return Some(Fetched::failed(format!("db error: {e}"))),
+        Err(e) => return Some(Err(format!("db error: {e}"))),
     };
     let Ok(Some(track)) = queries::get_track_row(&db.conn, db_id) else {
-        return Some(Fetched::failed("track not found"));
+        return Some(Err("track not found".into()));
     };
 
     // 1. The library's own file, when there is one.
@@ -1708,11 +1680,11 @@ pub(crate) fn download_track(
         && p.exists()
     {
         log::info!("download_track: local file exists, using {}", p.display());
-        return Some(Fetched::found(p));
+        return Some(Ok(p));
     }
     let Some(remote_id) = track.remote_id.clone() else {
-        return Some(Fetched::failed(
-            "not in the library folder, and no remote copy to fetch",
+        return Some(Err(
+            "not in the library folder, and no remote copy to fetch".into(),
         ));
     };
 
@@ -1723,7 +1695,7 @@ pub(crate) fn download_track(
     let cache_dir = cfg.cache_dir();
     let dest = cache_path_for_track(&cache_dir, &track, album_date.as_deref());
     if !path_within(&cache_dir, &dest) {
-        return Some(Fetched::failed(format!(
+        return Some(Err(format!(
             "cache path escapes the cache: {}",
             dest.display()
         )));
@@ -1742,73 +1714,53 @@ pub(crate) fn download_track(
         let _ = std::fs::remove_file(&dest);
     }
     if dest.exists() {
-        return Some(Fetched::found(dest));
+        return Some(Ok(dest));
     }
 
-    // 3. Download from remote. The queue item points at the in-progress file so
-    // the decoder reads bytes as they land; it flips to `dest` on success.
-    let part = crate::remote::download::part_path(&dest);
-    state.update_paths(&[(lead, part.clone())]);
+    // 3. Download from remote, into the `.part` file the decoder streams from
+    // while the bytes land.
+    let key = TransferKey::Track(db_id);
+    let store = state.downloads();
+    let bytes_written = store.announce(
+        key,
+        track.title.clone(),
+        track.artist_name.clone(),
+        crate::remote::download::part_path(&dest),
+        dest.clone(),
+    );
 
-    let bytes_written = crate::remote::downloads::ByteFeed::new();
-
-    // Announce it before a byte moves, so a queue of six shows six rows rather
-    // than one row and five tracks that look like nothing is happening to them.
-    let store = crate::remote::downloads::store();
-    store.queued(crate::remote::downloads::Download {
-        id: lead,
-        track_id: db_id,
-        title: track.title.clone(),
-        artist: track.artist_name.clone(),
-        source: part,
-        dest: dest.clone(),
-        total: 0,
-        written: bytes_written.clone(),
-        state: crate::remote::downloads::DownloadState::Queued,
-        bytes_per_second: 0,
-    });
-
-    let bytes_written_progress = bytes_written.clone();
     let progress_tx = tx.clone();
     let stream_ready_flag = std::sync::atomic::AtomicBool::new(false);
     // A retry restarts the byte count from zero, so a changed total re-announces.
     let announced_total = AtomicU64::new(u64::MAX);
-    // Taken out of the queue, cleared or removed, while waiting out an outage.
-    let gone = || waiting().is_none();
     let result =
-        client.download_with_progress(&remote_id, &dest, &gone, move |downloaded, total| {
-            bytes_written_progress.set(downloaded);
+        client.download_with_progress(&remote_id, &dest, cancelled, |downloaded, total| {
+            bytes_written.set(downloaded);
             // What knows a transfer moved is the code moving it. Held to a reading
             // every 250ms inside, so a chunk landing costs an atomic and a compare.
             store.progressed();
             if announced_total.swap(total, Ordering::Relaxed) != total {
-                // The store, and only the store. The item's state says whether its
-                // file can be played, which a transfer in flight has not changed.
-                store.started(lead, total, bytes_written_progress.clone());
+                store.started(key, total);
             }
             if !stream_ready_flag.load(Ordering::Relaxed)
                 && downloaded >= crate::player::state::STREAM_THRESHOLD
             {
                 stream_ready_flag.store(true, Ordering::Relaxed);
-                // Every entry waiting on it: whichever is under the cursor is
-                // the one the player starts streaming.
-                for id in waiting().unwrap_or_default() {
+                // Every entry waiting on it: whichever is under the cursor is the
+                // one the player starts streaming.
+                for id in store.waiters(key) {
                     progress_tx.send(PlayerCommand::TrackStreamReady(id)).ok();
                 }
             }
         });
 
-    let result = match result {
-        Err(SubsonicError::Download(DownloadError::Cancelled)) => {
-            store.withdrawn(lead);
-            bytes_written.done();
-            return None;
-        }
+    match result {
+        Err(SubsonicError::Download(DownloadError::Cancelled)) => None,
         Err(e) => {
             log::warn!("x {} — {}", track.title, e);
-            Err(e.to_string())
+            Some(Err(e.to_string()))
         }
-        Ok(_) => {
+        Ok(()) => {
             // Without this row the file is invisible to cache eviction and never reclaimed.
             if let Err(e) = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy()) {
                 log::warn!(
@@ -1818,54 +1770,8 @@ pub(crate) fn download_track(
                 );
             }
             log::info!("+ {} — {}", track.title, track.artist_name);
-            Ok(dest)
+            Some(Ok(dest))
         }
-    };
-    Some(Fetched {
-        result,
-        transfer: Some((lead, bytes_written)),
-    })
-}
-
-/// Tell everything waiting on a transfer how it ended.
-///
-/// The order is the point. Each entry's state comes first, then the store,
-/// then the feed: a decoder parked at the `.part` file's write head waits on
-/// the feed, and once woken looks at the entry's state to learn whether the
-/// file is complete or has failed. Woken before that state is written, it
-/// sees a download still running and parks again with nothing left to wake
-/// it. The player hears last, and only about entries under the cursor — the
-/// rest it picks up when the cursor reaches them.
-pub fn settle_transfer(
-    state: &SharedPlayerState,
-    tx: &crossbeam_channel::Sender<PlayerCommand>,
-    waiters: &[QueueItemId],
-    transfer: Option<(QueueItemId, &crate::remote::downloads::ByteFeed)>,
-    result: &Result<PathBuf, String>,
-) {
-    for &id in waiters {
-        match result {
-            Ok(path) => {
-                state.update_paths(&[(id, path.clone())]);
-                state.update_item_state(id, ItemState::Ready);
-            }
-            Err(reason) => state.update_item_state(id, ItemState::Failed(reason.clone())),
-        }
-    }
-    if let Some((store_id, feed)) = transfer {
-        let store = crate::remote::downloads::store();
-        match result {
-            Ok(_) => store.finished(store_id),
-            Err(reason) => store.failed(store_id, reason.clone()),
-        }
-        feed.done();
-    }
-    for &id in waiters.iter().filter(|id| state.is_cursor(**id)) {
-        let cmd = match result {
-            Ok(_) => PlayerCommand::TrackReady(id),
-            Err(_) => PlayerCommand::TrackFailed(id),
-        };
-        tx.send(cmd).ok();
     }
 }
 

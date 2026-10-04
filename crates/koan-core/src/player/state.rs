@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 use uuid::Uuid;
+
+use crate::remote::downloads::{ByteFeed, DownloadStore, TransferKey};
 
 /// Stable identity for a queue entry. UUIDv7 — time-ordered, unique across duplicates.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -80,6 +83,9 @@ pub const SEEK_SAFETY_MS: u64 = 2_000;
 /// business, and asking the item would mean two accounts of one fact that have
 /// to be kept in step. Read [`LoadState`] for the two
 /// together.
+///
+/// Once a transfer ends, this is written before anything is woken: a reader
+/// waiting on the transfer learns how it ended from here.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ItemState {
     /// Nothing has resolved this yet.
@@ -109,7 +115,7 @@ pub enum LoadState {
         total: u64,
         /// How many bytes have landed. The download thread writes it per chunk
         /// without taking any lock the player holds.
-        bytes_written: Arc<crate::remote::downloads::ByteFeed>,
+        bytes_written: Arc<ByteFeed>,
     },
     Ready,
     Failed(String),
@@ -118,35 +124,23 @@ pub enum LoadState {
 impl LoadState {
     /// An item's state, with whatever the download store says about it.
     ///
-    /// The store wins while a transfer is live, because it is the thing being
-    /// told. Once one has settled the item's own state stands: a finished
-    /// transfer leaves a file, and a file is what playback cares about.
-    pub fn of(item: &PlaylistItem) -> Self {
-        use crate::remote::downloads::{DownloadState, store};
-
-        if let Some(transfer) = store().for_item(item.id, item.db_id) {
-            match transfer.state {
-                DownloadState::Queued | DownloadState::Running => {
-                    return Self::Downloading {
-                        path: transfer.source,
-                        total: transfer.total,
-                        bytes_written: transfer.written,
-                    };
-                }
-                // A transfer that failed explains an item that cannot play,
-                // but only while the item has not since been resolved some
-                // other way — a retry, or a copy found on disk.
-                DownloadState::Failed(reason) if item.state == ItemState::Pending => {
-                    return Self::Failed(reason);
-                }
-                DownloadState::Failed(_) | DownloadState::Done => {}
-            }
-        }
-
+    /// The item's own state stands once it is anything but `Pending`: a
+    /// transfer's end is written to every entry waiting on it before the
+    /// transfer itself is marked settled. While it is pending, a listed
+    /// transfer for its track is what is happening to it — whichever entry
+    /// that transfer was started for.
+    pub fn of(item: &PlaylistItem, downloads: &DownloadStore) -> Self {
         match &item.state {
-            ItemState::Pending => Self::Pending,
             ItemState::Ready => Self::Ready,
             ItemState::Failed(reason) => Self::Failed(reason.clone()),
+            ItemState::Pending => match downloads.live(TransferKey::of(item)) {
+                Some(live) => Self::Downloading {
+                    path: live.source,
+                    total: live.total,
+                    bytes_written: live.written,
+                },
+                None => Self::Pending,
+            },
         }
     }
 }
@@ -218,12 +212,12 @@ impl QueueEntryStatus {
     ///
     /// `PriorityPending` is waiting its turn with no bytes moving; once its
     /// transfer starts it is `Downloading`, with progress to draw.
-    pub fn at_cursor(load: &LoadState) -> Self {
-        match load {
-            LoadState::Ready => Self::Playing,
-            LoadState::Downloading { .. } => Self::Downloading,
-            LoadState::Pending => Self::PriorityPending,
-            LoadState::Failed(_) => Self::Failed,
+    pub fn at_cursor(state: &ItemState, transferring: bool) -> Self {
+        match state {
+            ItemState::Ready => Self::Playing,
+            ItemState::Failed(_) => Self::Failed,
+            ItemState::Pending if transferring => Self::Downloading,
+            ItemState::Pending => Self::PriorityPending,
         }
     }
 }
@@ -284,6 +278,15 @@ pub struct SharedPlayerState {
     /// the saved queue has to be written again.
     content_version: AtomicU64,
 
+    /// Bumped when the set of items still waiting for a file may have
+    /// changed: items added or removed, or one put back to `Pending`. What the
+    /// download queue follows; a download landing or the cursor moving does
+    /// not move it.
+    pending_version: AtomicU64,
+
+    /// Every transfer this player's items are fetched by.
+    downloads: Arc<DownloadStore>,
+
     /// Set by external signals (e.g. souvlaki Quit event) to request clean shutdown.
     quit_requested: AtomicBool,
 
@@ -310,6 +313,8 @@ impl SharedPlayerState {
             playlist: parking_lot::RwLock::new(Playlist::default()),
             playlist_version: AtomicU64::new(0),
             content_version: AtomicU64::new(0),
+            pending_version: AtomicU64::new(0),
+            downloads: DownloadStore::new(),
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             output_sample_rate: AtomicU64::new(0),
@@ -387,7 +392,7 @@ impl SharedPlayerState {
             total,
             bytes_written,
             ..
-        } = LoadState::of(item)
+        } = self.load_state(item)
         else {
             return info.duration_ms;
         };
@@ -463,7 +468,7 @@ impl SharedPlayerState {
         pl.items
             .iter()
             .find(|item| item.id == id)
-            .and_then(|item| match LoadState::of(item) {
+            .and_then(|item| match self.load_state(item) {
                 LoadState::Downloading {
                     bytes_written,
                     total,
@@ -545,7 +550,23 @@ impl SharedPlayerState {
     /// `bump_version`, for a change to what a saved session holds.
     fn bump_content(&self) {
         self.content_version.fetch_add(1, Ordering::AcqRel);
+        self.pending_version.fetch_add(1, Ordering::AcqRel);
         self.bump_version();
+    }
+
+    /// See the field. Moves with every content change, and when an item goes
+    /// back to `Pending`.
+    pub fn pending_version(&self) -> u64 {
+        self.pending_version.load(Ordering::Acquire)
+    }
+
+    /// The transfers this player's items are fetched by.
+    pub fn downloads(&self) -> &Arc<DownloadStore> {
+        &self.downloads
+    }
+
+    fn load_state(&self, item: &PlaylistItem) -> LoadState {
+        LoadState::of(item, &self.downloads)
     }
 
     /// Say that something here moved, without saying what.
@@ -778,12 +799,25 @@ impl SharedPlayerState {
 
     /// Update the load state of a playlist item.
     pub fn update_item_state(&self, id: QueueItemId, new_state: ItemState) {
+        let pending = new_state == ItemState::Pending;
         let mut pl = self.playlist.write();
         if let Some(item) = pl.items.iter_mut().find(|item| item.id == id) {
             item.state = new_state;
         }
         drop(pl);
+        if pending {
+            self.pending_version.fetch_add(1, Ordering::AcqRel);
+        }
         self.bump_version();
+    }
+
+    /// An item's own state, without the rest of it.
+    pub fn item_state(&self, id: QueueItemId) -> Option<ItemState> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .find(|item| item.id == id)
+            .map(|item| item.state.clone())
     }
 
     /// Take what a finished download's own tags can add.
@@ -827,7 +861,7 @@ impl SharedPlayerState {
         pl.items
             .iter()
             .find(|item| item.id == id)
-            .and_then(|item| match LoadState::of(item) {
+            .and_then(|item| match self.load_state(item) {
                 LoadState::Ready => Some(PlaybackSource::Ready(item.path.clone())),
                 LoadState::Downloading {
                     path,
@@ -870,6 +904,7 @@ impl SharedPlayerState {
         }
         drop(pl);
         if !reset.is_empty() {
+            self.pending_version.fetch_add(1, Ordering::AcqRel);
             self.bump_version();
         }
         reset
@@ -921,20 +956,6 @@ impl SharedPlayerState {
             .collect()
     }
 
-    /// Every item mid-transfer, with the bytes it has and the bytes it expects.
-    ///
-    /// Progress moves without the playlist version moving — the download thread
-    /// writes the byte counter directly — so anything following the version
-    /// alone shows a frozen bar. This is how a watcher sees it move.
-    pub fn downloads_in_flight(&self) -> Vec<(QueueItemId, u64, u64)> {
-        crate::remote::downloads::store()
-            .all()
-            .iter()
-            .filter(|d| !d.state.is_settled())
-            .map(|d| (d.id, d.bytes_written(), d.total))
-            .collect()
-    }
-
     /// Get the db_id for a specific playlist item.
     pub fn item_db_id(&self, id: QueueItemId) -> Option<i64> {
         let pl = self.playlist.read();
@@ -950,7 +971,7 @@ impl SharedPlayerState {
         pl.items
             .iter()
             .find(|item| item.id == id)
-            .map(LoadState::of)
+            .map(|item| self.load_state(item))
     }
 
     // --- Snapshot helpers for undo ---
@@ -1122,6 +1143,14 @@ impl SharedPlayerState {
     pub fn derive_visible_queue(&self) -> VisibleQueueSnapshot {
         // Read before the playlist lock — see current_download_fraction.
         let playing_duration_ms = self.track_info.read().as_ref().map(|ti| ti.duration_ms);
+        // One pass over the transfers rather than one lookup, and a path
+        // cloned, per row.
+        let transfers: HashMap<TransferKey, (u64, u64)> = self
+            .downloads
+            .readings()
+            .into_iter()
+            .map(|r| (r.key, (r.written, r.total)))
+            .collect();
         let pl = self.playlist.read();
 
         let cursor_pos = match pl.cursor {
@@ -1140,39 +1169,32 @@ impl SharedPlayerState {
 
             // The byte count is the download thread's own counter, written per
             // chunk without the playlist lock, so a transfer never bumps the
-            // playlist version. Derived once per row because every branch below
-            // wants the item's state and its transfer together.
-            let load_state = LoadState::of(item);
-
-            let dl_progress = match &load_state {
-                LoadState::Downloading {
-                    total,
-                    bytes_written,
-                    ..
-                } => Some((bytes_written.load(Ordering::Relaxed), *total)),
+            // playlist version.
+            let dl_progress = match item.state {
+                ItemState::Pending => transfers.get(&TransferKey::of(item)).copied(),
                 _ => None,
             };
+            let transferring = dl_progress.is_some();
 
             let status = if is_cursor {
                 has_playing = true;
-                QueueEntryStatus::at_cursor(&load_state)
+                QueueEntryStatus::at_cursor(&item.state, transferring)
             } else if is_before_cursor {
                 finished_count += 1;
-                match &load_state {
-                    LoadState::Ready => QueueEntryStatus::Played,
-                    LoadState::Downloading { .. } => QueueEntryStatus::Downloading,
-                    LoadState::Pending => QueueEntryStatus::Downloading,
-                    LoadState::Failed(_) => QueueEntryStatus::Failed,
+                match &item.state {
+                    ItemState::Ready => QueueEntryStatus::Played,
+                    ItemState::Pending => QueueEntryStatus::Downloading,
+                    ItemState::Failed(_) => QueueEntryStatus::Failed,
                 }
             } else {
                 queue_count += 1;
-                match &load_state {
-                    LoadState::Ready => QueueEntryStatus::Queued,
-                    LoadState::Downloading { .. } => QueueEntryStatus::Downloading,
+                match &item.state {
+                    ItemState::Ready => QueueEntryStatus::Queued,
+                    ItemState::Pending if transferring => QueueEntryStatus::Downloading,
                     // Waiting its turn, not arriving: a spinner on every one
                     // of these read as the whole album downloading at once.
-                    LoadState::Pending => QueueEntryStatus::Queued,
-                    LoadState::Failed(_) => QueueEntryStatus::Failed,
+                    ItemState::Pending => QueueEntryStatus::Queued,
+                    ItemState::Failed(_) => QueueEntryStatus::Failed,
                 }
             };
 
@@ -1201,8 +1223,8 @@ impl SharedPlayerState {
                 duration_ms,
                 status,
                 download_progress: dl_progress,
-                error: match &load_state {
-                    LoadState::Failed(reason) => Some(reason.clone()),
+                error: match &item.state {
+                    ItemState::Failed(reason) => Some(reason.clone()),
                     _ => None,
                 },
             });
@@ -1242,34 +1264,34 @@ mod tests {
         }
     }
 
-    /// An item with a transfer running against it, told to the store the way
-    /// the downloader tells it.
+    /// An item with a transfer running against it, told to the state's store
+    /// the way the downloader tells it. Returns the transfer's byte feed.
     fn downloading_item(
+        state: &SharedPlayerState,
         title: &str,
         total: u64,
-        written: Arc<crate::remote::downloads::ByteFeed>,
-    ) -> PlaylistItem {
-        // A track of its own: the store is the process's, and another test's
-        // transfer for the same track would be found by this one's items.
-        static NEXT_TRACK: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(-1);
-        let track_id = NEXT_TRACK.fetch_sub(1, Ordering::Relaxed);
+    ) -> (PlaylistItem, Arc<ByteFeed>) {
+        static NEXT_TRACK: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
         let mut item = make_item(title, ItemState::Pending);
-        item.db_id = Some(track_id);
-        let store = crate::remote::downloads::store();
-        store.queued(crate::remote::downloads::Download {
-            id: item.id,
-            track_id,
-            title: title.into(),
-            artist: String::new(),
-            source: PathBuf::from(format!("/cache/{title}.flac.part")),
-            dest: PathBuf::from(format!("/cache/{title}.flac")),
-            total,
-            written: written.clone(),
-            state: crate::remote::downloads::DownloadState::Queued,
-            bytes_per_second: 0,
-        });
-        store.started(item.id, total, written);
-        item
+        item.db_id = Some(NEXT_TRACK.fetch_add(1, Ordering::Relaxed));
+        let feed = start_transfer(state, &item, total);
+        (item, feed)
+    }
+
+    /// Claim, announce and start the transfer for `item`'s track.
+    fn start_transfer(state: &SharedPlayerState, item: &PlaylistItem, total: u64) -> Arc<ByteFeed> {
+        let key = TransferKey::of(item);
+        let store = state.downloads();
+        store.claim(key, Some(item.id));
+        let feed = store.announce(
+            key,
+            item.title.clone(),
+            String::new(),
+            PathBuf::from(format!("/cache/{}.flac.part", item.title)),
+            PathBuf::from(format!("/cache/{}.flac", item.title)),
+        );
+        store.started(key, total);
+        feed
     }
 
     fn ready_item(title: &str) -> PlaylistItem {
@@ -1304,30 +1326,13 @@ mod tests {
         bitrate_kbps: Option<u32>,
         container_duration_ms: u64,
     ) -> Arc<SharedPlayerState> {
-        let written = crate::remote::downloads::ByteFeed::new();
-        written.set(downloaded);
-        let item = make_item("train", ItemState::Pending);
+        let mut item = make_item("train", ItemState::Pending);
+        item.db_id = Some(1);
         let id = item.id;
         let path = item.path.clone();
 
-        // The transfer goes where transfers go. Ids are unique per item, so
-        // tests sharing the process store never see each other's.
-        let store = crate::remote::downloads::store();
-        store.queued(crate::remote::downloads::Download {
-            id,
-            track_id: 1,
-            title: "train".into(),
-            artist: String::new(),
-            source: PathBuf::from("/cache/train.opus.part"),
-            dest: PathBuf::from("/cache/train.opus"),
-            total,
-            written: written.clone(),
-            state: crate::remote::downloads::DownloadState::Queued,
-            bytes_per_second: 0,
-        });
-        store.started(id, total, written);
-
         let state = SharedPlayerState::new();
+        start_transfer(&state, &item, total).set(downloaded);
         state.add_items(vec![item]);
         state.set_cursor(Some(id));
         state.set_track_info(Some(TrackInfo {
@@ -1450,8 +1455,12 @@ mod tests {
         // then say the file is playable. In that order — while the store still
         // says a transfer is running, it is.
         let id = state.cursor().expect("cursor");
-        crate::remote::downloads::store().finished(id);
-        state.update_item_state(id, ItemState::Ready);
+        let _ = crate::remote::downloads::settle(
+            &state,
+            TransferKey::Track(1),
+            &Ok(PathBuf::from("/cache/train.flac")),
+        );
+        assert_eq!(state.item_state(id), Some(ItemState::Ready));
         let info = state.track_info().expect("track info");
         state.set_track_info(Some(TrackInfo {
             duration_ms: DURATION_MS,
@@ -1690,10 +1699,8 @@ mod tests {
         // Downloading reads the same at the cursor as after it: bytes are
         // moving, and the row has progress to draw.
         let state = SharedPlayerState::new();
-        let bytes_cursor = crate::remote::downloads::ByteFeed::new();
-        let bytes_queued = crate::remote::downloads::ByteFeed::new();
-        let dl_cursor = downloading_item("downloading-at-cursor", 1_000_000, bytes_cursor.clone());
-        let dl_queued = downloading_item("downloading-queued", 500_000, bytes_queued.clone());
+        let (dl_cursor, _) = downloading_item(&state, "downloading-at-cursor", 1_000_000);
+        let (dl_queued, _) = downloading_item(&state, "downloading-queued", 500_000);
         let id_cursor = dl_cursor.id;
 
         state.add_items(vec![dl_cursor, dl_queued]);
@@ -1721,14 +1728,12 @@ mod tests {
     fn a_second_entry_for_a_track_reads_the_transfer_running_for_it() {
         // One transfer per track: the entry queued second has none of its own,
         // and streams and reports from the first one's.
-        let bytes = crate::remote::downloads::ByteFeed::new();
+        let state = SharedPlayerState::new();
+        let (first, bytes) = downloading_item(&state, "twice", 1_000_000);
         bytes.set(STREAM_THRESHOLD);
-        let first = downloading_item("twice", 1_000_000, bytes);
         let mut again = pending_item("twice");
         again.db_id = first.db_id;
         let again_id = again.id;
-
-        let state = SharedPlayerState::new();
         state.add_items(vec![first, again]);
 
         assert!(matches!(
@@ -1772,8 +1777,7 @@ mod tests {
         // afterwards must see them — the version has not moved, and the load
         // state it was given is the one it still holds.
         let state = SharedPlayerState::new();
-        let bytes = crate::remote::downloads::ByteFeed::new();
-        let item = downloading_item("downloading", 1_000, bytes.clone());
+        let (item, bytes) = downloading_item(&state, "downloading", 1_000);
         state.add_items(vec![item]);
 
         let version = state.playlist_version();
@@ -1786,16 +1790,7 @@ mod tests {
             version,
             "progress must not read as a queue mutation"
         );
-        // Every transfer the process knows about, not just this playlist's —
-        // a fetch with no queue item behind it is still a transfer, and the
-        // store is what is asked. Other tests share it, so this looks for its
-        // own rather than asserting the whole list.
-        assert!(
-            state
-                .downloads_in_flight()
-                .contains(&(snap.entries[0].id, 250, 1_000)),
-            "the counter should be visible through the store"
-        );
+        assert_eq!(state.downloads().readings()[0].written, 250);
     }
 
     #[test]

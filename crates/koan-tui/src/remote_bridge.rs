@@ -14,12 +14,13 @@ use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 use koan_core::graphql_client::GraphQLClient;
-use koan_core::helpers::{sanitise_extension, sanitise_filename, settle_transfer};
+use koan_core::helpers::{sanitise_extension, sanitise_filename};
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     ItemState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState, TrackInfo,
 };
 use koan_core::remote::client::SubsonicClient;
+use koan_core::remote::downloads::TransferKey;
 use koan_core::remote::{download, downloads};
 
 /// Disk budget for streamed-from-server tracks. These files belong to no local
@@ -174,45 +175,37 @@ fn download_and_play(
     state: &Arc<SharedPlayerState>,
     local_tx: &Sender<PlayerCommand>,
 ) {
+    // Fetched for this queue entry alone: the track has no row in this
+    // library, it is the server's.
+    let key = TransferKey::Entry(queue_id);
+    let store = state.downloads();
+    store.claim(key, Some(queue_id));
+
     // A file at `dest` is always complete — downloads land there by rename only.
     if dest.exists() {
-        settle_transfer(state, local_tx, &[queue_id], None, &Ok(dest.to_path_buf()));
+        downloads::settle(state, key, &Ok(dest.to_path_buf())).announce(local_tx);
         return;
     }
 
-    // Point the queue item at the in-progress file so the decoder reads bytes
-    // as they land; it flips to `dest` once the rename has happened.
-    state.update_paths(&[(queue_id, download::part_path(dest))]);
-
-    let bytes_written = downloads::ByteFeed::new();
-    let stream_ready_sent = std::sync::atomic::AtomicBool::new(false);
-
-    // Told to the download store like any other transfer, so the downloads
-    // page and everything else reading the store see what the bridge fetches.
-    let store = downloads::store();
-    store.queued(downloads::Download {
-        id: queue_id,
-        // The track has no row in this library; it is the server's.
-        track_id: 0,
-        title: dest
-            .file_stem()
+    // Told to the download store like any other transfer, so everything
+    // reading the store sees what the bridge fetches.
+    let bytes_written = store.announce(
+        key,
+        dest.file_stem()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default(),
-        artist: String::new(),
-        source: download::part_path(dest),
-        dest: dest.to_path_buf(),
-        total: 0,
-        written: bytes_written.clone(),
-        state: downloads::DownloadState::Queued,
-        bytes_per_second: 0,
-    });
+        String::new(),
+        download::part_path(dest),
+        dest.to_path_buf(),
+    );
+    let stream_ready_sent = std::sync::atomic::AtomicBool::new(false);
 
     // Once per attempt, not per chunk — see `helpers::download_track`.
     let announced_total = AtomicU64::new(u64::MAX);
     let result = streamer.stream_to_file(track_id, dest, |downloaded, total| {
         bytes_written.set(downloaded);
         if announced_total.swap(total, Ordering::Relaxed) != total {
-            store.started(queue_id, total, bytes_written.clone());
+            store.started(key, total);
         }
         if !stream_ready_sent.load(Ordering::Relaxed)
             && downloaded >= koan_core::player::state::STREAM_THRESHOLD
@@ -228,13 +221,7 @@ fn download_and_play(
         log::warn!("failed to stream {} from server: {}", dest.display(), e);
         e.to_string()
     });
-    settle_transfer(
-        state,
-        local_tx,
-        &[queue_id],
-        Some((queue_id, &bytes_written)),
-        &result,
-    );
+    downloads::settle(state, key, &result).announce(local_tx);
 }
 
 fn poll_and_stream_loop(

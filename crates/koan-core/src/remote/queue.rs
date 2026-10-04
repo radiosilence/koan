@@ -1,27 +1,39 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
 
 use crate::config;
+use crate::helpers::download_track;
 use crate::player::commands::PlayerCommand;
-use crate::player::state::{LoadState, QueueItemId, SharedPlayerState};
-
-use crate::helpers::{Fetched, download_track, settle_transfer};
+use crate::player::state::{ItemState, QueueItemId, SharedPlayerState};
+use crate::remote::downloads::{self, DownloadStore, TransferKey};
 
 /// Concurrent downloads the priority lane may run outside the worker pool.
 /// Small on purpose: its job is to get the track under the cursor playing, and
 /// every extra request competes with it for the same link.
 const PRIORITY_PERMITS: usize = 2;
 
+/// How long a transfer may go wanted by nothing before it is stopped.
+///
+/// Not at once: a front end that replaces the queue by clearing it and then
+/// adding to it leaves the playlist empty for a moment, and a transfer for a
+/// track in both would be thrown away and started again from nothing.
+const ABANDON_GRACE: Duration = Duration::from_secs(2);
+
 /// Persistent download queue — lives for the app's lifetime.
 ///
-/// Follows the playlist rather than being told about it: whenever the
-/// playlist changes, every entry still waiting for its file is queued and
-/// anything no longer in the playlist is dropped. A front end adds tracks to
-/// the player and nothing else, so there is no second request to race the
-/// first and no queue of entries the player has already discarded.
+/// Follows the playlist rather than being told about it: whenever the set of
+/// entries waiting for a file changes, each is queued or joins the transfer
+/// already running for its track, and anything no longer in the playlist is
+/// let go. A front end adds tracks to the player and nothing else, so there is
+/// no second request to race the first and no queue of entries the player has
+/// already discarded.
+///
+/// What is in flight, and who waits on it, is the player's download store.
+/// This decides only what is fetched when.
 ///
 /// Downloads run on a pool of worker threads. Cursor changes reorder the queue
 /// so the current track downloads first, followed by same-album tracks for
@@ -33,8 +45,10 @@ pub struct DownloadQueue {
 }
 
 struct Inner {
-    /// May be held while the player's state is read or written, never the
-    /// other way round.
+    /// Held across every change to which entries wait on which transfer —
+    /// joining, letting go, settling — so none can land between another's
+    /// look and its act. May be held while the player's state or its download
+    /// store is locked; neither is ever held while taking this.
     queue: Mutex<Queue>,
     has_work: Condvar,
     state: Arc<SharedPlayerState>,
@@ -96,9 +110,13 @@ fn ensure_workers(inner: &Arc<Inner>) {
 /// otherwise the front of the queue.
 ///
 /// Tracks wanted only in the cache come after everything in the playlist.
-fn next_item(q: &mut Queue, cursor: Option<(i64, QueueItemId)>) -> Option<Job> {
+fn next_item(
+    q: &mut Queue,
+    store: &DownloadStore,
+    cursor: Option<(i64, QueueItemId)>,
+) -> Option<Job> {
     let entry = match cursor {
-        Some((db_id, _)) if q.in_flight.contains_key(&db_id) => return None,
+        Some((db_id, _)) if store.in_flight(TransferKey::Track(db_id)) => return None,
         Some((_, queue_id)) => q
             .pending
             .iter()
@@ -126,7 +144,7 @@ fn retry_server_now() {
 fn cursor_download(state: &SharedPlayerState) -> Option<(i64, QueueItemId)> {
     let id = state.cursor()?;
     let item = state.get_item(id)?;
-    if !matches!(item.state, crate::player::state::ItemState::Pending) {
+    if item.state != ItemState::Pending {
         return None;
     }
     Some((item.db_id?, id))
@@ -136,47 +154,15 @@ fn cursor_download(state: &SharedPlayerState) -> Option<(i64, QueueItemId)> {
 /// wanted only in the cache.
 type Job = (i64, Option<QueueItemId>);
 
-/// Queue state and the in-flight bookkeeping that keeps a track from being
-/// downloaded by two threads at once.
+/// What is to be fetched, in the order it will be. What is being fetched is
+/// the download store's.
 #[derive(Default)]
 struct Queue {
-    /// Queue entries whose files are still to be fetched, in the order they
-    /// will be.
+    /// Queue entries whose files are still to be fetched.
     pending: VecDeque<(i64, QueueItemId)>,
     /// Tracks wanted in the cache with no queue entry behind them.
     cache: VecDeque<i64>,
-    /// Tracks being fetched, and what is waiting on each.
-    ///
-    /// Keyed by track, because the track decides which file the download
-    /// writes. Keyed by queue entry it would dedupe nothing that matters:
-    /// playing something a second time before it has arrived makes a new entry
-    /// with a new id, so nothing would match and a second transfer would start
-    /// over the first — two threads truncating and writing one `.part`, and
-    /// whichever finishes first renaming it out from under the other.
-    in_flight: HashMap<i64, Transfer>,
     priority_active: usize,
-}
-
-/// What one track's transfer is for.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct Transfer {
-    /// Every queue entry waiting on it, including the one that started it.
-    waiters: HashSet<QueueItemId>,
-    /// Wanted in the cache for its own sake, whatever the playlist does.
-    keep: bool,
-}
-
-impl Transfer {
-    fn for_entry(id: QueueItemId) -> Self {
-        Self {
-            waiters: HashSet::from([id]),
-            keep: false,
-        }
-    }
-
-    fn wanted(&self) -> bool {
-        self.keep || !self.waiters.is_empty()
-    }
 }
 
 /// What a priority request should do, given the state of the lane.
@@ -193,14 +179,14 @@ enum Dispatch {
 /// Claim `item` for the priority lane, or push it to the front of the queue if
 /// every permit is taken. On `Spawn` the caller owns a permit and must hand it
 /// back, through a `Permit`, when the download ends.
-fn claim_priority(q: &mut Queue, item: (i64, QueueItemId)) -> Dispatch {
+fn claim_priority(q: &mut Queue, store: &DownloadStore, item: (i64, QueueItemId)) -> Dispatch {
     let (db_id, queue_id) = item;
+    let key = TransferKey::Track(db_id);
     q.pending.retain(|(_, qid)| *qid != queue_id);
 
     // Already being fetched: wait on it rather than fetch it again. The entry
     // is remembered so it gets the answer when the one transfer lands.
-    if let Some(transfer) = q.in_flight.get_mut(&db_id) {
-        transfer.waiters.insert(queue_id);
+    if store.join(key, Some(queue_id)) {
         return Dispatch::AlreadyRunning;
     }
     if q.priority_active >= PRIORITY_PERMITS {
@@ -208,15 +194,11 @@ fn claim_priority(q: &mut Queue, item: (i64, QueueItemId)) -> Dispatch {
         return Dispatch::Requeued;
     }
     q.priority_active += 1;
-    q.in_flight.insert(db_id, Transfer::for_entry(queue_id));
+    store.claim(key, Some(queue_id));
     Dispatch::Spawn
 }
 
 /// Hands back a priority permit however the download ends — including a panic.
-///
-/// The track's in-flight entry is not this guard's to remove: settling takes
-/// it, and by the time this runs a new transfer for the same track may have
-/// claimed it.
 struct Permit {
     inner: Arc<Inner>,
 }
@@ -289,7 +271,7 @@ fn wake_workers(inner: &Arc<Inner>) {
 fn sync(inner: &Arc<Inner>) {
     let mut q = inner.queue.lock();
     let wanted = inner.state.pending_downloads();
-    let added = sync_with(&mut q, &wanted);
+    let added = sync_with(&mut q, inner.state.downloads(), &wanted);
     drop(q);
     if added {
         wake_workers(inner);
@@ -297,28 +279,19 @@ fn sync(inner: &Arc<Inner>) {
 }
 
 /// [`sync`] against a list already read. Whether anything was queued.
-fn sync_with(q: &mut Queue, wanted: &[(i64, QueueItemId)]) -> bool {
+fn sync_with(q: &mut Queue, store: &DownloadStore, wanted: &[(i64, QueueItemId)]) -> bool {
     let ids: HashSet<QueueItemId> = wanted.iter().map(|(_, id)| *id).collect();
     q.pending.retain(|(_, id)| ids.contains(id));
-    for transfer in q.in_flight.values_mut() {
-        transfer.waiters.retain(|id| ids.contains(id));
-    }
+    store.retain_waiters(&ids);
 
     let queued: HashSet<QueueItemId> = q.pending.iter().map(|(_, id)| *id).collect();
     let mut added = false;
     for &(db_id, id) in wanted {
-        if queued.contains(&id) {
+        if queued.contains(&id) || store.join(TransferKey::Track(db_id), Some(id)) {
             continue;
         }
-        match q.in_flight.get_mut(&db_id) {
-            Some(transfer) => {
-                transfer.waiters.insert(id);
-            }
-            None => {
-                q.pending.push_back((db_id, id));
-                added = true;
-            }
-        }
+        q.pending.push_back((db_id, id));
+        added = true;
     }
     added
 }
@@ -333,7 +306,7 @@ fn bump_to_front(pending: &mut VecDeque<(i64, QueueItemId)>, ids: &HashSet<Queue
 
 /// Start a priority download, or queue it at the front when the lane is full.
 fn dispatch_priority(inner: &Arc<Inner>, item: (i64, QueueItemId)) {
-    let dispatch = claim_priority(&mut inner.queue.lock(), item);
+    let dispatch = claim_priority(&mut inner.queue.lock(), inner.state.downloads(), item);
     match dispatch {
         Dispatch::AlreadyRunning => {}
         Dispatch::Requeued => {
@@ -347,14 +320,16 @@ fn dispatch_priority(inner: &Arc<Inner>, item: (i64, QueueItemId)) {
                     let _permit = Permit {
                         inner: spawn_inner.clone(),
                     };
-                    run_download(&spawn_inner, (item.0, Some(item.1)));
+                    run_download(&spawn_inner, item.0);
                 });
             if let Err(e) = spawned {
                 log::error!("failed to spawn priority download: {}", e);
                 let mut q = inner.queue.lock();
-                q.in_flight.remove(&item.0);
+                let store = inner.state.downloads();
+                for id in downloads::withdraw(store, TransferKey::Track(item.0)) {
+                    q.pending.push_front((item.0, id));
+                }
                 q.priority_active = q.priority_active.saturating_sub(1);
-                q.pending.push_front(item);
                 drop(q);
                 inner.has_work.notify_one();
             }
@@ -362,40 +337,27 @@ fn dispatch_priority(inner: &Arc<Inner>, item: (i64, QueueItemId)) {
     }
 }
 
-/// Every queue entry the transfer for `db_id` is for now, or `None` once
-/// nothing wants it — what a download asks while it runs.
-fn waiting(inner: &Inner, db_id: i64) -> Option<Vec<QueueItemId>> {
-    let q = inner.queue.lock();
-    q.in_flight
-        .get(&db_id)
-        .filter(|t| t.wanted())
-        .map(|t| t.waiters.iter().copied().collect())
-}
-
 /// Run one download, containing any panic so the worker pool never shrinks,
-/// and settle every entry waiting on it.
+/// and settle every entry waiting on it. The transfer was claimed in the
+/// player's store before this was called.
 ///
 /// The client is looked up per download, not once for the queue's lifetime:
 /// the queue lives as long as the process, and signing in, out or elsewhere
 /// has to reach it.
-fn run_download(inner: &Arc<Inner>, (db_id, entry): Job) {
-    // A track fetched only to cache has no entry to name its transfer by.
-    let lead = entry.unwrap_or_else(QueueItemId::new);
+fn run_download(inner: &Arc<Inner>, db_id: i64) {
+    let key = TransferKey::Track(db_id);
+    let store = inner.state.downloads();
     let cfg = config::Config::cached();
-    let fetched = match crate::helpers::subsonic_client(&cfg) {
+    let result = match crate::helpers::subsonic_client(&cfg) {
         // Failed, not left Pending: the player waits for Ready, so a queue of
         // tracks that can never arrive would otherwise sit saying nothing.
-        None => Some(Fetched {
-            result: Err(crate::helpers::remote_unavailable(&cfg)),
-            transfer: None,
-        }),
+        None => Some(Err(crate::helpers::remote_unavailable(&cfg))),
         Some(client) => {
-            let still_waiting = || waiting(inner, db_id);
+            let cancelled = || store.abandoned(key, ABANDON_GRACE);
             std::panic::catch_unwind(AssertUnwindSafe(|| {
                 download_track(
                     db_id,
-                    lead,
-                    &still_waiting,
+                    &cancelled,
                     &inner.cmd_tx,
                     &inner.state,
                     &cfg,
@@ -404,39 +366,30 @@ fn run_download(inner: &Arc<Inner>, (db_id, entry): Job) {
             }))
             .unwrap_or_else(|_| {
                 log::error!("download panicked for track {db_id}");
-                Some(Fetched {
-                    result: Err("download panicked".into()),
-                    transfer: None,
-                })
+                Some(Err("download panicked".into()))
             })
         }
     };
 
     // Under the queue lock, so no entry can join the transfer between being
-    // told and the transfer being forgotten: one arriving after this finds no
+    // told and the transfer ending: one arriving after this finds no
     // transfer and is queued afresh.
     let mut q = inner.queue.lock();
-    let transfer = q.in_flight.remove(&db_id).unwrap_or_default();
-    match fetched {
-        Some(fetched) => {
-            let waiters: Vec<QueueItemId> = transfer.waiters.into_iter().collect();
-            settle_transfer(
-                &inner.state,
-                &inner.cmd_tx,
-                &waiters,
-                fetched.transfer.as_ref().map(|(id, feed)| (*id, &**feed)),
-                &fetched.result,
-            );
-        }
+    let settled = match result {
+        Some(result) => Some(downloads::settle(&inner.state, key, &result)),
         // Withdrawn because nothing wanted it, as far as it last looked. An
         // entry that has asked since goes back to the front.
         None => {
-            for id in transfer.waiters {
+            for id in downloads::withdraw(store, key) {
                 q.pending.push_front((db_id, id));
             }
+            None
         }
-    }
+    };
     drop(q);
+    if let Some(settled) = settled {
+        settled.announce(&inner.cmd_tx);
+    }
     // Workers held back for the track under the cursor go on from here.
     inner.has_work.notify_all();
     trim_cache(inner);
@@ -501,10 +454,13 @@ fn worker_loop(inner: Arc<Inner>, index: usize) {
                 inner.has_work.wait(&mut q);
                 continue;
             }
-            match next_item(&mut q, cursor) {
-                Some(job) => {
-                    if claim(&mut q, job) {
-                        break job;
+            let store = inner.state.downloads();
+            match next_item(&mut q, store, cursor) {
+                // Already being fetched: the entry waits on that transfer
+                // rather than starting a second over it.
+                Some((db_id, entry)) => {
+                    if store.claim(TransferKey::Track(db_id), entry) {
+                        break db_id;
                     }
                 }
                 None => inner.has_work.wait(&mut q),
@@ -514,37 +470,8 @@ fn worker_loop(inner: Arc<Inner>, index: usize) {
     }
 }
 
-/// Claim a worker's job: true when this worker is to run it. A track already
-/// being fetched is not fetched again; the entry waits on that transfer.
-fn claim(q: &mut Queue, (db_id, entry): Job) -> bool {
-    match (q.in_flight.get_mut(&db_id), entry) {
-        (Some(transfer), Some(id)) => {
-            transfer.waiters.insert(id);
-            false
-        }
-        (Some(transfer), None) => {
-            transfer.keep = true;
-            false
-        }
-        (None, Some(id)) => {
-            q.in_flight.insert(db_id, Transfer::for_entry(id));
-            true
-        }
-        (None, None) => {
-            q.in_flight.insert(
-                db_id,
-                Transfer {
-                    waiters: HashSet::new(),
-                    keep: true,
-                },
-            );
-            true
-        }
-    }
-}
-
-/// Keep the queue following the player: on any playlist change, bring the
-/// queue in line with it; when the cursor moves to a pending track, hand it
+/// Keep the queue following the player: when the set of entries waiting for a
+/// file may have changed, bring the queue in line with it; when the cursor moves to a pending track, hand it
 /// and the next track to the priority lane and bump same-album tracks to the
 /// front.
 ///
@@ -563,7 +490,7 @@ fn follow_playlist(inner: Arc<Inner>) {
     loop {
         // Before the cursor, so the cursor's track is queued by the time it
         // is looked for.
-        let version = inner.state.playlist_version();
+        let version = inner.state.pending_version();
         if last_version != Some(version) {
             last_version = Some(version);
             sync(&inner);
@@ -583,11 +510,7 @@ fn follow_playlist(inner: Arc<Inner>) {
 /// Send the cursor's track, and the one after it, down the priority lane, if
 /// the cursor's track is waiting in the queue.
 fn promote_cursor(inner: &Arc<Inner>, cursor_id: QueueItemId) {
-    let is_pending = inner
-        .state
-        .item_load_state(cursor_id)
-        .is_some_and(|s| matches!(s, LoadState::Pending));
-    if !is_pending {
+    if inner.state.item_state(cursor_id) != Some(ItemState::Pending) {
         return;
     }
 
@@ -636,19 +559,28 @@ pub fn shared(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::player::state::PlaylistItem;
 
     fn qid() -> QueueItemId {
         QueueItemId::new()
     }
 
+    fn key(db_id: i64) -> TransferKey {
+        TransferKey::Track(db_id)
+    }
+
+    fn waiters(store: &DownloadStore, db_id: i64) -> HashSet<QueueItemId> {
+        store.waiters(key(db_id)).into_iter().collect()
+    }
+
     #[test]
     fn priority_lane_never_exceeds_its_permits() {
-        let mut q = Queue::default();
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
 
         // Rapid cursor movement: a fresh track lands on the lane every poll.
         let mut spawned = 0;
         for i in 0..500 {
-            if claim_priority(&mut q, (i, qid())) == Dispatch::Spawn {
+            if claim_priority(&mut q, &store, (i, qid())) == Dispatch::Spawn {
                 spawned += 1;
             }
             assert!(
@@ -668,23 +600,29 @@ mod tests {
 
     #[test]
     fn released_permits_are_reusable() {
-        let mut q = Queue::default();
-        assert_eq!(claim_priority(&mut q, (1, qid())), Dispatch::Spawn);
-        assert_eq!(claim_priority(&mut q, (2, qid())), Dispatch::Spawn);
-        assert_eq!(claim_priority(&mut q, (3, qid())), Dispatch::Requeued);
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
+        assert_eq!(claim_priority(&mut q, &store, (1, qid())), Dispatch::Spawn);
+        assert_eq!(claim_priority(&mut q, &store, (2, qid())), Dispatch::Spawn);
+        assert_eq!(
+            claim_priority(&mut q, &store, (3, qid())),
+            Dispatch::Requeued
+        );
 
-        q.in_flight.remove(&1);
+        let _ = downloads::withdraw(&store, key(1));
         q.priority_active -= 1;
-        assert_eq!(claim_priority(&mut q, (4, qid())), Dispatch::Spawn);
+        assert_eq!(claim_priority(&mut q, &store, (4, qid())), Dispatch::Spawn);
         assert!(q.priority_active <= PRIORITY_PERMITS);
     }
 
     #[test]
     fn an_in_flight_track_is_never_claimed_twice() {
-        let mut q = Queue::default();
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
         let id = qid();
-        assert_eq!(claim_priority(&mut q, (1, id)), Dispatch::Spawn);
-        assert_eq!(claim_priority(&mut q, (1, id)), Dispatch::AlreadyRunning);
+        assert_eq!(claim_priority(&mut q, &store, (1, id)), Dispatch::Spawn);
+        assert_eq!(
+            claim_priority(&mut q, &store, (1, id)),
+            Dispatch::AlreadyRunning
+        );
         assert_eq!(q.priority_active, 1);
         assert!(
             q.pending.is_empty(),
@@ -699,69 +637,56 @@ mod tests {
         // file a download would write — two of them would truncate and write
         // over one another, and whichever finished first would rename it away
         // from the other.
-        let mut q = Queue::default();
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
         let (first, again) = (qid(), qid());
-        assert_eq!(claim_priority(&mut q, (7, first)), Dispatch::Spawn);
-        assert_eq!(claim_priority(&mut q, (7, again)), Dispatch::AlreadyRunning);
+        assert_eq!(claim_priority(&mut q, &store, (7, first)), Dispatch::Spawn);
+        assert_eq!(
+            claim_priority(&mut q, &store, (7, again)),
+            Dispatch::AlreadyRunning
+        );
 
         assert_eq!(q.priority_active, 1, "one transfer, not two");
         assert!(q.pending.is_empty());
         assert_eq!(
-            q.in_flight.get(&7).map(|t| &t.waiters),
-            Some(&HashSet::from([first, again])),
+            waiters(&store, 7),
+            HashSet::from([first, again]),
             "both entries wait on the one transfer"
-        );
-    }
-
-    #[test]
-    fn a_worker_picking_up_a_duplicate_waits_on_the_running_one() {
-        // The same, arriving through the queue rather than the priority lane.
-        let mut q = Queue::default();
-        let (running, queued) = (qid(), qid());
-        assert_eq!(claim_priority(&mut q, (7, running)), Dispatch::Spawn);
-
-        assert!(
-            !claim(&mut q, (7, Some(queued))),
-            "not fetched a second time"
-        );
-
-        assert_eq!(
-            q.in_flight.get(&7).map(|t| &t.waiters),
-            Some(&HashSet::from([running, queued])),
-            "the queued entry waits rather than starting a second transfer"
         );
     }
 
     #[test]
     fn different_tracks_still_run_side_by_side() {
         // Keying on the track must not serialise unrelated downloads.
-        let mut q = Queue::default();
-        assert_eq!(claim_priority(&mut q, (1, qid())), Dispatch::Spawn);
-        assert_eq!(claim_priority(&mut q, (2, qid())), Dispatch::Spawn);
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
+        assert_eq!(claim_priority(&mut q, &store, (1, qid())), Dispatch::Spawn);
+        assert_eq!(claim_priority(&mut q, &store, (2, qid())), Dispatch::Spawn);
         assert_eq!(q.priority_active, 2);
     }
 
     #[test]
     fn requeued_priority_item_goes_to_the_head_of_the_queue() {
-        let mut q = Queue::default();
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
         q.pending.push_back((9, qid()));
         for i in 0..PRIORITY_PERMITS {
-            claim_priority(&mut q, (i as i64, qid()));
+            claim_priority(&mut q, &store, (i as i64, qid()));
         }
 
         let wanted = qid();
-        assert_eq!(claim_priority(&mut q, (7, wanted)), Dispatch::Requeued);
+        assert_eq!(
+            claim_priority(&mut q, &store, (7, wanted)),
+            Dispatch::Requeued
+        );
         assert_eq!(q.pending.front().map(|(_, id)| *id), Some(wanted));
     }
 
     #[test]
     fn claiming_removes_a_duplicate_queue_entry() {
-        let mut q = Queue::default();
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
         let id = qid();
         q.pending.push_back((1, id));
         q.pending.push_back((2, qid()));
 
-        assert_eq!(claim_priority(&mut q, (1, id)), Dispatch::Spawn);
+        assert_eq!(claim_priority(&mut q, &store, (1, id)), Dispatch::Spawn);
         assert_eq!(
             q.pending.len(),
             1,
@@ -785,54 +710,42 @@ mod tests {
     #[test]
     fn the_track_under_the_cursor_goes_first_and_goes_alone() {
         let (a, b, c) = (qid(), qid(), qid());
-        let mut q = Queue::default();
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
         q.pending.extend([(1, a), (2, b), (3, c)]);
 
         // Pressed play on the third: it jumps the queue.
-        assert_eq!(next_item(&mut q, Some((3, c))), Some((3, Some(c))));
-        q.in_flight.insert(3, Transfer::for_entry(c));
+        assert_eq!(next_item(&mut q, &store, Some((3, c))), Some((3, Some(c))));
+        store.claim(key(3), Some(c));
 
         // While it downloads, nothing else starts.
-        assert_eq!(next_item(&mut q, Some((3, c))), None);
+        assert_eq!(next_item(&mut q, &store, Some((3, c))), None);
         assert_eq!(q.pending.len(), 2, "the rest wait their turn");
 
         // Once it has landed the queue runs in order again.
-        q.in_flight.remove(&3);
-        assert_eq!(next_item(&mut q, None), Some((1, Some(a))));
-        assert_eq!(next_item(&mut q, None), Some((2, Some(b))));
+        let _ = downloads::withdraw(&store, key(3));
+        assert_eq!(next_item(&mut q, &store, None), Some((1, Some(a))));
+        assert_eq!(next_item(&mut q, &store, None), Some((2, Some(b))));
     }
 
     #[test]
     fn a_cursor_with_nothing_queued_for_it_holds_nothing_up() {
         let (a, elsewhere) = (qid(), qid());
-        let mut q = Queue::default();
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
         q.pending.push_back((1, a));
-        assert_eq!(next_item(&mut q, Some((9, elsewhere))), Some((1, Some(a))));
+        assert_eq!(
+            next_item(&mut q, &store, Some((9, elsewhere))),
+            Some((1, Some(a)))
+        );
     }
 
     #[test]
     fn a_track_wanted_only_in_the_cache_waits_behind_the_playlist() {
         let a = qid();
-        let mut q = Queue::default();
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
         q.cache.push_back(5);
         q.pending.push_back((1, a));
-        assert_eq!(next_item(&mut q, None), Some((1, Some(a))));
-        assert_eq!(next_item(&mut q, None), Some((5, None)));
-    }
-
-    #[test]
-    fn a_track_fetched_to_cache_is_wanted_with_nothing_waiting_on_it() {
-        // `download_to_cache` has no queue entry; its transfer must not read
-        // as abandoned for want of one.
-        let mut q = Queue::default();
-        assert!(claim(&mut q, (5, None)));
-        assert!(q.in_flight[&5].wanted());
-
-        // And a cache request for a track already on its way joins it.
-        let mut q = Queue::default();
-        assert!(claim(&mut q, (5, Some(qid()))));
-        assert!(!claim(&mut q, (5, None)));
-        assert!(q.in_flight[&5].keep);
+        assert_eq!(next_item(&mut q, &store, None), Some((1, Some(a))));
+        assert_eq!(next_item(&mut q, &store, None), Some((5, None)));
     }
 
     #[test]
@@ -840,30 +753,31 @@ mod tests {
         // Replacing a large queue used to leave every old entry queued, and
         // each cost a worker a wait before it gave up.
         let (old, kept, waiter) = (qid(), qid(), qid());
-        let mut q = Queue::default();
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
         q.pending.extend([(1, old), (2, kept)]);
-        q.in_flight.insert(3, Transfer::for_entry(waiter));
+        store.claim(key(3), Some(waiter));
 
-        sync_with(&mut q, &[(2, kept)]);
+        sync_with(&mut q, &store, &[(2, kept)]);
 
         assert_eq!(q.pending, VecDeque::from([(2, kept)]));
+        assert!(waiters(&store, 3).is_empty());
         assert!(
-            !q.in_flight[&3].wanted(),
-            "a transfer nothing waits on any more reads as abandoned"
+            store.abandoned(key(3), Duration::ZERO),
+            "a transfer nothing waits on any more is on its way to being stopped"
         );
     }
 
     #[test]
     fn the_queue_takes_new_entries_in_playlist_order_behind_what_it_has() {
         let (promoted, a, b) = (qid(), qid(), qid());
-        let mut q = Queue::default();
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
         q.pending.push_back((9, promoted));
 
-        assert!(sync_with(&mut q, &[(1, a), (9, promoted), (2, b)]));
+        assert!(sync_with(&mut q, &store, &[(1, a), (9, promoted), (2, b)]));
 
         assert_eq!(q.pending, VecDeque::from([(9, promoted), (1, a), (2, b)]));
         assert!(
-            !sync_with(&mut q, &[(1, a), (9, promoted), (2, b)]),
+            !sync_with(&mut q, &store, &[(1, a), (9, promoted), (2, b)]),
             "idempotent"
         );
     }
@@ -871,21 +785,27 @@ mod tests {
     #[test]
     fn a_new_entry_for_a_track_in_flight_waits_on_that_transfer() {
         let (running, again) = (qid(), qid());
-        let mut q = Queue::default();
-        q.in_flight.insert(7, Transfer::for_entry(running));
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
+        store.claim(key(7), Some(running));
 
-        assert!(!sync_with(&mut q, &[(7, running), (7, again)]));
+        assert!(!sync_with(&mut q, &store, &[(7, running), (7, again)]));
 
         assert!(q.pending.is_empty());
-        assert_eq!(q.in_flight[&7].waiters, HashSet::from([running, again]));
+        assert_eq!(waiters(&store, 7), HashSet::from([running, again]));
     }
 
-    /// The first play after launch: the player has the new queue and its
-    /// cursor, and the download queue holds its tracks.
-    fn first_play() -> (Arc<Inner>, Vec<(i64, QueueItemId)>) {
-        let (inner, ids, _) = queue_over(&[9001, 9002, 9003]);
-        inner.queue.lock().pending.extend(ids.iter().copied());
-        (inner, ids)
+    #[test]
+    fn a_queue_replaced_with_the_same_track_keeps_its_transfer() {
+        // A new queue holding the same track is new entries for it; the one
+        // transfer serves them and is never wanted by nothing in between.
+        let (old, new) = (qid(), qid());
+        let (mut q, store) = (Queue::default(), DownloadStore::new());
+        store.claim(key(7), Some(old));
+
+        sync_with(&mut q, &store, &[(7, new)]);
+
+        assert_eq!(waiters(&store, 7), HashSet::from([new]));
+        assert!(!store.abandoned(key(7), Duration::ZERO));
     }
 
     /// A player holding one pending item per track id, the cursor on the
@@ -898,12 +818,12 @@ mod tests {
         crossbeam_channel::Receiver<PlayerCommand>,
     ) {
         crate::config::isolate_config_for_tests();
-        let item = |title: &str, db_id: i64| crate::player::state::PlaylistItem {
+        let item = |db_id: i64| PlaylistItem {
             playlist_entry_id: None,
             id: qid(),
             db_id: Some(db_id),
-            path: std::path::PathBuf::from(format!("/cache/{title}.flac")),
-            title: title.into(),
+            path: std::path::PathBuf::from(format!("/cache/track-{db_id}.flac")),
+            title: format!("track-{db_id}"),
             artist: "Artist".into(),
             album_artist: "Artist".into(),
             album: "Album".into(),
@@ -912,12 +832,9 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
-            state: crate::player::state::ItemState::Pending,
+            state: ItemState::Pending,
         };
-        let items: Vec<_> = tracks
-            .iter()
-            .map(|&db_id| item(&format!("track-{db_id}"), db_id))
-            .collect();
+        let items: Vec<_> = tracks.iter().map(|&db_id| item(db_id)).collect();
         let ids: Vec<_> = items.iter().map(|i| (i.db_id.unwrap(), i.id)).collect();
 
         let state = SharedPlayerState::new();
@@ -936,6 +853,14 @@ mod tests {
         (inner, ids, cmd_rx)
     }
 
+    /// The first play after launch: the player has the new queue and its
+    /// cursor, and the download queue holds its tracks.
+    fn first_play() -> (Arc<Inner>, Vec<(i64, QueueItemId)>) {
+        let (inner, ids, _) = queue_over(&[1, 2, 3]);
+        inner.queue.lock().pending.extend(ids.iter().copied());
+        (inner, ids)
+    }
+
     #[test]
     fn a_cursor_set_before_its_tracks_were_queued_still_goes_first() {
         let (inner, ids) = first_play();
@@ -949,22 +874,25 @@ mod tests {
         );
     }
 
+    fn failed(inner: &Inner, id: QueueItemId) -> bool {
+        matches!(inner.state.item_state(id), Some(ItemState::Failed(_)))
+    }
+
     /// The watcher starts after the player already has its queue and cursor,
     /// with nothing further to wake it: it finds the tracks by itself and
     /// fetches every one. With no server, each fails rather than waiting.
     #[test]
     fn a_watcher_started_over_a_playlist_fetches_it_unprompted() {
-        let (inner, ids) = first_play();
-        inner.queue.lock().pending.clear();
+        let (inner, ids, _) = queue_over(&[1, 2, 3]);
         let watched = inner.clone();
         std::thread::spawn(move || follow_playlist(watched));
 
-        let failed = |id| matches!(inner.state.item_load_state(id), Some(LoadState::Failed(_)));
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !ids.iter().all(|(_, id)| failed(*id)) && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(10));
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !ids.iter().all(|(_, id)| failed(&inner, *id)) && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(ids.iter().all(|(_, id)| failed(*id)));
+        assert!(ids.iter().all(|(_, id)| failed(&inner, *id)));
     }
 
     /// A track queued twice, both entries waiting on its one transfer, the
@@ -975,16 +903,12 @@ mod tests {
         QueueItemId,
         QueueItemId,
     ) {
-        let (inner, ids, cmd_rx) = queue_over(&[9101, 9101]);
+        let (inner, ids, cmd_rx) = queue_over(&[1, 1]);
         let (first, again) = (ids[0].1, ids[1].1);
         inner.state.set_cursor(Some(again));
-        inner.queue.lock().in_flight.insert(
-            9101,
-            Transfer {
-                waiters: HashSet::from([first, again]),
-                keep: false,
-            },
-        );
+        let store = inner.state.downloads();
+        store.claim(key(1), Some(first));
+        store.join(key(1), Some(again));
         (inner, cmd_rx, first, again)
     }
 
@@ -992,20 +916,17 @@ mod tests {
     fn a_failed_transfer_fails_every_entry_waiting_on_it() {
         let (inner, cmd_rx, first, again) = duplicate_that_fails();
 
-        run_download(&inner, (9101, Some(first)));
+        run_download(&inner, 1);
 
         for id in [first, again] {
-            assert!(
-                matches!(inner.state.item_load_state(id), Some(LoadState::Failed(_))),
-                "every waiter hears the one answer"
-            );
+            assert!(failed(&inner, id), "every waiter hears the one answer");
         }
         let sent: Vec<_> = cmd_rx.try_iter().collect();
         assert!(
             matches!(sent.as_slice(), [PlayerCommand::TrackFailed(id)] if *id == again),
             "the cursor's entry is told it failed, not that it is ready: {sent:?}"
         );
-        assert!(inner.queue.lock().in_flight.is_empty());
+        assert!(!inner.state.downloads().in_flight(key(1)));
     }
 
     #[test]
@@ -1014,11 +935,22 @@ mod tests {
         inner.state.remove_item(first);
         sync(&inner);
 
-        run_download(&inner, (9101, Some(first)));
+        run_download(&inner, 1);
 
-        assert!(matches!(
-            inner.state.item_load_state(again),
-            Some(LoadState::Failed(_))
-        ));
+        assert!(failed(&inner, again));
+    }
+
+    #[test]
+    fn a_transfer_withdrawn_with_an_entry_waiting_queues_it_again() {
+        // The entry joined after the download decided nothing wanted it.
+        let (inner, ids, _) = queue_over(&[1]);
+        let store = inner.state.downloads();
+        store.claim(key(1), Some(ids[0].1));
+
+        let mut q = inner.queue.lock();
+        for id in downloads::withdraw(store, key(1)) {
+            q.pending.push_front((1, id));
+        }
+        assert_eq!(q.pending, VecDeque::from([ids[0]]));
     }
 }

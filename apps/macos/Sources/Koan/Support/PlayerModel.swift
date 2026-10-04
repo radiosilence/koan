@@ -159,8 +159,7 @@ final class PlayerModel {
     /// but cannot be seeked, where the point of the mark is to say the transfer
     /// is going and roughly how far — not to offer a position.
     var fetched: Double? {
-        currentTrackId.flatMap { mirror.progress(for: TransferFigure.key(track: $0)) }
-            ?? currentItemId.flatMap { mirror.progress(for: $0) }
+        currentTrackId.flatMap { mirror.progress(for: $0) }
     }
 
     // MARK: - Where what is playing lives

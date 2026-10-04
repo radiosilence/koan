@@ -262,9 +262,11 @@ pub struct QueueItem {
 /// changes state a handful of times and settles; its byte count moves ten times
 /// a second for as long as it runs. Carrying both in one value would mean a
 /// list rebuilding at the rate a download writes.
+///
+/// Identified by its track: a track is fetched once, however many queue entries
+/// want it, and a queue row finds its transfer by the track it plays.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct Transfer {
-    pub queue_item_id: String,
     pub track_id: i64,
     pub title: String,
     pub artist: String,
@@ -280,9 +282,6 @@ pub struct Transfer {
 /// page — one reading of one fact, so they cannot disagree.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct TransferFigure {
-    pub queue_item_id: String,
-    /// The track being fetched. A track queued twice is fetched once, under
-    /// the entry that asked first; the other entry finds its progress by this.
     pub track_id: i64,
     /// 0.0–1.0, or `None` when the server sent no Content-Length — a bar drawn
     /// at zero for a transfer that is going fine reads as stuck.
@@ -308,12 +307,15 @@ impl TransferState {
     }
 }
 
-impl From<&koan_core::remote::downloads::Download> for Transfer {
-    fn from(d: &koan_core::remote::downloads::Download) -> Self {
+// Transfers keyed to a queue entry rather than a track are the TUI remote
+// bridge's, which never shares a process with these bindings; they convert to
+// nothing.
+
+impl Transfer {
+    pub(crate) fn of(d: &koan_core::remote::downloads::Download) -> Option<Self> {
         use koan_core::remote::downloads::DownloadState;
-        Self {
-            queue_item_id: d.id.0.to_string(),
-            track_id: d.track_id,
+        Some(Self {
+            track_id: d.key.track_id()?,
             title: d.title.clone(),
             artist: d.artist.clone(),
             state: match &d.state {
@@ -326,33 +328,29 @@ impl From<&koan_core::remote::downloads::Download> for Transfer {
                 DownloadState::Failed(reason) => Some(reason.clone()),
                 _ => None,
             },
-        }
+        })
     }
 }
 
-impl From<&koan_core::remote::downloads::Download> for TransferFigure {
-    fn from(d: &koan_core::remote::downloads::Download) -> Self {
-        Self {
-            queue_item_id: d.id.0.to_string(),
-            track_id: d.track_id,
+impl TransferFigure {
+    pub(crate) fn of(d: &koan_core::remote::downloads::Download) -> Option<Self> {
+        Some(Self {
+            track_id: d.key.track_id()?,
             progress: d.fraction(),
             bytes_written: d.bytes_written(),
             total_bytes: d.total,
             bytes_per_second: d.bytes_per_second,
-        }
+        })
     }
-}
 
-impl From<&koan_core::remote::downloads::Reading> for TransferFigure {
-    fn from(r: &koan_core::remote::downloads::Reading) -> Self {
-        Self {
-            queue_item_id: r.id.0.to_string(),
-            track_id: r.track_id,
+    pub(crate) fn reading(r: &koan_core::remote::downloads::Reading) -> Option<Self> {
+        Some(Self {
+            track_id: r.key.track_id()?,
             progress: r.fraction(),
             bytes_written: r.written,
             total_bytes: r.total,
             bytes_per_second: r.bytes_per_second,
-        }
+        })
     }
 }
 
@@ -360,12 +358,17 @@ impl QueueItem {
     /// Build directly from a playlist item, skipping `derive_visible_queue()`.
     /// The state watcher builds this on every wake and only ever wants the
     /// item under the cursor — deriving the whole queue for that is waste.
-    pub(crate) fn from_cursor_item(item: &PlaylistItem, state: PlaybackState) -> Self {
+    pub(crate) fn from_cursor_item(
+        item: &PlaylistItem,
+        state: PlaybackState,
+        downloads: &koan_core::remote::downloads::DownloadStore,
+    ) -> Self {
         // The item's own state and any transfer against it, as one answer.
-        let load = LoadState::of(item);
+        let load = LoadState::of(item, downloads);
         // The queue row's mapping, so the transport and the row agree; a
         // playable track the player is not on yet is merely queued.
-        let status = match QueueEntryStatus::at_cursor(&load) {
+        let transferring = matches!(load, LoadState::Downloading { .. });
+        let status = match QueueEntryStatus::at_cursor(&item.state, transferring) {
             QueueEntryStatus::Playing if state == PlaybackState::Stopped => EntryStatus::Queued,
             status => status.into(),
         };

@@ -61,7 +61,7 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
     override var isFlipped: Bool { true }
 
     func show(_ transfer: Transfer, in context: Context) {
-        if self.transfer?.queueItemId != transfer.queueItemId {
+        if self.transfer?.trackId != transfer.trackId {
             hovered = false
             showSleeve(transfer.trackId, art: context.art)
         }
@@ -71,7 +71,7 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
 
         // The numbers only while it moves; a settled row does not read them.
         let running = transfer.state == .running
-        let figures = running ? context.meter.figure(for: transfer.queueItemId) : nil
+        let figures = running ? context.meter.figure(for: transfer.trackId) : nil
         switch transfer.state {
         case .done: figure.stringValue = "Done"
         case .failed: figure.stringValue = "Failed"
@@ -82,7 +82,7 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
         fraction = transfer.state == .done ? 1 : figures?.progress ?? 0
         subtitle.stringValue = Self.subtitle(transfer, figures: figures)
         restyle()
-        context.meter.follow(self, transfer: running ? transfer.queueItemId : nil)
+        context.meter.follow(self, transfer: running ? transfer.trackId : nil)
     }
 
     /// A frame's figures, between the table's own redraws: the bar by its
