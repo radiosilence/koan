@@ -178,8 +178,9 @@ fn container_of(path: &Path) -> String {
 }
 
 impl RendererLink {
-    pub(super) fn udn(&self) -> &str {
-        &self.session.renderer().udn
+    /// What it is known by as an output device, which profiles name.
+    pub(super) fn device_name(&self) -> &str {
+        self.session.renderer().device_name()
     }
 }
 
@@ -442,15 +443,13 @@ impl Player {
                 "a renderer is handed whole files only".into(),
             ));
         };
-        let udn = self
+        let device = self
             .renderer
             .as_ref()
             .expect("caller checked")
-            .session
-            .renderer()
-            .udn
-            .clone();
-        if let Some(setup) = self.dsp_for(&udn) {
+            .device_name()
+            .to_string();
+        if let Some(setup) = self.dsp_for(&device) {
             let link = self.renderer.as_ref().expect("caller checked");
             let encoding = [stream::Encoding::Flac, stream::Encoding::Wav]
                 .into_iter()

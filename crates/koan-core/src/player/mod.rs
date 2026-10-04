@@ -469,7 +469,11 @@ impl Player {
     fn dsp_for(&mut self, device: &str) -> Option<Arc<crate::audio::dsp::Setup>> {
         let config = crate::config::Config::cached();
         #[cfg(test)]
-        if let Some(setup) = if self.renderer.as_ref().is_some_and(|l| l.udn() == device) {
+        if let Some(setup) = if self
+            .renderer
+            .as_ref()
+            .is_some_and(|l| l.device_name() == device)
+        {
             self.renderer_dsp_override.clone()
         } else {
             self.dsp_override.clone()
@@ -518,7 +522,10 @@ impl Player {
     fn reload_dsp(&mut self) {
         let was = self.dsp.take().is_some_and(|c| c.setup.is_some());
         let (was, device) = match &self.renderer {
-            Some(link) => (self.streaming_to_renderer(), Ok(link.udn().to_string())),
+            Some(link) => (
+                self.streaming_to_renderer(),
+                Ok(link.device_name().to_string()),
+            ),
             None => (was, self.resolve_device().map(|d| d.name)),
         };
         let now = match device {

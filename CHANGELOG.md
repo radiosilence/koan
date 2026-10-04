@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **EQ and convolution on UPnP amplifiers.** An amplifier can have a profile of its own. With one, kōan decodes and processes the queue itself and sends a single FLAC stream (WAV for an amplifier without FLAC), dithered to the source's bit depth, in place of the original files; without one, it is handed the original files as before. Tracks follow one another inside the stream, so gapless does not depend on the amplifier, and with one convolution filter the stream runs unbroken across the whole queue. Where an amplifier shows ICY titles, it shows each track's. The progress bar follows the amplifier's clock through the stream.
+- **Presets in the Play on menu.** On the Mac each output's row says which preset it plays through, and a menu beside it changes that output's preset without switching to it. While what is heard is processed, the speaker button carries a dot.
+
 ## 0.51.0
 
 ### Added
