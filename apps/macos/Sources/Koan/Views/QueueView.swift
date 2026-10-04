@@ -216,11 +216,13 @@ struct QueueView: View {
                     }
                     // Following: the playing track kept in view as it moves
                     // on, until the person scrolls.
-                    .onChange(of: player.currentItemId) { _, id in
-                        guard ui.followingQueue, let id else { return }
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            scroll.scrollTo(id, anchor: .center)
-                        }
+                    .onChange(of: player.currentItemId) { _, _ in
+                        followPlaying(using: scroll)
+                    }
+                    // The playing item and the rows arrive separately: a track
+                    // played from a new queue is scrolled to once it is listed.
+                    .onChange(of: rows.map(\.id)) { _, _ in
+                        followPlaying(using: scroll)
                     }
                     .onScrollPhaseChange { _, phase in
                         if phase == .interacting, ui.followingQueue {
@@ -543,6 +545,15 @@ struct QueueView: View {
     /// The playing row is centred rather than put at the top: what is playing
     /// is read against what comes after it, and a row at the top edge has no
     /// after.
+    /// While following, bring the playing row into view, if it is listed.
+    private func followPlaying(using scroll: ScrollViewProxy) {
+        guard ui.followingQueue, let id = player.currentItemId,
+              rows.contains(where: { $0.id == id }) else { return }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            scroll.scrollTo(id, anchor: .center)
+        }
+    }
+
     private func jump(to target: UIState.Jump, using scroll: ScrollViewProxy) {
         let row: String? = switch target {
         case .top: rows.first?.id
@@ -824,6 +835,11 @@ private struct JumpToPlayingButton: View {
                 .foregroundStyle(ui.followingQueue ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
         }
         .disabled(player.currentItemId == nil)
+        // Nothing playing is nothing to follow: the button shows that rather
+        // than a tint it cannot be pressed to clear.
+        .onChange(of: player.currentItemId == nil) { _, none in
+            if none { ui.followingQueue = false }
+        }
         .help(ui.followingQueue ? "Following what's playing; click to stop" : "Scroll to what's playing and follow it")
         .accessibilityAddTraits(ui.followingQueue ? .isSelected : [])
     }

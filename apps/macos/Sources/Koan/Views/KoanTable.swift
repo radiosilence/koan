@@ -299,10 +299,18 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         /// between them, so a gapless move to the next track slides the list
         /// by a row rather than throwing the track to an edge. A row that was
         /// not on screen, or is gone, is centred instead.
+        ///
+        /// Recorded only once its row is here and scrolled to: the playing
+        /// item and the rows arrive in separate updates, so a track played
+        /// from a new queue can be followed before it is listed. Every update
+        /// asks again, which catches it when the rows land.
         private func follow(_ target: ID?) {
+            guard let target else {
+                followed = nil
+                return
+            }
+            guard target != followed, let table, let scroll, let row = index[target] else { return }
             defer { followed = target }
-            guard let target, target != followed, let table, let scroll,
-                  let row = index[target] else { return }
             let visible = scroll.contentView.bounds
             let to = table.rect(ofRow: row)
             let from = followed.flatMap { index[$0] }.map { table.rect(ofRow: $0) }
