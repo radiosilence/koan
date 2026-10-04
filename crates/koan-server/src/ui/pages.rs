@@ -164,7 +164,7 @@ max-wide:hidden\" href=\"/\">kōan</a>\
 <a class=\"{NAV_LINK}\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
 <a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
 <a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>{side_account}</nav>\
-<main id=content class=\"ml-(--side-w) max-w-[calc(var(--side-w)+1200px)] min-w-0 px-7 \
+<main id=content class=\"ml-(--side-w) min-w-0 px-7 \
 pt-[max(24px,env(safe-area-inset-top))] pb-10 max-wide:ml-0 max-wide:p-4 \
 max-wide:pt-[max(16px,env(safe-area-inset-top))]\">{content}</main>\
 <div class=\"hidden px-4 pt-2 pb-6 max-wide:block\">{foot_account}</div>\

@@ -343,9 +343,6 @@
   .max-w-\[560px\] {
     max-width: 560px;
   }
-  .max-w-\[calc\(var\(--side-w\)\+1200px\)\] {
-    max-width: calc(var(--side-w) + 1200px);
-  }
   .min-w-0 {
     min-width: 0px;
   }
