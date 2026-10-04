@@ -52,6 +52,11 @@ private struct SectionPage: View {
             .navigationTitle(title)
             .modifier(SectionFilter(placeholder: section.filterPlaceholder))
             .toolbar {
+                if section == .albums || section == .artists {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        BrowseFilterButton()
+                    }
+                }
                 if section == .albums {
                     AlbumSortControls()
                 }

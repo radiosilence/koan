@@ -821,6 +821,31 @@ pub enum AlbumSort {
     Random,
 }
 
+/// Narrowing the album and artist browsers by what the records are. The web
+/// UI's filters, applied by the same queries: an artist passes when any of
+/// their albums does.
+#[derive(uniffi::Record, Debug, Clone, Default, PartialEq, Eq)]
+pub struct BrowseFilter {
+    pub favourites: bool,
+    /// Only records in a lossless codec.
+    pub lossless: bool,
+    /// Only records in this codec, as `BrowseChoices::codecs` names it.
+    pub codec: Option<String>,
+    /// Release year bounds, inclusive. Records without a date are left out
+    /// when either is set.
+    pub year_from: Option<i32>,
+    pub year_to: Option<i32>,
+    pub genre: Option<String>,
+}
+
+/// What the codec and genre filters offer: the codecs records are in, most
+/// common first, and the genres most records carry.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct BrowseChoices {
+    pub codecs: Vec<String>,
+    pub genres: Vec<String>,
+}
+
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackSort {
     /// Disc, then track number — album running order.

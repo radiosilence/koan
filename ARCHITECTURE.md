@@ -271,15 +271,9 @@ Only a single-sourced row is asked — one already carrying both a path and a re
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
 | `id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
 
-### `format/`
+### `format` (from sift)
 
-fb2k-compatible template engine.
-
-| File | Purpose |
-|---|---|
-| `parser.rs` | Recursive descent tokenizer: `%field%`, `[conditional]`, `$function(args)`, `'quoted'` |
-| `eval.rs` | Evaluates token tree against a `MetadataProvider` trait. Conditionals omit block if any field missing. |
-| `functions.rs` | 59 built-in functions: string ops (`left`, `right`, `pad`, `replace`, `trim`, `caps`, `abbr`, `substr`, `insert`, `repeat`, `rot13`, etc.), logic (`if`, `if2`, `if3`, `ifequal`, `ifgreater`, `iflonger`, `select`, `not`, `and`, `or`, `xor`), numeric (`num`, `add`, `sub`, `mul`, `div`, `mod`, `max`, `min`, `hex`), path (`directory`, `directory_path`, `ext`, `filename`), info (`len`, `info`), special (`tab`, `crlf`, `char`) |
+fb2k-compatible template engine, re-exported from [sift](https://github.com/radiosilence/sift) as `koan_core::format`. sift is the tagger and library organiser koan shares with other importers; it holds the one copy of the engine so that a path koan plans and a path sift files agree. `MetadataProvider` is the trait koan implements over its rows; `format::format` evaluates a pattern, `format::parse` validates one.
 
 ### `remote/`
 
