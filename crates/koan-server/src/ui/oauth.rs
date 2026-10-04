@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
+use super::pages::{SIGNIN_BODY, SIGNIN_MAIN, SIGNIN_TITLE};
 use super::{UiState, html, open};
 use crate::auth::AuthUser;
 use crate::share::{escape, not_found};
@@ -307,7 +308,8 @@ fn request_error(base: &str, q: &AuthorizeParams) -> Option<(&'static str, &'sta
 
 fn page(title: &str, body: &str) -> String {
     format!(
-        "{head}</head><body class=signin><main><h1>kōan</h1>{body}</main></body></html>",
+        "{head}</head><body class=\"{SIGNIN_BODY}\"><main class=\"{SIGNIN_MAIN}\">\
+<h1 class=\"{SIGNIN_TITLE}\">kōan</h1>{body}</main></body></html>",
         head = super::pages::head(title),
     )
 }
@@ -379,10 +381,10 @@ pub(super) async fn authorize(
 Anyone can give an app any name: {host} is where it really goes.</p>\
 <p><small>Approve only a connection you started yourself, just now. \
 Approving connects whichever account started it.</small></p>\
-<form method=post action=\"/oauth/authorize\">{fields}\
-<button class=primary name=decision value=allow>Allow</button>\
-<button class=quiet name=decision value=deny>Deny</button></form>\
-<form method=post action=\"/auth/signout\">{next}<button class=quiet>Not {user}? Sign out</button></form>",
+<form class=\"grid gap-3.5\" method=post action=\"/oauth/authorize\">{fields}\
+<button class=\"primary\" name=decision value=allow>Allow</button>\
+<button class=\"quiet\" name=decision value=deny>Deny</button></form>\
+<form class=\"grid gap-3.5\" method=post action=\"/auth/signout\">{next}<button class=\"quiet\">Not {user}? Sign out</button></form>",
         host = escape(host),
         name = escape(&c.client_name),
         abilities = abilities(&user),

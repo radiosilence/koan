@@ -15,10 +15,13 @@ use koan_core::auth::Role;
 use koan_core::db::queries::auth::{self as users, UserRow};
 use koan_core::invite::{self, AccountError, Invite};
 
-use super::pages::respond;
+use super::pages::{COPY_ERROR, COPY_INPUT, COPY_ROW, EMPTY, SUB, respond};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, escape};
+
+/// A one-line form: the field, an option or two, the button.
+const FORM: &str = "mb-2 flex max-w-form gap-2";
 
 const ROLES: [(Role, &str); 3] = [
     (Role::Readonly, "Listen only"),
@@ -28,7 +31,7 @@ const ROLES: [(Role, &str); 3] = [
 
 fn role_select(id: i64, current: Role) -> String {
     let mut out = format!(
-        "<select aria-label=Access data-on:change=\"@post('/users/{id}/role?role=' + el.value)\">"
+        "<select class=\"px-2 py-1.5\" aria-label=Access data-on:change=\"@post('/users/{id}/role?role=' + el.value)\">"
     );
     for (role, label) in ROLES {
         let sel = if role == current { " selected" } else { "" };
@@ -39,7 +42,7 @@ fn role_select(id: i64, current: Role) -> String {
 }
 
 fn user_list(rows: &[UserRow], me: i64) -> String {
-    let mut out = String::from("<ul class=\"list users\" id=users>");
+    let mut out = String::from("<ul id=users>");
     for u in rows {
         // Not on your own row: a new password signs out every session, this
         // one included.
@@ -47,8 +50,8 @@ fn user_list(rows: &[UserRow], me: i64) -> String {
             String::new()
         } else {
             format!(
-                "<button class=quiet data-on:click=\"@post('/users/{id}/password/form')\">Password</button>\
-<button class=quiet data-on:click=\"confirm('Delete {name}? Their devices stop \
+                "<button class=\"quiet\" data-on:click=\"@post('/users/{id}/password/form')\">Password</button>\
+<button class=\"quiet\" data-on:click=\"confirm('Delete {name}? Their devices stop \
 working and their playlists and favourites go.') && @post('/users/{id}/delete')\">Delete</button>",
                 name = escape(&u.username),
                 id = u.id,
@@ -56,10 +59,15 @@ working and their playlists and favourites go.') && @post('/users/{id}/delete')\
         };
         let _ = write!(
             out,
-            "<li><span class=t>{name}{you}</span>{select}\
+            "<li class=\"flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-1 py-2.5\">\
+<span class=\"min-w-[8em] flex-1 truncate wrap-anywhere\">{name}{you}</span>{select}\
 <button data-on:click=\"@post('/users/{id}/invite')\">Invite</button>{others}</li>",
             name = escape(&u.username),
-            you = if u.id == me { "<small>you</small>" } else { "" },
+            you = if u.id == me {
+                "<small class=\"ml-2 text-meta text-muted\">you</small>"
+            } else {
+                ""
+            },
             select = role_select(u.id, u.role),
             id = u.id,
         );
@@ -74,7 +82,7 @@ fn result(html: &str) -> Event {
 
 fn failure(message: &str) -> Event {
     result(&format!(
-        "<p class=\"share error\" role=alert>{}</p>",
+        "<p class=\"{COPY_ERROR}\" role=alert>{}</p>",
         escape(message)
     ))
 }
@@ -83,8 +91,9 @@ fn invite_panel(i: &Invite) -> String {
     let e = escape;
     let details = match &i.password {
         Some(password) => format!(
-            "<p class=sub>The password is shown this once: the server keeps only its hash.</p>\
-<dl class=details><dt>Server URL</dt><dd>{server}</dd><dt>Username</dt><dd>{user}</dd>\
+            "<p class=\"{SUB}\">The password is shown this once: the server keeps only its hash.</p>\
+<dl class=\"mt-3.5 grid grid-cols-[max-content_1fr] gap-x-3.5 gap-y-1 text-control [&_dd]:wrap-anywhere \
+[&_dd]:select-all [&_dt]:text-muted\"><dt>Server URL</dt><dd>{server}</dd><dt>Username</dt><dd>{user}</dd>\
 <dt>Password</dt><dd><code>{password}</code></dd></dl>",
             server = e(&i.server),
             user = e(&i.username),
@@ -93,12 +102,14 @@ fn invite_panel(i: &Invite) -> String {
         None => String::new(),
     };
     format!(
-        "<div class=invite><h2>Invite for {user}</h2>\
-<p class=sub>Send this from your own mail. Opening the link on a phone, tablet or Mac with koan \
+        "<div class=\"mt-2 mb-4 max-w-panel rounded-lg border border-rule bg-surface px-4 pt-1 pb-4\">\
+<h2>Invite for {user}</h2><p class=\"{SUB}\">Send this from your own mail. Opening the link on a phone, tablet or Mac with koan \
 installed signs in and loads the library, on each device, for a week.</p>\
-<div class=share><input id=invite-link readonly value=\"{link}\" aria-label=\"Invite link\">\
+<div class=\"{COPY_ROW}\"><input id=invite-link readonly value=\"{link}\" \
+aria-label=\"Invite link\" class=\"{COPY_INPUT}\">\
 <button data-copy=invite-link>Copy link</button></div>\
-<div class=invite-actions><a class=button href=\"{mailto}\">Open in Mail</a>\
+<div class=\"mt-2.5 flex flex-wrap gap-2\"><a class=\"inline-block rounded-md border border-rule bg-rule px-3.5 py-2 \
+text-ink hover:border-hover hover:no-underline\" href=\"{mailto}\">Open in Mail</a>\
 <button data-copy-email>Copy email</button>\
 <button data-share-email data-show=\"'share' in navigator\">Share…</button></div>{details}\
 <textarea id=invite-text hidden readonly data-subject=\"{subject}\">{text}</textarea>\
@@ -149,13 +160,15 @@ pub(super) async fn page(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let intro = "<h1>Users</h1><p class=sub>Everyone who can sign in to this server. \
-An invite is a link that sets koan up with the account in one tap.</p>";
+    let intro = format!(
+        "<h1>Users</h1><p class=\"{SUB}\">Everyone who can sign in to this server. \
+An invite is a link that sets koan up with the account in one tap.</p>"
+    );
     if !s.auth_enabled {
         let inner = format!(
-            "{intro}<p class=empty>This server runs without sign-in, so it has no accounts.</p>"
+            "{intro}<p class=\"{EMPTY}\">This server runs without sign-in, so it has no accounts.</p>"
         );
-        return respond(&s, &headers, &user, "Users", "users", &inner);
+        return respond(&s, &headers, &user, "Users", &inner);
     }
     if user.role != Role::Admin {
         return forbidden();
@@ -176,15 +189,15 @@ An invite is a link that sets koan up with the account in one tap.</p>";
         );
     }
     let inner = format!(
-        "{intro}<form class=keyform data-on:submit__prevent=\"@post('/users')\">\
-<input name=username data-bind:newuser placeholder=Username maxlength=64 required \
+        "{intro}<form class=\"{FORM}\" data-on:submit__prevent=\"@post('/users')\">\
+<input class=\"flex-1\" name=username data-bind:newuser placeholder=Username maxlength=64 required \
 autocomplete=off autocapitalize=none spellcheck=false aria-label=Username>\
-<select data-bind:newrole aria-label=Access>{options}</select>\
-<button class=primary>Create and invite</button></form>\
+<select class=\"px-2 py-1.5\" data-bind:newrole aria-label=Access>{options}</select>\
+<button class=\"primary\">Create and invite</button></form>\
 <div id=user-result></div>{}",
         user_list(&rows, user.user_id)
     );
-    respond(&s, &headers, &user, "Users", "users", &inner)
+    respond(&s, &headers, &user, "Users", &inner)
 }
 
 /// Datastar posts its signals as JSON: `newuser` and `newrole`.
@@ -313,12 +326,12 @@ pub(super) async fn password_form(
     events(vec![
         clear_password_signal(),
         result(&format!(
-            "<form class=keyform data-on:submit__prevent=\"@post('/users/{id}/password')\">\
-<input type=password data-bind:setpassword placeholder=\"New password for {name}\" \
+            "<form class=\"{FORM}\" data-on:submit__prevent=\"@post('/users/{id}/password')\">\
+<input class=\"flex-1\" type=password data-bind:setpassword placeholder=\"New password for {name}\" \
 minlength=8 required autocomplete=new-password aria-label=\"New password for {name}\">\
-<button class=primary>Set password</button></form>\
-<p class=sub>Signs {name} out of every device. \
-<button class=quiet data-on:click=\"@post('/users/{id}/invite?reset=true')\">Generate one and \
+<button class=\"primary\">Set password</button></form>\
+<p class=\"{SUB}\">Signs {name} out of every device. \
+<button class=\"quiet\" data-on:click=\"@post('/users/{id}/invite?reset=true')\">Generate one and \
 invite</button></p>",
         )),
     ])
@@ -351,7 +364,7 @@ pub(super) async fn set_password(
     match done {
         Some((row, Ok(_))) => events(vec![
             result(&format!(
-                "<p class=share>{}'s password is changed, and their devices are signed out.</p>",
+                "<p class=\"{COPY_ROW}\">{}'s password is changed, and their devices are signed out.</p>",
                 escape(&row.username)
             )),
             clear_password_signal(),
