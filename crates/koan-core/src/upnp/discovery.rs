@@ -80,6 +80,18 @@ pub fn in_use(renderer: &Renderer) -> Option<bool> {
     ))
 }
 
+/// The URI `renderer` is on, asked now. `None` when it does not answer.
+pub fn playing_uri(renderer: &Renderer) -> Option<String> {
+    let args = super::soap::call(
+        &super::soap::client(),
+        &renderer.av_transport,
+        "GetPositionInfo",
+        &[("InstanceID", "0")],
+    )
+    .ok()?;
+    super::soap::arg(&args, "TrackURI").map(str::to_string)
+}
+
 /// Ask every known renderer whether it is in use, each on its own thread.
 fn check_busy() {
     for renderer in renderers() {

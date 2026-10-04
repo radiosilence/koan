@@ -142,6 +142,13 @@ pub enum PlayerCommand {
     /// `UseRenderer` would be, unless playback or the output has moved since
     /// launch, in which case it is dropped: see `upnp::resume`.
     ResumeRenderer(Box<crate::upnp::Connection>),
+    /// The renderer used last time did not turn up, or is someone else's:
+    /// play here what was held for it.
+    ResumeRendererMissed,
+    /// The app is quitting. Stop the renderer, which would otherwise play out
+    /// its buffer and be left on a URL nothing serves, then answer. Nothing
+    /// else changes: the session as saved is what the next launch resumes.
+    ReleaseRenderer(crossbeam_channel::Sender<()>),
     /// Set the volume of the renderer being played to, 0–100.
     SetRendererVolume(u8),
     /// Turn shuffle on or off: the items after the cursor reordered at
@@ -195,5 +202,17 @@ impl PlayerCommand {
                 | Self::PrevTrack
                 | Self::ReplacePlaylist { play: true, .. }
         )
+    }
+}
+
+/// Stop the renderer playing, if one is, before the app quits, waiting at
+/// most `timeout` for it to answer. Call it after the session is saved.
+pub fn release_renderer(
+    player: &crossbeam_channel::Sender<PlayerCommand>,
+    timeout: std::time::Duration,
+) {
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    if player.send(PlayerCommand::ReleaseRenderer(tx)).is_ok() {
+        let _ = rx.recv_timeout(timeout);
     }
 }

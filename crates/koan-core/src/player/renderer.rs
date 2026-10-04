@@ -904,6 +904,19 @@ impl Player {
         self.timeline.set_clock(None);
     }
 
+    /// The app is quitting: stop the renderer if it holds our track. What it
+    /// was sent is served by this process, so left alone it would play out
+    /// its buffer and sit on a URL nothing answers.
+    pub(super) fn release_renderer(&mut self) {
+        let Some(link) = self.renderer.as_ref() else {
+            return;
+        };
+        if self.renderer_play().is_some_and(|p| p.loaded) {
+            log::info!("upnp: quitting; stopping {}", link.session.renderer().name);
+            let _ = link.session.stop();
+        }
+    }
+
     /// Pause on the renderer, after the session's run has been set to paused.
     pub(super) fn pause_renderer(&mut self) {
         let at = self.clock_ms();
@@ -3204,6 +3217,93 @@ mod tests {
         // Where the restored session stood: the packet holding 5s.
         let at = r.player.shared_state.position_ms();
         assert!((4_800..=5_000).contains(&at), "at {at}ms");
+    }
+
+    /// Quitting while a renderer plays stops it: what it was sent is served
+    /// by this process, and goes with it.
+    #[test]
+    fn quitting_stops_the_renderer() {
+        let mut r = rig(WAV, true, &["a.wav"]);
+        r.player.process_command(PlayerCommand::Play(r.ids[0]));
+        r.settle();
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        r.player.process_command(PlayerCommand::ReleaseRenderer(tx));
+        assert!(rx.try_recv().is_ok(), "answered");
+        assert_eq!(r.commands().last().map(String::as_str), Some("Stop"));
+    }
+
+    /// A launch whose session was playing, with the renderer used last time
+    /// being looked for: the session waits paused here, the local output
+    /// never starts, and the music plays wherever the search ends.
+    fn launched_playing() -> (Rig, Arc<std::sync::atomic::AtomicUsize>) {
+        let mut r = rig(WAV, true, &["a.wav", "b.wav"]);
+        r.player.use_renderer(None);
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        r.player.backend = Box::new(crate::player::tests::StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+            starts: starts.clone(),
+        });
+        r.player.resume_renderer = true;
+        r.player.process_command(PlayerCommand::Cue {
+            id: r.ids[0],
+            position_ms: 5_000,
+            play: true,
+        });
+        assert_eq!(r.state(), PlaybackState::Paused, "held, not playing here");
+        (r, starts)
+    }
+
+    #[test]
+    fn a_session_playing_at_quit_plays_on_the_renderer_and_never_here() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let (mut r, starts) = launched_playing();
+        let cmd = found(&r);
+        r.player.process_command(cmd);
+        assert!(r.player.renderer_loaded());
+        assert_eq!(r.state(), PlaybackState::Playing);
+        assert!(r.count("Play") >= 1);
+        assert_eq!(starts.load(Relaxed), 0, "the local output never started");
+    }
+
+    #[test]
+    fn a_session_playing_at_quit_plays_here_once_the_renderer_is_not_found() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let (mut r, starts) = launched_playing();
+        r.player
+            .process_command(PlayerCommand::ResumeRendererMissed);
+        assert!(r.player.renderer.is_none());
+        assert_eq!(r.state(), PlaybackState::Playing);
+        assert_eq!(starts.load(Relaxed), 1);
+    }
+
+    /// A pause, a move elsewhere or a stop while the renderer is looked for
+    /// ends what was held for it: nothing starts, here or there, when the
+    /// search ends.
+    #[test]
+    fn pausing_moving_or_stopping_during_the_search_starts_nothing() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let stoppers: [fn() -> PlayerCommand; 3] = [
+            || PlayerCommand::Pause,
+            || PlayerCommand::PauseAndReport(crossbeam_channel::bounded(1).0),
+            || PlayerCommand::Stop,
+        ];
+        for stop in stoppers {
+            let (mut r, starts) = launched_playing();
+            r.player.process_command(stop());
+            r.player
+                .process_command(PlayerCommand::ResumeRendererMissed);
+            assert_ne!(r.state(), PlaybackState::Playing);
+            assert_eq!(starts.load(Relaxed), 0);
+
+            let (mut r, starts) = launched_playing();
+            r.player.process_command(stop());
+            let cmd = found(&r);
+            r.player.process_command(cmd);
+            assert!(r.player.renderer.is_none(), "not taken after all");
+            assert_ne!(r.state(), PlaybackState::Playing);
+            assert_eq!(starts.load(Relaxed), 0);
+        }
     }
 
     /// Playing something, or picking an output, before the renderer turns up
