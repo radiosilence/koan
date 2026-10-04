@@ -69,6 +69,8 @@ tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 biquad = "0.6"
 fft-convolver = "0.4"
 rubato = "5"
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+yaml-rust2 = { version = "0.13.0", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 # statvfs, for the free-space check before an organize run

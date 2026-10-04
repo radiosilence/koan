@@ -24,6 +24,7 @@ final class AppState {
     let activity: ActivityModel
     let levels: PlayingLevels
     let meter: TransferMeter
+    let dsp: DspModel
     let ui = UIState()
     /// Menu enablement and single-key shortcuts — both are the menu bar's, and
     /// there isn't one on iOS.
@@ -64,6 +65,7 @@ final class AppState {
         self.activity = activity
         self.levels = PlayingLevels(engine: engine)
         self.meter = TransferMeter(engine: engine, mirror: mirror)
+        self.dsp = DspModel(engine: engine)
         library.activity = activity
         library.art = art
         library.mirror = mirror

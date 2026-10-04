@@ -223,7 +223,7 @@ A download that gives up sends `TrackFailed` instead, and the parked cursor adva
 | `device.rs` | CoreAudio device enumeration, sample rate get/set/watch (macOS only) |
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
-| `dsp/` | `Setup` (a profile with its impulse responses loaded), `Chain` (the per-session processing), the derived preamp, and `autoeq.rs`, the `ParametricEQ.txt` parser |
+| `dsp/` | `Setup` (a profile with its responses loaded), `Chain` (the per-session processing), the derived preamp. `impulse.rs`: responses as routes — a weighted mix of inputs convolved into weighted outputs, with delays — and the convolution stage. Importers for Convolver `.cfg`, CamillaDSP, Equalizer APO/AutoEQ/REW text and raw coefficients; `import.rs` sorts what it is given; `profiles.rs` saves, renames, assigns and describes profiles for every front end |
 | `viz.rs` | `VizBuffer` (lock-protected ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI thread), `VizLevels` (spectrum reduced to low/mid/high, cloning no waveform) |
 | `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold, beat detection (low-band transient). Runs at whatever rate a client sets, decays to flat when the play head stops, and parks when nothing is reading. Publishes to `VizSnapshot`. |
 | `streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
@@ -421,4 +421,6 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 | `biquad` | RBJ cookbook biquads for parametric EQ, run in f64. |
 | `fft-convolver` | Uniformly partitioned FFT convolution with no added latency and no allocation after `init`. |
 | `rubato` | FFT resampler, used only to bring a track to the rate of an impulse response. |
+| `zip` | Reading Roon filter packs. Decompression only. |
+| `yaml-rust2` | Reading CamillaDSP configs. |
 | `parking_lot` | Faster RwLock/Mutex than std (no poisoning). |

@@ -152,9 +152,9 @@ Equalisation and convolution profiles, per output device. See
 
 ```bash
 koan dsp                                        # list profiles; * marks the current output's
-koan dsp import "HD 600 ParametricEQ.txt"       # profile from an AutoEQ / Equalizer APO file
-koan dsp import eq.txt --name HD600 --device "Topping E30"
-koan dsp impulse "Living room" room-44k.wav room-48k.wav  # impulse responses, one per rate
+koan dsp import "Harman 780.zip"                # Roon zip, .cfg, WAVs, CamillaDSP, APO, AutoEQ…
+koan dsp import L48.wav R48.wav --name Room --device "Topping E30"
+koan dsp import room.txt --rate 48000           # coefficients that do not say their rate
 koan dsp use "Living room" [--device NAME]      # play a device through a profile
 koan dsp clear [--device NAME]                  # play a device untouched
 koan dsp remove NAME

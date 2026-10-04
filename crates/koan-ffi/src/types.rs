@@ -898,6 +898,136 @@ pub enum KoanError {
     /// server that answered and said no — this one is worth retrying.
     #[error("remote: {message}")]
     Remote { message: String },
+    /// An import of coefficients that say nothing of their rate. Ask, and
+    /// import again with one.
+    #[error("{message}")]
+    NeedsSampleRate { message: String },
+}
+
+/// The DSP profiles, and which the current output plays through.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DspOverview {
+    /// Off bypasses every profile.
+    pub enabled: bool,
+    /// The output device playback goes to, which profiles are chosen by.
+    pub device: Option<String>,
+    pub active: Option<String>,
+    pub profiles: Vec<DspProfileSummary>,
+}
+
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DspProfileSummary {
+    pub name: String,
+    pub devices: Vec<String>,
+    pub bands: u32,
+    /// Rates there are impulse responses for.
+    pub rates: Vec<u32>,
+    /// Why it would not load, if it would not.
+    pub problem: Option<String>,
+}
+
+/// Everything in one profile, for its page in Settings.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DspProfileDetail {
+    pub name: String,
+    pub devices: Vec<String>,
+    /// The files it was imported from.
+    pub source: Vec<String>,
+    pub bands: Vec<DspBand>,
+    pub impulses: Vec<DspImpulse>,
+    /// Gain ahead of the filters at `preamp_rate`, derived unless `preamp_set`.
+    pub preamp_db: f64,
+    pub preamp_rate: u32,
+    pub preamp_set: bool,
+    pub problem: Option<String>,
+}
+
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DspBand {
+    /// `peaking`, `low_shelf`, `high_shelf`, `low_pass`, `high_pass`,
+    /// `notch`, `band_pass`, `all_pass` or `gain`.
+    pub kind: String,
+    pub freq: f64,
+    pub gain_db: f64,
+    pub q: f64,
+    /// From 0. Empty is every channel.
+    pub channels: Vec<u16>,
+}
+
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct DspImpulse {
+    pub file: String,
+    pub rate: u32,
+    /// `None` for one response applied to every channel.
+    pub channels: Option<u32>,
+    pub taps: u32,
+    pub routes: u32,
+    /// Feeds channels into each other, as crossfeed does.
+    pub mixes: bool,
+    /// Delays channels against each other.
+    pub delayed: bool,
+    /// Where the response peaks: the delay trimmed from playback.
+    pub peak_ms: f64,
+}
+
+impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
+    fn from(d: koan_core::audio::dsp::profiles::Detail) -> Self {
+        Self {
+            name: d.name,
+            devices: d.devices,
+            source: d.source,
+            bands: d
+                .filters
+                .into_iter()
+                .map(|f| DspBand {
+                    kind: f.kind.name().to_string(),
+                    freq: f.freq,
+                    gain_db: f.gain_db,
+                    q: f.q,
+                    channels: f.channels,
+                })
+                .collect(),
+            impulses: d
+                .impulses
+                .into_iter()
+                .map(|i| DspImpulse {
+                    file: i.file,
+                    rate: i.rate,
+                    channels: i.channels.map(|c| c as u32),
+                    taps: i.taps as u32,
+                    routes: i.routes as u32,
+                    mixes: i.mixes,
+                    delayed: i.delayed,
+                    peak_ms: i.peak_ms,
+                })
+                .collect(),
+            preamp_db: d.preamp_db,
+            preamp_rate: d.preamp_rate,
+            preamp_set: d.preamp_set,
+            problem: d.problem,
+        }
+    }
+}
+
+impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
+    fn from(o: koan_core::audio::dsp::profiles::Overview) -> Self {
+        Self {
+            enabled: o.enabled,
+            device: o.device,
+            active: o.active,
+            profiles: o
+                .profiles
+                .into_iter()
+                .map(|p| DspProfileSummary {
+                    name: p.name,
+                    devices: p.devices,
+                    bands: p.bands as u32,
+                    rates: p.rates,
+                    problem: p.problem,
+                })
+                .collect(),
+        }
+    }
 }
 
 pub(crate) fn year_of(date: &str) -> Option<i32> {

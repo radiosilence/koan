@@ -511,6 +511,10 @@ fn command_loop(
             PlayerCommand::ClearOutputDevice => {
                 local_tx.send(PlayerCommand::ClearOutputDevice).ok();
             }
+            // Local output, so local processing.
+            PlayerCommand::ReloadDsp => {
+                local_tx.send(PlayerCommand::ReloadDsp).ok();
+            }
             // Not applicable in remote mode — listed explicitly so the compiler
             // catches new variants.
             PlayerCommand::TrackReady(_)

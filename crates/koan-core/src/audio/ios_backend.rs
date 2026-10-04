@@ -22,13 +22,25 @@ use super::engine;
 /// the system mixer whatever it answers.
 pub struct IosAudioBackend;
 
+/// The name of the port the session is routed to, as the app last heard it:
+/// "AirPods Pro", "Headphones", "Speaker". What DSP profiles are keyed on.
+static ROUTE: parking_lot::RwLock<Option<String>> = parking_lot::RwLock::new(None);
+
+/// Told by the app on each route change.
+pub fn set_route(name: String) {
+    *ROUTE.write() = Some(name);
+}
+
 /// The one device there is: whatever the session is routed to.
 ///
 /// Named rather than enumerated, because the name is all iOS will tell us
 /// without going through the session — and the session is the app's.
 fn current_route() -> DeviceInfo {
     DeviceInfo {
-        name: "System Output".to_string(),
+        name: ROUTE
+            .read()
+            .clone()
+            .unwrap_or_else(|| "System Output".to_string()),
         sample_rates: vec![44100.0, 48000.0],
         platform_id: 0,
     }

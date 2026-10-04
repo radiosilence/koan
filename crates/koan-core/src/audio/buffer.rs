@@ -1647,10 +1647,7 @@ mod tests {
         let processing = Processing {
             dsp: Some(Arc::new(Setup::new(
                 vec![],
-                vec![crate::audio::dsp::Impulse {
-                    rate: 48000,
-                    channels: vec![ir],
-                }],
+                vec![crate::audio::dsp::Impulse::from_channels(48000, vec![ir])],
             ))),
             ..Processing::default()
         };

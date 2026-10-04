@@ -15,22 +15,25 @@
 //! flushed at its end. Output frame `n` is then input frame `n` at the output
 //! rate, which is what the timeline counts and the playhead reads.
 
-pub mod autoeq;
+pub mod apo;
+pub mod camilla;
+pub mod convolver;
+pub mod import;
+pub mod impulse;
+pub mod profiles;
+pub mod raw;
 
 use std::collections::BTreeMap;
-use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use biquad::{Biquad, Coefficients, DirectForm2Transposed, Hertz, Type};
-use fft_convolver::FFTConvolver;
 use realfft::RealFftPlanner;
 use rubato::audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Indexing, Resampler};
-use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, TrackType};
-use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
 use thiserror::Error;
+
+use impulse::{Convolve, read_audio};
+pub use impulse::{Impulse, Route};
 
 use crate::config::{DspProfile, EqFilter, EqFilterKind};
 
@@ -52,62 +55,25 @@ pub struct DspStatus {
     pub convolution_rate: Option<u32>,
 }
 
-/// An impulse response at the rate it was designed for: one channel for every
-/// output channel, or one per channel.
-#[derive(Debug, Clone)]
-pub struct Impulse {
-    pub rate: u32,
-    pub channels: Vec<Vec<f32>>,
-}
-
-impl Impulse {
-    /// The frame the response peaks at — its group delay, for a linear-phase
-    /// filter. One figure for every channel, so they stay aligned.
-    fn delay(&self) -> usize {
-        let mut best = (0, 0.0f32);
-        for ch in &self.channels {
-            for (i, &v) in ch.iter().enumerate() {
-                if v.abs() > best.1 {
-                    best = (i, v.abs());
-                }
-            }
-        }
-        best.0
-    }
-
-    fn for_channel(&self, c: usize) -> &[f32] {
-        &self.channels[if self.channels.len() == 1 { 0 } else { c }]
-    }
-
-    fn fits(&self, channels: usize) -> bool {
-        self.channels.len() == 1 || self.channels.len() == channels
-    }
-}
-
 /// A profile ready to run, its impulse responses read from disk.
 #[derive(Debug, Clone)]
 pub struct Setup {
     pub name: String,
     preamp_db: Option<f64>,
     filters: Vec<EqFilter>,
-    impulses: BTreeMap<u32, Impulse>,
+    /// By rate. More than one at a rate where they are for different channel
+    /// counts.
+    impulses: BTreeMap<u32, Vec<Impulse>>,
 }
 
 impl Setup {
     /// `None` for a profile that would leave the audio as it is.
     pub fn load(profile: &DspProfile, base: &Path) -> Result<Option<Self>, DspError> {
-        let mut impulses = BTreeMap::new();
+        let mut impulses: BTreeMap<u32, Vec<Impulse>> = BTreeMap::new();
         for path in &profile.impulses {
-            let path = if path.is_absolute() {
-                path.clone()
-            } else {
-                base.join(path)
-            };
-            let impulse = read_impulse(&path).map_err(|reason| DspError::Impulse {
-                path: path.clone(),
-                reason,
-            })?;
-            impulses.insert(impulse.rate, impulse);
+            for impulse in load_impulses(path, base)? {
+                impulses.entry(impulse.rate).or_default().push(impulse);
+            }
         }
         if profile.filters.is_empty()
             && impulses.is_empty()
@@ -123,13 +89,40 @@ impl Setup {
         }))
     }
 
+    /// The preamp at `rate` for `channels`: the profile's own, or the one
+    /// derived from the peak gain of its bands and response there.
+    pub fn preamp_db(&self, rate: u32, channels: usize) -> f64 {
+        let impulse = self
+            .impulses
+            .get(&rate)
+            .and_then(|at_rate| at_rate.iter().find(|i| i.fits(channels)));
+        let bands = self.bands(rate, channels);
+        self.preamp_db
+            .unwrap_or_else(|| -20.0 * peak_gain(&bands, impulse, channels, rate).log10().max(0.0))
+    }
+
+    fn bands(&self, rate: u32, channels: usize) -> Vec<Vec<Coefficients<f64>>> {
+        (0..channels)
+            .map(|c| {
+                self.filters
+                    .iter()
+                    .filter(|f| f.channels.is_empty() || f.channels.contains(&(c as u16)))
+                    .filter_map(|f| coefficients(f, rate))
+                    .collect()
+            })
+            .collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn new(filters: Vec<EqFilter>, impulses: Vec<Impulse>) -> Self {
         Self {
             name: "test".into(),
             preamp_db: None,
             filters,
-            impulses: impulses.into_iter().map(|i| (i.rate, i)).collect(),
+            impulses: impulses.into_iter().fold(BTreeMap::new(), |mut m, i| {
+                m.entry(i.rate).or_insert_with(Vec::new).push(i);
+                m
+            }),
         }
     }
 
@@ -149,6 +142,11 @@ impl Setup {
             .expect("not empty")
     }
 
+    /// Rates there are responses for.
+    pub fn rates(&self) -> Vec<u32> {
+        self.impulses.keys().copied().collect()
+    }
+
     pub fn status(&self, source: u32) -> DspStatus {
         DspStatus {
             profile: self.name.clone(),
@@ -158,61 +156,20 @@ impl Setup {
     }
 }
 
-fn read_impulse(path: &Path) -> Result<Impulse, String> {
-    let file = File::open(path).map_err(|e| e.to_string())?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
-    }
-    let mut reader = symphonia::default::get_probe()
-        .probe(
-            &hint,
-            mss,
-            FormatOptions::default(),
-            MetadataOptions::default(),
-        )
-        .map_err(|e| e.to_string())?;
-    let track = reader
-        .default_track(TrackType::Audio)
-        .ok_or("no audio track")?;
-    let track_id = track.id;
-    let params = track
-        .codec_params
-        .as_ref()
-        .and_then(|p| p.audio())
-        .ok_or("no audio track")?;
-    let rate = params.sample_rate.ok_or("no sample rate")?;
-    let mut decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(params, &Default::default())
-        .map_err(|e| e.to_string())?;
-
-    let mut interleaved = Vec::new();
-    let mut packet_samples: Vec<f32> = Vec::new();
-    let mut channels = 0;
-    while let Some(packet) = reader.next_packet().map_err(|e| e.to_string())? {
-        if packet.track_id != track_id {
-            continue;
-        }
-        let decoded = decoder.decode(&packet).map_err(|e| e.to_string())?;
-        channels = decoded.spec().channels().count();
-        decoded.copy_to_vec_interleaved(&mut packet_samples);
-        interleaved.extend_from_slice(&packet_samples);
-    }
-    if channels == 0 || interleaved.is_empty() {
-        return Err("empty".into());
-    }
-    let channels = (0..channels)
-        .map(|c| {
-            interleaved
-                .iter()
-                .skip(c)
-                .step_by(channels)
-                .copied()
-                .collect()
-        })
-        .collect();
-    Ok(Impulse { rate, channels })
+/// The responses one entry of a profile's `impulses` names: a WAV (or any
+/// audio file) at its own rate, or a Convolver `.cfg`.
+pub fn load_impulses(path: &Path, base: &Path) -> Result<Vec<Impulse>, DspError> {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    };
+    let read = if convolver::is_cfg(&path) {
+        convolver::read(&path)
+    } else {
+        read_audio(&path).map(|(rate, channels)| vec![Impulse::from_channels(rate, channels)])
+    };
+    read.map_err(|reason| DspError::Impulse { path, reason })
 }
 
 /// The processing for one session, built for the first track's format.
@@ -221,8 +178,8 @@ pub struct Chain {
     out_rate: u32,
     gain: f32,
     resample: Option<Resample>,
-    /// `filters × channels`, channel-major.
-    eq: Vec<DirectForm2Transposed<f64>>,
+    /// Each channel's bands, in order.
+    eq: Vec<Vec<DirectForm2Transposed<f64>>>,
     convolve: Option<Convolve>,
     out: Vec<f32>,
 }
@@ -231,35 +188,26 @@ impl Chain {
     pub fn new(setup: &Setup, source_rate: u32, channels: u16) -> Self {
         let channels = channels as usize;
         let out_rate = setup.output_rate(source_rate);
-        let impulse = setup
-            .impulses
-            .get(&out_rate)
-            .filter(|i| {
-                let fits = i.fits(channels);
-                if !fits {
-                    log::warn!(
-                        "dsp: impulse at {out_rate}Hz has {} channels, the stream {channels}; convolution skipped",
-                        i.channels.len()
-                    );
-                }
-                fits
-            });
-
-        let coefficients: Vec<_> = setup
-            .filters
-            .iter()
-            .filter_map(|f| coefficients(f, out_rate))
-            .collect();
-        let preamp_db = setup.preamp_db.unwrap_or_else(|| {
-            -20.0 * peak_gain(&coefficients, impulse, out_rate).log10().max(0.0)
+        let impulse = setup.impulses.get(&out_rate).and_then(|at_rate| {
+            let fitting = at_rate.iter().find(|i| i.fits(channels));
+            if fitting.is_none() {
+                log::warn!(
+                    "dsp: no impulse at {out_rate}Hz for {channels} channels; convolution skipped"
+                );
+            }
+            fitting
         });
+
+        let bands = setup.bands(out_rate, channels);
+        let preamp_db = setup.preamp_db(out_rate, channels);
         log::info!(
             "dsp: '{}' at {out_rate}Hz — {} bands, preamp {preamp_db:.2} dB{}",
             setup.name,
-            coefficients.len(),
+            setup.filters.len(),
             impulse.map_or(String::new(), |i| format!(
-                ", {} taps, {} frames delay",
-                i.channels[0].len(),
+                ", {} routes of {} taps, {} frames delay",
+                i.routes.len(),
+                i.taps(),
                 i.delay()
             ))
         );
@@ -269,8 +217,9 @@ impl Chain {
             out_rate,
             gain: 10f64.powf(preamp_db / 20.0) as f32,
             resample: Resample::new(source_rate, out_rate, channels),
-            eq: (0..channels)
-                .flat_map(|_| coefficients.iter().map(|&c| DirectForm2Transposed::new(c)))
+            eq: bands
+                .iter()
+                .map(|b| b.iter().map(|&c| DirectForm2Transposed::new(c)).collect())
                 .collect(),
             convolve: impulse.map(|i| Convolve::new(i, channels)),
             out: Vec::new(),
@@ -338,12 +287,11 @@ impl Chain {
 
     /// Gain, bands and convolution over `self.out`, at the output rate.
     fn post(&mut self) {
-        let n = self.eq.len() / self.channels.max(1);
-        if self.gain != 1.0 || n > 0 {
+        if self.gain != 1.0 || self.eq.iter().any(|b| !b.is_empty()) {
             for frame in self.out.chunks_exact_mut(self.channels) {
-                for (c, s) in frame.iter_mut().enumerate() {
+                for (s, bands) in frame.iter_mut().zip(&mut self.eq) {
                     let mut x = (*s * self.gain) as f64;
-                    for f in &mut self.eq[c * n..(c + 1) * n] {
+                    for f in bands {
                         x = f.run(x);
                     }
                     *s = x as f32;
@@ -358,6 +306,18 @@ impl Chain {
 
 fn coefficients(f: &EqFilter, rate: u32) -> Option<Coefficients<f64>> {
     let kind = match f.kind {
+        EqFilterKind::Gain => {
+            return Some(Coefficients {
+                a1: 0.0,
+                a2: 0.0,
+                b0: 10f64.powf(f.gain_db / 20.0),
+                b1: 0.0,
+                b2: 0.0,
+            });
+        }
+        EqFilterKind::Notch => Type::Notch,
+        EqFilterKind::BandPass => Type::BandPass,
+        EqFilterKind::AllPass => Type::AllPass,
         EqFilterKind::Peaking => Type::PeakingEQ(f.gain_db),
         EqFilterKind::LowShelf => Type::LowShelf(f.gain_db),
         EqFilterKind::HighShelf => Type::HighShelf(f.gain_db),
@@ -384,27 +344,39 @@ fn magnitude(c: &Coefficients<f64>, w: f64) -> f64 {
     num / den
 }
 
-/// The largest gain, linear, the bands and the response apply at any
-/// frequency. A preamp of its inverse keeps a full-scale sine at that frequency
-/// at full scale, as AutoEQ's `Preamp` line does.
-fn peak_gain(bands: &[Coefficients<f64>], impulse: Option<&Impulse>, rate: u32) -> f64 {
-    let eq = |w: f64| bands.iter().map(|c| magnitude(c, w)).product::<f64>();
+/// The largest gain, linear, the bands and the response apply to any channel
+/// at any frequency. A preamp of its inverse keeps a full-scale sine at that
+/// frequency at full scale, as AutoEQ's `Preamp` line does. Routes summing
+/// into one output are added by magnitude, which bounds what they can reach.
+fn peak_gain(
+    bands: &[Vec<Coefficients<f64>>],
+    impulse: Option<&Impulse>,
+    channels: usize,
+    rate: u32,
+) -> f64 {
+    let eq = |c: usize, w: f64| {
+        bands
+            .get(c)
+            .map_or(1.0, |b| b.iter().map(|c| magnitude(c, w)).product::<f64>())
+    };
     let Some(impulse) = impulse else {
         let (lo, hi) = (10f64.ln(), (rate as f64 * 0.499).ln());
         return (0..=4096)
-            .map(|i| {
+            .flat_map(|i| {
                 let f = (lo + (hi - lo) * i as f64 / 4096.0).exp();
-                eq(std::f64::consts::TAU * f / rate as f64)
+                let w = std::f64::consts::TAU * f / rate as f64;
+                (0..channels.max(1)).map(move |c| eq(c, w))
             })
             .fold(0.0, f64::max);
     };
-    let size = impulse.channels[0].len().next_power_of_two().max(8192);
+    let routes = impulse.routes_for(channels);
+    let size = impulse.taps().next_power_of_two().max(8192);
     let fft = RealFftPlanner::<f64>::new().plan_fft_forward(size);
     let mut spectrum = fft.make_output_vec();
-    let mut peak = 0.0f64;
-    for ch in &impulse.channels {
+    let mut per_output = vec![vec![0.0f64; spectrum.len()]; channels];
+    for r in &routes {
         let mut input = fft.make_input_vec();
-        for (d, &s) in input.iter_mut().zip(ch) {
+        for (d, &s) in input.iter_mut().zip(&r.ir) {
             *d = s as f64;
         }
         if fft.process(&mut input, &mut spectrum).is_err() {
@@ -412,10 +384,19 @@ fn peak_gain(bands: &[Coefficients<f64>], impulse: Option<&Impulse>, rate: u32) 
         }
         for (k, bin) in spectrum.iter().enumerate() {
             let w = std::f64::consts::TAU * k as f64 / size as f64;
-            peak = peak.max(bin.norm() * eq(w));
+            let fed: f64 = r
+                .inputs
+                .iter()
+                .map(|&(c, g)| g.abs() as f64 * eq(c, w))
+                .sum();
+            for &(o, g) in &r.outputs {
+                if let Some(out) = per_output.get_mut(o) {
+                    out[k] += bin.norm() * fed * g.abs() as f64;
+                }
+            }
         }
     }
-    peak
+    per_output.iter().flatten().copied().fold(0.0, f64::max)
 }
 
 /// Sample-rate conversion to an impulse response's rate.
@@ -539,68 +520,6 @@ impl Resample {
     }
 }
 
-/// FIR convolution, one convolver per channel.
-struct Convolve {
-    convolvers: Vec<FFTConvolver<f32>>,
-    channels: usize,
-    delay: usize,
-    /// Output frames of the response's delay still to drop.
-    skip: usize,
-    input: Vec<f32>,
-    output: Vec<f32>,
-}
-
-impl Convolve {
-    fn new(impulse: &Impulse, channels: usize) -> Self {
-        let convolvers = (0..channels)
-            .map(|c| {
-                let mut conv = FFTConvolver::default();
-                // Only a block size of zero is refused.
-                let _ = conv.init(1024, impulse.for_channel(c));
-                conv
-            })
-            .collect();
-        let delay = impulse.delay();
-        Self {
-            convolvers,
-            channels,
-            delay,
-            skip: delay,
-            input: Vec::new(),
-            output: Vec::new(),
-        }
-    }
-
-    fn run(&mut self, buf: &mut Vec<f32>) {
-        let ch = self.channels;
-        let frames = buf.len() / ch;
-        self.input.resize(frames, 0.0);
-        self.output.resize(frames, 0.0);
-        for (c, conv) in self.convolvers.iter_mut().enumerate() {
-            for (d, s) in self.input.iter_mut().zip(buf.iter().skip(c).step_by(ch)) {
-                *d = *s;
-            }
-            if conv.process(&self.input, &mut self.output).is_err() {
-                continue;
-            }
-            for (d, s) in buf.iter_mut().skip(c).step_by(ch).zip(&self.output) {
-                *d = *s;
-            }
-        }
-        let drop = self.skip.min(frames);
-        self.skip -= drop;
-        buf.drain(..drop * ch);
-    }
-
-    /// The response's delay worth of silence, which brings out the last of
-    /// the audio.
-    fn flush(&mut self, dst: &mut Vec<f32>) {
-        let mut tail = vec![0.0; self.delay * self.channels];
-        self.run(&mut tail);
-        dst.extend_from_slice(&tail);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,6 +530,7 @@ mod tests {
             freq,
             gain_db,
             q,
+            channels: vec![],
         }
     }
 
@@ -681,10 +601,7 @@ mod tests {
     fn delayed_impulse(rate: u32, delay: usize) -> Impulse {
         let mut ir = vec![0.0; delay * 2 + 1];
         ir[delay] = 1.0;
-        Impulse {
-            rate,
-            channels: vec![ir],
-        }
+        Impulse::from_channels(rate, vec![ir])
     }
 
     #[test]
@@ -765,16 +682,51 @@ mod tests {
     fn the_preamp_covers_the_response_gain() {
         let mut ir = vec![0.0; 64];
         ir[0] = 2.0;
-        let setup = Setup::new(
-            vec![],
-            vec![Impulse {
-                rate: 48000,
-                channels: vec![ir],
-            }],
-        );
+        let setup = Setup::new(vec![], vec![Impulse::from_channels(48000, vec![ir])]);
         let mut chain = Chain::new(&setup, 48000, 1);
         let (out, _) = run_all(&mut chain, &[0.5; 4800], 480);
         assert!(out.iter().all(|&s| (s - 0.5).abs() < 1e-4));
+    }
+
+    #[test]
+    fn bands_for_one_channel_leave_the_other_alone() {
+        let mut b = band(EqFilterKind::Gain, 1000.0, -6.0, 1.0);
+        b.channels = vec![1];
+        let mut setup = Setup::new(vec![b], vec![]);
+        setup.preamp_db = Some(0.0);
+        let mut chain = Chain::new(&setup, 48000, 2);
+        let (out, _) = run_all(&mut chain, &[0.5, 0.5, 0.5, 0.5], 4);
+        assert_eq!(out[0], 0.5);
+        assert!((out[1] - 0.25).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_route_can_feed_one_channel_into_the_other() {
+        // Left passes; right is left at half, plus right.
+        let impulse = Impulse {
+            rate: 48000,
+            channels: Some(2),
+            routes: vec![
+                Route {
+                    ir: vec![1.0],
+                    inputs: vec![(0, 1.0)],
+                    outputs: vec![(0, 1.0)],
+                },
+                Route {
+                    ir: vec![1.0],
+                    inputs: vec![(0, 0.5), (1, 1.0)],
+                    outputs: vec![(1, 1.0)],
+                },
+            ],
+            in_delays: vec![],
+            out_delays: vec![0, 1],
+        };
+        let mut setup = Setup::new(vec![], vec![impulse]);
+        setup.preamp_db = Some(0.0);
+        let mut chain = Chain::new(&setup, 48000, 2);
+        let (out, _) = run_all(&mut chain, &[0.4, 0.2, 0.0, 0.0], 4);
+        // The right output is a frame late, by its delay.
+        assert_eq!(out, vec![0.4, 0.0, 0.0, 0.4]);
     }
 
     #[test]
@@ -808,9 +760,9 @@ mod tests {
             ..Default::default()
         };
         let setup = Setup::load(&profile, &dir).unwrap().unwrap();
-        let impulse = &setup.impulses[&96000];
-        assert_eq!(impulse.channels.len(), 2);
-        assert_eq!(impulse.channels[0], vec![0.0, 0.5, 0.0, 0.0]);
+        let impulse = &setup.impulses[&96000][0];
+        assert_eq!(impulse.channels, Some(2));
+        assert_eq!(impulse.routes[0].ir, vec![0.0, 0.5, 0.0, 0.0]);
         assert_eq!(impulse.delay(), 1);
 
         let missing = DspProfile {

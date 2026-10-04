@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 /// commit when you finish editing, and the window re-reads on focus so a change
 /// made elsewhere is not silently overwritten.
 struct SettingsView: View {
+    @Environment(AppState.self) private var app
     @Environment(LibraryModel.self) private var library
     @Environment(ActivityModel.self) private var activity
 
@@ -82,6 +83,9 @@ struct SettingsView: View {
         // The size of a settings window. A phone gets whatever it has.
         #if os(macOS)
         .frame(width: 560, height: 460)
+        #endif
+        #if os(macOS)
+        .modifier(DspImportPrompts(dsp: app.dsp))
         #endif
         .task {
             if model == nil {
@@ -484,8 +488,183 @@ private struct PlaybackSettings: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+
+            DspSettings()
         }
         .formStyle(.grouped)
+    }
+}
+
+/// Correction for the output in use: a profile of bands, impulse responses or
+/// both, imported from what other tools write.
+private struct DspSettings: View {
+    @Environment(AppState.self) private var app
+    @State private var importing = false
+    /// The profile whose page is open, on the Mac, where settings has no
+    /// navigation stack to push it onto.
+    @State private var showing: String?
+
+    var body: some View {
+        let dsp = app.dsp
+        Section {
+            if let o = dsp.overview {
+                Toggle("Process audio", isOn: Binding(
+                    get: { o.enabled },
+                    set: { dsp.setEnabled($0) }
+                ))
+                if let device = o.device, !o.profiles.isEmpty {
+                    Picker("Profile for \(device)", selection: Binding(
+                        get: { o.active ?? "" },
+                        set: { dsp.use($0.isEmpty ? nil : $0) }
+                    )) {
+                        Text("None").tag("")
+                        ForEach(o.profiles, id: \.name) { p in
+                            Text(p.name).tag(p.name)
+                        }
+                    }
+                    .disabled(!o.enabled)
+                }
+                ForEach(o.profiles, id: \.name) { p in
+                    #if os(iOS)
+                    NavigationLink {
+                        DspProfilePage(dsp: dsp, name: p.name)
+                    } label: {
+                        ProfileRow(profile: p, active: o.active == p.name)
+                    }
+                    .swipeActions {
+                        Button("Delete", role: .destructive) { dsp.remove(p.name) }
+                    }
+                    #else
+                    Button {
+                        showing = p.name
+                    } label: {
+                        ProfileRow(profile: p, active: o.active == p.name)
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Delete", role: .destructive) { dsp.remove(p.name) }
+                    }
+                    #endif
+                }
+            }
+            Button("Import…") { importing = true }
+            if let error = dsp.lastError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        } header: {
+            Text("EQ and convolution")
+        } footer: {
+            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs. Importing into a profile of the same name adds to it. An output without a profile plays untouched.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .fileImporter(
+            isPresented: $importing,
+            allowedContentTypes: [.item, .folder],
+            allowsMultipleSelection: true
+        ) { result in
+            if case let .success(urls) = result, !urls.isEmpty {
+                dsp.importFiles(urls)
+            }
+        }
+        .task { dsp.reload() }
+        #if os(macOS)
+        .sheet(item: Binding(
+            get: { showing.map(ShownProfile.init) },
+            set: { showing = $0?.name }
+        )) { shown in
+            NavigationStack {
+                DspProfilePage(dsp: dsp, name: shown.name)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showing = nil }
+                        }
+                    }
+            }
+            .frame(minWidth: 480, minHeight: 440)
+        }
+        #endif
+    }
+}
+
+private struct ShownProfile: Identifiable {
+    let name: String
+    var id: String { name }
+}
+
+/// A profile in the list: its name, what it holds, and a tick on the one the
+/// output in use plays through.
+private struct ProfileRow: View {
+    let profile: DspProfileSummary
+    let active: Bool
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(profile.name)
+                if let problem = profile.problem {
+                    Text(problem)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else {
+                    Text(DspModel.describe(profile))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if active {
+                Image(systemName: "checkmark")
+                    .foregroundStyle(.tint)
+                    .accessibilityLabel("In use")
+            }
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+/// The questions an import can stop on — what rate bare coefficients are at —
+/// and the offer of what it made for the output in use. On the settings page,
+/// and on iOS over everything, since a share can arrive anywhere.
+struct DspImportPrompts: ViewModifier {
+    let dsp: DspModel
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                "What sample rate is it at?",
+                isPresented: Binding(
+                    get: { dsp.needsRate != nil },
+                    set: { if !$0 { dsp.needsRate = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                ForEach(DspModel.rates, id: \.self) { rate in
+                    Button("\(DspModel.khz(rate)) kHz") { dsp.retry(rate: rate) }
+                }
+                Button("Cancel", role: .cancel) { dsp.needsRate = nil }
+            } message: {
+                Text("These coefficients carry no rate of their own. Use the one the filter was designed at.")
+            }
+            .alert(
+                "Imported \(dsp.imported ?? "")",
+                isPresented: Binding(
+                    get: { dsp.imported != nil },
+                    set: { if !$0 { dsp.imported = nil } }
+                ),
+                presenting: dsp.imported
+            ) { name in
+                if let device = dsp.overview?.device, dsp.overview?.active != name {
+                    Button("Use for \(device)") { dsp.use(name) }
+                }
+                Button("Done", role: .cancel) {}
+            } message: { _ in
+                if let device = dsp.overview?.device, dsp.overview?.active == nil {
+                    Text("\(device) plays untouched until it has a profile.")
+                }
+            }
     }
 }
 

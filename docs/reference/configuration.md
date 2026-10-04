@@ -446,14 +446,19 @@ They describe the listening setup, so all of `[dsp]` belongs to the machine. See
 enabled = true                      # false bypasses every profile
 
 [[dsp.profiles]]
-name = "HD 600"
+name = "Living room"
 devices = ["Topping E30"]           # as `koan devices` names them
+impulses = ["dsp/living-room/48000.wav"]  # WAV or Convolver .cfg per rate; relative to this directory
 # preamp_db = -6.0                  # unset: derived from the filters' peak gain
 filters = [
     { type = "peaking", freq = 20.0, gain_db = -1.3, q = 2.0 },
+    { type = "gain", freq = 1000.0, gain_db = -2.0, channels = [1] },  # channels from 0; unset is all
 ]
-impulses = ["room-48k.wav"]         # WAV, one per sample rate; relative to this directory
 ```
+
+Profiles are normally made by importing (`koan dsp import`, or Settings in the
+apps), which reads every format the guide lists and keeps the result under
+`dsp/` here.
 
 ---
 

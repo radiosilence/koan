@@ -40,6 +40,7 @@ struct KoanIOSApp: App {
                         .environment(state.mirror)
                         .environment(\.powerSaving, powerSaving)
                         .modifier(InviteConfirmation(state: state))
+                        .modifier(DspImportPrompts(dsp: state.dsp))
                         .tint(.koanAccent)
                 } else if let startupError {
                     ContentUnavailableView(
@@ -51,9 +52,11 @@ struct KoanIOSApp: App {
                     Splash()
                 }
             }
-            // An invite, as a universal link or through `koan://join`.
+            // An invite, as a universal link or through `koan://join`; a filter
+            // or EQ file opened in koan or shared to it; `koan://dsp-inbox`,
+            // which the share extension opens after leaving something.
             .onOpenURL { url in
-                if let state { state.open(url: url) } else { pendingURL = url }
+                if let state { open(url, in: state) } else { pendingURL = url }
             }
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                 guard let url = activity.webpageURL else { return }
@@ -76,6 +79,7 @@ struct KoanIOSApp: App {
                 // with the rest of the app; link again now rather than when
                 // its retry comes round.
                 if phase == .active { state?.player.engine.linkNudge() }
+                if phase == .active, let state { ShareInbox.collect(into: state.dsp) }
             }
             .onChange(of: state?.player.isPlaying ?? false) { _, playing in
                 state?.player.engine.setPlaying(playing: playing)
@@ -118,13 +122,30 @@ struct KoanIOSApp: App {
                     }
                     state = built
                     if let pendingURL {
-                        built.open(url: pendingURL)
+                        open(pendingURL, in: built)
                         self.pendingURL = nil
                     }
+                    session.onRoute = { [weak built] name in
+                        guard let engine = built?.player.engine else { return }
+                        Task { try? await engine.setAudioRoute(name: name) }
+                    }
+                    ShareInbox.collect(into: built.dsp)
                 } catch {
                     startupError = String(describing: error)
                 }
             }
+        }
+    }
+}
+
+extension KoanIOSApp {
+    private func open(_ url: URL, in state: AppState) {
+        if url.isFileURL {
+            state.dsp.importFiles([url])
+        } else if url.scheme == "koan", url.host == "dsp-inbox" {
+            ShareInbox.collect(into: state.dsp)
+        } else {
+            state.open(url: url)
         }
     }
 }

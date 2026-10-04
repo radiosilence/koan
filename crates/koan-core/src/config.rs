@@ -523,10 +523,14 @@ pub struct DspProfile {
     /// exported at; a relative path is read from beside the config. Each
     /// file's own rate is the rate it applies to.
     pub impulses: Vec<PathBuf>,
+    /// The files it was imported from, by name, for showing where it came
+    /// from. Nothing reads them again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source: Vec<String>,
 }
 
 /// One parametric band, as AutoEQ and Equalizer APO describe it.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EqFilter {
     #[serde(rename = "type")]
     pub kind: EqFilterKind,
@@ -536,6 +540,9 @@ pub struct EqFilter {
     pub gain_db: f64,
     #[serde(default = "default_q")]
     pub q: f64,
+    /// The channels it applies to, from 0. Empty is every channel.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channels: Vec<u16>,
 }
 
 fn default_q() -> f64 {
@@ -550,6 +557,28 @@ pub enum EqFilterKind {
     HighShelf,
     LowPass,
     HighPass,
+    Notch,
+    BandPass,
+    AllPass,
+    /// Flat gain, `gain_db`: a channel's own preamp.
+    Gain,
+}
+
+impl EqFilterKind {
+    /// As written in the config.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Peaking => "peaking",
+            Self::LowShelf => "low_shelf",
+            Self::HighShelf => "high_shelf",
+            Self::LowPass => "low_pass",
+            Self::HighPass => "high_pass",
+            Self::Notch => "notch",
+            Self::BandPass => "band_pass",
+            Self::AllPass => "all_pass",
+            Self::Gain => "gain",
+        }
+    }
 }
 
 /// Which of the two files a setting is written to when koan changes it itself.
@@ -1216,7 +1245,7 @@ fn is_tracked_by_git(path: &Path) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::fs;
 
@@ -1735,7 +1764,7 @@ fps = 30
 
     /// `persist` reads and writes process-global paths, so these run one at a
     /// time rather than racing each other through `set_config_dir`.
-    static PERSIST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(crate) static PERSIST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// Point config at a fresh directory and hand back (base, local) paths.
     fn persist_sandbox(name: &str) -> (PathBuf, PathBuf) {
@@ -1816,15 +1845,18 @@ fps = 30
                     freq: 20.0,
                     gain_db: -1.3,
                     q: 2.0,
+                    channels: vec![],
                 },
                 EqFilter {
                     kind: EqFilterKind::HighShelf,
                     freq: 10000.0,
                     gain_db: 2.5,
                     q: 0.7,
+                    channels: vec![],
                 },
             ],
             impulses: vec![],
+            source: vec![],
         };
         Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
 

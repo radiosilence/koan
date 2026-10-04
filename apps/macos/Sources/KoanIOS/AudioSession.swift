@@ -26,6 +26,18 @@ final class AudioSession {
     var onInterruptionEnded: ((_ shouldResume: Bool) -> Void)?
     /// The route went away underneath us — headphones unplugged, a dock removed.
     var onRouteLost: (() -> Void)?
+    /// The name of the port audio now goes to — "AirPods Pro", "Headphones",
+    /// "Speaker" — which DSP profiles are chosen by. Told on activation and on
+    /// every change.
+    var onRoute: ((String) -> Void)? {
+        didSet { reportRoute() }
+    }
+
+    private func reportRoute() {
+        if let port = AVAudioSession.sharedInstance().currentRoute.outputs.first {
+            onRoute?(port.portName)
+        }
+    }
     /// Where interruption events are written, so a failure to resume on a
     /// real phone can be read back afterwards.
     var note: ((String) -> Void)?
@@ -182,6 +194,7 @@ final class AudioSession {
         let route = AVAudioSession.sharedInstance().currentRoute.outputs
             .map { $0.portType.rawValue }.joined(separator: ",")
         note?("route change reason=\(reason.rawValue) now=\(route)")
+        reportRoute()
         // The only reason that must pause. The others — a better route
         // appearing, a category change — are not the user walking away.
         if reason == .oldDeviceUnavailable {

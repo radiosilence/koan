@@ -1846,6 +1846,110 @@ impl KoanEngine {
         koan_core::remote::link::set_activity(token.zip(device).map(|(t, d)| (t, d, sandbox)));
     }
 
+    // --- DSP ---------------------------------------------------------------
+
+    pub async fn dsp_overview(self: Arc<Self>) -> DspOverview {
+        offload::offload(move || koan_core::audio::dsp::profiles::overview().into()).await
+    }
+
+    /// Import files, folders or zips as one profile and apply it. `name`
+    /// replaces the one taken from the files; `rate` is for coefficients with
+    /// none of their own, asked for after a `NeedsSampleRate`. Returns the
+    /// profile's name.
+    pub async fn dsp_import(
+        self: Arc<Self>,
+        paths: Vec<String>,
+        name: Option<String>,
+        rate: Option<u32>,
+    ) -> Result<String, KoanError> {
+        offload::sequenced(move || {
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            let imported =
+                koan_core::audio::dsp::import::import(&paths, rate).map_err(dsp_error)?;
+            self.save_dsp(imported, name)
+        })
+        .await
+    }
+
+    /// Import text: shared from another app, or pasted.
+    pub async fn dsp_import_text(
+        self: Arc<Self>,
+        text: String,
+        name: Option<String>,
+        rate: Option<u32>,
+    ) -> Result<String, KoanError> {
+        offload::sequenced(move || {
+            let imported =
+                koan_core::audio::dsp::import::import_text(&text, rate).map_err(dsp_error)?;
+            self.save_dsp(imported, name)
+        })
+        .await
+    }
+
+    pub async fn dsp_detail(self: Arc<Self>, name: String) -> Option<DspProfileDetail> {
+        offload::offload(move || koan_core::audio::dsp::profiles::detail(&name).map(Into::into))
+            .await
+    }
+
+    pub async fn dsp_rename(self: Arc<Self>, old: String, new: String) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::rename(&old, &new)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Play the current output through `profile`, or untouched with `None`.
+    pub async fn dsp_assign(self: Arc<Self>, profile: Option<String>) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            let device =
+                koan_core::audio::dsp::profiles::current_device().ok_or(KoanError::Audio {
+                    message: "no output device".into(),
+                })?;
+            koan_core::audio::dsp::profiles::assign(profile.as_deref(), &device)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    pub async fn dsp_remove(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::remove(&name)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    pub async fn dsp_set_enabled(self: Arc<Self>, enabled: bool) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_enabled(enabled)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// The name of the port iOS routes audio to, on each route change: what
+    /// profiles are chosen by on a phone. Does nothing elsewhere.
+    pub async fn set_audio_route(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+        #[cfg(target_os = "ios")]
+        {
+            offload::sequenced(move || {
+                koan_core::audio::ios_backend::set_route(name);
+                self.send_local(PlayerCommand::ReloadDsp)
+            })
+            .await
+        }
+        #[cfg(not(target_os = "ios"))]
+        {
+            let _ = name;
+            Ok(())
+        }
+    }
+
     // --- Settings ----------------------------------------------------------
 
     /// The whole configuration, as the settings window shows it.
@@ -3435,6 +3539,17 @@ impl KoanEngine {
     }
 
     /// Send to this device's player, whatever the app is controlling.
+    fn save_dsp(
+        &self,
+        imported: koan_core::audio::dsp::import::Imported,
+        name: Option<String>,
+    ) -> Result<String, KoanError> {
+        let name = koan_core::audio::dsp::profiles::save(imported, name.as_deref())
+            .map_err(|message| KoanError::BadArgument { message })?;
+        self.send_local(PlayerCommand::ReloadDsp)?;
+        Ok(name)
+    }
+
     fn send_local(&self, cmd: PlayerCommand) -> Result<(), KoanError> {
         self.tx.send(cmd).map_err(|e| KoanError::Player {
             message: e.to_string(),
@@ -4312,5 +4427,15 @@ mod restore_tests {
             PathBuf::from(stale),
             "unknown id: kept as saved"
         );
+    }
+}
+
+fn dsp_error(e: koan_core::audio::dsp::import::ImportError) -> KoanError {
+    use koan_core::audio::dsp::import::ImportError;
+    match e {
+        ImportError::NeedsRate(_) => KoanError::NeedsSampleRate {
+            message: e.to_string(),
+        },
+        ImportError::Failed(message) => KoanError::BadArgument { message },
     }
 }

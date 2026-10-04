@@ -392,6 +392,20 @@ impl Player {
         setup
     }
 
+    /// Load the profiles again, and restart where playback is if the output's
+    /// processing was or now is anything at all. The responses on disk can
+    /// change without the config doing so, so this does not compare them.
+    fn reload_dsp(&mut self) {
+        let was = self.dsp.take().is_some_and(|c| c.setup.is_some());
+        let now = match self.resolve_device() {
+            Ok(device) => self.dsp_for(&device.name).is_some(),
+            Err(_) => false,
+        };
+        if was || now {
+            self.restart_on_current_track();
+        }
+    }
+
     /// ReplayGain and DSP for a session on the output device.
     fn processing(&mut self) -> buffer::Processing {
         let cfg = crate::config::Config::cached();
@@ -1762,6 +1776,7 @@ impl Player {
                 self.restart_on_current_track();
             }
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
+            PlayerCommand::ReloadDsp => self.reload_dsp(),
         }
     }
 

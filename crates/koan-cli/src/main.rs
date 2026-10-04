@@ -269,18 +269,23 @@ enum CacheCommands {
 enum DspCommands {
     /// List profiles and which one the current output device plays through
     List,
-    /// Make a profile from an AutoEQ / Equalizer APO ParametricEQ.txt
+    /// Make or update a profile from EQ and filter files: AutoEQ or Equalizer
+    /// APO text, impulse WAVs, Roon zips and Convolver .cfg, CamillaDSP YAML,
+    /// raw or text coefficients. Files, folders or zips; an existing profile of
+    /// the same name keeps what this does not replace
     Import {
-        file: PathBuf,
-        /// Profile name (defaults to the file's name)
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+        /// Profile name (defaults to the first file's name)
         #[arg(long)]
         name: Option<String>,
+        /// Sample rate of coefficients that do not say
+        #[arg(long)]
+        rate: Option<u32>,
         /// Also play this output device through it
         #[arg(long)]
         device: Option<String>,
     },
-    /// Give a profile its impulse responses: WAV files, one per sample rate
-    Impulse { name: String, files: Vec<PathBuf> },
     /// Play an output device (the current one by default) through a profile
     Use {
         name: String,
@@ -533,10 +538,12 @@ fn main() {
         },
         Some(Commands::Dsp { command }) => match command.unwrap_or(DspCommands::List) {
             DspCommands::List => commands::cmd_dsp_list(),
-            DspCommands::Import { file, name, device } => {
-                commands::cmd_dsp_import(&file, name, device)
-            }
-            DspCommands::Impulse { name, files } => commands::cmd_dsp_impulse(&name, &files),
+            DspCommands::Import {
+                paths,
+                name,
+                rate,
+                device,
+            } => commands::cmd_dsp_import(&paths, name, rate, device),
             DspCommands::Use { name, device } => commands::cmd_dsp_use(&name, device),
             DspCommands::Clear { device } => commands::cmd_dsp_clear(device),
             DspCommands::Remove { name } => commands::cmd_dsp_remove(&name),
