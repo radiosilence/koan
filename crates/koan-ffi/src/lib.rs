@@ -386,13 +386,13 @@ impl KoanEngine {
         // A sync touches no player state, so it has no place in the lane's order.
         if matches!(cmd, koan_core::remote::link::LinkCommand::Sync { .. }) {
             return offload::offload(move || {
-                self.handle_link(cmd, false);
+                self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
                 Ok(())
             })
             .await;
         }
         offload::sequenced(move || {
-            self.handle_link(cmd, false);
+            self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
             Ok(())
         })
         .await
@@ -1886,7 +1886,7 @@ impl KoanEngine {
                 return Ok(0);
             }
             let dropped = match (&from, &to) {
-                (None, Some(to)) => self.hand_off_blocking(to)?,
+                (None, Some(to)) => self.hand_off_blocking(to, false)?,
                 (Some(from), to) => {
                     let to = match to {
                         Some(to) => to.clone(),
@@ -3646,14 +3646,11 @@ impl KoanEngine {
             std::sync::Mutex::new(None::<(u64, Vec<koan_core::remote::link::LinkQueueEntry>)>);
         koan_core::remote::devices::start(koan_core::remote::link::Local {
             identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
-            // Only the account may cost a sync: anyone on the network can send
-            // a track id this library has never heard of.
+            // What a command may cost, and where it may go, depends on who
+            // sent it: see `handle_link`.
             on_command: Arc::new(move |cmd, source| {
                 if let Some(engine) = weak.upgrade() {
-                    engine.handle_link(
-                        cmd,
-                        source == koan_core::remote::link::CommandSource::Account,
-                    );
+                    engine.handle_link(cmd, source);
                 }
             }),
             // The queue is read again only when it has changed: this runs on
@@ -4006,8 +4003,15 @@ impl KoanEngine {
     /// What the server asked of this app over the link. Runs on the link's
     /// thread, which may block: resolving an id the library lacks syncs first,
     /// when `may_sync`.
-    fn handle_link(&self, cmd: koan_core::remote::link::LinkCommand, may_sync: bool) {
-        use koan_core::remote::link::LinkCommand;
+    fn handle_link(
+        &self,
+        cmd: koan_core::remote::link::LinkCommand,
+        source: koan_core::remote::link::CommandSource,
+    ) {
+        use koan_core::remote::link::{CommandSource, LinkCommand};
+        // Only the account may cost a sync: anyone on the network can send a
+        // track id this library has never heard of.
+        let may_sync = source == CommandSource::Account;
         // Resolving a track the library lacks syncs first; what that brought
         // in has to reach the pages too.
         let resolve_tracks = |db: &Database, ids: &[String]| {
@@ -4077,7 +4081,12 @@ impl KoanEngine {
             }),
             LinkCommand::Undo => self.send_local(PlayerCommand::Undo),
             LinkCommand::Redo => self.send_local(PlayerCommand::Redo),
-            LinkCommand::HandOff { to } => self.hand_off_blocking(&to).map(|_| ()),
+            // From a device on the network, the music goes over the network
+            // or nowhere: up this device's link it would reach the account's
+            // own devices, which the asker has no claim on.
+            LinkCommand::HandOff { to } => self
+                .hand_off_blocking(&to, source != CommandSource::Account)
+                .map(|_| ()),
             // Taken off the link before it gets here.
             // Answered by the link session itself, which holds the watch.
             LinkCommand::Devices { .. }
@@ -4192,7 +4201,9 @@ impl KoanEngine {
     /// Send this device's queue and playhead to `to` and pause here. The
     /// tracks the server does not know are left out, since the other device
     /// could not play them; returns how many.
-    fn hand_off_blocking(&self, to: &str) -> Result<u32, KoanError> {
+    /// Send this device's music to `to`; with `nearby_only`, over the local
+    /// network and never this device's link.
+    fn hand_off_blocking(&self, to: &str, nearby_only: bool) -> Result<u32, KoanError> {
         use koan_core::remote::link::LinkCommand;
         let (items, cursor) = self.state.snapshot_playlist();
         let remote = self.remote_ids(&items.iter().filter_map(|i| i.db_id).collect::<Vec<_>>());
@@ -4230,16 +4241,18 @@ impl KoanEngine {
             0
         };
         let dropped = (items.len() - kept.len()) as u32;
-        let sent = koan_core::remote::devices::send(
-            to,
-            LinkCommand::Play {
-                track_ids: kept.into_iter().map(|(_, r)| r).collect(),
-                start_at: start_at as u32,
-                position_ms,
-                paused,
-                handoff: true,
-            },
-        );
+        let play = LinkCommand::Play {
+            track_ids: kept.into_iter().map(|(_, r)| r).collect(),
+            start_at: start_at as u32,
+            position_ms,
+            paused,
+            handoff: true,
+        };
+        let sent = if nearby_only {
+            koan_core::remote::devices::send_nearby(to, play)
+        } else {
+            koan_core::remote::devices::send(to, play)
+        };
         if let Err(message) = sent {
             if !paused {
                 self.send_local(PlayerCommand::Resume)?;
