@@ -556,7 +556,6 @@ mod tests {
     // -- Per-user data ------------------------------------------------------
 
     use crate::db::queries::{self, sample_meta, upsert_track};
-    use std::path::Path;
 
     fn count(db: &Database, sql: &str) -> i64 {
         db.conn.query_row(sql, [], |r| r.get(0)).unwrap()
@@ -567,11 +566,16 @@ mod tests {
         let (db, _tmp) = test_db();
         let admin = create_user(&db.conn, "owner", "pw", Role::Admin).unwrap();
         let mate = create_user(&db.conn, "mate", "pw", Role::User).unwrap();
-        let path = Path::new("/music/a.flac");
+        let track = upsert_track(&db.conn, &sample_meta("Scatology", "Coil", "Scatology")).unwrap();
+        let album = queries::get_track_row(&db.conn, track)
+            .unwrap()
+            .unwrap()
+            .album_id
+            .unwrap();
 
-        queries::add_favourite(&db.conn, admin, path).unwrap();
-        queries::add_favourite(&db.conn, mate, path).unwrap();
-        queries::remove_favourite(&db.conn, admin, path).unwrap();
+        queries::add_favourite(&db.conn, admin, track).unwrap();
+        queries::add_favourite(&db.conn, mate, track).unwrap();
+        queries::remove_favourite(&db.conn, admin, track).unwrap();
 
         assert!(
             queries::load_favourites(&db.conn, admin)
@@ -581,19 +585,18 @@ mod tests {
         assert!(
             queries::load_favourites(&db.conn, mate)
                 .unwrap()
-                .contains(path)
+                .contains(&track)
         );
-        assert!(queries::toggle_favourite_album(&db.conn, mate, "Coil", "Scatology").unwrap());
-        assert!(queries::toggle_favourite_album(&db.conn, admin, "Coil", "Scatology").unwrap());
+        assert!(queries::toggle_favourite_album(&db.conn, mate, album).unwrap());
+        assert!(queries::toggle_favourite_album(&db.conn, admin, album).unwrap());
         assert_eq!(count(&db, "SELECT COUNT(*) FROM favourite_albums"), 2);
     }
 
     #[test]
     fn the_local_user_is_the_first_admin_once_there_is_one() {
         let (db, _tmp) = test_db();
-        let path = Path::new("/music/a.flac");
         let track = upsert_track(&db.conn, &sample_meta("T", "A", "B")).unwrap();
-        queries::add_favourite(&db.conn, LOCAL_USER, path).unwrap();
+        queries::add_favourite(&db.conn, LOCAL_USER, track).unwrap();
         queries::record_play(&db.conn, LOCAL_USER, track, None).unwrap();
         let list = queries::create_playlist(&db.conn, LOCAL_USER, "Mine", None).unwrap();
         assert_eq!(resolve_user(&db.conn, LOCAL_USER).unwrap(), LOCAL_USER);
@@ -606,7 +609,7 @@ mod tests {
         assert!(
             queries::load_favourites(&db.conn, admin)
                 .unwrap()
-                .contains(path)
+                .contains(&track)
         );
         assert_eq!(queries::play_count(&db.conn, admin, track).unwrap(), 1);
         assert_eq!(
@@ -661,10 +664,11 @@ mod tests {
         let admin = create_user(&db.conn, "owner", "pw", Role::Admin).unwrap();
         let mate = create_user(&db.conn, "mate", "pw", Role::User).unwrap();
         let track = upsert_track(&db.conn, &sample_meta("T", "A", "B")).unwrap();
+        let row = queries::get_track_row(&db.conn, track).unwrap().unwrap();
         for user in [admin, mate] {
-            queries::add_favourite(&db.conn, user, Path::new("/music/a.flac")).unwrap();
-            queries::set_favourite_album(&db.conn, user, "A", "B", true).unwrap();
-            queries::set_favourite_artist(&db.conn, user, "A", true).unwrap();
+            queries::add_favourite(&db.conn, user, track).unwrap();
+            queries::set_favourite_album(&db.conn, user, row.album_id.unwrap(), true).unwrap();
+            queries::set_favourite_artist(&db.conn, user, row.artist_id.unwrap(), true).unwrap();
             queries::record_play(&db.conn, user, track, None).unwrap();
             queries::create_playlist(&db.conn, user, "List", None).unwrap();
             queries::shares::create_share(

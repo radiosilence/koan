@@ -85,6 +85,6 @@ pub(super) fn album_year(album: &queries::AlbumRow) -> Option<i32> {
 // ---------------------------------------------------------------------------
 
 /// Push a favourite to the remote server.
-pub(super) fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
-    koan_core::helpers::sync_favourite_to_remote(db, std::path::Path::new(path), star);
+pub(super) fn sync_favourite_to_remote(db: &Database, track_id: i64, star: bool) {
+    koan_core::helpers::sync_favourite_to_remote(db, track_id, star);
 }

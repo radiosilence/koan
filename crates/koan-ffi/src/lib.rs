@@ -1142,16 +1142,14 @@ impl KoanEngine {
     pub async fn toggle_favourite(self: Arc<Self>, track_id: i64) -> Result<bool, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let path = queries::track_favourite_key(&db.conn, track_id)
+            queries::get_track_row(&db.conn, track_id)
                 .map_err(db_err)?
                 .ok_or_else(|| KoanError::NotFound {
                     message: format!("track {track_id}"),
                 })?;
-
-            let now_favourite =
-                queries::toggle_favourite(&db.conn, queries::LOCAL_USER, Path::new(&path))
-                    .map_err(fav_err)?;
-            koan_core::helpers::sync_favourite_to_remote(&db, Path::new(&path), now_favourite);
+            let now_favourite = queries::toggle_favourite(&db.conn, queries::LOCAL_USER, track_id)
+                .map_err(fav_err)?;
+            koan_core::helpers::sync_favourite_to_remote(&db, track_id, now_favourite);
             Ok(now_favourite)
         })
         .await
@@ -1202,14 +1200,13 @@ impl KoanEngine {
     pub async fn toggle_favourite_album(self: Arc<Self>, album_id: i64) -> Result<bool, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let (artist, title) = queries::album_favourite_key(&db.conn, album_id)
+            queries::get_album(&db.conn, album_id)
                 .map_err(db_err)?
                 .ok_or_else(|| KoanError::NotFound {
                     message: format!("album {album_id}"),
                 })?;
-            let now =
-                queries::toggle_favourite_album(&db.conn, queries::LOCAL_USER, &artist, &title)
-                    .map_err(fav_err)?;
+            let now = queries::toggle_favourite_album(&db.conn, queries::LOCAL_USER, album_id)
+                .map_err(fav_err)?;
             koan_core::helpers::sync_collection_favourite_to_remote(
                 &db,
                 koan_core::helpers::FavouriteKind::Album,
@@ -1228,12 +1225,12 @@ impl KoanEngine {
     ) -> Result<bool, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let name = queries::artist_favourite_key(&db.conn, artist_id)
+            queries::get_artist(&db.conn, artist_id)
                 .map_err(db_err)?
                 .ok_or_else(|| KoanError::NotFound {
                     message: format!("artist {artist_id}"),
                 })?;
-            let now = queries::toggle_favourite_artist(&db.conn, queries::LOCAL_USER, &name)
+            let now = queries::toggle_favourite_artist(&db.conn, queries::LOCAL_USER, artist_id)
                 .map_err(fav_err)?;
             koan_core::helpers::sync_collection_favourite_to_remote(
                 &db,
