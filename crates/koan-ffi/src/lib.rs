@@ -149,7 +149,9 @@ impl Drop for KoanEngine {
     }
 }
 
-/// One client's subscription to the analyser.
+/// One client's subscription to the levels of whatever it is showing as
+/// playing: this device's analyser, or, while another device is controlled,
+/// that device's levels over the link (`koan_core::remote::levels`).
 ///
 /// A cursor over the published frame, in the shape `StateStream` already uses:
 /// the value is a whole snapshot, so a subscriber that slept through two
@@ -159,7 +161,18 @@ pub struct VizStream {
     /// Weak, so a client's loop ends when the engine goes rather than holding
     /// the analyser up. The loop *is* the subscription.
     viz: Weak<VizSnapshot>,
-    inner: tokio::sync::Mutex<tokio::sync::watch::Receiver<u64>>,
+    inner: tokio::sync::Mutex<Following>,
+}
+
+struct Following {
+    local: tokio::sync::watch::Receiver<u64>,
+    /// Display frames while the controlled device's bars move.
+    remote: tokio::sync::watch::Receiver<u64>,
+    /// Anything about the engine, the choice of device among it.
+    devices: tokio::sync::watch::Receiver<u64>,
+    /// Held while another device is controlled: watching it is what has it
+    /// send its levels, and dropping this stops them.
+    view: Option<koan_core::remote::levels::View>,
 }
 
 impl VizStream {
@@ -170,7 +183,12 @@ impl VizStream {
         viz.touch();
         Arc::new(Self {
             viz: Arc::downgrade(viz),
-            inner: tokio::sync::Mutex::new(viz.subscribe()),
+            inner: tokio::sync::Mutex::new(Following {
+                local: viz.subscribe(),
+                remote: koan_core::remote::levels::remote().ticks().subscribe(),
+                devices: koan_core::signal::engine_changed().subscribe(),
+                view: None,
+            }),
         })
     }
 }
@@ -181,13 +199,50 @@ impl VizStream {
     ///
     /// `None` once the engine is gone, which ends the caller's loop.
     pub async fn next(&self) -> Option<VizLevels> {
-        let mut cursor = self.inner.lock().await;
-        // Marked seen *before* the wait, so a frame published between the last
-        // answer and this call is returned rather than slept through.
-        cursor.borrow_and_update();
-        cursor.changed().await.ok()?;
-        let viz = self.viz.upgrade()?;
-        Some(viz.levels().into())
+        use koan_core::remote::{devices, levels};
+        let mut f = self.inner.lock().await;
+        loop {
+            let target = devices::target();
+            if f.view.as_ref().map(|v| v.target()) != target.as_deref() {
+                // The old device let go before the new one is watched, so it
+                // is told to stop.
+                f.view = None;
+                f.view = target.map(|t| levels::remote().view(t));
+            }
+            // Marked seen *before* the wait, so a frame published between the
+            // last answer and this call is returned rather than slept through.
+            f.devices.borrow_and_update();
+            if f.view.is_some() {
+                f.remote.borrow_and_update();
+                let Following {
+                    remote, devices, ..
+                } = &mut *f;
+                tokio::select! {
+                    tick = remote.changed() => tick.ok()?,
+                    moved = devices.changed() => {
+                        moved.ok()?;
+                        // A link or a connection on the network may have come
+                        // up, or the device relinked: ask again where due.
+                        levels::remote().ask(false);
+                        continue;
+                    }
+                }
+                let (position, playing) = devices::target_playhead().unwrap_or((0, false));
+                return Some(levels::remote().sample(position, playing).into());
+            }
+            let viz = self.viz.upgrade()?;
+            viz.touch();
+            drop(viz);
+            f.local.borrow_and_update();
+            let Following { local, devices, .. } = &mut *f;
+            tokio::select! {
+                frame = local.changed() => {
+                    frame.ok()?;
+                    return Some(self.viz.upgrade()?.levels().into());
+                }
+                moved = devices.changed() => moved.ok()?,
+            }
+        }
     }
 }
 
@@ -331,13 +386,13 @@ impl KoanEngine {
         // A sync touches no player state, so it has no place in the lane's order.
         if matches!(cmd, koan_core::remote::link::LinkCommand::Sync { .. }) {
             return offload::offload(move || {
-                self.handle_link(cmd, false);
+                self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
                 Ok(())
             })
             .await;
         }
         offload::sequenced(move || {
-            self.handle_link(cmd, false);
+            self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
             Ok(())
         })
         .await
@@ -455,6 +510,7 @@ impl KoanEngine {
     /// wakes for it.
     pub fn set_viz_fps(&self, fps: u8) {
         self.viz.set_fps(fps);
+        koan_core::remote::levels::remote().set_fps(fps);
     }
 
     // --- Queue mutation ----------------------------------------------------
@@ -1838,7 +1894,7 @@ impl KoanEngine {
                 return Ok(0);
             }
             let dropped = match (&from, &to) {
-                (None, Some(to)) => self.hand_off_blocking(to)?,
+                (None, Some(to)) => self.hand_off_blocking(to, false)?,
                 (Some(from), to) => {
                     let to = match to {
                         Some(to) => to.clone(),
@@ -3604,18 +3660,20 @@ impl KoanEngine {
         // A koan server this app syncs from can then tell it what to play, and
         // so can this person's other devices and anyone's on the network.
         let (weak, state) = (Arc::downgrade(&engine), engine.state.clone());
+        // What a device controlling this one draws its bars from, while it
+        // watches.
+        let playhead = engine.state.clone();
+        koan_core::remote::levels::feed()
+            .provide(engine.viz.clone(), move || playhead.position_ms());
         let held =
             std::sync::Mutex::new(None::<(u64, Vec<koan_core::remote::link::LinkQueueEntry>)>);
         koan_core::remote::devices::start(koan_core::remote::link::Local {
             identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
-            // Only the account may cost a sync: anyone on the network can send
-            // a track id this library has never heard of.
+            // What a command may cost, and where it may go, depends on who
+            // sent it: see `handle_link`.
             on_command: Arc::new(move |cmd, source| {
                 if let Some(engine) = weak.upgrade() {
-                    engine.handle_link(
-                        cmd,
-                        source == koan_core::remote::link::CommandSource::Account,
-                    );
+                    engine.handle_link(cmd, source);
                 }
             }),
             // The queue is read again only when it has changed: this runs on
@@ -3968,8 +4026,15 @@ impl KoanEngine {
     /// What the server asked of this app over the link. Runs on the link's
     /// thread, which may block: resolving an id the library lacks syncs first,
     /// when `may_sync`.
-    fn handle_link(&self, cmd: koan_core::remote::link::LinkCommand, may_sync: bool) {
-        use koan_core::remote::link::LinkCommand;
+    fn handle_link(
+        &self,
+        cmd: koan_core::remote::link::LinkCommand,
+        source: koan_core::remote::link::CommandSource,
+    ) {
+        use koan_core::remote::link::{CommandSource, LinkCommand};
+        // Only the account may cost a sync: anyone on the network can send a
+        // track id this library has never heard of.
+        let may_sync = source == CommandSource::Account;
         // Resolving a track the library lacks syncs first; what that brought
         // in has to reach the pages too.
         let resolve_tracks = |db: &Database, ids: &[String]| {
@@ -4039,9 +4104,17 @@ impl KoanEngine {
             }),
             LinkCommand::Undo => self.send_local(PlayerCommand::Undo),
             LinkCommand::Redo => self.send_local(PlayerCommand::Redo),
-            LinkCommand::HandOff { to } => self.hand_off_blocking(&to).map(|_| ()),
+            // From a device on the network, the music goes over the network
+            // or nowhere: up this device's link it would reach the account's
+            // own devices, which the asker has no claim on.
+            LinkCommand::HandOff { to } => self
+                .hand_off_blocking(&to, source != CommandSource::Account)
+                .map(|_| ()),
             // Taken off the link before it gets here.
-            LinkCommand::Devices { .. } => Ok(()),
+            // Answered by the link session itself, which holds the watch.
+            LinkCommand::Devices { .. }
+            | LinkCommand::WatchLevels { .. }
+            | LinkCommand::Levels { .. } => Ok(()),
             LinkCommand::SetOutput { output } => {
                 koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
                     .map_err(|message| KoanError::Audio { message })
@@ -4151,7 +4224,9 @@ impl KoanEngine {
     /// Send this device's queue and playhead to `to` and pause here. The
     /// tracks the server does not know are left out, since the other device
     /// could not play them; returns how many.
-    fn hand_off_blocking(&self, to: &str) -> Result<u32, KoanError> {
+    /// Send this device's music to `to`; with `nearby_only`, over the local
+    /// network and never this device's link.
+    fn hand_off_blocking(&self, to: &str, nearby_only: bool) -> Result<u32, KoanError> {
         use koan_core::remote::link::LinkCommand;
         let (items, cursor) = self.state.snapshot_playlist();
         let remote = self.remote_ids(&items.iter().filter_map(|i| i.db_id).collect::<Vec<_>>());
@@ -4189,16 +4264,18 @@ impl KoanEngine {
             0
         };
         let dropped = (items.len() - kept.len()) as u32;
-        let sent = koan_core::remote::devices::send(
-            to,
-            LinkCommand::Play {
-                track_ids: kept.into_iter().map(|(_, r)| r).collect(),
-                start_at: start_at as u32,
-                position_ms,
-                paused,
-                handoff: true,
-            },
-        );
+        let play = LinkCommand::Play {
+            track_ids: kept.into_iter().map(|(_, r)| r).collect(),
+            start_at: start_at as u32,
+            position_ms,
+            paused,
+            handoff: true,
+        };
+        let sent = if nearby_only {
+            koan_core::remote::devices::send_nearby(to, play)
+        } else {
+            koan_core::remote::devices::send(to, play)
+        };
         if let Err(message) = sent {
             if !paused {
                 self.send_local(PlayerCommand::Resume)?;

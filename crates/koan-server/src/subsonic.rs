@@ -3867,6 +3867,17 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
                                 })
                                 .await;
                             }
+                            Ok(LinkReport::Command {
+                                to,
+                                command: koan_core::remote::link::LinkCommand::WatchLevels { on },
+                            }) => {
+                                registry.watch_levels(&username, &device, &to, on);
+                            }
+                            // At the analyser's rate: relayed in place, with
+                            // no database and no thread hop.
+                            Ok(LinkReport::Levels { f }) => {
+                                registry.levels(&username, &device, f);
+                            }
                             Ok(LinkReport::Command { to, command }) => {
                                 // Relaying may push to a phone, which blocks.
                                 let username = username.clone();

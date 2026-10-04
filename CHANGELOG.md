@@ -7,6 +7,22 @@
 - **Devices that stop answering stay listed, asleep.** A device that went quiet dropped out of the Control menu at once, and a phone iOS suspended a moment ago vanished from every other device's list. A device now reads as reconnecting for one heartbeat (45 seconds), so a single missed signal does not mark it asleep, and is then shown asleep with when it was last seen. One a push can wake stays listed and can be chosen. One that nothing can wake from here is shown, cannot be chosen, and is dropped after `devices.asleep_grace_mins` (30 by default). Whether a device can be woken is the server's word: it has the device's push token and a push key to send with. The server sends when an absent device was last seen, which older apps ignore.
 - **Choosing an asleep device wakes it, and says how.** It is dialled on the local network if it was there within the last minute, then sent a background push, and after about six seconds a notification to tap ("Mac wants to play here"), since iOS delays or drops background pushes and never delivers one to an app that was swiped away. The device's row shows the stage, and why if it did not wake. Each step is logged with its timing on the device choosing, the server and the phone, so a failed wake shows where it stopped. Wake pushes carry a collapse id and expire after a minute.
 
+## 0.52.4
+
+### Added
+
+- **The queue can follow what is playing.** The jump-to-playing button now also follows: the queue keeps the playing track in view as it moves on, through gapless transitions, skips and repeats, sliding by a row rather than jumping. The button is tinted while it follows; pressing it again, or scrolling the queue yourself, stops it. On the Mac the track keeps its place on screen; on iOS it is kept centred.
+
+### Fixed
+
+- **Hand-off from a nearby device stays on the network.** A device on the same network could make another kōan hand its music to a device on that kōan's account, sent through its server as that account. A hand-off asked for by a device on the network now goes over the network or not at all; "Move here" between devices on one network works as before.
+
+## 0.52.3
+
+### Added
+
+- **The playing bars follow the device being controlled.** While one kōan controls another, the bars beside the playing track show that device's levels rather than this one's silence. The device sends its levels only while a controller has bars on screen, about forty bytes a frame at its analyser's rate, and stops when the bars go. Frames are drawn a couple of frames behind the playhead and interpolated, so a late one is not seen, and the bars settle to rest when the music pauses or the link stalls. A device on the same network may watch the bars of one it can already see playing; through a koan server, only the account's own devices can. The server must be this version or later to relay them; with an older one the bars stay at rest.
+
 ### Fixed
 
 - **Quitting while playing to an amplifier no longer leaves two things playing at the next launch.** Quitting stops the amplifier, which otherwise played on until its buffer ran out. At launch, a session that was playing waits while kōan looks for the amplifier it used, and plays there if it turns up, or here if it does not, rather than starting here at once. An amplifier still on a track a kōan on this machine sent it is taken back, not left as someone else's.
