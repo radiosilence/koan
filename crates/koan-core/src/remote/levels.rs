@@ -362,8 +362,11 @@ pub struct Remote {
     /// Gets a `WatchLevels` to a device over a connection that is up now, and
     /// says whether it did. Never queued, never a push: levels are no reason
     /// to wake anything. `devices::send_live`, but for tests.
-    send: Box<dyn Fn(&str, LinkCommand) -> bool + Send + Sync>,
+    send: Box<SendWatch>,
 }
+
+/// See `Remote::send`.
+type SendWatch = dyn Fn(&str, LinkCommand) -> bool + Send + Sync;
 
 struct RemoteState {
     views: Vec<Viewed>,
@@ -588,13 +591,9 @@ mod tests {
     use super::*;
 
     /// A `Remote` whose sends are recorded, and answer as `through` says.
-    fn recording(
-        through: bool,
-    ) -> (
-        Arc<Remote>,
-        Arc<Mutex<Vec<(String, bool)>>>,
-        Arc<std::sync::atomic::AtomicBool>,
-    ) {
+    type Sent = Arc<Mutex<Vec<(String, bool)>>>;
+
+    fn recording(through: bool) -> (Arc<Remote>, Sent, Arc<std::sync::atomic::AtomicBool>) {
         let sent = Arc::new(Mutex::new(Vec::new()));
         let open = Arc::new(std::sync::atomic::AtomicBool::new(through));
         let (log, gate) = (Arc::clone(&sent), Arc::clone(&open));
