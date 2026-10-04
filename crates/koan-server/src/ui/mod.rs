@@ -54,6 +54,7 @@ const PARTIAL: &str = "x-koan-partial";
 const UI_CSS: &str = include_str!("../../assets/ui.css");
 const UI_JS: &str = include_str!("../../assets/ui.js");
 const DATASTAR_JS: &str = include_str!("../../assets/datastar.js");
+const NO_COVER_SVG: &str = include_str!("../../assets/no-cover.svg");
 
 /// The page's stylesheet and scripts, each URL carrying a hash of its asset.
 pub(super) struct AssetUrls {
@@ -401,10 +402,24 @@ async fn cover(
     axum::extract::Query(q): axum::extract::Query<CoverQuery>,
 ) -> Response {
     let size = crate::covers::snap(q.size);
-    let art = blocking(move || {
+    let found = blocking(move || {
         let tracks = queries::tracks_for_album(&open(&s.pool)?.conn, id).ok()?;
-        s.covers.cover(&tracks, size)
+        (!tracks.is_empty()).then(|| s.covers.cover(&tracks, size))
     })
     .await;
-    crate::share::jpeg(art, q.v.is_some())
+    match found {
+        Some(Some(art)) => crate::share::jpeg(Some(art), q.v.is_some()),
+        // A record with no artwork draws what the apps draw, not a broken
+        // image. Not kept for good: art added beside the files changes no
+        // track's mtime, so the URL stays the same when it arrives.
+        Some(None) => (
+            [
+                (header::CONTENT_TYPE, "image/svg+xml"),
+                (header::CACHE_CONTROL, "private, max-age=3600"),
+            ],
+            NO_COVER_SVG,
+        )
+            .into_response(),
+        None => not_found(),
+    }
 }
