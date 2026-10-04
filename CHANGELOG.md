@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **New playlists on iOS.** The Playlists page has a button to make one, and "New Playlist…" in a context menu now asks for a name. The naming dialog was hosted only by the Mac's window, so on iOS the menu item did nothing.
 - **A reinstalled iOS app keeps its device id.** The id lived only in the app's container, which iOS empties when the app is deleted, so each reinstall appeared on the server as a new "iPhone" beside the old one. It is now kept in the Keychain as well, which survives a reinstall. The app also reports the phone's own name; iOS returns "iPhone" for it until the app holds Apple's user-assigned-device-name entitlement.
 - **Move here resumes where the source stopped.** The source read its playhead before sending and paused afterwards, so whatever played during the send and the fade was heard again on the destination; the destination then started the track from the top and seeked, letting its opening through. The source now pauses first and reports where the fade went silent, and the destination opens the track at that point. A track the destination has to download waits for the whole file rather than starting early, and a paused source arrives paused.
 - **A command reaches a suspended iPhone after the app has been reinstalled.** A reinstall gives the app a new device id and leaves the old one's push token behind under the same name, so the server answered "several can be reached: iPhone, iPhone" and sent no push. It now wakes the device seen most recently.
