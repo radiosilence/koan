@@ -3941,6 +3941,14 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
                                     }
                                 });
                             }
+                            Ok(LinkReport::Forget { device: forgotten }) => {
+                                let username = username.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let Err(e) = registry.forget(&username, &forgotten) {
+                                        log::info!("devices: {e}");
+                                    }
+                                });
+                            }
                             Ok(LinkReport::Hello(_)) | Err(_) => {}
                         }
                     }

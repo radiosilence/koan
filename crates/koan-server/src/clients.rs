@@ -650,6 +650,28 @@ impl Registry {
         });
     }
 
+    /// Forget `device`, one of `username`'s that is not linked: what the
+    /// server keeps of it, its push token included, so nothing is pushed to
+    /// it again; and every linked device of the account drops it. Another
+    /// account's device is out of reach of this, by construction: every
+    /// record is keyed by account. A device that links again is recorded
+    /// afresh.
+    pub fn forget(&self, username: &str, device: &str) -> Result<(), String> {
+        if self.list(Some(username)).iter().any(|c| c.device == device) {
+            return Err(format!("{device} is linked; it would be back at once"));
+        }
+        outbox::forget_device(device, username);
+        log::info!("devices: {username} forgot {device}");
+        self.broadcast(
+            Some(username),
+            LinkCommand::Forgotten {
+                device: device.to_string(),
+            },
+        );
+        self.announce(username);
+        Ok(())
+    }
+
     /// Relay `command` from one of `username`'s devices to another, `to`.
     pub fn relay(
         &self,
@@ -675,6 +697,7 @@ impl Registry {
         if matches!(
             command,
             LinkCommand::Devices { .. }
+                | LinkCommand::Forgotten { .. }
                 | LinkCommand::Levels { .. }
                 | LinkCommand::WatchLevels { .. }
                 | LinkCommand::Shares { .. }
@@ -1655,7 +1678,14 @@ mod outbox {
     /// Devices in scope with a push token, most recently seen first.
     pub fn push_targets(username: Option<&str>) -> Vec<PushTarget> {
         let Some(db) = db() else { return Vec::new() };
-        db.conn
+        push_targets_in(&db.conn, username)
+    }
+
+    pub(super) fn push_targets_in(
+        conn: &rusqlite::Connection,
+        username: Option<&str>,
+    ) -> Vec<PushTarget> {
+        conn
             .prepare(
                 "SELECT p.device, p.username, d.name, d.platform, p.token, p.sandbox, d.last_seen
                    FROM link_push p JOIN link_devices d ON d.device = p.device AND d.username = p.username
@@ -1677,6 +1707,23 @@ mod outbox {
                 .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// Forget `username`'s device `device`: its record, its push token and
+    /// what waits for it. It is recorded afresh if it links again.
+    pub fn forget_device(device: &str, username: &str) {
+        if let Some(db) = db() {
+            forget_device_in(&db.conn, device, username);
+        }
+    }
+
+    pub(super) fn forget_device_in(conn: &rusqlite::Connection, device: &str, username: &str) {
+        for table in ["link_push", "link_outbox", "link_devices"] {
+            let _ = conn.execute(
+                &format!("DELETE FROM {table} WHERE device = ?1 AND username = ?2"),
+                [device, username],
+            );
+        }
     }
 
     /// The row id of a track a command names by uid or row id.
@@ -2310,6 +2357,73 @@ mod tests {
             "sarita",
             "still woken through its own account after the restart"
         );
+    }
+
+    /// Forgetting a device tells the account's linked devices to drop it,
+    /// and no other account's; a linked device is not forgotten, since it
+    /// would be back at once.
+    #[test]
+    fn a_forgotten_device_is_dropped_by_the_accounts_devices() {
+        let reg = Registry::default();
+        let (mac_tx, mut mac) = tokio::sync::mpsc::unbounded_channel();
+        let (other_tx, mut other) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("j", "mac", "macos", "dev-mac", mac_tx, true);
+        reg.register("k", "laptop", "macos", "dev-k", other_tx, true);
+        while mac.try_recv().is_ok() {}
+        while other.try_recv().is_ok() {}
+
+        reg.forget("j", "dev-phone").unwrap();
+        let heard: Vec<LinkCommand> = std::iter::from_fn(|| mac.try_recv().ok()).collect();
+        assert!(heard.contains(&LinkCommand::Forgotten {
+            device: "dev-phone".into()
+        }));
+        assert!(
+            std::iter::from_fn(|| other.try_recv().ok())
+                .all(|c| !matches!(c, LinkCommand::Forgotten { .. })),
+            "another account hears nothing of it"
+        );
+        assert!(
+            reg.forget("j", "dev-mac").is_err(),
+            "linked: it would be back"
+        );
+        assert!(
+            reg.relay(
+                "j",
+                "dev-mac",
+                LinkCommand::Forgotten { device: "x".into() }
+            )
+            .is_err(),
+            "news from the server, not a command a device may send"
+        );
+    }
+
+    /// The server forgets a device's push token with it, so nothing is
+    /// pushed to it again; and only the account that owns it can.
+    #[test]
+    fn forgetting_a_device_stops_pushes_to_it_and_only_for_its_account() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        koan_core::db::schema::create_tables(&conn).unwrap();
+        for user in ["j", "k"] {
+            conn.execute(
+                "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES ('dev-phone', ?1, 'phone', 'ios', 1)",
+                [user],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO link_push (device, username, token, sandbox, updated_at) VALUES ('dev-phone', ?1, 't', 0, 1)",
+                [user],
+            )
+            .unwrap();
+        }
+        outbox::forget_device_in(&conn, "dev-phone", "k");
+        assert_eq!(
+            outbox::push_targets_in(&conn, Some("j")).len(),
+            1,
+            "k forgetting its own leaves j's alone"
+        );
+        outbox::forget_device_in(&conn, "dev-phone", "j");
+        assert!(outbox::push_targets_in(&conn, Some("j")).is_empty());
+        assert!(outbox::push_targets_in(&conn, None).is_empty());
     }
 
     #[test]

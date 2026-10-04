@@ -461,6 +461,12 @@ final class PlayerModel {
         attempt { try await self.engine.controlDevice(id: id) }
     }
 
+    /// Drop a device out of reach from the list, until it is heard from
+    /// again. One of the account's is forgotten by the server too.
+    func forget(_ id: String) {
+        attempt { try await self.engine.forgetDevice(id: id) }
+    }
+
     /// The renderer playing this device's music, if one is.
     var renderer: RendererOutput? { mirror.rendererOutput }
 

@@ -91,13 +91,20 @@ from again is back at once. While nothing can reach it, it can be chosen only
 if it can be woken.
 
 - **One a push can wake**, a phone on your account that iOS has suspended,
-  stays listed as asleep for as long as the server can reach it. Choosing it
-  wakes it. That takes a push key on the server; without one, the phone is
-  listed but cannot be woken.
+  can be chosen, and choosing it wakes it. That takes a push key on the
+  server; without one, the phone is listed but cannot be woken.
 - **One that cannot be woken from here**, such as a stranger's phone on the
   network or a Mac that has gone to sleep, is shown asleep and cannot be
-  chosen. It is dropped after `devices.asleep_grace_mins` (30 by default), a
-  setting of this machine's kept in `config.local.toml`.
+  chosen.
+
+An asleep device stays listed until you forget it: right-click it in the
+Control menu on the Mac, or press and hold it on iOS, and choose **Forget**.
+One this device only knows of, such as a stranger's on the network, is
+forgotten here. One of your account's is forgotten by the server too, with the
+token it is woken by, and drops off your other devices. Forgetting is not a
+block: a device that links or is heard on the network again is listed again.
+The server still forgets a device of your account it has not seen for 30 days
+on its own.
 
 ### Waking a device
 

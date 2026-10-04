@@ -150,6 +150,11 @@ pub enum LinkCommand {
     Shared {
         command: Box<LinkCommand>,
     },
+    /// `device` was forgotten: drop it, however it was last heard of. News,
+    /// as `Devices` is.
+    Forgotten {
+        device: String,
+    },
     /// Play through this output from now on, carrying on from where the music
     /// is, as the device's own output menu would.
     SetOutput {
@@ -252,6 +257,7 @@ impl LinkCommand {
             Self::Sync { .. }
                 | Self::Evict { .. }
                 | Self::Devices { .. }
+                | Self::Forgotten { .. }
                 | Self::Levels { .. }
                 | Self::SetOutput { .. }
                 | Self::SetRendererVolume { .. }
@@ -346,6 +352,7 @@ impl LinkCommand {
             | Self::HandOff { .. }
             | Self::Devices { .. }
             | Self::Shares { .. }
+            | Self::Forgotten { .. }
             | Self::WatchLevels { .. }
             | Self::Levels { .. }
             | Self::SetOutput { .. }
@@ -465,6 +472,11 @@ pub enum LinkReport {
     Share {
         grantee: String,
         allow: bool,
+    },
+    /// Forget `device`, one of this account's that is not linked: its record
+    /// and its push token. It is listed again if it links again.
+    Forget {
+        device: String,
     },
     /// A frame of this device's audio levels, while it is watched: see
     /// `LinkCommand::WatchLevels`. Sent at the analyser's rate, so short.
@@ -822,6 +834,9 @@ impl wire::Session for LinkSession<'_> {
                 } else {
                     log::warn!("link: refused from a shared account: {command:?}");
                 }
+            }
+            Ok(LinkCommand::Forgotten { device }) => {
+                crate::remote::devices::forgotten(&device);
             }
             Ok(LinkCommand::WatchLevels { on }) => {
                 self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));

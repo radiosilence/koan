@@ -12,10 +12,9 @@
 //! A device that stops answering is not dropped on the spot. It stays as it
 //! was for one full heartbeat past when it should have been heard from, so a
 //! single missed signal changes nothing; then it is listed asleep, with when
-//! it was last seen; and a device that cannot be woken is dropped once
-//! `devices.asleep_grace_mins` has passed. One that a push can wake stays
-//! listed, since choosing it is how it is woken. A device heard from again
-//! at any point is back at once.
+//! it was last seen, until it is heard from again or forgotten (`forget`).
+//! Asleep, it can be chosen only if a push can wake it. A device heard from
+//! again at any point is back at once, forgotten or not.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -91,7 +90,7 @@ struct Store {
     version: u64,
     /// When each device was last reachable, in Unix seconds.
     live: HashMap<String, i64>,
-    /// Devices no list carries any more, kept until the grace period ends.
+    /// Devices no list carries any more, kept until they are forgotten.
     departed: Vec<Departed>,
     /// `account` came down the link that is up now. One held from before the
     /// link last dropped says nothing about who is reachable at this moment.
@@ -129,7 +128,7 @@ pub enum Waking {
 }
 
 /// A device that dropped out of every list: as it was when last reachable.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Departed {
     id: String,
     name: String,
@@ -156,6 +155,9 @@ struct Saved {
     /// the server no longer lists is not taken for one seen just now.
     #[serde(default)]
     live: HashMap<String, i64>,
+    /// Devices no list carries any more, kept until forgotten.
+    #[serde(default)]
+    departed: Vec<Departed>,
 }
 
 /// A device reached on the local network, and where: dialled there at once
@@ -228,10 +230,8 @@ fn replan() {
 
 fn clock() {
     loop {
-        let grace = i64::from(Config::cached().devices.asleep_grace_mins) * 60;
         let now = chrono::Utc::now().timestamp();
-        let wait =
-            next_change(now, grace).map(|at| Duration::from_secs((at - now).max(0) as u64 + 1));
+        let wait = next_change(now).map(|at| Duration::from_secs((at - now).max(0) as u64 + 1));
         let mut rung = CLOCK.0.lock();
         if !*rung {
             let timed_out = match wait {
@@ -260,6 +260,7 @@ impl Store {
             account: self.account.iter().map(|(d, _)| d.clone()).collect(),
             nearby: self.seen.clone(),
             live: self.live.clone(),
+            departed: self.departed.clone(),
         };
         if let Ok(json) = serde_json::to_string(&saved) {
             let _ = std::fs::write(saved_path(), json);
@@ -289,6 +290,7 @@ fn restore() {
             .filter(|n| n.at >= cutoff)
             .collect();
         s.live = saved.live;
+        s.departed = saved.departed;
         // Not linked until the server says so, and doing nothing anyone
         // knows of: what it was playing then is not what it is playing now.
         s.account = saved
@@ -551,7 +553,48 @@ pub fn nearby_gone(id: &str) {
             same_library: ours.is_some() && gone.hello.library == ours,
             shared: false,
         });
+        s.save();
     });
+}
+
+/// Forget the device `id`: out of the list until it links or is heard on the
+/// network again, which brings it straight back. An account device is
+/// forgotten by the server too, push token and all, and every other device
+/// of the account drops it; only the account's own devices can be. Only a
+/// device out of reach is forgotten: one reachable would be back at once.
+pub fn forget(id: &str) -> Result<(), String> {
+    let device = list().into_iter().find(|d| d.id == id);
+    if device.as_ref().is_some_and(|d| d.awake) {
+        return Err("Only a device out of reach can be forgotten.".into());
+    }
+    let account = with(|s| s.account.iter().any(|(d, _)| d.id == id));
+    if account
+        && !link::report(LinkReport::Forget {
+            device: id.to_string(),
+        })
+    {
+        return Err("Not connected to your server, which remembers it too.".into());
+    }
+    forgotten(id);
+    Ok(())
+}
+
+/// Drop `id` from everything this device remembers of it: the server forgot
+/// it, or this device was asked to.
+pub fn forgotten(id: &str) {
+    changed(|s| {
+        s.account.retain(|(d, _)| d.id != id);
+        s.departed.retain(|g| g.id != id);
+        s.seen.retain(|n| n.id != id);
+        s.live.remove(id);
+        s.lan_heard.remove(id);
+        s.waking.remove(id);
+        if s.target.as_ref().is_some_and(|t| t.id == id) {
+            s.target = None;
+        }
+        s.save();
+    });
+    log::info!("devices: forgot {id}");
 }
 
 /// Something beside the list that the app shows with it has changed: the
@@ -572,16 +615,11 @@ pub fn linked() -> bool {
 
 /// Every other device, those playing first.
 pub fn list() -> Vec<Device> {
-    let cfg = Config::load().unwrap_or_default();
-    list_at(
-        chrono::Utc::now().timestamp(),
-        i64::from(cfg.devices.asleep_grace_mins) * 60,
-    )
+    list_at(chrono::Utc::now().timestamp())
 }
 
-/// `list` as of `now`, Unix seconds, dropping what cannot be woken once it
-/// has been asleep for `grace` seconds.
-fn list_at(now: i64, grace: i64) -> Vec<Device> {
+/// `list` as of `now`, Unix seconds.
+fn list_at(now: i64) -> Vec<Device> {
     let cfg = Config::load().unwrap_or_default();
     let ours = link::library_fingerprint(&cfg);
     with(|s| {
@@ -651,9 +689,6 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
                 continue;
             }
             let last = live(&g.id);
-            if last.is_some_and(|at| now - at > STALE_SECS + grace) {
-                continue;
-            }
             // Nothing routes to it now, whatever the label: reconnecting for
             // a heartbeat, then asleep.
             out.push(Device {
@@ -717,9 +752,8 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
     })
 }
 
-/// When `list` next changes on its own: a device crossing into asleep, or
-/// past the grace period.
-fn next_change(now: i64, grace: i64) -> Option<i64> {
+/// When `list` next changes on its own: a device crossing into asleep.
+fn next_change(now: i64) -> Option<i64> {
     with(|s| {
         let reachable = |id: &str| {
             s.nearby.iter().any(|n| n.hello.id == id)
@@ -728,7 +762,7 @@ fn next_change(now: i64, grace: i64) -> Option<i64> {
         s.live
             .iter()
             .filter(|(id, _)| !reachable(id))
-            .flat_map(|(_, at)| [at + STALE_SECS, at + STALE_SECS + grace])
+            .map(|(_, at)| at + STALE_SECS)
             .filter(|t| *t > now)
             .min()
     })
@@ -1147,16 +1181,16 @@ mod tests {
     }
 
     #[test]
-    fn a_device_that_stops_answering_sleeps_after_a_heartbeat_and_goes_after_the_grace() {
+    fn a_device_that_stops_answering_sleeps_after_a_heartbeat_and_stays() {
         let _held = STORE_LOCK.lock();
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
-        let grace = 30 * 60;
+        let week = 7 * 24 * 60 * 60;
 
         nearby_hello(hello("stranger"), "10.0.0.5:5626");
         nearby_gone("stranger");
         let now = with(|s| s.live["stranger"]);
-        let at = |t: i64| list_at(t, grace).into_iter().find(|d| d.id == "stranger");
+        let at = |t: i64| list_at(t).into_iter().find(|d| d.id == "stranger");
 
         let missed_one = at(now + STALE_SECS - 1).expect("still listed");
         assert!(
@@ -1171,16 +1205,16 @@ mod tests {
         assert!(asleep.asleep && !asleep.awake && !asleep.wakeable);
         assert_eq!(asleep.last_seen, Some(now));
         assert!(asleep.state.is_none(), "what it was doing is not news");
-        assert!(at(now + STALE_SECS + grace).is_some());
         assert!(
-            at(now + STALE_SECS + grace + 1).is_none(),
-            "dropped after the grace"
+            at(now + week).is_some_and(|d| d.asleep),
+            "kept long past the old grace, until forgotten"
         );
         assert_eq!(
-            next_change(now, grace),
+            next_change(now),
             Some(now + STALE_SECS),
             "the clock wakes for the next crossing"
         );
+        assert_eq!(next_change(now + STALE_SECS), None, "and then for nothing");
 
         // Heard from again: back at once, with no wait.
         nearby_hello(hello("stranger"), "10.0.0.5:5626");
@@ -1193,32 +1227,80 @@ mod tests {
         assert!(choosable("stranger").is_err());
         assert!(send("stranger", LinkCommand::Pause).is_err());
 
-        // An account device a push can wake stays listed past the grace.
+        // An account device a push can wake, asleep for days.
         let mut phone = device("phone", false);
         phone.linked = false;
-        phone.last_seen = Some(now - 10 * grace);
+        phone.last_seen = Some(now - week);
         phone.wakeable = Some(true);
         set_account(vec![phone]);
-        let phone = list_at(now, grace)
-            .into_iter()
-            .find(|d| d.id == "phone")
-            .unwrap();
+        let phone = list_at(now).into_iter().find(|d| d.id == "phone").unwrap();
         assert!(phone.asleep && phone.wakeable);
-        assert_eq!(phone.last_seen, Some(now - 10 * grace));
+        assert_eq!(phone.last_seen, Some(now - week));
         assert!(choosable("phone").is_ok());
 
         // An account device that unlinks without a push token: reconnecting
-        // for a heartbeat, then asleep, then dropped.
+        // for a heartbeat, then asleep, and kept.
         set_linked(true);
         set_account(vec![device("mac", false)]);
         set_account(Vec::new());
         let left = with(|s| s.live["mac"]);
-        let mac = |t: i64| list_at(t, grace).into_iter().find(|d| d.id == "mac");
+        let mac = |t: i64| list_at(t).into_iter().find(|d| d.id == "mac");
         let reconnecting = mac(left + 1).unwrap();
         assert!(!reconnecting.awake && !reconnecting.asleep);
         let asleep = mac(left + STALE_SECS + 1).unwrap();
         assert!(asleep.asleep && !asleep.wakeable && asleep.account);
-        assert!(mac(left + STALE_SECS + grace + 1).is_none());
+        assert!(mac(left + week).is_some());
+        with(|s| *s = Store::default());
+    }
+
+    /// Forgotten here, a stranger is gone, and kept gone across a relaunch;
+    /// heard on the network again, it is back. Forgetting is not a block.
+    #[test]
+    fn a_forgotten_device_is_gone_until_it_comes_back() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        nearby_hello(hello("stranger"), "10.0.0.5:5626");
+        assert!(forget("stranger").is_err(), "not while it is reachable");
+        nearby_gone("stranger");
+        // Kept across a relaunch, asleep, until forgotten.
+        with(|s| *s = Store::default());
+        restore();
+        assert!(list().iter().any(|d| d.id == "stranger"));
+        forget("stranger").unwrap();
+        assert!(!list().iter().any(|d| d.id == "stranger"));
+        assert!(remembered_nearby().iter().all(|n| n.id != "stranger"));
+        with(|s| *s = Store::default());
+        restore();
+        assert!(
+            !list().iter().any(|d| d.id == "stranger"),
+            "forgotten on disk too"
+        );
+        nearby_hello(hello("stranger"), "10.0.0.5:5626");
+        assert!(list().iter().any(|d| d.id == "stranger" && d.awake));
+        with(|s| *s = Store::default());
+    }
+
+    /// One of the account's is forgotten through the server, which has to be
+    /// reachable to hear it; what the server says it forgot goes from here.
+    #[test]
+    fn an_account_device_is_forgotten_through_the_server() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        let mut phone = device("phone", false);
+        phone.linked = false;
+        phone.wakeable = Some(true);
+        phone.last_seen = Some(chrono::Utc::now().timestamp() - 3600);
+        set_account(vec![phone]);
+        assert!(
+            forget("phone").is_err(),
+            "no link here: the server would still list it and wake it"
+        );
+        assert!(list().iter().any(|d| d.id == "phone"));
+        // What every linked device of the account hears once it is.
+        forgotten("phone");
+        assert!(!list().iter().any(|d| d.id == "phone"));
         with(|s| *s = Store::default());
     }
 
@@ -1549,6 +1631,7 @@ mod tests {
             account: vec![device("mac", true), device("phone", true)],
             nearby: Vec::new(),
             live: HashMap::new(),
+            departed: Vec::new(),
         };
         std::fs::write(saved_path(), serde_json::to_string(&saved).unwrap()).unwrap();
         restore();
@@ -1621,12 +1704,12 @@ mod tests {
 
         set_target(Some("tv".into()));
         nearby_gone("tv");
-        // Past the heartbeat and the grace: out of every list but the target.
+        // Long past the heartbeat: asleep, kept, and still the target.
         with(|s| *s.live.get_mut("tv").unwrap() -= STALE_SECS + 31 * 60);
         assert_eq!(target(), Some("tv".into()), "kept while out of reach");
         let tv = list().into_iter().find(|d| d.id == "tv").unwrap();
         assert_eq!(tv.name, "Living room");
-        assert!(!tv.awake && tv.problem.is_some());
+        assert!(!tv.awake && tv.asleep);
 
         // What a relaunch finds.
         with(|s| *s = Store::default());

@@ -830,10 +830,24 @@ private struct JumpToPlayingButton: View {
     @Environment(UIState.self) private var ui
 
     var body: some View {
+        let following = ui.followingQueue
         Button { ui.toggleFollowingQueue() } label: {
+            // On a disc of the tint while following, so the state reads by
+            // shape as well as colour.
             Image(systemName: Icon.jumpToPlaying)
-                .foregroundStyle(ui.followingQueue ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                .foregroundStyle(following ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                .padding(4)
+                .background(
+                    following ? AnyShapeStyle(.tint.opacity(0.18)) : AnyShapeStyle(.clear),
+                    in: Circle()
+                )
+                .contentShape(Circle())
         }
+        #if os(iOS)
+        // A default button tints its label on a phone whatever the label
+        // asks for, which left the button lit after following stopped.
+        .buttonStyle(.plain)
+        #endif
         .disabled(player.currentItemId == nil)
         // Nothing playing is nothing to follow: the button shows that rather
         // than a tint it cannot be pressed to clear.
@@ -841,7 +855,7 @@ private struct JumpToPlayingButton: View {
             if none { ui.followingQueue = false }
         }
         .help(ui.followingQueue ? "Following what's playing; click to stop" : "Scroll to what's playing and follow it")
-        .accessibilityAddTraits(ui.followingQueue ? .isSelected : [])
+        .accessibilityAddTraits(following ? .isSelected : [])
     }
 }
 

@@ -468,10 +468,6 @@ pub struct DevicesConfig {
     /// Devices to connect to by address, `host:port`: for networks that do
     /// not carry Bonjour, such as a tailnet.
     pub addresses: Vec<String>,
-    /// How long a device that has stopped answering, and that nothing can
-    /// wake, stays listed as asleep before it is dropped. One a push can
-    /// wake stays listed.
-    pub asleep_grace_mins: u32,
     /// What a kōan on the local network may have this device do, whoever is
     /// signed in there.
     pub nearby_control: NearbyControl,
@@ -496,7 +492,6 @@ impl Default for DevicesConfig {
             discoverable: true,
             port: DEVICES_PORT,
             addresses: Vec::new(),
-            asleep_grace_mins: 30,
             nearby_control: NearbyControl::Full,
         }
     }
@@ -753,7 +748,6 @@ pub fn layer_of(path: &str) -> Layer {
         | "devices.discoverable"
         | "devices.port"
         | "devices.addresses"
-        | "devices.asleep_grace_mins"
         | "devices.nearby_control"
         // Which koan server this machine signs in to.
         | "auth.server"
