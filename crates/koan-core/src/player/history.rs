@@ -37,13 +37,17 @@ const QUEUE_DEPTH: usize = 64;
 /// bar restarts playback at every step, and only where it lands matters.
 const REPORT_INTERVAL: Duration = Duration::from_secs(1);
 
-/// The track under the needle, and how much of it has been heard.
+/// The play under the needle, and how much of it has been heard.
 ///
 /// Time comes from position deltas rather than the wall clock, so a pause
 /// contributes nothing and a seek does not credit the stretch it skipped.
 #[derive(Debug, Clone)]
 pub struct InFlight {
     pub item: QueueItemId,
+    /// The timeline boundary this play is, in the session playing it: what
+    /// tells a gapless repeat of the item from the pass before it. A session
+    /// opened on the same play, by a seek, makes it 0 again.
+    pub boundary: usize,
     track_id: Option<i64>,
     last_position_ms: u64,
     listened_ms: u64,
@@ -54,6 +58,7 @@ impl InFlight {
     pub fn new(item: QueueItemId, track_id: Option<i64>, position_ms: u64) -> Self {
         Self {
             item,
+            boundary: 0,
             track_id,
             last_position_ms: position_ms,
             listened_ms: 0,

@@ -2375,8 +2375,17 @@ mod tests {
             disc: Some(1),
             duration_ms: None,
             db_id: None,
+            pre_shuffle: None,
         };
-        queries::save_playback_state(&db.conn, &[item], Some(&source_str), 0, false).unwrap();
+        queries::save_playback_state(
+            &db.conn,
+            &[item],
+            Default::default(),
+            Some(&source_str),
+            0,
+            false,
+        )
+        .unwrap();
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
         let dest = result.moves().next().unwrap().dest().to_path_buf();

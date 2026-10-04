@@ -1590,6 +1590,7 @@ pub fn playlist_item_from_track(
         disc: track.disc.map(|n| n as i64),
         duration_ms: track.duration_ms.map(|d| d as u64),
         state,
+        pre_shuffle: None,
     }
 }
 

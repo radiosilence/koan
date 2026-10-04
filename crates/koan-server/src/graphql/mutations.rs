@@ -375,6 +375,28 @@ impl MutationRoot {
         Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
+    /// Set shuffle, repeat or both on a linked koan app. Shuffle on reorders
+    /// the rest of its queue at random; off puts it back as it was.
+    async fn set_play_mode_on_client(
+        &self,
+        ctx: &Context<'_>,
+        shuffle: Option<bool>,
+        repeat: Option<GqlRepeat>,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let mut sent = None;
+        if let Some(on) = shuffle {
+            sent = Some(send_to_client(ctx, client.as_deref(), LinkCommand::Shuffle { on }).await?);
+        }
+        if let Some(mode) = repeat {
+            let cmd = LinkCommand::Repeat { mode: mode.into() };
+            sent = Some(send_to_client(ctx, client.as_deref(), cmd).await?);
+        }
+        let sent = sent.ok_or_else(|| async_graphql::Error::new("give shuffle, repeat or both"))?;
+        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
+    }
+
     /// This process's own player. On a server nobody hears it: for the
     /// music the user is listening to, use `controlClient` and the other
     /// `...OnClient` mutations.
@@ -412,6 +434,24 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::PrevTrack)?;
         Ok(GqlStatus::success("skipped to previous"))
+    }
+
+    /// Set shuffle, repeat or both on this process's own player, as
+    /// `nowPlaying` reports them.
+    async fn set_play_mode(
+        &self,
+        ctx: &Context<'_>,
+        shuffle: Option<bool>,
+        repeat: Option<GqlRepeat>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        if let Some(on) = shuffle {
+            send_cmd(ctx, PlayerCommand::SetShuffle(on))?;
+        }
+        if let Some(repeat) = repeat {
+            send_cmd(ctx, PlayerCommand::SetRepeat(repeat.into()))?;
+        }
+        Ok(GqlStatus::success("play mode set"))
     }
 
     async fn seek(&self, ctx: &Context<'_>, position_ms: i64) -> async_graphql::Result<GqlStatus> {
@@ -612,6 +652,7 @@ impl MutationRoot {
         let position_ms = state.position_ms();
         let was_playing =
             state.playback_state() == koan_core::player::state::PlaybackState::Playing;
+        let mode = state.play_mode();
         let persisted: Vec<PersistedQueueItem> = items
             .iter()
             .map(PersistedQueueItem::from_playlist_item)
@@ -626,12 +667,18 @@ impl MutationRoot {
         with_db(ctx, move |db| {
             if persisted.is_empty() {
                 queries::playback_state::clear_playback_state(&db.conn)
+                    .and_then(|()| {
+                        queries::playback_state::save_playback_position(
+                            &db.conn, mode, None, 0, false,
+                        )
+                    })
                     .map_err(|e| super::internal_error("db", e))?;
                 return Ok(GqlStatus::success("playback state cleared (empty queue)"));
             }
             queries::playback_state::save_playback_state(
                 &db.conn,
                 &persisted,
+                mode,
                 cursor_path.as_deref(),
                 position_ms,
                 was_playing,

@@ -414,6 +414,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
         "was_playing",
         "INTEGER NOT NULL DEFAULT 0",
     ),
+    // The play mode, beside the position rather than the queue so that it
+    // outlives a queue: it is the player's.
+    ("playback_position", "shuffle", "INTEGER NOT NULL DEFAULT 0"),
+    ("playback_position", "repeat", "TEXT NOT NULL DEFAULT 'off'"),
     // MusicBrainz ids are the join key for anything that wants to look a
     // release or a recording up elsewhere. The server hands them over on every
     // album and every song.
