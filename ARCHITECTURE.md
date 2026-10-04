@@ -54,6 +54,8 @@ GraphQL is for clients that *cannot* link the core -- a browser, or a jukebox re
 
 Slices are cut by **rate of change, not by subject**. The playhead and the transfer figures move ten times a second; the queue and the set of transfers move when someone does something. A client subscribes per slice, so a fast field sitting next to a slow one wakes every reader of the slow one at the fast one's rate — which is why a transfer's byte count is not a field on a queue row, and the seekable extent is not a field beside a track's title. See `koan-ffi/src/state.rs`.
 
+Download progress that is drawn, rather than read as text, does not go through the slices at all. The `Figures` slice moves when a rate sample is taken, which is too coarse for a ring to look continuous; `TransferMeter` in the app runs a display link while a transfer is running and something on screen shows it, reads `transfer_readings()` each frame and hands the numbers to the rings and bars as layer geometry. It is the same arrangement `PlayingLevels` has with the analyser.
+
 Nothing is dropped. Each slice carries a sequence number and each client keeps a cursor, so falling behind costs the intermediate values of a slice and never the fact that it changed. A cursor that has seen nothing reads the whole state, which is how a client seeds itself — there is no separate call for that.
 
 When you add a capability, ask whether both doors need it. `koan-ffi` returns cover art as raw bytes where GraphQL has to base64 it, and hands out changes as state slices where GraphQL subscribes; otherwise the two mirror each other closely enough that a gap in one is usually a gap in both.
@@ -292,21 +294,15 @@ Only a single-sourced row is asked — one already carrying both a path and a re
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
 | `id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
 
-### `format/`
+### `format` (from sift)
 
-fb2k-compatible template engine.
-
-| File | Purpose |
-|---|---|
-| `parser.rs` | Recursive descent tokenizer: `%field%`, `[conditional]`, `$function(args)`, `'quoted'` |
-| `eval.rs` | Evaluates token tree against a `MetadataProvider` trait. Conditionals omit block if any field missing. |
-| `functions.rs` | 59 built-in functions: string ops (`left`, `right`, `pad`, `replace`, `trim`, `caps`, `abbr`, `substr`, `insert`, `repeat`, `rot13`, etc.), logic (`if`, `if2`, `if3`, `ifequal`, `ifgreater`, `iflonger`, `select`, `not`, `and`, `or`, `xor`), numeric (`num`, `add`, `sub`, `mul`, `div`, `mod`, `max`, `min`, `hex`), path (`directory`, `directory_path`, `ext`, `filename`), info (`len`, `info`), special (`tab`, `crlf`, `char`) |
+fb2k-compatible template engine, re-exported from [sift](https://github.com/radiosilence/sift) as `koan_core::format`. sift is the tagger and library organiser koan shares with other importers; it holds the one copy of the engine so that a path koan plans and a path sift files agree. `MetadataProvider` is the trait koan implements over its rows; `format::format` evaluates a pattern, `format::parse` validates one.
 
 ### `remote/`
 
 | File | Purpose |
 |---|---|
-| `client.rs` | Subsonic/Navidrome HTTP client. Token auth (MD5+salt). Endpoints: ping, getArtists, getAlbumList2, getAlbum, search3, scrobble, reportPlayback (OpenSubsonic `playbackReport`, probed once per client), download. Two HTTP clients: total-deadline for JSON, stall-bounded for downloads |
+| `client.rs` | Subsonic/Navidrome HTTP client. Signs requests with an API key, or the password (`p=enc:` over HTTPS, token auth over HTTP). Endpoints: ping, getArtists, getAlbumList2, getAlbum, search3, scrobble, reportPlayback (OpenSubsonic `playbackReport`, probed once per client), download. Two HTTP clients: total-deadline for JSON, stall-bounded for downloads |
 | `download.rs` | The one place bytes are streamed to disk: `.part` temp file → verify → atomic rename, progress callback, retry with backoff. A server that is not answering (503, 429, 502, 504, no connection) is waited out on a per-client `Outage` rather than failing each track in turn. Shared by `client.rs` and the TUI remote bridge |
 | `sync.rs` | Library sync: stable `alphabeticalByName` album list (500/page), then every song via empty-query `search3` (500/page, four in flight) joined to it, one transaction per page. Servers that list no songs that way fetch albums one at a time with rayon. Reports progress per page. Whether to walk at all is `helpers::sync_remote`'s: koan's own syncs walk only when the server's `getIndexes` `lastModified` has moved since the last complete walk (`remote_servers.library_version`) |
 | `lrclib.rs` | LRCLIB API client for lyrics fetching (synced LRC + plain text) |

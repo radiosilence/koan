@@ -1,7 +1,7 @@
 //! CLI auth commands: setup, create-user, delete-user, list-users, login, logout,
 //! api-key.
 
-use std::io::{Write, stdin, stdout};
+use std::io::{IsTerminal, Write, stdin, stdout};
 
 use koan_core::auth::{self, Role};
 use koan_core::config::Config;
@@ -11,8 +11,40 @@ use owo_colors::OwoColorize;
 
 use super::{confirm, open_db};
 
+/// Whether the auth commands may ask questions. Not with `--non-interactive`,
+/// and not when stdin is not a terminal: nobody is there to answer, and an
+/// unanswered prompt must not be taken as yes.
+#[derive(Clone, Copy)]
+pub struct Tty(bool);
+
+impl Tty {
+    pub fn detect(non_interactive: bool) -> Self {
+        Self(!non_interactive && stdin().is_terminal())
+    }
+}
+
+fn fail(message: &str) -> ! {
+    eprintln!("{} {message}", "✗".red().bold());
+    std::process::exit(1);
+}
+
+/// Go ahead with something that cannot be undone: on `--yes`, or when asked
+/// at a terminal. Without either it refuses, rather than reading no answer as
+/// one.
+fn confirmed(tty: Tty, yes: bool, question: &str) -> bool {
+    if yes {
+        return true;
+    }
+    if !tty.0 {
+        fail(&format!(
+            "{question} Pass --yes to confirm without a prompt."
+        ));
+    }
+    confirm(question)
+}
+
 /// `koan auth setup` — generate keypair and create first admin user.
-pub fn cmd_auth_setup() {
+pub fn cmd_auth_setup(tty: Tty, save_to_1password: bool) {
     let db = open_db();
 
     // Generate keypair if not present.
@@ -40,22 +72,23 @@ pub fn cmd_auth_setup() {
         return;
     }
 
-    // Create first admin user. Supports non-interactive: KOAN_USERNAME + KOAN_PASSWORD env vars.
     println!("\nCreating admin user...");
 
     let username = std::env::var("KOAN_USERNAME")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| {
+            if !tty.0 {
+                fail("No username: set KOAN_USERNAME.");
+            }
             let u = prompt("Username: ");
             if u.is_empty() {
-                eprintln!("{} Username cannot be empty", "✗".red().bold());
-                std::process::exit(1);
+                fail("Username cannot be empty");
             }
             u
         });
 
-    let password = prompt_password_with_generate();
+    let password = new_password(tty);
 
     match auth_queries::create_user(&db.conn, &username, &password, Role::Admin) {
         Ok(id) => {
@@ -65,7 +98,7 @@ pub fn cmd_auth_setup() {
                 username,
                 id
             );
-            offer_save_to_1password(&username, &password);
+            offer_save_to_1password(tty, save_to_1password, &username, &password);
             let cfg = koan_core::config::Config::load_or_default();
             if !cfg.graphql.auth_enabled {
                 println!(
@@ -82,7 +115,7 @@ pub fn cmd_auth_setup() {
 }
 
 /// `koan auth create-user --username <u> --role <r>`
-pub fn cmd_auth_create_user(username: &str, role_str: &str) {
+pub fn cmd_auth_create_user(tty: Tty, username: &str, role_str: &str, save_to_1password: bool) {
     let db = open_db();
 
     let role: Role = role_str.parse().unwrap_or_else(|_| {
@@ -94,7 +127,7 @@ pub fn cmd_auth_create_user(username: &str, role_str: &str) {
         std::process::exit(1);
     });
 
-    let password = prompt_password_with_generate();
+    let password = new_password(tty);
 
     match auth_queries::create_user(&db.conn, username, &password, role) {
         Ok(id) => {
@@ -105,14 +138,7 @@ pub fn cmd_auth_create_user(username: &str, role_str: &str) {
                 id,
                 role
             );
-            if let Err(e) = auth_queries::remember_password(&db.conn, username, &password) {
-                eprintln!(
-                    "{} Subsonic token auth not set up: {e}",
-                    "!".yellow().bold()
-                );
-            }
-            // Offer to save credentials to 1Password if `op` CLI is available.
-            offer_save_to_1password(username, &password);
+            offer_save_to_1password(tty, save_to_1password, username, &password);
         }
         Err(e) => {
             eprintln!("{} Failed to create user: {}", "✗".red().bold(), e);
@@ -122,9 +148,9 @@ pub fn cmd_auth_create_user(username: &str, role_str: &str) {
 }
 
 /// `koan auth reset-password <username>`
-pub fn cmd_auth_reset_password(username: &str) {
+pub fn cmd_auth_reset_password(tty: Tty, username: &str, save_to_1password: bool) {
     let db = open_db();
-    let password = prompt_password_with_generate();
+    let password = new_password(tty);
 
     match auth_queries::update_password(&db.conn, username, &password) {
         Ok(true) => {
@@ -133,13 +159,7 @@ pub fn cmd_auth_reset_password(username: &str) {
                 "✓".green().bold(),
                 username
             );
-            if let Err(e) = auth_queries::remember_password(&db.conn, username, &password) {
-                eprintln!(
-                    "{} Subsonic token auth not set up: {e}",
-                    "!".yellow().bold()
-                );
-            }
-            offer_save_to_1password(username, &password);
+            offer_save_to_1password(tty, save_to_1password, username, &password);
         }
         Ok(false) => {
             eprintln!("{} User '{}' not found", "✗".red().bold(), username);
@@ -216,29 +236,30 @@ fn generate_password() -> String {
     password
 }
 
-/// Get password from KOAN_PASSWORD env var, or prompt interactively.
-/// Supports non-interactive use: KOAN_PASSWORD=secret koan auth create-user ...
-fn prompt_password_with_generate() -> String {
-    // Non-interactive: env var takes precedence.
-    if let Ok(pw) = std::env::var("KOAN_PASSWORD")
-        && !pw.is_empty()
-    {
+/// `KOAN_PASSWORD`, which takes precedence over asking.
+fn env_password() -> Option<String> {
+    std::env::var("KOAN_PASSWORD")
+        .ok()
+        .filter(|p| !p.is_empty())
+}
+
+/// A password for a new account: `KOAN_PASSWORD`, or at a terminal one
+/// generated or typed. Without either it fails, rather than generating a
+/// password nobody sees.
+fn new_password(tty: Tty) -> String {
+    if let Some(pw) = env_password() {
         return pw;
     }
+    if !tty.0 {
+        fail("No password: set KOAN_PASSWORD.");
+    }
 
-    let has_op = op_available();
-    let hint = if has_op {
+    let hint = if op_available() {
         " (can be saved to 1Password)"
     } else {
         ""
     };
-    eprint!(
-        "{} Generate a secure password{}? [Y/n] ",
-        "?".cyan().bold(),
-        hint
-    );
-    let mut input = String::new();
-    if std::io::stdin().read_line(&mut input).is_ok() && !input.trim().eq_ignore_ascii_case("n") {
+    if ask(&format!("Generate a secure password{hint}?")) {
         let pw = generate_password();
         println!("{} Generated password: {}", "✓".green().bold(), pw.bold());
         return pw;
@@ -258,9 +279,19 @@ fn prompt_password_with_generate() -> String {
     password
 }
 
-/// Offer to save credentials to 1Password if `op` CLI is available.
-fn offer_save_to_1password(username: &str, password: &str) {
+/// Save credentials to 1Password: without asking on `--save-to-1password`,
+/// otherwise only when asked at a terminal and `op` is installed.
+fn offer_save_to_1password(tty: Tty, save: bool, username: &str, password: &str) {
+    if !save && !tty.0 {
+        return;
+    }
     if !op_available() {
+        if save {
+            eprintln!(
+                "{} `op` is not available; not saved to 1Password",
+                "!".yellow().bold()
+            );
+        }
         return;
     }
 
@@ -271,16 +302,7 @@ fn offer_save_to_1password(username: &str, password: &str) {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "localhost".into());
 
-    eprint!(
-        "{} Save to 1Password as 'koan@{}'? [Y/n] ",
-        "?".cyan().bold(),
-        hostname
-    );
-    let mut input = String::new();
-    if std::io::stdin().read_line(&mut input).is_err() {
-        return;
-    }
-    if input.trim().eq_ignore_ascii_case("n") {
+    if !save && !ask(&format!("Save to 1Password as 'koan@{hostname}'?")) {
         return;
     }
 
@@ -296,17 +318,11 @@ fn offer_save_to_1password(username: &str, password: &str) {
         .filter(|o| o.status.success());
 
     if existing.is_some() {
-        // Item exists — offer to update.
-        eprint!(
-            "{} '{}' already exists in 1Password. Update it? [Y/n] ",
-            "?".cyan().bold(),
-            title
-        );
-        let mut confirm = String::new();
-        if std::io::stdin().read_line(&mut confirm).is_err() {
-            return;
-        }
-        if confirm.trim().eq_ignore_ascii_case("n") {
+        if !save
+            && !ask(&format!(
+                "'{title}' already exists in 1Password. Update it?"
+            ))
+        {
             return;
         }
 
@@ -367,7 +383,7 @@ fn offer_save_to_1password(username: &str, password: &str) {
 }
 
 /// `koan auth delete-user <username>`
-pub fn cmd_auth_delete_user(username: &str) {
+pub fn cmd_auth_delete_user(tty: Tty, username: &str, yes: bool) {
     let db = open_db();
 
     let user = match auth_queries::get_user_by_username(&db.conn, username) {
@@ -391,7 +407,7 @@ pub fn cmd_auth_delete_user(username: &str) {
         }
     }
 
-    if !confirm(&format!("Delete user '{}'?", username)) {
+    if !confirmed(tty, yes, &format!("Delete user '{username}'?")) {
         println!("Cancelled.");
         return;
     }
@@ -548,8 +564,19 @@ pub fn cmd_auth_api_key_revoke(id: i64) {
 }
 
 /// `koan auth login --server <url> --username <u>`
-pub fn cmd_auth_login(server_url: &str, username: &str) {
-    let password = prompt_password("Password: ");
+pub fn cmd_auth_login(tty: Tty, server_url: &str, username: &str) {
+    // Said aloud at a terminal: a KOAN_PASSWORD left exported from an earlier
+    // setup would otherwise sign in as nobody, with no hint why.
+    let password = match env_password() {
+        Some(pw) => {
+            if tty.0 {
+                eprintln!("{}", "Using KOAN_PASSWORD.".dimmed());
+            }
+            pw
+        }
+        None if tty.0 => prompt_password("Password: "),
+        None => fail("No password: set KOAN_PASSWORD."),
+    };
     if password.is_empty() {
         eprintln!("{} Password cannot be empty", "✗".red().bold());
         std::process::exit(1);
@@ -612,13 +639,12 @@ pub fn cmd_auth_login(server_url: &str, username: &str) {
 
 /// `koan auth regenerate-keys` — delete and regenerate Ed25519 keypair.
 /// All existing tokens are invalidated (signed by old key).
-pub fn cmd_auth_regenerate_keys() {
-    eprint!(
-        "{} This will invalidate ALL existing tokens. Continue? [y/N] ",
-        "!".yellow().bold()
-    );
-    let mut input = String::new();
-    if std::io::stdin().read_line(&mut input).is_err() || !input.trim().eq_ignore_ascii_case("y") {
+pub fn cmd_auth_regenerate_keys(tty: Tty, yes: bool) {
+    if !confirmed(
+        tty,
+        yes,
+        "This will invalidate ALL existing tokens. Continue?",
+    ) {
         println!("Aborted.");
         return;
     }
@@ -642,13 +668,12 @@ pub fn cmd_auth_regenerate_keys() {
 }
 
 /// `koan auth reset` — delete all auth state (keys, users, tokens). Nuclear option.
-pub fn cmd_auth_reset() {
-    eprint!(
-        "{} This will delete ALL keys, users, and tokens. Continue? [y/N] ",
-        "!".red().bold()
-    );
-    let mut input = String::new();
-    if std::io::stdin().read_line(&mut input).is_err() || !input.trim().eq_ignore_ascii_case("y") {
+pub fn cmd_auth_reset(tty: Tty, yes: bool) {
+    if !confirmed(
+        tty,
+        yes,
+        "This will delete ALL keys, users, and tokens. Continue?",
+    ) {
         println!("Aborted.");
         return;
     }
@@ -710,6 +735,15 @@ fn prompt(message: &str) -> String {
     input.trim().to_string()
 }
 
+/// A yes-by-default question, for terminals only. Enter is yes; end of input
+/// is no, so Ctrl-D cannot write to a vault.
+fn ask(question: &str) -> bool {
+    eprint!("{} {question} [Y/n] ", "?".cyan().bold());
+    let mut input = String::new();
+    matches!(stdin().read_line(&mut input), Ok(n) if n > 0)
+        && !input.trim().eq_ignore_ascii_case("n")
+}
+
 fn prompt_password(message: &str) -> String {
     rpassword::prompt_password(message).unwrap_or_default()
 }
@@ -729,17 +763,26 @@ pub fn cmd_auth_invite(username: &str, server: Option<&str>, reset: bool) {
         std::process::exit(1);
     };
     let db = open_db();
-    let password = auth::subsonic_key()
-        .map_err(|e| e.to_string())
-        .and_then(|key| {
-            koan_core::invite::account_password(&db.conn, &key, username, reset)
-                .map_err(|e| e.to_string())
-        })
-        .unwrap_or_else(|e| {
-            eprintln!("{} {e}", "✗".red().bold());
-            std::process::exit(1);
-        });
-    let invite = koan_core::invite::Invite::new(&server, username, &password);
+    let made = (|| -> Result<_, Box<dyn std::error::Error>> {
+        let user = koan_core::invite::account(&db.conn, username)?;
+        let password = if reset {
+            Some(koan_core::invite::set_password(&db.conn, username, None)?)
+        } else {
+            None
+        };
+        let (private, _) = auth::load_or_generate_keypair()?;
+        let token = koan_core::invite::mint_token(&db.conn, &private, user.id)?;
+        Ok(koan_core::invite::Invite::with_token(
+            &server,
+            username,
+            &token,
+            password.as_deref(),
+        ))
+    })();
+    let invite = made.unwrap_or_else(|e| {
+        eprintln!("{} {e}", "✗".red().bold());
+        std::process::exit(1);
+    });
     println!("{}\n", invite.link());
     println!("{} {}\n", "Subject:".dimmed(), invite.email_subject());
     print!("{}", invite.email_text());

@@ -136,7 +136,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `index/watch.rs` | Which filesystem events can change the index, and the directory each one means a scan of. Drops access, metadata, hidden and Syncthing paths, partial downloads |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
 | `index/id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
-| `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 59 built-in functions |
+| `format` | fb2k-compatible template engine, re-exported from sift (`sift-music`) — the tagger shared with other importers. Change it there |
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
 | `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
 | `remote/sync.rs` | Library sync: album list, then songs paged in bulk via empty-query `search3` (per-album `getAlbum` for servers that cannot), one transaction per page, progress per page. Every sync walks everything; `helpers::sync_remote` decides whether to walk, by the server's `getIndexes` `lastModified` |
@@ -216,6 +216,7 @@ follows the top of the stack in front — see `TabShell`.
 | `Support/Platform.swift` | The few types AppKit and UIKit disagree about. `KoanApp`, `RootView`, `Hotkeys`, `TextFocus`, `EditCommands`, `MenuShortcuts` and `ShortcutsSheet` are the macOS shell and have no iOS counterpart; everything else builds for both |
 | `Views/DriftingWash.swift` | The window's wash, as Core Animation. Drift, blur and dissolve belong to the compositor; nothing here costs a main-thread frame |
 | `Support/FrameTimer.swift` | Times a tap against the display link, so the region after a body evaluation — layout, the commit, the render server — is measurable at all. See CONTRIBUTING |
+| `Support/TransferMeter.swift` | Download progress at the display's rate: a display link, alive only while a transfer runs and something on screen draws it, reading byte counts per frame and handing them to rings and bars as layer geometry |
 | `Support/PlayingLevels.swift` | One analyser subscription for every playing indicator on screen, handing each frame straight to the bars as layer geometry — nothing observable, nothing SwiftUI re-runs. Reads the stream only while a bar is attached, which is what lets the analyser park |
 | `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select. On the Mac a `KoanTable` of `QueueTableRow`s. Never torn down: `StageView` keeps it mounted behind other pages, so its place and its playing row survive a visit elsewhere. The album and artist browsers are rebuilt on each visit and restore their scroll position; kept mounted, they made every page switch lay them out |
 | `Views/AlbumCollection.swift` | The Mac's album grid: `NSCollectionView`, tiles of layers and labels. SwiftUI's grid cost 22–27 ms per scroll step at 4K; this one 11–12. Behaviour mirrors `AlbumGridCell`, which iOS and the artist page keep. AppKit controls are SwiftUI graphs on macOS 26, so a tile makes its few only while showing them |

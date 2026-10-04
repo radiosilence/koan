@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::extract::{Path as UrlPath, State};
 use axum::response::Response;
 use axum::routing::get;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use koan_core::config::PushConfig;
 use koan_core::db::pool::Pool;

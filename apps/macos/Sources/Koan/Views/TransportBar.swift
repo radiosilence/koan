@@ -425,35 +425,30 @@ private struct DeviceMenu: View {
 
     var body: some View {
         Menu {
-            Button {
-                player.setDevice(nil)
-            } label: {
-                choice("System Default", selected: player.currentDevice == nil)
-            }
-            Divider()
-            ForEach(player.devices, id: \.name) { device in
-                Button {
-                    player.setDevice(device.name)
-                } label: {
-                    choice(device.name, selected: player.currentDevice == device.name)
+            // An inline picker is what puts the checkmark against the output
+            // in use; a `Label` with a checkmark symbol shows none on macOS 27.
+            Picker("Output", selection: Binding(
+                get: { player.currentDevice },
+                set: { player.setDevice($0) }
+            )) {
+                Text("System Default").tag(String?.none)
+                Divider()
+                ForEach(player.devices, id: \.name) { device in
+                    Text(device.name).tag(String?.some(device.name))
                 }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
         } label: {
             Image(systemName: "hifispeaker")
         }
-        .menuStyle(.borderlessButton)
+        // Drawn by SwiftUI. `.borderlessButton` hands the label to AppKit's
+        // popup button, which draws nothing on the bar's glass in dark mode.
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .frame(width: 24)
         .help("Output device — \(player.currentDevice ?? "System Default")")
-    }
-
-    @ViewBuilder
-    private func choice(_ name: String, selected: Bool) -> some View {
-        if selected {
-            Label(name, systemImage: "checkmark")
-        } else {
-            Text(name)
-        }
     }
 }
 

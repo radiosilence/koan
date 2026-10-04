@@ -1,3 +1,6 @@
+#if os(macOS)
+import CoreAudio
+#endif
 import Foundation
 import KoanFFI
 
@@ -49,6 +52,7 @@ final class PlayerModel {
 
     func start() async {
         refreshDevices()
+        followDevices()
         followSession()
         // The two things that are not views and so have no body to invalidate:
         // where a seek asked to land, and where what is playing lives.
@@ -356,13 +360,38 @@ final class PlayerModel {
 
     // MARK: - Devices & modes
 
+    /// The latest device read. CoreAudio posts several changes for one plug,
+    /// and the reads are offloaded, so an older one can finish last.
+    @ObservationIgnored private var deviceRead = 0
+
     func refreshDevices() {
         let engine = self.engine
+        deviceRead += 1
+        let read = deviceRead
         Task {
             let found = (try? await engine.devices()) ?? []
+            let current = await engine.currentDevice()
+            guard read == self.deviceRead else { return }
             self.devices = found
-            self.currentDevice = await engine.currentDevice()
+            self.currentDevice = current
         }
+    }
+
+    /// Re-reads the outputs whenever CoreAudio's list of devices changes, so a
+    /// DAC plugged in after launch can be picked without a restart.
+    private func followDevices() {
+        #if os(macOS)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &address, .main
+        ) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.refreshDevices() }
+        }
+        #endif
     }
 
     func setDevice(_ name: String?) {

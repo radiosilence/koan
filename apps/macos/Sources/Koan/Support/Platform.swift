@@ -261,6 +261,8 @@ extension PlatformViewRepresentable {
 extension NSColor {
     /// UIKit's name for it, so shared code can say one thing.
     static var label: NSColor { labelColor }
+    static var secondaryLabel: NSColor { secondaryLabelColor }
+    static var quaternaryLabel: NSColor { quaternaryLabelColor }
 }
 #endif
 

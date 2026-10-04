@@ -1344,7 +1344,7 @@ impl App {
             (ContextAction::Organize, "Organize files", 'o'),
         ];
         let cfg = koan_core::config::Config::load().unwrap_or_default();
-        if cfg.remote.enabled && !cfg.remote.password.is_empty() {
+        if cfg.remote.enabled && koan_core::helpers::remote_credential(&cfg).is_some() {
             actions.push((ContextAction::CopyShareLink, "Share link", 's'));
         }
         actions

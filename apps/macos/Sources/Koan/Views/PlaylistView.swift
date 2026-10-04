@@ -25,6 +25,7 @@ struct PlaylistView: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
+    @Environment(TransferMeter.self) private var meter
     @Environment(\.roomTint) private var tint
     @Environment(\.onStage) private var onStage
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -152,7 +153,7 @@ struct PlaylistView: View {
         }
         let live = onStage && !reduceMotion && graphics.animatesIndicators
         let key: [AnyHashable] = [
-            AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(tint), AnyHashable(library.favouriteTrackIds),
+            AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(onStage), AnyHashable(tint), AnyHashable(library.favouriteTrackIds),
         ]
         // Where a drop before the row at `index` lands in the playlist.
         let position = { (index: Int) -> Int in
@@ -168,7 +169,8 @@ struct PlaylistView: View {
                     barsLive: live,
                     tint: NSColor(tint),
                     favourites: library.favouriteTrackIds,
-                    progress: { mirror.progress(for: $0) },
+                    meter: meter,
+                    onStage: onStage,
                     art: art,
                     levels: levels,
                     toggleFavourite: { library.toggleFavourite(track: $0) }
