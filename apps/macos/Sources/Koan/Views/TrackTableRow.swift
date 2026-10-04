@@ -68,7 +68,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         let tint: NSColor
         let favourites: Set<Int64>
         let queued: [Int64: QueueItem]
-        let progress: (String) -> Double?
+        let meter: TransferMeter
         let art: CoverArtCache
         let levels: PlayingLevels
         let play: (TrackLine) -> Void
@@ -169,6 +169,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         heading.isHidden = !isHeading
         if case .heading(let text) = item.kind {
             heading.stringValue = text
+            context.meter.follow(availability, transfer: nil)
             needsLayout = true
             return
         }
@@ -256,10 +257,13 @@ final class TrackTableRow: NSTableCellView, TableRow {
         if context.columns.contains(.availability) {
             let queued = context.queued[track.id]
             let state = AvailabilityMark.state(
-                onServer: track.onServer, onDisk: track.onDisk, queued: queued, progress: context.progress
+                onServer: track.onServer, onDisk: track.onDisk, queued: queued, meter: context.meter
             )
             availability.show(state, tint: context.tint, selected: selected, appearance: appearance)
             toolTip = AvailabilityMark.help(state, failure: queued?.failureReason)
+            context.meter.follow(availability, transfer: state.isTransferring ? SourceBadges.transfer(of: queued) : nil)
+        } else {
+            context.meter.follow(availability, transfer: nil)
         }
         CATransaction.begin()
         CATransaction.setDisableActions(true)

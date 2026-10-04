@@ -15,6 +15,7 @@ struct DownloadsView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(CoverArtCache.self) private var art
     @Environment(UIState.self) private var ui
+    @Environment(TransferMeter.self) private var meter
     @State private var selection: Set<String> = []
     #endif
 
@@ -59,13 +60,10 @@ extension DownloadsView {
     /// A `KoanTable` — see there for why the Mac's lists are AppKit.
     private var table: some View {
         let transfers = mirror.transfers
-        // What the rows draw that moves: each transfer's state, and the
-        // figures of the ones still going.
-        let key = transfers.map { transfer -> String in
-            let figures = transfer.state == .running || transfer.state == .queued
-                ? mirror.figure(for: transfer.queueItemId) : nil
-            return "\(transfer.queueItemId):\(transfer.state):\(figures?.bytesWritten ?? 0):\(figures?.bytesPerSecond ?? 0)"
-        }
+        // What the rows draw that changes under them. The figures of the
+        // transfers still going are not in it: `TransferMeter` hands those to
+        // the rows directly.
+        let key = transfers.map { "\($0.queueItemId):\($0.state)" }
         let library = library
         let nav = nav
         return SafeAreaReader { insets in
@@ -73,7 +71,7 @@ extension DownloadsView {
                 items: transfers,
                 id: \.queueItemId,
                 context: DownloadTableRow.Context(
-                    figures: { mirror.figure(for: $0) },
+                    meter: meter,
                     art: art,
                     showInLibrary: { DownloadMenu.showInLibrary($0, library: library, nav: nav) }
                 ),
@@ -139,6 +137,7 @@ private struct DownloadRow: View {
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(EngineMirror.self) private var mirror
+    @Environment(TransferMeter.self) private var meter
     @State private var hovering = false
     @Environment(\.horizontalSizeClass) private var width
 
@@ -190,12 +189,14 @@ private struct DownloadRow: View {
             // back to looking empty — a row that had just completed read as
             // one that had not started.
             //
-            // Hierarchical styles, which a `Canvas` resolves against its own
-            // environment — `.tint` does not come through it and drew nothing.
-            Canvas { context, size in
-                context.fill(Self.bar(in: size, fraction: 1), with: .style(.quaternary))
-                context.fill(Self.bar(in: size, fraction: fraction), with: .style(.primary))
-            }
+            //
+            // Layers fed by `TransferMeter`, so the bar moves at the display's
+            // rate without this body running for it.
+            TransferBar(
+                transfer: transfer.state == .running ? transfer.queueItemId : nil,
+                fraction: fraction,
+                meter: meter
+            )
             .frame(height: 4)
 
             HStack(spacing: 6) {
@@ -269,10 +270,65 @@ private struct DownloadRow: View {
         case .running: progress.map { "\(Int($0 * 100))%" } ?? ""
         }
     }
+}
 
-    private static func bar(in size: CGSize, fraction: Double) -> Path {
-        let width = size.width * min(1, max(0, fraction))
-        guard width > 0 else { return Path() }
-        return Capsule().path(in: CGRect(x: 0, y: 0, width: width, height: size.height))
+/// A download's bar: the whole length quiet, what has arrived lit.
+private struct TransferBar: PlatformViewRepresentable {
+    /// The transfer to follow while it runs; `nil` holds `fraction`.
+    let transfer: String?
+    let fraction: Double
+    let meter: TransferMeter
+
+    typealias PlatformViewType = TransferBarView
+
+    func makeView(context: Context) -> TransferBarView { TransferBarView() }
+
+    func updateView(_ view: TransferBarView, context: Context) {
+        view.meter = meter
+        view.fraction = fraction
+        meter.follow(view, transfer: transfer)
+    }
+
+    static func dismantleView(_ view: TransferBarView, coordinator: ()) {
+        view.meter?.follow(view, transfer: nil)
+    }
+}
+
+final class TransferBarView: LayerView, TransferGauge {
+    private let track = CALayer()
+    private let filled = CALayer()
+    weak var meter: TransferMeter?
+
+    var fraction: Double = 0 {
+        didSet {
+            guard fraction != oldValue else { return }
+            layoutLayers()
+        }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        for layer in [track, filled] {
+            layer.actions = ["bounds": NSNull(), "position": NSNull(), "backgroundColor": NSNull()]
+            hostLayer.addSublayer(layer)
+        }
+        appearanceChanged()
+    }
+
+    func take(_ figure: TransferFigure) {
+        fraction = figure.progress ?? 0
+    }
+
+    override func layoutLayers() {
+        let height = bounds.height
+        track.cornerRadius = height / 2
+        filled.cornerRadius = height / 2
+        track.frame = bounds
+        filled.frame = CGRect(x: 0, y: 0, width: bounds.width * fraction.clamped(), height: height)
+    }
+
+    override func appearanceChanged() {
+        track.backgroundColor = resolved(.quaternaryLabel)
+        filled.backgroundColor = resolved(.label)
     }
 }
