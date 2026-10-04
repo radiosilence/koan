@@ -105,6 +105,8 @@ struct Store {
     wake_gen: u64,
     /// The accounts this device lets control it, as the server says.
     shares: Vec<String>,
+    /// Why the server refused the last change to them.
+    share_error: Option<String>,
 }
 
 /// A stage of waking a device, in the order they are tried.
@@ -130,6 +132,8 @@ struct Departed {
     platform: String,
     account: bool,
     same_library: bool,
+    /// Another account's, shared with this one.
+    shared: bool,
 }
 
 /// One heartbeat: a link that hears nothing for this long pings, and one that
@@ -368,13 +372,15 @@ pub fn set_account(devices: Vec<LinkDevice>) {
                 name: old.name.clone(),
                 platform: old.platform.clone(),
                 account: old.owner.is_none(),
+                shared: old.owner.is_some(),
                 same_library: true,
             })
             .collect();
         for d in leaving {
             // Never seen reachable as far as this device knows: gone, rather
-            // than taken for a device seen just now.
-            if !s.live.contains_key(&d.id) {
+            // than taken for a device seen just now. And a device another
+            // account stops sharing is gone at once, not asleep.
+            if !s.live.contains_key(&d.id) || d.shared {
                 continue;
             }
             s.departed.retain(|g| g.id != d.id);
@@ -386,13 +392,39 @@ pub fn set_account(devices: Vec<LinkDevice>) {
     });
 }
 
-/// The accounts this device is shared with, as the server last said.
-pub fn set_shares(grantees: Vec<String>) {
-    changed(|s| s.shares = grantees);
+/// The accounts this device is shared with, as the server last said, and
+/// why it refused the last change, if it did.
+pub fn set_shares(grantees: Vec<String>, error: Option<String>) {
+    changed(|s| {
+        s.shares = grantees;
+        s.share_error = error;
+    });
 }
 
 pub fn shares() -> Vec<String> {
     with(|s| s.shares.clone())
+}
+
+pub fn share_error() -> Option<String> {
+    with(|s| s.share_error.clone())
+}
+
+/// Signed out, or signed in elsewhere: the shares were that server's.
+pub fn forget_shares() {
+    set_shares(Vec::new(), None);
+}
+
+/// Send `cmd` to `id` over the local network only, never up this device's
+/// link. For what a stranger asked of this device: over the network it can
+/// only reach what the stranger could have reached itself; over the link it
+/// would act as this device's account.
+pub fn send_nearby(id: &str, cmd: LinkCommand) -> Result<(), String> {
+    let nearby = with(|s| s.nearby.iter().any(|n| n.hello.id == id));
+    if nearby && cmd.allowed_nearby() && crate::remote::nearby::send(id, cmd) {
+        Ok(())
+    } else {
+        Err(format!("{id} is not on this network"))
+    }
 }
 
 /// Let the account `grantee` on this server control this device, or stop.
@@ -478,6 +510,7 @@ pub fn nearby_gone(id: &str) {
             platform: gone.hello.platform.clone(),
             account: false,
             same_library: ours.is_some() && gone.hello.library == ours,
+            shared: false,
         });
     });
 }
@@ -1273,6 +1306,49 @@ mod tests {
             with(|s| s.attempt.is_none() && s.waking.is_empty()),
             "no push, and too long gone for the network"
         );
+        with(|s| *s = Store::default());
+    }
+
+    /// What a stranger or a sharing account asks this device to pass on goes
+    /// over the network or nowhere: never up this device's link, as its
+    /// account, to devices the asker has no claim on.
+    #[test]
+    fn a_hand_off_asked_by_a_stranger_never_goes_up_the_link() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        set_linked(true);
+        set_account(vec![device("mac", false)]);
+        let play = LinkCommand::Play {
+            track_ids: vec!["t".into()],
+            start_at: 0,
+            position_ms: 0,
+            paused: false,
+            handoff: true,
+        };
+        assert!(
+            send_nearby("mac", play).is_err(),
+            "the account's Mac is reached only through the link"
+        );
+        with(|s| *s = Store::default());
+    }
+
+    /// Another account's device that stops being shared is gone at once.
+    #[test]
+    fn a_device_no_longer_shared_is_dropped_at_once() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        set_linked(true);
+        let mut theirs = device("their-phone", false);
+        theirs.owner = Some("k".into());
+        set_account(vec![theirs]);
+        let listed = list().into_iter().find(|d| d.id == "their-phone").unwrap();
+        assert_eq!(listed.owner.as_deref(), Some("k"));
+        assert!(!listed.account, "not this account's own");
+        assert!(send("their-phone", LinkCommand::Sync { full: false }).is_err());
+        set_account(Vec::new());
+        assert!(!list().iter().any(|d| d.id == "their-phone"));
         with(|s| *s = Store::default());
     }
 

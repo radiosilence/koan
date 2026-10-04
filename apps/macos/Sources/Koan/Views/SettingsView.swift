@@ -792,8 +792,9 @@ private struct DevicesSettings: View {
                         Button("Share") { share(grantee, allow: true) }
                             .disabled(grantee.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
-                    if let shareError {
-                        Text(shareError).font(.caption).foregroundStyle(.orange)
+                    // Ours if it could not be sent; the server's if it refused.
+                    if let error = shareError ?? mirror.connection?.shareError {
+                        Text(error).font(.caption).foregroundStyle(.orange)
                     }
                 } header: {
                     Text("Shared with other accounts")

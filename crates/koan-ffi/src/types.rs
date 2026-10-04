@@ -1497,6 +1497,8 @@ pub struct ConnectionInfo {
     pub sharing: bool,
     /// The accounts this device is shared with.
     pub shared_with: Vec<String>,
+    /// Why the server refused the last change to them.
+    pub share_error: Option<String>,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

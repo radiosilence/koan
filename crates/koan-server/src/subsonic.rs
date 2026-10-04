@@ -3906,10 +3906,16 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
                                         .is_some();
                                     if allow && !known {
                                         log::info!("share: {username} asked to share with {grantee}, who has no account here");
+                                        registry.send_shares(
+                                            &username,
+                                            &device,
+                                            Some(format!("There is no account called {grantee} on this server.")),
+                                        );
                                         return;
                                     }
                                     if let Err(e) = registry.share(&username, &device, &grantee, allow) {
                                         log::info!("share: {e}");
+                                        registry.send_shares(&username, &device, Some(e));
                                     }
                                 });
                             }

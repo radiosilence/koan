@@ -138,6 +138,14 @@ pub enum LinkCommand {
     /// when it links and whenever the list changes.
     Shares {
         grantees: Vec<String>,
+        /// Why the last request to share or stop sharing was refused.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// `command`, sent by another account this device is shared with. Run
+    /// as a stranger's would be: see `allowed_shared`.
+    Shared {
+        command: Box<LinkCommand>,
     },
     /// Play through this output from now on, carrying on from where the music
     /// is, as the device's own output menu would.
@@ -167,6 +175,43 @@ impl LinkCommand {
     ///
     /// Where the sound goes is not playback: an output switch reaches into
     /// the room, and a preset into the config. Those are the account's own.
+    /// Whether another account this device is shared with may send it this:
+    /// playback and the queue, as `allowed_nearby`, and nothing that names
+    /// another device. `HandOff` makes this device send its music onward
+    /// under its owner's account, to a device the grant does not cover.
+    pub fn allowed_shared(&self) -> bool {
+        match self {
+            Self::Play { .. }
+            | Self::Enqueue { .. }
+            | Self::PlayNext { .. }
+            | Self::Remove { .. }
+            | Self::Clear
+            | Self::JumpTo { .. }
+            | Self::Seek { .. }
+            | Self::Pause
+            | Self::Resume
+            | Self::Next
+            | Self::Previous
+            | Self::PlayItem { .. }
+            | Self::RemoveItems { .. }
+            | Self::MoveItems { .. }
+            | Self::Insert { .. }
+            | Self::Undo
+            | Self::Redo
+            | Self::Shuffle { .. }
+            | Self::Repeat { .. } => true,
+            Self::Sync { .. }
+            | Self::Evict { .. }
+            | Self::HandOff { .. }
+            | Self::Devices { .. }
+            | Self::Shares { .. }
+            | Self::Shared { .. }
+            | Self::SetOutput { .. }
+            | Self::SetRendererVolume { .. }
+            | Self::SetPreset { .. } => false,
+        }
+    }
+
     pub fn allowed_nearby(&self) -> bool {
         !matches!(
             self,
@@ -177,6 +222,7 @@ impl LinkCommand {
                 | Self::SetRendererVolume { .. }
                 | Self::SetPreset { .. }
                 | Self::Shares { .. }
+                | Self::Shared { .. }
         )
     }
 
@@ -190,6 +236,7 @@ impl LinkCommand {
             | Self::Evict { track_ids }
             | Self::Insert { track_ids, .. } => track_ids,
             Self::JumpTo { track_id } => std::slice::from_ref(track_id),
+            Self::Shared { command } => command.track_ids(),
             _ => &[],
         }
     }
@@ -202,6 +249,9 @@ pub enum CommandSource {
     Account,
     /// A device on the same network, which may belong to anyone.
     Nearby,
+    /// Another account this device is shared with, through the server. Held
+    /// to the same as `Nearby`.
+    Shared,
 }
 
 /// Another device on the same account, as the server sends it.
@@ -244,6 +294,7 @@ impl LinkCommand {
             | Self::Evict { track_ids }
             | Self::Insert { track_ids, .. } => track_ids.iter_mut().collect(),
             Self::JumpTo { track_id } => vec![track_id],
+            Self::Shared { command } => command.track_ids_mut(),
             Self::PlayItem { .. }
             | Self::RemoveItems { .. }
             | Self::MoveItems { .. }
@@ -698,8 +749,17 @@ impl wire::Session for LinkSession<'_> {
             Ok(LinkCommand::Devices { devices }) => {
                 crate::remote::devices::set_account(devices);
             }
-            Ok(LinkCommand::Shares { grantees }) => {
-                crate::remote::devices::set_shares(grantees);
+            Ok(LinkCommand::Shares { grantees, error }) => {
+                crate::remote::devices::set_shares(grantees, error);
+            }
+            Ok(LinkCommand::Shared { command }) => {
+                // Checked by the server, and again here: this device decides
+                // what another account may have it do.
+                if command.allowed_shared() {
+                    (self.local.on_command)(*command, CommandSource::Shared);
+                } else {
+                    log::warn!("link: refused from a shared account: {command:?}");
+                }
             }
             Ok(cmd) => (self.local.on_command)(cmd, CommandSource::Account),
             Err(e) => log::warn!("link: not a command ({e}): {text}"),
@@ -858,6 +918,71 @@ fn percent_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What another account may ask of a shared device is a subset of what a
+    /// stranger on the network may, with nothing that names another device.
+    #[test]
+    fn a_sharing_account_may_ask_less_than_a_stranger() {
+        let ids = vec!["t".to_string()];
+        let all = [
+            LinkCommand::Play {
+                track_ids: ids.clone(),
+                start_at: 0,
+                position_ms: 0,
+                paused: false,
+                handoff: false,
+            },
+            LinkCommand::Enqueue {
+                track_ids: ids.clone(),
+            },
+            LinkCommand::PlayNext {
+                track_ids: ids.clone(),
+            },
+            LinkCommand::Remove {
+                track_ids: ids.clone(),
+            },
+            LinkCommand::Clear,
+            LinkCommand::Sync { full: false },
+            LinkCommand::Evict {
+                track_ids: ids.clone(),
+            },
+            LinkCommand::JumpTo {
+                track_id: "t".into(),
+            },
+            LinkCommand::Seek { position_ms: 0 },
+            LinkCommand::Pause,
+            LinkCommand::Resume,
+            LinkCommand::Next,
+            LinkCommand::Previous,
+            LinkCommand::Undo,
+            LinkCommand::Redo,
+            LinkCommand::Shuffle { on: true },
+            LinkCommand::HandOff { to: "x".into() },
+            LinkCommand::Devices { devices: vec![] },
+            LinkCommand::Shares {
+                grantees: vec![],
+                error: None,
+            },
+            LinkCommand::Shared {
+                command: Box::new(LinkCommand::Pause),
+            },
+            LinkCommand::SetRendererVolume { volume: 1 },
+        ];
+        for cmd in &all {
+            if cmd.allowed_shared() {
+                assert!(cmd.allowed_nearby(), "{cmd:?}");
+            }
+        }
+        assert!(!LinkCommand::HandOff { to: "x".into() }.allowed_shared());
+        assert!(LinkCommand::Pause.allowed_shared());
+        assert!(
+            !LinkCommand::Shared {
+                command: Box::new(LinkCommand::Pause)
+            }
+            .allowed_nearby(),
+            "a stranger cannot pose as a sharing account"
+        );
+    }
 
     // Neither case may reach `sync`: a test has no business reading the
     // machine's config and syncing against the server it names.
