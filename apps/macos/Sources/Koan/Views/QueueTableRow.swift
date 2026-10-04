@@ -43,6 +43,9 @@ final class QueueTableRow: NSTableCellView, TableRow {
         let tint: NSColor
         let favourites: Set<Int64>
         let meter: TransferMeter
+        /// Whether the page is showing. The queue stays mounted behind other
+        /// pages, and a ring there is not worth a display link.
+        let onStage: Bool
         let art: CoverArtCache
         let levels: PlayingLevels
         let toggleFavourite: (Int64) -> Void
@@ -213,7 +216,7 @@ final class QueueTableRow: NSTableCellView, TableRow {
         let state: AvailabilityMark.State = content.transferring.map { .transferring(context.meter.figure(for: $0)?.progress) }
             ?? (content.onServer || content.onDisk ? .stored(onServer: content.onServer, onDisk: content.onDisk) : .nothing)
         availability.show(state, tint: context.tint, selected: selected, appearance: appearance)
-        context.meter.follow(availability, transfer: content.transferring)
+        context.meter.follow(availability, transfer: context.onStage ? content.transferring : nil)
         let favourite = content.trackId.map(context.favourites.contains) ?? false
         heart.isHidden = content.trackId == nil || !(favourite || hovered)
         heartImage = Symbol.image(

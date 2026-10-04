@@ -52,31 +52,49 @@ days by default), so a machine that connects that often stays signed in until
 ## User management
 
 Admins manage accounts on the web UI's Users page, from the apps' Settings, over
-GraphQL (`users`, `createUser`, `inviteUser`, `setUserRole`, `deleteUser`, which
-MCP clients can call too), or with the CLI.
+GraphQL (`users`, `createUser`, `inviteUser`, `setUserRole`, `setUserPassword`,
+`deleteUser`, which MCP clients can call too), or with the CLI.
+
+The server keeps only an argon2 hash of each password, never a copy it can read
+back, so no admin can see an account's password. A generated one is shown once,
+when it is made.
 
 ### Invites
 
-An invite is the account as one link:
-`https://koan.rocks/join/#server=…&username=…&password=…`. On a device with
-koan installed it opens the app, which signs in and syncs the library with no
-further steps. Elsewhere, koan.rocks shows the downloads, an Open in koan
-button, and the details in plain text for other Subsonic apps. The Mac app is
-not a universal link target, since a Developer ID build carries no associated
-domains: there the page opens and its button hands over through `koan://join`.
-Pasting the link into Server URL in Settings works on either. The link is the
-account itself; nothing is redeemed on the server, so it works offline and a
-mail scanner fetching it changes nothing. The credentials are in the fragment,
-which browsers never send, so koan.rocks does not see them.
+An invite is a link carrying the server, the username and a token:
+`https://koan.rocks/join/#server=…&username=…&invite=…`. On a device with koan
+installed it opens the app, which trades the token for an API key of its own
+(`/rest/koanJoin`, listed as the `koanInvite` extension), signs in with that key
+and syncs the library with no further steps. Each device the link is opened on
+gets its own key, named after the device, which appears under API keys and can
+be revoked on its own. Elsewhere, koan.rocks shows the downloads and an Open in
+koan button. The Mac app is not a universal link target, since a Developer ID
+build carries no associated domains: there the page opens and its button hands
+over through `koan://join`. Pasting the link into Server URL in Settings works
+on either. The link is in the fragment, which browsers never send, so koan.rocks
+does not see it.
+
+The token is a JWT signed with the server's key, naming the account and good for
+a week. Nothing is stored when one is made, so an admin can make another at any
+time. It also carries a short digest of the account's password hash, so any
+password change withdraws every link sent before it: a reset is how a link that
+went to the wrong place is taken back. Links from servers older than tokens,
+which carried the password, are no longer read.
+
+Opening a link again on a device that already joined replaces that device's key
+and revokes the old one, through `/rest/koanRevokeKey`, which revokes the key
+the request signs in with.
+
+Creating an account generates its password, and the email carries it once, for
+the web UI and other Subsonic apps. Inviting an existing account sends only the
+link. To give an account a new password, invite it with a reset (generated,
+shown in the invite) or set one on the Users page or with `setUserPassword`.
+Either signs every device out, invited ones included, since a password change
+revokes the account's sessions and API keys.
 
 The server sends no mail. Creating an account or inviting one produces the email
 (plain text, rich text with a button, and a `mailto:`) for the admin to send
 themselves.
-
-An invite reuses the account's password, recovered from the sealed copy kept for
-Subsonic token auth, so the account's other devices keep working. Accounts made
-before koan kept that copy can only be invited with a new password, which signs
-their existing devices out.
 
 The link points at `sharing.public_url` when it is set, and otherwise at the
 address the admin reached the server on (honouring `X-Forwarded-Host` and
@@ -101,6 +119,7 @@ koan auth reset-password alice
 koan auth set-role alice admin
 
 # Print an invite: the link and the email to send it in
+# (--reset-password also generates a new password and puts it in the email)
 koan auth invite alice --server https://music.example.com
 
 # Delete a user
@@ -208,12 +227,13 @@ Refresh tokens are stored in the database as `sha256(token)`, so a database read
 
 ## Subsonic API
 
-`/rest/*` is kōan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`). Clients sign in with one of:
+`/rest/*` is kōan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`), and koan's own. Clients sign in with one of:
 
 - **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
 - **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. argon2 is expensive by design, so at most one check per core (2 to 8) runs at once and a request arriving when all are busy gets error 0, "server busy", rather than waiting. The protocol sends the password with every request, so use it only over HTTPS.
-- **Token** (`u` + `t` + `s`) — checked against the account's password, kept sealed with AES-256-GCM for this purpose. An account that has not signed in by password since kōan began keeping that copy has nothing to check a token against, gets error 41, and the client falls back to a password or a key; one password sign-in, or `koan auth reset-password`, fixes it.
 - **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret and its username, acting as `user`, for clients that have no account.
+
+Subsonic token auth (`t = md5(password + salt)`) is refused for accounts with error 41, which tells a client to fall back to a password or a key. Checking it needs the plaintext password on the server, and a password the server can read back is one its admins can read too. It also protects little: a captured token replays, and md5 of a short password is cheap to reverse.
 
 ```bash
 koan auth api-key create --username alice --name phone   # prints the key once
@@ -225,6 +245,8 @@ koan subsonic status
 koan subsonic disable
 ```
 
-Signed-in users manage their own keys in the web UI under **API keys**. `readonly` accounts, and their keys, get error 50 from every endpoint that writes.
+Signed-in users manage their own keys in the web UI under **API keys**.
+
+A koan app that joined by invite keeps its key as `remote.api_key` in `config.local.toml`, and signs in with it ahead of any password, `KOAN_REMOTE__PASSWORD` included. Sign out to go back to a password. `readonly` accounts, and their keys, get error 50 from every endpoint that writes.
 
 `koan play --server` streams audio over `/rest/stream` and signs those requests with the `[subsonic]` credentials from the machine it runs on, so they have to match the server's.

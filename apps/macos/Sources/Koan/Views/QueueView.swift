@@ -126,7 +126,7 @@ struct QueueView: View {
         case .playing: .centre
         }
         let key: [AnyHashable] = [
-            AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(tint),
+            AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(onStage), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds),
         ]
         return SafeAreaReader { insets in
@@ -139,6 +139,7 @@ struct QueueView: View {
                     tint: NSColor(tint),
                     favourites: library.favouriteTrackIds,
                     meter: meter,
+                    onStage: onStage,
                     art: art,
                     levels: levels,
                     toggleFavourite: { library.toggleFavourite(track: $0) }

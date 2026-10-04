@@ -153,7 +153,7 @@ struct PlaylistView: View {
         }
         let live = onStage && !reduceMotion && graphics.animatesIndicators
         let key: [AnyHashable] = [
-            AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(tint), AnyHashable(library.favouriteTrackIds),
+            AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(onStage), AnyHashable(tint), AnyHashable(library.favouriteTrackIds),
         ]
         // Where a drop before the row at `index` lands in the playlist.
         let position = { (index: Int) -> Int in
@@ -170,6 +170,7 @@ struct PlaylistView: View {
                     tint: NSColor(tint),
                     favourites: library.favouriteTrackIds,
                     meter: meter,
+                    onStage: onStage,
                     art: art,
                     levels: levels,
                     toggleFavourite: { library.toggleFavourite(track: $0) }

@@ -14,9 +14,8 @@
 //! that check instead, which is what a client's burst of requests on first
 //! contact looks like.
 //!
-//! Each successful check also seals the password for Subsonic token auth
-//! (`koan_core::auth::seal_password`), so an account that has signed in once
-//! by password can then use clients that only speak `t`/`s`.
+//! Subsonic token auth (`t`/`s`) is not checked here: it needs the plaintext
+//! password, and koan keeps only the hash.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -62,68 +61,16 @@ pub struct PasswordVerifier {
     /// Checks running now, by the same key as `verified`.
     checking: Mutex<HashMap<[u8; 32], Arc<Check>>>,
     max_checks: usize,
-    /// Seals passwords for token auth; `None` if it could not be loaded, which
-    /// leaves password auth working and token auth refused.
-    sealing: Option<[u8; 32]>,
 }
 
 impl PasswordVerifier {
     pub fn new(pool: Arc<Pool>) -> Self {
-        let sealing = auth::subsonic_key()
-            .inspect_err(|e| log::warn!("Subsonic token auth for accounts is off: {e}"))
-            .ok();
-        Self::with_key(pool, sealing)
-    }
-
-    pub fn with_key(pool: Arc<Pool>, sealing: Option<[u8; 32]>) -> Self {
         Self {
             pool,
             verified: Mutex::new(LruCache::new(NonZeroUsize::new(256).expect("non-zero"))),
             checking: Mutex::new(HashMap::new()),
             max_checks: max_checks(),
-            sealing,
         }
-    }
-
-    /// The user's id and role when `token` is `md5(password + salt)` for
-    /// their password. Needs the sealed copy a password sign-in leaves; the opened
-    /// password is then checked like any other, so a stale copy fails.
-    pub fn verify_token(
-        &self,
-        username: &str,
-        token: &str,
-        salt: &str,
-    ) -> Result<(i64, Role), Refused> {
-        use subtle::ConstantTimeEq;
-        let password = (|| {
-            let key = self.sealing.as_ref()?;
-            let sealed =
-                auth_queries::sealed_password(&self.pool.get().ok()?.conn, username).ok()??;
-            auth::open_password(key, username, &sealed)
-        })()
-        .ok_or(Refused::Wrong)?;
-        let expected = format!("{:x}", md5::compute(format!("{password}{salt}")));
-        if !bool::from(
-            token
-                .to_ascii_lowercase()
-                .as_bytes()
-                .ct_eq(expected.as_bytes()),
-        ) {
-            return Err(Refused::Wrong);
-        }
-        self.verify(username, &password)
-    }
-
-    /// Whether token auth could work for this user: a key and a sealed copy.
-    pub fn has_sealed(&self, username: &str) -> bool {
-        self.sealing.is_some()
-            && self
-                .pool
-                .get()
-                .ok()
-                .and_then(|db| auth_queries::sealed_password(&db.conn, username).ok())
-                .flatten()
-                .is_some()
     }
 
     /// The user's id and role when the password is theirs.
@@ -150,16 +97,8 @@ impl PasswordVerifier {
             .lock()
             .get(&key)
             .is_some_and(|at| at.elapsed() < REMEMBER);
-        if !fresh {
-            if !self.check(key, password, hash)? {
-                return Err(Refused::Wrong);
-            }
-            if let Some(k) = &self.sealing
-                && user.is_some()
-                && let Ok(sealed) = auth::seal_password(k, username, password)
-            {
-                let _ = auth_queries::set_sealed_password(&db.conn, username, &sealed);
-            }
+        if !fresh && !self.check(key, password, hash)? {
+            return Err(Refused::Wrong);
         }
         user.map(|u| (u.id, u.role)).ok_or(Refused::Wrong)
     }
@@ -206,10 +145,7 @@ mod tests {
         let db = Database::open(&path).unwrap();
         koan_core::db::schema::create_tables(&db.conn).unwrap();
         auth_queries::create_user(&db.conn, "mate", "hunter22", Role::Readonly).unwrap();
-        (
-            PasswordVerifier::with_key(Arc::new(Pool::new(path)), Some([7; 32])),
-            dir,
-        )
+        (PasswordVerifier::new(Arc::new(Pool::new(path))), dir)
     }
 
     #[test]
@@ -218,52 +154,6 @@ mod tests {
         assert_eq!(v.verify("mate", "hunter22"), Ok((1, Role::Readonly)));
         // Remembered, and still answered from the database's role.
         assert_eq!(v.verify("mate", "hunter22"), Ok((1, Role::Readonly)));
-    }
-
-    #[test]
-    fn token_auth_works_once_a_password_sign_in_sealed_it() {
-        let (v, _dir) = verifier();
-        let token = |pw: &str, salt: &str| format!("{:x}", md5::compute(format!("{pw}{salt}")));
-        assert_eq!(
-            v.verify_token("mate", &token("hunter22", "abc"), "abc"),
-            Err(Refused::Wrong)
-        );
-        assert!(!v.has_sealed("mate"));
-        v.verify("mate", "hunter22").unwrap();
-        assert!(v.has_sealed("mate"));
-        assert_eq!(
-            v.verify_token("mate", &token("hunter22", "abc"), "abc"),
-            Ok((1, Role::Readonly))
-        );
-        assert_eq!(
-            v.verify_token("mate", &token("hunter2", "abc"), "abc"),
-            Err(Refused::Wrong)
-        );
-        assert_eq!(
-            v.verify_token("nobody", &token("hunter22", "abc"), "abc"),
-            Err(Refused::Wrong)
-        );
-    }
-
-    #[test]
-    fn a_password_changed_elsewhere_makes_the_sealed_copy_fail() {
-        let (v, dir) = verifier();
-        v.verify("mate", "hunter22").unwrap();
-        let db = Database::open(&dir.path().join("test.db")).unwrap();
-        auth_queries::update_password(&db.conn, "mate", "correct horse").unwrap();
-        let token = format!("{:x}", md5::compute("hunter22salt"));
-        assert_eq!(v.verify_token("mate", &token, "salt"), Err(Refused::Wrong));
-    }
-
-    #[test]
-    fn a_sealed_password_opens_only_for_its_user_and_key() {
-        let sealed = auth::seal_password(&[1; 32], "mate", "hunter22").unwrap();
-        assert_eq!(
-            auth::open_password(&[1; 32], "mate", &sealed).as_deref(),
-            Some("hunter22")
-        );
-        assert_eq!(auth::open_password(&[1; 32], "owner", &sealed), None);
-        assert_eq!(auth::open_password(&[2; 32], "mate", &sealed), None);
     }
 
     #[test]

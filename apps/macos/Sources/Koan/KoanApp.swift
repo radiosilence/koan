@@ -48,12 +48,13 @@ struct KoanApp: App {
             // and the lyrics panel arriving in a single frame instead of
             // sliding. So the floor is the sum of what the columns draw at:
             // the widest page's stage (the record and playlist headers, ~760)
-            // plus the sidebar's 215 and the inspector's 320.
+            // plus the sidebar's 215 and the inspector's 280. It stays under
+            // 1280 so the window tiles to half of a 2560pt display.
             //
             // One number rather than one per column count: a floor that moved
             // when the lyrics panel opened resized the window under you, and a
             // window that jumps is worse than a window that is wide.
-            .frame(minWidth: 1320, minHeight: 620)
+            .frame(minWidth: 1260, minHeight: 620)
             .onOpenURL { url in
                 if let state { state.open(url: url) } else { pendingURL = url }
             }

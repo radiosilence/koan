@@ -31,7 +31,6 @@ struct SourceBadges: View {
         Group {
             if let transferring {
                 TransferRing(transfer: transferring, meter: meter)
-                    .help("Downloading")
             } else if onServer {
                 // Visible enough to be read at a glance down a list.
                 Image(systemName: onDisk ? "cloud.fill" : "cloud")
@@ -86,9 +85,11 @@ final class TransferRingView: LayerView, TransferGauge {
         hostLayer.addSublayer(ring)
         appearanceChanged()
         spin()
+        say("Downloading")
     }
 
     func take(_ figure: TransferFigure) {
+        say(figure.progress.map { "Downloading — \(Int($0 * 100))%" } ?? "Downloading")
         guard let fraction = figure.progress else { return spin() }
         ring.removeAnimation(forKey: "spin")
         CATransaction.begin()
@@ -114,6 +115,14 @@ final class TransferRingView: LayerView, TransferGauge {
     }
 
     override func appearanceChanged() { ring.strokeColor = resolved(.secondaryLabel) }
+
+    /// The tooltip, set here rather than with `.help` so a percentage
+    /// changing never runs a body. A phone has no hover and nothing to set.
+    private func say(_ text: String) {
+        #if canImport(AppKit)
+        if toolTip != text { toolTip = text }
+        #endif
+    }
 }
 
 extension SourceBadges {

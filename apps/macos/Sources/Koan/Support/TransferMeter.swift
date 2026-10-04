@@ -70,7 +70,9 @@ final class TransferMeter: Observable {
 
     /// Have `gauge` draw `transfer`, or nothing when it is `nil`. Called
     /// whenever a row is configured; it is handed the current figure at once,
-    /// so it never draws an old one while waiting for a frame.
+    /// so it never draws an old one while waiting for a frame. A row that is
+    /// mounted but off stage — the queue behind another page — passes `nil`,
+    /// or the link would run for a ring nobody can see.
     func follow(_ gauge: TransferGauge, transfer: String?) {
         guard let transfer else {
             gauges.removeObject(forKey: gauge)
@@ -96,8 +98,14 @@ final class TransferMeter: Observable {
         )
     }
 
+    /// The gauges still alive. A weak-keyed map table drops a dead key
+    /// lazily, so its `count` can go on counting rows that are gone.
+    private var live: [TransferGauge] {
+        gauges.keyEnumerator().allObjects.compactMap { $0 as? TransferGauge }
+    }
+
     private func relink() {
-        let wanted = running && !away && gauges.count > 0
+        let wanted = running && !away && !live.isEmpty
         if wanted, link == nil {
             link = makeLink()
         } else if !wanted, let link {
@@ -121,12 +129,16 @@ final class TransferMeter: Observable {
         return link
     }
 
+    /// A frame. A gauge is torn down without saying so — a table goes with
+    /// the page that held it — so the link checks for itself that someone is
+    /// still listening, and stops when nobody is.
     fileprivate func tick() {
+        let gauges = live
+        guard !gauges.isEmpty else { return relink() }
         let before = latest
         read()
-        for gauge in gauges.keyEnumerator().allObjects {
-            guard let gauge = gauge as? TransferGauge,
-                  let transfer = gauges.object(forKey: gauge) as String?,
+        for gauge in gauges {
+            guard let transfer = self.gauges.object(forKey: gauge) as String?,
                   let figure = latest[transfer], figure != before[transfer]
             else { continue }
             gauge.take(figure)

@@ -71,7 +71,7 @@ struct RootView: View {
         }
         .inspector(isPresented: $ui.showLyrics) {
             LyricsPanel()
-                .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
+                .inspectorColumnWidth(min: 260, ideal: 280, max: 460)
                 // The column animates on its own; its contents do not come
                 // with it. Without this the stage slides over and the pane
                 // then appears whole in one frame, a fifth of a second later.
