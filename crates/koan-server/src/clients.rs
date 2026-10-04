@@ -127,7 +127,7 @@ pub struct Registry {
     /// only, and forgotten with the watcher's link.
     level_watches: Mutex<Vec<LevelWatch>>,
     /// Where each device last linked from, by device id: its account and
-    /// address. In memory: a restart forgets it until each links again.
+    /// address. Kept in `link_devices` too, so a restart keeps it.
     addresses: Mutex<std::collections::HashMap<String, (String, std::net::IpAddr)>>,
 }
 
@@ -148,6 +148,7 @@ pub fn registry() -> &'static Registry {
         let registry = Registry::default();
         *registry.orders.lock() = outbox::load_orders();
         *registry.grants.lock() = outbox::load_grants();
+        *registry.addresses.lock() = outbox::load_addresses();
         registry
     });
     &REGISTRY
@@ -542,6 +543,7 @@ impl Registry {
         self.addresses
             .lock()
             .insert(device.to_string(), (username.to_string(), addr));
+        outbox::save_address(device, username, addr);
     }
 
     /// Whose push token wakes `to` when `username`'s device `from` asks: the
@@ -1548,6 +1550,55 @@ mod outbox {
             .unwrap_or_default()
     }
 
+    /// Where each device last linked from, by device id: the most recent of
+    /// its rows, should it have linked as more than one account.
+    pub fn load_addresses() -> std::collections::HashMap<String, (String, std::net::IpAddr)> {
+        let Some(db) = db() else {
+            return Default::default();
+        };
+        load_addresses_in(&db.conn)
+    }
+
+    pub(super) fn load_addresses_in(
+        conn: &rusqlite::Connection,
+    ) -> std::collections::HashMap<String, (String, std::net::IpAddr)> {
+        conn.prepare(
+            "SELECT device, username, addr FROM link_devices WHERE addr IS NOT NULL ORDER BY last_seen",
+        )
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(device, username, addr)| Some((device, (username, addr.parse().ok()?))))
+        .collect()
+    }
+
+    pub fn save_address(device: &str, username: &str, addr: std::net::IpAddr) {
+        if let Some(db) = db() {
+            save_address_in(&db.conn, device, username, addr);
+        }
+    }
+
+    pub(super) fn save_address_in(
+        conn: &rusqlite::Connection,
+        device: &str,
+        username: &str,
+        addr: std::net::IpAddr,
+    ) {
+        let _ = conn.execute(
+            "UPDATE link_devices SET addr = ?1 WHERE device = ?2 AND username = ?3",
+            rusqlite::params![addr.to_string(), device, username],
+        );
+    }
+
     pub fn load_grants() -> Vec<super::Grant> {
         let Some(db) = db() else { return Vec::new() };
         db.conn
@@ -2232,6 +2283,33 @@ mod tests {
         // An address is believed only for the account that linked from it.
         reg.seen_at("dev-other", "mallory", home);
         assert_eq!(reg.wake_owner("admin", "dev-other", "dev-tv"), "admin");
+    }
+
+    /// The server restarts with every release; a backgrounded iPad has to
+    /// stay wakeable across one without being opened again.
+    #[test]
+    fn where_a_device_last_linked_from_survives_a_restart() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        koan_core::db::schema::create_tables(&conn).unwrap();
+        for (device, user, seen) in [("dev-ipad", "sarita", 1), ("dev-phone", "admin", 2)] {
+            conn.execute(
+                "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES (?1, ?2, ?1, 'ios', ?3)",
+                rusqlite::params![device, user, seen],
+            )
+            .unwrap();
+        }
+        let home: std::net::IpAddr = "203.0.113.7".parse().unwrap();
+        outbox::save_address_in(&conn, "dev-ipad", "sarita", home);
+        outbox::save_address_in(&conn, "dev-phone", "admin", home);
+
+        // A fresh server, from what was saved.
+        let reg = Registry::default();
+        *reg.addresses.lock() = outbox::load_addresses_in(&conn);
+        assert_eq!(
+            reg.wake_owner("admin", "dev-phone", "dev-ipad"),
+            "sarita",
+            "still woken through its own account after the restart"
+        );
     }
 
     #[test]

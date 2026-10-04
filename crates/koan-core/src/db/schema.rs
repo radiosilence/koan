@@ -189,6 +189,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             name       TEXT NOT NULL,
             platform   TEXT NOT NULL,
             last_seen  INTEGER NOT NULL,
+            -- The address it last linked from, which lets a device of another
+            -- account behind the same router wake it.
+            addr       TEXT,
             PRIMARY KEY (device, username)
         );
 
@@ -472,6 +475,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     // by triggers, so a row has its key however it was written.
     ("artists", "name_key", "TEXT"),
     ("albums", "title_key", "TEXT"),
+    // Where a linked device last connected from: see koan-server's clients.rs.
+    ("link_devices", "addr", "TEXT"),
 ];
 
 /// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a

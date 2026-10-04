@@ -3827,8 +3827,10 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
             device.clone(),
         );
         let registered = tokio::task::spawn_blocking(move || {
+            let id = registry.register(&username, &name, &platform, &device, tx, wants_devices);
+            // After `register`, which records the device the address is kept on.
             registry.seen_at(&device, &username, addr);
-            registry.register(&username, &name, &platform, &device, tx, wants_devices)
+            id
         })
         .await;
         match registered {
