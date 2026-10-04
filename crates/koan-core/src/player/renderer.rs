@@ -3118,7 +3118,9 @@ mod tests {
         assert!(r.player.renderer_loaded());
         assert_eq!(r.player.session().unwrap().track.id, r.ids[0]);
         assert_eq!(r.state(), PlaybackState::Paused);
-        assert_eq!(r.player.shared_state.position_ms(), 5_000);
+        // Where the restored session stood: the packet holding 5s.
+        let at = r.player.shared_state.position_ms();
+        assert!((4_800..=5_000).contains(&at), "at {at}ms");
     }
 
     /// Playing something, or picking an output, before the renderer turns up
