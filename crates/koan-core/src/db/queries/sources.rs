@@ -892,7 +892,8 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
              cache_size_bytes = COALESCE(cache_size_bytes,
                  (SELECT cache_size_bytes FROM tracks WHERE id = ?2)),
              cache_download_date = COALESCE(cache_download_date,
-                 (SELECT cache_download_date FROM tracks WHERE id = ?2))
+                 (SELECT cache_download_date FROM tracks WHERE id = ?2)),
+             cache_pinned = (SELECT cache_pinned FROM tracks WHERE id = ?2)
            WHERE id = ?1 AND cached_path IS NULL",
     )?
     .execute(params![winner, loser])?;

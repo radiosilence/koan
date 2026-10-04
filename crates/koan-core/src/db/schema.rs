@@ -398,6 +398,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("tracks", "cache_size_bytes", "INTEGER"),
     ("tracks", "cache_download_date", "INTEGER"),
+    // Downloaded because someone asked for the file, not to play it: evicted
+    // only once everything fetched for playback has gone.
+    ("tracks", "cache_pinned", "INTEGER NOT NULL DEFAULT 0"),
     ("organize_log", "size_bytes", "INTEGER"),
     ("organize_log", "mtime", "INTEGER"),
     // When the album entered the library, so clients can offer a

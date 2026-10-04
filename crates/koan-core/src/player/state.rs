@@ -1141,6 +1141,23 @@ impl SharedPlayerState {
             .collect()
     }
 
+    /// Every entry with a library track, in the order `pending_downloads`
+    /// gives, whatever its state: what the cache has to hold, downloaded or
+    /// not, for the player to reach it.
+    pub fn playback_order(&self) -> Vec<(i64, QueueItemId)> {
+        let pl = self.playlist.read();
+        let from = pl
+            .cursor
+            .and_then(|c| pl.items.iter().position(|item| item.id == c))
+            .unwrap_or(0);
+        let (before, after) = pl.items.split_at(from);
+        after
+            .iter()
+            .chain(before)
+            .filter_map(|item| item.db_id.map(|db_id| (db_id, item.id)))
+            .collect()
+    }
+
     /// Get the db_id for a specific playlist item.
     pub fn item_db_id(&self, id: QueueItemId) -> Option<i64> {
         let pl = self.playlist.read();

@@ -68,7 +68,7 @@ Played tracks are kept, so they play again from disk. See [Cache management](../
 
 ```toml
 [remote]
-cache_limit = "50GB"           # max cache size, LRU eviction on startup (default: unlimited)
+cache_limit = "50GB"           # max cache size; bounds queue prefetch too (default: unlimited)
 cache_dir = "/custom/path"     # explicit cache dir (default: ~/.config/koan/cache)
 ```
 
