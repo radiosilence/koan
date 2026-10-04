@@ -1,3 +1,6 @@
+#if os(macOS)
+import CoreAudio
+#endif
 import Foundation
 import KoanFFI
 
@@ -49,6 +52,7 @@ final class PlayerModel {
 
     func start() async {
         refreshDevices()
+        followDevices()
         followSession()
         // The two things that are not views and so have no body to invalidate:
         // where a seek asked to land, and where what is playing lives.
@@ -363,6 +367,23 @@ final class PlayerModel {
             self.devices = found
             self.currentDevice = await engine.currentDevice()
         }
+    }
+
+    /// Re-reads the outputs whenever CoreAudio's list of devices changes, so a
+    /// DAC plugged in after launch can be picked without a restart.
+    private func followDevices() {
+        #if os(macOS)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &address, .main
+        ) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.refreshDevices() }
+        }
+        #endif
     }
 
     func setDevice(_ name: String?) {
