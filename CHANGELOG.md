@@ -6,6 +6,10 @@
 
 - **Control and Output are separate menus.** The one Play on menu mixed two choices. Control picks which kōan the transport and queue command; Output picks where the device in view plays, with each output's preset and the amplifier's volume. While another device is controlled, Output lists that device's audio devices and amplifiers, and picking one switches it there with the music carried over, playing or paused. Linked devices publish their outputs with what they are playing; changing another device's output, volume or presets is open to the account's own devices only, not to strangers on the network. The Output menu for a device linked through the server needs the server updated as well.
 
+### Fixed
+
+- **The Mac app takes the record's colour again.** Opening an album could leave the play button and the page's controls in koan's mint while the window behind them was washed in the sleeve's colour. The colour was worked out while the page drew, and when it landed just before the room went to look for it, nothing told the room, so it kept the accent until something else redrew it. Mint is now only for a record with no artwork or no colour in its sleeve.
+
 ## 0.52.1
 
 ### Added
