@@ -1817,8 +1817,12 @@ impl KoanEngine {
     /// back here with `None`. The music carries on from where it is. A
     /// renderer is this device's output rather than a device to control, so
     /// picking one stops controlling another koan.
+    ///
+    /// Not on the ordered lane: opening a session is a few round trips to the
+    /// renderer, and app commands queued behind it would wait them out. The
+    /// player takes the switch in its own order when it arrives.
     pub async fn play_to_renderer(self: Arc<Self>, udn: Option<String>) -> Result<(), KoanError> {
-        offload::sequenced(move || match udn {
+        offload::offload(move || match udn {
             Some(udn) => {
                 koan_core::remote::devices::set_target(None);
                 koan_core::upnp::connect(&udn, &self.tx)

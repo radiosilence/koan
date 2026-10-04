@@ -94,6 +94,47 @@ pub fn mime_candidates(extension: &str) -> &'static [&'static str] {
     }
 }
 
+/// What a file is, from its first bytes, as the extension it should have.
+/// Files are not always named for what they hold: tracks synced before the
+/// server published ALAC's suffix were cached as `.bin`.
+pub fn sniff_extension(path: &std::path::Path) -> Option<&'static str> {
+    use std::io::Read;
+    let mut head = [0u8; 40];
+    let n = std::fs::File::open(path).ok()?.read(&mut head).ok()?;
+    sniff(&head[..n])
+}
+
+fn sniff(head: &[u8]) -> Option<&'static str> {
+    let at = |offset: usize, magic: &[u8]| head.get(offset..offset + magic.len()) == Some(magic);
+    Some(if at(0, b"fLaC") {
+        "flac"
+    } else if at(0, b"OggS") {
+        if head.windows(8).any(|w| w == b"OpusHead") {
+            "opus"
+        } else {
+            "ogg"
+        }
+    } else if at(0, b"RIFF") && at(8, b"WAVE") {
+        "wav"
+    } else if at(0, b"FORM") && (at(8, b"AIFF") || at(8, b"AIFC")) {
+        "aiff"
+    } else if at(4, b"ftyp") {
+        "m4a"
+    } else if at(0, b"MAC ") {
+        "ape"
+    } else if at(0, b"wvpk") {
+        "wv"
+    } else if at(0, b"DSD ") {
+        "dsf"
+    } else if at(0, b"FRM8") {
+        "dff"
+    } else if at(0, b"ID3") || (head.len() > 1 && head[0] == 0xFF && head[1] & 0xE0 == 0xE0) {
+        "mp3"
+    } else {
+        return None;
+    })
+}
+
 /// The MIME types out of a `GetProtocolInfo` sink list. `None` in the list
 /// stands for a wildcard, a renderer claiming to play anything.
 pub fn sink_mimes(sink: &str) -> Vec<Option<String>> {
@@ -163,6 +204,19 @@ mod tests {
         assert_eq!(choose_mime("mp3", &sink), Some("audio/mpeg"));
         assert_eq!(choose_mime("opus", &sink), None);
         assert_eq!(choose_mime("xyz", &sink), None);
+    }
+
+    #[test]
+    fn a_file_is_known_by_its_first_bytes() {
+        assert_eq!(sniff(b"\0\0\0\x1cftypM4A \0\0"), Some("m4a"));
+        assert_eq!(sniff(b"fLaC\0\0\0\x22"), Some("flac"));
+        assert_eq!(sniff(b"ID3\x04\0"), Some("mp3"));
+        assert_eq!(sniff(b"RIFF\0\0\0\0WAVEfmt "), Some("wav"));
+        let mut opus = b"OggS".to_vec();
+        opus.resize(28, 0);
+        opus.extend_from_slice(b"OpusHead");
+        assert_eq!(sniff(&opus), Some("opus"));
+        assert_eq!(sniff(b"hello"), None);
     }
 
     #[test]

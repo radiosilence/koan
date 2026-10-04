@@ -1073,7 +1073,20 @@ impl Player {
             Some(PlaybackSource::Ready(path)) => {
                 self.start_playback(info.id, &path, position_ms, start)?;
             }
-            _ => return Ok(()),
+            // A renderer takes whole files only. Park on the track, keeping
+            // its place and whether it was paused, until the download lands.
+            Some(PlaybackSource::Streaming { .. }) => {
+                self.stop_engine();
+                self.shared_state.set_position_ms(position_ms);
+                self.shared_state.set_playback_state(PlaybackState::Stopped);
+                self.pending_cue = Some((info.id, position_ms, start));
+                log::info!(
+                    "{:?} is still downloading; it opens on the renderer at {position_ms}ms once it lands",
+                    info.id
+                );
+                return Ok(());
+            }
+            None => return Ok(()),
         }
 
         self.report(if was_paused {

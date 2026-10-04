@@ -21,8 +21,10 @@ use crate::upnp::{self, Connection, didl, session};
 /// clock and how late the event arrives.
 const END_TOLERANCE_MS: u64 = 5_000;
 
-/// After a `Play`, how long a renderer may still say it is stopped. Several
-/// report `STOPPED` while they fetch the start of the file.
+/// After koan loads or plays a track, how long the renderer's answers may
+/// still describe what it was doing before. Several report `STOPPED` while
+/// they fetch the start of the file, and Kodi goes on naming the previous URL
+/// as playing until the new one has opened.
 const START_GRACE: Duration = Duration::from_secs(3);
 
 pub(super) struct RendererOutput {
@@ -50,6 +52,15 @@ struct Slot {
     id: QueueItemId,
     token: String,
     path: PathBuf,
+}
+
+/// The extension a file should be served under: what its first bytes say
+/// it is, or its own extension when they say nothing.
+fn container_of(path: &Path) -> String {
+    didl::sniff_extension(path)
+        .map(str::to_string)
+        .or_else(|| media_extension(path))
+        .unwrap_or_default()
 }
 
 impl RendererOutput {
@@ -132,7 +143,7 @@ impl Player {
         start: Start,
     ) -> Result<(), PlayerError> {
         self.stop_engine();
-        let extension = media_extension(path).unwrap_or_default();
+        let extension = container_of(path);
         let Some(output) = self.renderer.as_mut() else {
             return Err(PlayerError::Renderer("no renderer".into()));
         };
@@ -198,6 +209,7 @@ impl Player {
             .session
             .set_uri(&url, &metadata)
             .map_err(|e| PlayerError::Renderer(e.to_string()))?;
+        output.started = Instant::now();
         let state = match start {
             Start::Playing => {
                 output
@@ -276,19 +288,22 @@ impl Player {
         if next.as_ref().map(|(id, _)| *id) == output.next.as_ref().map(|s| s.id) {
             return;
         }
-        if next.as_ref().map(|(id, _)| *id) == output.next_refused {
+        if next.is_some() && next.as_ref().map(|(id, _)| *id) == output.next_refused {
             return;
         }
         let Some((next_id, path)) = next else {
             // The queue changed and nothing follows now. A renderer cannot be
-            // told to forget its next track, so the end of this one is
-            // checked instead: see `on_renderer_snapshot`.
+            // told to forget its next track, so its URL stops working: a
+            // renderer that moves on to it anyway fails to fetch it and stops,
+            // which reads as the end of this track.
             if let Some(output) = self.renderer.as_mut() {
                 output.next = None;
+                let tokens: Vec<&str> = output.tokens();
+                output.session.retain(&tokens);
             }
             return;
         };
-        let extension = media_extension(&path).unwrap_or_default();
+        let extension = container_of(&path);
         let Some(mime) = output.session.mime_for(&extension) else {
             // Left for the end of this track, where it is skipped with a reason.
             return;
@@ -445,6 +460,49 @@ impl Player {
                 .shared_state
                 .update_renderer(|o| o.volume = Some(volume)),
             session::Event::Snapshot(snapshot) => self.on_renderer_snapshot(snapshot),
+            session::Event::Gone => self.renderer_gone(),
+        }
+    }
+
+    /// The renderer stopped answering or left the network. Leave it, paused
+    /// where it was, so that nothing more waits on it; play carries on here.
+    fn renderer_gone(&mut self) {
+        let Some(output) = self.renderer.as_mut() else {
+            return;
+        };
+        log::info!(
+            "upnp: leaving {}, which is gone",
+            output.session.renderer().name
+        );
+        // Nothing is sent to it on the way out: it would only time out.
+        output.current = None;
+        output.next = None;
+        if self.shared_state.playback_state() == PlaybackState::Playing {
+            self.shared_state.set_playback_state(PlaybackState::Paused);
+            self.report(PlaybackReportState::Paused);
+        }
+        self.use_renderer(None);
+    }
+
+    /// The renderer is no longer playing what koan gave it: stopped from its
+    /// own controls, or taken over by another control point. Keep the place,
+    /// paused; play loads the track again there.
+    fn renderer_released(&mut self) {
+        let at = self.shared_state.position_ms();
+        self.bank_listening();
+        let Some(output) = self.renderer.as_mut() else {
+            return;
+        };
+        output.current = None;
+        output.next = None;
+        output.session.retain(&[]);
+        self.shared_state.set_renderer_clock(Some(RendererClock {
+            position_ms: at,
+            running: None,
+        }));
+        if self.shared_state.playback_state() == PlaybackState::Playing {
+            self.shared_state.set_playback_state(PlaybackState::Paused);
+            self.report(PlaybackReportState::Paused);
         }
     }
 
@@ -461,6 +519,20 @@ impl Player {
         // Moved on to the track it was given next: gapless, from here.
         if token.is_some() && output.next.as_ref().map(|n| &n.token) == token.as_ref() {
             self.renderer_moved_on(snap.position_ms.unwrap_or(0));
+        } else if output.started.elapsed() >= START_GRACE
+            && !snap.track_uri.is_empty()
+            && output.current.as_ref().map(|c| &c.token) != token.as_ref()
+            && matches!(
+                snap.transport,
+                session::Transport::Playing | session::Transport::Paused
+            )
+        {
+            log::info!(
+                "upnp: renderer is playing something else: {}",
+                snap.track_uri
+            );
+            self.renderer_released();
+            return;
         }
 
         let Some(output) = self.renderer.as_ref() else {
@@ -496,6 +568,12 @@ impl Player {
                 }
             }
             session::Transport::Stopped | session::Transport::NoMedia => {
+                if state == PlaybackState::Paused {
+                    // Stopped at the renderer while paused here. Some forget
+                    // the track when they stop, so play must load it again.
+                    self.renderer_released();
+                    return;
+                }
                 if state != PlaybackState::Playing || output.started.elapsed() < START_GRACE {
                     return;
                 }
@@ -506,19 +584,8 @@ impl Player {
                     self.halt_renderer();
                     self.on_decode_finished();
                 } else {
-                    // Stopped at the renderer, or another control point took
-                    // it over. Keep the place; play loads the track again.
                     log::info!("upnp: renderer stopped at {at}ms");
-                    self.bank_listening();
-                    let output = self.renderer.as_mut().expect("checked above");
-                    output.current = None;
-                    output.next = None;
-                    self.shared_state.set_renderer_clock(Some(RendererClock {
-                        position_ms: at,
-                        running: None,
-                    }));
-                    self.shared_state.set_playback_state(PlaybackState::Paused);
-                    self.report(PlaybackReportState::Paused);
+                    self.renderer_released();
                 }
             }
             session::Transport::Transitioning => {}
@@ -620,21 +687,27 @@ mod tests {
         let ids = items.iter().map(|i| i.id).collect();
         player.process_command(PlayerCommand::AddToPlaylist(items));
 
-        let (tx, events) = crossbeam_channel::unbounded();
-        let session = upnp::session::Session::open(fake.renderer(), move |e| {
-            let _ = tx.send(e);
-        })
-        .unwrap();
-        player.use_renderer(Some(Box::new(Connection { session, events })));
-        Rig {
+        let mut rig = Rig {
             player,
             fake,
             ids,
             _dir: dir,
-        }
+        };
+        rig.connect();
+        rig
     }
 
     impl Rig {
+        fn connect(&mut self) {
+            let (tx, events) = crossbeam_channel::unbounded();
+            let session = upnp::session::Session::open(self.fake.renderer(), move |e| {
+                let _ = tx.send(e);
+            })
+            .unwrap();
+            self.player
+                .use_renderer(Some(Box::new(Connection { session, events })));
+        }
+
         /// Run the renderer's events through the player, as its loop does,
         /// until `done` holds.
         fn pump_until(&mut self, done: impl Fn(&Player) -> bool) {
@@ -646,13 +719,20 @@ mod tests {
                         self.player.on_renderer_event(event);
                         self.player.queue_next_on_renderer();
                     }
-                    Err(_) => panic!("timed out; renderer saw {:?}", self.fake.actions()),
+                    Err(_) => panic!(
+                        "timed out; renderer saw {:?}; player {:?} at {}ms, cursor {:?}",
+                        self.fake.actions(),
+                        self.player.shared_state.playback_state(),
+                        self.player.shared_state.position_ms(),
+                        self.player.shared_state.cursor(),
+                    ),
                 }
             }
         }
 
         /// Hear the renderer at `ms` into the track, past the start grace.
         fn at(&mut self, ms: u64) {
+            self.settle();
             self.fake.set_position(ms);
             let output = self.player.renderer.as_mut().unwrap();
             output.started = Instant::now() - START_GRACE;
@@ -660,6 +740,21 @@ mod tests {
             // RelTime is whole seconds.
             let floor = ms / 1000 * 1000;
             self.pump_until(|p| p.shared_state.position_ms() >= floor);
+        }
+
+        /// Take whatever answers the load left in flight, inside the grace
+        /// window, before the test moves time on past it.
+        fn settle(&mut self) {
+            let events = self.player.renderer_events().unwrap();
+            while let Ok(event) = events.recv_timeout(Duration::from_millis(100)) {
+                self.player.on_renderer_event(event);
+            }
+        }
+
+        /// As if the grace window after the last load had run out.
+        fn past_grace(&mut self) {
+            self.settle();
+            self.player.renderer.as_mut().unwrap().started = Instant::now() - START_GRACE;
         }
 
         fn state(&self) -> PlaybackState {
@@ -864,5 +959,241 @@ mod tests {
             r.player.active_playback.is_some(),
             "loaded on the local output"
         );
+    }
+
+    #[test]
+    fn switching_to_a_renderer_mid_download_opens_the_track_there_once_it_lands() {
+        use crate::remote::downloads::{ByteFeed, Download, DownloadState, store};
+
+        let mut r = rig(WAV, false, &["a.wav"]);
+        let id = r.ids[0];
+        r.player.use_renderer(None);
+
+        // Paused locally at 3s while the file is still arriving.
+        let path = r.player.shared_state.get_item(id).unwrap().path;
+        r.player
+            .shared_state
+            .update_item_state(id, ItemState::Pending);
+        let feed = ByteFeed::new();
+        feed.set(crate::player::state::STREAM_THRESHOLD * 2);
+        store().queued(Download {
+            id,
+            track_id: 0,
+            title: "a".into(),
+            artist: String::new(),
+            source: path.clone(),
+            dest: path.clone(),
+            total: 0,
+            written: feed.clone(),
+            state: DownloadState::Queued,
+            bytes_per_second: 0,
+        });
+        store().started(id, 0, feed);
+        r.player.shared_state.set_cursor(Some(id));
+        r.player.shared_state.set_track_info(Some(TrackInfo {
+            id,
+            path,
+            codec: "PCM".into(),
+            sample_rate: 8_000,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            channels: 1,
+            duration_ms: 10_000,
+        }));
+        r.player.shared_state.set_position_ms(3_000);
+        r.player
+            .shared_state
+            .set_playback_state(PlaybackState::Paused);
+
+        r.connect();
+        assert_eq!(
+            r.count("SetAVTransportURI"),
+            0,
+            "nothing sent before it lands"
+        );
+        assert_eq!(r.state(), PlaybackState::Stopped);
+
+        store().finished(id);
+        r.player
+            .shared_state
+            .update_item_state(id, ItemState::Ready);
+        r.player.track_ready(id);
+        assert_eq!(r.count("SetAVTransportURI"), 1);
+        assert_eq!(r.state(), PlaybackState::Paused, "still paused");
+        assert_eq!(r.player.shared_state.position_ms(), 3_000);
+        r.player.resume();
+        let commands = r.commands();
+        assert_eq!(&commands[commands.len() - 2..], ["Play", "Seek"]);
+        store().withdrawn(id);
+    }
+
+    #[test]
+    fn a_next_track_removed_from_the_queue_is_not_followed() {
+        let mut r = rig(WAV, true, &["a.wav", "b.wav"]);
+        r.player.play(r.ids[0]);
+        assert_eq!(r.count("SetNextAVTransportURI"), 1);
+        let next_uri = r.fake.state.lock().next_uri.clone();
+
+        r.player
+            .process_command(PlayerCommand::RemoveFromPlaylist(r.ids[1]));
+        r.player.queue_next_on_renderer();
+        let token = r
+            .player
+            .renderer
+            .as_ref()
+            .unwrap()
+            .session
+            .token_of(&next_uri)
+            .unwrap()
+            .to_string();
+        assert!(
+            !r.player
+                .renderer
+                .as_ref()
+                .unwrap()
+                .tokens()
+                .contains(&token.as_str()),
+            "its URL no longer serves"
+        );
+
+        // The renderer moves on to it anyway.
+        r.past_grace();
+        r.fake.finish_track();
+        r.pump_until(|p| p.shared_state.playback_state() == PlaybackState::Paused);
+        assert_eq!(r.player.shared_state.cursor(), Some(r.ids[0]));
+        assert!(!r.player.renderer_loaded());
+    }
+
+    #[test]
+    fn another_control_point_taking_the_renderer_over_releases_it() {
+        let mut r = rig(WAV, false, &["a.wav"]);
+        r.player.play(r.ids[0]);
+        r.at(2_000);
+        r.past_grace();
+        r.fake.play_foreign("http://10.0.0.9/song.mp3");
+        r.pump_until(|p| p.shared_state.playback_state() == PlaybackState::Paused);
+        assert!(!r.player.renderer_loaded());
+        assert!((2_000..3_000).contains(&r.player.shared_state.position_ms()));
+    }
+
+    #[test]
+    fn a_stop_at_the_renderer_while_paused_reloads_on_play() {
+        let mut r = rig(WAV, false, &["a.wav"]);
+        r.player.play(r.ids[0]);
+        r.at(4_000);
+        r.player.pause();
+        r.fake.press_stop(0);
+        r.pump_until(|p| !p.renderer_loaded());
+        assert_eq!(r.state(), PlaybackState::Paused);
+
+        r.player.resume();
+        assert_eq!(r.count("SetAVTransportURI"), 2, "loaded again");
+        let seek = r.last_command();
+        assert_eq!(seek.0, "Seek");
+        assert!(
+            seek.1.contains(&("Target".into(), "0:00:04".into())),
+            "{seek:?}"
+        );
+    }
+
+    #[test]
+    fn a_renderer_saying_goodbye_is_left_paused() {
+        let mut r = rig(WAV, false, &["a.wav"]);
+        r.player.play(r.ids[0]);
+        r.at(2_000);
+        let udn = r.fake.renderer().udn;
+        crate::upnp::discovery::forget(&udn);
+        r.pump_until(|p| p.renderer.is_none());
+        assert!(r.player.shared_state.renderer().is_none());
+        assert_eq!(r.state(), PlaybackState::Paused);
+        assert!(r.player.active_playback.is_some(), "loaded here, paused");
+    }
+
+    /// Two tones played to a real renderer, the second handed over as the
+    /// next track: a rising pitch with no gap is gapless working.
+    ///
+    /// `KOAN_UPNP_LOCATION=http://host:port/description.xml cargo test -p
+    /// koan-core --lib real_renderer -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs a renderer on the network"]
+    fn plays_to_a_real_renderer() {
+        let Ok(location) = std::env::var("KOAN_UPNP_LOCATION") else {
+            eprintln!("KOAN_UPNP_LOCATION is not set");
+            return;
+        };
+        let renderer = upnp::discovery::fetch(&url::Url::parse(&location).unwrap())
+            .unwrap()
+            .expect("a renderer at that address");
+        eprintln!(
+            "renderer: {} (gapless: {})",
+            renderer.name, renderer.gapless
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut player = Player::new();
+        let items: Vec<PlaylistItem> = [("low.wav", 440.0), ("high.wav", 660.0)]
+            .iter()
+            .map(|(name, hz)| {
+                let path = dir.path().join(name);
+                crate::test_utils::generate_wav_tone(&path, 44_100, *hz, 6.0);
+                item(path, name)
+            })
+            .collect();
+        let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+
+        let (tx, events) = crossbeam_channel::unbounded();
+        let session = upnp::session::Session::open(renderer, move |e| {
+            let _ = tx.send(e);
+        })
+        .unwrap();
+        player.use_renderer(Some(Box::new(Connection { session, events })));
+        player.play(ids[0]);
+
+        let started = Instant::now();
+        let mut moved_on = None;
+        while started.elapsed() < Duration::from_secs(25) {
+            let events = player.renderer_events().unwrap();
+            if let Ok(event) = events.recv_timeout(Duration::from_millis(250)) {
+                eprintln!("{:>6}ms {event:?}", started.elapsed().as_millis());
+                player.on_renderer_event(event);
+                player.queue_next_on_renderer();
+            }
+            if moved_on.is_none() && player.shared_state.cursor() == Some(ids[1]) {
+                moved_on = Some(started.elapsed());
+                eprintln!("moved on to the second tone at {:?}", started.elapsed());
+            }
+            if moved_on.is_some() && player.shared_state.playback_state() == PlaybackState::Stopped
+            {
+                break;
+            }
+        }
+        let at = moved_on.expect("the renderer reached the second tone");
+        assert!(at > Duration::from_secs(5), "moved on too early: {at:?}");
+        assert_eq!(player.shared_state.playback_state(), PlaybackState::Stopped);
+    }
+
+    #[test]
+    fn a_renderer_still_naming_the_last_track_after_a_load_is_not_a_takeover() {
+        let mut r = rig(WAV, false, &["a.wav", "b.wav"]);
+        r.fake.lag.store(true, std::sync::atomic::Ordering::Relaxed);
+        r.player.play(r.ids[0]);
+        r.player.play(r.ids[1]);
+        // Its answers name the first track's URL for now.
+        r.player.renderer.as_ref().unwrap().session.look();
+        r.pump_until(|p| p.renderer.as_ref().is_some_and(|o| o.session.epoch() > 0));
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < deadline {
+            if let Ok(e) = r
+                .player
+                .renderer_events()
+                .unwrap()
+                .recv_timeout(Duration::from_millis(50))
+            {
+                r.player.on_renderer_event(e);
+            }
+        }
+        assert!(r.player.renderer_loaded(), "still koan's");
+        assert_eq!(r.state(), PlaybackState::Playing);
     }
 }

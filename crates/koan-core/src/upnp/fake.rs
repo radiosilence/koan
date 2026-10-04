@@ -33,6 +33,10 @@ pub struct FakeRenderer {
     pub sink: &'static str,
     pub gapless: bool,
     pub events: bool,
+    /// Go on reporting the previous URI after a new one is set, as Kodi
+    /// does while it opens the new one.
+    pub lag: std::sync::atomic::AtomicBool,
+    stale_uri: Mutex<Option<String>>,
 }
 
 impl FakeRenderer {
@@ -49,6 +53,8 @@ impl FakeRenderer {
             sink,
             gapless,
             events,
+            lag: Default::default(),
+            stale_uri: Default::default(),
         });
         let serving = fake.clone();
         thread::spawn(move || {
@@ -116,6 +122,18 @@ impl FakeRenderer {
             let mut s = self.state.lock();
             s.transport = "STOPPED";
             s.position_ms = at_ms;
+        }
+        self.notify_transport();
+    }
+
+    /// Another control point starts something on it.
+    pub fn play_foreign(&self, uri: &str) {
+        {
+            let mut s = self.state.lock();
+            s.uri = uri.to_string();
+            s.next_uri.clear();
+            s.transport = "PLAYING";
+            s.position_ms = 0;
         }
         self.notify_transport();
     }
@@ -245,6 +263,9 @@ impl FakeRenderer {
                 ("Sink".into(), self.sink.to_string()),
             ],
             "SetAVTransportURI" => {
+                if self.lag.load(std::sync::atomic::Ordering::Relaxed) && !s.uri.is_empty() {
+                    *self.stale_uri.lock() = Some(s.uri.clone());
+                }
                 s.uri = get("CurrentURI");
                 s.next_uri.clear();
                 s.transport = "STOPPED";
@@ -286,7 +307,13 @@ impl FakeRenderer {
             "GetPositionInfo" => vec![
                 ("Track".into(), "1".into()),
                 ("TrackDuration".into(), "0:00:10".into()),
-                ("TrackURI".into(), s.uri.clone()),
+                (
+                    "TrackURI".into(),
+                    self.stale_uri
+                        .lock()
+                        .clone()
+                        .unwrap_or_else(|| s.uri.clone()),
+                ),
                 ("RelTime".into(), super::soap::format_time(s.position_ms)),
             ],
             "GetVolume" => vec![("CurrentVolume".into(), s.volume.to_string())],

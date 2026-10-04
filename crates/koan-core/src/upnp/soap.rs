@@ -11,6 +11,10 @@ const TIMEOUT: Duration = Duration::from_secs(4);
 
 #[derive(Debug, thiserror::Error)]
 pub enum SoapError {
+    /// No answer at all: refused, unroutable or timed out. A renderer that
+    /// was switched off looks like this.
+    #[error("not answering: {0}")]
+    Unreachable(String),
     #[error("{0}")]
     Http(String),
     #[error("renderer refused {action}: {code} {description}")]
@@ -63,7 +67,13 @@ pub fn call(
         )
         .body(envelope(&service.service_type, action, args))
         .send()
-        .map_err(|e| SoapError::Http(e.to_string()))?;
+        .map_err(|e| {
+            if e.is_connect() || e.is_timeout() {
+                SoapError::Unreachable(e.to_string())
+            } else {
+                SoapError::Http(e.to_string())
+            }
+        })?;
     let status = response.status();
     let text = response
         .text()

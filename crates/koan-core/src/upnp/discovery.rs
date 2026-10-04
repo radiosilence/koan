@@ -74,10 +74,32 @@ pub fn remember(renderer: Renderer, max_age: Duration) {
     }
 }
 
-fn forget(udn: &str) {
+type GoneHook = (u64, String, Box<dyn Fn() + Send>);
+
+static GONE: Mutex<Vec<GoneHook>> = Mutex::new(Vec::new());
+static GONE_NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Run `f` when the renderer `udn` says goodbye. Returns a handle for
+/// `forget_gone`.
+pub(crate) fn on_gone(udn: &str, f: impl Fn() + Send + 'static) -> u64 {
+    let id = GONE_NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    GONE.lock().push((id, udn.to_string(), Box::new(f)));
+    id
+}
+
+pub(crate) fn forget_gone(id: u64) {
+    GONE.lock().retain(|(i, ..)| *i != id);
+}
+
+pub(crate) fn forget(udn: &str) {
     if with(|s| s.renderers.remove(udn).is_some()) {
         log::info!("upnp: {udn} left");
         crate::signal::engine_changed().bump();
+    }
+    for (_, hooked, f) in GONE.lock().iter() {
+        if hooked == udn {
+            f();
+        }
     }
 }
 

@@ -72,6 +72,8 @@ pub struct Snapshot {
 pub enum Event {
     Snapshot(Snapshot),
     Volume(u8),
+    /// The renderer stopped answering, or said goodbye on the network.
+    Gone,
 }
 
 struct Subscription {
@@ -88,8 +90,21 @@ struct Shared {
     polling: AtomicBool,
     playing: AtomicBool,
     subscriptions: Mutex<Vec<Subscription>>,
+    trust: Arc<Trust>,
     callback: String,
     closed: AtomicBool,
+    unreachable: AtomicBool,
+    on_event: Arc<dyn Fn(Event) + Send + Sync>,
+}
+
+/// Which `NOTIFY`s to believe. The listener is open to the whole network,
+/// so only events carrying a SID this session subscribed under are read, and
+/// while a subscription is being made, before its SID is known, only as a
+/// reason to look.
+#[derive(Default)]
+struct Trust {
+    sids: Mutex<Vec<String>>,
+    subscribing: AtomicBool,
 }
 
 pub struct Session {
@@ -99,6 +114,7 @@ pub struct Session {
     base: String,
     sink: Vec<Option<String>>,
     stop: Sender<()>,
+    gone: u64,
 }
 
 impl Session {
@@ -119,14 +135,20 @@ impl Session {
         let on_event: Arc<dyn Fn(Event) + Send + Sync> = Arc::new(on_event);
         let (look_tx, look_rx) = crossbeam_channel::bounded::<()>(1);
         let seen = Arc::new(AtomicBool::new(false));
+        let trust = Arc::new(Trust::default());
         let listener = {
             let look = look_tx.clone();
             let on_event = on_event.clone();
             let seen = seen.clone();
-            Listener::start(Box::new(move |_sid, body| {
+            let trust = trust.clone();
+            Listener::start(Box::new(move |sid, body| {
+                let known = trust.sids.lock().iter().any(|s| s == sid);
+                if !known && !trust.subscribing.load(Ordering::Acquire) {
+                    return;
+                }
                 seen.store(true, Ordering::Release);
                 let change = parse_notify(&body);
-                if let Some(volume) = change.volume {
+                if let Some(volume) = change.volume.filter(|_| known) {
                     on_event(Event::Volume(volume));
                 }
                 if change.transport {
@@ -168,13 +190,17 @@ impl Session {
             polling: AtomicBool::new(false),
             playing: AtomicBool::new(false),
             subscriptions: Mutex::new(Vec::new()),
+            trust,
             callback: format!("<{base}/events/>"),
             closed: AtomicBool::new(false),
+            unreachable: AtomicBool::new(false),
+            on_event: on_event.clone(),
         });
 
         let services: Vec<Service> = std::iter::once(shared.renderer.av_transport.clone())
             .chain(shared.renderer.rendering_control.clone())
             .collect();
+        shared.trust.subscribing.store(true, Ordering::Release);
         for (i, service) in services.into_iter().enumerate() {
             match shared.subscribe(&service) {
                 Ok(sub) => shared.subscriptions.lock().push(sub),
@@ -186,6 +212,18 @@ impl Session {
                 }
             }
         }
+        shared.trust.subscribing.store(false, Ordering::Release);
+
+        // A renderer saying goodbye is gone, whether or not anything was
+        // being sent to it.
+        let gone = {
+            let weak = Arc::downgrade(&shared);
+            super::discovery::on_gone(&shared.renderer.udn, move || {
+                if let Some(shared) = weak.upgrade() {
+                    shared.lost();
+                }
+            })
+        };
 
         if let Some(volume) = shared.volume() {
             on_event(Event::Volume(volume));
@@ -201,6 +239,7 @@ impl Session {
             base,
             sink,
             stop: stop_tx,
+            gone,
         })
     }
 
@@ -312,7 +351,17 @@ impl Session {
 
     /// Run an AVTransport action, and move the epoch once the renderer has
     /// taken it.
+    ///
+    /// Once the renderer has failed to answer at all, nothing more is sent:
+    /// each attempt would hold the player for a timeout, and a skip is three
+    /// of them.
     fn transport(&self, action: &str, args: &[(&str, &str)]) -> Result<(), SoapError> {
+        if self.shared.unreachable.load(Ordering::Acquire) {
+            return Err(SoapError::Unreachable(format!(
+                "{} stopped answering",
+                self.shared.renderer.name
+            )));
+        }
         let mut full = vec![("InstanceID", "0")];
         full.extend_from_slice(args);
         let result = soap::call(
@@ -324,6 +373,9 @@ impl Session {
         self.shared.epoch.fetch_add(1, Ordering::AcqRel);
         if let Err(e) = &result {
             log::warn!("upnp: {}: {e}", self.shared.renderer.name);
+            if matches!(e, SoapError::Unreachable(_)) {
+                self.shared.lost();
+            }
         }
         result.map(|_| ())
     }
@@ -342,6 +394,7 @@ impl Drop for Session {
     fn drop(&mut self) {
         self.shared.closed.store(true, Ordering::Release);
         let _ = self.stop.try_send(());
+        super::discovery::forget_gone(self.gone);
         // Unsubscribe off this thread: the renderer may be gone, and whoever
         // closed the session is not waiting on its answer.
         let shared = self.shared.clone();
@@ -364,6 +417,14 @@ fn method(name: &str) -> reqwest::Method {
 }
 
 impl Shared {
+    /// Say once that the renderer is gone.
+    fn lost(&self) {
+        if !self.unreachable.swap(true, Ordering::AcqRel) && !self.closed.load(Ordering::Acquire) {
+            log::info!("upnp: {} is gone", self.renderer.name);
+            (self.on_event)(Event::Gone);
+        }
+    }
+
     fn subscribe(&self, service: &Service) -> Result<Subscription, String> {
         let response = self
             .http
@@ -374,7 +435,9 @@ impl Shared {
             .send()
             .and_then(|r| r.error_for_status())
             .map_err(|e| e.to_string())?;
-        subscription(service, &response)
+        let sub = subscription(service, &response)?;
+        self.trust.sids.lock().push(sub.sid.clone());
+        Ok(sub)
     }
 
     fn renew(&self, sub: &Subscription) -> Result<Subscription, String> {
@@ -386,7 +449,9 @@ impl Shared {
             .send()
             .and_then(|r| r.error_for_status())
             .map_err(|e| e.to_string())?;
-        subscription(&sub.service, &response)
+        let renewed = subscription(&sub.service, &response)?;
+        self.trust.sids.lock().push(renewed.sid.clone());
+        Ok(renewed)
     }
 
     fn snapshot(&self) -> Result<Snapshot, SoapError> {

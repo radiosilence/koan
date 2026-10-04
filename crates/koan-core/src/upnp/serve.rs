@@ -14,7 +14,7 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -30,10 +30,18 @@ pub struct Served {
 /// What a `NOTIFY` delivered: the subscription it is for and its body.
 pub type EventSink = Box<dyn Fn(&str, String) + Send + Sync>;
 
+/// The listener is open to the whole network while it runs, so what any one
+/// client can make it hold is bounded: connections, the request head, and a
+/// `NOTIFY` body.
+const MAX_CONNECTIONS: usize = 32;
+const MAX_HEAD: u64 = 8 * 1024;
+const MAX_BODY: usize = 64 * 1024;
+
 struct Shared {
     tracks: Mutex<HashMap<String, Served>>,
     on_event: EventSink,
     stopped: AtomicBool,
+    connections: AtomicUsize,
 }
 
 pub struct Listener {
@@ -51,6 +59,7 @@ impl Listener {
             tracks: Mutex::new(HashMap::new()),
             on_event,
             stopped: AtomicBool::new(false),
+            connections: AtomicUsize::new(0),
         });
         let accept = shared.clone();
         thread::Builder::new()
@@ -61,14 +70,23 @@ impl Listener {
                         break;
                     }
                     let Ok(stream) = stream else { continue };
+                    if accept.connections.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
+                        accept.connections.fetch_sub(1, Ordering::AcqRel);
+                        continue;
+                    }
                     let shared = accept.clone();
-                    let _ = thread::Builder::new()
-                        .name("koan-upnp-conn".into())
-                        .spawn(move || {
-                            if let Err(e) = handle(&shared, stream) {
-                                log::debug!("upnp http: {e}");
-                            }
-                        });
+                    let spawned =
+                        thread::Builder::new()
+                            .name("koan-upnp-conn".into())
+                            .spawn(move || {
+                                if let Err(e) = handle(&shared, stream) {
+                                    log::debug!("upnp http: {e}");
+                                }
+                                shared.connections.fetch_sub(1, Ordering::AcqRel);
+                            });
+                    if spawned.is_err() {
+                        accept.connections.fetch_sub(1, Ordering::AcqRel);
+                    }
                 }
             })?;
         log::info!("upnp: serving on port {port}");
@@ -144,15 +162,20 @@ impl Request {
 
 pub(crate) fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
     let mut reader = BufReader::new(stream);
+    // The request line and headers together, however slowly they arrive.
+    let mut head = (&mut reader).take(MAX_HEAD);
     let mut line = String::new();
-    reader.read_line(&mut line)?;
+    head.read_line(&mut line)?;
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or_default().to_string();
     let path = parts.next().unwrap_or_default().to_string();
     let mut headers = Vec::new();
     loop {
         line.clear();
-        if reader.read_line(&mut line)? == 0 {
+        if head.read_line(&mut line)? == 0 {
+            if head.limit() == 0 {
+                return Err(std::io::Error::other("request head too large"));
+            }
             break;
         }
         let trimmed = line.trim_end();
@@ -171,7 +194,7 @@ pub(crate) fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
         .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
         .and_then(|(_, v)| v.parse().ok())
         .unwrap_or(0)
-        .min(1 << 20);
+        .min(MAX_BODY);
     let mut body = vec![0; length];
     reader.read_exact(&mut body)?;
     Ok(Request {

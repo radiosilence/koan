@@ -351,14 +351,17 @@ struct DevicePickerButton: View {
         Button {
             open = true
         } label: {
+            // Only the icon takes the tint: it follows the record's colour,
+            // and a dark sleeve makes tinted text vanish against the bar.
             HStack(spacing: 5) {
                 Image(systemName: "laptopcomputer.and.iphone")
+                    .foregroundStyle(controlledName != nil ? Color.accentColor : .primary)
                 if labelled, let name = controlledName {
                     Text(name)
                         .lineLimit(1)
+                        .foregroundStyle(.primary)
                 }
             }
-            .foregroundStyle(controlledName != nil ? Color.accentColor : .primary)
         }
         .buttonStyle(.plain)
         .help(controlledName.map { "Playing on \($0)" } ?? "Play on another device")
