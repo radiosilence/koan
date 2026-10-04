@@ -41,7 +41,7 @@ fn key_list(keys: &[ApiKeyRow]) -> String {
         let _ = write!(
             out,
             "<li class=\"{ROW}\"><span class=\"min-w-0 flex-1 overflow-hidden text-ellipsis wrap-anywhere\">{name}\
-<small class=\"block text-[13px] text-muted\">Created {created} · {used}</small></span>\
+<small class=\"block text-meta text-muted\">Created {created} · {used}</small></span>\
 <button class=\"quiet\" data-on:click=\"confirm('{REVOKE_CONFIRM}') && @post('/keys/{id}/revoke')\">Revoke</button></li>",
             name = escape(&k.name),
             created = day(k.created_at),
@@ -76,7 +76,7 @@ your password. It acts as you, with your permissions, until you revoke it.</p>"
             .await
             .unwrap_or_default();
         format!(
-            "{intro}<form class=\"mb-2 flex max-w-[520px] gap-2\" data-on:submit__prevent=\"@post('/keys')\">\
+            "{intro}<form class=\"mb-2 flex max-w-form gap-2\" data-on:submit__prevent=\"@post('/keys')\">\
 <input class=\"flex-1\" name=name data-bind:keyname placeholder=\"Name, e.g. phone\" maxlength={MAX_NAME} required \
 autocomplete=off aria-label=\"Key name\"><button class=\"primary\">Create key</button></form>\
 <div id=key-result></div>{}",

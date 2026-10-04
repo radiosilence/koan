@@ -21,7 +21,7 @@ use crate::auth::AuthUser;
 use crate::share::{blocking, escape};
 
 /// A one-line form: the field, an option or two, the button.
-const FORM: &str = "mb-2 flex max-w-[520px] gap-2";
+const FORM: &str = "mb-2 flex max-w-form gap-2";
 
 const ROLES: [(Role, &str); 3] = [
     (Role::Readonly, "Listen only"),
@@ -64,7 +64,7 @@ working and their playlists and favourites go.') && @post('/users/{id}/delete')\
 <button data-on:click=\"@post('/users/{id}/invite')\">Invite</button>{others}</li>",
             name = escape(&u.username),
             you = if u.id == me {
-                "<small class=\"ml-2 text-[13px] text-muted\">you</small>"
+                "<small class=\"ml-2 text-meta text-muted\">you</small>"
             } else {
                 ""
             },
@@ -92,7 +92,7 @@ fn invite_panel(i: &Invite) -> String {
     let details = match &i.password {
         Some(password) => format!(
             "<p class=\"{SUB}\">The password is shown this once: the server keeps only its hash.</p>\
-<dl class=\"mt-3.5 grid grid-cols-[max-content_1fr] gap-x-3.5 gap-y-1 text-[14px] [&_dd]:wrap-anywhere \
+<dl class=\"mt-3.5 grid grid-cols-[max-content_1fr] gap-x-3.5 gap-y-1 text-control [&_dd]:wrap-anywhere \
 [&_dd]:select-all [&_dt]:text-muted\"><dt>Server URL</dt><dd>{server}</dd><dt>Username</dt><dd>{user}</dd>\
 <dt>Password</dt><dd><code>{password}</code></dd></dl>",
             server = e(&i.server),
@@ -102,7 +102,7 @@ fn invite_panel(i: &Invite) -> String {
         None => String::new(),
     };
     format!(
-        "<div class=\"mt-2 mb-4 max-w-[560px] rounded-lg border border-rule bg-surface px-4 pt-1 pb-4\">\
+        "<div class=\"mt-2 mb-4 max-w-panel rounded-lg border border-rule bg-surface px-4 pt-1 pb-4\">\
 <h2>Invite for {user}</h2><p class=\"{SUB}\">Send this from your own mail. Opening the link on a phone, tablet or Mac with koan \
 installed signs in and loads the library, on each device, for a week.</p>\
 <div class=\"{COPY_ROW}\"><input id=invite-link readonly value=\"{link}\" \

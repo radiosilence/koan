@@ -13,6 +13,18 @@
     --radius-md: 0.375rem;
     --radius-lg: 0.5rem;
     --default-mono-font-family: var(--font-mono);
+    --text-fine: 12px;
+    --text-meta: 13px;
+    --text-control: 14px;
+    --text-body: 15px;
+    --text-body--line-height: 1.45;
+    --text-input: 16px;
+    --text-title-sm: 22px;
+    --text-title-sm--line-height: 1.2;
+    --text-title: 26px;
+    --text-title--line-height: 1.2;
+    --container-form: 520px;
+    --container-panel: 560px;
     --animate-busy: busy 0.7s linear infinite;
   }
 }
@@ -337,11 +349,11 @@
   .max-w-\[360px\] {
     max-width: 360px;
   }
-  .max-w-\[520px\] {
-    max-width: 520px;
+  .max-w-form {
+    max-width: var(--container-form);
   }
-  .max-w-\[560px\] {
-    max-width: 560px;
+  .max-w-panel {
+    max-width: var(--container-panel);
   }
   .min-w-0 {
     min-width: 0px;
@@ -605,20 +617,20 @@
   .text-\[11px\] {
     font-size: 11px;
   }
-  .text-\[12px\] {
-    font-size: 12px;
-  }
-  .text-\[13px\] {
-    font-size: 13px;
-  }
-  .text-\[14px\] {
-    font-size: 14px;
-  }
-  .text-\[16px\] {
-    font-size: 16px;
-  }
   .text-\[22px\] {
     font-size: 22px;
+  }
+  .text-control {
+    font-size: var(--text-control);
+  }
+  .text-fine {
+    font-size: var(--text-fine);
+  }
+  .text-input {
+    font-size: var(--text-input);
+  }
+  .text-meta {
+    font-size: var(--text-meta);
   }
   .font-bold {
     --tw-font-weight: var(--font-weight-bold);
@@ -874,17 +886,18 @@
     .max-wide\:pl-3 {
       padding-left: calc(var(--spacing) * 3);
     }
-    .max-wide\:text-\[13px\] {
-      font-size: 13px;
+    .max-wide\:text-body {
+      font-size: var(--text-body);
+      line-height: var(--tw-leading, var(--text-body--line-height));
     }
-    .max-wide\:text-\[14px\] {
-      font-size: 14px;
+    .max-wide\:text-control {
+      font-size: var(--text-control);
     }
-    .max-wide\:text-\[15px\] {
-      font-size: 15px;
+    .max-wide\:text-input {
+      font-size: var(--text-input);
     }
-    .max-wide\:text-\[16px\] {
-      font-size: 16px;
+    .max-wide\:text-meta {
+      font-size: var(--text-meta);
     }
     .max-wide\:text-brand {
       color: var(--brand);
@@ -988,8 +1001,8 @@
   }
   body {
     background-color: var(--bg);
-    font-size: 15px;
-    line-height: 1.45;
+    font-size: var(--text-body);
+    line-height: var(--tw-leading, var(--text-body--line-height));
     color: var(--ink);
     -webkit-text-size-adjust: 100%;
     padding-bottom: calc(var(--bar-h) + var(--tabs-h) + env(safe-area-inset-bottom));
@@ -1008,20 +1021,20 @@
   h1 {
     margin-top: var(--spacing);
     margin-bottom: calc(var(--spacing) * 4);
-    font-size: 26px;
-    line-height: 1.2;
+    font-size: var(--text-title);
+    line-height: var(--tw-leading, var(--text-title--line-height));
     --tw-font-weight: var(--font-weight-extralight);
     font-weight: var(--font-weight-extralight);
     overflow-wrap: anywhere;
     @media (width < 721px) {
-      font-size: 22px;
-      line-height: 1.2;
+      font-size: var(--text-title-sm);
+      line-height: var(--tw-leading, var(--text-title-sm--line-height));
     }
   }
   h2 {
     margin-top: calc(var(--spacing) * 6);
     margin-bottom: calc(var(--spacing) * 2.5);
-    font-size: 13px;
+    font-size: var(--text-meta);
     --tw-font-weight: var(--font-weight-semibold);
     font-weight: var(--font-weight-semibold);
     --tw-tracking: .08em;
@@ -1177,7 +1190,7 @@
     padding-inline: 0px;
     padding-top: calc(var(--spacing) * 3);
     padding-bottom: calc(var(--spacing) * 0.5);
-    font-size: 13px;
+    font-size: var(--text-meta);
     --tw-tracking: .08em;
     letter-spacing: .08em;
     color: var(--muted);
@@ -1203,12 +1216,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 13px;
+    font-size: var(--text-meta);
     color: var(--muted);
   }
   .tracks .d {
     flex: none;
-    font-size: 13px;
+    font-size: var(--text-meta);
     color: var(--muted);
     --tw-numeric-spacing: tabular-nums;
     font-variant-numeric: var(--tw-ordinal,) var(--tw-slashed-zero,) var(--tw-numeric-figure,) var(--tw-numeric-spacing,) var(--tw-numeric-fraction,);
@@ -1217,7 +1230,7 @@
     flex: none;
     padding-inline: calc(var(--spacing) * 2.5);
     padding-block: var(--spacing);
-    font-size: 16px;
+    font-size: var(--text-input);
     --tw-leading: 1;
     line-height: 1;
   }

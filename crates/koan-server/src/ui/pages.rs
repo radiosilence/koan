@@ -35,7 +35,7 @@ const ICON_PLAY: &str = "<svg class=\"in-[.playing]:hidden\" viewBox=\"0 0 24 24
 const ICON_PAUSE: &str = "<svg class=\"hidden in-[.playing]:inline\" viewBox=\"0 0 24 24\" aria-hidden=true>\
      <path d=\"M6 4h4v16H6zM14 4h4v16h-4z\"/></svg>";
 
-pub(super) const KICKER: &str = "m-0 text-[12px] tracking-[.08em] text-muted uppercase";
+pub(super) const KICKER: &str = "m-0 text-fine tracking-[.08em] text-muted uppercase";
 pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";
 pub(super) const EMPTY: &str = "text-muted";
 pub(super) const ERROR: &str = "text-bad";
@@ -50,11 +50,11 @@ max-wide:grid-cols-[repeat(auto-fill,minmax(140px,1fr))] max-wide:gap-x-3 max-wi
 const LIST_ROW: &str = "flex min-w-0 items-baseline gap-3 border-b border-rule px-1 py-2.5 text-ink \
 hover:text-brand hover:no-underline";
 const LIST_NAME: &str = "min-w-0 flex-1 truncate";
-const LIST_COUNT: &str = "text-[13px] text-muted";
+const LIST_COUNT: &str = "text-meta text-muted";
 /// A copyable link: the share, the new key, an invite, the MCP address.
-pub(super) const COPY_ROW: &str = "mt-3 flex max-w-[520px] gap-2";
-pub(super) const COPY_INPUT: &str = "flex-1 text-[14px]";
-pub(super) const COPY_ERROR: &str = "mt-3 max-w-[520px] text-[14px] text-bad";
+pub(super) const COPY_ROW: &str = "mt-3 flex max-w-form gap-2";
+pub(super) const COPY_INPUT: &str = "flex-1 text-control";
+pub(super) const COPY_ERROR: &str = "mt-3 max-w-form text-control text-bad";
 /// The sign-in and consent pages, which stand outside the shell.
 pub(super) const SIGNIN_BODY: &str = "pb-0";
 pub(super) const SIGNIN_MAIN: &str = "mx-auto max-w-[360px] px-4 py-16";
@@ -88,7 +88,7 @@ fn buttons(page: bool) -> String {
 /// Position and length around the seek bar. `extra` places it.
 fn scrub(extra: &str) -> String {
     format!(
-        "<div class=\"flex w-full items-center gap-2.5 text-[12px] text-muted tabular-nums {extra}\">\
+        "<div class=\"flex w-full items-center gap-2.5 text-fine text-muted tabular-nums {extra}\">\
 <span data-np=pos>0:00</span>\
 <input type=range class=\"min-w-0 flex-1\" data-ctl=seek min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span data-np=len>0:00</span></div>"
@@ -112,12 +112,12 @@ pub(super) fn head(title: &str) -> String {
 /// The sidebar's links, which become the tab bar on a phone.
 const NAV_LINK: &str = "rounded-md px-2.5 py-2 text-muted hover:text-ink hover:no-underline \
 aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:flex max-wide:flex-1 max-wide:items-center \
-max-wide:justify-center max-wide:rounded-none max-wide:text-[14px] max-wide:aria-[current=page]:bg-transparent \
+max-wide:justify-center max-wide:rounded-none max-wide:text-control max-wide:aria-[current=page]:bg-transparent \
 max-wide:aria-[current=page]:text-brand";
 
 /// The account's links sit in the sidebar on a wide screen and under the page
 /// on a phone, where they are plain links.
-const ACCOUNT_LINK: &str = "rounded-md px-1.5 py-1 text-[13px] whitespace-nowrap text-muted hover:text-ink \
+const ACCOUNT_LINK: &str = "rounded-md px-1.5 py-1 text-meta whitespace-nowrap text-muted hover:text-ink \
 hover:no-underline aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:text-brand \
 max-wide:hover:text-brand max-wide:hover:underline max-wide:aria-[current=page]:bg-transparent \
 max-wide:aria-[current=page]:text-brand";
@@ -130,11 +130,11 @@ fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> Str
             String::new()
         };
         format!(
-            "<form class=\"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-[13px] text-muted\" \
+            "<form class=\"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted\" \
 method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 pb-0.5 text-ink\">{}</span>\
 {users}<a class=\"{ACCOUNT_LINK}\" href=\"/keys\" data-nav=keys>API keys</a>\
 <a class=\"{ACCOUNT_LINK}\" href=\"/connect\" data-nav=connect>Assistants</a>\
-<button class=\"quiet px-2 py-1 text-[13px]\">Sign out</button></form>",
+<button class=\"quiet px-2 py-1 text-meta\">Sign out</button></form>",
             escape(&user.username)
         )
     } else {
@@ -144,7 +144,7 @@ method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] trunc
     let account = |place: &str| {
         format!(
             "<div class=\"mt-auto flex min-w-0 flex-col gap-1 {place}\">{signout}\
-<a class=\"rounded-md px-1 py-0.5 text-[12px] text-muted tabular-nums hover:text-ink hover:no-underline\" \
+<a class=\"rounded-md px-1 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
 href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
             v = env!("CARGO_PKG_VERSION")
         )
@@ -179,7 +179,7 @@ max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule
 <a class=\"flex min-w-0 items-center gap-2.5 text-ink hover:no-underline\" href=\"/queue\">\
 <img class=\"size-12 flex-none rounded-sm bg-rule object-cover max-wide:size-10\" data-np=cover alt=\"\" hidden>\
 <span class=\"flex min-w-0 flex-col\"><span class=\"truncate\" data-np=title>Nothing playing</span>\
-<span class=\"truncate text-[13px] text-muted\" data-np=artist></span></span></a>\
+<span class=\"truncate text-meta text-muted\" data-np=artist></span></span></a>\
 <div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer></body></html>",
         head = head(title),
         datastar = super::ASSETS.datastar_js,
@@ -223,13 +223,13 @@ pub(super) fn login(next: &str, error: Option<&str>) -> String {
     let error = error
         .map(|e| format!("<p class=\"m-0 {ERROR}\" role=alert>{}</p>", escape(e)))
         .unwrap_or_default();
-    let label = "grid gap-1.5 text-[13px] text-muted";
+    let label = "grid gap-1.5 text-meta text-muted";
     format!(
         "{head}</head><body class=\"{SIGNIN_BODY}\"><main class=\"{SIGNIN_MAIN}\"><h1 class=\"{SIGNIN_TITLE}\">kōan</h1>\
 <form class=\"grid gap-3.5\" method=post action=\"/login\"><input type=hidden name=next value=\"{next}\">\
-<label class=\"{label}\">Username<input class=\"text-[16px]\" name=username autocomplete=username autocapitalize=none \
+<label class=\"{label}\">Username<input class=\"text-input\" name=username autocomplete=username autocapitalize=none \
 spellcheck=false required autofocus></label>\
-<label class=\"{label}\">Password<input class=\"text-[16px]\" name=password type=password \
+<label class=\"{label}\">Password<input class=\"text-input\" name=password type=password \
 autocomplete=current-password required></label>\
 {error}<button class=\"primary\">Sign in</button></form></main></body></html>",
         head = head("Sign in"),
@@ -290,7 +290,7 @@ fn cells(albums: &[AlbumRow], versions: &Versions) -> String {
 <img class=\"mb-1.5 aspect-square h-auto w-full rounded-md border border-rule bg-surface object-cover \
 group-hover:border-hover [&.missing]:visible [&.missing]:text-transparent\" loading=lazy decoding=async \
 width={size} height={size} src=\"{src}\" alt=\"\">\
-<span class=\"truncate\">{title}</span><span class=\"truncate text-[13px] text-muted\">{artist}</span></a>",
+<span class=\"truncate\">{title}</span><span class=\"truncate text-meta text-muted\">{artist}</span></a>",
             id = a.id,
             size = crate::covers::GRID,
             src = cover_url(a.id, crate::covers::GRID, versions),
@@ -903,7 +903,7 @@ pub(super) async fn search(
     let inner = format!(
         "<h1>Search</h1><form class=\"search\" action=\"/search\" method=get \
 data-on:submit__prevent=\"@get('/search/results')\">\
-<input class=\"w-full max-w-[560px] px-3 py-2.5 text-[16px]\" type=search name=q value=\"{q}\" placeholder=\"Albums, artists, tracks\" autocomplete=off \
+<input class=\"w-full max-w-panel px-3 py-2.5 text-input\" type=search name=q value=\"{q}\" placeholder=\"Albums, artists, tracks\" autocomplete=off \
 autocapitalize=none spellcheck=false enterkeyhint=search autofocus aria-label=Search data-bind:q \
 data-init=\"$q && @get('/search/results')\" \
 data-on:input__debounce.250ms=\"@get('/search/results')\"></form>{found}",
@@ -945,7 +945,7 @@ data-np=cover alt=\"\" hidden><div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\
 <button class=\"quiet px-2 py-1\" data-act=clear>Clear</button></div>\
 <ol id=queue-list class=\"tracks\"></ol>",
         buttons = buttons(true),
-        scrub = scrub("max-w-[520px] max-wide:mt-2 max-wide:text-[13px]"),
+        scrub = scrub("max-w-form max-wide:mt-2 max-wide:text-meta"),
     );
     respond(&s, &headers, &user, "Queue", &inner)
 }

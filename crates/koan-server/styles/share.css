@@ -27,7 +27,7 @@
   }
 
   body {
-    @apply bg-bg text-[15px]/[1.45] text-ink;
+    @apply bg-bg text-body text-ink;
     -webkit-text-size-adjust: 100%;
   }
 
@@ -40,7 +40,7 @@
   }
 
   h1 {
-    @apply my-1 text-[26px]/[1.2] font-extralight wrap-anywhere max-wide:text-[22px]/[1.2];
+    @apply my-1 text-title font-extralight wrap-anywhere max-wide:text-title-sm;
   }
 
   /* A browser default that preflight removes, which the page is drawn with. */

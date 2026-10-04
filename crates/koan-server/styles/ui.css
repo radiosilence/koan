@@ -45,7 +45,7 @@
   }
 
   body {
-    @apply bg-bg text-[15px]/[1.45] text-ink;
+    @apply bg-bg text-body text-ink;
     -webkit-text-size-adjust: 100%;
     padding-bottom: calc(var(--bar-h) + var(--tabs-h) + env(safe-area-inset-bottom));
   }
@@ -59,11 +59,11 @@
   }
 
   h1 {
-    @apply mt-1 mb-4 text-[26px]/[1.2] font-extralight wrap-anywhere max-wide:text-[22px]/[1.2];
+    @apply mt-1 mb-4 text-title font-extralight wrap-anywhere max-wide:text-title-sm;
   }
 
   h2 {
-    @apply mt-6 mb-2.5 text-[13px] font-semibold tracking-[.08em] text-muted uppercase;
+    @apply mt-6 mb-2.5 text-meta font-semibold tracking-[.08em] text-muted uppercase;
   }
 
   button {
@@ -145,7 +145,7 @@
   }
 
   .tracks li.disc {
-    @apply cursor-default border-0 bg-transparent px-0 pt-3 pb-0.5 text-[13px] tracking-[.08em] text-muted uppercase;
+    @apply cursor-default border-0 bg-transparent px-0 pt-3 pb-0.5 text-meta tracking-[.08em] text-muted uppercase;
   }
 
   .tracks .n {
@@ -157,15 +157,15 @@
   }
 
   .tracks .t small {
-    @apply block truncate text-[13px] text-muted;
+    @apply block truncate text-meta text-muted;
   }
 
   .tracks .d {
-    @apply flex-none text-[13px] text-muted tabular-nums;
+    @apply flex-none text-meta text-muted tabular-nums;
   }
 
   .tracks button {
-    @apply flex-none px-2.5 py-1 text-[16px] leading-none;
+    @apply flex-none px-2.5 py-1 text-input leading-none;
   }
 
   .tracks button svg {

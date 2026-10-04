@@ -414,7 +414,7 @@ fn render(
         };
         let small = if credited {
             format!(
-                "<small class=\"block truncate text-[13px] text-muted\">{}</small>",
+                "<small class=\"block truncate text-meta text-muted\">{}</small>",
                 escape(&t.artist_name)
             )
         } else {
@@ -431,7 +431,7 @@ fn render(
              data-src=\"/share/{id}/{pos}\" data-dur=\"{secs}\" data-title=\"{title}\" data-artist=\"{art}\" \
              data-album=\"{alb}\"><span class=\"w-[1.5em] text-right text-muted tabular-nums\">{n}</span>\
              <span class=\"min-w-0 flex-1 truncate group-[.playing]:text-brand\">{title}{small}</span>\
-             <span class=\"text-[13px] text-muted tabular-nums\">{dur}</span></li>",
+             <span class=\"text-meta text-muted tabular-nums\">{dur}</span></li>",
             pos = i + 1,
             secs = t.duration_ms.unwrap_or(0) / 1000,
             title = escape(&t.title),
@@ -463,7 +463,7 @@ fn render(
                  <img class=\"art size-16 flex-none rounded-md border border-rule bg-surface object-cover \
                  [&.missing]:invisible\" src=\"/share/{id}/{first}/cover\" alt=\"\" loading=lazy>\
                  <div><h2 class=\"m-0 text-[17px] font-bold wrap-anywhere\">{title}</h2>\
-                 <p class=\"mt-0.5 mb-0 text-[13px] text-muted\">{sub}</p></div></header>\
+                 <p class=\"mt-0.5 mb-0 text-meta text-muted\">{sub}</p></div></header>\
                  <ol class=\"{TRACKS}\">{rows}</ol></section>",
                 first = i + 1,
                 title = escape(&tracks[i].album_title),
@@ -501,12 +501,12 @@ fn render(
 <header class=\"mb-5 flex items-end gap-5 max-wide:flex-col max-wide:items-stretch\">\
 <img id=cover class=\"size-[200px] flex-none rounded-lg border border-rule bg-surface object-cover \
 max-wide:aspect-square max-wide:h-auto max-wide:w-full\" src=\"/share/{id}/cover\" alt=\"\">\
-<div class=\"min-w-0 flex-1\"><p class=\"m-0 text-[12px] tracking-[.08em] text-muted uppercase\">{kicker}</p>\
+<div class=\"min-w-0 flex-1\"><p class=\"m-0 text-fine tracking-[.08em] text-muted uppercase\">{kicker}</p>\
 <h1>{title}</h1><p class=\"mt-0 mb-3.5 text-muted\">{sub}</p>{note}\
 <div class=\"flex items-center gap-2\"><button id=prev class=\"bg-transparent text-muted\" aria-label=Previous>&#9198;</button>\
 <button id=play class=\"min-w-24 border-brand bg-brand font-semibold text-bg\">Play</button>\
 <button id=next class=\"bg-transparent text-muted\" aria-label=Next>&#9197;</button></div>\
-<div class=\"mt-3 flex items-center gap-2.5 text-[13px] text-muted tabular-nums\"><span id=pos>0:00</span>\
+<div class=\"mt-3 flex items-center gap-2.5 text-meta text-muted tabular-nums\"><span id=pos>0:00</span>\
 <input id=seek class=\"min-w-0 flex-1 accent-brand\" type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span id=len>0:00</span></div></div></header>\
 <div id=tracks data-start=\"{start}\">{body}</div><noscript><p>{links}</p></noscript></main>\

@@ -155,7 +155,7 @@ impl Browse {
 /// end of a row of the sheet.
 const LABEL: &str = "inline-flex items-center gap-1.5 max-wide:justify-between";
 /// The toolbar's selects and year fields, smaller than a form's.
-const FIELD: &str = "bg-surface px-2 py-[5px] text-[13px] max-wide:text-[16px]";
+const FIELD: &str = "bg-surface px-2 py-[5px] text-meta max-wide:text-input";
 
 fn select(name: &str, label: &str, options: &[(String, String)], current: &str) -> String {
     let mut out = format!(
@@ -248,11 +248,11 @@ text-[11px] font-bold text-bg\">{active}</span>"
     };
     format!(
         "<details class=\"browse group -mt-1 mb-5\"><summary class=\"hidden cursor-pointer list-none items-center gap-1.5 \
-rounded-md border border-rule bg-surface px-3 py-[7px] text-[14px] text-ink group-open:border-brand \
+rounded-md border border-rule bg-surface px-3 py-[7px] text-control text-ink group-open:border-brand \
 max-wide:inline-flex [&::-webkit-details-marker]:hidden\">{label}</summary>\
-<form class=\"toolbar flex flex-wrap items-center gap-x-3.5 gap-y-2 text-[13px] text-muted max-wide:mt-2.5 \
+<form class=\"toolbar flex flex-wrap items-center gap-x-3.5 gap-y-2 text-meta text-muted max-wide:mt-2.5 \
 max-wide:flex-col max-wide:items-stretch max-wide:gap-3 max-wide:rounded-[10px] max-wide:border \
-max-wide:border-rule max-wide:bg-surface max-wide:p-3.5 max-wide:text-[15px]\" method=get action=\"{path}\">\
+max-wide:border-rule max-wide:bg-surface max-wide:p-3.5 max-wide:text-body\" method=get action=\"{path}\">\
 <label class=\"{LABEL}\">Name<input class=\"w-[12em] {FIELD} max-wide:w-auto max-wide:flex-1\" type=search \
 name=q placeholder=\"{name_hint}\" value=\"{q}\" aria-label=\"Filter by name\"></label>{sort_select}{seed}{reshuffle}{fav}{lossless}{codec}\
 <label class=\"{LABEL}\">Years<input class=\"w-[4.5em] {FIELD}\" name=from inputmode=numeric maxlength=4 \
