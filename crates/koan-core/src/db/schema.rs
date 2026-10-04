@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 13;
+pub const SCHEMA_VERSION: i64 = 14;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -10,6 +10,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // connection without it fails them rather than sorting differently.
     super::connection::register_library_collation(conn)?;
     super::connection::register_shuffle_function(conn)?;
+    super::connection::register_fold_function(conn)?;
     let found: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if found > SCHEMA_VERSION {
         return Err(rusqlite::Error::SqliteFailure(
@@ -51,8 +52,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             codec        TEXT,
             label        TEXT,
             remote_id    TEXT,
-            added_at     TEXT,
-            UNIQUE(title, artist_id)
+            added_at     TEXT
         );
 
         CREATE TABLE IF NOT EXISTS tracks (
@@ -103,10 +103,6 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             WHERE remote_id IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_artists_remote_id ON artists(remote_id)
             WHERE remote_id IS NOT NULL;
-        -- An upsert finds an artist by name however it is capitalised.
-        -- `UNIQUE(name)` is a binary index, so that lookup could not use it.
-        CREATE INDEX IF NOT EXISTS idx_artists_name_nocase
-            ON artists(name COLLATE NOCASE);
         -- The genre list and the genre filter both match case-insensitively,
         -- and both want the albums a genre spans.
         CREATE INDEX IF NOT EXISTS idx_tracks_genre
@@ -237,29 +233,27 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         -- admin account (see `queries::auth::LOCAL_USER`). 0 names no row in
         -- `users`, so there is no foreign key; the `users_personal_data`
         -- trigger does the cascading one would.
+        -- Favourites name rows. A rebuilt index re-reads its sources into the
+        -- rows it has rather than making new ones, so they survive it.
         CREATE TABLE IF NOT EXISTS favourites (
             user_id     INTEGER NOT NULL DEFAULT 0,
-            track_path  TEXT NOT NULL,
+            track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
             created_at  TEXT DEFAULT (datetime('now')),
-            PRIMARY KEY (user_id, track_path)
+            PRIMARY KEY (user_id, track_id)
         );
 
-        -- Albums and artists are favourited by name, not by row id, for the
-        -- same reason tracks are favourited by path: a rebuilt index assigns
-        -- new ids, and losing every favourite to a reindex is not acceptable.
         CREATE TABLE IF NOT EXISTS favourite_albums (
             user_id     INTEGER NOT NULL DEFAULT 0,
-            artist_name TEXT NOT NULL,
-            album_title TEXT NOT NULL,
+            album_id    INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
             created_at  TEXT DEFAULT (datetime('now')),
-            PRIMARY KEY (user_id, artist_name, album_title)
+            PRIMARY KEY (user_id, album_id)
         );
 
         CREATE TABLE IF NOT EXISTS favourite_artists (
             user_id     INTEGER NOT NULL DEFAULT 0,
-            artist_name TEXT NOT NULL,
+            artist_id   INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
             created_at  TEXT DEFAULT (datetime('now')),
-            PRIMARY KEY (user_id, artist_name)
+            PRIMARY KEY (user_id, artist_id)
         );
 
         CREATE TABLE IF NOT EXISTS playback_state (
@@ -389,6 +383,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         DROP INDEX IF EXISTS idx_refresh_tokens_expires;
         ",
     )?;
+    conn.execute_batch(crate::db::queries::sources::SOURCE_TABLES)?;
     apply_migrations(conn, found)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
@@ -403,9 +398,6 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("tracks", "cache_size_bytes", "INTEGER"),
     ("tracks", "cache_download_date", "INTEGER"),
-    // Downloaded because someone asked for the file, not to play it: evicted
-    // only once everything fetched for playback has gone.
-    ("tracks", "cache_pinned", "INTEGER NOT NULL DEFAULT 0"),
     ("organize_log", "size_bytes", "INTEGER"),
     ("organize_log", "mtime", "INTEGER"),
     // When the album entered the library, so clients can offer a
@@ -459,6 +451,10 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("refresh_tokens", "grant_id", "TEXT"),
     ("refresh_tokens", "client_name", "TEXT"),
     ("refresh_tokens", "used_at", "INTEGER"),
+    // Names as matching compares them; see `queries::sources::fold`. Kept
+    // by triggers, so a row has its key however it was written.
+    ("artists", "name_key", "TEXT"),
+    ("albums", "title_key", "TEXT"),
 ];
 
 /// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a
@@ -574,7 +570,6 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     if column_exists(conn, "users", "sealed_password")? {
         conn.execute("ALTER TABLE users DROP COLUMN sealed_password", [])?;
     }
-    merge_case_duplicate_artists(conn)?;
     // A client more than this far behind purges its whole cache instead.
     conn.execute(
         "DELETE FROM art_evictions WHERE seq < (SELECT MAX(seq) FROM art_evictions) - 50000",
@@ -583,6 +578,11 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
     per_user_favourites(conn)?;
+    name_keys(conn)?;
+    albums_without_name_uniqueness(conn)?;
+    favourites_by_id(conn)?;
+    merge_folded_artists(conn)?;
+    merge_folded_albums(conn)?;
     // After the rebuilds above, which drop a table's indexes with it.
     // `idx_play_history_track` is a prefix of `idx_play_history_track_played`.
     // The favourites key leads with the user, and merging two tracks repoints
@@ -591,7 +591,10 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_play_history_user ON play_history(user_id, played_at);
          CREATE INDEX IF NOT EXISTS idx_play_history_track_played ON play_history(track_id, played_at);
          DROP INDEX IF EXISTS idx_play_history_track;
-         CREATE INDEX IF NOT EXISTS idx_favourites_path ON favourites(track_path);
+         DROP INDEX IF EXISTS idx_favourites_path;
+         CREATE INDEX IF NOT EXISTS idx_favourites_track ON favourites(track_id);
+         CREATE INDEX IF NOT EXISTS idx_favourite_albums_album ON favourite_albums(album_id);
+         CREATE INDEX IF NOT EXISTS idx_favourite_artists_artist ON favourite_artists(artist_id);
          CREATE INDEX IF NOT EXISTS idx_playlists_user ON playlists(user_id);
          CREATE TRIGGER IF NOT EXISTS users_personal_data AFTER DELETE ON users BEGIN
              DELETE FROM favourites WHERE user_id = OLD.id;
@@ -627,12 +630,24 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         backfill_uids(conn, table)?;
     }
 
-    // Once: `upsert_track` stores no new zeros, and the sweep reads every track.
-    if found < 3 {
-        crate::db::queries::tracks::clear_zero_discs(conn)?;
+    // Each file and each server entry became a source row of its own. Built
+    // once from what the tracks hold, which is one source's names, then
+    // replaced by each source's own: the next scan reads every file again and
+    // the next sync walks the whole server.
+    if found < 14 {
+        if found < 3 {
+            crate::db::queries::tracks::clear_zero_discs(conn)?;
+        }
+        crate::db::queries::tracks::merge_spelling_twins(conn)?;
+        crate::db::queries::sources::build_from_tracks(conn).map_err(|e| match e {
+            crate::db::connection::DbError::Sqlite(e) => e,
+            other => rusqlite::Error::ToSqlConversionFailure(Box::new(other)),
+        })?;
+        conn.execute_batch(
+            "DELETE FROM scan_cache;
+             UPDATE remote_servers SET library_version = NULL;",
+        )?;
     }
-    crate::db::queries::tracks::merge_split_cross_source_tracks(conn)?;
-    crate::db::queries::tracks::merge_spelling_twins(conn)?;
 
     Ok(())
 }
@@ -798,19 +813,151 @@ fn table_exists(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
     Ok(found > 0)
 }
 
-/// Fold artists whose names differ only in letter case into one: the row that
-/// owns the most albums, then the most tracks. Tags spell one act differently
-/// from record to record, and the split left an artist's page without the
-/// albums its tracks belong to. Idempotent; a single query when there are none.
-fn merge_case_duplicate_artists(conn: &Connection) -> rusqlite::Result<()> {
+/// Keep `artists.name_key` and `albums.title_key` filled, and indexed for the
+/// lookups that match on them.
+fn name_keys(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS artists_name_key AFTER INSERT ON artists
+           WHEN NEW.name_key IS NULL
+         BEGIN UPDATE artists SET name_key = koan_fold(NEW.name) WHERE id = NEW.id; END;
+         CREATE TRIGGER IF NOT EXISTS artists_name_key_renamed AFTER UPDATE OF name ON artists
+         BEGIN UPDATE artists SET name_key = koan_fold(NEW.name) WHERE id = NEW.id; END;
+         UPDATE artists SET name_key = koan_fold(name) WHERE name_key IS NULL;
+         CREATE INDEX IF NOT EXISTS idx_artists_name_key ON artists(name_key);
+         DROP INDEX IF EXISTS idx_artists_name_nocase;",
+    )?;
+    album_title_keys(conn)
+}
+
+fn album_title_keys(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS albums_title_key AFTER INSERT ON albums
+           WHEN NEW.title_key IS NULL
+         BEGIN UPDATE albums SET title_key = koan_fold(NEW.title) WHERE id = NEW.id; END;
+         CREATE TRIGGER IF NOT EXISTS albums_title_key_renamed AFTER UPDATE OF title ON albums
+         BEGIN UPDATE albums SET title_key = koan_fold(NEW.title) WHERE id = NEW.id; END;
+         UPDATE albums SET title_key = koan_fold(title) WHERE title_key IS NULL;
+         CREATE INDEX IF NOT EXISTS idx_albums_title_key ON albums(title_key, artist_id);",
+    )
+}
+
+/// Rebuild `albums` without `UNIQUE(title, artist_id)`. Two editions with the
+/// same title and album artist are two albums when their release ids differ;
+/// see `queries::get_or_create_album`.
+fn albums_without_name_uniqueness(conn: &Connection) -> rusqlite::Result<()> {
+    let sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'albums'",
+        [],
+        |r| r.get(0),
+    )?;
+    if !sql.contains("UNIQUE(title, artist_id)") {
+        return Ok(());
+    }
+    // Pragma changes are no-ops inside a transaction, so this must bracket it.
+    conn.pragma_update(None, "foreign_keys", "off")?;
+    let rebuild = conn.execute_batch(
+        "BEGIN;
+         CREATE TABLE albums_new (
+             id           INTEGER PRIMARY KEY,
+             title        TEXT NOT NULL,
+             artist_id    INTEGER REFERENCES artists(id),
+             date         TEXT,
+             total_discs  INTEGER,
+             total_tracks INTEGER,
+             codec        TEXT,
+             label        TEXT,
+             remote_id    TEXT,
+             added_at     TEXT,
+             mbid         TEXT,
+             sort_name    TEXT,
+             uid          TEXT,
+             title_key    TEXT
+         );
+         INSERT INTO albums_new (id, title, artist_id, date, total_discs, total_tracks, codec,
+                                 label, remote_id, added_at, mbid, sort_name, uid, title_key)
+             SELECT id, title, artist_id, date, total_discs, total_tracks, codec,
+                    label, remote_id, added_at, mbid, sort_name, uid, title_key FROM albums;
+         DROP TABLE albums;
+         ALTER TABLE albums_new RENAME TO albums;
+         CREATE INDEX IF NOT EXISTS idx_albums_artist ON albums(artist_id);
+         CREATE INDEX IF NOT EXISTS idx_albums_remote_id ON albums(remote_id)
+             WHERE remote_id IS NOT NULL;
+         CREATE TRIGGER IF NOT EXISTS evict_album_art AFTER DELETE ON albums
+             BEGIN INSERT INTO art_evictions (kind, id) VALUES ('album', old.id); END;
+         COMMIT;",
+    );
+    conn.pragma_update(None, "foreign_keys", "on")?;
+    rebuild?;
+    album_title_keys(conn)
+}
+
+/// Favourites from names and paths to row ids. A favourite whose track,
+/// album or artist is not in the library names nothing any more, and goes.
+fn favourites_by_id(conn: &Connection) -> rusqlite::Result<()> {
+    if !column_exists(conn, "favourites", "track_path")? {
+        return Ok(());
+    }
+    // A trigger naming a table mid-rebuild fails the rename that completes
+    // it. `apply_migrations` recreates it afterwards.
+    conn.execute_batch(
+        "DROP TRIGGER IF EXISTS users_personal_data;
+         BEGIN;
+         CREATE TABLE favourites_new (
+             user_id     INTEGER NOT NULL DEFAULT 0,
+             track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+             created_at  TEXT DEFAULT (datetime('now')),
+             PRIMARY KEY (user_id, track_id)
+         );
+         INSERT OR IGNORE INTO favourites_new (user_id, track_id, created_at)
+             SELECT f.user_id, t.id, f.created_at FROM favourites f JOIN tracks t ON t.path = f.track_path
+             UNION ALL
+             SELECT f.user_id, t.id, f.created_at FROM favourites f JOIN tracks t ON t.cached_path = f.track_path
+             UNION ALL
+             SELECT f.user_id, t.id, f.created_at FROM favourites f JOIN tracks t ON t.remote_url = f.track_path;
+         DROP TABLE favourites;
+         ALTER TABLE favourites_new RENAME TO favourites;
+
+         CREATE TABLE favourite_albums_new (
+             user_id     INTEGER NOT NULL DEFAULT 0,
+             album_id    INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+             created_at  TEXT DEFAULT (datetime('now')),
+             PRIMARY KEY (user_id, album_id)
+         );
+         INSERT OR IGNORE INTO favourite_albums_new (user_id, album_id, created_at)
+             SELECT f.user_id, al.id, f.created_at FROM favourite_albums f
+               JOIN artists ar ON ar.name_key = koan_fold(f.artist_name)
+               JOIN albums al ON al.artist_id = ar.id AND al.title_key = koan_fold(f.album_title);
+         DROP TABLE favourite_albums;
+         ALTER TABLE favourite_albums_new RENAME TO favourite_albums;
+
+         CREATE TABLE favourite_artists_new (
+             user_id     INTEGER NOT NULL DEFAULT 0,
+             artist_id   INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+             created_at  TEXT DEFAULT (datetime('now')),
+             PRIMARY KEY (user_id, artist_id)
+         );
+         INSERT OR IGNORE INTO favourite_artists_new (user_id, artist_id, created_at)
+             SELECT f.user_id, ar.id, f.created_at FROM favourite_artists f
+               JOIN artists ar ON ar.name_key = koan_fold(f.artist_name);
+         DROP TABLE favourite_artists;
+         ALTER TABLE favourite_artists_new RENAME TO favourite_artists;
+         COMMIT;",
+    )
+}
+
+/// Merge artists whose names fold to the same key, which matching treats as
+/// one: tags spell the same act "The Squire Of Gothos" on one record and
+/// "of" on the next, or a server in capitals. The row with the most albums,
+/// then tracks, keeps its name.
+fn merge_folded_artists(conn: &Connection) -> rusqlite::Result<()> {
     let groups: Vec<String> = conn
-        .prepare("SELECT lower(name) FROM artists GROUP BY lower(name) HAVING COUNT(*) > 1")?
+        .prepare("SELECT name_key FROM artists GROUP BY name_key HAVING COUNT(*) > 1")?
         .query_map([], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     for key in groups {
         let ids: Vec<i64> = conn
             .prepare(
-                "SELECT a.id FROM artists a WHERE lower(a.name) = ?1
+                "SELECT a.id FROM artists a WHERE a.name_key = ?1
                  ORDER BY (SELECT COUNT(*) FROM albums WHERE artist_id = a.id) DESC,
                           (SELECT COUNT(*) FROM tracks WHERE artist_id = a.id) DESC,
                           a.id",
@@ -821,42 +968,52 @@ fn merge_case_duplicate_artists(conn: &Connection) -> rusqlite::Result<()> {
             continue;
         };
         for &gone in rest {
-            // An album both spellings hold under one title is one album: its
-            // tracks join the kept artist's copy. Moving the row would break
-            // `UNIQUE(title, artist_id)`.
-            conn.execute(
-                "UPDATE tracks SET album_id = (SELECT k.id FROM albums k, albums g
-                                                WHERE g.id = tracks.album_id
-                                                  AND k.artist_id = ?1 AND k.title = g.title)
-                  WHERE album_id IN (SELECT g.id FROM albums g
-                                      WHERE g.artist_id = ?2
-                                        AND EXISTS (SELECT 1 FROM albums k
-                                                     WHERE k.artist_id = ?1 AND k.title = g.title))",
-                [keep, gone],
-            )?;
-            conn.execute(
-                "DELETE FROM albums WHERE artist_id = ?2
-                   AND EXISTS (SELECT 1 FROM albums k WHERE k.artist_id = ?1 AND k.title = albums.title)",
-                [keep, gone],
-            )?;
-            conn.execute(
+            for sql in [
                 "UPDATE albums SET artist_id = ?1 WHERE artist_id = ?2",
-                [keep, gone],
-            )?;
-            conn.execute(
                 "UPDATE tracks SET artist_id = ?1 WHERE artist_id = ?2",
-                [keep, gone],
-            )?;
-            conn.execute(
+                "UPDATE OR IGNORE favourite_artists SET artist_id = ?1 WHERE artist_id = ?2",
+                "UPDATE shares SET subject_id = ?1 WHERE kind = 'artist' AND subject_id = ?2",
                 "UPDATE artists SET
                      remote_id = COALESCE(remote_id, (SELECT remote_id FROM artists WHERE id = ?2)),
                      mbid = COALESCE(mbid, (SELECT mbid FROM artists WHERE id = ?2)),
                      sort_name = COALESCE(sort_name, (SELECT sort_name FROM artists WHERE id = ?2))
                  WHERE id = ?1",
-                [keep, gone],
-            )?;
-            conn.execute("DELETE FROM artist_info WHERE artist_id = ?1", [gone])?;
-            conn.execute("DELETE FROM artists WHERE id = ?1", [gone])?;
+            ] {
+                conn.execute(sql, [keep, gone])?;
+            }
+            for sql in [
+                "DELETE FROM favourite_artists WHERE artist_id = ?1",
+                "DELETE FROM artist_info WHERE artist_id = ?1",
+                "DELETE FROM artists WHERE id = ?1",
+            ] {
+                conn.execute(sql, [gone])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Merge albums that are one by `get_or_create_album`'s reckoning: the same
+/// folded title and album artist, and the same release or none. Arises where
+/// the old key compared titles bytewise, or once folded artists merged.
+fn merge_folded_albums(conn: &Connection) -> rusqlite::Result<()> {
+    let twins: Vec<(i64, i64)> = conn
+        .prepare(
+            "SELECT MIN(k.id), g.id FROM albums g JOIN albums k
+                ON k.title_key = g.title_key AND k.artist_id IS g.artist_id AND k.id < g.id
+               AND (k.mbid IS g.mbid OR k.mbid IS NULL OR g.mbid IS NULL)
+             GROUP BY g.id",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (keep, gone) in twins {
+        let both: bool = conn.query_row(
+            "SELECT COUNT(*) = 2 FROM albums WHERE id IN (?1, ?2)",
+            [keep, gone],
+            |r| r.get(0),
+        )?;
+        if both {
+            crate::db::queries::merge_albums(conn, keep, gone)?;
         }
     }
     Ok(())
@@ -1035,7 +1192,10 @@ mod tests {
             2
         );
         assert_eq!(
-            count("SELECT COUNT(*) FROM tracks WHERE album_id = 102"),
+            count(
+                "SELECT COUNT(*) FROM tracks t JOIN albums al ON al.id = t.album_id
+                  WHERE al.title = 'Habits'"
+            ),
             2,
             "Habits once, holding both copies' tracks"
         );
@@ -1128,11 +1288,7 @@ mod tests {
             ),
             (
                 "every track a user favourited",
-                "SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites WHERE user_id = ?1)
-                 UNION
-                 SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites WHERE user_id = ?1)
-                 UNION
-                 SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites WHERE user_id = ?1)",
+                "SELECT track_id FROM favourites WHERE user_id = ?1",
             ),
             (
                 "tracks under a folder",
@@ -1147,8 +1303,8 @@ mod tests {
                 "SELECT id FROM artists WHERE remote_id = ?1",
             ),
             (
-                "an artist by name, however it is capitalised",
-                "SELECT id FROM artists WHERE name = ?1 COLLATE NOCASE",
+                "an artist by name, however it is spelled",
+                "SELECT id FROM artists WHERE name_key = ?1",
             ),
             (
                 "a scan cache entry by track",
@@ -1171,8 +1327,8 @@ mod tests {
                 "UPDATE share_tracks SET track_id = ?1 WHERE track_id = ?2",
             ),
             (
-                "favourites repointed to a merged track's path",
-                "UPDATE OR IGNORE favourites SET track_path = ?1 WHERE track_path = ?2",
+                "favourites repointed to a merged track",
+                "UPDATE OR IGNORE favourites SET track_id = ?1 WHERE track_id = ?2",
             ),
             (
                 "a track's last play",
@@ -1484,6 +1640,98 @@ mod tests {
                 .unwrap();
             assert_eq!(found, 1, "{table}.{column} was not migrated");
         }
+    }
+
+    #[test]
+    fn favourites_from_before_ids_name_their_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        {
+            let db = Database::open(&path).unwrap();
+            db.conn
+                .execute_batch(
+                    "DROP TRIGGER users_personal_data;
+                     DROP TABLE favourites; DROP TABLE favourite_albums; DROP TABLE favourite_artists;
+                     CREATE TABLE favourites (user_id INTEGER NOT NULL DEFAULT 0, track_path TEXT NOT NULL,
+                         created_at TEXT, PRIMARY KEY (user_id, track_path));
+                     CREATE TABLE favourite_albums (user_id INTEGER NOT NULL DEFAULT 0,
+                         artist_name TEXT NOT NULL, album_title TEXT NOT NULL, created_at TEXT,
+                         PRIMARY KEY (user_id, artist_name, album_title));
+                     CREATE TABLE favourite_artists (user_id INTEGER NOT NULL DEFAULT 0,
+                         artist_name TEXT NOT NULL, created_at TEXT, PRIMARY KEY (user_id, artist_name));
+                     INSERT INTO artists (id, name) VALUES (1, 'Burial');
+                     INSERT INTO albums (id, title, artist_id) VALUES (1, 'Untrue', 1);
+                     INSERT INTO tracks (id, title, album_id, artist_id, path) VALUES (1, 'Archangel', 1, 1, '/a.flac');
+                     INSERT INTO tracks (id, title, album_id, artist_id, remote_id, remote_url, source)
+                         VALUES (2, 'Near Dark', 1, 1, 'sub-2', 'http://server/2', 'remote');
+                     INSERT INTO favourites (track_path) VALUES ('/a.flac'), ('http://server/2'), ('/gone.flac');
+                     INSERT INTO favourite_albums (artist_name, album_title) VALUES ('BURIAL', 'untrue');
+                     INSERT INTO favourite_artists (artist_name) VALUES ('Burial');
+                     PRAGMA user_version = 13;",
+                )
+                .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        let ids = |sql: &str| -> Vec<i64> {
+            db.conn
+                .prepare(sql)
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
+        };
+        assert_eq!(ids("SELECT track_id FROM favourites ORDER BY 1"), [1, 2]);
+        assert_eq!(ids("SELECT album_id FROM favourite_albums"), [1]);
+        assert_eq!(ids("SELECT artist_id FROM favourite_artists"), [1]);
+    }
+
+    #[test]
+    fn a_library_from_before_source_rows_gets_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        {
+            let db = Database::open(&path).unwrap();
+            // A local file and the server's copy, left apart by the old
+            // matching because the server spelled the credit differently.
+            db.conn
+                .execute_batch(
+                    "DROP TABLE local_files; DROP TABLE remote_entries;
+                     INSERT INTO artists (id, name) VALUES (1, 'Petrol Girls'), (2, 'Petrol Girls • Ren Aldridge');
+                     INSERT INTO albums (id, title, artist_id) VALUES (1, 'Talk of Violence', 1);
+                     INSERT INTO tracks (id, title, album_id, artist_id, track_number, path) VALUES
+                         (1, 'Treading Water', 1, 1, 1, '/a.flac');
+                     INSERT INTO tracks (id, title, album_id, artist_id, track_number, remote_id, source) VALUES
+                         (2, 'Treading Water', 1, 2, 1, 'sub-1', 'remote');
+                     INSERT INTO play_history (track_id, played_at) VALUES (2, 1);
+                     INSERT INTO scan_cache (path, mtime, size, track_id) VALUES ('/a.flac', 1, 1, 1);
+                     INSERT INTO remote_servers (url, username, library_version)
+                         VALUES ('https://server', 'me', 5);
+                     PRAGMA user_version = 13;",
+                )
+                .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        let one = |sql: &str| -> i64 { db.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(one("SELECT COUNT(*) FROM tracks"), 1);
+        assert_eq!(
+            one(
+                "SELECT COUNT(*) FROM local_files f JOIN remote_entries r ON r.track_id = f.track_id"
+            ),
+            1
+        );
+        assert_eq!(
+            one("SELECT COUNT(*) FROM play_history WHERE track_id = 1"),
+            1
+        );
+        // Read every file and walk the server again, for each source's own tags.
+        assert_eq!(one("SELECT COUNT(*) FROM scan_cache"), 0);
+        assert_eq!(
+            one("SELECT COUNT(*) FROM remote_servers WHERE library_version IS NULL"),
+            1
+        );
     }
 
     #[test]
@@ -1815,7 +2063,9 @@ mod tests {
              INSERT INTO users (id, username, password_hash, role) VALUES
                  (3, 'mate', 'h', 'user'), (5, 'owner', 'h', 'admin'), (7, 'late', 'h', 'admin');
              INSERT INTO artists (id, name) VALUES (1, 'A');
-             INSERT INTO tracks (id, artist_id, title, source) VALUES (1, 1, 'T', 'local');
+             INSERT INTO albums (id, title, artist_id) VALUES (1, 'B', 1);
+             INSERT INTO tracks (id, artist_id, album_id, title, source, path) VALUES
+                 (1, 1, 1, 'T', 'local', '/a.flac'), (2, 1, 1, 'U', 'local', '/b.flac');
              INSERT INTO favourites (track_path) VALUES ('/a.flac'), ('/b.flac');
              INSERT INTO favourite_albums (artist_name, album_title) VALUES ('A', 'B');
              INSERT INTO favourite_artists (artist_name) VALUES ('A');
@@ -1847,7 +2097,7 @@ mod tests {
         }
         // Keyed by user now: the same favourite for someone else is its own row.
         conn.execute(
-            "INSERT INTO favourites (user_id, track_path) VALUES (3, '/a.flac')",
+            "INSERT INTO favourites (user_id, track_id) VALUES (3, 1)",
             [],
         )
         .unwrap();

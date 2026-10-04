@@ -7,7 +7,6 @@ use koan_core::db::queries;
 use koan_core::graphql_client::{GraphQLClient, GraphQLError};
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::ItemState;
 use owo_colors::OwoColorize;
 
 use koan_tui::app::PickerAction;
@@ -67,9 +66,6 @@ pub fn cmd_play(
 
     let (state, _timeline, viz_snapshot, tx) = Player::spawn();
 
-    let download_queue =
-        koan_core::remote::queue::shared(&tx, &state, Some(log_buffer.clone())).clone();
-
     // Spawn the API server on a background thread if requested.
     if let Some(opts) = api_opts {
         let db_path = config::db_path();
@@ -96,15 +92,13 @@ pub fn cmd_play(
     }
 
     let mut expects_playback = track_ids.is_some() || !paths.is_empty();
-    let mut restored: Option<koan_tui::play::RestoredPosition> = None;
 
     if let Some(ids) = track_ids {
         let tx_bg = tx.clone();
-        let dq_bg = download_queue.clone();
         std::thread::Builder::new()
             .name("koan-resolve".into())
             .spawn(move || {
-                enqueue_playlist(ids, PickerAction::AppendAndPlay, tx_bg, dq_bg);
+                enqueue_playlist(ids, PickerAction::AppendAndPlay, tx_bg);
             })
             .expect("failed to spawn resolve thread");
     } else if !paths.is_empty() {
@@ -157,12 +151,6 @@ pub fn cmd_play(
             .map(|i| i.to_playlist_item())
             .collect();
         if !items.is_empty() {
-            let pending: Vec<(i64, koan_core::player::state::QueueItemId)> = items
-                .iter()
-                .filter(|i| matches!(i.state, ItemState::Pending))
-                .filter_map(|i| i.db_id.map(|db_id| (db_id, i.id)))
-                .collect();
-
             let cursor_id = persisted.cursor_path.as_ref().and_then(|cp| {
                 items
                     .iter()
@@ -172,22 +160,20 @@ pub fn cmd_play(
             tx.send(PlayerCommand::AddToPlaylist(items))
                 .expect("player thread died");
             if let Some(cid) = cursor_id {
-                state.set_cursor(Some(cid));
-                restored = Some(koan_tui::play::RestoredPosition {
-                    item: cid,
-                    position_ms: persisted.position_ms,
-                    was_playing: persisted.was_playing,
-                });
+                // The player waits for a track still downloading, and opens it
+                // at the position once it can.
+                if persisted.position_ms > 0 || persisted.was_playing {
+                    tx.send(PlayerCommand::Cue {
+                        id: cid,
+                        position_ms: persisted.position_ms,
+                        play: persisted.was_playing,
+                    })
+                    .expect("player thread died");
+                } else {
+                    state.set_cursor(Some(cid));
+                }
             }
             expects_playback = true;
-
-            if !pending.is_empty() {
-                log::info!(
-                    "session restore: {} pending downloads submitted to queue",
-                    pending.len()
-                );
-                download_queue.enqueue(pending);
-            }
         }
     }
 
@@ -205,8 +191,6 @@ pub fn cmd_play(
         log_buffer,
         start_in_library,
         expects_playback,
-        restored,
-        download_queue,
         callbacks,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
@@ -216,7 +200,7 @@ pub fn cmd_play(
     std::thread::sleep(Duration::from_millis(100));
 }
 
-pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
+pub fn cmd_play_remote(server_url: &str) {
     eprintln!("connecting to kōan server at {}...", server_url);
 
     let client = GraphQLClient::from_config(server_url);
@@ -260,17 +244,12 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         }
     }
 
-    if jukebox {
-        eprintln!("jukebox mode — server plays audio, client is remote control");
-    }
+    eprintln!("remote control — the server plays the audio");
     let (state, _timeline, viz_snapshot, cmd_tx) =
-        koan_tui::remote_bridge::spawn_remote_bridge(client, jukebox);
+        koan_tui::remote_bridge::spawn_remote_bridge(client);
 
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
-
-    let download_queue =
-        koan_core::remote::queue::shared(&cmd_tx, &state, Some(log_buffer.clone())).clone();
 
     std::thread::sleep(Duration::from_millis(300));
 
@@ -288,8 +267,6 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         log_buffer,
         true,
         false,
-        None,
-        download_queue,
         callbacks,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);

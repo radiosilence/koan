@@ -1,7 +1,7 @@
 //! The web UI: sign in, browse the library and play it in the browser.
 //!
 //! Server-rendered HTML, with Datastar for the parts that change in place
-//! (search as you type, loading more, the share button) and a small script of
+//! (search as you type, the share button) and a small script of
 //! its own that swaps only the page content on navigation, so the player keeps
 //! playing. Playback happens in the browser, streaming from `/ui/stream`: a
 //! headless server has no speakers.
@@ -113,12 +113,10 @@ pub fn router(
     let gated = axum::Router::new()
         .route("/", get(pages::albums))
         .route("/albums", get(pages::albums))
-        .route("/albums/more", get(pages::albums_more))
         .route("/album/{id}", get(pages::album))
         .route("/album/{id}/share", post(pages::share_album))
         .route("/artist/{id}/share", post(pages::share_artist))
         .route("/artists", get(pages::artists))
-        .route("/artists/more", get(pages::artists_more))
         .route("/artist/{id}", get(pages::artist))
         .route("/playlists", get(pages::playlists))
         .route("/playlist/{id}", get(pages::playlist))

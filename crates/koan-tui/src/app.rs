@@ -10,11 +10,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use koan_core::audio::viz::VizSnapshot;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
-    LoadState, PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, SharedPlayerState,
+    PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, SharedPlayerState,
     VisibleQueueSnapshot,
 };
-
-use koan_core::remote::queue::DownloadQueue;
 
 use super::library::LibraryState;
 use super::lyrics::LyricsState;
@@ -163,6 +161,8 @@ pub struct App {
     pub state: Arc<SharedPlayerState>,
     pub tx: Sender<PlayerCommand>,
     pub quit: bool,
+    /// When a skip key last acted, to swallow the terminal's key repeat.
+    last_skip: Option<std::time::Instant>,
 
     /// Queue cursor, selection, scroll, and cached snapshot.
     pub queue: QueueState,
@@ -268,7 +268,7 @@ pub struct App {
     frame_count: u32,
 
     /// Set of favourite track paths, loaded from DB on startup.
-    pub favourites: std::collections::HashSet<PathBuf>,
+    pub favourites: std::collections::HashSet<i64>,
 
     /// Visualizer config (enabled flag, fps).
     pub viz_config: koan_core::config::VisualizerConfig,
@@ -296,9 +296,6 @@ pub struct App {
 
     /// Album art width in terminal columns. Height = width/2 (square via halfblocks).
     pub art_size: u16,
-
-    /// Persistent download queue — used to trigger downloads for pending items.
-    pub download_queue: DownloadQueue,
 }
 
 impl App {
@@ -308,7 +305,6 @@ impl App {
         tx: Sender<PlayerCommand>,
         log_buffer: Arc<Mutex<Vec<String>>>,
         ticks_per_sec: u8,
-        download_queue: DownloadQueue,
     ) -> Self {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
         let ticker_divisor = (ticks_per_sec / TICKER_FPS).max(1);
@@ -320,6 +316,7 @@ impl App {
             state,
             tx,
             quit: false,
+            last_skip: None,
             queue: QueueState::default(),
             picker: None,
             spinner_tick: 0,
@@ -369,7 +366,6 @@ impl App {
             fps_sample_count: 0,
             display_fps: 0,
             art_size: cfg.playback.art_size.clamp(4, 80),
-            download_queue,
         }
     }
 
@@ -395,26 +391,21 @@ impl App {
         }
     }
 
-    /// Toggle favourite status for a track path. Returns true if now favourite.
-    ///
-    /// A track mid-download sits at its `.part` path, which matches no track row
-    /// and stops existing the moment the download finishes; favourites are keyed
-    /// on the final path so the star survives.
-    pub fn toggle_favourite(&mut self, path: &std::path::Path) -> bool {
-        let path = &koan_core::remote::download::strip_part_suffix(path);
+    /// Toggle favourite status for a track. Returns true if now favourite.
+    pub fn toggle_favourite(&mut self, track_id: i64) -> bool {
         if let Ok(db) = koan_core::db::pool::shared().get()
             && let Ok(is_fav) = koan_core::db::queries::toggle_favourite(
                 &db.conn,
                 koan_core::db::queries::LOCAL_USER,
-                path,
+                track_id,
             )
         {
             if is_fav {
-                self.favourites.insert(path.to_path_buf());
+                self.favourites.insert(track_id);
             } else {
-                self.favourites.remove(path);
+                self.favourites.remove(&track_id);
             }
-            koan_core::helpers::sync_favourite_to_remote(&db, path, is_fav);
+            koan_core::helpers::sync_favourite_to_remote(&db, track_id, is_fav);
             return is_fav;
         }
         false
@@ -740,12 +731,8 @@ impl App {
                 self.quit = true;
             }
             KeyCode::Char(' ') => self.toggle_pause(),
-            KeyCode::Char('>') | KeyCode::Char('n') => {
-                self.tx.send(PlayerCommand::NextTrack).ok();
-            }
-            KeyCode::Char('<') => {
-                self.tx.send(PlayerCommand::PrevTrack).ok();
-            }
+            KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
+            KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
             KeyCode::Char('.') | KeyCode::Right => {
                 self.seek_to(self.state.position_ms().saturating_add(10_000));
             }
@@ -895,9 +882,8 @@ impl App {
             KeyCode::Char('f') => {
                 // Toggle favourite for the track at cursor.
                 let visible = self.visible_queue();
-                if let Some(entry) = visible.get(self.queue.cursor) {
-                    let path = entry.path.clone();
-                    self.toggle_favourite(&path);
+                if let Some(id) = visible.get(self.queue.cursor).and_then(|e| e.db_id) {
+                    self.toggle_favourite(id);
                 }
             }
             KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1300,7 +1286,7 @@ impl App {
         let visible = self.visible_queue();
         let is_fav = visible
             .get(self.queue.cursor)
-            .is_some_and(|e| self.favourites.contains(&e.path));
+            .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)));
         let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
         let actions = self.build_context_actions(fav_label);
         self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
@@ -1318,9 +1304,8 @@ impl App {
             }
             ContextAction::ToggleFavourite => {
                 let visible = self.visible_queue();
-                if let Some(entry) = visible.get(self.queue.cursor) {
-                    let path = entry.path.clone();
-                    self.toggle_favourite(&path);
+                if let Some(id) = visible.get(self.queue.cursor).and_then(|e| e.db_id) {
+                    self.toggle_favourite(id);
                 }
             }
             ContextAction::TrackInfo => {
@@ -2115,7 +2100,7 @@ impl App {
 
                         let is_fav = visible
                             .get(idx)
-                            .is_some_and(|e| self.favourites.contains(&e.path));
+                            .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)));
                         let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
                         let actions = self.build_context_actions(fav_label);
                         self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
@@ -2145,7 +2130,7 @@ impl App {
                         let all_fav = (first..=last).all(|i| {
                             visible
                                 .get(i)
-                                .is_some_and(|e| self.favourites.contains(&e.path))
+                                .is_some_and(|e| e.db_id.is_some_and(|id| self.favourites.contains(&id)))
                         });
                         let fav_label = if all_fav { "Unfavourite" } else { "Favourite" };
                         let actions = self.build_context_actions(fav_label);
@@ -2351,19 +2336,9 @@ impl App {
         if let Some(entry) = visible.get(idx)
             && entry.status != QueueEntryStatus::Playing
         {
-            let queue_id = entry.id;
-            let db_id = entry.db_id;
-            let is_pending = self
-                .state
-                .item_load_state(queue_id)
-                .is_some_and(|s| matches!(s, LoadState::Pending));
-
-            self.tx.send(PlayerCommand::Play(queue_id)).ok();
-
-            // Trigger priority download if the item needs it.
-            if is_pending && let Some(db_id) = db_id {
-                self.download_queue.prioritize(db_id, queue_id);
-            }
+            // A track still to be fetched jumps the download queue when the
+            // cursor reaches it.
+            self.tx.send(PlayerCommand::Play(entry.id)).ok();
         }
     }
 
@@ -2494,8 +2469,23 @@ impl App {
         };
     }
 
+    /// Next or previous, at most once per 150 ms. A held key repeats faster
+    /// than anyone means to skip, and the player acts on every command it is
+    /// sent.
+    fn skip(&mut self, cmd: PlayerCommand) {
+        let now = std::time::Instant::now();
+        if self
+            .last_skip
+            .is_some_and(|at| now.duration_since(at) < std::time::Duration::from_millis(150))
+        {
+            return;
+        }
+        self.last_skip = Some(now);
+        self.tx.send(cmd).ok();
+    }
+
     fn toggle_pause(&self) {
-        let cmd = if self.state.playback_state() == PlaybackState::Playing {
+        let cmd = if self.state.wants_to_play() {
             PlayerCommand::Pause
         } else {
             PlayerCommand::Resume
@@ -2552,12 +2542,8 @@ impl App {
                 };
             }
             KeyCode::Char(' ') => self.toggle_pause(),
-            KeyCode::Char('>') | KeyCode::Char('n') => {
-                self.tx.send(PlayerCommand::NextTrack).ok();
-            }
-            KeyCode::Char('<') => {
-                self.tx.send(PlayerCommand::PrevTrack).ok();
-            }
+            KeyCode::Char('>') | KeyCode::Char('n') => self.skip(PlayerCommand::NextTrack),
+            KeyCode::Char('<') => self.skip(PlayerCommand::PrevTrack),
             _ => {
                 if self.library_focus == LibraryFocus::Library {
                     self.handle_library_browse_key(key);

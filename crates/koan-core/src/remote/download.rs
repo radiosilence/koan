@@ -254,7 +254,8 @@ impl Outage {
 /// Wait out a server that is not answering rather than fail against it.
 pub struct Patience<'a> {
     pub outage: &'a Outage,
-    /// Asked while waiting; `true` ends the wait with `DownloadError::Cancelled`.
+    /// Asked while waiting out the server and as each chunk lands; `true`
+    /// ends the download with `DownloadError::Cancelled`.
     pub cancelled: &'a dyn Fn() -> bool,
 }
 
@@ -299,6 +300,10 @@ pub fn download_with_retries(
 ) -> Result<u64, DownloadError> {
     let attempts = attempts.max(1);
     let mut failures = 0;
+    let cancelled: &dyn Fn() -> bool = match &patience {
+        Some(p) => p.cancelled,
+        None => &|| false,
+    };
 
     let err = loop {
         if let Some(p) = &patience
@@ -307,7 +312,7 @@ pub fn download_with_retries(
             break DownloadError::Cancelled;
         }
 
-        let e = match attempt_download(dest, &request, &on_progress) {
+        let e = match attempt_download(dest, &request, &on_progress, cancelled) {
             Ok(bytes) => {
                 if let Some(p) = &patience {
                     p.outage.up();
@@ -358,6 +363,7 @@ fn attempt_download(
     dest: &Path,
     request: &impl Fn() -> Result<reqwest::blocking::RequestBuilder, DownloadError>,
     on_progress: &impl Fn(u64, u64),
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<u64, DownloadError> {
     let resp = request()?.send()?;
     let status = resp.status();
@@ -382,7 +388,7 @@ fn attempt_download(
             "server returned an error document where audio was expected".into(),
         ));
     }
-    stream_to_file(resp, dest, on_progress)
+    stream_to_file(resp, dest, on_progress, cancelled)
 }
 
 /// Stream a response body into `dest` via a `.part` sibling, renaming only once
@@ -392,6 +398,7 @@ fn stream_to_file(
     mut resp: reqwest::blocking::Response,
     dest: &Path,
     on_progress: &impl Fn(u64, u64),
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<u64, DownloadError> {
     let total = resp.content_length().unwrap_or(0);
 
@@ -413,6 +420,9 @@ fn stream_to_file(
                 }
                 downloaded += n as u64;
                 on_progress(downloaded, total);
+                if cancelled() {
+                    break Err(DownloadError::Cancelled);
+                }
             }
             Err(e) => break Err(DownloadError::Io(e)),
         }
@@ -941,6 +951,33 @@ mod tests {
             "stopped within a poll, not at the next try"
         );
         assert_eq!(server.hits(), 1);
+        assert!(!part_path(&dest).exists());
+    }
+
+    #[test]
+    fn a_download_no_longer_wanted_stops_mid_transfer() {
+        // Not only while waiting out an outage: a cleared queue should not go
+        // on fetching an album nobody is going to play.
+        let server = StubServer::start(vec![Reply::Complete(vec![7u8; 4 * 1024 * 1024])]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = tmp_dest(&dir);
+        let client = download_client().unwrap();
+        let outage = Outage::default();
+        let received = AtomicUsize::new(0);
+
+        let err = download_with_retries(
+            &dest,
+            3,
+            patient(&outage, &|| received.load(Ordering::Relaxed) > 0),
+            || Ok(client.get(server.url())),
+            |bytes, _| received.store(bytes as usize, Ordering::Relaxed),
+        )
+        .expect_err("cancelled");
+
+        assert!(matches!(err, DownloadError::Cancelled), "unexpected: {err}");
+        assert!(received.load(Ordering::Relaxed) < 4 * 1024 * 1024);
+        assert_eq!(server.hits(), 1, "not retried");
+        assert!(!dest.exists());
         assert!(!part_path(&dest).exists());
     }
 

@@ -2642,33 +2642,31 @@ fn set_star(
     let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
     match kind {
         EntityKind::Song => {
-            let key = queries::track_favourite_key(&db.conn, id)
+            queries::get_track_row(&db.conn, id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Track"))?;
-            let path = std::path::Path::new(&key);
             let op = if star {
                 queries::add_favourite
             } else {
                 queries::remove_favourite
             };
-            op(&db.conn, user, path).map_err(internal)?;
+            op(&db.conn, user, id).map_err(internal)?;
             // The upstream server has one account, and it is the local user's.
             if queries::auth::is_local_user(&db.conn, user).map_err(internal)? {
-                koan_core::helpers::sync_favourite_to_remote(db, path, star);
+                koan_core::helpers::sync_favourite_to_remote(db, id, star);
             }
         }
         EntityKind::Album => {
-            let album = queries::get_album(&db.conn, id)
+            queries::get_album(&db.conn, id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Album"))?;
-            queries::set_favourite_album(&db.conn, user, &album.artist_name, &album.title, star)
-                .map_err(internal)?;
+            queries::set_favourite_album(&db.conn, user, id, star).map_err(internal)?;
         }
         EntityKind::Artist => {
-            let artist = queries::get_artist(&db.conn, id)
+            queries::get_artist(&db.conn, id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Artist"))?;
-            queries::set_favourite_artist(&db.conn, user, &artist.name, star).map_err(internal)?;
+            queries::set_favourite_artist(&db.conn, user, id, star).map_err(internal)?;
         }
     }
     Ok(())

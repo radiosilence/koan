@@ -532,19 +532,6 @@ async fn live_fragments_are_datastar_events_and_posts_need_datastar() {
     assert!(r.body.starts_with("event: datastar-patch-elements\n"));
     assert!(r.body.contains("data: elements <div id=results>"));
 
-    let r = send(
-        &f.app,
-        authed(&f.state, "/albums/more?offset=0")
-            .header("datastar-request", "true")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert!(
-        r.body
-            .contains("data: selector #albums\ndata: mode append\n")
-    );
-
     let share = format!("/album/{}/share", f.album_id);
     let bare = Request::post(&share)
         .header(header::HOST, HOST)

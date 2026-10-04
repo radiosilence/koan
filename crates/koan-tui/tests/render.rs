@@ -304,7 +304,7 @@ fn queue_survives_every_size_and_title() {
         .map(|(i, t)| entry(t, statuses[i % statuses.len()]))
         .collect();
     let selected: HashSet<usize> = [0usize, 2].into_iter().collect();
-    let favourites: HashSet<PathBuf> = [PathBuf::from("/music/a.flac")].into_iter().collect();
+    let favourites: HashSet<i64> = [1].into_iter().collect();
 
     for &(w, h) in SIZES {
         for mode in [Mode::Normal, Mode::QueueEdit] {

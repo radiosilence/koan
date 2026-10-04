@@ -35,15 +35,12 @@ koan -d --subsonic 4040           # daemon with Subsonic
 ### Remote TUI
 
 ```bash
-koan play --server http://host:4000          # TUI connected to remote koan
-koan play --server http://host:4000 --jukebox  # remote control only
+koan play --server http://host:4000          # remote control for a koan server
 ```
 
-Client mode pulls audio from the server's `/rest/stream`, which is guarded by the
-server's `[subsonic]` credentials rather than the JWT the GraphQL side uses. Set the
-same username and secret in *this* machine's config (`koan subsonic setup`, then copy
-the secret from the server) or the queue plays nothing. `--jukebox` needs no
-credentials — the server does the playing.
+The server plays the audio. To listen on this machine, sign in to the server as a
+remote library (`koan remote login`) and play through the local engine. `--jukebox`
+is still accepted and changes nothing.
 
 ### MCP server
 

@@ -49,12 +49,17 @@ export KOAN_GRAPHQL__PLAYGROUND=true
 
 ## Remote TUI
 
-Connect a TUI from another machine to a running headless kōan:
+Control a running headless kōan from a TUI on another machine. The server plays
+the audio; the TUI is a remote control:
 
 ```bash
-koan play --server http://host:4000            # full TUI
-koan play --server http://host:4000 --jukebox  # remote control only (no local playback)
+koan play --server http://host:4000
 ```
+
+To play its library on the machine you are sitting at, sign in to it as a remote
+server instead (`koan remote login`, or Settings in the apps). Tracks then play
+through the local engine and download into the local cache like any other remote
+library.
 
 ## Authentication
 

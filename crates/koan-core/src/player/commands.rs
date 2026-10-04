@@ -59,18 +59,24 @@ pub enum PlayerCommand {
     },
     /// Clear the entire playlist (stop + remove all items).
     ClearPlaylist,
-    /// Replace the playlist and start playing at `start`, as one operation.
+    /// Replace the playlist and open the track at `start`, as one operation:
+    /// from `position_ms`, playing or paused.
     ///
     /// Doing this as ClearPlaylist + AddToPlaylist + Play sends three commands
     /// down a bounded channel, and the player acts on each as it arrives: the
     /// first track starts, then the cursor jumps, so clicking track nine of an
-    /// album shows track one playing first. It is also three undo entries for
-    /// one user action.
+    /// album shows track one playing first. It is three undo entries for one
+    /// user action. And between the clear and the add the playlist is empty,
+    /// which tells the download queue that nothing is wanted.
     ///
-    /// `start` past the end starts at the beginning.
+    /// `start` past the end starts at the beginning. It opens at
+    /// `position_ms`, playing or paused, as `Cue` does: a hand-off picks up
+    /// where the source stopped without the top of the track being heard.
     ReplacePlaylist {
         items: Vec<PlaylistItem>,
         start: usize,
+        position_ms: u64,
+        play: bool,
     },
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),
@@ -98,8 +104,12 @@ pub enum PlayerCommand {
     /// only thing it listens for, and a track that cannot be fetched never
     /// becomes Ready. That is the offline-library stall.
     TrackFailed(QueueItemId),
-    /// Decode thread exhausted the playlist — auto-advance or stop.
-    DecodeFinished,
+    /// Fetch these tracks into the cache, with no queue entry to play them.
+    CacheTracks(Vec<i64>),
+    /// Decode thread exhausted the playlist — auto-advance or stop. Carries
+    /// the session it came from, so one sent just before a play or seek is
+    /// recognised as stale.
+    DecodeFinished(u64),
     /// The decoder queued the next track, so when the playhead reaches it is
     /// now known.
     TrackQueued,
