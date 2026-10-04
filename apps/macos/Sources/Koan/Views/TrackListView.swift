@@ -26,6 +26,7 @@ struct TrackListView: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
+    @Environment(TransferMeter.self) private var meter
     @Environment(UIState.self) private var ui
     @Environment(\.roomTint) private var tint
     @Environment(\.onStage) private var onStage
@@ -62,11 +63,11 @@ struct TrackListView: View {
         let playing = player.isPlaying
         let live = onStage && !reduceMotion && graphics.animatesIndicators
         // What the rows draw that can change under them, as one value. Download
-        // progress is in it, so a moving download redraws the rows on screen.
+        // progress is not: `TransferMeter` hands it to the rings directly.
         let key = [
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds),
-            AnyHashable(queued.map { "\($0.key):\($0.value.status):\(SourceBadges.transfer(of: $0.value).flatMap(mirror.progress(for:)) ?? -1)" }.sorted()),
+            AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
         ]
         return SafeAreaReader { insets in
             KoanTable(
@@ -81,7 +82,7 @@ struct TrackListView: View {
                     tint: NSColor(tint),
                     favourites: library.favouriteTrackIds,
                     queued: queued,
-                    progress: { mirror.progress(for: $0) },
+                    meter: meter,
                     art: art,
                     levels: levels,
                     play: { line in player.playNow(trackIds: tracks.map(\.id), startingAt: line.position) },

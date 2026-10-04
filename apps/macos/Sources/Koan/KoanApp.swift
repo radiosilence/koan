@@ -25,6 +25,7 @@ struct KoanApp: App {
                         .environment(state.playlists)
                         .environment(state.activity)
                         .environment(state.levels)
+                        .environment(state.meter)
                         .environment(state.mirror)
                         .modifier(InviteConfirmation(state: state))
                         // One accent for the whole app, from the icon. Without
