@@ -5,22 +5,20 @@
 
 use koan_core::db::queries;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{ItemState, QueueItemId};
 
 use crate::app::PickerAction;
-use koan_core::remote::queue::DownloadQueue;
 
 /// Build PlaylistItems from track IDs and enqueue according to the action:
 /// - Append: add to end of queue, don't play.
 /// - AppendAndPlay: add to end, play the first added track.
-/// - ReplaceQueue: clear queue, add tracks, play from top.
+/// - ReplaceQueue: replace the queue in one command, play from top.
 ///
-/// Pending remote tracks are submitted to the persistent `DownloadQueue`.
+/// Remote tracks download once the player has them: the download queue
+/// follows the playlist.
 pub fn enqueue_playlist(
     ids: Vec<i64>,
     action: PickerAction,
     tx: crossbeam_channel::Sender<PlayerCommand>,
-    download_queue: DownloadQueue,
 ) {
     let db = match koan_core::db::pool::shared().get() {
         Ok(db) => db,
@@ -31,11 +29,6 @@ pub fn enqueue_playlist(
     };
     let rows = queries::tracks_by_ids(&db.conn, &ids).unwrap_or_default();
     let items = koan_core::helpers::playlist_items_for_tracks(&db, &rows);
-    let pending_downloads: Vec<(i64, QueueItemId)> = items
-        .iter()
-        .filter(|i| matches!(i.state, ItemState::Pending))
-        .filter_map(|i| Some((i.db_id?, i.id)))
-        .collect();
 
     if items.is_empty() {
         return;
@@ -43,7 +36,16 @@ pub fn enqueue_playlist(
 
     let first_id = items[0].id;
 
-    if action == PickerAction::ReplaceQueue && tx.send(PlayerCommand::ClearPlaylist).is_err() {
+    // One command, so the playlist is never empty in between: the download
+    // queue reads an empty playlist as nothing wanted.
+    if action == PickerAction::ReplaceQueue {
+        tx.send(PlayerCommand::ReplacePlaylist {
+            items,
+            start: 0,
+            position_ms: 0,
+            play: true,
+        })
+        .ok();
         return;
     }
 
@@ -51,13 +53,7 @@ pub fn enqueue_playlist(
         return;
     }
 
-    if matches!(
-        action,
-        PickerAction::AppendAndPlay | PickerAction::ReplaceQueue
-    ) && tx.send(PlayerCommand::Play(first_id)).is_err()
-    {
-        return;
+    if action == PickerAction::AppendAndPlay {
+        tx.send(PlayerCommand::Play(first_id)).ok();
     }
-
-    download_queue.enqueue(pending_downloads);
 }

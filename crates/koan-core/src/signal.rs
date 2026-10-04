@@ -80,6 +80,14 @@ impl Wake {
     }
 }
 
+impl std::fmt::Debug for Wake {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Wake")
+            .field("generation", &self.generation())
+            .finish()
+    }
+}
+
 impl Default for Wake {
     fn default() -> Self {
         Self::new()

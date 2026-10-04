@@ -1,9 +1,8 @@
 //! Helpers shared by every front end: koan-tui, koan-server, koan-ffi and koan-cli.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use crate::config::Config;
 use crate::db::connection::Database;
@@ -682,20 +681,17 @@ pub fn relocate_cached_paths(db: &Database, cache_dir: &Path) -> rusqlite::Resul
 ///
 /// Clearing downloads deletes files the queue is still pointing at, and an item
 /// that goes on claiming to be ready plays nothing at all. Call this after
-/// either clearing function, from anywhere with a player attached.
-pub fn requeue_cleared_downloads(
-    state: &Arc<SharedPlayerState>,
-    tx: &crossbeam_channel::Sender<PlayerCommand>,
-) {
+/// either clearing function, from anywhere with a player attached. Putting the
+/// items back to `Pending` is all it takes: the download queue follows the
+/// playlist and fetches them.
+pub fn requeue_cleared_downloads(state: &SharedPlayerState) {
     let stale = state.reset_items_with_missing_files();
-    if stale.is_empty() {
-        return;
+    if !stale.is_empty() {
+        log::info!(
+            "{} queued tracks lost their copy — fetching again",
+            stale.len()
+        );
     }
-    log::info!(
-        "{} queued tracks lost their copy — fetching again",
-        stale.len()
-    );
-    spawn_downloads(stale, tx.clone(), state.clone());
 }
 
 /// Push a favourite to the remote server, if this track came from one.
@@ -1616,76 +1612,43 @@ fn is_cached_audio(path: &std::path::Path) -> bool {
 /// 1. Local library path (DB `path` field) -- use directly if file exists
 /// 2. Cache path -- use if already downloaded
 /// 3. Download from remote to cache -- stream while downloading
-pub fn download_track(
+///
+/// Runs the transfer the download queue claimed for this track in the
+/// player's store. `cancelled` says when nothing wants it any more; `None` is
+/// returned then. Says nothing to the queue entries waiting on it: the caller
+/// settles them, all at once, with [`crate::remote::downloads::settle`].
+pub(crate) fn download_track(
     db_id: i64,
-    queue_id: QueueItemId,
+    cancelled: &dyn Fn() -> bool,
     tx: &crossbeam_channel::Sender<PlayerCommand>,
-    log_buf: &Arc<Mutex<Vec<String>>>,
-    state: &Arc<SharedPlayerState>,
+    state: &SharedPlayerState,
     cfg: &Config,
     client: &SubsonicClient,
-) {
-    if !in_queue_soon(state, queue_id, Duration::from_secs(5)) {
-        return;
-    }
-
+) -> Option<Result<PathBuf, String>> {
     // From the pool. This runs once per track fetched, and opening a
     // connection runs the schema DDL and a WAL checkpoint — with several
     // transfers going, several init cycles would contend with each other and
     // with library reads.
     let db = match crate::db::pool::shared().get() {
         Ok(db) => db,
-        Err(e) => {
-            fail_track(state, tx, queue_id, format!("db error: {}", e));
-            return;
-        }
+        Err(e) => return Some(Err(format!("db error: {e}"))),
     };
-    let track = match queries::get_track_row(&db.conn, db_id) {
-        Ok(Some(t)) => t,
-        _ => {
-            fail_track(state, tx, queue_id, "track not found".into());
-            return;
-        }
+    let Ok(Some(track)) = queries::get_track_row(&db.conn, db_id) else {
+        return Some(Err("track not found".into()));
     };
 
-    let remote_id = match &track.remote_id {
-        Some(rid) => rid.clone(),
-        None => {
-            // No remote_id -- check if the local file exists.
-            if let Some(ref path) = track.path {
-                let p = std::path::PathBuf::from(path);
-                if p.exists() {
-                    state.update_paths(&[(queue_id, p)]);
-                    state.update_item_state(queue_id, ItemState::Ready);
-                    if state.is_cursor(queue_id) {
-                        tx.send(PlayerCommand::TrackReady(queue_id)).ok();
-                    }
-                    return;
-                }
-            }
-            fail_track(
-                state,
-                tx,
-                queue_id,
-                "not in the library folder, and no remote copy to fetch".into(),
-            );
-            return;
-        }
-    };
-
-    // 1. Check if the local library file exists.
-    if let Some(ref local_path) = track.path {
-        let p = std::path::PathBuf::from(local_path);
-        if p.exists() {
-            log::info!("download_track: local file exists, using {}", p.display());
-            state.update_paths(&[(queue_id, p)]);
-            state.update_item_state(queue_id, ItemState::Ready);
-            if state.is_cursor(queue_id) {
-                tx.send(PlayerCommand::TrackReady(queue_id)).ok();
-            }
-            return;
-        }
+    // 1. The library's own file, when there is one.
+    if let Some(p) = track.path.as_deref().map(PathBuf::from)
+        && p.exists()
+    {
+        log::info!("download_track: local file exists, using {}", p.display());
+        return Some(Ok(p));
     }
+    let Some(remote_id) = track.remote_id.clone() else {
+        return Some(Err(
+            "not in the library folder, and no remote copy to fetch".into(),
+        ));
+    };
 
     let album_date: Option<String> = track
         .album_id
@@ -1694,13 +1657,10 @@ pub fn download_track(
     let cache_dir = cfg.cache_dir();
     let dest = cache_path_for_track(&cache_dir, &track, album_date.as_deref());
     if !path_within(&cache_dir, &dest) {
-        fail_track(
-            state,
-            tx,
-            queue_id,
-            format!("cache path escapes the cache: {}", dest.display()),
-        );
-        return;
+        return Some(Err(format!(
+            "cache path escapes the cache: {}",
+            dest.display()
+        )));
     }
 
     // 2. Already cached.
@@ -1716,154 +1676,63 @@ pub fn download_track(
         let _ = std::fs::remove_file(&dest);
     }
     if dest.exists() {
-        state.update_paths(&[(queue_id, dest)]);
-        state.update_item_state(queue_id, ItemState::Ready);
-        if state.is_cursor(queue_id) {
-            tx.send(PlayerCommand::TrackReady(queue_id)).ok();
-        }
-        return;
+        return Some(Ok(dest));
     }
 
-    // 3. Download from remote. The queue item points at the in-progress file so
-    // the decoder reads bytes as they land; it flips to `dest` on success.
-    state.update_paths(&[(queue_id, crate::remote::download::part_path(&dest))]);
+    // 3. Download from remote, into the `.part` file the decoder streams from
+    // while the bytes land.
+    let store = state.downloads();
+    let bytes_written = store.announce(
+        db_id,
+        track.title.clone(),
+        track.artist_name.clone(),
+        crate::remote::download::part_path(&dest),
+        dest.clone(),
+    );
 
-    let bytes_written = crate::remote::downloads::ByteFeed::new();
-
-    // Announce it before a byte moves, so a queue of six shows six rows rather
-    // than one row and five tracks that look like nothing is happening to them.
-    let store = crate::remote::downloads::store();
-    store.queued(crate::remote::downloads::Download {
-        id: queue_id,
-        track_id: db_id,
-        title: track.title.clone(),
-        artist: track.artist_name.clone(),
-        source: crate::remote::download::part_path(&dest),
-        dest: dest.clone(),
-        total: 0,
-        written: bytes_written.clone(),
-        state: crate::remote::downloads::DownloadState::Queued,
-        bytes_per_second: 0,
-    });
-
-    let progress_qid = queue_id;
-    let bytes_written_progress = bytes_written.clone();
     let progress_tx = tx.clone();
     let stream_ready_flag = std::sync::atomic::AtomicBool::new(false);
     // A retry restarts the byte count from zero, so a changed total re-announces.
     let announced_total = AtomicU64::new(u64::MAX);
-    // Taken out of the queue, cleared or removed, while waiting out an outage.
-    let gone = || state.get_item(queue_id).is_none();
     let result =
-        client.download_with_progress(&remote_id, &dest, &gone, move |downloaded, total| {
-            bytes_written_progress.set(downloaded);
+        client.download_with_progress(&remote_id, &dest, cancelled, |downloaded, total| {
+            bytes_written.set(downloaded);
             // What knows a transfer moved is the code moving it. Held to a reading
             // every 250ms inside, so a chunk landing costs an atomic and a compare.
             store.progressed();
             if announced_total.swap(total, Ordering::Relaxed) != total {
-                // The store, and only the store. The item's state says whether its
-                // file can be played, which a transfer in flight has not changed.
-                store.started(progress_qid, total, bytes_written_progress.clone());
+                store.started(db_id, total);
             }
             if !stream_ready_flag.load(Ordering::Relaxed)
                 && downloaded >= crate::player::state::STREAM_THRESHOLD
             {
                 stream_ready_flag.store(true, Ordering::Relaxed);
-                progress_tx
-                    .send(PlayerCommand::TrackStreamReady(progress_qid))
-                    .ok();
+                // Every entry waiting on it: whichever is under the cursor is the
+                // one the player starts streaming.
+                for id in store.waiters(db_id) {
+                    progress_tx.send(PlayerCommand::TrackStreamReady(id)).ok();
+                }
             }
         });
 
-    if let Err(SubsonicError::Download(DownloadError::Cancelled)) = result {
-        store.withdrawn(queue_id);
-        bytes_written.done();
-        return;
-    }
-
-    // However it ended, a decoder reading the `.part` file may be parked at the
-    // write head. It waits on the feed, so the feed has to wake it — and only
-    // once the item says how it ended, or it looks, sees a download, and parks
-    // again with nothing left to wake it.
-    if let Err(e) = result {
-        store.failed(queue_id, e.to_string());
-        fail_track(state, tx, queue_id, e.to_string());
-        bytes_written.done();
-        push_log(log_buf, format!("x {} — {}", track.title, e));
-        return;
-    }
-    store.finished(queue_id);
-
-    state.update_paths(&[(queue_id, dest.clone())]);
-    state.update_item_state(queue_id, ItemState::Ready);
-    bytes_written.done();
-    // Without this row the file is invisible to cache eviction and never reclaimed.
-    if let Err(e) = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy()) {
-        log::warn!(
-            "cached {} but failed to record it ({}) — it will not be evicted",
-            dest.display(),
-            e
-        );
-    }
-
-    push_log(
-        log_buf,
-        format!("+ {} — {}", track.title, track.artist_name),
-    );
-
-    if state.is_cursor(queue_id) {
-        tx.send(PlayerCommand::TrackReady(queue_id)).ok();
-    }
-}
-
-/// Wait for the player to hold `id`, at most `timeout`. Whether it does.
-///
-/// Queueing a track sends the player the command that adds it and starts its
-/// download together, and a download worker already running can begin before
-/// the player has applied the command. Until then the track reads as taken
-/// out of the queue, which is what cancels a download, so the download
-/// cancelled itself before a byte moved and nothing tried it again. Woken
-/// when the queue changes rather than polled; a track that never arrives — a
-/// queue replaced again before the player took it — is not fetched.
-fn in_queue_soon(state: &SharedPlayerState, id: QueueItemId, timeout: Duration) -> bool {
-    let changed = crate::signal::engine_changed();
-    let deadline = std::time::Instant::now() + timeout;
-    let mut seen = changed.generation();
-    loop {
-        if state.get_item(id).is_some() {
-            return true;
+    match result {
+        Err(SubsonicError::Download(DownloadError::Cancelled)) => None,
+        Err(e) => {
+            log::warn!("x {} — {}", track.title, e);
+            Some(Err(e.to_string()))
         }
-        let now = std::time::Instant::now();
-        if now >= deadline {
-            return false;
+        Ok(()) => {
+            // Without this row the file is invisible to cache eviction and never reclaimed.
+            if let Err(e) = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy()) {
+                log::warn!(
+                    "cached {} but failed to record it ({}) — it will not be evicted",
+                    dest.display(),
+                    e
+                );
+            }
+            log::info!("+ {} — {}", track.title, track.artist_name);
+            Some(Ok(dest))
         }
-        seen = changed.wait_until(seen, deadline - now);
-    }
-}
-
-/// Mark a queue item unplayable and tell the player, if it is waiting on it.
-///
-/// Setting `ItemState::Failed` alone is not enough: the player only wakes for
-/// `TrackReady`, so a cursor parked on the item would wait for a download that
-/// has already given up.
-pub(crate) fn fail_track(
-    state: &Arc<SharedPlayerState>,
-    tx: &crossbeam_channel::Sender<PlayerCommand>,
-    queue_id: QueueItemId,
-    reason: String,
-) {
-    state.update_item_state(queue_id, ItemState::Failed(reason));
-    if state.is_cursor(queue_id) {
-        tx.send(PlayerCommand::TrackFailed(queue_id)).ok();
-    }
-}
-
-/// Append to the TUI log pane, tolerating a poisoned lock — a download worker
-/// must not die because some other thread panicked while holding it.
-fn push_log(log_buf: &Arc<Mutex<Vec<String>>>, msg: String) {
-    match log_buf.lock() {
-        Ok(mut buf) => buf.push(msg),
-        Err(_) => log::info!("{}", msg),
     }
 }
 
@@ -1885,74 +1754,6 @@ pub fn remote_unavailable(cfg: &Config) -> String {
     // A credential resolved, so the client should have built. Nothing else
     // returns `None`, but saying so beats claiming a cause that is wrong.
     "the remote server could not be reached".into()
-}
-
-/// Submit tracks for download.
-///
-/// Everything that is not the TUI reaches downloads through here — the FFI and the
-/// GraphQL server. The batch goes to the shared queue:
-/// the same pool, priority lane and cursor watcher the TUI uses.
-pub fn spawn_downloads(
-    pending: Vec<(i64, QueueItemId)>,
-    tx: crossbeam_channel::Sender<PlayerCommand>,
-    state: Arc<SharedPlayerState>,
-) {
-    if pending.is_empty() {
-        return;
-    }
-    crate::remote::queue::shared(&tx, &state, None).enqueue(pending);
-}
-
-#[cfg(test)]
-mod queue_arrival_tests {
-    use super::*;
-    use crate::player::state::{ItemState, PlaylistItem};
-
-    fn item() -> PlaylistItem {
-        PlaylistItem {
-            playlist_entry_id: None,
-            id: QueueItemId::new(),
-            db_id: Some(1),
-            path: std::path::PathBuf::from("/cache/one.flac"),
-            title: "One".into(),
-            artist: "Artist".into(),
-            album_artist: "Artist".into(),
-            album: "Album".into(),
-            year: None,
-            codec: None,
-            track_number: None,
-            disc: None,
-            duration_ms: None,
-            state: ItemState::Pending,
-        }
-    }
-
-    /// The download starts before the player has the track, which arrives a
-    /// moment later: the download waits for it rather than cancelling.
-    #[test]
-    fn a_download_waits_for_its_track_to_reach_the_queue() {
-        let state = Arc::new(SharedPlayerState::new());
-        let track = item();
-        let id = track.id;
-        let player = state.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(50));
-            player.add_items(vec![track]);
-        });
-        assert!(in_queue_soon(&state, id, Duration::from_secs(2)));
-    }
-
-    #[test]
-    fn a_track_that_never_arrives_is_not_waited_for_long() {
-        let state = SharedPlayerState::new();
-        let started = std::time::Instant::now();
-        assert!(!in_queue_soon(
-            &state,
-            QueueItemId::new(),
-            Duration::from_millis(100)
-        ));
-        assert!(started.elapsed() < Duration::from_secs(1));
-    }
 }
 
 #[cfg(test)]
@@ -2539,6 +2340,7 @@ mod cache_path_tests {
 mod favourite_sync_tests {
     use super::*;
     use crate::db::queries::sample_meta;
+    use std::sync::Mutex;
 
     /// A server with song `s1` starred, recording every id it is asked to star.
     fn serve(stars: Arc<Mutex<Vec<String>>>) -> String {

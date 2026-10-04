@@ -7,12 +7,12 @@ use koan_core::db::queries;
 use koan_core::db::queries::UidKind;
 use koan_core::db::queries::playback_state::PersistedQueueItem;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState};
+use koan_core::player::state::{PlaylistItem, QueueItemId, SharedPlayerState};
 
 use koan_core::auth::Role;
 use koan_core::remote::link::LinkCommand;
 
-use super::helpers::{spawn_downloads, sync_favourite_to_remote};
+use super::helpers::sync_favourite_to_remote;
 use super::jobs::{JobHandle, JobRegistry, JobState};
 use super::types::*;
 use super::{DbHandle, parse_queue_item_id, require_role, send_cmd, send_cmd_via, with_db};
@@ -29,37 +29,15 @@ fn require_organize() -> async_graphql::Result<()> {
     }
 }
 
-/// Tracks resolved into queue items, plus the remote ones needing a download.
-struct ResolvedQueue {
-    items: Vec<PlaylistItem>,
-    pending_downloads: Vec<(i64, QueueItemId)>,
-}
-
-impl From<Vec<PlaylistItem>> for ResolvedQueue {
-    fn from(items: Vec<PlaylistItem>) -> Self {
-        let pending_downloads = items
-            .iter()
-            .filter(|i| matches!(i.state, koan_core::player::state::ItemState::Pending))
-            .filter_map(|i| Some((i.db_id?, i.id)))
-            .collect();
-        Self {
-            items,
-            pending_downloads,
-        }
-    }
-}
-
 /// Resolve track IDs into playlist items on the blocking pool.
 async fn resolve_tracks(
     ctx: &Context<'_>,
     track_ids: Vec<i64>,
-) -> async_graphql::Result<ResolvedQueue> {
+) -> async_graphql::Result<Vec<PlaylistItem>> {
     with_db(ctx, move |db| {
         let rows = queries::tracks_by_ids(&db.conn, &track_ids)
             .map_err(|e| super::internal_error("db", e))?;
-        Ok(ResolvedQueue::from(
-            koan_core::helpers::playlist_items_for_tracks(db, &rows),
-        ))
+        Ok(koan_core::helpers::playlist_items_for_tracks(db, &rows))
     })
     .await
 }
@@ -454,23 +432,17 @@ impl MutationRoot {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
-        let queue_item_ids: Vec<String> =
-            resolved.items.iter().map(|i| i.id.0.to_string()).collect();
-        let first_id = resolved.items.first().map(|i| i.id);
-        let count = resolved.items.len() as i32;
+        let queue_item_ids: Vec<String> = resolved.iter().map(|i| i.id.0.to_string()).collect();
+        let first_id = resolved.first().map(|i| i.id);
+        let count = resolved.len() as i32;
 
-        if !resolved.items.is_empty() {
-            send_cmd_via(tx, PlayerCommand::AddToPlaylist(resolved.items))?;
+        if !resolved.is_empty() {
+            send_cmd_via(tx, PlayerCommand::AddToPlaylist(resolved))?;
 
-            if state.playback_state() == PlaybackState::Stopped
+            if state.is_idle()
                 && let Some(id) = first_id
             {
                 send_cmd_via(tx, PlayerCommand::Play(id))?;
-            }
-
-            // Kick off downloads for remote tracks.
-            if !resolved.pending_downloads.is_empty() {
-                spawn_downloads(resolved.pending_downloads, tx.clone(), state.clone());
             }
         }
 
@@ -496,27 +468,23 @@ impl MutationRoot {
         let track_ids = super::row_ids(ctx, UidKind::Track, &track_ids).await?;
         require_role(ctx, Role::User)?;
         let resolved = resolve_tracks(ctx, track_ids).await?;
-        let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
-        let queue_item_ids: Vec<String> =
-            resolved.items.iter().map(|i| i.id.0.to_string()).collect();
-        let count = resolved.items.len() as i32;
+        let queue_item_ids: Vec<String> = resolved.iter().map(|i| i.id.0.to_string()).collect();
+        let count = resolved.len() as i32;
 
-        if resolved.items.is_empty() {
+        if resolved.is_empty() {
             send_cmd_via(tx, PlayerCommand::ClearPlaylist)?;
         } else {
             send_cmd_via(
                 tx,
                 PlayerCommand::ReplacePlaylist {
-                    items: resolved.items,
+                    items: resolved,
                     start: start_at.unwrap_or(0).max(0) as usize,
+                    position_ms: 0,
+                    play: true,
                 },
             )?;
-
-            if !resolved.pending_downloads.is_empty() {
-                spawn_downloads(resolved.pending_downloads, tx.clone(), state.clone());
-            }
         }
 
         Ok(GqlQueueMutationResult {
@@ -862,27 +830,25 @@ impl MutationRoot {
             for (item, entry) in items.iter_mut().zip(&entries) {
                 item.playlist_entry_id = Some(entry.id);
             }
-            Ok(ResolvedQueue::from(items))
+            Ok(items)
         })
         .await?;
 
-        let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
-        let count = resolved.items.len();
-        if resolved.items.is_empty() {
+        let count = resolved.len();
+        if resolved.is_empty() {
             send_cmd_via(tx, PlayerCommand::ClearPlaylist)?;
         } else {
             send_cmd_via(
                 tx,
                 PlayerCommand::ReplacePlaylist {
-                    items: resolved.items,
+                    items: resolved,
                     start: 0,
+                    position_ms: 0,
+                    play: true,
                 },
             )?;
-            if !resolved.pending_downloads.is_empty() {
-                spawn_downloads(resolved.pending_downloads, tx.clone(), state.clone());
-            }
         }
         Ok(GqlStatus::success(format!("playing {count} track(s)")))
     }

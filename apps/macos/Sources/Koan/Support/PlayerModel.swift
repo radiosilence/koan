@@ -99,13 +99,11 @@ final class PlayerModel {
     // is one account of each of these and no rule about when to refresh it.
 
     var isPlaying: Bool { mirror.playback.state == .playing }
-    /// Asked to play a track that has not arrived yet. The engine parks
-    /// stopped until it can start, which with nothing on screen to say so reads
-    /// as a tap that did nothing. A track paused by hand is paused, not this.
+    /// Asked to play a track that has not arrived yet, which with nothing on
+    /// screen to say so reads as a tap that did nothing. A wait paused by hand
+    /// reads as paused, since it will open paused.
     var isWaitingForTrack: Bool {
-        let playback = mirror.playback
-        guard playback.state == .stopped, let status = playback.entry?.status else { return false }
-        return status == .downloading || status == .priorityPending
+        mirror.playback.waiting && mirror.playback.state == .stopped
     }
     var currentTrackId: Int64? { mirror.playback.entry?.trackId }
     var currentItemId: String? { mirror.playback.queueItemId }
@@ -151,15 +149,6 @@ final class PlayerModel {
         let seekableMs = mirror.seekableMs
         guard durationMs > 0, seekableMs < durationMs else { return 1 }
         return Double(seekableMs) / Double(durationMs)
-    }
-
-    /// How much of what is playing has arrived, while it is still arriving.
-    ///
-    /// Bytes, not reachable time: the two differ for a track that is playing
-    /// but cannot be seeked, where the point of the mark is to say the transfer
-    /// is going and roughly how far — not to offer a position.
-    var fetched: Double? {
-        currentItemId.flatMap { mirror.progress(for: $0) }
     }
 
     // MARK: - Where what is playing lives
@@ -271,6 +260,7 @@ final class PlayerModel {
     /// has not arrived is a reasonable thing to try, and a bar that simply
     /// ignores the attempt teaches nothing.
     func explainUnseekable() {
+        let fetched = currentTrackId.flatMap { mirror.figure(for: $0)?.progress }
         let progress = fetched.map { " — \(Int($0 * 100))% so far" } ?? ""
         lastNotice = "Still downloading\(progress). This track can be seeked once it has finished."
     }
