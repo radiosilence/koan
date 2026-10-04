@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **The queue can follow what is playing.** The jump-to-playing button now also follows: the queue keeps the playing track in view as it moves on, through gapless transitions, skips and repeats, sliding by a row rather than jumping. The button is tinted while it follows; pressing it again, or scrolling the queue yourself, stops it. On the Mac the track keeps its place on screen; on iOS it is kept centred.
+
 ### Fixed
 
 - **Quitting while playing to an amplifier no longer leaves two things playing at the next launch.** Quitting stops the amplifier, which otherwise played on until its buffer ran out. At launch, a session that was playing waits while kōan looks for the amplifier it used, and plays there if it turns up, or here if it does not, rather than starting here at once. An amplifier still on a track a kōan on this machine sent it is taken back, not left as someone else's.

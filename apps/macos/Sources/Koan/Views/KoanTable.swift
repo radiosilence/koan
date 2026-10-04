@@ -93,6 +93,12 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
     var accept: (([PlayableTransfer], Int) -> Bool)?
     /// Scroll a row into view: bumped token, the row, and where it should sit.
     var jump: (token: Int, to: ID?, place: JumpPlace) = (0, nil, .centre)
+    /// A row to keep in view as it changes, at the place in the viewport the
+    /// last one held: the playing track, while the queue follows it.
+    var follow: ID?
+    /// The person scrolled: the wheel, a trackpad, the scroller or a paging
+    /// key. Never the table's own scrolling.
+    var userScrolled: () -> Void = {}
     let insets: EdgeInsets
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -161,6 +167,8 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         private var rewinds: Int?
         private var restored = false
         private var jumpToken: Int?
+        private var followed: ID?
+        private var liveScroll: (any NSObjectProtocol)?
         /// Set while the table applies a selection it was handed, so the
         /// change is not handed straight back.
         private var applying = false
@@ -175,6 +183,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
             table.doubleAction = #selector(doubleClicked)
             table.owner = self
             scroll.contentView.postsBoundsChangedNotifications = true
+            watchLiveScroll(scroll)
             watching = NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main
             ) { [weak self] _ in
@@ -190,6 +199,21 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
 
         func detach() {
             if let watching { NotificationCenter.default.removeObserver(watching) }
+            if let liveScroll { NotificationCenter.default.removeObserver(liveScroll) }
+        }
+
+        /// The scroller dragged, or a trackpad's gesture begun. The wheel
+        /// and the keys arrive through the table view.
+        private func watchLiveScroll(_ scroll: NSScrollView) {
+            liveScroll = NotificationCenter.default.addObserver(
+                forName: NSScrollView.willStartLiveScrollNotification, object: scroll, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.userScrolled() }
+            }
+        }
+
+        func userScrolled() {
+            parent?.userScrolled()
         }
 
         func update(_ parent: KoanTable, environment: EnvironmentValues) {
@@ -224,6 +248,7 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
                 jump(to: row, place: parent.jump.place)
             }
             jumpToken = parent.jump.token
+            follow(parent.follow)
             if table.rowHeight != parent.rowHeight {
                 table.rowHeight = parent.rowHeight
                 table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<items.count))
@@ -265,6 +290,37 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
                 scroll.contentView.animator().setBoundsOrigin(NSPoint(
                     x: scroll.contentView.bounds.minX,
                     y: max(y, 0) - scroll.contentInsets.top
+                ))
+            }
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+
+        /// Keep the followed row where the last one sat: scroll by the distance
+        /// between them, so a gapless move to the next track slides the list
+        /// by a row rather than throwing the track to an edge. A row that was
+        /// not on screen, or is gone, is centred instead.
+        private func follow(_ target: ID?) {
+            defer { followed = target }
+            guard let target, target != followed, let table, let scroll,
+                  let row = index[target] else { return }
+            let visible = scroll.contentView.bounds
+            let to = table.rect(ofRow: row)
+            let from = followed.flatMap { index[$0] }.map { table.rect(ofRow: $0) }
+            let y: CGFloat
+            if let from, from.intersects(visible) {
+                y = visible.minY + (to.minY - from.minY)
+            } else {
+                let height = visible.height - scroll.contentInsets.top - scroll.contentInsets.bottom
+                y = to.midY - height / 2 - scroll.contentInsets.top
+            }
+            let top = -scroll.contentInsets.top
+            let bottom = max(table.bounds.height - visible.height + scroll.contentInsets.bottom, top)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.3
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                scroll.contentView.animator().setBoundsOrigin(NSPoint(
+                    x: visible.minX,
+                    y: min(max(y, top), bottom)
                 ))
             }
             scroll.reflectScrolledClipView(scroll.contentView)
@@ -524,7 +580,14 @@ final class KoanTableView: NSTableView {
         return coordinator?.menu(for: row)
     }
 
+    override func scrollWheel(with event: NSEvent) {
+        coordinator?.userScrolled()
+        super.scrollWheel(with: event)
+    }
+
     override func keyDown(with event: NSEvent) {
+        // Page Up, Page Down, Home, End: the person moving the list.
+        if [116, 121, 115, 119].contains(event.keyCode) { coordinator?.userScrolled() }
         switch event.keyCode {
         case 36, 76: coordinator?.primary()
         case 51, 117: if coordinator?.remove() != true { super.keyDown(with: event) }
@@ -541,6 +604,7 @@ protocol KoanTableActions: AnyObject {
     func laidOut()
     func primary()
     func remove() -> Bool
+    func userScrolled()
 }
 
 extension KoanTable.Coordinator: KoanTableActions {}

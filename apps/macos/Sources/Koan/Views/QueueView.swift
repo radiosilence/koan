@@ -158,6 +158,8 @@ struct QueueView: View {
                     move(from: moving, to: before)
                 },
                 jump: (ui.queueJumpToken, jumpTarget, jumpPlace),
+                follow: ui.followingQueue ? player.currentItemId : nil,
+                userScrolled: { if ui.followingQueue { ui.followingQueue = false } },
                 insets: EdgeInsets(top: 0, leading: insets.leading, bottom: insets.bottom, trailing: 0)
             )
         }
@@ -211,6 +213,19 @@ struct QueueView: View {
                     // list may have been moved since.
                     .onChange(of: ui.queueJumpToken) { _, _ in
                         jump(to: ui.queueJumpTarget, using: scroll)
+                    }
+                    // Following: the playing track kept in view as it moves
+                    // on, until the person scrolls.
+                    .onChange(of: player.currentItemId) { _, id in
+                        guard ui.followingQueue, let id else { return }
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            scroll.scrollTo(id, anchor: .center)
+                        }
+                    }
+                    .onScrollPhaseChange { _, phase in
+                        if phase == .interacting, ui.followingQueue {
+                            ui.followingQueue = false
+                        }
                     }
                     // Double-click and context menu both come from the List, keyed
                     // on the rows under the pointer rather than on a gesture.
@@ -792,6 +807,8 @@ private struct QueueSelectionHeader: View {
     }
 }
 
+/// Jumps to what is playing and follows it from then on, tinted while it
+/// does; pressed again, or any scroll of the person's own, stops following.
 /// Beside the layout picker because both are about what you are looking at
 /// rather than what is in the queue. Disabled rather than hidden when nothing
 /// is playing: a control that comes and goes is one you have to look for. Its
@@ -802,11 +819,13 @@ private struct JumpToPlayingButton: View {
     @Environment(UIState.self) private var ui
 
     var body: some View {
-        Button { ui.jumpQueue(to: .playing) } label: {
+        Button { ui.toggleFollowingQueue() } label: {
             Image(systemName: Icon.jumpToPlaying)
+                .foregroundStyle(ui.followingQueue ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
         }
         .disabled(player.currentItemId == nil)
-        .help("Scroll to what's playing")
+        .help(ui.followingQueue ? "Following what's playing; click to stop" : "Scroll to what's playing and follow it")
+        .accessibilityAddTraits(ui.followingQueue ? .isSelected : [])
     }
 }
 
