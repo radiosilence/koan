@@ -558,7 +558,7 @@ async fn live_fragments_are_datastar_events_and_posts_need_datastar() {
 }
 
 #[tokio::test]
-async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered() {
+async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered_and_drawn() {
     let f = setup(true);
     let page = send(
         &f.app,
@@ -580,8 +580,25 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered() {
     let uri = format!("/ui/cover/{}?size=300&v=1", f.album_id);
     for _ in 0..2 {
         let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
-        assert_eq!(r.status, StatusCode::NOT_FOUND, "the fake file has no art");
+        assert_eq!(r.status, StatusCode::OK, "the fake file has no art");
+        assert_eq!(r.headers[header::CONTENT_TYPE], "image/svg+xml");
+        assert!(r.body.contains("<svg"), "the apps' placeholder, drawn");
+        assert!(
+            !r.headers[header::CACHE_CONTROL]
+                .to_str()
+                .unwrap()
+                .contains("immutable"),
+            "art added later must replace it"
+        );
     }
+    let r = send(
+        &f.app,
+        authed(&f.state, "/ui/cover/999999?size=300")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "no such album");
     let kept: Vec<_> = std::fs::read_dir(f.dir.path().join("covers"))
         .unwrap()
         .map(|e| e.unwrap())
