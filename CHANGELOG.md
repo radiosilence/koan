@@ -11,6 +11,13 @@
 
 - **Devices that cannot be reached are no longer listed** under Play on. A phone that left the network, or another person's app that is not discoverable, showed as a row with only a reason.
 - **Music moved back to a device that was controlling another takes control back.** Moving music from the Mac to a phone leaves the Mac controlling the phone; moving it back now returns the Mac to its own playback, on the renderer it was playing to if there was one, instead of it going on showing the phone. Only a hand-off does this: a device told to play something by another keeps whatever it was controlling, so two devices can still control each other on purpose.
+- **The web UI lists every album and artist on one page, as the apps do.** Pages of 60 albums and 100 artists behind a Load more button made a large library tedious to scroll and broke find-in-page. Covers load lazily, so the whole listing costs markup rather than images.
+- **The web UI's name and year filters apply as you type.** A pause in typing replaces the listing under the toolbar and leaves the field focused; the URL is replaced rather than pushed, so back does not step through each keystroke. A year applies once it has four digits. On a phone the sheet's Apply still applies everything.
+
+### Fixed
+
+- **A record with no artwork shows the ensō in the web UI, not a broken image.** The cover route answered 404, and the browser drew its broken-image icon until the page's script caught the error. It now serves the placeholder the macOS and iOS apps draw: the app icon's ensō, faded. It is cached for an hour rather than for good, since art added beside the files does not change the cover's URL.
+
 
 ## 0.50.3
 
