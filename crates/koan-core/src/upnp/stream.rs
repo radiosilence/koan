@@ -110,8 +110,9 @@ struct State {
     log: VecDeque<Arc<Chunk>>,
     /// The index of `log`'s first chunk in the stream.
     base: usize,
-    /// Each open connection and the index of the next chunk it reads.
-    readers: Vec<(u64, usize)>,
+    /// Each open connection, oldest first: its id, the index of the next
+    /// chunk it reads, and the frame it joined at.
+    readers: Vec<(u64, usize, u64)>,
     /// The furthest any connection has read, as the index of the next chunk.
     read_to: usize,
     /// Bytes encoded so far, and the frame the next chunk starts at.
@@ -240,14 +241,25 @@ impl Pipe {
                 .get(index - state.base)
                 .map_or(state.next_frame, |c| c.start),
         };
-        self.origin.store(origin, Ordering::Release);
-        state.readers.push((id, index));
+        state.readers.push((id, index, origin));
+        self.follow_oldest(&state);
         Reader { id }
+    }
+
+    /// The renderer's position counts from where the connection it plays
+    /// from joined, taken to be the oldest still open: a connection opened
+    /// alongside it is a probe, and one opened after it has gone is its
+    /// reconnect. With none open, the last stands.
+    fn follow_oldest(&self, state: &State) {
+        if let Some(oldest) = state.readers.first() {
+            self.origin.store(oldest.2, Ordering::Release);
+        }
     }
 
     fn disconnect(&self, reader: &Reader) {
         let mut state = self.state.lock();
         state.readers.retain(|r| r.0 != reader.id);
+        self.follow_oldest(&state);
         state.trim();
         drop(state);
         self.changed.notify_all();
@@ -837,8 +849,43 @@ mod tests {
         assert_eq!(pipe.next(&player).unwrap().start, 2000);
         assert_eq!(pipe.next(&player).unwrap().start, 3000);
         push(4000);
+        pipe.disconnect(&player);
         let again = pipe.connect();
         assert_eq!(pipe.origin_ms(), 4000);
         assert_eq!(pipe.next(&again).unwrap().start, 4000);
+    }
+
+    /// A connection opened late while the renderer still plays from another
+    /// is a probe: the position the renderer reports still counts from where
+    /// its own connection joined. Once that one goes, the newer is its
+    /// reconnect.
+    #[test]
+    fn a_late_connection_alongside_the_playing_one_moves_nothing() {
+        let format = Format {
+            encoding: Encoding::Wav,
+            rate: 1000,
+            channels: 1,
+            bits: 16,
+        };
+        let pipe = Pipe::new(format, "audio/wav", |_| String::new());
+        let push = |start| assert!(pipe.push(vec![0; 300 * 1024], start, 1000, None));
+        let player = pipe.connect();
+        for start in [0, 1000, 2000, 3000] {
+            push(start);
+            pipe.next(&player).unwrap();
+        }
+        push(4000);
+        assert_eq!(pipe.origin_ms(), 0);
+
+        let probe = pipe.connect();
+        assert_eq!(pipe.origin_ms(), 0, "the probe moves nothing");
+        assert_eq!(pipe.next(&probe).unwrap().start, 4000);
+        pipe.disconnect(&probe);
+        assert_eq!(pipe.origin_ms(), 0);
+
+        let reconnect = pipe.connect();
+        pipe.disconnect(&player);
+        assert_eq!(pipe.origin_ms(), 5000, "the reconnect carries on");
+        drop(reconnect);
     }
 }

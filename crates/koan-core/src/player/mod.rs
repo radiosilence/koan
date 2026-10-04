@@ -511,28 +511,31 @@ impl Player {
         setup
     }
 
-    /// Load the profiles again, and restart where playback is if the output's
-    /// processing was or now is anything at all. The responses on disk can
-    /// change without the config doing so, so this does not compare them.
-    ///
-    /// On a renderer, what was is the session itself: a stream processed
-    /// here, or the original file. A renderer playing the file with no
-    /// profile now either is left alone, rather than stopped and loaded again
-    /// for nothing.
+    /// Load the profiles again, and restart where playback is if what the
+    /// output in use plays through has changed. The setups are compared as
+    /// loaded, responses included, since the files can change without the
+    /// config doing so. A preset given to another device, from the Play on
+    /// menu, changes nothing here and restarts nothing.
     fn reload_dsp(&mut self) {
-        let was = self.dsp.take().is_some_and(|c| c.setup.is_some());
-        let (was, device) = match &self.renderer {
-            Some(link) => (
-                self.streaming_to_renderer(),
-                Ok(link.device_name().to_string()),
-            ),
-            None => (was, self.resolve_device().map(|d| d.name)),
+        let device = match &self.renderer {
+            Some(link) => Ok(link.device_name().to_string()),
+            None => self.resolve_device().map(|d| d.name),
         };
-        let now = match device {
-            Ok(device) => self.dsp_for(&device).is_some(),
-            Err(_) => false,
+        let Ok(device) = device else {
+            self.dsp = None;
+            return;
         };
-        if was || now {
+        let was = self
+            .dsp
+            .take()
+            .filter(|c| c.device == device)
+            .map(|c| c.setup);
+        let now = self.dsp_for(&device);
+        let changed = match was {
+            Some(was) => was != now,
+            None => now.is_some(),
+        };
+        if changed {
             self.restart_on_current_track();
         }
     }

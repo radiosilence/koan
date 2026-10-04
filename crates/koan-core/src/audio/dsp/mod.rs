@@ -56,7 +56,7 @@ pub struct DspStatus {
 }
 
 /// A profile ready to run, its impulse responses read from disk.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Setup {
     pub name: String,
     preamp_db: Option<f64>,

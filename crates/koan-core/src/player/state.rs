@@ -461,8 +461,13 @@ impl SharedPlayerState {
     /// Whether the playhead is advancing on its own. Playing, but held, while
     /// a renderer has been told to play and has not yet started: a client
     /// counting on from the command would run ahead of the sound.
+    ///
+    /// A renderer playing a file keeps its clock here; one playing a stream
+    /// processed here keeps it on the timeline, in time into the stream.
     pub fn playhead_moving(&self) -> bool {
-        match *self.renderer_clock.lock() {
+        let clock =
+            (*self.renderer_clock.lock()).or_else(|| self.timeline.get().and_then(|t| t.clock()));
+        match clock {
             Some(clock) => clock.running.is_some(),
             None => self.playback_state() == PlaybackState::Playing,
         }

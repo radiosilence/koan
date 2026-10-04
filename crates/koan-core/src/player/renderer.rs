@@ -3021,6 +3021,53 @@ mod tests {
         assert_eq!(r.state(), PlaybackState::Playing);
     }
 
+    /// A preset given to a device not in use, from the Play on menu, restarts
+    /// nothing: not a session here while the renderer's changes, nor a stream
+    /// on the renderer while this device's does.
+    #[test]
+    fn a_preset_for_a_device_not_in_use_restarts_nothing() {
+        let mut r = rig(WAV, true, &["a.wav"]);
+        with_profile(&mut r);
+        r.player.process_command(PlayerCommand::UseRenderer(None));
+        r.player.play(r.ids[0]);
+        let starts = r.player.playback_starts;
+        with_renderer_profile(&mut r);
+        r.player.process_command(PlayerCommand::ReloadDsp);
+        assert_eq!(r.player.playback_starts, starts, "played here, untouched");
+
+        r.connect();
+        r.player.play(r.ids[0]);
+        r.settle();
+        assert!(r.player.streaming_to_renderer());
+        let starts = r.player.playback_starts;
+        let uri = r.fake.state.lock().uri.clone();
+        r.player.dsp_override = None;
+        r.player.process_command(PlayerCommand::ReloadDsp);
+        assert_eq!(r.player.playback_starts, starts, "the stream, untouched");
+        assert_eq!(r.fake.state.lock().uri, uri);
+
+        // The renderer's own preset changing reopens it, once.
+        r.player.renderer_dsp_override = Some(Arc::new(
+            crate::audio::dsp::Setup::new(vec![], vec![]).with_preamp(-3.0),
+        ));
+        r.player.process_command(PlayerCommand::ReloadDsp);
+        assert_eq!(r.player.playback_starts, starts + 1);
+        assert_ne!(r.fake.state.lock().uri, uri);
+    }
+
+    /// As for a file, the bar holds where the stream opens until the renderer
+    /// says it is playing.
+    #[test]
+    fn a_stream_holds_the_playhead_until_the_renderer_plays() {
+        let mut r = rig(WAV, true, &["a.wav"]);
+        with_renderer_profile(&mut r);
+        r.player.play(r.ids[0]);
+        assert_eq!(r.state(), PlaybackState::Playing);
+        assert!(!r.player.shared_state.playhead_moving());
+        r.settle();
+        assert!(r.player.shared_state.playhead_moving(), "once it says so");
+    }
+
     /// The decoder finishes long before the renderer does. The session ends
     /// when the renderer stops at the end of what it was sent.
     #[test]
