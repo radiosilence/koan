@@ -117,8 +117,85 @@ pub fn connect(
         .map_err(|_| "The player has stopped.".to_string())
 }
 
+/// How long after launch the renderer used last time is looked for.
+const RESUME_WINDOW: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// Go back to the renderer used last time, if the config names one: look for
+/// it for `RESUME_WINDOW`, waking on each change discovery announces, and hand
+/// the player an open session as `PlayerCommand::ResumeRenderer` if it turns
+/// up. The player takes it only if nobody has played anything or picked an
+/// output meanwhile. `true` if there is one to look for.
+pub fn resume(player: &crossbeam_channel::Sender<crate::player::commands::PlayerCommand>) -> bool {
+    let Some(udn) = crate::config::Config::cached().playback.renderer.clone() else {
+        return false;
+    };
+    let choice = CHOICE.load(std::sync::atomic::Ordering::Acquire);
+    let player = player.clone();
+    let spawned = std::thread::Builder::new()
+        .name("koan-upnp-resume".into())
+        .spawn(move || {
+            let Some(renderer) = await_renderer(&udn, RESUME_WINDOW) else {
+                log::info!("upnp: {udn}, used last time, is not on the network; playing here");
+                return;
+            };
+            if CHOICE.load(std::sync::atomic::Ordering::Acquire) != choice {
+                return;
+            }
+            match open(renderer, &player) {
+                Ok(connection) => {
+                    let _ = player.send(crate::player::commands::PlayerCommand::ResumeRenderer(
+                        Box::new(connection),
+                    ));
+                }
+                Err(e) => log::info!("upnp: could not go back to {udn}: {e}"),
+            }
+        });
+    spawned.is_ok()
+}
+
+/// The renderer `udn` once discovery has found it, waiting at most `window`.
+fn await_renderer(udn: &str, window: std::time::Duration) -> Option<Renderer> {
+    let signal = crate::signal::engine_changed();
+    let mut seen = signal.generation();
+    let deadline = std::time::Instant::now() + window;
+    discovery::search();
+    loop {
+        if let Some(renderer) = discovery::find(udn) {
+            return Some(renderer);
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        seen = signal.wait_until(seen, left);
+    }
+}
+
 /// Bring the music back to this device's own output.
 pub fn disconnect(player: &crossbeam_channel::Sender<crate::player::commands::PlayerCommand>) {
     choose();
     let _ = player.send(crate::player::commands::PlayerCommand::UseRenderer(None));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A renderer discovery knows is found at once; one it never hears of
+    /// is given up on when the window closes, and the music stays here.
+    #[test]
+    fn a_remembered_renderer_is_found_or_given_up_on() {
+        let fake = fake::FakeRenderer::start("http-get:*:audio/wav:*", true, false);
+        let renderer = fake.renderer();
+        discovery::remember(renderer.clone(), std::time::Duration::from_secs(60));
+        assert_eq!(
+            await_renderer(&renderer.udn, std::time::Duration::from_secs(1)).map(|r| r.udn),
+            Some(renderer.udn)
+        );
+
+        let start = std::time::Instant::now();
+        let window = std::time::Duration::from_millis(300);
+        assert!(await_renderer("uuid:nowhere", window).is_none());
+        assert!(start.elapsed() >= window);
+    }
 }
