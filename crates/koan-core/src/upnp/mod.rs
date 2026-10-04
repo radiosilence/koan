@@ -15,6 +15,7 @@ pub mod discovery;
 pub mod serve;
 pub mod session;
 pub mod soap;
+pub mod stream;
 mod xml;
 
 #[cfg(test)]

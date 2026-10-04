@@ -33,12 +33,12 @@ struct DspProfilePage: View {
                         Text("No output yet")
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(d.devices, id: \.self) { Text($0) }
+                    ForEach(d.devices, id: \.self) { Text(dsp.label($0)) }
                     if let device = dsp.overview?.device {
                         if d.devices.contains(device) {
-                            Button("Stop using for \(device)") { dsp.use(nil) }
+                            Button("Stop using for \(dsp.label(device))") { dsp.use(nil) }
                         } else {
-                            Button("Use for \(device)") { dsp.use(d.name) }
+                            Button("Use for \(dsp.label(device))") { dsp.use(d.name) }
                         }
                     }
                 }

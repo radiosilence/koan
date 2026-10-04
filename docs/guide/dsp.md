@@ -14,8 +14,17 @@ profile, nothing runs at all: the samples reach the device untouched, and the
 format badge says when they did not ("FLAC 24/96 · FIR").
 
 Processing applies to this device's own output. When it controls another
-device, that device's settings apply. A UPnP renderer is handed the original
-file, untouched.
+device, that device's settings apply.
+
+A UPnP renderer is an output like any other and can have a profile of its own.
+Without one it is handed the original file, untouched. With one, kōan decodes
+and processes the queue itself and sends the renderer a single FLAC stream for
+as long as the format stays the same, dithered to the source's bit depth (24
+bits for lossy sources). The renderer never changes track inside that stream,
+so gapless holds, and with a single convolution filter every track plays at the
+filter's rate and the stream never ends between tracks. Seeking opens a new
+stream at the new position. A renderer that cannot take FLAC is sent WAV;
+one that takes neither is handed the original file.
 
 ## Importing
 
@@ -105,7 +114,12 @@ two do not compound. A profile's page shows the figure.
 ## Choosing
 
 Settings lists the profiles, with a tick on the one the output in use plays
-through, and a picker to change it. Each profile's page shows exactly what it
+through, and a picker to change it. On the Mac the Play on menu, under the
+speaker in the transport bar, gives each output its preset: the row says which
+("Off", or "Original file" for a renderer), and the slider button beside it
+changes it, for that output whether or not it is the one playing. While what is
+heard is processed, the speaker carries a dot and the format badge names the
+processing. Each profile's page shows exactly what it
 holds — every response's rate, channels, length, where it peaks and whether it
 mixes or delays channels, any bands, the headroom, and where it was imported
 from. Changes apply straight away, where playback is.

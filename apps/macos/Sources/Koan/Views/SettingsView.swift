@@ -513,7 +513,7 @@ private struct DspSettings: View {
                     set: { dsp.setEnabled($0) }
                 ))
                 if let device = o.device, !o.profiles.isEmpty {
-                    Picker("Profile for \(device)", selection: Binding(
+                    Picker("Profile for \(dsp.label(device))", selection: Binding(
                         get: { o.active ?? "" },
                         set: { dsp.use($0.isEmpty ? nil : $0) }
                     )) {

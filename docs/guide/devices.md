@@ -59,6 +59,10 @@ amplifier, such as Dirac Live, still applies. ReplayGain and fades do not,
 since kōan never touches the samples. The volume control in the picker drives
 the amplifier's own volume.
 
+An amplifier given an EQ or convolution profile of its own is sent a stream kōan
+has processed instead, ReplayGain included; see
+[Equalisation and convolution](dsp.md).
+
 - **Gapless** where the renderer accepts the next track in advance
   (`SetNextAVTransportURI`). Otherwise there is a short gap between tracks.
 - **Formats the renderer does not list** (often Opus or APE) are skipped and

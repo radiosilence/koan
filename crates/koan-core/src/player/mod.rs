@@ -148,8 +148,11 @@ pub struct Player {
     playback_starts: usize,
     /// What `dsp_for` answers in tests, in place of reading the profiles
     /// from config: config is the process's, and the suite runs in parallel.
+    /// The first is this device's, the second the renderer's.
     #[cfg(test)]
     dsp_override: Option<Arc<crate::audio::dsp::Setup>>,
+    #[cfg(test)]
+    renderer_dsp_override: Option<Arc<crate::audio::dsp::Setup>>,
 }
 
 struct DspCache {
@@ -212,13 +215,12 @@ struct Session {
 /// Where a session's sound comes out, and so whether koan decodes it.
 enum Output {
     /// Decoded here, into the ring, drained by an engine: this device's own
-    /// output. An engine that encodes the ring for a renderer instead (DSP
-    /// on a renderer, #642) is another engine here, not another output.
+    /// output.
     Local(Local),
-    /// The original file handed to a renderer, which decodes it and runs its
-    /// own gapless. Nothing is decoded here, so there is no ring and no
-    /// lookahead: see `renderer`.
-    Passthrough(Box<renderer::Passthrough>),
+    /// A renderer: handed the original file, which it decodes and plays
+    /// gaplessly itself, or a stream decoded and processed here. See
+    /// `renderer`.
+    Renderer(Box<renderer::Play>),
 }
 
 struct Local {
@@ -238,7 +240,7 @@ impl Session {
     fn engine(&self) -> Option<&dyn AudioEngineHandle> {
         match &self.output {
             Output::Local(local) => Some(local.engine.as_ref()),
-            Output::Passthrough(_) => None,
+            Output::Renderer(_) => None,
         }
     }
 }
@@ -326,6 +328,8 @@ impl Player {
             playback_starts: 0,
             #[cfg(test)]
             dsp_override: None,
+            #[cfg(test)]
+            renderer_dsp_override: None,
         }
     }
 
@@ -465,13 +469,21 @@ impl Player {
     fn dsp_for(&mut self, device: &str) -> Option<Arc<crate::audio::dsp::Setup>> {
         let config = crate::config::Config::cached();
         #[cfg(test)]
-        if let Some(setup) = &self.dsp_override {
+        if let Some(setup) = if self
+            .renderer
+            .as_ref()
+            .is_some_and(|l| l.device_name() == device)
+        {
+            self.renderer_dsp_override.clone()
+        } else {
+            self.dsp_override.clone()
+        } {
             self.dsp = Some(DspCache {
                 config,
                 device: device.to_string(),
                 setup: Some(setup.clone()),
             });
-            return Some(setup.clone());
+            return Some(setup);
         }
         if let Some(cache) = &self.dsp
             && Arc::ptr_eq(&cache.config, &config)
@@ -499,24 +511,31 @@ impl Player {
         setup
     }
 
-    /// Load the profiles again, and restart where playback is if the output's
-    /// processing was or now is anything at all. The responses on disk can
-    /// change without the config doing so, so this does not compare them.
-    ///
-    /// A renderer is handed the original file, which no profile touches, so
-    /// while one is the output the cache is only dropped: restarting would
-    /// stop and reload it for nothing. The next session here reads the new
-    /// profile.
+    /// Load the profiles again, and restart where playback is if what the
+    /// output in use plays through has changed. The setups are compared as
+    /// loaded, responses included, since the files can change without the
+    /// config doing so. A preset given to another device, from the Play on
+    /// menu, changes nothing here and restarts nothing.
     fn reload_dsp(&mut self) {
-        let was = self.dsp.take().is_some_and(|c| c.setup.is_some());
-        if self.renderer.is_some() {
-            return;
-        }
-        let now = match self.resolve_device() {
-            Ok(device) => self.dsp_for(&device.name).is_some(),
-            Err(_) => false,
+        let device = match &self.renderer {
+            Some(link) => Ok(link.device_name().to_string()),
+            None => self.resolve_device().map(|d| d.name),
         };
-        if was || now {
+        let Ok(device) = device else {
+            self.dsp = None;
+            return;
+        };
+        let was = self
+            .dsp
+            .take()
+            .filter(|c| c.device == device)
+            .map(|c| c.setup);
+        let now = self.dsp_for(&device);
+        let changed = match was {
+            Some(was) => was != now,
+            None => now.is_some(),
+        };
+        if changed {
             self.restart_on_current_track();
         }
     }
@@ -668,12 +687,16 @@ impl Player {
         }
         state.set_transport(playback, waiting);
         // Only a session decoded here can have been processed: a renderer
-        // plays the original file.
+        // handed the original file plays it as it is.
         let dsp = match &self.transport {
             Transport::Loaded(Session {
                 output: Output::Local(local),
                 ..
             }) => local.dsp.clone(),
+            Transport::Loaded(Session {
+                output: Output::Renderer(play),
+                ..
+            }) => play.dsp(),
             _ => None,
         };
         if state.dsp() != dsp {
@@ -1430,7 +1453,7 @@ impl Player {
         self.bank_listening();
         let local = match playback.output {
             Output::Local(local) => local,
-            Output::Passthrough(play) => {
+            Output::Renderer(play) => {
                 self.halt_renderer(*play);
                 self.answer_silence();
                 return;
@@ -1781,7 +1804,7 @@ impl Player {
     /// Ignored from a session already torn down: a play or seek handled after
     /// the message was sent has replaced what it describes.
     fn on_decode_finished(&mut self, session: u64) {
-        if session != self.session {
+        if session != self.session || self.renderer_stream_finished() {
             return;
         }
         log::info!("decode finished, checking for next track");
@@ -2193,10 +2216,18 @@ impl Player {
     /// running out, or a pause fading to silence.
     fn next_wake(&self) -> Option<std::time::Instant> {
         let session = self.session()?;
-        let Output::Local(local) = &session.output else {
-            return self.renderer_deadline();
-        };
         let now = std::time::Instant::now();
+        let Output::Local(local) = &session.output else {
+            // A stream's track changes are the timeline's, as they are here.
+            let next_track = (session.run == Run::Playing && self.streaming_to_renderer())
+                .then(|| self.timeline.until_next_track())
+                .flatten()
+                .map(|left| now + left + BOUNDARY_SLACK);
+            return match (next_track, self.renderer_deadline()) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+        };
         match session.run {
             Run::Playing => {
                 let next_track = self

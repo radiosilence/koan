@@ -20,11 +20,23 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 
-/// A file the listener will serve, by token.
-#[derive(Debug, Clone)]
-pub struct Served {
-    pub path: PathBuf,
-    pub mime: String,
+use super::stream::{self, Pipe};
+
+/// What the listener will serve, by token: a file, or a stream koan is
+/// making. Either way `art` is where the cover comes from.
+#[derive(Clone)]
+pub enum Served {
+    File { path: PathBuf, mime: String },
+    Stream { pipe: Arc<Pipe>, art: PathBuf },
+}
+
+impl Served {
+    fn art(&self) -> &std::path::Path {
+        match self {
+            Self::File { path, .. } => path,
+            Self::Stream { art, .. } => art,
+        }
+    }
 }
 
 /// What a `NOTIFY` delivered: the subscription it is for and its body.
@@ -217,13 +229,14 @@ fn handle(shared: &Shared, mut stream: TcpStream) -> std::io::Result<()> {
             let token = rest.split('.').next().unwrap_or_default();
             let served = shared.tracks.lock().get(token).cloned();
             match served {
-                Some(served) => serve_file(&mut stream, &req, &served),
+                Some(Served::File { path, mime }) => serve_file(&mut stream, &req, &path, &mime),
+                Some(Served::Stream { pipe, .. }) => stream::serve(&mut stream, &req, &pipe),
                 None => status(&mut stream, 404, "Not Found"),
             }
         }
         ("GET" | "HEAD", "art") => {
             let served = shared.tracks.lock().get(rest).cloned();
-            let art = served.and_then(|s| crate::index::metadata::extract_cover_art(&s.path));
+            let art = served.and_then(|s| crate::index::metadata::extract_cover_art(s.art()));
             match art {
                 Some(bytes) => {
                     let mime = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
@@ -287,8 +300,13 @@ fn parse_range(header: &str, len: u64) -> Option<Result<(u64, u64), ()>> {
     })
 }
 
-fn serve_file(stream: &mut TcpStream, req: &Request, served: &Served) -> std::io::Result<()> {
-    let mut file = match File::open(&served.path) {
+fn serve_file(
+    stream: &mut TcpStream,
+    req: &Request,
+    path: &std::path::Path,
+    mime: &str,
+) -> std::io::Result<()> {
+    let mut file = match File::open(path) {
         Ok(f) => f,
         Err(_) => return status(stream, 404, "Not Found"),
     };
@@ -312,7 +330,7 @@ fn serve_file(stream: &mut TcpStream, req: &Request, served: &Served) -> std::io
     write!(
         stream,
         "{head}Content-Type: {}\r\nContent-Length: {count}\r\nAccept-Ranges: bytes\r\n{dlna}Connection: close\r\n\r\n",
-        served.mime
+        mime
     )?;
     if req.method == "HEAD" || count == 0 {
         return Ok(());
@@ -358,7 +376,7 @@ mod tests {
         let path = dir.path().join("a.flac");
         std::fs::write(&path, b"0123456789").unwrap();
         let listener = Listener::start(Box::new(|_, _| {})).unwrap();
-        let token = listener.add(Served {
+        let token = listener.add(Served::File {
             path,
             mime: "audio/flac".into(),
         });
