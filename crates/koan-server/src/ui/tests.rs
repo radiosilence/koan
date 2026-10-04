@@ -395,6 +395,12 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
         .to_str()
         .unwrap();
     assert!(csp.contains("script-src 'self' 'unsafe-eval';") && !csp.contains("unsafe-inline"));
+    // The stylesheet's URL changes with its contents, so an upgrade never pairs
+    // new markup with a cached stylesheet.
+    let css = &super::ASSETS.css;
+    assert!(css.starts_with("/ui/assets/ui.css?v=") && full.body.contains(css.as_str()));
+    let served = send(&f.app, get(css).body(Body::empty()).unwrap()).await;
+    assert_eq!(served.status, StatusCode::OK);
 
     let partial = send(
         &f.app,

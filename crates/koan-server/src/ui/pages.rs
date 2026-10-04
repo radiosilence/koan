@@ -102,9 +102,10 @@ pub(super) fn head(title: &str) -> String {
 <meta name=color-scheme content=\"dark light\">\
 <meta name=theme-color content=\"#1e1e1e\" media=\"(prefers-color-scheme: dark)\">\
 <meta name=theme-color content=\"#ffffff\" media=\"(prefers-color-scheme: light)\"><meta name=robots content=\"noindex,nofollow\">\
-<title>{} · kōan</title>{}<link rel=stylesheet href=\"/ui/assets/ui.css\">",
+<title>{} · kōan</title>{}<link rel=stylesheet href=\"{}\">",
         escape(title),
-        crate::share::icon_links("/ui/assets")
+        crate::share::icon_links("/ui/assets"),
+        super::ASSETS.css,
     )
 }
 
@@ -149,8 +150,8 @@ href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></d
         )
     };
     format!(
-        "{head}<script type=module src=\"/ui/assets/datastar.js\"></script>\
-<script src=\"/ui/assets/player.js\" defer></script><script src=\"/ui/assets/ui.js\" defer></script>\
+        "{head}<script type=module src=\"{datastar}\"></script>\
+<script src=\"{player}\" defer></script><script src=\"{ui}\" defer></script>\
 </head><body><nav class=\"fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r \
 border-rule bg-surface px-2.5 py-4 pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
 max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto \
@@ -181,6 +182,9 @@ max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule
 <span class=\"truncate text-[13px] text-muted\" data-np=artist></span></span></a>\
 <div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer></body></html>",
         head = head(title),
+        datastar = super::ASSETS.datastar_js,
+        player = super::ASSETS.player_js,
+        ui = super::ASSETS.ui_js,
         buttons = buttons(false),
         scrub = scrub("max-wide:hidden"),
         side_account = account("max-wide:hidden"),

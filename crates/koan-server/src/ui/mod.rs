@@ -55,6 +55,24 @@ const UI_CSS: &str = include_str!("../../assets/ui.css");
 const UI_JS: &str = include_str!("../../assets/ui.js");
 const DATASTAR_JS: &str = include_str!("../../assets/datastar.js");
 
+/// The page's stylesheet and scripts, each URL carrying a hash of its asset.
+pub(super) struct AssetUrls {
+    pub css: String,
+    pub ui_js: String,
+    pub player_js: String,
+    pub datastar_js: String,
+}
+
+pub(super) static ASSETS: std::sync::LazyLock<AssetUrls> = std::sync::LazyLock::new(|| {
+    use crate::share::versioned;
+    AssetUrls {
+        css: versioned("/ui/assets/ui.css", UI_CSS),
+        ui_js: versioned("/ui/assets/ui.js", UI_JS),
+        player_js: versioned("/ui/assets/player.js", crate::share::ENGINE_JS),
+        datastar_js: versioned("/ui/assets/datastar.js", DATASTAR_JS),
+    }
+});
+
 #[derive(Clone)]
 pub struct UiState {
     pool: Arc<Pool>,

@@ -12,7 +12,7 @@
 //! gaplessly. Its CSP allows this server's own scripts and nothing else.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -32,6 +32,23 @@ const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self';
 pub(crate) const ENGINE_JS: &str = include_str!("../assets/player.js");
 const PLAYER_JS: &str = include_str!("../assets/share.js");
 const PAGE_CSS: &str = include_str!("../assets/share.css");
+/// `path` with a hash of `body`, the asset served there. Assets are cached for
+/// an hour, and the markup depends on its stylesheet: after an upgrade the new
+/// URL is fetched rather than the previous build's copy reused.
+pub(crate) fn versioned(path: &str, body: &str) -> String {
+    let hash = body.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{path}?v={hash:016x}")
+}
+
+static SHARE_CSS_URL: LazyLock<String> =
+    LazyLock::new(|| versioned("/share/assets/share.css", PAGE_CSS));
+static SHARE_JS_URL: LazyLock<String> =
+    LazyLock::new(|| versioned("/share/assets/share.js", PLAYER_JS));
+static SHARE_ENGINE_URL: LazyLock<String> =
+    LazyLock::new(|| versioned("/share/assets/player.js", ENGINE_JS));
+
 /// The track lists' class list, on the page's one list or each album's.
 const TRACKS: &str = "grid gap-1.5";
 
@@ -433,7 +450,7 @@ fn render(
         "<!doctype html><html lang=en><head><meta charset=utf-8>\
 <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
 <meta name=robots content=\"noindex,nofollow\"><title>{title}</title>{preview}\
-{icons}<link rel=stylesheet href=\"/share/assets/share.css\"></head><body>\
+{icons}<link rel=stylesheet href=\"{css}\"></head><body>\
 <main class=\"mx-auto max-w-[760px] px-4 pt-[max(24px,env(safe-area-inset-top))] pb-12\">\
 <header class=\"mb-5 flex items-end gap-5 max-wide:flex-col max-wide:items-stretch\">\
 <img id=cover class=\"size-[200px] flex-none rounded-lg border border-rule bg-surface object-cover \
@@ -447,11 +464,14 @@ max-wide:aspect-square max-wide:h-auto max-wide:w-full\" src=\"/share/{id}/cover
 <input id=seek class=\"min-w-0 flex-1 accent-brand\" type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span id=len>0:00</span></div></div></header>\
 <div id=tracks data-start=\"{start}\">{body}</div><noscript><p>{links}</p></noscript></main>\
-<script src=\"/share/assets/player.js\" defer></script>\
-<script src=\"/share/assets/share.js\" defer></script></body></html>",
+<script src=\"{engine}\" defer></script>\
+<script src=\"{js}\" defer></script></body></html>",
         title = escape(&title),
         preview = preview.concat(),
         icons = icon_links("/share/assets"),
+        css = *SHARE_CSS_URL,
+        engine = *SHARE_ENGINE_URL,
+        js = *SHARE_JS_URL,
         sub = escape(&sub.join(" · ")),
         start = start.map_or(-1, |i| i as i64),
     )
