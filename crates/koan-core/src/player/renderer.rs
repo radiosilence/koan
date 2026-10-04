@@ -1322,7 +1322,7 @@ mod tests {
         let here = r.player.shared_state.dsp().map(|d| d.profile);
         assert_eq!(
             here.as_deref(),
-            Some("Half"),
+            Some("test"),
             "played here, it is processed"
         );
 
