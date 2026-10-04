@@ -39,6 +39,11 @@
     @apply overflow-x-hidden;
   }
 
+  /* Touch screens get no hover, so a tap's highlight is the only sign it landed. Preflight removes it. */
+  html {
+    -webkit-tap-highlight-color: revert;
+  }
+
   body {
     @apply bg-bg text-[15px]/[1.45] text-ink;
     -webkit-text-size-adjust: 100%;

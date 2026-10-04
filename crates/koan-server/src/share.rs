@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -36,10 +36,14 @@ const PAGE_CSS: &str = include_str!("../assets/share.css");
 /// an hour, and the markup depends on its stylesheet: after an upgrade the new
 /// URL is fetched rather than the previous build's copy reused.
 pub(crate) fn versioned(path: &str, body: &str) -> String {
+    format!("{path}?v={}", content_hash(body))
+}
+
+pub(crate) fn content_hash(body: &str) -> String {
     let hash = body.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
     });
-    format!("{path}?v={hash:016x}")
+    format!("{hash:016x}")
 }
 
 static SHARE_CSS_URL: LazyLock<String> =
@@ -48,6 +52,44 @@ static SHARE_JS_URL: LazyLock<String> =
     LazyLock::new(|| versioned("/share/assets/share.js", PLAYER_JS));
 static SHARE_ENGINE_URL: LazyLock<String> =
     LazyLock::new(|| versioned("/share/assets/player.js", ENGINE_JS));
+
+/// The classes in `html` that `css` has no rule for, bar `hooks`: the names
+/// scripts select on. A class Tailwind did not see when it compiled `css` (an
+/// unquoted attribute, a constant in a file it does not scan) fails silently
+/// otherwise, as an unstyled element.
+#[cfg(test)]
+pub(crate) fn unstyled_classes(html: &str, css: &str, hooks: &[&str]) -> Vec<String> {
+    let ident = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    let has_rule = |class: &str| {
+        let selector: String = class
+            .chars()
+            .flat_map(|c| if ident(c) { vec![c] } else { vec!['\\', c] })
+            .collect();
+        let selector = format!(".{selector}");
+        css.match_indices(&selector).any(|(i, _)| {
+            css[i + selector.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !ident(c) && c != '\\')
+        })
+    };
+    let mut missing: Vec<String> = html
+        .split("class=")
+        .skip(1)
+        .flat_map(|rest| {
+            match rest.strip_prefix('"') {
+                Some(quoted) => quoted.split('"').next().unwrap_or_default(),
+                None => rest.split([' ', '>']).next().unwrap_or_default(),
+            }
+            .split_whitespace()
+        })
+        .filter(|class| !hooks.contains(class) && !has_rule(class))
+        .map(str::to_owned)
+        .collect();
+    missing.sort();
+    missing.dedup();
+    missing
+}
 
 /// The track lists' class list, on the page's one list or each album's.
 const TRACKS: &str = "grid gap-1.5";
@@ -68,15 +110,15 @@ pub fn router(
     axum::Router::new()
         .route(
             "/share/assets/share.js",
-            get(|| async { asset(PLAYER_JS, "text/javascript; charset=utf-8") }),
+            get(|q: RawQuery| async move { asset(PLAYER_JS, "text/javascript; charset=utf-8", q) }),
         )
         .route(
             "/share/assets/player.js",
-            get(|| async { asset(ENGINE_JS, "text/javascript; charset=utf-8") }),
+            get(|q: RawQuery| async move { asset(ENGINE_JS, "text/javascript; charset=utf-8", q) }),
         )
         .route(
             "/share/assets/share.css",
-            get(|| async { asset(PAGE_CSS, "text/css; charset=utf-8") }),
+            get(|q: RawQuery| async move { asset(PAGE_CSS, "text/css; charset=utf-8", q) }),
         )
         .route(
             "/share/assets/{name}",
@@ -155,12 +197,16 @@ pub(crate) fn icon_links(base: &str) -> String {
     )
 }
 
-pub(crate) fn asset(body: &'static str, kind: &'static str) -> Response {
+/// A text asset. Requested by its hashed URL (`?v=`), it never changes, so it
+/// is kept for good; a bare URL is rechecked hourly.
+pub(crate) fn asset(body: &'static str, kind: &'static str, query: RawQuery) -> Response {
+    let cache = if query.0.is_some_and(|q| q.starts_with("v=")) {
+        "public, max-age=31536000, immutable"
+    } else {
+        "public, max-age=3600"
+    };
     (
-        [
-            (header::CONTENT_TYPE, kind),
-            (header::CACHE_CONTROL, "public, max-age=3600"),
-        ],
+        [(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, cache)],
         body,
     )
         .into_response()
@@ -920,6 +966,24 @@ mod tests {
                 StatusCode::NOT_FOUND,
                 "no art in fake files, nor a 4th track"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn every_class_on_the_share_page_has_a_rule() {
+        let lib = library();
+        for target in [
+            ShareTarget::Artist(lib.artist),
+            ShareTarget::Album {
+                album_id: queries::tracks_by_ids(&lib.db.conn, &[lib.tracks[0]]).unwrap()[0]
+                    .album_id
+                    .unwrap(),
+                start_track_id: None,
+            },
+        ] {
+            let html = lib.page(&lib.share(target)).await;
+            let missing = unstyled_classes(&html, PAGE_CSS, &["art"]);
+            assert!(missing.is_empty(), "no rule in share.css for {missing:?}");
         }
     }
 

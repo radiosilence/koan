@@ -144,7 +144,7 @@ method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] trunc
     let account = |place: &str| {
         format!(
             "<div class=\"mt-auto flex min-w-0 flex-col gap-1 {place}\">{signout}\
-<a class=\"px-1 py-0.5 text-[12px] text-muted tabular-nums hover:text-ink hover:no-underline\" \
+<a class=\"rounded-md px-1 py-0.5 text-[12px] text-muted tabular-nums hover:text-ink hover:no-underline\" \
 href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
             v = env!("CARGO_PKG_VERSION")
         )
@@ -309,7 +309,7 @@ fn more(next: Option<String>) -> String {
             "<div id=more class=\"mt-5 flex justify-center\"><button data-indicator:_more data-attr:disabled=\"$_more\" \
 data-class:busy=\"$_more\" data-on:click=\"@get('{next}')\">Load more</button></div>"
         ),
-        None => "<div id=more></div>".into(),
+        None => "<div id=more class=\"mt-5\"></div>".into(),
     }
 }
 

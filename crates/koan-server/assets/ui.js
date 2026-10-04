@@ -26,11 +26,23 @@
     new URL(typeof input === "string" ? input : input.url, location.href).origin === location.origin;
   // Every request this page makes, Datastar's included, renews once on a 401
   // and retries; a session that cannot be renewed reloads into the sign-in form.
+  // Responses name the stylesheet their markup was written for. A tab open
+  // across an upgrade swaps it in rather than drawing new markup with the old
+  // one, and keeps playing.
+  const sheet = document.querySelector('link[rel=stylesheet][href^="/ui/assets/ui.css"]');
+  function freshen(r) {
+    const v = r.headers.get("X-Koan-Css");
+    if (sheet && v && new URL(sheet.href).searchParams.get("v") !== v) {
+      sheet.href = `/ui/assets/ui.css?v=${v}`;
+    }
+  }
   window.fetch = async (input, init) => {
     const r = await rawFetch(input, init);
+    if (sameOrigin(input)) freshen(r);
     if (r.status !== 401 || !sameOrigin(input)) return r;
     if (await renew()) {
       const again = await rawFetch(input, init);
+      freshen(again);
       if (again.status !== 401) return again;
     }
     location.reload();

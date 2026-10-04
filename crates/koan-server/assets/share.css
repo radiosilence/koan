@@ -441,6 +441,9 @@
   html, body {
     overflow-x: hidden;
   }
+  html {
+    -webkit-tap-highlight-color: revert;
+  }
   body {
     background-color: var(--bg);
     font-size: 15px;
