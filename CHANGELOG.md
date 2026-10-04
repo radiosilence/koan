@@ -1,14 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Devices that stop answering stay listed, asleep.** A device that went quiet dropped out of the Control menu at once, and a phone iOS suspended a moment ago vanished from every other device's list. A device now reads as reconnecting for one heartbeat (45 seconds), so a single missed signal does not mark it asleep, and is then shown asleep with when it was last seen. One a push can wake stays listed and can be chosen. One that nothing can wake from here is shown, cannot be chosen, and is dropped after `devices.asleep_grace_mins` (30 by default). Whether a device can be woken is the server's word: it has the device's push token and a push key to send with. The server sends when an absent device was last seen, which older apps ignore.
+
 ## 0.52.3
 
 ### Added
 
 - **The playing bars follow the device being controlled.** While one kōan controls another, the bars beside the playing track show that device's levels rather than this one's silence. The device sends its levels only while a controller has bars on screen, about forty bytes a frame at its analyser's rate, and stops when the bars go. Frames are drawn a couple of frames behind the playhead and interpolated, so a late one is not seen, and the bars settle to rest when the music pauses or the link stalls. A device on the same network may watch the bars of one it can already see playing; through a koan server, only the account's own devices can. The server must be this version or later to relay them; with an older one the bars stay at rest.
-
-### Changed
-
-- **Devices that stop answering stay listed, asleep.** A device that went quiet dropped out of the Control menu at once, and a phone iOS suspended a moment ago vanished from every other device's list. A device now reads as reconnecting for one heartbeat (45 seconds), so a single missed signal does not mark it asleep, and is then shown asleep with when it was last seen. One a push can wake stays listed and can be chosen. One that nothing can wake from here is shown, cannot be chosen, and is dropped after `devices.asleep_grace_mins` (30 by default). Whether a device can be woken is the server's word: it has the device's push token and a push key to send with. The server sends when an absent device was last seen, which older apps ignore.
 
 ### Fixed
 
