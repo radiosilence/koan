@@ -394,6 +394,7 @@ impl DestinationLedger {
         if cfg!(any(
             target_os = "macos",
             target_os = "ios",
+            target_os = "tvos",
             target_os = "windows"
         )) {
             key.to_lowercase()

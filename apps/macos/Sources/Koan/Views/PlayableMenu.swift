@@ -100,7 +100,9 @@ struct PlayableMenu: View {
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(OrganizeModel.self) private var organize
+    #if os(macOS)
     @Environment(\.openWindow) private var openWindow
+    #endif
 
     var body: some View {
         Button { act { player.playNow(trackIds: $0) } } label: {

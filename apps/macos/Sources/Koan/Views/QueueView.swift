@@ -30,7 +30,9 @@ struct QueueView: View {
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(OrganizeModel.self) private var organize
+    #if os(macOS)
     @Environment(\.openWindow) private var openWindow
+    #endif
     @Environment(UIState.self) private var ui
     @Environment(PlaylistsModel.self) private var playlists
     /// The queue outlives the page you are on — see `StageView`. Anything

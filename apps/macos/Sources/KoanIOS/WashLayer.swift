@@ -41,6 +41,11 @@ extension View {
     /// The wash as this page's navigation background. Each pushed page needs
     /// its own: a stack paints an opaque ground behind every page it shows.
     func roomBackground() -> some View {
+        #if os(tvOS)
+        // tvOS has no navigation container background; the page draws its own.
+        background { WashLayer().ignoresSafeArea() }
+        #else
         containerBackground(for: .navigation) { WashLayer() }
+        #endif
     }
 }

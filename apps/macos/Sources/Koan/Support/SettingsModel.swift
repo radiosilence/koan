@@ -25,6 +25,10 @@ final class SettingsModel {
     /// Typed here rather than in `settings`, because it never comes back out of
     /// the engine — the credential store is write-only from this side.
     var password = ""
+    /// Whether `password` holds an API key made in the web UI rather than the
+    /// account's password: one that can be revoked on its own, and the only
+    /// thing worth typing on a device with no keyboard.
+    var withApiKey = false
 
     init(engine: KoanEngine, activity: ActivityModel, art: CoverArtCache?) async {
         self.engine = engine
@@ -121,9 +125,14 @@ final class SettingsModel {
     func signIn(url: String, username: String) {
         let engine = self.engine
         let password = self.password
+        let withKey = self.withApiKey
         Task {
             let result = await activity.run("Signing in") {
-                try await engine.signInRemote(url: url, username: username, password: password)
+                if withKey {
+                    try await engine.signInRemoteWithKey(url: url, username: username, apiKey: password)
+                } else {
+                    try await engine.signInRemote(url: url, username: username, password: password)
+                }
             }
             switch result {
             case .success:

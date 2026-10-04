@@ -672,7 +672,7 @@ struct OutputButton: View {
     }
 }
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 extension View {
     /// The sheets the buttons open, attached to a view that outlives them.
     func controlSheet(isPresented: Binding<Bool>) -> some View {

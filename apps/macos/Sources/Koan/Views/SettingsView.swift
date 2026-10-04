@@ -324,10 +324,14 @@ private struct RemoteSettings: View {
                         .verbatimEntry(.url)
                     TextField("Username", text: $username, prompt: Text("Username"))
                         .verbatimEntry()
+                    Picker("Sign in with", selection: $model.withApiKey) {
+                        Text("Password").tag(false)
+                        Text("API key").tag(true)
+                    }
                     SecureField(
-                        "Password",
+                        model.withApiKey ? "API key" : "Password",
                         text: $model.password,
-                        prompt: Text("Password")
+                        prompt: Text(model.withApiKey ? "API key" : "Password")
                     )
                     .verbatimEntry()
                     HStack {

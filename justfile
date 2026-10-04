@@ -398,6 +398,7 @@ macos-test: macos-ffi
 
 
 ios_deployment_target := "26.0"
+tv_deployment_target := "26.0"
 
 # Type-check the shared SwiftUI sources against the iOS SDK.
 #
@@ -729,6 +730,70 @@ ios-phone config="Debug": (ios-ffi "iphoneos")
     xcrun devicectl device install app --device "$phone" \
         "target/ios-build/Build/Products/{{config}}-iphoneos/koan.app"
     xcrun devicectl device process launch --device "$phone" {{bundle_id}}
+
+# Build the Rust engine for a tvOS SDK and stage it for the Swift link.
+#
+# `appletvsimulator` or `appletvos`, staged under the SDK's own name so the
+# Xcode project finds the right one through `$(PLATFORM_NAME)`.
+tv-ffi platform="appletvsimulator":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{platform}}" in
+        appletvsimulator) triple=aarch64-apple-tvos-sim ;;
+        appletvos) triple=aarch64-apple-tvos ;;
+        *) echo "unknown platform: {{platform}}" >&2; exit 1 ;;
+    esac
+    # As in `ios-ffi`: C dependencies compile against the current SDK, and
+    # rustc must target the same version.
+    export TVOS_DEPLOYMENT_TARGET={{tv_deployment_target}}
+    out=target/tv-{{tv_deployment_target}}
+    cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
+    rm -rf "target/tv-link/{{platform}}" && mkdir -p "target/tv-link/{{platform}}"
+    cp "$out/$triple/release/libkoan_ffi.a" "target/tv-link/{{platform}}/"
+    just ffi-bindings "target/tv-link/{{platform}}/libkoan_ffi.a"
+    echo "koan-ffi ready for {{platform}}"
+
+# Build, install and launch koan on an Apple TV simulator.
+#
+# A booted Apple TV if there is one, otherwise the first on a runtime that can
+# run the deployment target.
+tv-run: (tv-ffi "appletvsimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sim=$(xcrun simctl list devices available -j \
+        | python3 -c 'import json,sys; want=int("{{tv_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k and int(k.split("tvOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    [ -n "$sim" ] || { echo "No Apple TV simulator on tvOS {{tv_deployment_target}} or later." >&2; exit 1; }
+    xcrun simctl boot "$sim" 2>/dev/null || true
+    open -a Simulator
+    xcrun simctl bootstatus "$sim" -b
+    xcodebuild build -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV -configuration Debug \
+        -destination "id=$sim" -derivedDataPath target/tv-build
+    xcrun simctl install "$sim" target/tv-build/Build/Products/Debug-appletvsimulator/koan.app
+    xcrun simctl launch "$sim" {{bundle_id}}
+
+# Build, install and launch on the Apple TV on the network.
+#
+# Signed as `ios-phone` is, with the personal team unless APPLE_TEAM_ID says
+# otherwise. The TV must be paired in Xcode first.
+tv-device config="Debug": (tv-ffi "appletvos")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tv=$(xcrun devicectl list devices | awk '/Apple TV/' \
+        | grep -oE '[0-9a-f]{40}|[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1 || true)
+    [ -n "$tv" ] || { echo "No Apple TV found — pair it in Xcode, and wake it." >&2; exit 1; }
+    APPLE_TEAM_ID=${APPLE_TEAM_ID:-2256Q92VF2} just ios-project
+    auth=(-allowProvisioningUpdates)
+    if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+        auth+=(-authenticationKeyPath "$APPLE_API_KEY_PATH" -authenticationKeyID "$APPLE_API_KEY_ID" -authenticationKeyIssuerID "$APPLE_API_ISSUER_ID")
+    fi
+    xcodebuild build -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV -configuration {{config}} \
+        -destination "id=$tv" -derivedDataPath target/tv-build \
+        "${auth[@]}"
+    xcrun devicectl device install app --device "$tv" \
+        "target/tv-build/Build/Products/{{config}}-appletvos/koan.app"
+    xcrun devicectl device process launch --device "$tv" {{bundle_id}}
 
 # Archive for a device, sign, and upload to TestFlight.
 #

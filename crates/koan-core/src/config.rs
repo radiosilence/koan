@@ -1125,7 +1125,7 @@ pub fn config_dir() -> PathBuf {
     platform_config_dir()
 }
 
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_os = "tvos")))]
 fn platform_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -1141,7 +1141,16 @@ fn platform_config_dir() -> PathBuf {
     ios_library().join("Application Support").join("koan")
 }
 
-#[cfg(target_os = "ios")]
+/// A tvOS app has no persistent storage of its own: `Library/Caches` is the
+/// one directory it can write, and the system empties it when space runs short.
+/// The configuration lives there until it has somewhere that survives a purge.
+/// Beside the download cache rather than inside it, which is trimmed.
+#[cfg(target_os = "tvos")]
+fn platform_config_dir() -> PathBuf {
+    ios_library().join("Caches").join("koan-config")
+}
+
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
 fn ios_library() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -1155,7 +1164,7 @@ fn ios_library() -> PathBuf {
 /// against someone's iCloud storage — and which iOS may clear when the device
 /// is short of space, which is what a cache is for.
 fn default_cache_dir() -> PathBuf {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     if CONFIG_DIR.read().is_none() && std::env::var_os("KOAN_CONFIG_DIR").is_none() {
         return ios_library().join("Caches").join("koan");
     }

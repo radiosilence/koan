@@ -48,11 +48,7 @@ struct TabShell: View {
         }
         .tabViewStyle(.sidebarAdaptable)
         .toggleStyle(SystemSwitch())
-        // Above the tab bar rather than below it — `safeAreaInset` would put
-        // the transport where the tab bar goes, which is to say on top of it.
-        .tabViewBottomAccessory {
-            MiniPlayer(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices)
-        }
+        .modifier(Transport(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices))
         .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
         // sidebar; with no sidebar they float above the transport, which is
@@ -214,5 +210,25 @@ struct TabShell: View {
                 follow(chosen)
             }
         )
+    }
+}
+
+/// The mini player. On a phone it sits above the tab bar: `safeAreaInset`
+/// would put it where the tab bar goes, which is to say on top of it. tvOS
+/// draws its tab bar across the top, so the foot of the screen is free.
+private struct Transport: ViewModifier {
+    @Binding var showingNowPlaying: Bool
+    @Binding var showingDevices: Bool
+
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        content.safeAreaInset(edge: .bottom) { player }
+        #else
+        content.tabViewBottomAccessory { player }
+        #endif
+    }
+
+    private var player: some View {
+        MiniPlayer(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices)
     }
 }

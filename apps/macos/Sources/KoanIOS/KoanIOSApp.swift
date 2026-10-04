@@ -16,7 +16,9 @@ struct KoanIOSApp: App {
     /// A link opened before the engine was up, handled once it is.
     @State private var pendingURL: URL?
     @State private var session = AudioSession()
+    #if !os(tvOS)
     @State private var remoteActivity: RemoteActivityController?
+    #endif
     @Environment(\.scenePhase) private var scenePhase
     @State private var powerSaving = ProcessInfo.processInfo.isLowPowerModeEnabled
 
@@ -90,7 +92,9 @@ struct KoanIOSApp: App {
                     let built = try await AppState()
                     await built.start()
                     PushDelegate.engine = built.player.engine
+                    #if !os(tvOS)
                     remoteActivity = RemoteActivityController(engine: built.player.engine, mirror: built.mirror, art: built.art)
+                    #endif
                     PushDelegate.requestAlertsIfSignedIn()
                     // The session goes up before anything can be asked to play:
                     // a RemoteIO unit on an inactive session produces silence

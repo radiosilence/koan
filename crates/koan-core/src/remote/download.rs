@@ -30,7 +30,9 @@ pub const API_TIMEOUT: Duration = Duration::from_secs(30);
 const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (Macintosh)");
 #[cfg(target_os = "ios")]
 const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (iOS)");
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+#[cfg(target_os = "tvos")]
+const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (tvOS)");
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos")))]
 const USER_AGENT: &str = concat!("koan/", env!("CARGO_PKG_VERSION"), " (Linux)");
 
 /// Attempts a download gets before giving up.

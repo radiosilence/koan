@@ -1008,6 +1008,16 @@ pub fn set_remote_credentials(
     remember_remote(url, username, Credential::Password(password.to_string()))
 }
 
+/// Sign in with an API key made elsewhere — the server's web UI, or another
+/// device — for a device where typing a password is the harder thing. Checked
+/// against the server before anything is written, as a password is.
+pub fn set_remote_api_key(url: &str, username: &str, api_key: &str) -> Result<(), SignInError> {
+    let url = url.trim_end_matches('/');
+    let credential = Credential::ApiKey(api_key.to_string());
+    SubsonicClient::from_auth(SubsonicAuth::with(url, username, credential.clone())).ping()?;
+    remember_remote(url, username, credential)
+}
+
 /// Join a server with an invite. A token is traded for an API key named after
 /// this device; an address with the account in it carries the password, which
 /// signs in as `set_remote_credentials` does.

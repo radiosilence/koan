@@ -116,7 +116,7 @@ fn note(key: &str, problem: Option<String>) {
 /// link-local address.
 fn locally_refused(error: &str) -> bool {
     let e = error.to_lowercase();
-    cfg!(target_os = "ios")
+    cfg!(any(target_os = "ios", target_os = "tvos"))
         && (e.contains("no route to host") || e.contains("network is unreachable"))
 }
 
