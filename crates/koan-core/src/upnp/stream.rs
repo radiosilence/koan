@@ -665,7 +665,7 @@ mod tests {
         };
         let pipe = Pipe::new(format, "audio/wav", |_| String::new());
         let chunk = |start| Chunk {
-            bytes: vec![0; EARLY / 2],
+            bytes: vec![0; 400 * 1024],
             start,
             frames: 1000,
             track: None,

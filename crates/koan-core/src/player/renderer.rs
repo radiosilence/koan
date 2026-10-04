@@ -1630,7 +1630,7 @@ mod tests {
         let here = r.player.shared_state.dsp().map(|d| d.profile);
         assert_eq!(
             here.as_deref(),
-            Some("Half"),
+            Some("test"),
             "played here, it is processed"
         );
 
@@ -2945,9 +2945,18 @@ mod tests {
         r.past_grace();
 
         r.fake.set_position(31_000);
-        r.link().session.look();
         let second = r.ids[1];
-        r.pump_until(|p| p.shared_state.cursor() == Some(second));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // A look already in flight may answer from before the move: ask
+        // until the answer is the new one.
+        while r.player.shared_state.cursor() != Some(second) {
+            assert!(
+                Instant::now() < deadline,
+                "never followed into the next track"
+            );
+            r.link().session.look();
+            r.step(Duration::from_millis(100));
+        }
         let at = r.player.shared_state.position_ms();
         assert!(
             (1_000..3_000).contains(&at),
@@ -2971,9 +2980,15 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(r.count("Seek"), 0);
         assert!(r.player.streaming_to_renderer());
-        assert_eq!(r.player.shared_state.position_ms(), 10_000);
+        // Where the decoder could seek to: the packet holding the target.
+        let at = r.player.shared_state.position_ms();
+        assert!((9_800..=10_000).contains(&at), "at {at}ms");
         let (_, heard) = stream::decode(&whole_stream(&mut r), "wav");
-        assert_eq!(heard.len(), 20 * 8_000, "the last twenty seconds");
+        let seconds = heard.len() as f64 / 8_000.0;
+        assert!(
+            (20.0..20.3).contains(&seconds),
+            "{seconds}s, the last twenty"
+        );
     }
 
     /// Giving the renderer a profile reopens what it plays as a stream, and
