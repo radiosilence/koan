@@ -1014,8 +1014,8 @@ pub fn set_remote_credentials(
 }
 
 /// Join a server with an invite. A token is traded for an API key named after
-/// this device; a link from a server older than tokens carries the password,
-/// which signs in as `set_remote_credentials` does.
+/// this device; an address with the account in it carries the password, which
+/// signs in as `set_remote_credentials` does.
 pub fn join_with_invite(invite: &crate::invite::Invite) -> Result<(), SignInError> {
     let url = invite.server.trim_end_matches('/');
     match (&invite.token, &invite.password) {

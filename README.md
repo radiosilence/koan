@@ -53,7 +53,7 @@ cargo install --path crates/koan-cli
 ```
 
 
-Single binary. macOS works out of the box (CoreAudio). Linux needs ALSA dev headers:
+Single binary. macOS needs nothing else. Linux needs the ALSA and D-Bus development headers:
 
 ```bash
 # Debian/Ubuntu
@@ -79,22 +79,9 @@ koan                                        # launch the TUI
 
 `space` to pause, `<`/`>` to skip, `p` to pick tracks, `a` for albums, `q` to quit.
 
-**Rather not touch a terminal?** Install the app instead and do all of the above
-inside it: **Settings → Library** points kōan at your music and scans it,
-**Settings → Server** signs you in to Navidrome or Subsonic, and playback and
-devices have their own panes. Everything in this quickstart can
-be done from the app; the headless server and the MCP endpoint still want a
-shell.
+The macOS app needs none of this: **Settings → Library** adds folders, **Settings → Server** signs in to a kōan, Navidrome or Subsonic server.
 
-**Remote server?** If you run Navidrome or Subsonic:
-
-```bash
-koan remote login https://music.example.com admin
-koan remote sync
-koan
-```
-
-Local and remote tracks merge into one library. Local files take playback priority; remote tracks stream with progressive download.
+To run a server, play from Navidrome, or move off it, see the [documentation](https://koan.rocks/docs/).
 
 ## What it does
 
@@ -105,13 +92,13 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
 - **Subsonic/Navidrome** -- library sync that runs when the server changes, unified local+remote browsing, streaming playback, two-way sync of favourites and playlists
-- **Music server** -- run headless and kōan serves the library itself: a mobile-first web UI with gapless browser playback, share links (a track shares its album cued to it) that unfurl with their cover, and an OpenSubsonic API for Subsonic apps, signed in with a kōan account by password, token or API key. See [Headless Server](docs/guide/headless-server.md)
+- **Music server** -- run headless and kōan serves the library itself: a mobile-first web UI with gapless browser playback, share links (a track shares its album cued to it) that unfurl with their cover, and an OpenSubsonic API for Subsonic apps, signed in with a kōan account by password, token or API key. See [Running a server](https://koan.rocks/docs/headless-server/)
 - **Playlists** -- ordered, named, reorderable; synced both ways with Navidrome, exportable as M3U8
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
 - **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` — 59 of them — for display and file organization
 - **File organization** -- rename/reorganize your library from the macOS app or the TUI using format string patterns
 - **GraphQL API** -- alongside the app and TUI, or headless. Relay pagination, filters, and mutations for playback, the queue, favourites, playlists and the library
-- **MCP server** -- `koan mcp` exposes the player to Claude Desktop via Model Context Protocol, and a server serves it over HTTP behind an authenticating gateway, acting as the signed-in account
+- **MCP server** -- a server serves MCP at `/mcp` with its own OAuth sign-in, acting as the signed-in account; `koan mcp` runs the player for a desktop client over stdio
 - **Queue management** -- undo/redo (100-deep), multi-select, drag-reorder, Finder drag & drop, session persistence
 - **SQLite FTS5 search** -- full-text search across your entire library
 - **Media keys** -- macOS Control Center and Linux MPRIS (play/pause, next/prev, now playing info)
@@ -177,21 +164,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 
 ## Documentation
 
-| Guide | What it covers |
-|-------|---------------|
-| **[Getting Started](docs/getting-started.md)** | First-time setup, local and remote libraries, your first session |
-| **[Authentication](docs/guide/authentication.md)** | JWT auth, user management, 1Password integration, recovery |
-| **[Remote Servers](docs/guide/remote-servers.md)** | Navidrome/Subsonic setup, sync, streaming, cache management |
-| **[File Organization](docs/guide/file-organization.md)** | Rename and reorganize your library from the macOS app or the TUI |
-| **[GraphQL API](docs/guide/graphql-api.md)** | Headless operation, queries, mutations, daemon mode |
-| **[MCP Integration](docs/guide/mcp-integration.md)** | Claude Desktop setup, example prompts |
-| **[Headless Server](docs/guide/headless-server.md)** | Running kōan as a background music server |
-| **[Configuration](docs/reference/configuration.md)** | All config fields, layered config, env var overrides |
-| **[Keybindings](docs/reference/keybindings.md)** | Every key in every mode |
-| **[CLI Reference](docs/reference/cli.md)** | All commands, flags, and shell completions |
-| **[Format Strings](docs/format-strings.md)** | fb2k-compatible template syntax and all 59 functions |
-| **[Troubleshooting](docs/recipes/troubleshooting.md)** | Common issues and fixes |
-| **[Cache Management](docs/recipes/cache-management.md)** | Download cache, eviction, disk usage |
+At [koan.rocks/docs](https://koan.rocks/docs/), rendered from [`docs/`](docs). Start with [Getting started](https://koan.rocks/docs/getting-started/), [Running a server](https://koan.rocks/docs/headless-server/) or [Migrating from Navidrome](https://koan.rocks/docs/migrating-from-navidrome/).
 
 ## Architecture
 
@@ -203,29 +176,7 @@ Five crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (
 
 ## macOS app
 
-A native SwiftUI app lives in [`apps/macos`](apps/macos). Browse and search the
-library, build and reorder the queue, keep playlists, favourite tracks, albums
-and artists, read synced lyrics, look through play history, and
-reorganize files on disk — and set the whole thing up on first run, library
-folders and remote sign-in included, without opening a terminal.
-
-It links `koan-core` directly through `koan-ffi` rather than talking to `koan
-serve` — the app is sitting on top of the audio engine, so round-tripping HTTP to
-reach it would buy nothing and cost a daemon, a port, and an auth surface.
-Playback stays bit-perfect because CoreAudio output never leaves Rust.
-
-One library and one config with the CLI and TUI, so a queue saved in one shows up
-in the others, and a scan run in either is a scan for both.
-
-Two things it deliberately leaves alone: visualizers, which are what the TUI is
-for, and running the server, which is a `koan serve` job. GraphQL remains the
-surface for clients that *can't* link the core — the web UI and
-jukebox-style remotes.
-
-Dropping a folder from Finder onto the queue indexes it into the library and
-plays it; **Organize Files…** then previews where a pattern puts each file —
-collisions included — before moving anything. See
-[File Organization](docs/guide/file-organization.md).
+A SwiftUI app in [`apps/macos`](apps/macos). It links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the TUI.
 
 ```bash
 just macos-run     # build and launch
@@ -238,15 +189,7 @@ Requires Swift 6 and macOS 26+.
 
 <img alt="Now Playing, lyrics, a record and the queue on iPhone" src="docs/images/koan-ios.png" />
 
-The same SwiftUI app over the same engine, in a phone's shell. `koan-core` runs
-in-process through `koan-ffi`, as on the Mac, and plays out through RemoteIO. A
-tab bar holds the queue, the library, search and settings; Now Playing has the
-seek bar, synced lyrics and an AirPlay picker, over the playing record's
-colour. An iPad with room for a sidebar gets the Mac's layout instead.
-
-It plays from a Subsonic or Navidrome server, since a phone has no music folder
-to scan. Output crosses the system mixer, so bit-perfect is a claim for the Mac
-and Linux only.
+The same SwiftUI app and engine in a phone's shell, playing from a server. Output crosses the system mixer, so bit-perfect is a claim for the Mac and Linux only.
 
 ```bash
 just ios-run      # build and launch on a simulator
@@ -258,12 +201,7 @@ Requires iOS 26+.
 
 ## Playing on another device
 
-Any kōan app can control another, like AirPlay or Spotify Connect: the phone
-as a remote for the Mac, with a lock-screen Live Activity; the Mac's queue
-moved to the phone on the way out; a heart on the phone for what the Mac is
-playing. Your devices find each other through a kōan server from anywhere;
-anyone's find each other on the local network over Bonjour, and a tailnet by
-address. See [Playing on another device](docs/guide/devices.md).
+Any kōan app can control another, and hand its queue to it. See [Playing on another device](https://koan.rocks/docs/devices/).
 
 ## Planned
 

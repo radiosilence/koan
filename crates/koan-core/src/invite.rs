@@ -18,10 +18,9 @@
 //! installed the address is a universal link and opens it directly; without,
 //! the page offers the downloads and a `koan://join` button.
 //!
-//! Links from servers that predate tokens carry the password instead, and
-//! still sign in with it. So does a server address with the account in it
-//! (`https://user:password@host`), which is what someone pasting into the
-//! server field may have.
+//! A server address with the account in it (`https://user:password@host`),
+//! which is what someone pasting into the server field may have, reads as an
+//! invite too, and signs in with the password.
 //!
 //! The server never sends mail. It produces the email for the admin to send
 //! from their own client.
@@ -51,11 +50,11 @@ const MAX_DEVICE_NAME: usize = 100;
 pub struct Invite {
     pub server: String,
     pub username: String,
-    /// What a koan server trades for an API key. Absent only in links from
-    /// servers older than tokens, which carry `password` instead.
+    /// What a koan server trades for an API key. Absent only from an address
+    /// with the account in it.
     pub token: Option<String>,
     /// The account's password: generated with the account and put in the
-    /// email once, or read from an old link. Never in a link with a token.
+    /// email once, or taken from an address. Never in a link.
     pub password: Option<String>,
 }
 
@@ -71,8 +70,8 @@ impl Invite {
         }
     }
 
-    /// An account that signs in with its password: an old link, or an address
-    /// with the account in it.
+    /// An account that signs in with its password: an address with the account
+    /// in it.
     pub fn with_password(server: &str, username: &str, password: &str) -> Self {
         Self {
             server: server.trim().trim_end_matches('/').to_owned(),
@@ -86,11 +85,9 @@ impl Invite {
         let mut p = form_urlencoded::Serializer::new(String::new());
         p.append_pair("server", &self.server)
             .append_pair("username", &self.username);
-        match (&self.token, &self.password) {
-            (Some(token), _) => p.append_pair("invite", token),
-            (None, Some(password)) => p.append_pair("password", password),
-            (None, None) => &mut p,
-        };
+        if let Some(token) = &self.token {
+            p.append_pair("invite", token);
+        }
         p.finish()
     }
 
@@ -126,14 +123,13 @@ impl Invite {
             }
             _ => None,
         }?;
-        let (mut server, mut username, mut token, mut password) = (None, None, None, None);
+        let (mut server, mut username, mut token) = (None, None, None);
         for (k, v) in form_urlencoded::parse(params.as_bytes()) {
             let v = Some(v.into_owned()).filter(|v| !v.is_empty());
             match &*k {
                 "server" => server = v,
                 "username" => username = v,
                 "invite" => token = v,
-                "password" => password = v,
                 _ => {}
             }
         }
@@ -142,11 +138,7 @@ impl Invite {
         if !matches!(scheme.as_str(), "http" | "https") {
             return None;
         }
-        match (token, password) {
-            (Some(token), _) => Some(Self::with_token(&server, &username, &token, None)),
-            (None, Some(password)) => Some(Self::with_password(&server, &username, &password)),
-            (None, None) => None,
-        }
+        Some(Self::with_token(&server, &username, &token?, None))
     }
 
     pub fn email_subject(&self) -> String {
@@ -496,15 +488,10 @@ mod tests {
     }
 
     #[test]
-    fn links_from_before_tokens_sign_in_with_their_password() {
+    fn links_carrying_a_password_are_not_invites() {
         let old =
             "https://koan.rocks/join/#server=https%3A%2F%2Fa.example&username=u&password=p%26q";
-        assert_eq!(
-            Invite::parse(old),
-            Some(Invite::with_password("https://a.example", "u", "p&q"))
-        );
-        let i = Invite::with_password("https://a.example", "u", "p&q");
-        assert_eq!(Invite::parse(&i.link()), Some(i));
+        assert_eq!(Invite::parse(old), None);
     }
 
     #[test]

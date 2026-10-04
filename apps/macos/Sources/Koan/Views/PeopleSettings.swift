@@ -168,8 +168,9 @@ struct PeopleSettings: View {
             .fixedSize()
             Menu {
                 Button("Invite") { Task { await model.invite(account.username) } }
-                Button("New Password and Invite…") { model.resetting = account.username }
+                // Not for this account: a new password signs this app out too.
                 if account.username != signedInAs {
+                    Button("New Password and Invite…") { model.resetting = account.username }
                     Button("Delete", role: .destructive) { deleting = account.username }
                 }
             } label: {

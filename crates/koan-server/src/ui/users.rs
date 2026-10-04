@@ -41,11 +41,14 @@ fn role_select(id: i64, current: Role) -> String {
 fn user_list(rows: &[UserRow], me: i64) -> String {
     let mut out = String::from("<ul class=\"list users\" id=users>");
     for u in rows {
-        let delete = if u.id == me {
+        // Not on your own row: a new password signs out every session, this
+        // one included.
+        let others = if u.id == me {
             String::new()
         } else {
             format!(
-                "<button class=quiet data-on:click=\"confirm('Delete {name}? Their devices stop \
+                "<button class=quiet data-on:click=\"@post('/users/{id}/password/form')\">Password</button>\
+<button class=quiet data-on:click=\"confirm('Delete {name}? Their devices stop \
 working and their playlists and favourites go.') && @post('/users/{id}/delete')\">Delete</button>",
                 name = escape(&u.username),
                 id = u.id,
@@ -54,8 +57,7 @@ working and their playlists and favourites go.') && @post('/users/{id}/delete')\
         let _ = write!(
             out,
             "<li><span class=t>{name}{you}</span>{select}\
-<button data-on:click=\"@post('/users/{id}/invite')\">Invite</button>\
-<button class=quiet data-on:click=\"@post('/users/{id}/password')\">Password</button>{delete}</li>",
+<button data-on:click=\"@post('/users/{id}/invite')\">Invite</button>{others}</li>",
             name = escape(&u.username),
             you = if u.id == me { "<small>you</small>" } else { "" },
             select = role_select(u.id, u.role),
@@ -285,8 +287,43 @@ pub(super) async fn invite(
     }
 }
 
-/// Without a `setpassword` signal, the form asking for one; with it, the
-/// account's new password. Datastar posts its signals as JSON.
+fn clear_password_signal() -> Event {
+    Event::default()
+        .event("datastar-patch-signals")
+        .data("signals {\"setpassword\":\"\"}")
+}
+
+/// The form asking for an account's new password. Its own route, so a value
+/// typed into one account's form and never submitted cannot reach another's:
+/// Datastar posts every signal with every request.
+pub(super) async fn password_form(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+) -> Response {
+    if !usable(&s, &user) {
+        return forbidden();
+    }
+    let row = blocking(move || users::get_user_by_id(&open(&s.pool)?.conn, id).ok()?).await;
+    let Some(row) = row else {
+        return events(vec![failure("No such account.")]);
+    };
+    let name = escape(&row.username);
+    events(vec![
+        clear_password_signal(),
+        result(&format!(
+            "<form class=keyform data-on:submit__prevent=\"@post('/users/{id}/password')\">\
+<input type=password data-bind:setpassword placeholder=\"New password for {name}\" \
+minlength=8 required autocomplete=new-password aria-label=\"New password for {name}\">\
+<button class=primary>Set password</button></form>\
+<p class=sub>Signs {name} out of every device. \
+<button class=quiet data-on:click=\"@post('/users/{id}/invite?reset=true')\">Generate one and \
+invite</button></p>",
+        )),
+    ])
+}
+
+/// Set the password the form posts as its `setpassword` signal.
 pub(super) async fn set_password(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
@@ -303,39 +340,23 @@ pub(super) async fn set_password(
     let done = blocking(move || {
         let db = open(&s.pool)?;
         let row = users::get_user_by_id(&db.conn, id).ok()??;
-        if password.is_empty() {
-            return Some((row, None));
-        }
         let done = invite::set_password(&db.conn, &row.username, Some(&password));
         if done.is_ok() {
             crate::clients::registry().disconnect(&row.username);
         }
-        Some((row, Some(done.map(drop))))
+        Some((row, done))
     })
     .await;
-    let Some((row, done)) = done else {
-        return events(vec![failure("No such account.")]);
-    };
-    let name = escape(&row.username);
     match done {
-        None => events(vec![result(&format!(
-            "<form class=keyform data-on:submit__prevent=\"@post('/users/{id}/password')\">\
-<input type=password data-bind:setpassword placeholder=\"New password for {name}\" \
-minlength=8 required autocomplete=new-password aria-label=\"New password for {name}\">\
-<button class=primary>Set password</button></form>\
-<p class=sub>Signs {name} out of every device. \
-<button class=quiet data-on:click=\"@post('/users/{id}/invite?reset=true')\">Generate one and \
-invite</button></p>",
-        ))]),
-        Some(Ok(())) => events(vec![
+        Some((row, Ok(_))) => events(vec![
             result(&format!(
-                "<p class=share>{name}'s password is changed, and their devices are signed out.</p>"
+                "<p class=share>{}'s password is changed, and their devices are signed out.</p>",
+                escape(&row.username)
             )),
-            Event::default()
-                .event("datastar-patch-signals")
-                .data("signals {\"setpassword\":\"\"}"),
+            clear_password_signal(),
         ]),
-        Some(Err(e)) => events(vec![failure(&e.to_string())]),
+        Some((_, Err(e))) => events(vec![failure(&e.to_string())]),
+        None => events(vec![failure("No such account.")]),
     }
 }
 

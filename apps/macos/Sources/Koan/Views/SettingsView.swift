@@ -556,10 +556,7 @@ private struct DevicesSettings: View {
                     LabeledContent("Listening on port", value: String(port))
                 }
                 if mirror.connection?.localNetworkBlocked == true {
-                    Label(
-                        "Blocked by iOS. Allow Local Network for kōan in Settings → Privacy & Security.",
-                        systemImage: "wifi.exclamationmark"
-                    )
+                    Label(LocalNetwork.blocked, systemImage: "wifi.exclamationmark")
                     .font(.callout)
                     .foregroundStyle(.orange)
                 }

@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Invites: a link that carries an account, opened in one tap.
 ///
-/// A koan server's link carries a token, which is traded for an API key of
-/// this device's own; links from older servers carry the password. The link
+/// The link carries a token, which is traded for an API key of this device's
+/// own. The link
 /// arrives as a universal link (`koan.rocks/join/`), as `koan://join`
 /// from the join page, or pasted into Settings. Opening it signs in, syncs the
 /// whole library and shows it, with nothing asked — except when it would

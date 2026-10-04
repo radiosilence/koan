@@ -2,16 +2,43 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Move here resumes where the source stopped.** The source read its playhead before sending and paused afterwards, so whatever played during the send and the fade was heard again on the destination; the destination then started the track from the top and seeked, letting its opening through. The source now pauses first and reports where the fade went silent, and the destination opens the track at that point. A track the destination has to download waits for the whole file rather than starting early, and a paused source arrives paused.
+
 ### Changed
 
-- **Invites carry a token, not the password.** The link holds a JWT signed with the server's key, good for a week on any number of devices. The app trades it for an API key of its own (`/rest/koanJoin`, the `koanInvite` extension), so each invited device appears under API keys and can be revoked alone. Creating an account still generates a password and shows it once in the email, for the web UI and other Subsonic apps; inviting an existing account sends only the link. Links from older servers carry the password and still work. An app older than this cannot read the new links.
+- **Invites carry a token, not the password.** The link holds a JWT signed with the server's key, good for a week on any number of devices. The app trades it for an API key of its own (`/rest/koanJoin`, the `koanInvite` extension), so each invited device appears under API keys and can be revoked alone. Creating an account still generates a password and shows it once in the email, for the web UI and other Subsonic apps; inviting an existing account sends only the link. Links made by older servers, which carried the password, are no longer read, and an app older than this cannot read the new ones.
 - **Admins set passwords.** The Users page and GraphQL (`setUserPassword`) set a chosen password; inviting with a reset generates one. Either signs the account out everywhere.
 - **The apps can sign in with an API key** (`remote.api_key` in `config.local.toml`), which is what an invite stores.
+- **Linked apps are scoped to the account that linked them, admins included.** An admin's `clients` and `…OnClient` mutations used to reach every account's devices, so on a shared server a command without `client` could land on someone else's phone or fail on the ambiguity. Lists of devices to choose from now give each one's platform and id, since the iOS app names itself "iPhone" on every phone.
+- **The macOS and iOS apps tint in koan green when a record gives no colour**: no artwork, a sleeve with no colour in it, or nothing playing. They tinted in grey before, which drew the playing row's title and borderless controls as if disabled. The green is the one koan.rocks and the web UI use, darker in light mode.
+
 
 ### Removed
 
 - **Recoverable passwords.** The server no longer keeps each account's password encrypted beside its hash, which let an admin read it back through an invite. Schema version 13 drops `users.sealed_password`; a database opened by this version is refused by older ones. The key they were encrypted with, `subsonic.key` in the auth directory, is deleted when the server starts.
 - **Subsonic token auth (`t`/`s`) for accounts.** It needed that readable copy. Clients get error 41 and should send the password (`p=`, over HTTPS) or an API key; the `[subsonic]` shared secret still accepts it. A koan app signed in to a koan server over plain HTTP needs signing in again, or an invite.
+
+### Fixed
+
+- **A command reaches a suspended iPhone after the app has been reinstalled.** A reinstall gives the app a new device id and leaves the old one's push token behind under the same name, so the server answered "several can be reached: iPhone, iPhone" and sent no push. It now wakes the device seen most recently.
+
+## 0.50.2
+
+### Changed
+
+- **The web UI, share pages, koan.rocks and the documentation share one look.** The server's pages take the site's typeface (Geist Mono) and greys, the site takes the web UI's green, and the server's pages follow the system's light or dark setting as the site already did. Both are built with Tailwind from one theme, `site/src/theme.css`, so a colour or the font changes in one place.
+
+### Fixed
+
+- **The Mac no longer claims the local network is blocked by iOS.** A connection to a nearby device that failed with "no route to host" was taken to mean the system had refused koan the local network, which is how iOS reports it. On macOS it means only that the address is unreachable, such as a phone asleep or a stale link-local address, and one such device kept the warning up. The Mac now trusts only the Bonjour responder's refusal, and the warning names System Settings there.
+
+## 0.50.1
+
+### Fixed
+
+- **A release no longer publishes without its binaries.** A push to main cancelled the previous run's builds and tests, and the publish jobs treated a cancelled dependency as a pass: 0.50.0 went to crates.io, npm and TestFlight with an empty GitHub release and no Homebrew update. Pushes to main no longer cancel each other, and publishing stops if anything it depends on was cancelled or the binaries were not built.
 
 ## 0.50.0
 
@@ -153,15 +180,15 @@
 
 ## 0.46.1
 
+### Changed
+
+- **Unused code is removed**, including twelve koan-ffi exports the apps no longer call. No behaviour changes.
+
 ### Fixed
 
 - **The empty library points somewhere useful.** On iPhone and iPad it said to run a scan, which the app cannot do, and on the Mac it named a terminal command. It now points to Settings → Server on iOS, and to adding a folder or signing in on the Mac.
 - **Settings and CLI help describe what koan does.** The sample-rate note says the device is asked to match the source and that nothing is resampled unless it refuses; sync, devices and invite descriptions match their behaviour; `--headless` and `--subsonic` help match how the server mounts its APIs.
 - **The documentation and site match the code**: five crates, `Config::persist` for config writes, current GraphQL operation names and configuration keys, radio's use of ListenBrainz and MusicBrainz, and where the Mac app keeps its data.
-
-### Changed
-
-- **Unused code is removed**, including twelve koan-ffi exports the apps no longer call. No behaviour changes.
 
 ## 0.46.0
 
@@ -580,11 +607,13 @@
 ### Added
 
 - **Subsonic token auth for koan accounts.** Most Subsonic clients (Play:Sub, and koan's own releases before this one) sign in with `t=md5(password + salt)`, which cannot be checked against an argon2 hash. Each account's password is now also kept sealed with AES-256-GCM under `auth/subsonic.key` (created on first use, 0600), bound to the username, and token auth opens it, compares the token, then checks the password against the hash as usual, so a password changed elsewhere stops working. The sealed copy is written whenever the password is proven: web sign-in, a `p=` sign-in, `koan auth create-user` and `koan auth reset-password`. An account without one still gets error 41, so clients can fall back.
-
-### Added
-
 - **OpenSubsonic.** Every `/rest/*` response carries `openSubsonic`, `type="koan"` and `serverVersion`, and `getOpenSubsonicExtensions` answers without sign-in. Extensions: `apiKeyAuthentication` (`apiKey=` and `tokenInfo`; keys made with `koan auth api-key create` or on the web UI's API keys page, stored as `sha256`, shown once, acting at their account's current role), `formPost` (parameters in an `application/x-www-form-urlencoded` body, merged with the query string, repeated keys included) and `songLyrics` (`getLyricsBySongId`, from the lyrics koan has cached, LRC split into timed lines). Token auth for a username other than the shared secret's is now error 41 rather than 40, which is what tells a client to fall back to a password or a key. Songs, albums and artists carry the OpenSubsonic fields koan has data for: MusicBrainz ids, sort names, display artists, genres as lists, the album date as `releaseDate`, record labels, last played, and bit depth, sample rate and channel count; albums also gain the `duration` and `created` Subsonic always required, and list fields are arrays in JSON even with one member.
 - **koan.rocks.** The project website, as hand-written static HTML and CSS in `site/` with no build step and no tracking. The Site workflow builds `ghcr.io/radiosilence/koan-site` (nano-web) on every push to main, tagged `sha-<commit>` and `latest`, and asks the jaritanet deployment to pick it up.
+- **Web UI.** A server serves a small browser UI at `/`: sign in, browse albums (newest first), artists and search, and play in the browser. Tracks the browser can decode are decoded ahead and started on the sample the last one ends, the same engine as the share page, now one file both load. The queue lives in the browser and survives a reload; the transport has lock-screen controls through the Media Session API. Server-rendered HTML with Datastar for search, paging and the share button; navigation swaps only the page content, so playback continues across pages. Sign-in is koan's own session in `HttpOnly` cookies: a lapsed access cookie is renewed from the refresh cookie (`/auth/resume` for page loads, `/auth/renew` for an open page), so no token reaches page script.
+- **Native sharing.** A koan with no remote Subsonic server makes share links itself, at `{sharing.public_url}/share/{id}`: a page anyone can open without an account, with cover art, the track list and a player per track, and no script at all. The page and its audio serve the share's own tracks and nothing else, by position rather than library id, and an expired, revoked or unknown id is the same 404. Shares are listed with `shares`, renewed with `updateShare` and revoked with `deleteShare` (GraphQL and MCP), and koan's Subsonic API implements `createShare`, `getShares`, `updateShare` and `deleteShare` with `shareRole` on, so Subsonic clients' own share buttons and a koan app pointed at a koan server create native shares. Sharing no longer needs Navidrome behind it.
+- **MCP over HTTP for a headless server.** `--mcp-bind ADDR:PORT` (or `KOAN_MCP_BIND`) serves the same two MCP tools at `/mcp` over streamable HTTP, on a listener of its own, for an authenticating gateway to proxy. It carries no credential check, as stdio does not, so it stays off the public port.
+- **A headless server keeps its index current.** It scans the library folders at start and whenever they change, as the macOS app already did; new music needed `koan scan` or the `triggerScan` mutation before.
+- **Container image.** A `Dockerfile` for the headless server (Debian slim, non-root, state in `/config`), published to `ghcr.io/radiosilence/koan` from `main`, tagged with the commit.
 
 ### Changed
 
@@ -592,90 +621,57 @@
 - **Share links unfurl.** Share pages carry OpenGraph and Twitter card tags (title, a description with tracks and duration, and the cover as an absolute `og:image` on `sharing.public_url`), so messaging apps show a card with the cover.
 - **The web UI sorts and filters.** Albums sort as the macOS app does (recently added, title, artist, year, random) and artists by name, album count or recently added; both filter by favourites, lossless or a codec, a year range and a genre. The sorting, filtering and paging are done in SQL, and the state is the page's query string, so reload, back and a copied link all show the same listing. On a phone the controls fold into one "Sort · Filter" sheet. `AlbumQuery` and `ArtistQuery` gain the `AlbumFilter` that does this, and `ArtistQuery` an `ArtistOrder`.
 - **Covers load fast in the web UI and on share pages.** They were served as embedded, often several hundred kilobytes each, re-read from the audio file on every request; an albums page pulled about 15 MB. They are now resized to the size shown (400 px tiles, 800 px headers and previews), encoded as JPEG, kept on disk under `covers/` in the config directory and in memory, and addressed by a URL that carries the album's file mtime so browsers cache them for good. An album with no art is remembered rather than re-read. The same albums page now fetches about 2.3 MB.
-- **The MCP over HTTP acts as the gateway's signed-in koan account.** The gateway sends \`x-koan-username\` and \`x-koan-password\`; the \`graphql\` tool runs at that account's role (admin, user or readonly), checked the same way as Subsonic's \`p=\`. A request naming no account keeps the transport default (\`User\`, or \`Admin\` with \`KOAN_MCP_ADMIN=1\`), unless \`KOAN_MCP_REQUIRE_LOGIN=1\` refuses it. stdio is unchanged.
-- **Subsonic clients sign in with koan accounts.** \`/rest/*\` accepts \`p=\` (plain or \`enc:\` hex) checked against the account's argon2 hash, so the web UI login works in Subsonic clients too; a successful check is remembered for ten minutes, keyed on the stored hash so a password change ends it. Token auth needs the plaintext on the server, so it remains only for the \`[subsonic]\` shared secret, which is now optional. \`readonly\` accounts get code 50 from every endpoint that writes (stars, scrobbles, playlists, shares) and \`getUser\` reports each account's real roles. koan's own client sends \`p=enc:\` over HTTPS and the salted token over HTTP.
-- **Releases of the macOS app are signed with a Developer ID and notarised.** The release job imports the certificate into a keychain of its own, signs the app with the hardened runtime and a secure timestamp, signs the DMG, has Apple notarise it and staples the ticket, so a downloaded \`Koan.dmg\` opens without the quarantine workaround. \`just macos-notarize\` does the same locally. Without the signing secrets (a fork) the build is ad-hoc signed as before.
+- **The MCP over HTTP acts as the gateway's signed-in koan account.** The gateway sends `x-koan-username` and `x-koan-password`; the `graphql` tool runs at that account's role (admin, user or readonly), checked the same way as Subsonic's `p=`. A request naming no account keeps the transport default (`User`, or `Admin` with `KOAN_MCP_ADMIN=1`), unless `KOAN_MCP_REQUIRE_LOGIN=1` refuses it. stdio is unchanged.
+- **Subsonic clients sign in with koan accounts.** `/rest/*` accepts `p=` (plain or `enc:` hex) checked against the account's argon2 hash, so the web UI login works in Subsonic clients too; a successful check is remembered for ten minutes, keyed on the stored hash so a password change ends it. Token auth needs the plaintext on the server, so it remains only for the `[subsonic]` shared secret, which is now optional. `readonly` accounts get code 50 from every endpoint that writes (stars, scrobbles, playlists, shares) and `getUser` reports each account's real roles. koan's own client sends `p=enc:` over HTTPS and the salted token over HTTP.
+- **Releases of the macOS app are signed with a Developer ID and notarised.** The release job imports the certificate into a keychain of its own, signs the app with the hardened runtime and a secure timestamp, signs the DMG, has Apple notarise it and staples the ticket, so a downloaded `Koan.dmg` opens without the quarantine workaround. `just macos-notarize` does the same locally. Without the signing secrets (a fork) the build is ad-hoc signed as before.
+- **The server sign-in fields say what they are.** An iOS form shows a field's prompt and not its label, so the prompts were the only text on screen, and they were examples (`https://music.example.com`, `your account`, `hunter2`). They now read Server URL, Username and Password.
+- **The share page plays gaplessly, and looks like the rest of the estate.** Tracks the browser can decode are decoded ahead and each is started on the sample the last one ends, so albums that run into each other play without a gap; a track too long to hold decoded (over fifteen minutes) streams instead. One player with previous, play and next, a seek bar, and lock-screen and headphone controls through the Media Session API. The script and stylesheet are served by koan (`/share/assets/*`) and the CSP allows those and nothing else; without script, each track is a plain link.
 
 ### Fixed
 
 - **Sound with the iPhone on silent.** Decoded audio is now heard through a media element (a MediaStream destination played by `<audio>`) rather than straight from Web Audio, which iOS silences with the ring/silent switch however the page declares itself. Scheduling stays on the AudioContext clock, so gapless playback is unchanged, and a media element also keeps playing on the lock screen and in the background. Browsers without MediaStream output play to the context directly, as before.
 - **The seek bar follows the track again.** It stopped updating once clicked, because the position updater skipped a focused range and a clicked range keeps focus; it now skips only while the range is being dragged, and resets as soon as the track changes.
-
-## Unreleased
-
-### Added
-
-- **Web UI.** A server serves a small browser UI at `/`: sign in, browse albums (newest first), artists and search, and play in the browser. Tracks the browser can decode are decoded ahead and started on the sample the last one ends, the same engine as the share page, now one file both load. The queue lives in the browser and survives a reload; the transport has lock-screen controls through the Media Session API. Server-rendered HTML with Datastar for search, paging and the share button; navigation swaps only the page content, so playback continues across pages. Sign-in is koan's own session in `HttpOnly` cookies: a lapsed access cookie is renewed from the refresh cookie (`/auth/resume` for page loads, `/auth/renew` for an open page), so no token reaches page script.
-
-### Fixed
-
 - **Browser sign-in set only one cookie.** `/auth/login`, `/auth/refresh` and `/auth/logout` sent their cookies as a header array, which keeps only the last value per name, so browsers received the stale-path clear and never the access or refresh cookie.
 - **The share page plays on iPhone.** iOS starts audio only inside the tap itself; the player created its audio context there but resumed it after fetching and decoding the first track, which iOS no longer counts as the tap, so nothing played. The context and the streaming element are now unlocked in the gesture, and the page declares itself a media player (`navigator.audioSession`), so the ring/silent switch no longer mutes Web Audio.
-
-## Unreleased
-
-### Changed
-
-- **The server sign-in fields say what they are.** An iOS form shows a field's prompt and not its label, so the prompts were the only text on screen, and they were examples (`https://music.example.com`, `your account`, `hunter2`). They now read Server URL, Username and Password.
-- **The share page plays gaplessly, and looks like the rest of the estate.** Tracks the browser can decode are decoded ahead and each is started on the sample the last one ends, so albums that run into each other play without a gap; a track too long to hold decoded (over fifteen minutes) streams instead. One player with previous, play and next, a seek bar, and lock-screen and headphone controls through the Media Session API. The script and stylesheet are served by koan (`/share/assets/*`) and the CSP allows those and nothing else; without script, each track is a plain link.
-
-## Unreleased
-
-### Fixed
-
 - **A server with auth on starts without `koan auth setup` having run first.** It generates its signing keypair on first start, as the auth-disabled path already did; a server in a container has no terminal to run setup in before it starts, and crash-looped instead. Accounts are still created deliberately: until one exists, nothing signs in.
 
-## Unreleased
-
-### Added
-
-- **Native sharing.** A koan with no remote Subsonic server makes share links itself, at `{sharing.public_url}/share/{id}`: a page anyone can open without an account, with cover art, the track list and a player per track, and no script at all. The page and its audio serve the share's own tracks and nothing else, by position rather than library id, and an expired, revoked or unknown id is the same 404. Shares are listed with `shares`, renewed with `updateShare` and revoked with `deleteShare` (GraphQL and MCP), and koan's Subsonic API implements `createShare`, `getShares`, `updateShare` and `deleteShare` with `shareRole` on, so Subsonic clients' own share buttons and a koan app pointed at a koan server create native shares. Sharing no longer needs Navidrome behind it.
-
-## Unreleased
-
-### Added
-
-- **MCP over HTTP for a headless server.** `--mcp-bind ADDR:PORT` (or `KOAN_MCP_BIND`) serves the same two MCP tools at `/mcp` over streamable HTTP, on a listener of its own, for an authenticating gateway to proxy. It carries no credential check, as stdio does not, so it stays off the public port.
-- **A headless server keeps its index current.** It scans the library folders at start and whenever they change, as the macOS app already did; new music needed `koan scan` or the `triggerScan` mutation before.
-- **Container image.** A `Dockerfile` for the headless server (Debian slim, non-root, state in `/config`), published to `ghcr.io/radiosilence/koan` from `main`, tagged with the commit.
-
-## v0.35.5 (2026-09-26)
+## 0.35.5
 
 ### Fixed
 
 - **Clear Index no longer leaves albums showing another album's cover.** Artwork is cached on disk by album, track and artist id, and a cleared library hands those ids out again from 1, so the cache served each new album the cover of whichever old one had held its number. Clearing the index now clears the artwork cache too. A library already affected needs Clear Artwork Cache once.
 
-## v0.35.4 (2026-09-26)
+## 0.35.4
 
 ### Fixed
 
 - **A full sync also clears what the server's renumbering left behind.** An entry that exists only on the server, still under an id the server has dropped, cannot be streamed, and it sat beside the entry that replaced it. It is now folded into that entry, with its play history and favourite. Files without a track number are paired with their server entry in the same sync, where before they needed a second one.
 
-## v0.35.3 (2026-09-26)
+## 0.35.3
+
+### Changed
+
+- `dirs` 7.0.0 ([#444](https://github.com/radiosilence/koan/pull/444)) and `lru` 0.18.5 ([#443](https://github.com/radiosilence/koan/pull/443)). Neither changes behaviour; `dirs` 7 resolves the home and music folders exactly as 6 did.
 
 ### Fixed
 
 - **A full sync relinks files after the server renumbers its tracks.** When a Navidrome rescan gave every track a new id, the local file kept the old one. The sync added the recording again under the new id, and the two were never merged because both carried a server id, so the library listed each affected track twice. After a complete full sync, a file whose id the server no longer has is unlinked and merged into the entry carrying the current id, keeping its play history and favourites. ([#445](https://github.com/radiosilence/koan/pull/445))
 - **The album grid's reshuffle button is a die.** It used the shuffle symbol, the same one as playing an artist or a record shuffled, for an action that plays nothing. ([#441](https://github.com/radiosilence/koan/pull/441))
 
-### Changed
-
-- `dirs` 7.0.0 ([#444](https://github.com/radiosilence/koan/pull/444)) and `lru` 0.18.5 ([#443](https://github.com/radiosilence/koan/pull/443)). Neither changes behaviour; `dirs` 7 resolves the home and music folders exactly as 6 did.
-
-## v0.35.2 (2026-09-25)
+## 0.35.2
 
 ### Fixed
 
 - **The log is written on a first launch.** The logger opened `koan.log` before anything had created `~/.config/koan`, failed, and stayed silent for the rest of the run, so a first launch of the macOS app, or of the CLI on a fresh machine, left nothing to diagnose. It now creates the directory itself and retries the open on a later message if one fails.
 
-## v0.35.1 (2026-09-24)
+## 0.35.1
 
 ### Fixed
 
 - **Back returns to where the album grid and the artist list were scrolled.** Both were rebuilt on the way back, and a macOS `List` cannot be told to scroll, so they always came back at the top. Once visited they now stay mounted behind the other pages, as the queue already did. Clicking a sidebar row for the page already showing sends it back to the top instead, the way a browser tab's own link does. ([#440](https://github.com/radiosilence/koan/pull/440))
 - **The `koan-app` cask uses `postflight_steps`.** Homebrew deprecated the block form of `postflight` and warns about it on every `brew update`.
 
-## v0.35.0 (2026-09-24)
+## 0.35.0
 
 ### Added
 
@@ -686,13 +682,13 @@
 - **MusicBrainz artist searches match the whole name.** A name of several words was searched word by word, so "Azure Ray" found Ray Charles. This also sharpens radio's relationship lookups.
 - **Shuffle sits in the artist page's button row**, beside Play Next and Queue, rather than on a line of its own below them. ([#437](https://github.com/radiosilence/koan/pull/437))
 
-## v0.34.3 (2026-09-24)
+## 0.34.3
 
 ### Added
 
 - **Pause and resume fade.** The volume ramps over 150ms instead of cutting, and the play head stops on the last sample heard. `playback.fade_on_pause`, on by default; Settings → Playback. Outside the ramp samples pass through untouched, so playback stays bit-perfect.
 
-## v0.34.2 (2026-09-24)
+## 0.34.2
 
 ### Fixed
 
@@ -737,7 +733,7 @@
 - **A file on disk and the server's copy of it are one track, whatever the server calls the album.** Navidrome appends a release's MusicBrainz disambiguation to its name — "(deluxe)", "(Bandcamp)", "(Unmixed)" — and dedup matched on the album name, so thousands of tracks sat twice on two album pages: one playing from disk, one streaming, and dead whenever the server was unreachable. koan now reads the recording and release ids from local tags (Picard's `MUSICBRAINZ_TRACKID` / `MUSICBRAINZ_ALBUMID`) and matches on the pair. The recording alone would fold an album track into every compilation it is on; the release is what keeps those apart. The next scan after upgrading re-reads the files indexed without an id, once, and folds what it finds. ([#422](https://github.com/radiosilence/koan/issues/422))
 - **The test suite no longer opens the library of whoever runs it.** The TUI's `App` and `LibraryState` took a database path and ignored it, reading through the shared pool, which opens the configured library. A render test that browsed the library therefore opened the developer's own — and opening it runs the checked-out branch's migrations against it. The dead parameters are gone, the test isolates its config like the others, and `just check` runs the suite against a throwaway config dir and fails if anything writes there. ([#423](https://github.com/radiosilence/koan/issues/423))
 
-## v0.34.1 (2026-09-23)
+## 0.34.1
 
 ### Changed
 
@@ -757,17 +753,17 @@
 
 - **A file dropped from Finder no longer doubles on the next rescan if its name has an accent.** Foundation hands over file paths with accents precomposed, and a Mac-written disk holds them decomposed; both open the same file, but `tracks.path` is compared bytewise, so a rescan saw a file it had no row for and added a second one. Only the accented names on an album doubled, which is what made it look like nothing in particular. Paths from outside — a drop, a configured folder, a folder being forgotten — are now resolved against the directory that holds them and stored as it spells them. Pairs already split are folded on the next launch: the older row keeps its history and sync link and takes the disk's spelling; favourites follow. ([#418](https://github.com/radiosilence/koan/issues/418))
 
-## v0.34.0 (2026-09-22)
+## 0.34.0
+
+### Security
+
+- **rustls accepted TLS 1.3 handshake messages across a key change (RUSTSEC-2026-0285)** — a Subsonic/Navidrome server, or anyone between koan and one, could send handshake messages in plaintext that should have been encrypted without the connection being refused. The transcript is still authenticated, so a handshake could not be altered or completed this way. rustls is now 0.23.45.
 
 ### Added
 
 - **Pick several albums and play or queue them together.** Select in the Albums toolbar, ⌘-click a cover, or ⌘A turns the grid into a selection: a click ticks a record, ⇧-click ticks a range, and Play or Add to Queue takes the lot and puts the grid back. A mode rather than list-style clicking, because a click on a tile already plays the record and its title already opens it.
 
   Ticks survive the filter changing, so a pick can be gathered across several searches, and they play in the order they were made — the grid has no order for a record it is no longer showing. Dragging a ticked tile carries every tick to the queue or a playlist; an unticked one still carries only itself. Escape, Done or leaving the page ends it.
-
-### Security
-
-- **rustls accepted TLS 1.3 handshake messages across a key change (RUSTSEC-2026-0285)** — a Subsonic/Navidrome server, or anyone between koan and one, could send handshake messages in plaintext that should have been encrypted without the connection being refused. The transcript is still authenticated, so a handshake could not be altered or completed this way. rustls is now 0.23.45.
 
 ### Fixed
 
@@ -781,7 +777,7 @@
 
   Pairs already split are folded together on the next launch. A sync could never do it: it matches a remote row by the id the server gave it, long before any content match runs, so the two would have stayed apart for good. The local row wins — it holds the path and the properties read from the file, and playback prefers it — and inherits the id the server knows it by. Only a clean pair is touched: one row with a path and no remote id, one with a remote id and no path, sharing an album, a title, a disc and a track number. Anything else is left where it is rather than guessed at.
 
-## v0.33.2 (2026-08-29)
+## 0.33.2
 
 ### Changed
 
@@ -829,7 +825,7 @@
 
 - **`chacha20` moves off a yanked release.** 0.10.0 and 0.10.1 called an SSE4.1 intrinsic from inside the SSE2 backend, so on an x86 processor with SSE2 and not SSE4.1 the instruction is illegal and the process dies. Upstream yanked both and shipped 0.10.2. Not a weakness in the cipher — a crash, and only on hardware old enough to matter to the Linux builds.
 
-## v0.33.1 (2026-08-28)
+## 0.33.1
 
 ### Added
 
@@ -865,61 +861,7 @@
 
 - **A track no longer leaves its album when its download finishes.** A track that streams starts on the partial tags symphonia can read, so when the file lands koan re-reads it properly and fills the queue item in. It filled in tracks that needed nothing — ones that came out of the library and already carried the record's own title. Where a file's tags disagree with the server's, and on a rip they often do, the item quietly changed album halfway down the queue and its record split in two: ten tracks under one heading, the one that had played under another. The file's word now only counts for a queue item with no library row behind it. Its duration still counts for everything, because that is the file's to know.
 
-## v0.33.0 (2026-08-26)
-
-### Removed
-
-- **WavPack and Monkey's Audio are no longer indexed.** koan could not play either: symphonia has no WavPack reader at all — there is no feature to turn on — and its `ape` feature is APE *tags*, not the codec. Both extensions were scanned all the same, so a library holding them showed rows that listed, searched, sorted, and then refused to play. A format koan cannot open is better left out than claimed.
-
-  Anything already indexed disappears on the next scan.
-
-### Fixed
-
-- **A large Opus file plays while it downloads again.** koan#375 taught a partial file to answer "where does this end?" with what had arrived rather than with the length the server advertised, which is what FLAC needs — it bisects between its first frame and the end it is given, and an end it cannot reach sends every probe into bytes that are not on disk.
-
-  Ogg needs the opposite. It takes the end it is handed as the end of the *stream*, so told the file stops at the write head it reported a track that was already over: nought milliseconds, and the decode thread reached the end of it in a second and moved on to the next, over and over. A large Opus download never played at all. The answer now depends on the container — Ogg, Opus, Speex and Ogg-FLAC keep the whole file's end, everything else keeps what has arrived. Neither can seek mid-download; for Ogg this is the difference between playing and not.
-
-- **Long tracks streamed from a server no longer break when the download lands.** Playback of a track that started mid-download held on to the name of the temporary file it started from. Finishing a download renames that file, so from then on the track named nothing: the next seek failed to open it and stopped playback outright. A nine-hour recording made it easy to hit, because there was a lot of track left to seek in.
-
-- **Seeking a track that is still downloading stays in the stream.** It used to reopen the partial file as an ordinary file, decoding whatever bytes happened to be on disk and ending the track early. Seeking now stays inside the download and lands anywhere already fetched, forwards or back.
-
-- **The seek bar shows how far a track can actually be reached, and stops there.** The limit was derived from the download's own byte count and quietly did nothing when a server sent no `Content-Length`, or when under five seconds had arrived — so a scrub could land somewhere the track had not got to. koan works it out once now, from bytes where a length is known and from the measured bitrate where it is not, and the bar draws the same figure the engine enforces.
-
-- **A large track no longer holds the player deaf while it opens.** Reading a container to find out what it is happened on the thread that answers play, pause and seek. Ogg states its duration in its last page, so opening one mid-download waited for the entire remaining transfer first — twenty-two seconds of an unresponsive player, on a fast connection. That reading now happens on its own thread and comes back as a message like anything else.
-
-- **A long Opus starts playing straight away rather than waiting for the whole download.** It used to wait because of that last page. koan now opens a partial file without stating a length, which is what stops a container going looking for its tail — and is how every format opens mid-download, not only Ogg, because stating a length also sends the reader looking for metadata at the end of a file that is not all there. The track starts in milliseconds and plays. What each format gives up is whatever only its tail could tell it: for Ogg that is the duration, and with it seeking, until the transfer lands. Ones that describe their frames from the front — FLAC, MP3, MP4 — stay seekable throughout, as far into the track as the bytes reach.
-
-  The transport says which of the two it is rather than leaving you to find out: the bar fills as the file arrives, the playhead moves against the duration the library knows, and reaching for a position it cannot reach yet gets an answer instead of silence.
-
-  When the transfer lands, seeking comes back on its own. Playback is not interrupted to do it — the decoder is reading a file, and a file being renamed underneath an open descriptor is not something it notices. The finished file is picked up the next time the track is seeked, which is the first moment it matters.
-
-- **A track whose downloaded copy was thrown away plays again.** Clearing downloads deleted the files but left the queue pointing at them and still saying they were ready, so afterwards nothing in the queue would play at all. Anything whose copy has gone is put back to waiting and fetched again.
-
-- **A track still downloading can be played by asking for it.** Double-clicking one opened the path the transfer will be renamed to rather than the one it is writing, and found nothing there — so it waited for the whole download rather than starting. Where a transfer is writing is now part of what says a transfer is running, so there is no longer an order for two threads to get wrong.
-
-- **The seek bar's downloaded extent moves while the download does.** The transport keeps its own copy of what is playing, refreshed when the playback state or the cursor moves — and neither moves during a download, so the mark sat wherever it had been when playback started. It follows the progress it is drawing now.
-
-- **A finished download's bar does not read as an empty one.** The downloads page lit the part that had arrived, so a transfer completing took the highlight away and the bar dropped back to looking untouched. The quiet end is the part still missing, the same way round as the seek bar.
-
-- **The bar no longer darkens when a download finishes.** It lit the downloaded part rather than dimming the part that had not arrived, so completing a transfer took the highlight away and the whole bar dropped a shade. The quiet end is the one that is missing, and a track already on disk looks like the ordinary bar it is.
-
-- **The playhead is visible on a very long track.** A third of a minute into nine hours is a tenth of a percent of the bar — narrower than the bar is thick, and so drawn as nothing at all. It has a head that does not shrink with the fraction.
-
-- **A download landing shows up on the page you are looking at.** A track fetched while its record was on screen kept an empty cloud until you navigated away and back — the page showing the row was not among the things a library change refreshed. A playlist had it twice over: nothing told it a library change had happened at all, and its progress rings never moved, because progress was patched into the queue index keyed by track and not the one keyed by playlist entry, which is the one a playlist row reads.
-
-- **The cloud and the heart sit in the same order everywhere.** The queue and a playlist had them the other way round from a record's own track list.
-
-- **Playing a track twice before it arrives fetches it once.** Downloads were deduplicated by queue entry rather than by track, and playing something again makes a new entry — so nothing matched and a second transfer started over the first. Both wrote the same file, and whichever finished renamed it out from under the other, which is where the failed downloads in the log came from. One transfer now, with every entry waiting on it told when it lands.
-
-- **FLACs start before their whole file has arrived.** A FLAC keeps a padding block after its tags — space reserved so tags can be edited without rewriting the file, and often several hundred kilobytes of it — which puts the first audio frame further in than the point streaming begins looking. koan gave up rather than reading on, so a FLAC played only once fully downloaded while an MP3 started at once.
-
-- **Finding what is favourited no longer reads the whole library.** Matching favourites to tracks joined on three columns at once, which no index can serve, so it read every track to find the hundred that were starred — fifty milliseconds, on every listing that shows a heart, which is all of them. One millisecond now, on a library of forty-eight thousand.
-
-- **Reaching for a position in a track that has not arrived says so.** A track whose container cannot state a duration until the last of its bytes lands — Ogg — is reachable nowhere at all while it downloads, and every seek into one was sent unclamped and taken as a seek to zero, so the arrow keys threw playback back to the start. The TUI now says how far the transfer has got instead of moving.
-
-- **Clicking the TUI's seek bar lands where it was aimed on a track still downloading.** The click was mapped against the duration the container reported, which on a partial file reads short, while the bar was drawn against the one the library knows. Both use the library's now.
-
-- **Half-finished downloads are cleaned up.** koan writes a download straight through and renames it at the end, so a `.part` file still on disk is from a run that did not finish — bytes nothing knows about, since only finished downloads are tracked for eviction. An interrupted nine-hour recording was half a gigabyte that never came back. They are swept at startup, which is the run after the one that left them.
+## 0.33.0
 
 ### Changed
 
@@ -965,9 +907,17 @@
   
 - **The TUI opens the database once rather than per query.** Every read opened its own connection: a `create_dir_all`, a permissions syscall, the whole schema DDL and a WAL checkpoint before a single row came back — and while downloads were writing, that checkpoint contended with them. The TUI's reads are user-triggered rather than per-frame so it never cost what it cost the macOS app, but autosave ran one on a timer. It shares the pool the app uses, which now applies the schema itself so a first run on a fresh machine works the same way.
 
-- **What koan is downloading is kept in one place.** Whether a track was arriving was recorded twice — once against the queue entry and once by the downloader — and the two had to be told separately, so they could and did disagree: a queue entry pointed at the file a transfer had just been renamed away from, and anything the TUI fetched was invisible to everything else. A queue entry now says only whether its own file can be played, and whether bytes are arriving is asked of the downloader.
+### Fixed
 
-- **A download in progress is played from disk rather than copied into memory.** The decoder used to read from a growing in-memory copy that a second thread filled from the file: a 451 MB recording cost 451 MB of RAM for as long as it played. It reads the file directly now, which costs nothing, seeks backwards for free, and carries on across the rename that ends a download.
+- **A large Opus file plays while it downloads again.** koan#375 taught a partial file to answer "where does this end?" with what had arrived rather than with the length the server advertised, which is what FLAC needs — it bisects between its first frame and the end it is given, and an end it cannot reach sends every probe into bytes that are not on disk.
+
+  Ogg needs the opposite. It takes the end it is handed as the end of the *stream*, so told the file stops at the write head it reported a track that was already over: nought milliseconds, and the decode thread reached the end of it in a second and moved on to the next, over and over. A large Opus download never played at all. The answer now depends on the container — Ogg, Opus, Speex and Ogg-FLAC keep the whole file's end, everything else keeps what has arrived. Neither can seek mid-download; for Ogg this is the difference between playing and not.
+
+- **Reaching for a position in a track that has not arrived says so.** A track whose container cannot state a duration until the last of its bytes lands — Ogg — is reachable nowhere at all while it downloads, and every seek into one was sent unclamped and taken as a seek to zero, so the arrow keys threw playback back to the start. The TUI now says how far the transfer has got instead of moving.
+
+- **Clicking the TUI's seek bar lands where it was aimed on a track still downloading.** The click was mapped against the duration the container reported, which on a partial file reads short, while the bar was drawn against the one the library knows. Both use the library's now.
+
+## 0.32.0
 
 ### Added
 
@@ -995,8 +945,68 @@
 
   The setting lives in macOS defaults (`defaults write cc.blit.koan graphics -int 0`) rather than `config.toml`: how much this app draws is this machine's business, and the TUI has none of it to draw.
 
+### Changed
+
+- **What koan is downloading is kept in one place.** Whether a track was arriving was recorded twice — once against the queue entry and once by the downloader — and the two had to be told separately, so they could and did disagree: a queue entry pointed at the file a transfer had just been renamed away from, and anything the TUI fetched was invisible to everything else. A queue entry now says only whether its own file can be played, and whether bytes are arriving is asked of the downloader.
+
+- **A download in progress is played from disk rather than copied into memory.** The decoder used to read from a growing in-memory copy that a second thread filled from the file: a 451 MB recording cost 451 MB of RAM for as long as it played. It reads the file directly now, which costs nothing, seeks backwards for free, and carries on across the rename that ends a download.
+- **The macOS app queries the library instead of copying it.** It used to load every album and every artist at launch, narrow those copies in Swift and index them so search could resolve ids against them -- three shapes of the same five thousand rows, held to serve views that read none of them directly. Now a section asks the engine what it should be showing and shows exactly that; narrowing and sorting happen in SQL.
+
+  Nothing is paged. This is an in-process call rather than a wire, so a listing arrives whole: the scrollbar tells the truth about how long the library is, and one flick reaches the end of it.
+
+  The bugs this closes are the ones that came from the copy existing: a section showing a library the database no longer has, and a cold launch showing an empty one because the load lived somewhere the second window never reached. There is no load to have forgotten to do.
+
+  `AlbumSort::Random` now takes a seed, so narrowing a shuffled listing narrows the shuffle you are looking at instead of dealing a new one on every keystroke. A new seed is a new shuffle, which is what the reshuffle button asks for.
+
+- **The engine says when the library changed.** A new `LibraryChanged` event rides the same channel as `QueueChanged` and `DownloadsChanged`, raised by anything that writes library rows -- scan, sync, import, organize, forget, rebuild -- including the automatic sync and the watched-folder scan that nothing was announcing at all. A background scan finishing now reaches the browser the same way one you asked for does, and the app no longer refreshes itself by guessing from whatever it happened to start.
+
+- **`koan-core` narrows and orders albums and artists itself.** `list_albums` and `list_artists` take a search term, an order, a favourites-only flag and an optional limit, replacing the several near-identical queries that answered one shape of the question each. Play history and favourite tracks take a search term too, and fuzzy album and artist search hands back rows rather than ids for a caller to resolve.
+
+### Removed
+
+- **WavPack and Monkey's Audio are no longer indexed.** koan could not play either: symphonia has no WavPack reader at all — there is no feature to turn on — and its `ape` feature is APE *tags*, not the codec. Both extensions were scanned all the same, so a library holding them showed rows that listed, searched, sorted, and then refused to play. A format koan cannot open is better left out than claimed.
+
+  Anything already indexed disappears on the next scan.
+
 ### Fixed
 
+- **Long tracks streamed from a server no longer break when the download lands.** Playback of a track that started mid-download held on to the name of the temporary file it started from. Finishing a download renames that file, so from then on the track named nothing: the next seek failed to open it and stopped playback outright. A nine-hour recording made it easy to hit, because there was a lot of track left to seek in.
+
+- **Seeking a track that is still downloading stays in the stream.** It used to reopen the partial file as an ordinary file, decoding whatever bytes happened to be on disk and ending the track early. Seeking now stays inside the download and lands anywhere already fetched, forwards or back.
+
+- **The seek bar shows how far a track can actually be reached, and stops there.** The limit was derived from the download's own byte count and quietly did nothing when a server sent no `Content-Length`, or when under five seconds had arrived — so a scrub could land somewhere the track had not got to. koan works it out once now, from bytes where a length is known and from the measured bitrate where it is not, and the bar draws the same figure the engine enforces.
+
+- **A large track no longer holds the player deaf while it opens.** Reading a container to find out what it is happened on the thread that answers play, pause and seek. Ogg states its duration in its last page, so opening one mid-download waited for the entire remaining transfer first — twenty-two seconds of an unresponsive player, on a fast connection. That reading now happens on its own thread and comes back as a message like anything else.
+
+- **A long Opus starts playing straight away rather than waiting for the whole download.** It used to wait because of that last page. koan now opens a partial file without stating a length, which is what stops a container going looking for its tail — and is how every format opens mid-download, not only Ogg, because stating a length also sends the reader looking for metadata at the end of a file that is not all there. The track starts in milliseconds and plays. What each format gives up is whatever only its tail could tell it: for Ogg that is the duration, and with it seeking, until the transfer lands. Ones that describe their frames from the front — FLAC, MP3, MP4 — stay seekable throughout, as far into the track as the bytes reach.
+
+  The transport says which of the two it is rather than leaving you to find out: the bar fills as the file arrives, the playhead moves against the duration the library knows, and reaching for a position it cannot reach yet gets an answer instead of silence.
+
+  When the transfer lands, seeking comes back on its own. Playback is not interrupted to do it — the decoder is reading a file, and a file being renamed underneath an open descriptor is not something it notices. The finished file is picked up the next time the track is seeked, which is the first moment it matters.
+
+- **A track whose downloaded copy was thrown away plays again.** Clearing downloads deleted the files but left the queue pointing at them and still saying they were ready, so afterwards nothing in the queue would play at all. Anything whose copy has gone is put back to waiting and fetched again.
+
+- **A track still downloading can be played by asking for it.** Double-clicking one opened the path the transfer will be renamed to rather than the one it is writing, and found nothing there — so it waited for the whole download rather than starting. Where a transfer is writing is now part of what says a transfer is running, so there is no longer an order for two threads to get wrong.
+
+- **The seek bar's downloaded extent moves while the download does.** The transport keeps its own copy of what is playing, refreshed when the playback state or the cursor moves — and neither moves during a download, so the mark sat wherever it had been when playback started. It follows the progress it is drawing now.
+
+- **A finished download's bar does not read as an empty one.** The downloads page lit the part that had arrived, so a transfer completing took the highlight away and the bar dropped back to looking untouched. The quiet end is the part still missing, the same way round as the seek bar.
+
+- **The bar no longer darkens when a download finishes.** It lit the downloaded part rather than dimming the part that had not arrived, so completing a transfer took the highlight away and the whole bar dropped a shade. The quiet end is the one that is missing, and a track already on disk looks like the ordinary bar it is.
+
+- **The playhead is visible on a very long track.** A third of a minute into nine hours is a tenth of a percent of the bar — narrower than the bar is thick, and so drawn as nothing at all. It has a head that does not shrink with the fraction.
+
+- **A download landing shows up on the page you are looking at.** A track fetched while its record was on screen kept an empty cloud until you navigated away and back — the page showing the row was not among the things a library change refreshed. A playlist had it twice over: nothing told it a library change had happened at all, and its progress rings never moved, because progress was patched into the queue index keyed by track and not the one keyed by playlist entry, which is the one a playlist row reads.
+
+- **The cloud and the heart sit in the same order everywhere.** The queue and a playlist had them the other way round from a record's own track list.
+
+- **Playing a track twice before it arrives fetches it once.** Downloads were deduplicated by queue entry rather than by track, and playing something again makes a new entry — so nothing matched and a second transfer started over the first. Both wrote the same file, and whichever finished renamed it out from under the other, which is where the failed downloads in the log came from. One transfer now, with every entry waiting on it told when it lands.
+
+- **FLACs start before their whole file has arrived.** A FLAC keeps a padding block after its tags — space reserved so tags can be edited without rewriting the file, and often several hundred kilobytes of it — which puts the first audio frame further in than the point streaming begins looking. koan gave up rather than reading on, so a FLAC played only once fully downloaded while an MP3 started at once.
+
+- **Finding what is favourited no longer reads the whole library.** Matching favourites to tracks joined on three columns at once, which no index can serve, so it read every track to find the hundred that were starred — fifty milliseconds, on every listing that shows a heart, which is all of them. One millisecond now, on a library of forty-eight thousand.
+
+- **Half-finished downloads are cleaned up.** koan writes a download straight through and renames it at the end, so a `.part` file still on disk is from a run that did not finish — bytes nothing knows about, since only finished downloads are tracked for eviction. An interrupted nine-hour recording was half a gigabyte that never came back. They are swept at startup, which is the run after the one that left them.
 - **A rate something else changed now reaches the macOS app.** koan has watched the device's nominal sample rate since #323 and the watch fires -- the log has been saying so all along. What never moved was the app. The FFI announces a playback change only when its snapshot differs from the last one, and that comparison was a signature of named fields: playback state, cursor, and, since #359, how far the download had got. The output rate is none of them, so retuning the interface under a playing track left the badge claiming the rate the device held when the track started, until the next track happened to move the cursor.
 
   The snapshot is compared whole now, with the position held out because it has an event of its own. A signature has to be remembered to be widened, and had already been widened twice. The same omission was swallowing a stream's duration correction, which lands after playback starts and moves nothing else.
@@ -1011,21 +1021,13 @@
 
 - **The wash honours Reduce Motion.** It never did. The playing indicators already went still when the system asked for less motion and the room behind them kept breathing.
 
-### Changed
+## 0.31.2
 
-- **The macOS app queries the library instead of copying it.** It used to load every album and every artist at launch, narrow those copies in Swift and index them so search could resolve ids against them -- three shapes of the same five thousand rows, held to serve views that read none of them directly. Now a section asks the engine what it should be showing and shows exactly that; narrowing and sorting happen in SQL.
+### Added
 
-  Nothing is paged. This is an in-process call rather than a wire, so a listing arrives whole: the scrollbar tells the truth about how long the library is, and one flick reaches the end of it.
+- **The app says so when it has a server configured and no password for it.** Nothing did. The queue filled with tracks that never loaded, every sleeve came back empty and no download started — which reads as a broken library rather than as being signed out, and sends you looking in the wrong place for it. A toast at launch now names the server and points at Settings, which is where the one thing that fixes it lives.
 
-  The bugs this closes are the ones that came from the copy existing: a section showing a library the database no longer has, and a cold launch showing an empty one because the load lived somewhere the second window never reached. There is no load to have forgotten to do.
-
-  `AlbumSort::Random` now takes a seed, so narrowing a shuffled listing narrows the shuffle you are looking at instead of dealing a new one on every keystroke. A new seed is a new shuffle, which is what the reshuffle button asks for.
-
-- **The engine says when the library changed.** A new `LibraryChanged` event rides the same channel as `QueueChanged` and `DownloadsChanged`, raised by anything that writes library rows -- scan, sync, import, organize, forget, rebuild -- including the automatic sync and the watched-folder scan that nothing was announcing at all. A background scan finishing now reaches the browser the same way one you asked for does, and the app no longer refreshes itself by guessing from whatever it happened to start.
-
-- **`koan-core` narrows and orders albums and artists itself.** `list_albums` and `list_artists` take a search term, an order, a favourites-only flag and an optional limit, replacing the several near-identical queries that answered one shape of the question each. Play history and favourite tracks take a search term too, and fuzzy album and artist search hands back rows rather than ids for a caller to resolve.
-
-## v0.31.2 (2026-08-25)
+- **A button that puts the queue back on the row that is playing.** Beside the layout picker, since both are about what you are looking at rather than what is in the queue. The row is centred rather than dropped at the top edge — what is playing is read against what comes after it. It runs the same path `g` and `G` do, and is disabled rather than hidden when nothing is playing.
 
 ### Changed
 
@@ -1037,23 +1039,17 @@
 
   The remote password, the Subsonic API secret and the refresh token from `koan auth login` all move. `koan auth login` writes a new `[auth]` section naming the server it signed in to. The `keyring` dependency and `KOAN_NO_KEYCHAIN` are gone, along with the test-suite opt-out that only existed because unsigned test binaries could never match an ACL either.
 
-### Added
-
-- **The app says so when it has a server configured and no password for it.** Nothing did. The queue filled with tracks that never loaded, every sleeve came back empty and no download started — which reads as a broken library rather than as being signed out, and sends you looking in the wrong place for it. A toast at launch now names the server and points at Settings, which is where the one thing that fixes it lives.
-
-- **A button that puts the queue back on the row that is playing.** Beside the layout picker, since both are about what you are looking at rather than what is in the queue. The row is centred rather than dropped at the top edge — what is playing is read against what comes after it. It runs the same path `g` and `G` do, and is disabled rather than hidden when nothing is playing.
-
-### Fixed
-
-- **The queue comes back to where you left it.** A trip to an album and back dropped you at the top of it again. The stage builds one page at a time, so leaving the queue destroyed it — and a macOS `List` cannot be put back: its scroll position belongs to AppKit's table, and every SwiftUI way of asking for one (`scrollPosition`, `scrollTo(y:)`, `scrollPosition(id:)`) is quietly inert on it. The queue is no longer torn down. It stays where it is, behind whatever you navigated to: invisible, untouchable, and off stage, which is also what stops the bars on the playing row dancing to an analyser nobody can see. The selection you left survives the trip too.
-
 ### Removed
 
 - **The macOS app is Apple silicon only.** It shipped as a universal binary, and the Intel slice was over half the release build: two cross compilations of the engine, lipo'd together, then a universal Swift build on top. That is a long time and a lot of a runner's disk — enough that the v0.31.1 release ran out of it partway through writing the disk image — to serve machines whose newest supported macOS is the app's minimum.
 
   koan itself is unchanged on Intel: `koan` the terminal player still builds and ships for `x86_64-apple-darwin`, and an Intel Mac that wants koan can run that. It is the SwiftUI app, and only the app, that now needs Apple silicon.
 
-## v0.31.1 (2026-08-25)
+### Fixed
+
+- **The queue comes back to where you left it.** A trip to an album and back dropped you at the top of it again. The stage builds one page at a time, so leaving the queue destroyed it — and a macOS `List` cannot be put back: its scroll position belongs to AppKit's table, and every SwiftUI way of asking for one (`scrollPosition`, `scrollTo(y:)`, `scrollPosition(id:)`) is quietly inert on it. The queue is no longer torn down. It stays where it is, behind whatever you navigated to: invisible, untouchable, and off stage, which is also what stops the bars on the playing row dancing to an analyser nobody can see. The selection you left survives the trip too.
+
+## 0.31.1
 
 ### Changed
 
@@ -1065,7 +1061,7 @@
 
 - **Artist chips are a plain fill rather than glass.** Glass samples what is behind it and adapts its own luminance to stay legible against it — right for something floating over content, wrong for a chip sitting in it. On a flat page ground every pill sampled the same colour and they all matched; over the wash they each answered to a different part of it, so a row of them read as a scatter of half-transparent ones rather than a set. A fixed fill takes its share of the colour behind it without arguing with it.
 
-## v0.31.0 (2026-08-25)
+## 0.31.0
 
 ### Added
 
@@ -1219,11 +1215,17 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 - **The README said Opus wasn't supported.** It was removed from the format list on the grounds that symphonia ships no Opus decoder. That much is true and always has been, which is why koan has bridged `opus-decoder` since v0.20.3.
 
-## v0.30.2 (2026-08-25)
+## 0.30.2
 
 ### Added
 
 - **A heart on the transport.** ⌘D has always favourited what is playing from anywhere, but a heart you can see also tells you whether this one is already in. It sits next to the title, because that is what it acts on.
+
+### Changed
+
+- **The format badge says when the output is being resampled.** koan switches the device to the source rate, and when a device refuses — MPEG-2 and MPEG-2.5 MP3 rates routinely are — the system resamples to reach it. The player has always known which of those happened, because `set_device_sample_rate` returns the rate the device settled at, and it compared the two and wrote a line to the log. Nothing else ever saw it. Meanwhile the badge showed the source format either way, captioned "koan matches the device rate rather than resampling" — an unconditional claim that is false in exactly the case worth knowing about.
+
+  The settled rate now reaches the front ends: the macOS badge appends it — `FLAC 24/96 → 48` — the TUI's format line does the same, and `nowPlaying.track.outputSampleRate` carries it over GraphQL. What it does not do is claim bit-perfection. koan never takes the device exclusively, so another application's audio can be mixed in and the volume stage may scale in software, and none of that is visible from inside the process. What koan can say for certain is whether it handed the device the samples as they are, or something had to resample to reach it — so that is all it says.
 
 ### Fixed
 
@@ -1239,13 +1241,7 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
   The load state says *that* a download is running and hands out the counter; the counter is where progress lives, and the download thread writes it without taking a lock at all. It is announced once per attempt. Progress reaches the macOS app as its own event instead of as a queue change, so it moves at 10 Hz without anything being rebuilt — and the last few tracks of an album no longer freeze at whatever fraction they had reached, which is what happened when nothing was left *waiting* to download and the old nudge stopped firing.
 
-### Changed
-
-- **The format badge says when the output is being resampled.** koan switches the device to the source rate, and when a device refuses — MPEG-2 and MPEG-2.5 MP3 rates routinely are — the system resamples to reach it. The player has always known which of those happened, because `set_device_sample_rate` returns the rate the device settled at, and it compared the two and wrote a line to the log. Nothing else ever saw it. Meanwhile the badge showed the source format either way, captioned "koan matches the device rate rather than resampling" — an unconditional claim that is false in exactly the case worth knowing about.
-
-  The settled rate now reaches the front ends: the macOS badge appends it — `FLAC 24/96 → 48` — the TUI's format line does the same, and `nowPlaying.track.outputSampleRate` carries it over GraphQL. What it does not do is claim bit-perfection. koan never takes the device exclusively, so another application's audio can be mixed in and the volume stage may scale in software, and none of that is visible from inside the process. What koan can say for certain is whether it handed the device the samples as they are, or something had to resample to reach it — so that is all it says.
-
-## v0.30.1 (2026-08-25)
+## 0.30.1
 
 ### Changed
 
@@ -1259,7 +1255,11 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 - **Navigating anywhere could take two seconds.** Opening an album from the queue and then clicking through to its artist slid the page in as though it were being dragged. `.animation(_:value:)` animates *every* animatable change in the subtree it is attached to, not only the value it names, and it was attached to the whole split view to cross-fade the tint between records — so any navigation that happened to coincide with a new colour was stretched to the length of that cross-fade. The tint is animated where it is set instead, which is the only thing that was ever meant to move.
 
-## v0.30.0 (2026-08-24)
+## 0.30.0
+
+### Added
+
+- **The artist and album in the transport bar are links.** The bar named what was playing and gave you no way to get to it — its second line was the artist as plain text, and the record it came from was not shown at all. It reads `artist — album` now, each name going where its own name says, through the same `LinkText` the rows, grid cells and queue headers use. That was the last place in the app an artist name was not a link.
 
 ### Changed
 
@@ -1287,17 +1287,14 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 - **Favourites and history can be filtered, which they were already built for.** Both narrow on title, artist and album, history has an empty state for when a filter matches nothing, and neither could be typed into: the toolbar offered its field to albums and artists by name, and ⌘F named the same two. Which sections have a filter is now one answer on `Navigator.Section` that the field and ⌘F both read, so a section cannot be filterable in the model and not on screen. Favourites also draws the narrowed list rather than the whole one, and counts what it is showing.
 
 - **The sidebar said no remote tracks were cached, however many were.** The count asked for tracks whose `source` is `'cached'` — a value the schema allows and nothing writes, because downloading a track does not change where it came from. What a download writes is `cached_path`, which is what `set_cached_path` sets and clearing the cache nulls. Counted from there it agrees with the files on disk.
-### Added
 
-- **The artist and album in the transport bar are links.** The bar named what was playing and gave you no way to get to it — its second line was the artist as plain text, and the record it came from was not shown at all. It reads `artist — album` now, each name going where its own name says, through the same `LinkText` the rows, grid cells and queue headers use. That was the last place in the app an artist name was not a link.
-
-## v0.29.1 (2026-08-24)
+## 0.29.1
 
 ### Changed
 
 - **The playing row is marked by bars rather than a speaker.** A speaker glyph says "sound comes out of here", which is true of the whole application; what a row needs to say is *this one, and it is still moving*. Three bars ride a pair of sine waves whose frequencies sit at an irrational ratio, so the pattern never settles into a loop the eye can catch, and they freeze where they stand when the transport pauses — paused is the absence of motion, so it costs no second glyph. Reduce Motion gets the bars at rest.
 
-## v0.29.0 (2026-08-24)
+## 0.29.0
 
 ### Added
 
@@ -1339,7 +1336,7 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 - **A macOS build made without Xcode had invisible controls.** The accent is read from the asset catalog, compiling it needs `actool`, and that ships with Xcode proper rather than the command line tools. Without it the colour resolved to nothing and the whole app was tinted with nothing — which does not merely lose the colour: every borderless button and the playing row's title and speaker are drawn in `.tint`, so they were invisible rather than uncoloured. It falls back to the system accent, which is visible and still visibly not koan's.
 
-## v0.28.0 (2026-08-24)
+## 0.28.0
 
 ### Added
 
@@ -1391,7 +1388,7 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 - **Picking from the search dropdown landed on an empty results page instead of what you picked.** Choosing a suggestion pushes its album or artist and then empties the field, and both happened in one update: the results page is the stack's root at that moment, so clearing the query changed what that root drew while the destination was still landing, and it was discarded against the root it had been pushed onto. Emptying the field is its own update now, so the push settles first.
 
-## v0.27.0 (2026-08-24)
+## 0.27.0
 
 ### Added
 
@@ -1457,7 +1454,7 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 - **Reading the config forked a `git` process.** `Config::load()` re-read both TOML files, re-ran the figment merge, and re-scanned for credentials in version control — and that last check shells out to `git ls-files` whenever a password is present in the file, then panics if it is tracked. koan reaches config from paths that run per frame: the macOS settings pane reads `library_folders()` from a SwiftUI list body, so it did all of that per rendered frame. The check is what its own message says it is, a gate on starting, and runs once per process now. The merged config is cached and re-read when either file's mtime moves, so a config edited by hand is still picked up.
 
-## v0.26.0 (2026-08-23)
+## 0.26.0
 
 ### Added
 
@@ -1515,7 +1512,11 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 - **One implementation of pushing a favourite to the server.** The TUI, the app and the server each had a byte-identical copy.
 
-## v0.25.2 (2026-08-23)
+## 0.25.2
+
+### Changed
+
+- **Direct downloads say how to get past Gatekeeper.** The app is signed but not notarised, so macOS refuses the first open of a downloaded copy and offers only "Move to Trash". The `xattr -dr com.apple.quarantine` line now leads the release notes and the README's install section; the Homebrew cask already did this in a postflight.
 
 ### Fixed
 
@@ -1523,17 +1524,13 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 - **A broken bundle can no longer ship.** `just macos-verify <arches>` asserts the binary contains every architecture asked for and does not link `koan_ffi` dynamically, and CI runs it between the build and the DMG. Both bundles that went out broken today built, signed and packaged without complaint.
 - **The Homebrew cask is no longer published with an empty checksum.** The shas came from bare `sha256sum <path>` calls whose failure went nowhere, so a missing artifact produced `sha256 ""` — which Homebrew refuses to install — and nothing in the run said so.
 
-### Changed
-
-- **Direct downloads say how to get past Gatekeeper.** The app is signed but not notarised, so macOS refuses the first open of a downloaded copy and offers only "Move to Trash". The `xattr -dr com.apple.quarantine` line now leads the release notes and the README's install section; the Homebrew cask already did this in a postflight.
-
-## v0.25.1 (2026-08-23)
+## 0.25.1
 
 ### Fixed
 
 - **The v0.25.0 macOS app could not launch.** `-lkoan_ffi` over cargo's output directory finds the `.dylib` next to the archive and prefers it, so the shipped app referenced `/Users/runner/work/koan/koan/target/release/deps/libkoan_ffi.dylib` — a path that exists only on the CI runner — and was arm64-only, the host dylib having won over the universal archive. `just macos-ffi` now stages the right archive in a directory holding nothing else, which cannot produce either outcome. The bundled binary goes from 3.4 MB to 20 MB, which is the engine actually being in it.
 
-## v0.25.0 (2026-08-23)
+## 0.25.0
 
 ### Added
 
@@ -1571,7 +1568,7 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 - **Share links report why they failed.** Every surface collapsed all failures into "local-only tracks can't be shared", including a server that returned no URL for a share it had created. Resolution now lives in koan-core, with distinct errors, one query for the remote ids, and a partial share that says how much it left out.
 
-## v0.24.0 (2026-08-22)
+## 0.24.0
 
 ### Breaking
 
@@ -1596,12 +1593,6 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 - **Default CORS no longer allows any origin.** With `cors_origins` empty the server emits no `Access-Control-Allow-Origin` at all. List the origins your web client is served from.
 
 - **The MCP `graphql` tool executes at `user` role**, not admin. It could previously invoke `organizeExecute`, `organizeUndo`, `updateConfig`, `triggerScan` and `createShare` — none of which its tool description advertised. `KOAN_MCP_ADMIN=1` restores admin; `setDevice`/`clearDevice`/`triggerScan` need it.
-
-### Added
-
-- **Native macOS app** — a SwiftUI front-end in `apps/macos`, built on a new `koan-ffi` crate that exposes `koan-core` to Swift via uniffi. In-process: no daemon, no port, no auth surface, and CoreAudio output stays in Rust so playback is bit-perfect. Queue-centric like the TUI, with album-grouped queue, a multi-select picker (add / add-and-play / replace queue), library and artist browsing, favourites, snapshots and synced lyrics. Visualizers are out of scope. Ships as `brew install --cask radiosilence/koan/koan-app`.
-- **`SubsonicClient::get_cover_art`** — fetches artwork from the remote server. Libraries synced from Navidrome have no local files to read embedded tags out of, so every album was previously blank in any client relying on tag extraction.
-- **`queries::favourite_track_ids_batch`** — favourited track IDs in one query.
 
 ### Security
 
@@ -1629,6 +1620,9 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 ### Added
 
+- **Native macOS app** — a SwiftUI front-end in `apps/macos`, built on a new `koan-ffi` crate that exposes `koan-core` to Swift via uniffi. In-process: no daemon, no port, no auth surface, and CoreAudio output stays in Rust so playback is bit-perfect. Queue-centric like the TUI, with album-grouped queue, a multi-select picker (add / add-and-play / replace queue), library and artist browsing, favourites, snapshots and synced lyrics. Visualizers are out of scope. Ships as `brew install --cask radiosilence/koan/koan-app`.
+- **`SubsonicClient::get_cover_art`** — fetches artwork from the remote server. Libraries synced from Navidrome have no local files to read embedded tags out of, so every album was previously blank in any client relying on tag extraction.
+- **`queries::favourite_track_ids_batch`** — favourited track IDs in one query.
 - **`koan scan --force-remove`** — deletes stale tracks even when the proportion missing trips the mount-failure brake, for the case where the files really were deleted. It lifts that one check and nothing else: a folder yielding no audio files is still left alone, and a path that cannot be stat'd is still not "gone". The run announces itself up front and lists what it removed.
 
 - **Render tests for the TUI** (`crates/koan-tui/tests/render.rs`) — the widget layer had no test coverage, and layout and unicode regressions compile cleanly while rendering wrong. Pins the main layout split at every terminal height, asserts the seek bar's click hit-test agrees with the columns actually painted, and sweeps every widget across terminal sizes from 1×1 upward with titles containing CJK, emoji, ZWJ sequences, combining marks and RTL text.
@@ -1721,6 +1715,39 @@ Also hardened, same blast radius:
 - The pre-push hook no longer runs `git add -A && git commit --amend` when `cargo fmt` changes files —
   it swept unrelated working-tree changes into the user's commit. It now fails and asks. It also runs
   `--all-targets`, matching CI, so warnings in test code stop passing the hook and failing CI.
+
+### Removed
+
+- **The ReplayGain scanner.** `scan_track`, `scan_album`, `write_tags` and their helpers had no caller anywhere and no CLI or GraphQL surface — and `scan_album` was wrong regardless: it built one R128 analyser from the first track's spec and fed every subsequent track through it, so a mono interlude or a 48 kHz bonus track silently corrupted the album gain for every track. Reading and applying ReplayGain tags during playback is untouched. Drops the `ebur128` dependency.
+- **`playback.software_volume`.** Declared, defaulted, documented and tested, but read by nothing since it was added — setting it did nothing at all.
+
+- **`cargo test` overwrote the user's real JWT signing key.** `auth`'s keypair tests called
+  `generate_keypair()`, which writes to `~/.config/koan/auth/`, so running the test suite rotated the
+  live Ed25519 key and invalidated every issued token. Keypair derivation is now split from the
+  filesystem write and the tests use the pure form.
+- **MP3s at unusual sample rates played at the wrong speed** — the audio engine was configured with the rate the *device* settled on, not the rate the PCM actually is. Output devices reject the MPEG-2/2.5 rates that only MP3 uses (8/11.025/12/16/22.05/24 kHz, and 32 kHz on many DACs), so a 22.05 kHz MP3 on a 44.1 kHz device played at exactly double speed. The engine is now always configured from the source format and the device switch is a best-effort bit-perfect optimisation; when it fails the platform resamples instead. FLAC never hit this because it is only ever ripped at rates every device supports. ([#181](https://github.com/radiosilence/koan/pull/181))
+- **Mixed-format queues played the second track at the wrong speed** — every track in a gapless session shares one ring buffer and therefore one engine, but the decode thread would happily push a 48 kHz track in behind a 44.1 kHz one. A track whose rate or channel count differs now ends the decode session so the player can restart it on a correctly configured engine.
+- **Tail of the last decoded track was cut off** — the decode thread signalled completion as soon as it had *written* the last sample, up to 4 seconds before the audio engine had played it. It now waits for the ring buffer to drain first.
+- **An empty or unmounted library folder deleted the entire library** — `full_scan` only checked that the folder existed, so a NAS mount that failed, an unattached Docker volume, or a directory whose permissions changed left an empty-but-present path. Stale removal then found every indexed path missing and deleted the rows along with their play history, lyrics and embeddings. Three brakes now: a folder yielding zero audio files skips stale removal entirely, `try_exists` means an IO error is never read as "deleted", and a run that would clear more than 20% of a folder holding at least 100 tracks is refused outright.
+- **Scanning one folder swept its siblings** — the stale-removal prefix had no trailing separator, so scanning `/Volumes/Music` also matched `/Volumes/Music Backup`. Unplugging the backup drive and rescanning the main one deleted the backup's rows.
+- **Content dedup merged distinct tracks and lost a file** — the match ignored `disc`, so a 2-CD box set whose discs share a track title and number collapsed into one row pointing at whichever disc was scanned last; the other file became unreachable in library, search and queue, and stale removal never noticed because the file was still on disk. `disc` is now part of the predicate, and the match only fires across sources: two rows that both carry a local path, or that both carry a remote id, are two tracks. That keeps the local↔remote dedup the design wants. The cost is that a server which rotates its ids yields visible duplicates instead of re-attaching silently — duplicates you can see and fix, where a swallowed track you can do neither with.
+- **Remote sync erased locally-scanned audio properties** — merging wrote every column straight from the incoming metadata, so syncing against a Navidrome serving the same files nulled `sample_rate`, `bit_depth`, `channels`, `size_bytes` and `mtime` across the library and rewrote the codec. A merge now fills gaps only and never overwrites a populated column with NULL.
+- **Orphaned `scan_cache` rows aborted stale cleanup half-done** — cleanup deleted the cache row by the track's current path, leaving any row under a former path behind. The foreign key then failed the `DELETE FROM tracks` — after the FTS, lyrics, play-history and embedding rows had already gone — and every remaining stale track in that run was skipped. Cache rows are now cleared by `track_id` as well as path.
+- **A single panicking file aborted the whole scan** — lofty and symphonia can panic on hostile tags; rayon re-raised it at `collect()`, so one bad file out of 500k produced zero indexed tracks and a backtrace that didn't name it. Tag reads are contained; the file is reported as an error and the scan continues. Same for acoustic analysis.
+- **Files skipped by walkdir vanished silently** — permission-denied subtrees and symlink loops were discarded without a word. They are logged, counted in `ScanResult::unreadable`, and reported by `koan scan`.
+- **`ScanResult::updated` was always zero** — every upsert counted as `added`, so `koan scan` printed "0 updated" every run and GraphQL returned the same through `tracksUpdated`. `upsert_track_status` reports whether a row was inserted, which also makes `ScanEvent::is_new` truthful.
+- **A failed `scan_cache` write was swallowed** — the track was indexed but uncached, so every future scan re-read its tags with no diagnostic.
+
+- **Failed album fetches no longer become permanent library holes** — a sync that lost albums to network errors still reported success and advanced `last_sync`, so the next incremental sync skipped straight past them. `last_sync` now only advances when every album fetch succeeded, and `SyncResult` carries the failure count so `koan remote sync` and `triggerRemoteSync` report an incomplete run.
+- **Sync pagination can no longer skip albums** — the offset walk used `type=newest`, whose ordering shifts whenever the server reorders or adds an album mid-sync. It now walks `alphabeticalByName`, de-duplicates album ids for the run, and uses `created` only to decide which albums need a detail fetch.
+- **Truncated downloads can no longer masquerade as cached tracks** — the TUI remote bridge wrote straight to its destination and only checked completeness when the server sent a Content-Length, so a dropped connection on a chunked stream (Navidrome's transcoded output) left a truncated file that played as a stub for the rest of the session. Every remote download now goes through one implementation that writes a `.part` file and renames only on a verified-complete transfer.
+- **The remote-stream cache is bounded** — bridge downloads were keyed on a per-session queue id, so nothing was ever reused and every play left a full-size file behind forever. They are now keyed on track identity and the directory is pruned to a 2GB budget.
+- **Priority downloads respect `download_workers`** — cursor movement spawned an unbounded thread per landing, so scrolling a large remote queue fired hundreds of concurrent requests at the server. Priority downloads now run on a two-permit lane, tracks already downloading are never started twice, and anything over the limit goes to the head of the worker queue.
+- **Favouriting a track mid-download sticks** — the star was keyed on the in-progress `.part` path, which stops existing when the download completes, so it silently disappeared and was never pushed to the server.
+- **Download workers survive panics** — a panicking download permanently shrank the worker pool for the process lifetime.
+- **Lost server connections are visible** — the remote bridge swallowed poll errors and froze on the last known state while retrying at 10Hz. Connection loss and recovery are now logged.
+
+- **`remove_track_by_path` and `remove_tracks_by_source`** — unused outside their own tests, and both left orphaned foreign-key rows behind that would fail a later delete.
 
 ### Fixed
 
@@ -1815,38 +1842,11 @@ Also hardened, same blast radius:
 - **Spectrum read 6 dB low.** The FFT magnitude scale was `2/N`, correct for a rectangular window, but the analyzer applies a Hann window with a coherent gain of 0.5. Everything read 6.02 dB down, so against the -80 dB floor a full-scale sine topped out at 0.925 and the bars never reached the top of the widget. The scale is now derived from the window's own sum.
 - **Spectrum bass bars combed and collapsed at high sample rates.** A fixed 2048-point FFT spaces bins 93.75 Hz apart at 192 kHz, leaving whole runs of the bottom Bark bars with no bin at all. The gap filler ran left-to-right in place, so it fed synthesised values into the next bar's average while the bar to the right was still zero: a sawtooth ripple biased low, with bar 0 sitting permanently at half height. Runs of empty bars are now interpolated in one pass between their measured neighbours.
 
-### Removed
+### Known issues
 
-- **The ReplayGain scanner.** `scan_track`, `scan_album`, `write_tags` and their helpers had no caller anywhere and no CLI or GraphQL surface — and `scan_album` was wrong regardless: it built one R128 analyser from the first track's spec and fed every subsequent track through it, so a mono interlude or a 48 kHz bonus track silently corrupted the album gain for every track. Reading and applying ReplayGain tags during playback is untouched. Drops the `ebur128` dependency.
-- **`playback.software_volume`.** Declared, defaulted, documented and tested, but read by nothing since it was added — setting it did nothing at all.
+- **WAV `LIST INFO` tags are not read** — Symphonia 0.6.1's WAV reader parses the chunk into a metadata log and then builds the reader from `external_data` instead, discarding it. Only reachable for WAVs lofty cannot parse, since lofty reads these tags on the happy path; such files fall back to a filename-derived title.
 
-- **`cargo test` overwrote the user's real JWT signing key.** `auth`'s keypair tests called
-  `generate_keypair()`, which writes to `~/.config/koan/auth/`, so running the test suite rotated the
-  live Ed25519 key and invalidated every issued token. Keypair derivation is now split from the
-  filesystem write and the tests use the pure form.
-- **MP3s at unusual sample rates played at the wrong speed** — the audio engine was configured with the rate the *device* settled on, not the rate the PCM actually is. Output devices reject the MPEG-2/2.5 rates that only MP3 uses (8/11.025/12/16/22.05/24 kHz, and 32 kHz on many DACs), so a 22.05 kHz MP3 on a 44.1 kHz device played at exactly double speed. The engine is now always configured from the source format and the device switch is a best-effort bit-perfect optimisation; when it fails the platform resamples instead. FLAC never hit this because it is only ever ripped at rates every device supports. ([#181](https://github.com/radiosilence/koan/pull/181))
-- **Mixed-format queues played the second track at the wrong speed** — every track in a gapless session shares one ring buffer and therefore one engine, but the decode thread would happily push a 48 kHz track in behind a 44.1 kHz one. A track whose rate or channel count differs now ends the decode session so the player can restart it on a correctly configured engine.
-- **Tail of the last decoded track was cut off** — the decode thread signalled completion as soon as it had *written* the last sample, up to 4 seconds before the audio engine had played it. It now waits for the ring buffer to drain first.
-- **An empty or unmounted library folder deleted the entire library** — `full_scan` only checked that the folder existed, so a NAS mount that failed, an unattached Docker volume, or a directory whose permissions changed left an empty-but-present path. Stale removal then found every indexed path missing and deleted the rows along with their play history, lyrics and embeddings. Three brakes now: a folder yielding zero audio files skips stale removal entirely, `try_exists` means an IO error is never read as "deleted", and a run that would clear more than 20% of a folder holding at least 100 tracks is refused outright.
-- **Scanning one folder swept its siblings** — the stale-removal prefix had no trailing separator, so scanning `/Volumes/Music` also matched `/Volumes/Music Backup`. Unplugging the backup drive and rescanning the main one deleted the backup's rows.
-- **Content dedup merged distinct tracks and lost a file** — the match ignored `disc`, so a 2-CD box set whose discs share a track title and number collapsed into one row pointing at whichever disc was scanned last; the other file became unreachable in library, search and queue, and stale removal never noticed because the file was still on disk. `disc` is now part of the predicate, and the match only fires across sources: two rows that both carry a local path, or that both carry a remote id, are two tracks. That keeps the local↔remote dedup the design wants. The cost is that a server which rotates its ids yields visible duplicates instead of re-attaching silently — duplicates you can see and fix, where a swallowed track you can do neither with.
-- **Remote sync erased locally-scanned audio properties** — merging wrote every column straight from the incoming metadata, so syncing against a Navidrome serving the same files nulled `sample_rate`, `bit_depth`, `channels`, `size_bytes` and `mtime` across the library and rewrote the codec. A merge now fills gaps only and never overwrites a populated column with NULL.
-- **Orphaned `scan_cache` rows aborted stale cleanup half-done** — cleanup deleted the cache row by the track's current path, leaving any row under a former path behind. The foreign key then failed the `DELETE FROM tracks` — after the FTS, lyrics, play-history and embedding rows had already gone — and every remaining stale track in that run was skipped. Cache rows are now cleared by `track_id` as well as path.
-- **A single panicking file aborted the whole scan** — lofty and symphonia can panic on hostile tags; rayon re-raised it at `collect()`, so one bad file out of 500k produced zero indexed tracks and a backtrace that didn't name it. Tag reads are contained; the file is reported as an error and the scan continues. Same for acoustic analysis.
-- **Files skipped by walkdir vanished silently** — permission-denied subtrees and symlink loops were discarded without a word. They are logged, counted in `ScanResult::unreadable`, and reported by `koan scan`.
-- **`ScanResult::updated` was always zero** — every upsert counted as `added`, so `koan scan` printed "0 updated" every run and GraphQL returned the same through `tracksUpdated`. `upsert_track_status` reports whether a row was inserted, which also makes `ScanEvent::is_new` truthful.
-- **A failed `scan_cache` write was swallowed** — the track was indexed but uncached, so every future scan re-read its tags with no diagnostic.
-
-- **Failed album fetches no longer become permanent library holes** — a sync that lost albums to network errors still reported success and advanced `last_sync`, so the next incremental sync skipped straight past them. `last_sync` now only advances when every album fetch succeeded, and `SyncResult` carries the failure count so `koan remote sync` and `triggerRemoteSync` report an incomplete run.
-- **Sync pagination can no longer skip albums** — the offset walk used `type=newest`, whose ordering shifts whenever the server reorders or adds an album mid-sync. It now walks `alphabeticalByName`, de-duplicates album ids for the run, and uses `created` only to decide which albums need a detail fetch.
-- **Truncated downloads can no longer masquerade as cached tracks** — the TUI remote bridge wrote straight to its destination and only checked completeness when the server sent a Content-Length, so a dropped connection on a chunked stream (Navidrome's transcoded output) left a truncated file that played as a stub for the rest of the session. Every remote download now goes through one implementation that writes a `.part` file and renames only on a verified-complete transfer.
-- **The remote-stream cache is bounded** — bridge downloads were keyed on a per-session queue id, so nothing was ever reused and every play left a full-size file behind forever. They are now keyed on track identity and the directory is pruned to a 2GB budget.
-- **Priority downloads respect `download_workers`** — cursor movement spawned an unbounded thread per landing, so scrolling a large remote queue fired hundreds of concurrent requests at the server. Priority downloads now run on a two-permit lane, tracks already downloading are never started twice, and anything over the limit goes to the head of the worker queue.
-- **Favouriting a track mid-download sticks** — the star was keyed on the in-progress `.part` path, which stops existing when the download completes, so it silently disappeared and was never pushed to the server.
-- **Download workers survive panics** — a panicking download permanently shrank the worker pool for the process lifetime.
-- **Lost server connections are visible** — the remote bridge swallowed poll errors and froze on the last known state while retrying at 10Hz. Connection loss and recovery are now logged.
-
-- **`remove_track_by_path` and `remove_tracks_by_source`** — unused outside their own tests, and both left orphaned foreign-key rows behind that would fail a later delete.
+Closes the browser-facing attack surface on `koan serve`. The threat model that drove this: koan on a LAN, reachable from other machines on the network and from any web page the owner's browser happens to load.
 
 ### Internal
 
@@ -1870,19 +1870,13 @@ Also hardened, same blast radius:
 - **MP3 duration overstated by ~30 ms** — the probe reported the untrimmed frame count while the decoder dropped encoder delay and padding, so the seek bar ran past the end of the audio. Both sides now report the trimmed length.
 - **Gapless trimming in ReplayGain scans** — encoder delay and padding are now dropped before loudness analysis, so MP3/Vorbis scans no longer measure the silence the decoder discards. Scanned gain values shift very slightly; re-scan to refresh them.
 
-### Known issues
-
-- **WAV `LIST INFO` tags are not read** — Symphonia 0.6.1's WAV reader parses the chunk into a metadata log and then builds the reader from `external_data` instead, discarding it. Only reachable for WAVs lofty cannot parse, since lofty reads these tags on the happy path; such files fall back to a filename-derived title.
-
-Closes the browser-facing attack surface on `koan serve`. The threat model that drove this: koan on a LAN, reachable from other machines on the network and from any web page the owner's browser happens to load.
-
-## v0.23.3 (2026-04-19)
+## 0.23.3
 
 ### Fixed
 
 - **`similarArtists` crashed on pre-existing DBs** — schema added a `relationship` column to `similar_artists` but shipped no `ALTER TABLE` migration, so databases created before the column existed blew up with `no such column: sa.relationship` the moment the query ran. Added the migration alongside the existing cache-column migrations and a regression test that boots a pre-migration schema and verifies `create_tables` patches it. ([#180](https://github.com/radiosilence/koan/pull/180))
 
-## v0.23.2 (2026-04-18)
+## 0.23.2
 
 Second attempt at getting the split crates on crates.io. v0.23.1 published `koan-core` but then failed because the publish order had `koan-tui` before `koan-server` — and `koan-tui` depends on `koan-server`. Flipped the order; no code delta.
 
@@ -1890,7 +1884,7 @@ Second attempt at getting the split crates on crates.io. v0.23.1 published `koan
 
 - **Publish order** — `koan-server` now publishes before `koan-tui` so the crates.io index sees the dependency before downstream crates try to resolve it.
 
-## v0.23.1 (2026-04-18)
+## 0.23.1
 
 Re-release of v0.23.0 to publish the split crates to crates.io. No code changes from v0.23.0.
 
@@ -1898,7 +1892,7 @@ Re-release of v0.23.0 to publish the split crates to crates.io. No code changes 
 
 - **Missing crates on crates.io** — the publish-crate CI job referenced the pre-split binary name (`koan-music`) and silently failed for every release since v0.21.0. `koan-tui`, `koan-server`, and `koan-cli` had never been published. The job now publishes all four crates in dependency order and is idempotent across partial retries. ([#177](https://github.com/radiosilence/koan/pull/177))
 
-## v0.23.0 (2026-04-18)
+## 0.23.0
 
 Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, real-time subscriptions, cookie auth, and configurable CORS. Subsonic streaming now rides the GraphQL port by default, so the remote TUI (`koan play --server`) finally works end-to-end.
 
@@ -1926,7 +1920,17 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 
 - **`ApiServerOpts` struct** — replaces positional args on internal `run_api_blocking`, carries optional `VizSnapshot` for subscription support.
 
-## v0.22.0 (2026-04-12)
+## 0.22.0
+
+### Security
+
+- Constant-time password comparison in Subsonic API (fixes timing attack).
+- Atomic refresh token rotation (single SQL statement, no TOCTOU race).
+- Key file permissions set before write (no world-readable window).
+- Server panics if auth enabled but keypair missing (fail-closed).
+- GraphQL handler requires AuthUser injection (no silent admin fallback).
+- Hardcoded admin/admin Subsonic fallback removed.
+- Auth keypair directory gets automatic `.gitignore`.
 
 ### Added
 
@@ -1950,17 +1954,13 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **GraphQL playground with introspection key** — `koan --headless --playground` generates a process-scoped key, injects it into GraphiQL as a default header, auto-opens the browser. Normal JWT auth unaffected.
 - **CORS support** — API endpoints accept cross-origin requests for browser clients.
 
-### Security
+## 0.21.0
 
-- Constant-time password comparison in Subsonic API (fixes timing attack).
-- Atomic refresh token rotation (single SQL statement, no TOCTOU race).
-- Key file permissions set before write (no world-readable window).
-- Server panics if auth enabled but keypair missing (fail-closed).
-- GraphQL handler requires AuthUser injection (no silent admin fallback).
-- Hardcoded admin/admin Subsonic fallback removed.
-- Auth keypair directory gets automatic `.gitignore`.
+### Added
 
-## v0.21.0 (2026-04-12)
+- **Integration test coverage** — 12 new behavioral tests covering the scanner, decode pipeline, session persistence, remote sync, GraphQL mutations, and config loading. Shared WAV file generators in `test_utils.rs`. Safety net for the crate restructure.
+- **Bitrate display for lossy codecs** — transport bar shows bitrate (e.g. `Opus 48kHz/128kbps stereo`) instead of a fake bit depth. Estimated from file size / duration for Opus. ([#155](https://github.com/radiosilence/koan/pull/155))
+- **Human-readable quality labels** — `FLAC · CD quality` for 44.1kHz/16bit/stereo, `stereo`/`mono` instead of `2ch`/`1ch`, sample rates as `44.1kHz` not `44100Hz`. ([#155](https://github.com/radiosilence/koan/pull/155))
 
 ### Changed
 
@@ -1971,45 +1971,44 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
   - **koan-cli** — thin entry point with clap CLI, logger, signal handling. Produces the `koan` binary.
   - Dependency rules enforced by Cargo: koan-tui and koan-server cannot import each other. Future iOS app imports only koan-core.
 
-### Added
-
-- **Integration test coverage** — 12 new behavioral tests covering the scanner, decode pipeline, session persistence, remote sync, GraphQL mutations, and config loading. Shared WAV file generators in `test_utils.rs`. Safety net for the crate restructure.
-- **Bitrate display for lossy codecs** — transport bar shows bitrate (e.g. `Opus 48kHz/128kbps stereo`) instead of a fake bit depth. Estimated from file size / duration for Opus. ([#155](https://github.com/radiosilence/koan/pull/155))
-- **Human-readable quality labels** — `FLAC · CD quality` for 44.1kHz/16bit/stereo, `stereo`/`mono` instead of `2ch`/`1ch`, sample rates as `44.1kHz` not `44100Hz`. ([#155](https://github.com/radiosilence/koan/pull/155))
-
 ### Fixed
 
 - **GraphQL connections** — disabled `nodes` shortcut field on Relay connections, edges-only for consistency. ([#166](https://github.com/radiosilence/koan/pull/166))
 
-## v0.20.4 (2026-04-12)
+## 0.20.4
 
 ### Fixed
 
 - **Bit depth hidden for lossy codecs** — Opus, Vorbis, AAC, and MP3 no longer show a fake "32bit" in the transport bar. `bit_depth` is now `Option<u16>` — `None` for lossy codecs, displayed only for lossless (FLAC, ALAC, WAV, AIFF). Transport shows `"Opus 48000Hz/2ch"` instead of `"Opus 48000Hz/32bit/2ch"`.
 
-## v0.20.3 (2026-04-12)
+## 0.20.3
 
 ### Added
 
 - **Opus codec support** — `.opus` files now play correctly. Uses `opus-decoder` (pure Rust, RFC 8251) to bridge Symphonia's Ogg demuxer with a real Opus decoder. Pre-skip trimming, 48 kHz output, ReplayGain scanning all handled. Closes [#149](https://github.com/radiosilence/koan/issues/149).
 - **Secrets-in-git startup check** — on launch, koan checks if config files containing passwords are tracked by git. If so, the app refuses to start and prints remediation steps (remove from git, add to .gitignore, rotate credentials). Hard panic, no bypass.
 
+### Changed
+
+- **Symphonia format support** — added ADPCM codec, MKV/WebM and CAF container support.
+
 ### Fixed
 
 - **Scan FK constraint error** — `koan scan` failed with `FOREIGN KEY constraint failed` when removing stale tracks that had rows in `lyrics_cache`, `play_history`, or `track_vectors`. Now cleans all FK references before deleting. ([#152](https://github.com/radiosilence/koan/pull/152))
 - **Multi-instance state clobber** — autosave is now event-driven (dirty flag) and throttled to 100ms. An idle koan window no longer overwrites the saved state of an active instance.
 
-### Changed
-
-- **Symphonia format support** — added ADPCM codec, MKV/WebM and CAF container support.
-
-## v0.20.2 (2026-04-12)
+## 0.20.2
 
 ### Changed
 
 - **Reactive background** — beat-pulsing background color on braille modes (starfield, wormhole, kaleidoscope, lissajous, wireframe, spiral) moved behind `[visualizer] reactive_bg = false` config flag instead of being removed. Off by default.
 
-## v0.20.1 (2026-04-12)
+## 0.20.1
+
+### Added
+
+- **Symphonia format support** — added ADPCM codec, MKV/WebM and CAF container support. Opus decoding is not yet supported (see [#149](https://github.com/radiosilence/koan/issues/149)).
+- **BPM detection** — beat onset interval tracking with median estimation. Stored on VisualizerState for future use. Resets on track changes.
 
 ### Fixed
 
@@ -2019,12 +2018,7 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **Pleasures layout** — artist/album text properly spaced with blank lines above and below. Waveform box no longer clips peaks at the top (height scale capped per ridgeline). Raised cosine window tapers ridgelines to flat baselines at the edges.
 - **Animation timing** — all visualizer animations now use actual frame delta time instead of hardcoded 1/60. Consistent speed at 30fps, 60fps, or 120fps.
 
-### Added
-
-- **Symphonia format support** — added ADPCM codec, MKV/WebM and CAF container support. Opus decoding is not yet supported (see [#149](https://github.com/radiosilence/koan/issues/149)).
-- **BPM detection** — beat onset interval tracking with median estimation. Stored on VisualizerState for future use. Resets on track changes.
-
-## v0.20.0 (2026-04-11)
+## 0.20.0
 
 ### Added
 
@@ -2055,63 +2049,67 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **Braille rendering** — all braille cells now rendered bold with +25% brightness boost to compensate for dot sparsity. ([#147](https://github.com/radiosilence/koan/pull/147))
 - **Spectrogram** — dedicated heat map colorscale (blue→yellow→red→white) with sqrt amplitude scaling for full dynamic range. No longer uses the palette system. ([#147](https://github.com/radiosilence/koan/pull/147))
 
-## v0.19.5 (2026-04-11)
+## 0.19.5
 
 ### Added
 
 - **Four new visualizer modes** — cycle with `M` key through nine total modes. New additions: `spectrogram` (time×frequency heatmap scrolling vertically, block characters for density), `stereo` (L and R waveforms stacked top/bottom with warm/cool palette split), `vu` (dual analog needle meters with arc scale, tick marks, and ballistic needle physics — fast attack, slow decay), `flame` (filled area under the spectrum curve with 8 stacked decay trails creating a layered mountain/fire effect). All modes use the existing palette system, beat-reactive color shifts, and dreamy drift. Config: `[visualizer] mode = "spectrogram"` (or `waterfall`, `stereo`, `vu`, `meter`, `flame`, `mountain`). ([#146](https://github.com/radiosilence/koan/pull/146))
 
-## v0.19.4 (2026-04-11)
+## 0.19.4
 
 ### Fixed
 
 - **Braille visualizer modes running at ~11fps instead of 60fps** — the decode thread pushed entire packets to the visualization buffer in one shot, then blocked waiting for the audio ring buffer to drain. For FLAC (4096 frames/packet at 44.1kHz), VizBuffer only got fresh data every ~93ms (~11fps). Spectrum bars hid this with decay smoothing, but waveform-based modes (oscilloscope, lissajous, radial, particles) rendered the same frozen samples 5-6 frames in a row before jumping. VizBuffer writes now happen incrementally inside the ring buffer push loop, paced by the audio callback's real-time consumption rate. All visualizer modes now update at true 60fps.
 - **Double-smoothed spectrum bars** — the TUI applied its own decay smoothing on top of the analyzer's, making transients mushier than intended. Spectrum, peaks, and VU levels now pass through directly from the analyzer thread (single layer of smoothing). Beat energy retains local decay for the hue-shift effect.
 
-## v0.19.3 (2026-04-09)
+## 0.19.3
 
 ### Fixed
 
 - **Incomplete downloads can't corrupt the cache** — downloads now write to a `.part` file and atomically rename on completion. Interrupted downloads are cleaned up, never mistaken for complete files. Size verification against Content-Length catches server-side truncation. Streaming playback reads from RAM (StreamBuffer) so the rename is invisible to the decoder. ([#143](https://github.com/radiosilence/koan/pull/143))
 
-## v0.19.2 (2026-04-09)
+## 0.19.2
 
 ### Fixed
 
 - **Streaming playback fails on restored sessions with unmounted volumes** — when a track's original local path no longer exists (e.g. volume unmounted), the streaming system tried to open the stale path instead of the cache download destination. Now updates the item path to the cache dest before downloading starts. Also checks if the local file came back (volume remounted) before re-downloading. ([#140](https://github.com/radiosilence/koan/pull/140))
 
-## v0.19.1 (2026-04-06)
+## 0.19.1
 
 ### Added
 
 - **Braille visualizer modes** — five rendering modes for the visualizer, switchable with `M` key: `bars` (existing LED spectrum), `oscilloscope` (raw PCM waveform as braille line), `radial` (polar-coordinate spectrum starburst), `particles` (frequency-driven particle system with physics), `lissajous` (stereo phase scope with afterglow trail). All modes use a braille character grid (U+2800..U+28FF) for 2x4 subpixel resolution per terminal cell. Beat-reactive, palette-colored, existing color palettes and drift effects apply to all modes. Config: `[visualizer] mode = "bars"` (default). ([#137](https://github.com/radiosilence/koan/issues/137))
 
-## v0.19.0 (2026-04-06)
+## 0.19.0
 
 ### Added
 
 - **Colorful spectrum analyzer** — frequency-mapped rainbow replaces monochrome green. Four palettes via `[visualizer] palette`: `spectrum` (default), `fire`, `neon`, `mono`. Dreamy 8-second color drift breathes the rainbow back and forth across the bars. Beat-reactive hue shifts snap the palette forward on kicks/transients. Brightness pulses on top. Peak markers glow in brightened palette colors. All color math in the render path — zero impact on audio threads. ([#134](https://github.com/radiosilence/koan/issues/134), [#135](https://github.com/radiosilence/koan/pull/135))
 
-## v0.18.7 (2026-04-05)
+## 0.18.7
 
 ### Changed
 
 - **Sample rate switching uses CoreAudio property listener instead of polling** — `set_device_sample_rate` now registers an `AudioObjectAddPropertyListener` on `kAudioDevicePropertyNominalSampleRate` and blocks on a oneshot channel instead of spinning every 10ms. Eliminates up to 10ms unnecessary latency per rate switch. Timeout bumped from 2s to 5s to cover USB Class 1 DACs doing PLL relock. Early-out when rate already matches, spurious callback verification, RAII listener cleanup. ([#130](https://github.com/radiosilence/koan/issues/130))
 
-## v0.18.6 (2026-04-05)
+## 0.18.6
 
 ### Fixed
 
 - **`koan play /dir` with large libraries** — for >1000 files, uses a single `all_tracks_by_path` DB query instead of hundreds of batched `WHERE IN` queries. Directory walk + metadata resolution now runs on a background thread so the TUI starts immediately ([#128](https://github.com/radiosilence/koan/pull/128))
 - **Organize preview takes minutes on large libraries** — `preview_for_paths` now loads metadata from the DB (single query) instead of re-reading every file's tags from disk. Falls back to parallel disk reads (rayon) for files not in the DB. 48k-track library: ~5 minutes → ~3 seconds ([#128](https://github.com/radiosilence/koan/pull/128))
 
-## v0.18.5 (2026-04-05)
+## 0.18.5
 
 ### Fixed
 
 - **Hi-res audio playing at wrong speed** — CoreAudio sample rate switches are asynchronous, but the player read back the device rate immediately after requesting the change and got the *old* rate. A fallback (`unwrap_or(source_rate)`) then masked the mismatch by lying to the ASBD. Result: 96kHz files played at quarter speed (device still clocked at the old rate, draining the ring buffer too slowly). `set_device_sample_rate` now polls until CoreAudio confirms the switch (10ms intervals, 2s timeout) and returns the verified rate. Both file and streaming playback paths fixed. ([#124](https://github.com/radiosilence/koan/pull/124))
 
-## v0.18.4 (2026-04-01)
+## 0.18.4
+
+### Changed
+
+- **Now-playing queue indicator** — playing track now shows ▶ instead of `>`, with bold title text for visibility ([#122](https://github.com/radiosilence/koan/pull/122))
 
 ### Fixed
 
@@ -2119,11 +2117,7 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **Double engine restart at session restore** — startup sent Play+Pause+Seek, causing three engine teardown/rebuild cycles. Now sets cursor without playback; the deferred seek is the single start point ([#122](https://github.com/radiosilence/koan/pull/122))
 - **Key repeat rapid-skipping** — terminal key repeat on `>`/`<` could fire dozens of NextTrack/PrevTrack commands. Added 150ms debounce in the Player command loop ([#122](https://github.com/radiosilence/koan/pull/122))
 
-### Changed
-
-- **Now-playing queue indicator** — playing track now shows ▶ instead of `>`, with bold title text for visibility ([#122](https://github.com/radiosilence/koan/pull/122))
-
-## v0.18.3 (2026-04-01)
+## 0.18.3
 
 ### Changed
 
@@ -2138,7 +2132,7 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **Removed `Config::save()` footgun** — method could leak secrets from merged config into `config.toml`. Replaced with `Config::patch_local(section, values)` for targeted local config updates ([#120](https://github.com/radiosilence/koan/pull/120))
 - **`.gitignore` now covers `*.db-wal` and `*.db-shm`** — SQLite WAL files were previously not gitignored ([#120](https://github.com/radiosilence/koan/pull/120))
 
-## v0.18.2 (2026-03-29)
+## 0.18.2
 
 ### Changed
 
@@ -2160,8 +2154,17 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
   - `docs/reference/` — configuration (all fields including previously undocumented `ticker_fps`, `target_fps`, `show_fps`, `art_size`, `output_device`), keybindings (every key in every mode), CLI reference
   - `docs/recipes/` — troubleshooting, cache management
 
-## v0.18.1 (2026-03-28)
+## 0.18.1
 
+### Added
+
+- **API concurrency limit** — GraphQL server now applies a tower `ConcurrencyLimitLayer` (max 10 concurrent requests) to prevent mutation spam / DoS ([#99](https://github.com/radiosilence/koan/issues/99))
+- **Composite index** on `tracks(album_id, disc, track_number)` for faster album-ordered queries ([#99](https://github.com/radiosilence/koan/issues/99))
+- **Render callback drain on AudioEngine drop** — `AudioOutputUnitStop` can return before the render callback finishes during sample rate switches. Added `in_callback` atomic flag and spin-wait in `Drop` to ensure the callback has fully exited before tearing down buffers ([#89](https://github.com/radiosilence/koan/issues/89))
+- **Pending items never downloaded on session restore** — the cache verify fix correctly marked missing files as `Pending`, but never actually triggered downloads. Introduced a persistent `DownloadQueue` that lives for the app's lifetime: session restore feeds pending items into it, and double-clicking a pending track triggers a priority download with stream-when-ready playback. The same queue replaces the one-shot scoped thread pool previously used by `enqueue_playlist` ([#94](https://github.com/radiosilence/koan/issues/94))
+- **GraphQL/Subsonic port bind panic** — `run_api_blocking` called `.expect()` on port bind, crashing the entire app on `AddrInUse`. Now logs a warning and gracefully disables the API server ([#95](https://github.com/radiosilence/koan/issues/95))
+- **TUI layout jump when album art loads** — the transport bar now always reserves a 24×12 cell placeholder for album art, preventing layout reflow when art loads or when switching between tracks with/without embedded art ([#96](https://github.com/radiosilence/koan/issues/96))
+- **Track `db_id` in playlist items** — `PlaylistItem` and `PersistedQueueItem` now carry `db_id: Option<i64>`, enabling re-download of remote tracks after session restore. Backwards-compatible: old persisted state without `db_id` deserializes cleanly via `#[serde(default)]` ([#94](https://github.com/radiosilence/koan/issues/94))
 ### Changed
 
 - **Config loading uses figment** — replaced hand-rolled TOML deep-merge with [figment](https://docs.rs/figment) for layered config: defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Any config field is now overridable via environment variables using `KOAN_SECTION__FIELD` naming (e.g. `KOAN_REMOTE__PASSWORD`, `KOAN_GRAPHQL__PORT`, `KOAN_PLAYBACK__TARGET_FPS`)
@@ -2176,33 +2179,45 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **Sequential scan_cache lookups** — scanner now batch-loads the entire scan cache into a HashMap instead of issuing one DB query per file, dramatically faster for large libraries ([#99](https://github.com/radiosilence/koan/issues/99))
 - **Memory usage on playlist build** — `playlist_items_from_paths` now uses `tracks_by_paths()` (batched IN-query) instead of loading every track in the library into a HashMap ([#99](https://github.com/radiosilence/koan/issues/99))
 
+## 0.18.0
+
 ### Added
 
-- **API concurrency limit** — GraphQL server now applies a tower `ConcurrencyLimitLayer` (max 10 concurrent requests) to prevent mutation spam / DoS ([#99](https://github.com/radiosilence/koan/issues/99))
-- **Composite index** on `tracks(album_id, disc, track_number)` for faster album-ordered queries ([#99](https://github.com/radiosilence/koan/issues/99))
 - **CoreAudio crash during sample rate switch** — `stop_engine()` was dropping the `AudioEngine` on a background cleanup thread while the player thread immediately changed the device sample rate. The engine is now dropped synchronously before any sample rate changes; only the decode handle cleanup runs in the background ([#89](https://github.com/radiosilence/koan/issues/89))
-- **Render callback drain on AudioEngine drop** — `AudioOutputUnitStop` can return before the render callback finishes during sample rate switches. Added `in_callback` atomic flag and spin-wait in `Drop` to ensure the callback has fully exited before tearing down buffers ([#89](https://github.com/radiosilence/koan/issues/89))
-- **Pending items never downloaded on session restore** — the cache verify fix correctly marked missing files as `Pending`, but never actually triggered downloads. Introduced a persistent `DownloadQueue` that lives for the app's lifetime: session restore feeds pending items into it, and double-clicking a pending track triggers a priority download with stream-when-ready playback. The same queue replaces the one-shot scoped thread pool previously used by `enqueue_playlist` ([#94](https://github.com/radiosilence/koan/issues/94))
-- **GraphQL/Subsonic port bind panic** — `run_api_blocking` called `.expect()` on port bind, crashing the entire app on `AddrInUse`. Now logs a warning and gracefully disables the API server ([#95](https://github.com/radiosilence/koan/issues/95))
-- **TUI layout jump when album art loads** — the transport bar now always reserves a 24×12 cell placeholder for album art, preventing layout reflow when art loads or when switching between tracks with/without embedded art ([#96](https://github.com/radiosilence/koan/issues/96))
-
-### Added
-
-- **Track `db_id` in playlist items** — `PlaylistItem` and `PersistedQueueItem` now carry `db_id: Option<i64>`, enabling re-download of remote tracks after session restore. Backwards-compatible: old persisted state without `db_id` deserializes cleanly via `#[serde(default)]` ([#94](https://github.com/radiosilence/koan/issues/94))
 - **Cache management with LRU eviction** — cached remote downloads are now tracked in the DB (path, size, download date). Set `cache_limit` in `[remote]` config (e.g. `"50GB"`) to enable automatic LRU eviction on startup. Evicts whole albums, oldest last-played first. Favourited tracks are never evicted. New `koan cache evict` subcommand for manual eviction ([#88](https://github.com/radiosilence/koan/issues/88))
 
-## v0.17.1 (2026-03-27)
-
-### Fixed
-
-- **GraphQL/Subsonic servers now bind to 127.0.0.1 by default** — previously bound to `0.0.0.0` with no authentication, exposing library enumeration, file moves, and queue clearing to anyone on the network. Added `bind` field to `[graphql]` config and `--bind` CLI flag ([#85](https://github.com/radiosilence/koan/issues/85))
+## 0.17.1
 
 ### Added
 
 - **Album-aware download priority** — when a track starts playing, remaining tracks from the same album are bumped to the front of the download queue, ensuring gapless album playback ([#87](https://github.com/radiosilence/koan/issues/87))
 - **CONTRIBUTING.md** — contribution guidelines ([#82](https://github.com/radiosilence/koan/issues/82))
 
-## v0.17.0 (2026-03-26)
+### Fixed
+
+- **GraphQL/Subsonic servers now bind to 127.0.0.1 by default** — previously bound to `0.0.0.0` with no authentication, exposing library enumeration, file moves, and queue clearing to anyone on the network. Added `bind` field to `[graphql]` config and `--bind` CLI flag ([#85](https://github.com/radiosilence/koan/issues/85))
+
+## 0.17.0
+
+### Changed
+
+- **Unified daemon mode** — `koan` now runs TUI + GraphQL API in one process by default. No more separate `koan serve`. All interfaces share one player, one state ([#70](https://github.com/radiosilence/koan/issues/70))
+  - `koan --headless` replaces `koan serve` (GraphQL API only, no TUI)
+  - `koan -d` / `koan --daemonize` forks a headless background daemon
+  - `koan --mcp` replaces `koan mcp` (MCP server on stdio)
+  - `koan --no-api` opts out of the API server (TUI-only, old behaviour)
+  - `koan --port`, `--subsonic`, `--playground` configure the API from top-level
+  - Play args (`--album`, `--artist`, `--id`, `--library`, `--clear`, `--server`, `--jukebox`) moved to top-level — `koan play` removed
+  - `koan scan --analyze` combines scan + acoustic analysis in one pass
+
+### Removed
+
+- **`koan play`** — `koan` IS play. All args moved to top-level
+- **`koan serve`** — replaced by `koan --headless`
+- **`koan graphql`** — dead alias, removed
+- **`koan mcp`** — replaced by `koan --mcp` flag
+- **`koan pick`** — standalone picker removed, TUI has built-in pickers (`p`/`a`/`r`)
+- **`koan artists`**, **`koan albums`** — use `koan search` or GraphQL queries
 
 ### Fixed
 
@@ -2238,7 +2253,7 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **Transaction boundaries** — `upsert_track()` wraps the entire artist/album/track/FTS5 operation in a savepoint. Scanner and analyzer use proper `unchecked_transaction()` with error propagation instead of silent `let _ =` drops ([#79](https://github.com/radiosilence/koan/pull/79))
 - **Source column validation** — `CHECK (source IN ('local', 'remote', 'cached'))` constraint on tracks table ([#79](https://github.com/radiosilence/koan/pull/79))
 - **WAL checkpoint on connect** — `PRAGMA wal_checkpoint(PASSIVE)` at connection open prevents unbounded WAL growth across sessions ([#79](https://github.com/radiosilence/koan/pull/79))
-- **LIKE wildcard escaping** — `remove_stale_tracks` now escapes `%`, `_`, `\` in path prefixes via `escape_like()` ([#79](https://github.com/radiosilence/koan/pull/79))
+- **LIKE wildcard escaping** — `remove_stale_tracks` now escapes `%`, `_`, `` in path prefixes via `escape_like()` ([#79](https://github.com/radiosilence/koan/pull/79))
 - **Missing index** — added `idx_library_folders_path` on `library_folders(path)` ([#79](https://github.com/radiosilence/koan/pull/79))
 
 #### Misc
@@ -2247,26 +2262,6 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **Unicode-aware string comparison** — `stricmp` format function uses `.to_lowercase()` instead of ASCII-only `eq_ignore_ascii_case()` ([#75](https://github.com/radiosilence/koan/pull/75))
 - **Ancillary file move errors logged** — `execute_single_move_no_db` now logs warnings via `log::warn!` instead of silently swallowing with `.ok()` ([#75](https://github.com/radiosilence/koan/pull/75))
 - **Tokio features scoped** — `"full"` replaced with `["rt-multi-thread", "net", "macros", "signal"]` in koan-music ([#75](https://github.com/radiosilence/koan/pull/75))
-
-### Changed
-
-- **Unified daemon mode** — `koan` now runs TUI + GraphQL API in one process by default. No more separate `koan serve`. All interfaces share one player, one state ([#70](https://github.com/radiosilence/koan/issues/70))
-  - `koan --headless` replaces `koan serve` (GraphQL API only, no TUI)
-  - `koan -d` / `koan --daemonize` forks a headless background daemon
-  - `koan --mcp` replaces `koan mcp` (MCP server on stdio)
-  - `koan --no-api` opts out of the API server (TUI-only, old behaviour)
-  - `koan --port`, `--subsonic`, `--playground` configure the API from top-level
-  - Play args (`--album`, `--artist`, `--id`, `--library`, `--clear`, `--server`, `--jukebox`) moved to top-level — `koan play` removed
-  - `koan scan --analyze` combines scan + acoustic analysis in one pass
-
-### Removed
-
-- **`koan play`** — `koan` IS play. All args moved to top-level
-- **`koan serve`** — replaced by `koan --headless`
-- **`koan graphql`** — dead alias, removed
-- **`koan mcp`** — replaced by `koan --mcp` flag
-- **`koan pick`** — standalone picker removed, TUI has built-in pickers (`p`/`a`/`r`)
-- **`koan artists`**, **`koan albums`** — use `koan search` or GraphQL queries
 
 ## 0.16.0
 
@@ -2295,6 +2290,15 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **Cross-platform credentials** — `keyring` crate replaces `security-framework` (macOS Keychain + Linux secret-service)
 - **CI for Linux** — clippy, test, build on macOS + Ubuntu. Release binaries: macOS arm64/x86_64 + Linux x86_64/arm64 (native runners)
 
+### Changed
+
+- **graphql.rs split** — 2400-line file decomposed into `graphql/{mod,types,queries,mutations,helpers,server}.rs` ([#67](https://github.com/radiosilence/koan/pull/67))
+- **`Player` holds `Box<dyn AudioBackend>`** — all device/engine calls go through trait
+- **SubsonicClient factory** — `subsonic_client()` helper replaces 9 manual creation sites ([#65](https://github.com/radiosilence/koan/pull/65))
+- **Player device restart dedup** — `restart_on_current_track()` + `Config::load_or_default()` ([#62](https://github.com/radiosilence/koan/pull/62))
+- **serve.rs route dedup** — `register_subsonic_routes()` shared between prod and test ([#61](https://github.com/radiosilence/koan/pull/61))
+- **Platform-gated deps** — `coreaudio-sys`/`core-foundation` macOS-only, `cpal` Linux-only
+
 ### Fixed
 
 - **Remote tracks silently skipped** — GQL mutations now trigger background downloads. Correct cache paths via `resolve_item_path()` (single code path with TUI)
@@ -2309,15 +2313,6 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **`insert_in_queue`** — was silently appending, now uses `InsertInPlaylist`
 - **Ctrl+C on GQL server** — graceful shutdown via `tokio::signal::ctrl_c`
 
-### Changed
-
-- **graphql.rs split** — 2400-line file decomposed into `graphql/{mod,types,queries,mutations,helpers,server}.rs` ([#67](https://github.com/radiosilence/koan/pull/67))
-- **`Player` holds `Box<dyn AudioBackend>`** — all device/engine calls go through trait
-- **SubsonicClient factory** — `subsonic_client()` helper replaces 9 manual creation sites ([#65](https://github.com/radiosilence/koan/pull/65))
-- **Player device restart dedup** — `restart_on_current_track()` + `Config::load_or_default()` ([#62](https://github.com/radiosilence/koan/pull/62))
-- **serve.rs route dedup** — `register_subsonic_routes()` shared between prod and test ([#61](https://github.com/radiosilence/koan/pull/61))
-- **Platform-gated deps** — `coreaudio-sys`/`core-foundation` macOS-only, `cpal` Linux-only
-
 ## 0.14.0
 
 ### Added
@@ -2328,6 +2323,10 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 
 ## 0.13.1
 
+### Changed
+
+- **graphql.rs split** — 2400-line god file decomposed into `graphql/{mod,types,queries,mutations,helpers,server}.rs`
+
 ### Fixed
 
 - **N+1 query elimination** — genre and favourite filtering now use batch SQL queries instead of per-item DB calls. O(1) instead of O(n*m) on large libraries
@@ -2337,10 +2336,6 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 - **SubsonicClient factory** — single `subsonic_client()` helper replaces 9 manual construction sites, 30s timeout on all HTTP clients
 - **serve.rs route dedup** — extracted `register_subsonic_routes()`, test router no longer duplicates prod routes
 - **CI reliability** — arm64 cross-compile no longer silently fails, tags not force-pushed, doc tests added
-
-### Changed
-
-- **graphql.rs split** — 2400-line god file decomposed into `graphql/{mod,types,queries,mutations,helpers,server}.rs`
 
 ## 0.13.0
 
@@ -2562,17 +2557,9 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
 
 Full codebase audit of v0.5.2 covering security, performance, architecture, dependencies, and test coverage. Every change was reviewed individually and as a combined integration.
 
-### Fixed
-
-- **Security hardening** — credentials removed from stored remote URLs (reconstructed from config at playback time), config and DB files restricted to 0o600 on Unix, FTS5 and LIKE query inputs sanitized, HTTPS warning for non-localhost remotes, secure random salt via `getrandom`, PID-namespaced cover art temp files
-- **Streaming duration display** — seek bar metrics now use the DB-sourced track duration instead of the probed partial-file duration, so elapsed/total and click-to-seek are correct during streaming playback
-
-### Performance
-
-- **Render loop allocations eliminated** — playlist version gate skips redundant O(n) visible queue rebuild when queue is idle; borrowed string keys in display line builder remove 2 allocations per entry per call; spectrum data changed from heap Vec to stack arrays ([f32; 48]) eliminating allocation on every frame clone at 60fps
-
 ### Changed
 
+- **Render loop allocations eliminated** — playlist version gate skips redundant O(n) visible queue rebuild when queue is idle; borrowed string keys in display line builder remove 2 allocations per entry per call; spectrum data changed from heap Vec to stack arrays ([f32; 48]) eliminating allocation on every frame clone at 60fps
 - **Symphonia codec features scoped** — replaced blanket `features = ["all"]` with only the codecs koan actually uses (FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV, AIFF), reducing compile time
 - **`row_to_track_row` helper** — deduplicated 4 identical 22-line row-mapping closures in tracks.rs into a single shared function
 - **`plan_single_move` helper** — extracted shared move-planning logic (path formatting, sanitization, extension preservation, ancillary file handling) from two `plan_moves` variants in organize.rs
@@ -2583,6 +2570,11 @@ Full codebase audit of v0.5.2 covering security, performance, architecture, depe
 ### Removed
 
 - **Dead code cleanup** — removed 6 unused functions/fields: `LyricsState::clear`, `CoverArt::centered`, `scrollbar_hover` theme field, `event.rs` module, `VisualizerState::num_bars`, 3 unused `HoverZone` variants
+
+### Fixed
+
+- **Security hardening** — credentials removed from stored remote URLs (reconstructed from config at playback time), config and DB files restricted to 0o600 on Unix, FTS5 and LIKE query inputs sanitized, HTTPS warning for non-localhost remotes, secure random salt via `getrandom`, PID-namespaced cover art temp files
+- **Streaming duration display** — seek bar metrics now use the DB-sourced track duration instead of the probed partial-file duration, so elapsed/total and click-to-seek are correct during streaming playback
 
 ### Tests
 
@@ -2640,6 +2632,10 @@ Full codebase audit of v0.5.2 covering security, performance, architecture, depe
 - **Configurable frame rate** — `[playback] target_fps` (default: 60) controls TUI redraw rate. Accepts 30, 60, or 120
 - **Transport icons** — play/pause/stop status icons use Unicode symbols instead of ASCII
 
+### Removed
+
+- **Event::Tick** — tick variant removed from event enum. Ticking is now unconditional every frame
+
 ### Fixed
 
 - **Standalone picker mouse support** — `koan pick --artist`/`--album` now enables mouse capture. Click to select, double-click to confirm, scroll wheel to navigate
@@ -2654,10 +2650,6 @@ Full codebase audit of v0.5.2 covering security, performance, architecture, depe
 - **Album header drag** — clicking and dragging an album header reorders the entire album group as a unit
 - **Play/pause click** — clicking the status icon (play/pause indicator) next to the seek bar now toggles playback
 - **Download progress on all tracks** — tracks before the playing position now correctly show download progress and status instead of being unconditionally marked as played
-
-### Removed
-
-- **Event::Tick** — tick variant removed from event enum. Ticking is now unconditional every frame
 
 ## 0.3.0
 
@@ -2691,13 +2683,13 @@ Full codebase audit of v0.5.2 covering security, performance, architecture, depe
 - **Seek from Control Center** — absolute position, relative with duration, and direction-only (10s steps)
 - **Quit from Control Center** — clean shutdown via atomic flag on SharedPlayerState
 
-### Fixed
-
-- **mise binary name** — release tarballs now contain `koan` instead of `koan-macos-arm64`, fixing mise installs
-
 ### Removed
 
 - **Dead file watcher** — notify/FSEvents module was implemented but never wired in. Removed watcher.rs, notify deps, `config.watch` field
+
+### Fixed
+
+- **mise binary name** — release tarballs now contain `koan` instead of `koan-macos-arm64`, fixing mise installs
 
 ## 0.2.0
 
@@ -2727,18 +2719,6 @@ First public release. Full TUI rewrite, undo/redo, file organization, CI/CD pipe
 - **CI/CD pipeline** — test + clippy + fmt check, cross-compiled binaries (arm64 + x86_64), GitHub releases with auto-tagging, crates.io publishing (`koan-core` then `koan-music`)
 - **MIT LICENSE** file
 
-### Fixed
-
-- **Album picker adds wrong tracks** — was passing album IDs as track IDs, now correctly expands via DB query
-- **Track artist vs album artist** — stored separately in DB, compilations display correctly
-- **Seek past end of track** — skips to next instead of crashing
-- **Scroll past end** — queue scroll clamps correctly
-- **Scroll in modals** — routes to active modal instead of always scrolling queue
-- **Library shows album artists only** — no spurious entries from featured artists on compilations
-- **Crash on pick subcommand** — fixed usize underflow race with `saturating_sub`, added panic hook for terminal restore
-- **Queue metadata for local tracks** — was blank, now populated correctly
-- **Album header dimming** — only dims when ALL tracks in group are played
-
 ### Changed
 
 - **Crate renamed** — `koan-cli` → `koan-music` (binary stays `koan`), directory `crates/koan-music/`
@@ -2751,6 +2731,18 @@ First public release. Full TUI rewrite, undo/redo, file organization, CI/CD pipe
 - **`koan organize` CLI subcommand** — file organization is now TUI-only (context menu → organize modal)
 - **FFI/Swift layer** — removed entirely, pure Rust
 - **fzf dependency** — replaced with built-in nucleo fuzzy picker
+
+### Fixed
+
+- **Album picker adds wrong tracks** — was passing album IDs as track IDs, now correctly expands via DB query
+- **Track artist vs album artist** — stored separately in DB, compilations display correctly
+- **Seek past end of track** — skips to next instead of crashing
+- **Scroll past end** — queue scroll clamps correctly
+- **Scroll in modals** — routes to active modal instead of always scrolling queue
+- **Library shows album artists only** — no spurious entries from featured artists on compilations
+- **Crash on pick subcommand** — fixed usize underflow race with `saturating_sub`, added panic hook for terminal restore
+- **Queue metadata for local tracks** — was blank, now populated correctly
+- **Album header dimming** — only dims when ALL tracks in group are played
 
 ## 0.1.0
 

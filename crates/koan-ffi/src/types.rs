@@ -936,7 +936,8 @@ pub struct ArtEvictions {
 pub struct Invite {
     pub server: String,
     pub username: String,
-    /// What koan trades for an API key; absent from links made before tokens.
+    /// What koan trades for an API key; absent from a pasted address with the
+    /// account in it.
     pub token: Option<String>,
     pub password: Option<String>,
     pub link: String,

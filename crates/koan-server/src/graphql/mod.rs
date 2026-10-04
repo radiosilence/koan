@@ -148,6 +148,11 @@ impl DbHandle {
         self.pool.acquire()
     }
 
+    /// The database this schema serves, which need not be the default one.
+    fn path(&self) -> std::path::PathBuf {
+        self.pool.pool.path().to_owned()
+    }
+
     /// A connection outside the bound, for work that runs for minutes and must
     /// not deny a connection to request-path resolvers.
     fn open_detached(&self) -> Result<Database, koan_core::db::connection::DbError> {
@@ -470,11 +475,10 @@ fn editable_playlist(
     }
 }
 
-/// Whose linked clients the current user may see and command: their own, or
-/// every account's for an admin.
+/// Whose linked clients the current user may see and command: their own,
+/// whatever their role.
 fn client_scope(ctx: &Context<'_>) -> Option<String> {
-    let user = get_auth_user(ctx);
-    (user.role != Role::Admin).then_some(user.username)
+    Some(get_auth_user(ctx).username)
 }
 
 /// Check that the current user has at least the required role.

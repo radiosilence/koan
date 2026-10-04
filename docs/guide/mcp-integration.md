@@ -1,4 +1,4 @@
-# MCP Integration
+# MCP integration
 
 kōan exposes two tools over the Model Context Protocol. The client reads the GraphQL schema, then drives everything through the `graphql` tool. There are two ways to connect:
 
@@ -27,9 +27,7 @@ A connection lasts as long as its refresh token is used within `auth.refresh_tok
 
 ## Running locally (stdio)
 
-1. Make sure `koan` is on your PATH (or note the full path from `which koan`).
-
-2. Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+Run `koan scan` at least once so the library is indexed, then add kōan to Claude Desktop's config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
@@ -42,7 +40,7 @@ A connection lasts as long as its refresh token is used within `auth.refresh_tok
 }
 ```
 
-If kōan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the full path:
+Claude Desktop does not read your shell's `PATH`, so a `koan` installed by Homebrew or mise needs its full path (`which koan`):
 
 ```json
 {
@@ -55,39 +53,19 @@ If kōan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the 
 }
 ```
 
-3. Restart Claude Desktop. You should see kōan in the MCP server list (plug icon).
-
-4. Make sure you've run `koan scan` at least once so your library is indexed.
+Restart Claude Desktop to pick it up.
 
 ## Playing on a phone
 
 Connected to a server, the assistant can play music on the koan apps linked to it rather than on the server: it lists them with `clients`, builds a track list with the library queries, and calls `playOnClient`. Ask for "something chill like Polar Bear on my phone" and the queue starts on the iPhone. See [Playing on a linked app](headless-server.md#playing-on-a-linked-app).
 
-## Tools exposed
+## Tools
 
 | Tool | Purpose |
 |------|---------|
-| `schema_sdl` | Returns the full GraphQL schema so the LLM knows what queries and mutations are available |
-| `graphql` | Executes a GraphQL query or mutation against the running player |
+| `schema_sdl` | The GraphQL schema, so the model knows what it can ask |
+| `graphql` | Runs a query or mutation, in-process, against the same schema as the [GraphQL API](graphql-api.md) |
 
-The LLM reads the schema first, then constructs whatever queries it needs. This 2-tool design means new features added to the GraphQL API are automatically available to the MCP server without any changes.
+Anything added to the GraphQL API is available over MCP without changes here. A request like "find my 90s electronic albums, pick one at random and queue it" becomes an `albums` query filtered by year and genre, then `addToQueue` and `play`.
 
-## Example prompts
-
-Things you can ask Claude when kōan is connected:
-
-- "Play me some ambient music"
-- "What albums do I have by Aphex Twin?"
-- "Queue up Tri Repetae but skip the interludes"
-- "Pause" / "Skip this" / "What's playing?"
-- "Play something like what's on now but more upbeat"
-- "Search my library for anything with 'rain' in the title"
-- "Switch audio output to my DAC"
-- "Save this queue as 'techno friday'" / "Restore my chill mix"
-- "Star this track"
-
-Claude chains GraphQL operations: "find all my 90s electronic albums, pick one at random, and queue it up" becomes an `albums` query filtered by year and genre, then `addToQueue` and `play`.
-
-## How it differs from the GraphQL API
-
-The MCP server executes GraphQL in-process against the same schema as the [GraphQL API](graphql-api.md). `koan mcp` serves it over stdio at `user` role, so the mutations that trigger scans or change the output device are refused unless `KOAN_MCP_ADMIN=1` is set, and those that move files or rewrite config are refused always (see [In-process access](authentication.md#in-process-access)). A server's `/mcp` acts as the signed-in account, capped the same way.
+`koan mcp` runs at `user` role, so it cannot trigger scans or change the output device unless `KOAN_MCP_ADMIN=1` is set, and never moves files or rewrites config. See [In-process access](authentication.md#in-process-access).

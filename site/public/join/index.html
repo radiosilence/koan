@@ -41,12 +41,10 @@
       <p class="text-sm text-muted">If the button does nothing, copy the invite and paste it into the Server URL field in kōan's Settings.</p>
 
       <h2 class="mt-10">Using another app?</h2>
-      <p id="with-password" hidden>Any Subsonic app can sign in with these:</p>
-      <p id="with-token" hidden>Any Subsonic app can sign in with the server and username below and the password from your invite email. Apps that take an API key can use one made on the server's own page, under API keys.</p>
+      <p>Any Subsonic app can sign in with the server and username below and the password from your invite email. Apps that take an API key can use one made on the server's own page, under API keys.</p>
       <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1">
         <dt class="text-muted">Server URL</dt><dd id="server" class="m-0 break-all select-all"></dd>
         <dt class="text-muted">Username</dt><dd id="username" class="m-0 break-all select-all"></dd>
-        <dt class="text-muted password" hidden>Password</dt><dd id="password" class="password m-0 break-all select-all" hidden></dd>
       </dl>
       <p class="mt-8 text-sm text-muted">These details never left your browser: they are in the part of the link after the #, which is not sent to koan.rocks.</p>
     </div>
@@ -62,11 +60,9 @@
       const params = new URLSearchParams(location.hash.slice(1));
       const server = params.get("server");
       const username = params.get("username");
-      // A koan server's link carries a token the app trades for a key of
-      // its own; links from older servers carry the password.
+      // The token the app trades for a key of its own.
       const invite = params.get("invite");
-      const password = params.get("password");
-      if (!server || !username || !(invite || password)) {
+      if (!server || !username || !invite) {
         document.getElementById("broken").hidden = false;
         return;
       }
@@ -76,16 +72,7 @@
       text("server-name", host);
       text("server", server);
       text("username", username);
-      if (invite) {
-        document.getElementById("with-token").hidden = false;
-      } else {
-        document.getElementById("with-password").hidden = false;
-        document.querySelectorAll(".password").forEach((el) => { el.hidden = false; });
-        text("password", password);
-      }
-      const query = new URLSearchParams(
-        invite ? { server, username, invite } : { server, username, password },
-      ).toString();
+      const query = new URLSearchParams({ server, username, invite }).toString();
       document.getElementById("open").href = "koan://join?" + query;
       const copy = document.getElementById("copy-link");
       copy.addEventListener("click", () => {

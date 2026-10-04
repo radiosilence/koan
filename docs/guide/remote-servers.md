@@ -1,4 +1,4 @@
-# Remote Servers
+# Remote servers
 
 kōan integrates with [Navidrome](https://www.navidrome.org/), Subsonic, and any server with a Subsonic-compatible API. Remote tracks merge with your local library into one collection.
 
@@ -14,7 +14,7 @@ This prompts for your password and saves credentials to `config.local.toml` (git
 koan remote sync
 ```
 
-The first sync fetches your entire remote library. This can take a while for large collections (tens of thousands of tracks), but progress is displayed throughout.
+The first sync takes minutes for a library of tens of thousands of tracks.
 
 ## Staying in sync
 
@@ -64,7 +64,7 @@ download_workers = 5    # parallel download threads (default: 5)
 
 ## Cache management
 
-Downloaded remote tracks are cached locally so subsequent plays are instant. See [Cache Management](../recipes/cache-management.md) for size limits, eviction, and cleanup.
+Played tracks are kept, so they play again from disk. See [Cache management](../recipes/cache-management.md) for size limits and eviction.
 
 ```toml
 [remote]
@@ -72,12 +72,9 @@ cache_limit = "50GB"           # max cache size, LRU eviction on startup (defaul
 cache_dir = "/custom/path"     # explicit cache dir (default: ~/.config/koan/cache)
 ```
 
-## Favourite sync
+## Favourites and playlists
 
-Favourites sync bidirectionally with your remote server:
-
-- Star a track in kōan (`f`) -> stars it on the server
-- Star a track on the server (via Navidrome web UI, DSub, etc.) -> next `koan remote sync` picks it up
+Favourites and playlists sync both ways. A change made in kōan is sent to the server at once; one made in another client arrives with the next sync.
 
 ## Configuration reference
 

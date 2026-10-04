@@ -1,6 +1,6 @@
-# Configuration Reference
+# Configuration
 
-kōan uses [figment](https://docs.rs/figment) for layered configuration. Four sources are merged in order -- each layer overrides the one before it:
+Four sources are merged, each overriding the one before it:
 
 ```
 Defaults -> config.toml -> config.local.toml -> KOAN_* env vars
@@ -9,12 +9,12 @@ Defaults -> config.toml -> config.local.toml -> KOAN_* env vars
 
 | Layer | Path | Purpose |
 |-------|------|---------|
-| Defaults | (built-in) | Hardcoded sane defaults for every field |
+| Defaults | (built-in) | |
 | `config.toml` | `~/.config/koan/config.toml` | Shared settings -- safe to commit to dotfiles |
 | `config.local.toml` | `~/.config/koan/config.local.toml` | This machine only, gitignored, `0600` |
-| Environment | `KOAN_*` vars | Overrides for CI and headless deployments -- highest priority |
+| Environment | `KOAN_*` vars | Containers and one-off overrides |
 
-Run `koan config` to see all layers and the fully resolved result (including which `KOAN_*` env vars are active).
+Run `koan config` to see the merged result, the files it came from and which `KOAN_*` env vars are active.
 
 ## Which file a setting goes in
 
@@ -98,17 +98,6 @@ Field names match the TOML key in SCREAMING_SNAKE_CASE. Nested sections use `__`
 - `[remote] password` -> `KOAN_REMOTE__PASSWORD`
 - `[subsonic] port` -> `KOAN_SUBSONIC__PORT`
 - `[playback] pre_amp_db` -> `KOAN_PLAYBACK__PRE_AMP_DB`
-
-## CI usage
-
-Env vars make kōan easy to configure in CI without config files:
-
-```yaml
-env:
-  KOAN_REMOTE__URL: ${{ secrets.NAVIDROME_URL }}
-  KOAN_REMOTE__PASSWORD: ${{ secrets.NAVIDROME_PASSWORD }}
-  KOAN_GRAPHQL__PORT: 4001
-```
 
 ## `koan config init`
 
@@ -215,7 +204,7 @@ username = "admin"
 # config.toml or config.local.toml
 [remote]
 download_workers = 5             # parallel download threads (default: 5)
-cache_limit = "50GB"             # max cache size, LRU eviction on startup (default: unlimited)
+cache_limit = "50GB"             # max cache size, LRU eviction at startup and as downloads land (default: unlimited)
 cache_dir = "/custom/path"       # explicit cache dir (default: ~/.config/koan/cache)
 ```
 
@@ -227,18 +216,7 @@ Every secret kōan holds -- the remote password, the Subsonic shared secret, the
 refresh token for a kōan server -- is written to `config.local.toml`, which is
 gitignored and created `0600`.
 
-Not the OS keychain, which kōan used until v0.31.2. A keychain item's ACL is
-keyed on the reading binary's code signature, and kōan has no stable signing
-identity: ad-hoc signing derives that identity from the binary's own hash, so
-every release is a different application to macOS, no grant ever matches twice,
-and the password dialog returns on every launch after every update.
-
-The dialog was not buying much in exchange. Subsonic authenticates every request
-with the password or a salted MD5 of it, so a client has to keep something
-password-equivalent indefinitely -- there is no token to exchange it for, and
-Navidrome offers no OAuth. A `0600` file guards it from other accounts on the
-machine and from an unencrypted backup, which is the bargain `~/.netrc`,
-`~/.aws/credentials` and `gh`'s `hosts.yml` all make.
+Not the OS keychain: a keychain item is bound to the reading binary's code signature, which changed with every build, so macOS asked for the password after every update. A Subsonic client has to keep something password-equivalent in any case, and a `0600` file is the same bargain `~/.netrc` and `gh`'s `hosts.yml` make.
 
 ## `[auth]`
 
@@ -327,13 +305,7 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$le
 flat = "%artist% - %title%"
 ```
 
-Named patterns used by the TUI organize modal. Format strings use fb2k syntax -- `%field%` for metadata, `$function()` for transforms, `[conditionals]` to omit blocks when fields are missing. See [Format Strings](../format-strings.md) for the full reference.
-
-The `va-aware` pattern handles compilations: if the album artist is "Various Artists", it includes the per-track artist in the filename and omits the redundant year prefix.
-
-Files are organized into a configured library folder (from `[library] folders`): the first one from the TUI, and the one you pick in the macOS app when there are several. The format pattern generates the relative path within that folder.
-
-See [File Organization](../guide/file-organization.md) for a walkthrough.
+Named patterns for organize, in [format string](../format-strings.md) syntax. See [File organization](../guide/file-organization.md).
 
 ---
 
@@ -370,26 +342,39 @@ Auth is enabled by default. Run `koan auth setup` to create a keypair and admin 
 
 ## `[subsonic]`
 
-kōan's own Subsonic-compatible REST API, served at `/rest/*`.
+kōan's Subsonic API, served at `/rest/*`. Clients sign in with a kōan account; see [Authentication](../guide/authentication.md#subsonic-api).
 
 ```toml
-# config.local.toml -- which machine serves Subsonic, and as whom
+# config.local.toml -- which machine serves Subsonic
 [subsonic]
-enabled = false               # serve /rest/* on the GraphQL port (default: false)
-port = 4040                   # also serve it on a dedicated port (default: none)
-username = "koan"             # username Subsonic clients authenticate as
+enabled = false               # serve /rest/* on the main port (default: false)
+port = 4040                   # also serve it on a port of its own (default: none)
+username = "koan"             # the shared secret's username (default: koan)
 ```
 
-`enabled` mounts `/rest/*` on the GraphQL port. `port` adds a second listener for
-clients that insist on Subsonic having one of its own.
+`koan subsonic setup` enables it and generates a shared secret, written to `config.local.toml` and printed once. The secret signs in as `username` with `user` rights, for a client that has no account of its own; `koan play --server` streams with it. It is generated rather than chosen because Subsonic token auth sends `md5(secret + salt)` with every request, and a captured digest of a human-chosen password can be cracked offline.
 
-Run `koan subsonic setup` to enable it. That generates a secret, writes it to `config.local.toml`, and prints it once.
+---
 
-The secret is deliberately **not** your Navidrome/`[remote]` password. The Subsonic protocol authenticates with `md5(secret + salt)` where the client picks the salt, over whatever transport it likes — so anyone who can capture one request walks away with a digest to crack offline. A generated 256-bit secret makes that worthless; your Navidrome password would not.
+## `[sharing]`
 
-`/rest/*` is not covered by JWT auth, so these credentials alone guard every file in the library. Don't expose the port to the internet.
+```toml
+[sharing]
+public_url = "https://music.example.com"
+```
 
-See [Authentication](../guide/authentication.md), [GraphQL API](../guide/graphql-api.md), and [Headless Server](../guide/headless-server.md) for usage guides.
+The address the server is reached at from outside. Share links, invite links and MCP sign-in are built on it; without it the server makes no share links and offers MCP clients no sign-in, since an address taken from request headers could be chosen by whoever sends them.
+
+---
+
+## `[mcp]`
+
+```toml
+[mcp]
+redirect_hosts = ["claude.ai", "claude.com"]
+```
+
+The hosts an MCP client may register to return to, besides this machine. Empty allows any HTTPS host, and each approval rests on the person recognising the host the consent page names. See [MCP integration](../guide/mcp-integration.md).
 
 ---
 

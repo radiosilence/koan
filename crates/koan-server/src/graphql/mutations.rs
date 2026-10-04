@@ -115,6 +115,7 @@ impl MutationRoot {
                 track_ids,
                 start_at: start_at.unwrap_or(0),
                 position_ms: 0,
+                paused: false,
             }
         };
         let sent = send_to_client(ctx, client.as_deref(), cmd).await?;
@@ -298,8 +299,9 @@ impl MutationRoot {
             created_at: chrono::Utc::now().timestamp(),
         };
         crate::clients::registry().add_order(order.clone());
-        super::blocking(|| {
-            crate::clients::fulfil_from(&koan_core::config::db_path());
+        let path = ctx.data::<super::DbHandle>()?.path();
+        super::blocking(move || {
+            crate::clients::fulfil_from(&path);
             Ok(())
         })
         .await?;
@@ -339,8 +341,9 @@ impl MutationRoot {
             created_at: chrono::Utc::now().timestamp(),
         };
         crate::clients::registry().add_order(order.clone());
-        super::blocking(|| {
-            crate::clients::fulfil_from(&koan_core::config::db_path());
+        let path = ctx.data::<super::DbHandle>()?.path();
+        super::blocking(move || {
+            crate::clients::fulfil_from(&path);
             Ok(())
         })
         .await?;

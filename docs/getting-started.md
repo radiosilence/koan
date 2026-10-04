@@ -1,181 +1,77 @@
-# Getting Started
+# Getting started
 
+kōan plays a music folder on this machine, a server's library, or both merged into one. Which piece to install depends on where the music is:
 
-## Install
+- **On the computer you listen at:** the macOS app, or the terminal UI on macOS and Linux.
+- **On another machine:** run the [server](guide/headless-server.md) there, and sign in from the apps, the browser or any Subsonic client.
+- **On a Navidrome or Subsonic server you already run:** the apps and terminal UI play from it directly. See [Remote servers](guide/remote-servers.md), or [Migrating from Navidrome](guide/migrating-from-navidrome.md) to replace it.
 
-### Homebrew (recommended)
+## The macOS app
 
-```bash
-brew install radiosilence/koan/koan
-```
-
-### mise
-
-```bash
-mise use -g github:radiosilence/koan@latest
-```
-
-### Cargo
+Download [`Koan.dmg`](https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg) or install with Homebrew:
 
 ```bash
-cargo install koan-cli
+brew install --cask radiosilence/koan/koan-app
 ```
 
-### Build from source
+Everything is set up in Settings: **Library** adds folders and scans them, **Server** signs in to a kōan, Navidrome or Subsonic server. It needs macOS 26 or later, and shares its config and library with the terminal UI.
+
+## The iOS app
+
+The iOS app plays from a server; a phone has no music folder to scan. Sign in under Settings → Server, or open an invite link from the server's admin. It needs iOS 26 or later.
+
+## The terminal UI
 
 ```bash
-git clone https://github.com/radiosilence/koan.git && cd koan
-cargo install --path crates/koan-cli
+mise use -g github:radiosilence/koan@latest   # or: brew install radiosilence/koan/koan
+                                              # or: cargo install koan-cli
 ```
 
-### Linux dependencies
-
-macOS works out of the box (CoreAudio). Linux needs ALSA and D-Bus dev headers:
+Linux needs the ALSA and D-Bus headers to build: `libasound2-dev libdbus-1-dev` on Debian and Ubuntu, `alsa-lib-devel dbus-devel` on Fedora, `alsa-lib dbus` on Arch.
 
 ```bash
-# Debian/Ubuntu
-sudo apt install libasound2-dev libdbus-1-dev
-
-# Fedora
-sudo dnf install alsa-lib-devel dbus-devel
-
-# Arch
-sudo pacman -S alsa-lib dbus
+koan config init   # creates ~/.config/koan/ with a commented config.toml
 ```
 
-## Create your config
-
-```bash
-koan config init
-```
-
-This creates `~/.config/koan/` with:
-
-| File | Purpose |
-|------|---------|
-| `config.toml` | Commented template -- all defaults shown as comments, uncomment to customize. Safe to commit to dotfiles |
-| `config.local.toml` | Machine-specific settings (library paths, credentials) -- gitignored |
-| `.gitignore` | Ignores logs, database, local config, cache |
-| `koan.db` | SQLite database (created on first use) |
-| `cache/` | Download cache for remote tracks |
-
-Running `koan config init` on an existing setup is safe -- it merges new defaults without overwriting your customizations, and skips `config.local.toml` if it already exists. `[library]` and `[remote]` sections are excluded from `config.toml` (they belong in `config.local.toml`).
-
-## Add your music
-
-kōan needs at least one music source -- local files, a remote server, or both.
-
-### Option A: Local files
-
-Edit `~/.config/koan/config.local.toml`:
+Add your music to `~/.config/koan/config.local.toml`:
 
 ```toml
 [library]
 folders = ["/path/to/your/music"]
 ```
 
-Then scan your library:
+Then index it and start the player:
 
 ```bash
 koan scan
+koan
 ```
 
-kōan reads metadata from FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF, CAF, Ogg, MKV/WebM, and MP4 files.
-
-A scan also removes tracks whose files have gone, taking their play history with them -- so it refuses to do that when the pattern looks like a mount failure rather than a deletion: a folder that yields no audio files at all, a path it cannot stat, or more than 20% of a folder of at least 100 tracks disappearing at once. If you really did delete that much, `koan scan --force-remove` lifts the last of those (only the last -- an empty or unreadable folder is still left alone).
-
-### Option B: Remote server (Navidrome/Subsonic)
-
-If you run [Navidrome](https://www.navidrome.org/), Subsonic, or anything with a Subsonic-compatible API:
+Or sign in to a server instead of, or as well as, scanning:
 
 ```bash
-koan remote login https://music.example.com admin
+koan remote login https://music.example.com alice
 koan remote sync
 ```
 
-Every sync fetches your entire library. koan syncs on its own when the server's library changes: a koan server tells it, and for Navidrome and other Subsonic servers it checks on a timer and syncs only if something moved.
+### Playing
 
-See [Remote Servers](guide/remote-servers.md) for the full setup guide.
+`p` searches tracks, `a` albums, `r` artists, and `l` browses the library. In a picker, `Enter` adds to the queue, `Ctrl+Enter` adds and plays, and `Ctrl+R` replaces the queue. `space` pauses, `<` and `>` skip, `,` and `.` seek, and `e` edits the queue, with `Ctrl+Z` to undo. The hint bar shows the keys for the current mode; [Keybindings](reference/keybindings.md) lists them all.
 
-### Option C: Both
+`koan play` also takes paths: `koan play ~/Music/some-album/`.
 
-Local and remote tracks merge: if the same track exists in both sources (matched on artist, album, disc, track number and title, or on MusicBrainz recording and release ids), it becomes a single entry. Local files always take playback priority; remote tracks stream on demand and cache locally.
+### Shell completions
 
-Run `koan remote sync` periodically (or after adding music to your server) to pull new tracks.
-
-## Play something
+Completions read the library, so `koan play --album <TAB>` lists your albums:
 
 ```bash
-# Launch the TUI
-koan
-
-# Play files or directories directly
-koan play ~/Music/Aphex\ Twin/
-koan play ~/Music/album/*.flac
-
-# Play by album or artist ID (use tab completion)
-koan play --album 5
-koan play --artist 3
+source <(COMPLETE=zsh koan)    # zsh; bash and fish take COMPLETE=bash and COMPLETE=fish
 ```
 
-The TUI launches immediately. If tracks need downloading (remote library), they appear in the queue with animated spinners while loading in the background.
+## Removed files
 
-## Your first session
+A scan removes tracks whose files have gone, along with their play history. It refuses when the pattern looks like a missing mount rather than a deletion: a folder with no audio files, a path it cannot read, or more than 20% of a folder of at least 100 tracks gone at once. `koan scan --force-remove` lifts the last of these after a deliberate mass deletion.
 
-The TUI has three areas: a **transport bar** at the top (album art, track info, seek bar, spectrum analyzer), a **content area** in the middle (queue, library, or picker), and a **hint bar** at the bottom showing available keys.
+## Local and remote together
 
-### Finding music
-
-| Key | What it opens |
-|-----|--------------|
-| `p` | Track picker -- fuzzy search across all tracks |
-| `a` | Album picker -- fuzzy search by album name |
-| `r` | Artist picker -- fuzzy search by artist |
-| `l` | Library browser -- tree view (artist -> album -> track) |
-
-Type to filter. In any picker, press `Enter` to add to queue, `Ctrl+Enter` to add and start playing, or `Ctrl+R` to replace the entire queue.
-
-### Controlling playback
-
-| Key | Action |
-|-----|--------|
-| `space` | Pause / resume |
-| `<` `>` | Previous / next track |
-| `,` `.` or `<-` `->` | Seek +/-10 seconds |
-| `i` | Track info (codec, sample rate, bit depth, cover art) |
-| `L` | Toggle lyrics panel |
-| `f` | Favourite / unfavourite |
-| `v` | Visualizer picker (22 modes with live preview) |
-
-### Managing the queue
-
-Press `e` to enter edit mode. Select tracks with shift-arrows, `d` to delete, `j`/`k` to reorder. `Ctrl+Z` undoes any queue change (100-deep stack). `Esc` to exit edit mode.
-
-Mouse works everywhere too -- click, drag, scroll wheel. Double-click a track to jump to it.
-
-See [Keybindings](reference/keybindings.md) for the complete key reference.
-
-## Shell completions
-
-Dynamic completions that know your library -- artist/album IDs tab-complete from the database.
-
-```bash
-# zsh (add to .zshrc)
-source <(COMPLETE=zsh koan)
-
-# bash
-source <(COMPLETE=bash koan)
-
-# fish
-COMPLETE=fish koan | source
-```
-
-Then `koan play --album <TAB>` shows your actual albums with artist names.
-
-## What's next?
-
-- **[Configuration](reference/configuration.md)** -- customize playback, visualizer, organize patterns, and more
-- **[Authentication](guide/authentication.md)** -- set up API auth, manage users
-- **[File Organization](guide/file-organization.md)** -- rename your library using format string patterns
-- **[Remote Servers](guide/remote-servers.md)** -- advanced Subsonic/Navidrome setup
-- **[GraphQL API](guide/graphql-api.md)** -- programmatic control and headless operation
+A track present both locally and on a server is one entry in the library, matched on artist, album, disc, track number and title, or on MusicBrainz recording and release. The local file plays; the remote copy is the fallback when the drive is not mounted.

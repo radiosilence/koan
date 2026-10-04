@@ -779,9 +779,29 @@ async fn admins_create_invite_and_remove_accounts() {
     assert!(r.body.contains("<dt>Password</dt>"), "{}", r.body);
     assert_closed(alice_link);
 
-    // So does a password the admin chooses; without one, the form asking.
-    let r = send(&f.app, post("/users/1/password", "{}", &admin)).await;
+    // So does a password the admin chooses. The row's button asks for the
+    // form, and a value typed into another account's form and never
+    // submitted, which Datastar posts along with it, changes nothing.
+    let before = queries::auth::get_user_by_id(&db.conn, 1)
+        .unwrap()
+        .unwrap()
+        .password_hash;
+    let r = send(
+        &f.app,
+        post(
+            "/users/1/password/form",
+            r#"{"setpassword":"typed for someone else"}"#,
+            &admin,
+        ),
+    )
+    .await;
     assert!(r.body.contains("data-bind:setpassword"), "{}", r.body);
+    assert!(r.body.contains(r#"{"setpassword":""}"#), "{}", r.body);
+    let after = queries::auth::get_user_by_id(&db.conn, 1)
+        .unwrap()
+        .unwrap()
+        .password_hash;
+    assert_eq!(before, after);
     let r = send(
         &f.app,
         post("/users/1/password", r#"{"setpassword":"short"}"#, &admin),

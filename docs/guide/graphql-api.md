@@ -45,11 +45,7 @@ To disable auth:
 auth_enabled = false
 ```
 
-> **Warning:** with auth disabled, anything that can reach the port is an admin — it can read your
-> entire library, control playback and rewrite config. The `Origin` and `Host` checks keep a web page
-> you visit from being that "anything", but they are not a substitute for auth: any other machine on
-> the network still gets in. Only disable auth on a host you control, bound to `127.0.0.1`, and never
-> with the port forwarded.
+With auth disabled, anything that can reach the port is an admin; see [Recovery / lockout](authentication.md#recovery--lockout) before doing it.
 
 ## Configuration
 
@@ -63,9 +59,6 @@ auth_enabled = true           # JWT authentication (default: true)
 access_token_ttl = "15m"      # access token lifetime (default: 15m)
 refresh_token_ttl = "30d"     # refresh token lifetime (default: 30d)
 ```
-
-kōan's own Subsonic API is configured separately, under `[subsonic]` — see
-[Configuration](../reference/configuration.md#subsonic).
 
 The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0.0.0"` in config to expose on all interfaces.
 
@@ -133,7 +126,7 @@ mutation { saveQueueAsPlaylist(name: "techno friday") { id, name, trackCount } }
 
 # Playlists
 { playlists { id, name, trackCount, durationMs, remoteId } }
-{ playlistTracks(id: 3) { id, title, artistName } }
+{ playlistTracks(id: 3) { id, title, artist } }
 mutation { addToPlaylist(id: 3, trackIds: [42, 43]) { ok } }
 # A reorder, a removal and a shuffle are all the same call: the list you want.
 mutation { setPlaylistTracks(id: 3, trackIds: [43, 42]) { ok } }
@@ -193,26 +186,13 @@ every other client slow:
 - 30 second timeout on a query (`408`); subscriptions are exempt
 - 64 queries in flight, beyond which further requests get `503` immediately
 
-## Available operations
+## The schema
 
-| Category | Operations |
-|----------|-----------|
-| **Playback** | `play`, `pause`, `resume`, `stop`, `next`, `previous`, `seek` |
-| **Queue** | `queue`, `addToQueue`, `removeFromQueue`, `moveInQueue`, `clearQueue`, `replaceQueue`, `undo`, `redo` |
-| **Library** | `artists`, `albums`, `tracks`, `track`, `fuzzySearch`, `libraryStats`, `lyrics`, `coverArt` |
-| **State** | `nowPlaying`, `devices`, `setDevice`, `clearDevice` |
-| **Favourites** | `favourites`, `favourite`, `unfavourite`, `toggleFavourite` |
-| **Playlists** | `playlists`, `playlistTracks`, `createPlaylist`, `saveQueueAsPlaylist`, `addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist` |
+`--playground` serves GraphiQL at `/graphql`, which browses the schema. The MCP tool `schema_sdl` returns the same schema as SDL.
 
-## Subsonic REST API
+## Subsonic API
 
-kōan can also expose a Subsonic-compatible REST API for clients that speak the Subsonic protocol:
-
-```bash
-koan --headless --subsonic 4040
-```
-
-This runs on a separate port from the GraphQL API. Useful for connecting Subsonic clients (DSub, Ultrasonic, play:Sub) to a headless kōan instance. It speaks OpenSubsonic, including API-key sign-in and synced lyrics; see [Authentication](authentication.md#subsonic-api).
+The server's Subsonic API, at `/rest` on the same port, is configured separately; see [Configuration](../reference/configuration.md#subsonic) and [Authentication](authentication.md#subsonic-api).
 
 ## MCP server
 
