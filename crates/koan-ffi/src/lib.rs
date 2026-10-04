@@ -149,7 +149,9 @@ impl Drop for KoanEngine {
     }
 }
 
-/// One client's subscription to the analyser.
+/// One client's subscription to the levels of whatever it is showing as
+/// playing: this device's analyser, or, while another device is controlled,
+/// that device's levels over the link (`koan_core::remote::levels`).
 ///
 /// A cursor over the published frame, in the shape `StateStream` already uses:
 /// the value is a whole snapshot, so a subscriber that slept through two
@@ -159,7 +161,18 @@ pub struct VizStream {
     /// Weak, so a client's loop ends when the engine goes rather than holding
     /// the analyser up. The loop *is* the subscription.
     viz: Weak<VizSnapshot>,
-    inner: tokio::sync::Mutex<tokio::sync::watch::Receiver<u64>>,
+    inner: tokio::sync::Mutex<Following>,
+}
+
+struct Following {
+    local: tokio::sync::watch::Receiver<u64>,
+    /// Display frames while the controlled device's bars move.
+    remote: tokio::sync::watch::Receiver<u64>,
+    /// Anything about the engine, the choice of device among it.
+    devices: tokio::sync::watch::Receiver<u64>,
+    /// Held while another device is controlled: watching it is what has it
+    /// send its levels, and dropping this stops them.
+    view: Option<koan_core::remote::levels::View>,
 }
 
 impl VizStream {
@@ -170,7 +183,12 @@ impl VizStream {
         viz.touch();
         Arc::new(Self {
             viz: Arc::downgrade(viz),
-            inner: tokio::sync::Mutex::new(viz.subscribe()),
+            inner: tokio::sync::Mutex::new(Following {
+                local: viz.subscribe(),
+                remote: koan_core::remote::levels::remote().ticks().subscribe(),
+                devices: koan_core::signal::engine_changed().subscribe(),
+                view: None,
+            }),
         })
     }
 }
@@ -181,13 +199,50 @@ impl VizStream {
     ///
     /// `None` once the engine is gone, which ends the caller's loop.
     pub async fn next(&self) -> Option<VizLevels> {
-        let mut cursor = self.inner.lock().await;
-        // Marked seen *before* the wait, so a frame published between the last
-        // answer and this call is returned rather than slept through.
-        cursor.borrow_and_update();
-        cursor.changed().await.ok()?;
-        let viz = self.viz.upgrade()?;
-        Some(viz.levels().into())
+        use koan_core::remote::{devices, levels};
+        let mut f = self.inner.lock().await;
+        loop {
+            let target = devices::target();
+            if f.view.as_ref().map(|v| v.target()) != target.as_deref() {
+                // The old device let go before the new one is watched, so it
+                // is told to stop.
+                f.view = None;
+                f.view = target.map(|t| levels::remote().view(t));
+            }
+            // Marked seen *before* the wait, so a frame published between the
+            // last answer and this call is returned rather than slept through.
+            f.devices.borrow_and_update();
+            if f.view.is_some() {
+                f.remote.borrow_and_update();
+                let Following {
+                    remote, devices, ..
+                } = &mut *f;
+                tokio::select! {
+                    tick = remote.changed() => tick.ok()?,
+                    moved = devices.changed() => {
+                        moved.ok()?;
+                        // A link or a connection on the network may have come
+                        // up, or the device relinked: ask again where due.
+                        levels::remote().ask(false);
+                        continue;
+                    }
+                }
+                let (position, playing) = devices::target_playhead().unwrap_or((0, false));
+                return Some(levels::remote().sample(position, playing).into());
+            }
+            let viz = self.viz.upgrade()?;
+            viz.touch();
+            drop(viz);
+            f.local.borrow_and_update();
+            let Following { local, devices, .. } = &mut *f;
+            tokio::select! {
+                frame = local.changed() => {
+                    frame.ok()?;
+                    return Some(self.viz.upgrade()?.levels().into());
+                }
+                moved = devices.changed() => moved.ok()?,
+            }
+        }
     }
 }
 
@@ -455,6 +510,7 @@ impl KoanEngine {
     /// wakes for it.
     pub fn set_viz_fps(&self, fps: u8) {
         self.viz.set_fps(fps);
+        koan_core::remote::levels::remote().set_fps(fps);
     }
 
     // --- Queue mutation ----------------------------------------------------
@@ -3588,6 +3644,11 @@ impl KoanEngine {
         // A koan server this app syncs from can then tell it what to play, and
         // so can this person's other devices and anyone's on the network.
         let (weak, state) = (Arc::downgrade(&engine), engine.state.clone());
+        // What a device controlling this one draws its bars from, while it
+        // watches.
+        let playhead = engine.state.clone();
+        koan_core::remote::levels::feed()
+            .provide(engine.viz.clone(), move || playhead.position_ms());
         let held =
             std::sync::Mutex::new(None::<(u64, Vec<koan_core::remote::link::LinkQueueEntry>)>);
         koan_core::remote::devices::start(koan_core::remote::link::Local {
@@ -4025,7 +4086,10 @@ impl KoanEngine {
             LinkCommand::Redo => self.send_local(PlayerCommand::Redo),
             LinkCommand::HandOff { to } => self.hand_off_blocking(&to).map(|_| ()),
             // Taken off the link before it gets here.
-            LinkCommand::Devices { .. } => Ok(()),
+            // Answered by the link session itself, which holds the watch.
+            LinkCommand::Devices { .. }
+            | LinkCommand::WatchLevels { .. }
+            | LinkCommand::Levels { .. } => Ok(()),
             LinkCommand::SetOutput { output } => {
                 koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
                     .map_err(|message| KoanError::Audio { message })

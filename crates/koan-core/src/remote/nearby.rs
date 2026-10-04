@@ -456,6 +456,8 @@ fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), Strin
         stop,
         greeted: false,
         sent: None,
+        waker: waker.clone(),
+        levels: None,
     };
     wire::drive(&mut socket, fd, &waker, &mut session)
 }
@@ -465,6 +467,10 @@ struct Serving<'a> {
     stop: &'a Arc<Stop>,
     greeted: bool,
     sent: Option<(LinkState, Instant)>,
+    waker: Arc<Waker>,
+    /// Set while the device at the other end has bars on screen for this
+    /// one. Dropped with the connection, which stops the frames.
+    levels: Option<crate::remote::levels::Watch>,
 }
 
 impl wire::Session for Serving<'_> {
@@ -490,6 +496,9 @@ impl wire::Session for Serving<'_> {
             out.push(LinkReport::State(now.clone()));
             self.sent = Some((now, Instant::now()));
         }
+        if let Some(f) = self.levels.as_mut().and_then(|w| w.take()) {
+            out.push(LinkReport::Levels { f });
+        }
         out.iter()
             .filter_map(|r| serde_json::to_string(r).ok())
             .collect()
@@ -497,6 +506,9 @@ impl wire::Session for Serving<'_> {
 
     fn incoming(&mut self, text: &str) {
         match serde_json::from_str::<LinkCommand>(text) {
+            Ok(LinkCommand::WatchLevels { on }) => {
+                self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
+            }
             Ok(cmd) if cmd.allowed_nearby() => {
                 (self.local.on_command)(cmd, crate::remote::link::CommandSource::Nearby)
             }
@@ -738,6 +750,11 @@ impl wire::Session for Controlling<'_> {
             Ok(LinkReport::State(state)) => {
                 if let Some(id) = &self.id {
                     devices::nearby_state(id, state);
+                }
+            }
+            Ok(LinkReport::Levels { f }) => {
+                if let Some(id) = &self.id {
+                    crate::remote::levels::remote().received(id, f);
                 }
             }
             Ok(_) => {}
