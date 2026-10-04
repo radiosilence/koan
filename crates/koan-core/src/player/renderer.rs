@@ -2892,11 +2892,16 @@ mod tests {
         ));
     }
 
-    /// The stream the renderer was last sent, once it has read all of it.
+    /// The stream the renderer was last sent, once it has read all of it:
+    /// a minute decoded and processed in a debug build, alongside the rest of
+    /// the suite, so given longer than `pump_until` gives.
     fn whole_stream(r: &mut Rig) -> Vec<u8> {
         let uri = r.fake.state.lock().uri.clone();
-        let fake = r.fake.clone();
-        r.pump_until(|_| fake.state.lock().fetched.iter().any(|(u, _)| *u == uri));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !r.fake.state.lock().fetched.iter().any(|(u, _)| *u == uri) {
+            assert!(Instant::now() < deadline, "the stream never ended");
+            r.step(Duration::from_millis(50));
+        }
         r.fake.state.lock().streamed.clone()
     }
 
