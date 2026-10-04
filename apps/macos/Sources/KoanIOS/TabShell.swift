@@ -25,7 +25,11 @@ struct TabShell: View {
     /// Which tab is showing. Held rather than derived from the navigator: a
     /// record belongs to whichever tab it was opened from, and the navigator
     /// cannot say which that was.
+    #if os(tvOS)
+    @State private var selection: TabID = .nowPlaying
+    #else
     @State private var selection: TabID = .queue
+    #endif
 
     var body: some View {
         // The record's colour: the tint here, for everything below, and the wash
@@ -33,6 +37,12 @@ struct TabShell: View {
         // has no window to hang one wash on, and a stack paints its own ground
         // over anything placed behind it.
         TabView(selection: tab) {
+            #if os(tvOS)
+            // The room's first page: what is playing, at the size a sofa reads.
+            Tab("Now Playing", systemImage: "play.circle", value: TabID.nowPlaying) {
+                NowPlayingPage()
+            }
+            #endif
             Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
                 stack(.queue) { QueueView() }
             }
@@ -46,9 +56,19 @@ struct TabShell: View {
                 stack(.search) { IOSSearchView() }
             }
         }
+        #if os(tvOS)
+        // Tabs across the top, as every television app has them; the sidebar
+        // style folds them behind a pill a remote has to find first.
+        .tabViewStyle(.tabBarOnly)
+        #else
         .tabViewStyle(.sidebarAdaptable)
+        #endif
         .toggleStyle(SystemSwitch())
         .modifier(Transport(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices))
+        #if os(tvOS)
+        // The remote's Play/Pause, wherever focus is.
+        .onPlayPauseCommand { player.togglePlayPause() }
+        #endif
         .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
         // sidebar; with no sidebar they float above the transport, which is
@@ -142,6 +162,8 @@ struct TabShell: View {
     /// and More brings a navigation stack of its own.
     enum TabID: Hashable {
         case queue, library, settings, search
+        /// tvOS only, where Now Playing is a page rather than a sheet.
+        case nowPlaying
 
         /// The page the tab itself is, under anything pushed onto it. The
         /// library is a list of sections rather than one, and settings is not
@@ -150,7 +172,7 @@ struct TabShell: View {
             switch self {
             case .queue: .section(.queue)
             case .search: .section(.searchResults)
-            case .library, .settings: nil
+            case .library, .settings, .nowPlaying: nil
             }
         }
     }
@@ -214,15 +236,15 @@ struct TabShell: View {
 }
 
 /// The mini player. On a phone it sits above the tab bar: `safeAreaInset`
-/// would put it where the tab bar goes, which is to say on top of it. tvOS
-/// draws its tab bar across the top, so the foot of the screen is free.
+/// would put it where the tab bar goes, which is to say on top of it.
 private struct Transport: ViewModifier {
     @Binding var showingNowPlaying: Bool
     @Binding var showingDevices: Bool
 
     func body(content: Content) -> some View {
         #if os(tvOS)
-        content.safeAreaInset(edge: .bottom) { player }
+        // Now Playing is a tab of its own there.
+        content
         #else
         content.tabViewBottomAccessory { player }
         #endif

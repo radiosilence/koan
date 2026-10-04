@@ -33,6 +33,8 @@ enum DevicePicker {
     static var platform: String {
         #if os(iOS)
         "ios"
+        #elseif os(tvOS)
+        "tvos"
         #else
         "macos"
         #endif
@@ -41,6 +43,8 @@ enum DevicePicker {
     static var deviceNoun: String {
         #if os(iOS)
         UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        #elseif os(tvOS)
+        "Apple TV"
         #else
         "Mac"
         #endif
@@ -49,6 +53,7 @@ enum DevicePicker {
     static func icon(for platform: String) -> String {
         switch platform {
         case "ios": "iphone"
+        case "tvos": "appletv"
         case "macos": "laptopcomputer"
         default: "desktopcomputer"
         }
@@ -230,10 +235,11 @@ struct OutputPicker: View {
     @ViewBuilder private func rows(_ outputs: OutputsInfo) -> some View {
         // A phone's own output is its route, which the system chooses: the
         // row says which, and picking it brings the sound back from a renderer.
-        let phone = (outputs.owner == nil ? DevicePicker.platform : player.controlled?.platform) == "ios"
-        if phone {
+        // An Apple TV's is too.
+        let platform = outputs.owner == nil ? DevicePicker.platform : player.controlled?.platform
+        if platform == "ios" || platform == "tvos" {
             ForEach(outputs.devices, id: \.id) { device in
-                OutputChoiceRow(output: device, outputs: outputs, choice: .default, icon: DevicePicker.icon(for: "ios"), none: "Off")
+                OutputChoiceRow(output: device, outputs: outputs, choice: .default, icon: DevicePicker.icon(for: platform ?? "ios"), none: "Off")
             }
         } else {
             OutputChoiceRow(output: nil, outputs: outputs, choice: .default, icon: "speaker.wave.2", none: "Off")

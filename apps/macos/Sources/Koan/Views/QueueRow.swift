@@ -196,7 +196,7 @@ struct QueueRow: View {
         // Fixed height so a row doesn't grow when a download indicator appears
         // and shrink when it finishes, reflowing the list each time. The same
         // heights as every other list's rows — see `RowMetrics`.
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         .frame(minHeight: artwork ? RowMetrics.art : RowMetrics.text)
         #else
         .frame(height: artwork ? RowMetrics.art : RowMetrics.text)

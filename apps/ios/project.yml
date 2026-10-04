@@ -161,6 +161,7 @@ targets:
         excludes:
           - RemoteActivity.swift
           - RemoteActivityController.swift
+      - path: ../macos/Sources/KoanTV
       - path: ../macos/Sources/Koan
         # The iOS target's list, plus the Mac's sidebar, which the phone
         # compiles and the TV cannot.
@@ -300,6 +301,19 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan.uitests
         GENERATE_INFOPLIST_FILE: YES
 
+  # The remote's walk through the television app. See `just tv-walk`.
+  KoanTVUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources:
+      - path: TVUITests
+    dependencies:
+      - target: KoanTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan.tvuitests
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   Koan:
     build:
@@ -314,5 +328,8 @@ schemes:
     build:
       targets:
         KoanTV: all
+    test:
+      targets:
+        - KoanTVUITests
     archive:
       config: Release

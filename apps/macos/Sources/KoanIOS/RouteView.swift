@@ -97,12 +97,18 @@ private struct SectionFilter: ViewModifier {
     @Environment(LibraryModel.self) private var library
 
     func body(content: Content) -> some View {
+        #if os(tvOS)
+        // A search field on tvOS is a keyboard across the top of the page,
+        // over its title and buttons. The Search tab finds things there.
+        content
+        #else
         if let placeholder {
             @Bindable var library = library
             content.searchable(text: $library.filter, prompt: placeholder)
         } else {
             content
         }
+        #endif
     }
 }
 

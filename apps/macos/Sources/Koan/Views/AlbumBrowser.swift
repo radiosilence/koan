@@ -18,7 +18,12 @@ struct AlbumBrowser: View {
     /// carry the grid to wherever it landed.
     @State private var position = ScrollPosition()
 
+    #if os(tvOS)
+    /// Six across, read from a sofa.
+    private let columns = [GridItem(.adaptive(minimum: 250, maximum: 300), spacing: 48)]
+    #else
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
+    #endif
     #endif
 
     #if os(macOS)

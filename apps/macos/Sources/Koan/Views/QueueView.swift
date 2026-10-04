@@ -17,7 +17,7 @@ struct QueueView: View {
     /// A phone's library is a server's, so an empty one means not signed in
     /// yet: the first thing anyone opening the app sees, App Review included.
     private var emptyDetail: String {
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         if library.stats?.totalTracks == 0 {
             return "Sign in to your music server in Settings → Server."
         }
@@ -93,7 +93,7 @@ struct QueueView: View {
                     detail: emptyDetail
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                #if os(iOS)
+                #if os(iOS) || os(tvOS)
                 .task { if library.stats == nil { library.loadStats() } }
                 #endif
             } else {
@@ -845,7 +845,7 @@ private struct JumpToPlayingButton: View {
                 )
                 .contentShape(Circle())
         }
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         // A default button tints its label on a phone whatever the label
         // asks for, which left the button lit after following stopped.
         .buttonStyle(.plain)

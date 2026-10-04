@@ -795,6 +795,31 @@ tv-device config="Debug": (tv-ffi "appletvos")
         "target/tv-build/Build/Products/{{config}}-appletvos/koan.app"
     xcrun devicectl device process launch --device "$tv" {{bundle_id}}
 
+# Walk the television app with the remote on a simulator, screenshotting each
+# page. Signs in with the account in the environment: KOAN_REMOTE__URL,
+# KOAN_REMOTE__USERNAME and KOAN_REMOTE__API_KEY (or __PASSWORD). Screenshots
+# land in target/tv-walk.
+tv-walk: (tv-ffi "appletvsimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/tv-walk
+    rm -rf "$out" && mkdir -p "$out"
+    sim=$(xcrun simctl list devices available -j \
+        | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    [ -n "$sim" ] || { echo "No Apple TV simulator." >&2; exit 1; }
+    xcrun simctl boot "$sim" 2>/dev/null || true
+    xcrun simctl bootstatus "$sim" -b >/dev/null
+    for v in KOAN_REMOTE__ENABLED KOAN_REMOTE__URL KOAN_REMOTE__USERNAME KOAN_REMOTE__API_KEY KOAN_REMOTE__PASSWORD KOAN_WALK_SETTLE; do
+        [ -n "${!v:-}" ] && export "TEST_RUNNER_$v=${!v}"
+    done
+    xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
+        -destination "id=$sim" -derivedDataPath target/tv-build \
+        -only-testing:KoanTVUITests/TVWalkTests \
+        -resultBundlePath "$out/walk.xcresult" || true
+    xcrun xcresulttool export attachments --path "$out/walk.xcresult" --output-path "$out"
+    echo "screenshots in $out"
+
 # Archive for a device, sign, and upload to TestFlight.
 #
 # Signing is cloud-managed: xcodebuild asks App Store Connect for the

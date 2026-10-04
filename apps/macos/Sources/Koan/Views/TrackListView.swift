@@ -376,7 +376,7 @@ struct TrackRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 48, alignment: .trailing)
         }
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         .frame(minHeight: showsAlbum ? RowMetrics.art : RowMetrics.text)
         #else
         .frame(height: showsAlbum ? RowMetrics.art : RowMetrics.text)

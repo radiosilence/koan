@@ -116,9 +116,16 @@ extension View {
     ///
     /// A phone has neither. Touch has no double-click, and a `List` selection
     /// on iOS only exists in edit mode, so here the row takes the tap itself.
+    ///
+    /// A television has no touch either: only what can take focus can be
+    /// clicked, so there the row is a button.
+    @ViewBuilder
     func primaryTap(_ action: @escaping () -> Void) -> some View {
         #if os(macOS)
         self
+        #elseif os(tvOS)
+        Button(action: action) { contentShape(Rectangle()) }
+            .buttonStyle(.plain)
         #else
         contentShape(Rectangle()).onTapGesture(perform: action)
         #endif

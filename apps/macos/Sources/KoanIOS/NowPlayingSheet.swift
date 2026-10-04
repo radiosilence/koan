@@ -223,7 +223,7 @@ private struct RoutePreset: View {
 
 /// The system's output picker — AirPlay, Bluetooth, the speaker. iOS owns the
 /// route, so this stands where the Mac's device menu does.
-private struct RoutePicker: UIViewRepresentable {
+struct RoutePicker: UIViewRepresentable {
     func makeUIView(context: Context) -> AVRoutePickerView {
         let picker = AVRoutePickerView()
         picker.prioritizesVideoDevices = false

@@ -44,6 +44,11 @@ struct KoanIOSApp: App {
                         .modifier(InviteConfirmation(state: state))
                         .modifier(DspImportPrompts(dsp: state.dsp))
                         .tint(.koanAccent)
+                        #if os(tvOS)
+                        // The wash is drawn for a dark room; a television set
+                        // to light would grey it out.
+                        .preferredColorScheme(.dark)
+                        #endif
                 } else if let startupError {
                     ContentUnavailableView(
                         "kōan could not start",

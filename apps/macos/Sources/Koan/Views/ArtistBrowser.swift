@@ -162,7 +162,7 @@ private struct ArtistRow: View {
             .frame(width: 18, height: 18)
             // The name is the way in — a link, so a single click opens the
             // artist while the rest of the row selects.
-            #if os(iOS)
+            #if os(iOS) || os(tvOS)
             // Too narrow for count columns: they would take the name's room.
             VStack(alignment: .leading, spacing: 2) {
                 LinkText(
@@ -201,7 +201,7 @@ private struct ArtistRow: View {
             #endif
         }
         .pointerHover { hovered = $0 }
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         .frame(minHeight: RowMetrics.line)
         #else
         .frame(height: RowMetrics.line)
