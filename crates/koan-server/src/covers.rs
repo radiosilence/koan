@@ -102,12 +102,20 @@ impl Covers {
     }
 
     /// An empty file records that there is no art. Failure to write is only a
-    /// lost cache entry.
+    /// lost cache entry. Requests that miss the same cover together each write
+    /// a temporary file of their own, so the one renamed into place last is
+    /// whole rather than another's half-written file.
     fn write_disk(&self, key: &str, art: Option<&[u8]>) {
+        static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let _ = std::fs::create_dir_all(&self.dir);
-        let tmp = self.dir.join(format!("{key}.tmp"));
-        if std::fs::write(&tmp, art.unwrap_or_default()).is_ok() {
-            let _ = std::fs::rename(&tmp, self.dir.join(key));
+        let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp = self
+            .dir
+            .join(format!("{key}.{}-{n}.tmp", std::process::id()));
+        if std::fs::write(&tmp, art.unwrap_or_default()).is_ok()
+            && std::fs::rename(&tmp, self.dir.join(key)).is_err()
+        {
+            let _ = std::fs::remove_file(&tmp);
         }
     }
 }
@@ -158,6 +166,24 @@ mod tests {
         assert_eq!(snap(Some(401)), 800);
         assert_eq!(snap(Some(99_999)), 1200);
         assert_eq!(snap(None), LARGE);
+    }
+
+    #[test]
+    fn writers_racing_on_one_cover_leave_it_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let covers = Covers::new(dir.path().to_path_buf());
+        let arts: Vec<Vec<u8>> = (0..8u8).map(|i| vec![i; 256 * 1024]).collect();
+        for _ in 0..20 {
+            std::thread::scope(|s| {
+                for art in &arts {
+                    s.spawn(|| covers.write_disk("k-400.jpg", Some(art)));
+                }
+            });
+            let got = std::fs::read(dir.path().join("k-400.jpg")).unwrap();
+            assert!(arts.contains(&got), "a torn write of {} bytes", got.len());
+        }
+        let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
+        assert_eq!(left.len(), 1, "no temporary files left behind");
     }
 
     #[test]
