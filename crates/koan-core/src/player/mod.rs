@@ -2908,13 +2908,7 @@ mod tests {
     fn a_track_added_after_the_decoder_reached_the_end_follows_gaplessly() {
         let dir = tempfile::tempdir().unwrap();
         let (mut player, ids) = queued_wavs(dir.path(), &["a"]);
-        // Wait for the decoder to look past the last track.
-        while player
-            .session()
-            .is_some_and(|s| s.lookahead.lock().is_empty())
-        {
-            std::thread::yield_now();
-        }
+        wait_for_lookahead(&player);
         let path = dir.path().join("b.wav");
         crate::test_utils::generate_wav(&path, 8_000, 1, 1.0, 16);
         let b = PlaylistItem {
@@ -2933,19 +2927,74 @@ mod tests {
     }
 
     #[test]
-    fn playing_next_a_track_still_downloading_leaves_the_lookahead_alone() {
+    fn playing_next_a_track_still_downloading_takes_back_the_lookahead() {
         let dir = tempfile::tempdir().unwrap();
         let (mut player, ids) = queued_wavs(dir.path(), &["a", "b"]);
+        let remote = pending_item("remote");
+        let remote_id = remote.id;
 
         player.process_command(PlayerCommand::InsertInPlaylist {
-            items: vec![pending_item("remote")],
+            items: vec![remote],
             after: ids[0],
         });
-        assert_eq!(
-            player.playback_starts, 1,
-            "the decoder would pass over it and queue b all the same"
-        );
+        assert_eq!(player.playback_starts, 2, "b is taken back out of the ring");
+        await_queued(&player);
+        wait_for_lookahead(&player);
+        let session = player.session().unwrap();
+        let step = session.lookahead.lock().last().cloned().unwrap();
+        assert_eq!(step.next, Some(remote_id), "the decoder waits for it");
+        assert!(player.timeline.queued_after_playhead().is_empty());
         player.process_command(PlayerCommand::Stop);
+    }
+
+    #[test]
+    fn gapless_playback_waits_for_a_track_still_downloading() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+            starts: Default::default(),
+        });
+        let wav = |name: &str| {
+            let path = dir.path().join(format!("{name}.wav"));
+            crate::test_utils::generate_wav(&path, 8_000, 1, 1.0, 16);
+            PlaylistItem {
+                path,
+                ..make_item(name)
+            }
+        };
+        let items = vec![wav("a"), pending_item("arriving"), wav("c")];
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::Play(ids[0]));
+        await_queued(&player);
+        wait_for_lookahead(&player);
+
+        assert!(
+            player.timeline.queued_after_playhead().is_empty(),
+            "c is not queued over the track before it"
+        );
+        // The session drains and ends; the advance parks on the track.
+        player.process_command(PlayerCommand::DecodeFinished(player.session));
+        assert_eq!(player.shared_state.cursor(), Some(ids[1]));
+        assert!(player.waiting().is_some());
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    /// Until the decoder has taken a step past the playing track.
+    fn wait_for_lookahead(player: &Player) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while player
+            .session()
+            .is_some_and(|s| s.lookahead.lock().is_empty())
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the decoder never looked ahead"
+            );
+            std::thread::yield_now();
+        }
     }
 
     #[test]
