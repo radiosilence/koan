@@ -3085,6 +3085,49 @@ mod tests {
         assert_eq!(r.state(), PlaybackState::Stopped);
     }
 
+    /// A device controlling this one sees where it plays, moves the music to
+    /// a renderer it can see with the place and the pause kept, and sets the
+    /// renderer's volume, all as this device's own menu does.
+    #[test]
+    fn a_controlling_device_moves_the_music_and_sets_the_volume() {
+        use crate::remote::outputs::{self, OutputChoice};
+        let mut r = rig(WAV, true, &["a.wav"]);
+        r.player.use_renderer(None);
+        r.player.process_command(PlayerCommand::Cue {
+            id: r.ids[0],
+            position_ms: 5_000,
+            play: false,
+        });
+        let renderer = r.fake.renderer();
+        upnp::discovery::remember(renderer.clone(), Duration::from_secs(60));
+
+        let published = outputs::local(&r.player.shared_state);
+        assert!(!matches!(published.current, OutputChoice::Renderer { .. }));
+        assert!(published.renderers.iter().any(|o| o.id == renderer.udn));
+
+        outputs::set(
+            OutputChoice::Renderer {
+                udn: renderer.udn.clone(),
+            },
+            &r.player.command_sender(),
+        )
+        .unwrap();
+        r.pump_until(|p| p.renderer.is_some());
+        assert!(r.player.renderer_loaded());
+        assert_eq!(r.state(), PlaybackState::Paused, "paused, as it was");
+        let at = r.player.shared_state.position_ms();
+        assert!((4_800..=5_000).contains(&at), "where it was, at {at}ms");
+        assert_eq!(
+            outputs::local(&r.player.shared_state).current,
+            OutputChoice::Renderer { udn: renderer.udn }
+        );
+
+        r.player
+            .process_command(PlayerCommand::SetRendererVolume(42));
+        assert_eq!(r.fake.state.lock().volume, 42);
+        assert_eq!(outputs::local(&r.player.shared_state).volume, Some(42));
+    }
+
     #[test]
     fn a_next_track_refused_after_a_gapless_move_is_offered_again() {
         use std::sync::atomic::Ordering::Relaxed;

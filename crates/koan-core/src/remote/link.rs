@@ -21,8 +21,8 @@ use tungstenite::stream::MaybeTlsStream;
 use crate::config::{self, Config};
 use crate::helpers::{subsonic_auth, subsonic_client};
 use crate::remote::client::SubsonicAuth;
-use crate::remote::profile;
 pub use crate::remote::outputs::{LinkOutput, LinkOutputs, OutputChoice};
+use crate::remote::profile;
 use crate::remote::wire::{self, Waker};
 
 /// What a server asks a linked client to do.

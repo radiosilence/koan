@@ -387,7 +387,9 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
             s.account.iter().any(|(d, _)| d.id == id),
         )
     });
-    if nearby && crate::remote::nearby::send(id, cmd.clone()) {
+    // The network path proves nothing about who is asking, so a device on it
+    // refuses what only the account may send: that goes through the server.
+    if nearby && cmd.allowed_nearby() && crate::remote::nearby::send(id, cmd.clone()) {
         return Ok(());
     }
     if link::report(LinkReport::Command {

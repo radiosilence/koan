@@ -133,7 +133,11 @@ pub fn set(
     player: &crossbeam_channel::Sender<PlayerCommand>,
 ) -> Result<(), String> {
     let choice = crate::upnp::choose();
-    let send = |cmd| player.send(cmd).map_err(|_| "The player has stopped.".to_string());
+    let send = |cmd| {
+        player
+            .send(cmd)
+            .map_err(|_| "The player has stopped.".to_string())
+    };
     match output {
         OutputChoice::Default => send(PlayerCommand::ClearOutputDevice),
         OutputChoice::Device { name } => send(PlayerCommand::SetOutputDevice(name)),
