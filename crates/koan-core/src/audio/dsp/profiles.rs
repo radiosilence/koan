@@ -46,8 +46,13 @@ pub fn current_device() -> Option<String> {
 }
 
 pub fn overview() -> Overview {
+    overview_for(current_device())
+}
+
+/// The profiles, and which `device` plays through. A front end that knows
+/// a renderer is the output names it by its UDN here.
+pub fn overview_for(device: Option<String>) -> Overview {
     let cfg = Config::cached();
-    let device = current_device();
     let base = config::config_dir();
     Overview {
         enabled: cfg.dsp.enabled,

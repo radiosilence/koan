@@ -1898,7 +1898,26 @@ impl KoanEngine {
     // --- DSP ---------------------------------------------------------------
 
     pub async fn dsp_overview(self: Arc<Self>) -> DspOverview {
-        offload::offload(move || koan_core::audio::dsp::profiles::overview().into()).await
+        offload::offload(move || {
+            let mut overview: DspOverview =
+                koan_core::audio::dsp::profiles::overview_for(self.dsp_device()).into();
+            let playing = self.state.renderer();
+            overview.names = overview
+                .profiles
+                .iter()
+                .flat_map(|p| p.devices.iter())
+                .chain(overview.device.iter())
+                .filter_map(|udn| {
+                    let name = match &playing {
+                        Some(r) if &r.udn == udn => r.name.clone(),
+                        _ => koan_core::upnp::discovery::find(udn)?.name,
+                    };
+                    Some((udn.clone(), name))
+                })
+                .collect();
+            overview
+        })
+        .await
     }
 
     /// Import files, folders or zips as one profile and apply it. `name`
@@ -1952,15 +1971,22 @@ impl KoanEngine {
     /// Play the current output through `profile`, or untouched with `None`.
     pub async fn dsp_assign(self: Arc<Self>, profile: Option<String>) -> Result<(), KoanError> {
         offload::sequenced(move || {
-            let device =
-                koan_core::audio::dsp::profiles::current_device().ok_or(KoanError::Audio {
-                    message: "no output device".into(),
-                })?;
-            koan_core::audio::dsp::profiles::assign(profile.as_deref(), &device)
-                .map_err(|message| KoanError::BadArgument { message })?;
-            self.send_local(PlayerCommand::ReloadDsp)
+            let device = self.dsp_device().ok_or(KoanError::Audio {
+                message: "no output device".into(),
+            })?;
+            self.assign_dsp(profile, &device)
         })
         .await
+    }
+
+    /// Play `device` through `profile`, or untouched with `None`, whether or
+    /// not it is the output in use. A renderer is named by its UDN.
+    pub async fn dsp_assign_device(
+        self: Arc<Self>,
+        device: String,
+        profile: Option<String>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || self.assign_dsp(profile, &device)).await
     }
 
     pub async fn dsp_remove(self: Arc<Self>, name: String) -> Result<(), KoanError> {
@@ -3639,6 +3665,21 @@ impl KoanEngine {
     }
 
     /// Send to this device's player, whatever the app is controlling.
+    /// The output profiles are chosen by: the renderer playing, by its UDN,
+    /// or this device's own.
+    fn dsp_device(&self) -> Option<String> {
+        self.state
+            .renderer()
+            .map(|r| r.udn)
+            .or_else(koan_core::audio::dsp::profiles::current_device)
+    }
+
+    fn assign_dsp(&self, profile: Option<String>, device: &str) -> Result<(), KoanError> {
+        koan_core::audio::dsp::profiles::assign(profile.as_deref(), device)
+            .map_err(|message| KoanError::BadArgument { message })?;
+        self.send_local(PlayerCommand::ReloadDsp)
+    }
+
     fn save_dsp(
         &self,
         imported: koan_core::audio::dsp::import::Imported,

@@ -918,10 +918,13 @@ pub enum KoanError {
 pub struct DspOverview {
     /// Off bypasses every profile.
     pub enabled: bool,
-    /// The output device playback goes to, which profiles are chosen by.
+    /// The output device playback goes to, which profiles are chosen by. A
+    /// renderer is named by its UDN.
     pub device: Option<String>,
     pub active: Option<String>,
     pub profiles: Vec<DspProfileSummary>,
+    /// What to call the devices named by a UDN, where the renderer is known.
+    pub names: std::collections::HashMap<String, String>,
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
@@ -1022,6 +1025,7 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
     fn from(o: koan_core::audio::dsp::profiles::Overview) -> Self {
         Self {
             enabled: o.enabled,
+            names: Default::default(),
             device: o.device,
             active: o.active,
             profiles: o

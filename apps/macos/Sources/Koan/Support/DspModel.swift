@@ -93,6 +93,22 @@ final class DspModel {
         act { try await $0.dspAssign(profile: profile) }
     }
 
+    /// Play `device` through `profile`, or untouched, whether or not it is
+    /// the output in use. A renderer is named by its UDN.
+    func assign(_ profile: String?, to device: String) {
+        act { try await $0.dspAssignDevice(device: device, profile: profile) }
+    }
+
+    /// The profile `device` plays through, if any.
+    func profile(for device: String) -> String? {
+        overview?.profiles.first { $0.devices.contains(device) }?.name
+    }
+
+    /// What to call a device: a renderer by its name rather than its UDN.
+    func label(_ device: String) -> String {
+        overview?.names[device] ?? device
+    }
+
     func remove(_ profile: String) {
         act { try await $0.dspRemove(name: profile) }
     }

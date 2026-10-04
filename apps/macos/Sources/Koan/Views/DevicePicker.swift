@@ -21,6 +21,7 @@ import UIKit
 struct DevicePicker: View {
     @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
+    @Environment(AppState.self) private var app
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -56,6 +57,7 @@ struct DevicePicker: View {
         .onAppear {
             player.searchRenderers()
             player.refreshDevices()
+            app.dsp.reload()
         }
     }
 
@@ -78,11 +80,13 @@ struct DevicePicker: View {
             onSelect: { player.playHere(.system(nil)) }
         )
         ForEach(player.devices, id: \.name) { device in
+            let presets = Presets(dsp: app.dsp, device: device.name, none: "Off")
             OutputRow(
                 icon: Self.icon(forOutput: device.kind),
                 name: device.name,
-                detail: nil,
+                detail: presets?.summary,
                 selected: player.isPlayingHere(.system(device.name)),
+                presets: presets,
                 onSelect: { player.playHere(.system(device.name)) }
             )
         }
@@ -96,7 +100,10 @@ struct DevicePicker: View {
         )
         #endif
         ForEach(mirror.renderers, id: \.udn) { renderer in
-            RendererRow(renderer: renderer)
+            RendererRow(
+                renderer: renderer,
+                presets: Presets(dsp: app.dsp, device: renderer.udn, none: "Original file")
+            )
         }
         if let output = player.renderer, !player.isControllingAnother {
             RendererVolume(output: output)
@@ -199,6 +206,7 @@ private struct DeviceRow: View {
 private struct RendererRow: View {
     @Environment(PlayerModel.self) private var player
     let renderer: RendererInfo
+    let presets: Presets?
 
     var body: some View {
         let output = player.renderer?.udn == renderer.udn ? player.renderer : nil
@@ -212,6 +220,7 @@ private struct RendererRow: View {
             action: .output,
             canMove: false,
             warning: output == nil && renderer.busy,
+            presets: presets,
             onSelect: { player.playHere(.renderer(renderer.udn)) },
             onMove: {}
         )
@@ -226,12 +235,13 @@ private struct RendererRow: View {
         if output == nil && renderer.busy {
             return "In use by something else. Picking it takes over."
         }
-        return kind
+        return [kind, presets?.summary].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
-/// The renderer's own volume. koan sends it the original file, so ReplayGain
-/// and fades stay out of the signal; saying so beats ignoring them silently.
+/// The renderer's own volume, and what it is sent. Handed the original file,
+/// it plays without ReplayGain or fades; saying so beats ignoring them
+/// silently.
 private struct RendererVolume: View {
     @Environment(PlayerModel.self) private var player
     let output: RendererOutput
@@ -261,11 +271,78 @@ private struct RendererVolume: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Text("\(output.name) plays the original files. ReplayGain and fades don't apply.")
+            Text(sent)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+extension RendererVolume {
+    private var sent: String {
+        if let dsp = player.currentFormat?.dsp {
+            return "\(output.name) is sent a stream processed through \u{201C}\(dsp.profile)\u{201D}. Fades don't apply."
+        }
+        return "\(output.name) plays the original files. ReplayGain and fades don't apply."
+    }
+}
+
+/// The DSP profiles a device can play through, and the one it does. Nil when
+/// there are no profiles to choose from, so rows without a choice say
+/// nothing.
+struct Presets {
+    let current: String?
+    let profiles: [String]
+    /// What a device with no profile is said to play: "Off" for one of this
+    /// device's own, "Original file" for a renderer.
+    let none: String
+    let enabled: Bool
+    let choose: (String?) -> Void
+
+    @MainActor
+    init?(dsp: DspModel, device: String, none: String) {
+        guard let overview = dsp.overview, !overview.profiles.isEmpty else { return nil }
+        current = dsp.profile(for: device)
+        profiles = overview.profiles.map(\.name)
+        self.none = none
+        enabled = overview.enabled
+        choose = { dsp.assign($0, to: device) }
+    }
+
+    var summary: String {
+        guard let current else { return none }
+        return enabled ? current : "\(current), processing off"
+    }
+}
+
+/// The preset submenu at a row's end.
+private struct PresetMenu: View {
+    let presets: Presets
+
+    var body: some View {
+        Menu {
+            Picker("Preset", selection: Binding(
+                get: { presets.current ?? "" },
+                set: { presets.choose($0.isEmpty ? nil : $0) }
+            )) {
+                Text(presets.none).tag("")
+                Divider()
+                ForEach(presets.profiles, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.caption)
+                .foregroundStyle(presets.current == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+        }
+        #if os(macOS)
+        .menuStyle(.borderlessButton)
+        #endif
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Preset")
+        .accessibilityLabel("Preset: \(presets.summary)")
     }
 }
 
@@ -341,6 +418,7 @@ private struct OutputRow: View {
     let name: String
     let detail: String?
     let selected: Bool
+    var presets: Presets?
     let onSelect: () -> Void
 
     var body: some View {
@@ -351,6 +429,7 @@ private struct OutputRow: View {
             selected: selected,
             action: .output,
             canMove: false,
+            presets: presets,
             onSelect: onSelect,
             onMove: {}
         )
@@ -374,6 +453,7 @@ private struct DeviceChoiceRow: View {
     var unreachable = false
     /// Pickable, with something worth reading first.
     var warning = false
+    var presets: Presets?
     let onSelect: () -> Void
     let onMove: () -> Void
 
@@ -426,6 +506,10 @@ private struct DeviceChoiceRow: View {
             }
             .buttonStyle(.plain)
             .disabled(unreachable && !selected)
+
+            if let presets {
+                PresetMenu(presets: presets)
+            }
 
             if canMove {
                 Button("Move here", action: onMove)
@@ -503,6 +587,15 @@ struct DevicePickerButton: View {
                 Image(systemName: "hifispeaker")
                     .font(iconSize.map { .system(size: $0) })
                     .foregroundStyle(target.name != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                    // What is heard is processed: the badge says how.
+                    .overlay(alignment: .topTrailing) {
+                        if processing != nil {
+                            Circle()
+                                .fill(.tint)
+                                .frame(width: 5, height: 5)
+                                .offset(x: 3, y: -1)
+                        }
+                    }
                 if labelled, let name = target.name {
                     Text(name)
                         .lineLimit(1)
@@ -511,11 +604,18 @@ struct DevicePickerButton: View {
             }
         }
         .buttonStyle(.plain)
-        .help(target.help)
-        .accessibilityLabel(target.help)
+        .help(help)
+        .accessibilityLabel(help)
         #if os(macOS)
         .popover(isPresented: $open, arrowEdge: .top) { DevicePicker() }
         #endif
+    }
+
+    private var processing: String? { player.currentFormat?.dsp?.profile }
+
+    private var help: String {
+        guard let processing else { return target.help }
+        return "\(target.help), through \u{201C}\(processing)\u{201D}"
     }
 
     /// Where the music is going, when it is not this device's default
