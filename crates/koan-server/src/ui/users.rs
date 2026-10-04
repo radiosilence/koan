@@ -1,6 +1,7 @@
-//! Accounts, for admins: create one, change its role, delete it, and produce
-//! an invite for it — the link and the email to send it in. The server sends
-//! nothing itself; the admin sends the email from their own client.
+//! Accounts, for admins: create one, change its role or password, delete it,
+//! and produce an invite for it — the link and the email to send it in. The
+//! server sends nothing itself; the admin sends the email from their own
+//! client.
 
 use std::fmt::Write as _;
 
@@ -10,7 +11,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
-use koan_core::auth::{self, Role};
+use koan_core::auth::Role;
 use koan_core::db::queries::auth::{self as users, UserRow};
 use koan_core::invite::{self, AccountError, Invite};
 
@@ -18,6 +19,9 @@ use super::pages::{COPY_ERROR, COPY_INPUT, COPY_ROW, EMPTY, SUB, respond};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, escape};
+
+/// A one-line form: the field, an option or two, the button.
+const FORM: &str = "mb-2 flex max-w-[520px] gap-2";
 
 const ROLES: [(Role, &str); 3] = [
     (Role::Readonly, "Listen only"),
@@ -40,11 +44,14 @@ fn role_select(id: i64, current: Role) -> String {
 fn user_list(rows: &[UserRow], me: i64) -> String {
     let mut out = String::from("<ul id=users>");
     for u in rows {
-        let delete = if u.id == me {
+        // Not on your own row: a new password signs out every session, this
+        // one included.
+        let others = if u.id == me {
             String::new()
         } else {
             format!(
-                "<button class=\"quiet\" data-on:click=\"confirm('Delete {name}? Their devices stop \
+                "<button class=\"quiet\" data-on:click=\"@post('/users/{id}/password/form')\">Password</button>\
+<button class=\"quiet\" data-on:click=\"confirm('Delete {name}? Their devices stop \
 working and their playlists and favourites go.') && @post('/users/{id}/delete')\">Delete</button>",
                 name = escape(&u.username),
                 id = u.id,
@@ -54,7 +61,7 @@ working and their playlists and favourites go.') && @post('/users/{id}/delete')\
             out,
             "<li class=\"flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule px-1 py-2.5\">\
 <span class=\"min-w-[8em] flex-1 truncate wrap-anywhere\">{name}{you}</span>{select}\
-<button data-on:click=\"@post('/users/{id}/invite')\">Invite</button>{delete}</li>",
+<button data-on:click=\"@post('/users/{id}/invite')\">Invite</button>{others}</li>",
             name = escape(&u.username),
             you = if u.id == me {
                 "<small class=\"ml-2 text-[13px] text-muted\">you</small>"
@@ -82,31 +89,52 @@ fn failure(message: &str) -> Event {
 
 fn invite_panel(i: &Invite) -> String {
     let e = escape;
+    let details = match &i.password {
+        Some(password) => format!(
+            "<p class=\"{SUB}\">The password is shown this once: the server keeps only its hash.</p>\
+<dl class=\"mt-3.5 grid grid-cols-[max-content_1fr] gap-x-3.5 gap-y-1 text-[14px] [&_dd]:wrap-anywhere \
+[&_dd]:select-all [&_dt]:text-muted\"><dt>Server URL</dt><dd>{server}</dd><dt>Username</dt><dd>{user}</dd>\
+<dt>Password</dt><dd><code>{password}</code></dd></dl>",
+            server = e(&i.server),
+            user = e(&i.username),
+            password = e(password),
+        ),
+        None => String::new(),
+    };
     format!(
         "<div class=\"mt-2 mb-4 max-w-[560px] rounded-lg border border-rule bg-surface px-4 pt-1 pb-4\">\
 <h2>Invite for {user}</h2><p class=\"{SUB}\">Send this from your own mail. Opening the link on a phone, tablet or Mac with koan \
-installed signs in and loads the library; the details work in any Subsonic app.</p>\
+installed signs in and loads the library, on each device, for a week.</p>\
 <div class=\"{COPY_ROW}\"><input id=invite-link readonly value=\"{link}\" \
 aria-label=\"Invite link\" class=\"{COPY_INPUT}\">\
 <button data-copy=invite-link>Copy link</button></div>\
 <div class=\"mt-2.5 flex flex-wrap gap-2\"><a class=\"inline-block rounded-md border border-rule bg-rule px-3.5 py-2 \
 text-ink hover:border-hover hover:no-underline\" href=\"{mailto}\">Open in Mail</a>\
 <button data-copy-email>Copy email</button>\
-<button data-share-email data-show=\"'share' in navigator\">Share…</button></div>\
-<dl class=\"mt-3.5 grid grid-cols-[max-content_1fr] gap-x-3.5 gap-y-1 text-[14px] [&_dd]:wrap-anywhere \
-[&_dd]:select-all [&_dt]:text-muted\"><dt>Server URL</dt><dd>{server}</dd><dt>Username</dt><dd>{user}</dd>\
-<dt>Password</dt><dd><code>{password}</code></dd></dl>\
+<button data-share-email data-show=\"'share' in navigator\">Share…</button></div>{details}\
 <textarea id=invite-text hidden readonly data-subject=\"{subject}\">{text}</textarea>\
 <template id=invite-html>{html}</template></div>",
         user = e(&i.username),
         link = e(&i.link()),
         mailto = e(&i.mailto()),
-        server = e(&i.server),
-        password = e(&i.password),
         subject = e(&i.email_subject()),
         text = e(&i.email_text()),
         html = i.email_html(),
     )
+}
+
+/// An invite carrying a token signed with this server's key.
+fn token_invite(
+    s: &UiState,
+    server: &str,
+    id: i64,
+    username: &str,
+    password: Option<&str>,
+) -> Result<Invite, AccountError> {
+    let keys = crate::auth::signing_keys().map_err(|e| AccountError::Other(Box::new(e)))?;
+    let db = open(&s.pool).ok_or_else(|| AccountError::Other("no database".into()))?;
+    let token = invite::mint_token(&db.conn, &keys.0, id)?;
+    Ok(Invite::with_token(server, username, &token, password))
 }
 
 fn forbidden() -> Response {
@@ -161,7 +189,7 @@ An invite is a link that sets koan up with the account in one tap.</p>"
         );
     }
     let inner = format!(
-        "{intro}<form class=\"mb-2 flex max-w-[520px] gap-2\" data-on:submit__prevent=\"@post('/users')\">\
+        "{intro}<form class=\"{FORM}\" data-on:submit__prevent=\"@post('/users')\">\
 <input class=\"flex-1\" name=username data-bind:newuser placeholder=Username maxlength=64 required \
 autocomplete=off autocapitalize=none spellcheck=false aria-label=Username>\
 <select class=\"px-2 py-1.5\" data-bind:newrole aria-label=Access>{options}</select>\
@@ -201,10 +229,9 @@ pub(super) async fn create(
     let me = user.user_id;
     let made = blocking(move || {
         let db = open(&s.pool)?;
-        let made = auth::subsonic_key()
-            .map_err(|e| AccountError::Other(Box::new(e)))
-            .and_then(|key| invite::create_account(&db.conn, &key, &username, role))
-            .map(|password| Invite::new(&server, &username, &password));
+        let made = invite::create_account(&db.conn, &username, role).and_then(|made| {
+            token_invite(&s, &server, made.id, username.trim(), Some(&made.password))
+        });
         Some((made, list(&s)))
     })
     .await;
@@ -247,25 +274,101 @@ pub(super) async fn invite(
     let made = blocking(move || {
         let db = open(&s.pool)?;
         let row = users::get_user_by_id(&db.conn, id).ok()??;
-        let made = auth::subsonic_key()
-            .map_err(|e| AccountError::Other(Box::new(e)))
-            .and_then(|key| invite::account_password(&db.conn, &key, &row.username, q.reset))
-            .map(|password| Invite::new(&server, &row.username, &password));
-        if q.reset && made.is_ok() {
-            crate::clients::registry().disconnect(&row.username);
-        }
-        Some((row, made))
+        let password = if q.reset {
+            match invite::set_password(&db.conn, &row.username, None) {
+                Ok(p) => {
+                    crate::clients::registry().disconnect(&row.username);
+                    Some(p)
+                }
+                Err(e) => return Some(Err(e)),
+            }
+        } else {
+            None
+        };
+        Some(token_invite(
+            &s,
+            &server,
+            row.id,
+            &row.username,
+            password.as_deref(),
+        ))
     })
     .await;
     match made {
-        Some((_, Ok(i))) => events(vec![result(&invite_panel(&i))]),
-        Some((row, Err(AccountError::NotRecoverable(_)))) => events(vec![result(&format!(
-            "<p class=\"{COPY_ROW}\" role=alert>{name}'s password is not recoverable: the account \
-predates koan keeping it. An invite needs a new password, which signs {name}'s existing \
-devices out.</p><button data-on:click=\"@post('/users/{id}/invite?reset=true')\">\
-New password and invite</button>",
-            name = escape(&row.username),
-        ))]),
+        Some(Ok(i)) => events(vec![result(&invite_panel(&i))]),
+        Some(Err(e)) => events(vec![failure(&e.to_string())]),
+        None => events(vec![failure("No such account.")]),
+    }
+}
+
+fn clear_password_signal() -> Event {
+    Event::default()
+        .event("datastar-patch-signals")
+        .data("signals {\"setpassword\":\"\"}")
+}
+
+/// The form asking for an account's new password. Its own route, so a value
+/// typed into one account's form and never submitted cannot reach another's:
+/// Datastar posts every signal with every request.
+pub(super) async fn password_form(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+) -> Response {
+    if !usable(&s, &user) {
+        return forbidden();
+    }
+    let row = blocking(move || users::get_user_by_id(&open(&s.pool)?.conn, id).ok()?).await;
+    let Some(row) = row else {
+        return events(vec![failure("No such account.")]);
+    };
+    let name = escape(&row.username);
+    events(vec![
+        clear_password_signal(),
+        result(&format!(
+            "<form class=\"{FORM}\" data-on:submit__prevent=\"@post('/users/{id}/password')\">\
+<input class=\"flex-1\" type=password data-bind:setpassword placeholder=\"New password for {name}\" \
+minlength=8 required autocomplete=new-password aria-label=\"New password for {name}\">\
+<button class=\"primary\">Set password</button></form>\
+<p class=\"{SUB}\">Signs {name} out of every device. \
+<button class=\"quiet\" data-on:click=\"@post('/users/{id}/invite?reset=true')\">Generate one and \
+invite</button></p>",
+        )),
+    ])
+}
+
+/// Set the password the form posts as its `setpassword` signal.
+pub(super) async fn set_password(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+    body: Bytes,
+) -> Response {
+    if !usable(&s, &user) {
+        return forbidden();
+    }
+    let password = serde_json::from_slice::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("setpassword")?.as_str().map(str::to_owned))
+        .unwrap_or_default();
+    let done = blocking(move || {
+        let db = open(&s.pool)?;
+        let row = users::get_user_by_id(&db.conn, id).ok()??;
+        let done = invite::set_password(&db.conn, &row.username, Some(&password));
+        if done.is_ok() {
+            crate::clients::registry().disconnect(&row.username);
+        }
+        Some((row, done))
+    })
+    .await;
+    match done {
+        Some((row, Ok(_))) => events(vec![
+            result(&format!(
+                "<p class=\"{COPY_ROW}\">{}'s password is changed, and their devices are signed out.</p>",
+                escape(&row.username)
+            )),
+            clear_password_signal(),
+        ]),
         Some((_, Err(e))) => events(vec![failure(&e.to_string())]),
         None => events(vec![failure("No such account.")]),
     }

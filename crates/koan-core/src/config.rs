@@ -147,6 +147,10 @@ pub struct RemoteConfig {
     /// Password — stored in config.local.toml (gitignored), not config.toml.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub password: String,
+    /// An OpenSubsonic API key, signing in instead of the password. What
+    /// joining with a koan invite stores. config.local.toml, like the password.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub api_key: String,
     /// Defaults to config_dir()/cache if empty.
     pub cache_dir: Option<PathBuf>,
     /// Parallel download workers for remote tracks (default: 5).
@@ -253,6 +257,7 @@ impl Default for RemoteConfig {
             url: String::new(),
             username: String::new(),
             password: String::new(),
+            api_key: String::new(),
             cache_dir: None,
             download_workers: 5,
             cache_limit: None,
@@ -490,6 +495,7 @@ pub fn layer_of(path: &str) -> Layer {
     match path {
         // Secrets.
         "remote.password"
+        | "remote.api_key"
         | "subsonic.password"
         | "auth.refresh_token"
         | "push.key"
@@ -1020,7 +1026,7 @@ fn check_secrets_in_git() {
 }
 
 fn scan_for_tracked_secrets() {
-    let sensitive_fields = ["password", "refresh_token"];
+    let sensitive_fields = ["password", "api_key", "refresh_token"];
 
     for (label, path) in [
         ("config.toml", config_file_path()),

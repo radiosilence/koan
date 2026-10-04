@@ -325,6 +325,9 @@
   .w-\[4\.5em\] {
     width: 4.5em;
   }
+  .w-\[12em\] {
+    width: 12em;
+  }
   .w-full {
     width: 100%;
   }

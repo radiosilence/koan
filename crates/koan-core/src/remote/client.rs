@@ -45,36 +45,63 @@ impl From<reqwest::Error> for SubsonicError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubsonicAuth {
     pub base_url: String,
+    /// Who the credential signs in as. Not sent with an API key, which names
+    /// its account itself, but still what the account is known by locally.
     pub username: String,
-    pub password: String,
+    pub credential: Credential,
+}
+
+/// What signs each request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Credential {
+    Password(String),
+    /// OpenSubsonic's `apiKeyAuthentication`. What redeeming a koan invite
+    /// gives.
+    ApiKey(String),
 }
 
 impl SubsonicAuth {
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
+        Self::with(
+            base_url,
+            username,
+            Credential::Password(password.to_string()),
+        )
+    }
+
+    pub fn with(base_url: &str, username: &str, credential: Credential) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             username: username.to_string(),
-            password: password.to_string(),
+            credential,
         }
     }
 
-    /// Build auth query params: u, then p (HTTPS) or t and s, then v, c, f.
+    /// Build auth query params: `apiKey`, or u then p (HTTPS) or t and s; then
+    /// v, c, f.
     ///
-    /// Over HTTPS the password goes as `p=enc:<hex>`: a koan server checks
+    /// Over HTTPS a password goes as `p=enc:<hex>`: a koan server checks
     /// accounts against an argon2 hash, which token auth cannot be checked
     /// against. Over plain HTTP that would expose the password, so the salted
     /// token is sent instead, as every Subsonic server accepts.
     fn params(&self) -> Result<HashMap<String, String>, SubsonicError> {
         let mut params = HashMap::new();
-        params.insert("u".into(), self.username.clone());
-        if self.base_url.starts_with("https://") {
-            let hex: String = self.password.bytes().map(|b| format!("{b:02x}")).collect();
-            params.insert("p".into(), format!("enc:{hex}"));
-        } else {
-            let salt = random_salt()?;
-            let token = format!("{:x}", md5::compute(format!("{}{}", self.password, salt)));
-            params.insert("t".into(), token);
-            params.insert("s".into(), salt);
+        match &self.credential {
+            Credential::ApiKey(key) => {
+                params.insert("apiKey".into(), key.clone());
+            }
+            Credential::Password(password) => {
+                params.insert("u".into(), self.username.clone());
+                if self.base_url.starts_with("https://") {
+                    let hex: String = password.bytes().map(|b| format!("{b:02x}")).collect();
+                    params.insert("p".into(), format!("enc:{hex}"));
+                } else {
+                    let salt = random_salt()?;
+                    let token = format!("{:x}", md5::compute(format!("{password}{salt}")));
+                    params.insert("t".into(), token);
+                    params.insert("s".into(), salt);
+                }
+            }
         }
         params.insert("v".into(), API_VERSION.into());
         params.insert("c".into(), CLIENT_NAME.into());
@@ -82,7 +109,8 @@ impl SubsonicAuth {
         Ok(params)
     }
 
-    /// The auth params as a query string. Every value is URL-safe as built.
+    /// The auth params as a query string. Every value is URL-safe as built:
+    /// API keys are base64url.
     pub fn query(&self) -> Result<String, SubsonicError> {
         Ok(self
             .params()?
@@ -184,19 +212,7 @@ impl SubsonicClient {
         }
 
         let resp: SubsonicResponseWrapper = self.http.get(&url).query(&params).send()?.json()?;
-
-        let inner = resp.subsonic_response;
-        if inner.status != "ok" {
-            if let Some(err) = inner.error {
-                return Err(SubsonicError::Api {
-                    code: err.code,
-                    message: err.message,
-                });
-            }
-            return Err(SubsonicError::BadResponse);
-        }
-
-        Ok(inner)
+        resp.subsonic_response.ok()
     }
 
     /// Detect a Subsonic error returned from an endpoint that should have sent
@@ -717,12 +733,19 @@ impl SubsonicClient {
             .ok_or(SubsonicError::BadResponse)
     }
 
-    /// With `reset`, the account gets a new password and its devices sign out.
+    /// With `reset`, the account gets a new password, which comes back with the
+    /// invite, and its devices sign out.
     pub fn koan_invite(&self, username: &str, reset: bool) -> Result<KoanInvite, SubsonicError> {
         let reset = if reset { "true" } else { "false" };
         self.get_with_params("koanInvite", &[("username", username), ("reset", reset)])?
             .invite
             .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Revoke the API key this client signs in with (`koanRevokeKey`).
+    pub fn koan_revoke_own_key(&self) -> Result<(), SubsonicError> {
+        self.get("koanRevokeKey")?;
+        Ok(())
     }
 
     pub fn koan_set_user_role(&self, username: &str, role: &str) -> Result<(), SubsonicError> {
@@ -786,6 +809,7 @@ struct SubsonicResponse {
     indexes: Option<SubsonicIndexes>,
     users: Option<KoanUsers>,
     invite: Option<KoanInvite>,
+    join: Option<KoanJoined>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -801,15 +825,63 @@ pub struct KoanUser {
     pub role: String,
 }
 
-/// What a koan server hands back for an invite: the account's credentials.
-/// The link is built from the address the client already reaches it at.
+/// What a koan server hands back for an invite: the token the link carries,
+/// and the password when one was just made. The link is built from the
+/// address the client already reaches the server at.
 #[derive(Debug, Clone, Deserialize)]
 pub struct KoanInvite {
     pub username: String,
-    pub password: String,
+    pub token: String,
+    pub password: Option<String>,
+}
+
+/// An invite redeemed: the account it was for and the API key made for this
+/// device.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KoanJoined {
+    pub username: String,
+    pub api_key: String,
+}
+
+/// Trade a koan invite token for an API key (`koanJoin`), naming the key for
+/// `device`. Unauthenticated: the token is the credential.
+pub fn redeem_invite(
+    base_url: &str,
+    token: &str,
+    device: &str,
+) -> Result<KoanJoined, SubsonicError> {
+    let url = format!("{}/rest/koanJoin", base_url.trim_end_matches('/'));
+    let resp: SubsonicResponseWrapper = download::api_client()?
+        .get(&url)
+        .query(&[
+            ("invite", token),
+            ("name", device),
+            ("v", API_VERSION),
+            ("c", CLIENT_NAME),
+            ("f", "json"),
+        ])
+        .send()?
+        .json()?;
+    resp.subsonic_response
+        .ok()?
+        .join
+        .ok_or(SubsonicError::BadResponse)
 }
 
 impl SubsonicResponse {
+    fn ok(self) -> Result<Self, SubsonicError> {
+        if self.status == "ok" {
+            return Ok(self);
+        }
+        Err(self
+            .error
+            .map_or(SubsonicError::BadResponse, |err| SubsonicError::Api {
+                code: err.code,
+                message: err.message,
+            }))
+    }
+
     fn has_extension(&self, name: &str) -> bool {
         self.open_subsonic_extensions
             .iter()
@@ -1290,6 +1362,20 @@ mod tests {
         let params = client.auth_params().unwrap();
         assert_eq!(params["p"], "enc:6869");
         assert!(!params.contains_key("t") && !params.contains_key("s"));
+    }
+
+    #[test]
+    fn test_auth_params_with_an_api_key_name_no_user() {
+        let auth = SubsonicAuth::with(
+            "http://koan.example",
+            "alice",
+            Credential::ApiKey("k3y".into()),
+        );
+        let params = auth.params().unwrap();
+        assert_eq!(params.get("apiKey").map(String::as_str), Some("k3y"));
+        for absent in ["u", "p", "t", "s"] {
+            assert!(!params.contains_key(absent), "{absent}");
+        }
     }
 
     #[test]

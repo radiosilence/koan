@@ -73,6 +73,10 @@ libc = "0.2"
 coreaudio-sys = "0.2"
 core-foundation = "0.10"
 
+[target.'cfg(target_os = "ios")'.dependencies]
+# The device id, kept in the Keychain so a reinstall keeps it
+security-framework = "3"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 cpal = "0.18"
 
