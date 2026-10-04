@@ -803,9 +803,9 @@ fn deliver_push(
 /// Wakes sent and not yet answered by a link, by `(device, username)`: when,
 /// and which kind. A device that does not link is never answered; the map
 /// is bounded by the devices that have pushed tokens.
-static WOKEN: LazyLock<
-    Mutex<std::collections::HashMap<(String, String), (std::time::Instant, &'static str)>>,
-> = LazyLock::new(Default::default);
+type Woken = std::collections::HashMap<(String, String), (std::time::Instant, &'static str)>;
+
+static WOKEN: LazyLock<Mutex<Woken>> = LazyLock::new(Default::default);
 
 /// Have every device pull what the server just changed (a playlist edited,
 /// albums added): at once where linked, on next link where not. Syncs waiting

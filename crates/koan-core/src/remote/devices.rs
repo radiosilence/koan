@@ -93,6 +93,13 @@ struct Store {
     fresh: bool,
     /// Devices being woken, or that did not wake, by id.
     waking: HashMap<String, Waking>,
+    /// When each device was last heard from on the local network, in Unix
+    /// seconds: any message, and the moment it disconnected.
+    lan_heard: HashMap<String, i64>,
+    /// The wake under way, as its generation and the device: one at a time.
+    attempt: Option<(u64, String)>,
+    /// Bumped by every wake started or abandoned.
+    wake_gen: u64,
 }
 
 /// A stage of waking a device, in the order they are tried.
@@ -394,6 +401,8 @@ pub fn nearby_hello(hello: LinkHello, addr: &str) {
             .insert(hello.id.clone(), chrono::Utc::now().timestamp());
         s.departed.retain(|g| g.id != hello.id);
         s.waking.remove(&hello.id);
+        s.lan_heard
+            .insert(hello.id.clone(), chrono::Utc::now().timestamp());
         s.nearby.retain(|n| n.hello.id != hello.id);
         s.nearby.push(Nearby {
             hello,
@@ -408,8 +417,9 @@ pub fn nearby_state(id: &str, state: LinkState) {
         if let Some(n) = s.nearby.iter_mut().find(|n| n.hello.id == id) {
             n.state = Some(state);
             n.at = Instant::now();
-            s.live
-                .insert(id.to_string(), chrono::Utc::now().timestamp());
+            let now = chrono::Utc::now().timestamp();
+            s.live.insert(id.to_string(), now);
+            s.lan_heard.insert(id.to_string(), now);
         }
     });
 }
@@ -422,8 +432,9 @@ pub fn nearby_gone(id: &str) {
             return;
         };
         let gone = s.nearby.remove(at);
-        s.live
-            .insert(id.to_string(), chrono::Utc::now().timestamp());
+        let now = chrono::Utc::now().timestamp();
+        s.live.insert(id.to_string(), now);
+        s.lan_heard.insert(id.to_string(), now);
         // An account device is still listed by the server; only a stranger
         // has to be remembered here.
         if s.account.iter().any(|(d, _)| d.id == id) {
@@ -583,9 +594,7 @@ fn list_at(now: i64, grace: i64) -> Vec<Device> {
             });
         }
         for d in &mut out {
-            if !d.awake {
-                d.waking = s.waking.get(&d.id).cloned();
-            }
+            d.waking = s.waking.get(&d.id).cloned();
         }
         out.sort_by_key(|d| {
             (
@@ -635,41 +644,60 @@ const NETWORK_WAIT: Duration = Duration::from_secs(3);
 const PUSH_WAIT: Duration = Duration::from_secs(6);
 const NOTIFICATION_WAIT: Duration = Duration::from_secs(45);
 
-/// The stages to try, each with how long to wait on it.
-fn wake_plan(seen_nearby_recently: bool) -> Vec<(Waking, Duration)> {
+/// The stages to try, each with how long to wait on it. A device that
+/// nothing can wake through the server is only tried on the network.
+fn wake_plan(seen_nearby_recently: bool, wakeable: bool) -> Vec<(Waking, Duration)> {
     let mut plan = Vec::new();
     if seen_nearby_recently {
         plan.push((Waking::Network, NETWORK_WAIT));
     }
-    plan.push((Waking::Push, PUSH_WAIT));
-    plan.push((Waking::Notification, NOTIFICATION_WAIT));
+    if wakeable {
+        plan.push((Waking::Push, PUSH_WAIT));
+        plan.push((Waking::Notification, NOTIFICATION_WAIT));
+    }
     plan
 }
 
+/// How a wake ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Ended {
+    Reached(Waking),
+    Failed(String),
+    /// Another device was chosen meanwhile: nothing more is sent.
+    Cancelled,
+}
+
 /// Walk `plan`: `act` starts each stage, `wait` blocks until the device is
-/// reachable or the stage's time is up, saying which. The stage it was
-/// reached in, or the failure to show.
+/// reachable, the stage's time is up or the wake is abandoned, saying whether
+/// it was reached. `current` is false once another wake has replaced this one.
 fn run_wake(
     plan: &[(Waking, Duration)],
+    current: impl Fn() -> bool,
     mut act: impl FnMut(&Waking) -> Result<(), String>,
     mut wait: impl FnMut(Duration) -> bool,
-) -> Result<Waking, Waking> {
+) -> Ended {
     let mut last = None;
     for (stage, time) in plan {
+        if !current() {
+            return Ended::Cancelled;
+        }
         if let Err(why) = act(stage) {
-            return Err(Waking::Failed(why));
+            return Ended::Failed(why);
         }
         last = Some(stage);
         if wait(*time) {
-            return Ok(stage.clone());
+            return Ended::Reached(stage.clone());
         }
     }
-    Err(Waking::Failed(match last {
+    if !current() {
+        return Ended::Cancelled;
+    }
+    Ended::Failed(match last {
         Some(Waking::Notification) => {
             "Did not wake. A notification is waiting on it to be tapped.".into()
         }
         _ => "Did not wake.".into(),
-    }))
+    })
 }
 
 fn reachable(id: &str) -> bool {
@@ -679,34 +707,91 @@ fn reachable(id: &str) -> bool {
     })
 }
 
-/// Wake the asleep device `id`, in the background: on the local network if it
-/// was there a moment ago, then a background push, then a notification on it
-/// to tap. The device's row says which stage it is at, and why it failed if it
-/// did. Each step is logged with its time from the start, so a wake that did
-/// not happen shows where it stopped.
+/// Heard from on the local network within `NETWORK_RECENT` of `now`.
+fn recently_on_network(id: &str, now: i64) -> bool {
+    with(|s| {
+        s.lan_heard
+            .get(id)
+            .is_some_and(|at| now - at <= NETWORK_RECENT)
+    })
+}
+
+/// Start a wake of `id`: its generation, or `None` when one of `id` is
+/// already under way, which this then joins. Abandons any other.
+fn begin_wake(id: &str) -> Option<u64> {
+    with(|s| {
+        if s.attempt.as_ref().is_some_and(|(_, d)| d == id) {
+            return None;
+        }
+        s.wake_gen += 1;
+        s.attempt = Some((s.wake_gen, id.to_string()));
+        Some(s.wake_gen)
+    })
+}
+
+fn wake_is_current(generation: u64) -> bool {
+    with(|s| s.attempt.as_ref().is_some_and(|(g, _)| *g == generation))
+}
+
+/// Abandon the wake under way, unless it is of `keep`.
+fn cancel_wake(keep: Option<&str>) {
+    let cancelled = with(|s| {
+        let other = s
+            .attempt
+            .as_ref()
+            .is_some_and(|(_, d)| Some(d.as_str()) != keep);
+        if other {
+            let (_, id) = s.attempt.take().expect("checked");
+            s.waking.remove(&id);
+            s.wake_gen += 1;
+        }
+        other
+    });
+    if cancelled {
+        // The abandoned wake's thread is waiting on this.
+        crate::signal::engine_changed().bump();
+    }
+}
+
+/// Wake `id`, which is not reachable, in the background: on the local network
+/// if it was heard there in the last minute, then, when the server can wake
+/// it, a background push and then a notification on it to tap. The device's
+/// row says which stage it is at, and why it failed if it did. Each step is
+/// logged with its time from the start, so a wake that did not happen shows
+/// where it stopped.
+///
+/// One wake at a time: choosing another device abandons this one, so nothing
+/// more reaches the device left behind, and choosing this one again joins it.
+/// It does not wait for the device to be labelled asleep: a phone suspended
+/// seconds ago is the one most worth waking.
 pub fn wake(id: &str) {
     let id = id.to_string();
-    // Only what this device may wake: its account's, through the server. A
-    // stranger on the network has nothing to answer a push with.
-    let Some(device) = list()
-        .into_iter()
-        .find(|d| d.id == id && d.asleep && d.wakeable)
-    else {
+    if reachable(&id) {
+        return;
+    }
+    let Some(device) = list().into_iter().find(|d| d.id == id) else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp();
+    // A stranger on the network has nothing to answer a push with.
+    let plan = wake_plan(recently_on_network(&id, now), device.wakeable);
+    if plan.is_empty() {
+        return;
+    }
+    let Some(generation) = begin_wake(&id) else {
+        log::info!("wake: {}: already being woken", device.name);
         return;
     };
     let name = device.name;
-    let now = chrono::Utc::now().timestamp();
-    let recent = remembered_nearby()
-        .iter()
-        .any(|n| n.id == id && now - n.at <= NETWORK_RECENT);
     let _ = std::thread::Builder::new()
         .name("koan-wake".into())
         .spawn(move || {
             let started = Instant::now();
             let ms = || started.elapsed().as_millis();
-            let plan = wake_plan(recent);
-            let outcome = run_wake(
+            let current = || wake_is_current(generation);
+            let ended = run_wake(
                 &plan,
+                current,
                 |stage| {
                     log::info!("wake: {name}: {stage:?} at +{}ms", ms());
                     changed(|s| s.waking.insert(id.clone(), stage.clone()));
@@ -735,7 +820,7 @@ pub fn wake(id: &str) {
                     let mut seen = signal.generation();
                     while !reachable(&id) {
                         let left = until.saturating_duration_since(Instant::now());
-                        if left.is_zero() {
+                        if left.is_zero() || !current() {
                             return false;
                         }
                         seen = signal.wait_until(seen, left);
@@ -743,16 +828,31 @@ pub fn wake(id: &str) {
                     true
                 },
             );
-            match outcome {
-                Ok(stage) => {
+            match &ended {
+                Ended::Reached(stage) => {
                     log::info!("wake: {name}: reached at +{}ms, after {stage:?}", ms());
-                    changed(|s| s.waking.remove(&id));
                 }
-                Err(failed) => {
-                    log::warn!("wake: {name}: did not wake in {}ms ({failed:?})", ms());
-                    changed(|s| s.waking.insert(id.clone(), failed));
+                Ended::Failed(why) => {
+                    log::warn!("wake: {name}: did not wake in {}ms: {why}", ms());
+                }
+                Ended::Cancelled => {
+                    log::info!("wake: {name}: abandoned at +{}ms for another device", ms());
                 }
             }
+            changed(|s| {
+                if !s.attempt.as_ref().is_some_and(|(g, _)| *g == generation) {
+                    return;
+                }
+                s.attempt = None;
+                match ended {
+                    Ended::Failed(why) => {
+                        s.waking.insert(id.clone(), Waking::Failed(why));
+                    }
+                    _ => {
+                        s.waking.remove(&id);
+                    }
+                }
+            });
         });
 }
 
@@ -762,6 +862,7 @@ pub fn target() -> Option<String> {
 }
 
 pub fn set_target(id: Option<String>) {
+    cancel_wake(id.as_deref());
     let listed = id
         .as_ref()
         .and_then(|id| list().into_iter().find(|d| d.id == *id));
@@ -954,12 +1055,13 @@ mod tests {
 
     /// Run a wake with a device that answers in stage `answers_in`, if any:
     /// the stages started, and how it ended.
-    fn walk(recent: bool, answers_in: Option<Waking>) -> (Vec<Waking>, Result<Waking, Waking>) {
-        let plan = wake_plan(recent);
+    fn walk(recent: bool, answers_in: Option<Waking>) -> (Vec<Waking>, Ended) {
+        let plan = wake_plan(recent, true);
         let mut started = Vec::new();
         let current = std::cell::RefCell::new(None);
-        let outcome = run_wake(
+        let ended = run_wake(
             &plan,
+            || true,
             |stage| {
                 started.push(stage.clone());
                 *current.borrow_mut() = Some(stage.clone());
@@ -967,7 +1069,7 @@ mod tests {
             },
             |_| *current.borrow() == answers_in,
         );
-        (started, outcome)
+        (started, ended)
     }
 
     #[test]
@@ -976,36 +1078,143 @@ mod tests {
         assert_eq!(tried, [Waking::Network, Waking::Push, Waking::Notification]);
         let (tried, _) = walk(false, None);
         assert_eq!(tried, [Waking::Push, Waking::Notification]);
+        assert_eq!(
+            wake_plan(true, false)
+                .iter()
+                .map(|(w, _)| w.clone())
+                .collect::<Vec<_>>(),
+            [Waking::Network],
+            "a stranger is only ever tried on the network"
+        );
+        assert!(wake_plan(false, false).is_empty());
     }
 
     #[test]
     fn a_wake_stops_at_the_stage_that_reached_it() {
-        let (tried, outcome) = walk(true, Some(Waking::Network));
+        let (tried, ended) = walk(true, Some(Waking::Network));
         assert_eq!(tried, [Waking::Network], "no push for a phone still awake");
-        assert_eq!(outcome, Ok(Waking::Network));
-        let (tried, outcome) = walk(false, Some(Waking::Push));
+        assert_eq!(ended, Ended::Reached(Waking::Network));
+        let (tried, ended) = walk(false, Some(Waking::Push));
         assert_eq!(
             tried,
             [Waking::Push],
             "no notification once the push worked"
         );
-        assert_eq!(outcome, Ok(Waking::Push));
+        assert_eq!(ended, Ended::Reached(Waking::Push));
     }
 
     #[test]
     fn a_push_that_does_not_wake_it_falls_back_to_a_notification_then_says_so() {
-        let (tried, outcome) = walk(false, None);
+        let (tried, ended) = walk(false, None);
         assert_eq!(tried.last(), Some(&Waking::Notification));
-        assert!(matches!(outcome, Err(Waking::Failed(why)) if why.contains("notification")));
-        // The stages' times: the notification comes after a short wait on the push.
-        let plan = wake_plan(false);
+        assert!(matches!(ended, Ended::Failed(why) if why.contains("notification")));
+        let plan = wake_plan(false, true);
         assert!(plan[0].1 <= Duration::from_secs(8) && plan[0].1 >= Duration::from_secs(5));
     }
 
     #[test]
     fn a_stage_that_cannot_start_ends_the_wake_with_why() {
-        let outcome = run_wake(&wake_plan(false), |_| Err("Not connected".into()), |_| true);
-        assert_eq!(outcome, Err(Waking::Failed("Not connected".into())));
+        let ended = run_wake(
+            &wake_plan(false, true),
+            || true,
+            |_| Err("Not connected".into()),
+            |_| true,
+        );
+        assert_eq!(ended, Ended::Failed("Not connected".into()));
+    }
+
+    /// Choosing another device mid-wake sends nothing more to the one left
+    /// behind: no notification "wants to play here" for a choice taken back.
+    #[test]
+    fn a_wake_abandoned_for_another_choice_sends_nothing_more() {
+        let live = std::cell::Cell::new(true);
+        let mut tried = Vec::new();
+        let ended = run_wake(
+            &wake_plan(true, true),
+            || live.get(),
+            |stage| {
+                tried.push(stage.clone());
+                Ok(())
+            },
+            |_| {
+                live.set(false);
+                false
+            },
+        );
+        assert_eq!(tried, [Waking::Network]);
+        assert_eq!(ended, Ended::Cancelled);
+    }
+
+    #[test]
+    fn one_wake_at_a_time_joined_by_the_same_choice_and_ended_by_another() {
+        let _held = STORE_LOCK.lock();
+        with(|s| *s = Store::default());
+        let first = begin_wake("phone").expect("starts");
+        assert!(begin_wake("phone").is_none(), "choosing it again joins it");
+        assert!(wake_is_current(first));
+        cancel_wake(Some("phone"));
+        assert!(wake_is_current(first), "the same choice does not end it");
+        cancel_wake(Some("mac"));
+        assert!(!wake_is_current(first), "another choice does");
+        let second = begin_wake("mac").unwrap();
+        assert!(begin_wake("phone").is_some() && !wake_is_current(second));
+        with(|s| *s = Store::default());
+    }
+
+    /// The wake starts the moment a device stops being reachable, not once
+    /// the heartbeat has passed and it is labelled asleep.
+    #[test]
+    fn a_device_chosen_seconds_after_it_dropped_is_woken() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        set_linked(true);
+        set_account(vec![device("phone", false)]);
+        let mut phone = device("phone", false);
+        phone.linked = false;
+        phone.wakeable = Some(true);
+        phone.last_seen = Some(chrono::Utc::now().timestamp() - 10);
+        set_account(vec![phone]);
+        let listed = list().into_iter().find(|d| d.id == "phone").unwrap();
+        assert!(!listed.asleep && !listed.awake, "reconnecting, not asleep");
+        wake("phone");
+        // Its thread may already have finished: with no link here, the push
+        // stage fails at once and says so on the row.
+        let ran = (0..100).any(|_| {
+            let seen = with(|s| {
+                s.attempt.as_ref().is_some_and(|(_, d)| d == "phone")
+                    || s.waking.contains_key("phone")
+            });
+            if !seen {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            seen
+        });
+        assert!(ran, "the pipeline runs");
+        cancel_wake(None);
+        with(|s| *s = Store::default());
+    }
+
+    /// A device linked for ten minutes that left half a minute ago is tried
+    /// on the network first: the time is when it was last heard there, not
+    /// when it first connected.
+    #[test]
+    fn last_heard_on_the_network_is_the_last_message_not_the_first() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        nearby_hello(hello("phone"), "10.0.0.7:5626");
+        with(|s| {
+            for seen in &mut s.seen {
+                seen.at -= 10 * 60;
+            }
+        });
+        nearby_state("phone", LinkState::default());
+        nearby_gone("phone");
+        let left = with(|s| s.lan_heard["phone"]);
+        assert!(recently_on_network("phone", left + 30));
+        assert!(!recently_on_network("phone", left + NETWORK_RECENT + 1));
+        with(|s| *s = Store::default());
     }
 
     #[test]
@@ -1015,11 +1224,14 @@ mod tests {
         with(|s| *s = Store::default());
         nearby_hello(hello("stranger"), "10.0.0.5:5626");
         nearby_gone("stranger");
-        with(|s| *s.live.get_mut("stranger").unwrap() -= STALE_SECS + 10);
+        with(|s| {
+            *s.live.get_mut("stranger").unwrap() -= 10 * 60;
+            *s.lan_heard.get_mut("stranger").unwrap() -= 10 * 60;
+        });
         wake("stranger");
         assert!(
-            with(|s| s.waking.is_empty()),
-            "not wakeable: no stage starts"
+            with(|s| s.attempt.is_none() && s.waking.is_empty()),
+            "no push, and too long gone for the network"
         );
         with(|s| *s = Store::default());
     }
