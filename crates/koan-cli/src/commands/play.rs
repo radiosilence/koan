@@ -65,6 +65,7 @@ pub fn cmd_play(
     BufferedLogger::set_buffer(log_buffer.clone());
 
     let (state, _timeline, viz_snapshot, tx) = Player::spawn_for_listening();
+    let tx_quit = tx.clone();
 
     // Spawn the API server on a background thread if requested.
     if let Some(opts) = api_opts {
@@ -203,6 +204,10 @@ pub fn cmd_play(
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
+
+    // Saved above, playing if it was: a renderer left on our URL would play
+    // out its buffer and stop, so it is stopped here and resumed next time.
+    koan_core::player::commands::release_renderer(&tx_quit, Duration::from_millis(1500));
 
     BufferedLogger::clear_buffer();
     std::thread::sleep(Duration::from_millis(100));

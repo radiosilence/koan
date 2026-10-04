@@ -7,6 +7,10 @@
 - **Devices that stop answering stay listed, asleep.** A device that went quiet dropped out of the Control menu at once, and a phone iOS suspended a moment ago vanished from every other device's list. A device now stays as it was for one heartbeat (45 seconds), so a single missed signal changes nothing, and is then shown asleep with when it was last seen. One a push can wake stays listed and can be chosen; one that nothing can wake from here is shown, cannot be chosen, and is dropped after `devices.asleep_grace_mins` (30 by default). The server sends when an absent device was last seen, which older apps ignore.
 - **Choosing an asleep device wakes it, and says how.** It is dialled on the local network if it was there within the last minute, then sent a background push, and after about six seconds a notification to tap ("Mac wants to play here"), since iOS delays or drops background pushes and never delivers one to an app that was swiped away. The device's row shows the stage, and why if it did not wake. Each step is logged with its timing on the device choosing, the server and the phone, so a failed wake shows where it stopped. Wake pushes carry a collapse id and expire after a minute.
 
+### Fixed
+
+- **Quitting while playing to an amplifier no longer leaves two things playing at the next launch.** Quitting stops the amplifier, which otherwise played on until its buffer ran out. At launch, a session that was playing waits while kōan looks for the amplifier it used, and plays there if it turns up, or here if it does not, rather than starting here at once. An amplifier still on a track a kōan on this machine sent it is taken back, not left as someone else's.
+
 ## 0.52.2
 
 ### Changed
