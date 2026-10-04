@@ -64,7 +64,7 @@ pub fn cmd_play(
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
 
-    let (state, _timeline, viz_snapshot, tx) = Player::spawn();
+    let (state, _timeline, viz_snapshot, tx) = Player::spawn_for_listening();
 
     // Spawn the API server on a background thread if requested.
     if let Some(opts) = api_opts {

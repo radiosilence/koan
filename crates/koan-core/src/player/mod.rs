@@ -2298,7 +2298,42 @@ impl Player {
         }
     }
 
+    /// Spawn a player for a process that does not own an output of its own:
+    /// `koan serve`, `koan mcp`. It plays where it is told and nowhere else.
     pub fn spawn() -> (
+        Arc<SharedPlayerState>,
+        Arc<PlaybackTimeline>,
+        Arc<VizSnapshot>,
+        crossbeam_channel::Sender<PlayerCommand>,
+    ) {
+        Self::spawn_with(false)
+    }
+
+    /// Spawn the player for an app someone listens through: the macOS and iOS
+    /// apps and `koan play`. It goes back to the renderer used last time if
+    /// that turns up at launch (`upnp::resume`). A headless process must not:
+    /// the config is the machine's, and it would take the amplifier from the
+    /// app.
+    pub fn spawn_for_listening() -> (
+        Arc<SharedPlayerState>,
+        Arc<PlaybackTimeline>,
+        Arc<VizSnapshot>,
+        crossbeam_channel::Sender<PlayerCommand>,
+    ) {
+        Self::spawn_with(true)
+    }
+
+    /// The renderer to go back to at launch: the one used last time, for a
+    /// player someone listens through.
+    fn renderer_to_resume(listening: bool) -> Option<String> {
+        listening
+            .then(|| crate::config::Config::cached().playback.renderer.clone())
+            .flatten()
+    }
+
+    fn spawn_with(
+        listening: bool,
+    ) -> (
         Arc<SharedPlayerState>,
         Arc<PlaybackTimeline>,
         Arc<VizSnapshot>,
@@ -2317,7 +2352,10 @@ impl Player {
             state.clone(),
         ));
 
-        player.resume_renderer = crate::upnp::resume(&tx);
+        if let Some(udn) = Self::renderer_to_resume(listening) {
+            player.resume_renderer = true;
+            crate::upnp::resume(udn, &tx);
+        }
 
         thread::Builder::new()
             .name("koan-player".into())
@@ -2330,6 +2368,18 @@ impl Player {
 
 #[cfg(test)]
 mod tests {
+    /// `koan serve` and `koan mcp` read the same config as the app, and must
+    /// not go looking for the app's amplifier.
+    #[test]
+    fn a_headless_player_does_not_go_back_to_a_renderer() {
+        crate::config::isolate_config_for_tests();
+        crate::config::Config::persist(|cfg| {
+            cfg.playback.renderer = Some("uuid:headless-test".into());
+        })
+        .unwrap();
+        assert_eq!(Player::renderer_to_resume(false), None);
+    }
+
     #[test]
     fn a_download_in_progress_is_known_by_its_own_extension() {
         use std::path::Path;

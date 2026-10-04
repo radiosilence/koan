@@ -3386,7 +3386,7 @@ impl KoanEngine {
         drop(db);
         let t_sweep = t0.elapsed();
 
-        let (state, _timeline, viz, tx) = Player::spawn();
+        let (state, _timeline, viz, tx) = Player::spawn_for_listening();
         let t_player = t0.elapsed();
 
         // Bumped by the background tasks below as well as by everything the UI

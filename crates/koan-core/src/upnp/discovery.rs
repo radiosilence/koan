@@ -64,25 +64,31 @@ pub fn busy(udn: &str) -> bool {
     with(|s| s.renderers.get(udn).is_some_and(|k| k.busy))
 }
 
+/// Whether `renderer` is playing or paused for something, asked now. `None`
+/// when it does not answer.
+pub fn in_use(renderer: &Renderer) -> Option<bool> {
+    let args = super::soap::call(
+        &super::soap::client(),
+        &renderer.av_transport,
+        "GetTransportInfo",
+        &[("InstanceID", "0")],
+    )
+    .ok()?;
+    Some(matches!(
+        super::soap::arg(&args, "CurrentTransportState"),
+        Some("PLAYING" | "PAUSED_PLAYBACK" | "TRANSITIONING")
+    ))
+}
+
 /// Ask every known renderer whether it is in use, each on its own thread.
 fn check_busy() {
     for renderer in renderers() {
         let _ = thread::Builder::new()
             .name("koan-upnp-status".into())
             .spawn(move || {
-                let http = super::soap::client();
-                let Ok(args) = super::soap::call(
-                    &http,
-                    &renderer.av_transport,
-                    "GetTransportInfo",
-                    &[("InstanceID", "0")],
-                ) else {
+                let Some(busy) = in_use(&renderer) else {
                     return;
                 };
-                let busy = matches!(
-                    super::soap::arg(&args, "CurrentTransportState"),
-                    Some("PLAYING" | "PAUSED_PLAYBACK" | "TRANSITIONING")
-                );
                 let changed = with(|s| {
                     s.renderers
                         .get_mut(&renderer.udn)
