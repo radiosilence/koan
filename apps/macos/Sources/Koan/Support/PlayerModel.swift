@@ -475,9 +475,11 @@ final class PlayerModel {
     var outputs: OutputsInfo? { mirror.outputs }
 
     /// Whether the device in view's output can be chosen from here: this
-    /// device's always, another's only if it is one of the account's own.
+    /// device's always, another's if it is the account's own or lets it.
     var canChooseOutput: Bool {
-        !isControllingAnother || controlled?.account == true
+        // Another account's device, shared or on this network, publishes its
+        // outputs only when it lets them be chosen.
+        !isControllingAnother || controlled?.account == true || mirror.outputs != nil
     }
 
     /// Play the device in view through `output`. On another device it

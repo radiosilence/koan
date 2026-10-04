@@ -107,15 +107,38 @@ pub struct Order {
 /// An order nobody's scan has fulfilled in this long is dropped.
 const ORDER_TTL: i64 = 24 * 60 * 60;
 
+/// The owner of `device` lets the account `grantee` control it: playback and
+/// the queue, as a device on the same network may, and nothing of the
+/// owner's account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Grant {
+    pub device: String,
+    pub owner: String,
+    pub grantee: String,
+}
+
 #[derive(Default)]
 pub struct Registry {
     entries: Mutex<Vec<Entry>>,
     orders: Mutex<Vec<Order>>,
     activities: Mutex<Vec<Activity>>,
-    /// Which of an account's devices has another's playing bars on screen:
-    /// `(username, watcher, target)`. Held in memory only, and forgotten with
-    /// the watcher's link.
-    level_watches: Mutex<Vec<(String, String, String)>>,
+    grants: Mutex<Vec<Grant>>,
+    /// Which devices have another's playing bars on screen. Held in memory
+    /// only, and forgotten with the watcher's link.
+    level_watches: Mutex<Vec<LevelWatch>>,
+    /// Where each device last linked from, by device id: its account and
+    /// address. Kept in `link_devices` too, so a restart keeps it.
+    addresses: Mutex<std::collections::HashMap<String, (String, std::net::IpAddr)>>,
+}
+
+/// `watcher`, a device of `watcher_user`, has `target`'s playing bars on
+/// screen; `target` is `owner`'s. The two accounts differ for a device shared
+/// with the watcher's.
+struct LevelWatch {
+    owner: String,
+    watcher_user: String,
+    watcher: String,
+    target: String,
 }
 
 /// One registry per process: the WebSocket route and the GraphQL schema are
@@ -124,6 +147,8 @@ pub fn registry() -> &'static Registry {
     static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
         let registry = Registry::default();
         *registry.orders.lock() = outbox::load_orders();
+        *registry.grants.lock() = outbox::load_grants();
+        *registry.addresses.lock() = outbox::load_addresses();
         registry
     });
     &REGISTRY
@@ -178,6 +203,9 @@ impl Registry {
             wants_devices,
         });
         drop(entries);
+        // Always, empty or not: an app signed in elsewhere before holds that
+        // server's list.
+        self.send_shares(username, device, None);
         self.announce(username);
         // A device that relinked has a new session, which holds no watch:
         // tell it again that it is watched, if it is.
@@ -185,7 +213,7 @@ impl Registry {
             .level_watches
             .lock()
             .iter()
-            .any(|(u, _, t)| u == username && t == device)
+            .any(|w| w.owner == username && w.target == device)
         {
             self.send_live(username, device, LinkCommand::WatchLevels { on: true });
         }
@@ -236,8 +264,8 @@ impl Registry {
                 .level_watches
                 .lock()
                 .iter()
-                .filter(|(u, w, _)| *u == username && *w == device)
-                .map(|(_, _, t)| t.clone())
+                .filter(|w| w.watcher_user == username && w.watcher == device)
+                .map(|w| w.target.clone())
                 .collect();
             for target in targets {
                 self.watch_levels(&username, &device, &target, false);
@@ -250,31 +278,44 @@ impl Registry {
     /// when the last one goes. Only over a live link: levels are no reason to
     /// wake a phone or to queue a command for later.
     pub fn watch_levels(&self, username: &str, watcher: &str, target: &str, on: bool) {
+        // A device shared with `username` is watched as its owner's.
+        let owner = self
+            .shared_owner(username, target)
+            .unwrap_or_else(|| username.to_string());
         let mut watches = self.level_watches.lock();
-        watches.retain(|(u, w, t)| !(u == username && w == watcher && t == target));
+        watches.retain(|w| {
+            !(w.watcher_user == username && w.watcher == watcher && w.target == target)
+        });
         if on {
-            watches.push((username.into(), watcher.into(), target.into()));
+            watches.push(LevelWatch {
+                owner: owner.clone(),
+                watcher_user: username.into(),
+                watcher: watcher.into(),
+                target: target.into(),
+            });
         }
-        let watched = watches.iter().any(|(u, _, t)| u == username && t == target);
+        let watched = watches
+            .iter()
+            .any(|w| w.owner == owner && w.target == target);
         drop(watches);
         if on || !watched {
-            self.send_live(username, target, LinkCommand::WatchLevels { on: watched });
+            self.send_live(&owner, target, LinkCommand::WatchLevels { on: watched });
         }
     }
 
     /// A frame of `from`'s levels, for each device watching it. Not stored:
     /// one that cannot be delivered now is of no use later.
     pub fn levels(&self, username: &str, from: &str, f: koan_core::remote::levels::Frame) {
-        let watchers: Vec<String> = self
+        let watchers: Vec<(String, String)> = self
             .level_watches
             .lock()
             .iter()
-            .filter(|(u, _, t)| u == username && t == from)
-            .map(|(_, w, _)| w.clone())
+            .filter(|w| w.owner == username && w.target == from)
+            .map(|w| (w.watcher_user.clone(), w.watcher.clone()))
             .collect();
-        for watcher in watchers {
+        for (watcher_user, watcher) in watchers {
             self.send_live(
-                username,
+                &watcher_user,
                 &watcher,
                 LinkCommand::Levels {
                     from: from.to_string(),
@@ -300,6 +341,27 @@ impl Registry {
     /// other devices: those linked, with what each is doing, and those a push
     /// can wake.
     fn announce(&self, username: &str) {
+        self.announce_to(username);
+        // Those `username` shares a device with see it change too.
+        let grantees: Vec<String> = {
+            let mut g: Vec<String> = self
+                .grants
+                .lock()
+                .iter()
+                .filter(|g| g.owner == username)
+                .map(|g| g.grantee.clone())
+                .collect();
+            g.sort();
+            g.dedup();
+            g
+        };
+        for grantee in grantees {
+            self.announce_to(&grantee);
+        }
+    }
+
+    /// `announce` for `username` alone.
+    fn announce_to(&self, username: &str) {
         let listening = |e: &Entry| e.info.username == username && e.wants_devices;
         if !self.entries.lock().iter().any(listening) {
             return;
@@ -328,6 +390,7 @@ impl Registry {
                 }),
                 last_seen: None,
                 wakeable: Some(can_push && asleep.iter().any(|t| t.device == e.device)),
+                owner: None,
             })
             .collect();
         for t in asleep {
@@ -340,13 +403,194 @@ impl Registry {
                     state: None,
                     last_seen: Some(t.last_seen),
                     wakeable: Some(can_push),
+                    owner: None,
                 });
             }
         }
+        all.extend(self.shared_devices(username, &entries, can_push));
         for e in ours.iter().filter(|e| e.wants_devices) {
             let devices = all.iter().filter(|d| d.id != e.device).cloned().collect();
             let _ = e.tx.send(LinkCommand::Devices { devices });
         }
+    }
+
+    /// The devices shared with `grantee`, as `grantee` sees them: their
+    /// state, with nothing of their owner's own (the outputs are the owner's
+    /// to choose); and absent ones only where a push can wake them.
+    fn shared_devices(&self, grantee: &str, entries: &[Entry], can_push: bool) -> Vec<LinkDevice> {
+        let grants: Vec<Grant> = self
+            .grants
+            .lock()
+            .iter()
+            .filter(|g| g.grantee == grantee)
+            .cloned()
+            .collect();
+        let mut out = Vec::new();
+        for g in grants {
+            let linked = entries
+                .iter()
+                .find(|e| e.device == g.device && e.info.username == g.owner);
+            match linked {
+                Some(e) => out.push(LinkDevice {
+                    id: e.device.clone(),
+                    name: e.info.name.clone(),
+                    platform: e.info.platform.clone(),
+                    linked: true,
+                    state: e.info.reports.then(|| LinkState {
+                        position_ms: e.info.position_ms(),
+                        ..e.info.state.clone()
+                    }),
+                    last_seen: None,
+                    wakeable: Some(can_push),
+                    owner: Some(g.owner.clone()),
+                }),
+                None => {
+                    if let Some(t) = outbox::push_targets(Some(&g.owner))
+                        .into_iter()
+                        .find(|t| t.device == g.device)
+                    {
+                        out.push(LinkDevice {
+                            id: t.device,
+                            name: t.name,
+                            platform: t.platform,
+                            linked: false,
+                            state: None,
+                            last_seen: Some(t.last_seen),
+                            wakeable: Some(can_push),
+                            owner: Some(g.owner.clone()),
+                        });
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Let `grantee` control `owner`'s device `device`, or stop letting it.
+    /// Asked by the device itself; the caller has checked `grantee` is an
+    /// account on this server.
+    pub fn share(
+        &self,
+        owner: &str,
+        device: &str,
+        grantee: &str,
+        allow: bool,
+    ) -> Result<(), String> {
+        if grantee == owner {
+            return Err("a device is already its own account's".into());
+        }
+        let grant = Grant {
+            device: device.to_string(),
+            owner: owner.to_string(),
+            grantee: grantee.to_string(),
+        };
+        {
+            let mut grants = self.grants.lock();
+            grants.retain(|g| *g != grant);
+            if allow {
+                grants.push(grant.clone());
+            }
+        }
+        if allow {
+            outbox::save_grant(&grant);
+        } else {
+            outbox::drop_grant(&grant);
+        }
+        log::info!(
+            "share: {owner}'s {device} {} {grantee}",
+            if allow {
+                "shared with"
+            } else {
+                "no longer shared with"
+            }
+        );
+        self.send_shares(owner, device, None);
+        self.announce_to(grantee);
+        Ok(())
+    }
+
+    /// Tell `owner`'s device `device` whom it is shared with, and why its last
+    /// request was refused, if it was.
+    pub fn send_shares(&self, owner: &str, device: &str, error: Option<String>) {
+        let mut grantees: Vec<String> = self
+            .grants
+            .lock()
+            .iter()
+            .filter(|g| g.owner == owner && g.device == device)
+            .map(|g| g.grantee.clone())
+            .collect();
+        grantees.sort();
+        if let Some(e) = self
+            .entries
+            .lock()
+            .iter()
+            .find(|e| e.info.username == owner && e.device == device && e.wants_devices)
+        {
+            let accounts = outbox::accounts()
+                .into_iter()
+                .filter(|a| a != owner)
+                .collect();
+            let _ = e.tx.send(LinkCommand::Shares {
+                grantees,
+                error,
+                accounts,
+            });
+        }
+    }
+
+    /// `device`, of `username`'s, linked from `addr`.
+    pub fn seen_at(&self, device: &str, username: &str, addr: std::net::IpAddr) {
+        self.addresses
+            .lock()
+            .insert(device.to_string(), (username.to_string(), addr));
+        outbox::save_address(device, username, addr);
+    }
+
+    /// Whose push token wakes `to` when `username`'s device `from` asks: the
+    /// owner of a device shared with `username`; the account of one last seen
+    /// at the same address as `from` is now, which is to say behind the same
+    /// router, a household's; else `username`'s own. A wake grants nothing
+    /// else: what may then be done to the device follows the share or the
+    /// network as ever.
+    fn wake_owner(&self, username: &str, from: &str, to: &str) -> String {
+        if let Some(owner) = self.shared_owner(username, to) {
+            return owner;
+        }
+        let addresses = self.addresses.lock();
+        let here = addresses
+            .get(from)
+            .filter(|(user, _)| user == username)
+            .map(|(_, addr)| *addr);
+        match (here, addresses.get(to)) {
+            (Some(here), Some((owner, there))) if *there == here => owner.clone(),
+            _ => username.to_string(),
+        }
+    }
+
+    /// The account `to` belongs to, when `from`, a device of `owner`'s, is
+    /// shared with it.
+    fn grantee_of(&self, owner: &str, from: &str, to: &str) -> Option<String> {
+        let to_user = self
+            .entries
+            .lock()
+            .iter()
+            .find(|e| e.device == to && e.info.username != owner)
+            .map(|e| e.info.username.clone())?;
+        self.grants
+            .lock()
+            .iter()
+            .any(|g| g.owner == owner && g.device == from && g.grantee == to_user)
+            .then_some(to_user)
+    }
+
+    /// Whose device `to` is, when it is not `username`'s own but shared with
+    /// it: the owner.
+    fn shared_owner(&self, username: &str, to: &str) -> Option<String> {
+        self.grants
+            .lock()
+            .iter()
+            .find(|g| g.grantee == username && g.device == to)
+            .map(|g| g.owner.clone())
     }
 
     /// Wake `to`, one of `username`'s devices that is not linked, for `from`
@@ -355,6 +599,16 @@ impl Registry {
     /// round trip, and remembered so the link that follows is logged with how
     /// long it took.
     pub fn wake(&self, username: &str, from: &str, to: &str, notify: bool) {
+        let from_name = self
+            .list(Some(username))
+            .into_iter()
+            .find(|c| c.device == from)
+            .map_or_else(|| "Another device".to_string(), |c| c.name);
+        let owner = self.wake_owner(username, from, to);
+        if owner != username {
+            log::info!("wake: {to} is {owner}'s, woken for {username}");
+        }
+        let username = &owner;
         if self.list(Some(username)).iter().any(|c| c.device == to) {
             log::info!("wake: {to} is already linked");
             return;
@@ -370,11 +624,6 @@ impl Registry {
             log::info!("wake: {to} has given no push token");
             return;
         };
-        let from_name = self
-            .list(Some(username))
-            .into_iter()
-            .find(|c| c.device == from)
-            .map_or_else(|| "Another device".to_string(), |c| c.name);
         let (push, how) = if notify {
             (
                 crate::push::Push::Summon {
@@ -408,6 +657,11 @@ impl Registry {
     /// record is keyed by account. A device that links again is recorded
     /// afresh.
     pub fn forget(&self, username: &str, device: &str) -> Result<(), String> {
+        // Another account's device, shared with this one: forgetting it
+        // declines the share, or the next list would bring it straight back.
+        if let Some(owner) = self.shared_owner(username, device) {
+            return self.share(&owner, device, username, false);
+        }
         if self.list(Some(username)).iter().any(|c| c.device == device) {
             return Err(format!("{device} is linked; it would be back at once"));
         }
@@ -430,6 +684,19 @@ impl Registry {
         to: &str,
         command: LinkCommand,
     ) -> Result<ClientInfo, String> {
+        self.relay_from(username, None, to, command)
+    }
+
+    /// `relay`, knowing which of `username`'s devices, `from`, sent it: what
+    /// lets a device shared with another account hand its music to that
+    /// account's device, the one way a grant runs backwards.
+    pub fn relay_from(
+        &self,
+        username: &str,
+        from: Option<&str>,
+        to: &str,
+        command: LinkCommand,
+    ) -> Result<ClientInfo, String> {
         // Levels are relayed only between live links, by `watch_levels` and
         // `levels`: never queued for a device that is away, never a push.
         if matches!(
@@ -438,8 +705,36 @@ impl Registry {
                 | LinkCommand::Forgotten { .. }
                 | LinkCommand::Levels { .. }
                 | LinkCommand::WatchLevels { .. }
+                | LinkCommand::Shares { .. }
+                | LinkCommand::Shared { .. }
         ) {
             return Err("not a command".into());
+        }
+        // A device shared with `username` takes the playback set, marked as
+        // another account's so it runs as that account's request and never
+        // with its owner's powers.
+        if let Some(owner) = self.shared_owner(username, to) {
+            if !command.allowed_playback() {
+                return Err(format!("{to} is shared for playback only"));
+            }
+            let command = LinkCommand::Shared {
+                command: Box::new(command),
+            };
+            return self.send(Some(&owner), Some(to), command);
+        }
+        // The other way: a device shared with `to`'s account hands its music
+        // there, as "Move here" from that account asks it to. That and only
+        // that: a grant does not let the owner's device command the grantee's.
+        if let Some(from) = from
+            && let Some(grantee) = self.grantee_of(username, from, to)
+        {
+            if !matches!(command, LinkCommand::Play { handoff: true, .. }) {
+                return Err(format!("{to} is another account's"));
+            }
+            let command = LinkCommand::Shared {
+                command: Box::new(command),
+            };
+            return self.send(Some(&grantee), Some(to), command);
         }
         self.send(Some(username), Some(to), command)
     }
@@ -475,30 +770,47 @@ impl Registry {
         let Some(pusher) = crate::push::pusher() else {
             return;
         };
+        // A device shared with `username` is its owner's to look up, and the
+        // owner's reports reach those it is shared with too.
+        let owner = self
+            .shared_owner(username, target)
+            .unwrap_or_else(|| username.to_string());
         let Some(info) = self
-            .list(Some(username))
+            .list(Some(&owner))
             .into_iter()
             .find(|c| c.device == target)
         else {
             return;
         };
+        let watchers: Vec<String> = self
+            .grants
+            .lock()
+            .iter()
+            .filter(|g| g.owner == owner && g.device == target)
+            .map(|g| g.grantee.clone())
+            .chain(std::iter::once(owner.clone()))
+            .collect();
         let state = crate::push::ActivityState::of(&info);
         let mut due = Vec::new();
         for a in self.activities.lock().iter_mut() {
-            if a.username == username
+            if watchers.contains(&a.username)
                 && a.target == target
                 && a.sent.as_ref().is_none_or(|s| s.differs(&state))
             {
                 a.sent = Some(state.clone());
-                due.push((a.token.clone(), a.sandbox, a.watcher.clone()));
+                due.push((
+                    a.token.clone(),
+                    a.sandbox,
+                    a.watcher.clone(),
+                    a.username.clone(),
+                ));
             }
         }
         if due.is_empty() {
             return;
         }
-        let username = username.to_string();
         std::thread::spawn(move || {
-            for (token, sandbox, watcher) in due {
+            for (token, sandbox, watcher, username) in due {
                 let push = crate::push::Push::Activity(state.clone());
                 match pusher.send(&token, sandbox, &push) {
                     crate::push::Outcome::Sent => {}
@@ -847,16 +1159,21 @@ fn reach_absent(
         reports: false,
         notified: true,
     };
-    let verb = match cmd {
+    // What it asks, whoever asks it.
+    let asked = match cmd {
+        LinkCommand::Shared { command } => command.as_ref(),
+        cmd => cmd,
+    };
+    let verb = match asked {
         LinkCommand::Play { .. } | LinkCommand::JumpTo { .. } | LinkCommand::Resume => Some("Play"),
         _ => None,
     };
     let push = match verb {
         Some(verb) => crate::push::Push::Notify {
             title: format!("{verb} on {}", target.name),
-            body: outbox::describe(cmd).unwrap_or_else(|| "From your koan server".into()),
+            body: outbox::describe(asked).unwrap_or_else(|| "From your koan server".into()),
             command: serde_json::to_value(cmd).ok()?,
-            image: cover_track(cmd)
+            image: cover_track(asked)
                 .and_then(outbox::track_row)
                 .and_then(|t| pusher.cover_link(t)),
         },
@@ -1249,6 +1566,100 @@ mod outbox {
             "INSERT INTO link_outbox (device, username, command, created_at) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![device, username, text, chrono::Utc::now().timestamp()],
         );
+    }
+
+    /// Every account on the server, by name: what an owner chooses from to
+    /// share a device. Any account may see them; the server's users trust
+    /// each other that far.
+    pub fn accounts() -> Vec<String> {
+        let Some(db) = db() else { return Vec::new() };
+        koan_core::db::queries::auth::list_users(&db.conn)
+            .map(|users| users.into_iter().map(|u| u.username).collect())
+            .unwrap_or_default()
+    }
+
+    /// Where each device last linked from, by device id: the most recent of
+    /// its rows, should it have linked as more than one account.
+    pub fn load_addresses() -> std::collections::HashMap<String, (String, std::net::IpAddr)> {
+        let Some(db) = db() else {
+            return Default::default();
+        };
+        load_addresses_in(&db.conn)
+    }
+
+    pub(super) fn load_addresses_in(
+        conn: &rusqlite::Connection,
+    ) -> std::collections::HashMap<String, (String, std::net::IpAddr)> {
+        conn.prepare(
+            "SELECT device, username, addr FROM link_devices WHERE addr IS NOT NULL ORDER BY last_seen",
+        )
+        .and_then(|mut s| {
+            s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(device, username, addr)| Some((device, (username, addr.parse().ok()?))))
+        .collect()
+    }
+
+    pub fn save_address(device: &str, username: &str, addr: std::net::IpAddr) {
+        if let Some(db) = db() {
+            save_address_in(&db.conn, device, username, addr);
+        }
+    }
+
+    pub(super) fn save_address_in(
+        conn: &rusqlite::Connection,
+        device: &str,
+        username: &str,
+        addr: std::net::IpAddr,
+    ) {
+        let _ = conn.execute(
+            "UPDATE link_devices SET addr = ?1 WHERE device = ?2 AND username = ?3",
+            rusqlite::params![addr.to_string(), device, username],
+        );
+    }
+
+    pub fn load_grants() -> Vec<super::Grant> {
+        let Some(db) = db() else { return Vec::new() };
+        db.conn
+            .prepare("SELECT device, owner, grantee FROM link_grants ORDER BY created_at")
+            .and_then(|mut s| {
+                s.query_map([], |r| {
+                    Ok(super::Grant {
+                        device: r.get(0)?,
+                        owner: r.get(1)?,
+                        grantee: r.get(2)?,
+                    })
+                })?
+                .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn save_grant(g: &super::Grant) {
+        if let Some(db) = db() {
+            let _ = db.conn.execute(
+                "INSERT OR IGNORE INTO link_grants (device, owner, grantee, created_at) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![g.device, g.owner, g.grantee, chrono::Utc::now().timestamp()],
+            );
+        }
+    }
+
+    pub fn drop_grant(g: &super::Grant) {
+        if let Some(db) = db() {
+            let _ = db.conn.execute(
+                "DELETE FROM link_grants WHERE device = ?1 AND owner = ?2 AND grantee = ?3",
+                [&g.device, &g.owner, &g.grantee],
+            );
+        }
     }
 
     pub fn save_push(username: &str, device: &str, token: &str, sandbox: bool) {
@@ -1689,6 +2100,270 @@ mod tests {
         let _ = mac;
     }
 
+    fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkCommand>) -> Vec<LinkCommand> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    /// `j` shares the phone with `k`, not the Mac.
+    fn shared() -> (
+        Registry,
+        tokio::sync::mpsc::UnboundedReceiver<LinkCommand>,
+        tokio::sync::mpsc::UnboundedReceiver<LinkCommand>,
+        tokio::sync::mpsc::UnboundedReceiver<LinkCommand>,
+    ) {
+        let reg = Registry::default();
+        let (phone_tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
+        let (mac_tx, mac) = tokio::sync::mpsc::unbounded_channel();
+        let (k_tx, k) = tokio::sync::mpsc::unbounded_channel();
+        let id = reg.register("j", "phone", "ios", "dev-phone", phone_tx, true);
+        reg.register("j", "mac", "macos", "dev-mac", mac_tx, true);
+        reg.register("k", "laptop", "macos", "dev-k", k_tx, true);
+        reg.report(
+            &id,
+            LinkState {
+                playing: true,
+                title: Some("Roygbiv".into()),
+                outputs: Some(Default::default()),
+                ..Default::default()
+            },
+        );
+        reg.share("j", "dev-phone", "k", true).unwrap();
+        drain(&mut phone);
+        (reg, phone, mac, k)
+    }
+
+    #[test]
+    fn a_grantee_sees_the_shared_device_and_nothing_else_of_the_owner() {
+        let (_reg, _phone, _mac, mut k) = shared();
+        let listed = drain(&mut k)
+            .into_iter()
+            .rev()
+            .find_map(|c| match c {
+                LinkCommand::Devices { devices } => Some(devices),
+                _ => None,
+            })
+            .expect("told of it");
+        assert_eq!(listed.len(), 1, "the phone, not the Mac");
+        let phone = &listed[0];
+        assert_eq!(phone.id, "dev-phone");
+        assert_eq!(phone.owner.as_deref(), Some("j"));
+        let state = phone.state.as_ref().expect("its state");
+        assert_eq!(state.title.as_deref(), Some("Roygbiv"));
+        assert!(
+            state.outputs.is_some(),
+            "outputs, to choose from: the output is in the playback set"
+        );
+    }
+
+    /// A granted account (`k`, say read-only) controlling the owner's (`j`,
+    /// say admin) phone gets the playback set and nothing of `j`'s account:
+    /// what touches the library is refused, and every command arrives marked
+    /// as `k`'s, so the phone runs it with no power to sync, and no command
+    /// in the set writes favourites, playlists or history.
+    #[test]
+    fn a_grantee_controls_playback_as_itself_and_nothing_of_the_owners_account() {
+        let (reg, mut phone, mut mac, _k) = shared();
+        let wrapped = |c: LinkCommand| LinkCommand::Shared {
+            command: Box::new(c),
+        };
+        for cmd in [
+            LinkCommand::Pause,
+            LinkCommand::SetRendererVolume { volume: 40 },
+            LinkCommand::HandOff { to: "dev-k".into() },
+        ] {
+            reg.relay("k", "dev-phone", cmd.clone()).unwrap();
+            assert_eq!(drain(&mut phone), [wrapped(cmd)]);
+        }
+        for cmd in [
+            LinkCommand::Sync { full: false },
+            LinkCommand::Evict { track_ids: vec![] },
+            LinkCommand::Shared {
+                command: Box::new(LinkCommand::Pause),
+            },
+        ] {
+            assert!(!cmd.allowed_playback());
+            assert!(reg.relay("k", "dev-phone", cmd).is_err());
+        }
+        assert!(drain(&mut phone).is_empty());
+        assert!(
+            reg.relay("k", "dev-mac", LinkCommand::Pause).is_err(),
+            "not shared, not reachable"
+        );
+        assert!(
+            drain(&mut mac)
+                .iter()
+                .all(|c| matches!(c, LinkCommand::Devices { .. } | LinkCommand::Shares { .. })),
+            "news, and no command"
+        );
+        assert!(reg.shared_owner("k", "dev-mac").is_none(), "nor wakeable");
+    }
+
+    /// "Move here" both ways: the grantee pulls the shared phone's music to
+    /// its own device, which the phone sends as a hand-off; the grant lets
+    /// that one command run backwards and nothing else.
+    #[test]
+    fn a_hand_off_runs_both_ways_across_a_grant_and_nothing_else_does() {
+        let (reg, _phone, _mac, mut k) = shared();
+        drain(&mut k);
+        let play = LinkCommand::Play {
+            track_ids: vec!["t".into()],
+            start_at: 0,
+            position_ms: 1000,
+            paused: false,
+            handoff: true,
+        };
+        reg.relay_from("j", Some("dev-phone"), "dev-k", play.clone())
+            .unwrap();
+        assert!(drain(&mut k).contains(&LinkCommand::Shared {
+            command: Box::new(play.clone())
+        }));
+        assert!(
+            reg.relay_from("j", Some("dev-phone"), "dev-k", LinkCommand::Pause)
+                .is_err(),
+            "the owner's phone does not command the grantee's devices"
+        );
+        assert!(
+            reg.relay_from("j", Some("dev-mac"), "dev-k", play.clone())
+                .is_err(),
+            "only the shared device"
+        );
+        let not_a_hand_off = LinkCommand::Play {
+            track_ids: vec!["t".into()],
+            start_at: 0,
+            position_ms: 0,
+            paused: false,
+            handoff: false,
+        };
+        assert!(
+            reg.relay_from("j", Some("dev-phone"), "dev-k", not_a_hand_off)
+                .is_err(),
+            "a hand-off, not any play"
+        );
+    }
+
+    #[test]
+    fn revoking_ends_control_at_once() {
+        let (reg, mut phone, _mac, mut k) = shared();
+        reg.share("j", "dev-phone", "k", false).unwrap();
+        assert!(reg.relay("k", "dev-phone", LinkCommand::Pause).is_err());
+        assert!(
+            drain(&mut phone)
+                .iter()
+                .all(|c| !matches!(c, LinkCommand::Pause))
+        );
+        assert!(reg.shared_owner("k", "dev-phone").is_none());
+        let listed = drain(&mut k)
+            .into_iter()
+            .rev()
+            .find_map(|c| match c {
+                LinkCommand::Devices { devices } => Some(devices),
+                _ => None,
+            })
+            .expect("told it is gone");
+        assert!(listed.is_empty());
+    }
+
+    #[test]
+    fn a_device_hears_whom_it_is_shared_with_every_time_it_links() {
+        let reg = Registry::default();
+        let (tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("j", "phone", "ios", "dev-phone", tx, true);
+        let first = drain(&mut phone);
+        assert!(
+            first.contains(&LinkCommand::Shares {
+                grantees: vec![],
+                error: None,
+                accounts: vec![],
+            }),
+            "an empty list replaces one from another server"
+        );
+        reg.send_shares(
+            "j",
+            "dev-phone",
+            Some("There is no account called x".into()),
+        );
+        assert!(drain(&mut phone).iter().any(
+            |c| matches!(c, LinkCommand::Shares { error: Some(e), .. } if e.contains("no account"))
+        ));
+    }
+
+    #[test]
+    fn the_owner_is_told_who_it_shares_with() {
+        let reg = Registry::default();
+        let (tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("j", "phone", "ios", "dev-phone", tx, true);
+        reg.share("j", "dev-phone", "k", true).unwrap();
+        reg.share("j", "dev-phone", "m", true).unwrap();
+        let last = drain(&mut phone).into_iter().rev().find_map(|c| match c {
+            LinkCommand::Shares { grantees, .. } => Some(grantees),
+            _ => None,
+        });
+        assert_eq!(last, Some(vec!["k".to_string(), "m".to_string()]));
+        assert!(
+            reg.share("j", "dev-phone", "j", true).is_err(),
+            "not with itself"
+        );
+    }
+
+    /// Whose token wakes a device: another account's, behind the same router
+    /// as the asker; a shared one's owner from anywhere; and otherwise only
+    /// the asker's own, so a device elsewhere of another account is refused.
+    #[test]
+    fn a_device_is_woken_for_another_account_on_its_network_or_by_grant() {
+        let reg = Registry::default();
+        let home: std::net::IpAddr = "203.0.113.7".parse().unwrap();
+        let away: std::net::IpAddr = "198.51.100.2".parse().unwrap();
+        reg.seen_at("dev-ipad", "sarita", home);
+        reg.seen_at("dev-phone", "admin", home);
+        assert_eq!(
+            reg.wake_owner("admin", "dev-phone", "dev-ipad"),
+            "sarita",
+            "same address: the iPad's own token"
+        );
+        reg.seen_at("dev-phone", "admin", away);
+        assert_eq!(
+            reg.wake_owner("admin", "dev-phone", "dev-ipad"),
+            "admin",
+            "elsewhere, with no grant: only admin's own, which it is not"
+        );
+        reg.share("sarita", "dev-ipad", "admin", true).unwrap();
+        assert_eq!(
+            reg.wake_owner("admin", "dev-phone", "dev-ipad"),
+            "sarita",
+            "shared: from anywhere"
+        );
+        // An address is believed only for the account that linked from it.
+        reg.seen_at("dev-other", "mallory", home);
+        assert_eq!(reg.wake_owner("admin", "dev-other", "dev-tv"), "admin");
+    }
+
+    /// The server restarts with every release; a backgrounded iPad has to
+    /// stay wakeable across one without being opened again.
+    #[test]
+    fn where_a_device_last_linked_from_survives_a_restart() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        koan_core::db::schema::create_tables(&conn).unwrap();
+        for (device, user, seen) in [("dev-ipad", "sarita", 1), ("dev-phone", "admin", 2)] {
+            conn.execute(
+                "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES (?1, ?2, ?1, 'ios', ?3)",
+                rusqlite::params![device, user, seen],
+            )
+            .unwrap();
+        }
+        let home: std::net::IpAddr = "203.0.113.7".parse().unwrap();
+        outbox::save_address_in(&conn, "dev-ipad", "sarita", home);
+        outbox::save_address_in(&conn, "dev-phone", "admin", home);
+
+        // A fresh server, from what was saved.
+        let reg = Registry::default();
+        *reg.addresses.lock() = outbox::load_addresses_in(&conn);
+        assert_eq!(
+            reg.wake_owner("admin", "dev-phone", "dev-ipad"),
+            "sarita",
+            "still woken through its own account after the restart"
+        );
+    }
+
     /// Forgetting a device tells the account's linked devices to drop it,
     /// and no other account's; a linked device is not forgotten, since it
     /// would be back at once.
@@ -1725,6 +2400,26 @@ mod tests {
             .is_err(),
             "news from the server, not a command a device may send"
         );
+    }
+
+    /// A device shared by another account is forgotten by declining the
+    /// share: its owner keeps it and is told, and it is not listed again.
+    #[test]
+    fn forgetting_a_shared_device_declines_the_share() {
+        let (reg, mut phone, _mac, mut k) = shared();
+        drain(&mut k);
+        reg.forget("k", "dev-phone").unwrap();
+        assert!(reg.shared_owner("k", "dev-phone").is_none());
+        assert!(
+            drain(&mut phone)
+                .iter()
+                .any(|c| matches!(c, LinkCommand::Shares { grantees, .. } if grantees.is_empty()))
+        );
+        let listed = drain(&mut k).into_iter().rev().find_map(|c| match c {
+            LinkCommand::Devices { devices } => Some(devices),
+            _ => None,
+        });
+        assert_eq!(listed.map(|d| d.len()), Some(0));
     }
 
     /// The server forgets a device's push token with it, so nothing is
@@ -1774,11 +2469,14 @@ mod tests {
                 ..Default::default()
             },
         );
-        let mut last = None;
-        while let Ok(LinkCommand::Devices { devices }) = rx1.try_recv() {
-            last = Some(devices);
-        }
-        let devices = last.expect("the Mac is told of the phone");
+        let devices = drain(&mut rx1)
+            .into_iter()
+            .rev()
+            .find_map(|c| match c {
+                LinkCommand::Devices { devices } => Some(devices),
+                _ => None,
+            })
+            .expect("the Mac is told of the phone");
         assert_eq!(devices.len(), 1, "not itself, not another account's");
         assert_eq!(devices[0].id, "dev-phone");
         assert_eq!(

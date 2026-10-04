@@ -23,7 +23,9 @@ use std::time::{Duration, Instant};
 use parking_lot::{Condvar, Mutex};
 
 use crate::config::Config;
-use crate::remote::link::{self, LinkCommand, LinkDevice, LinkHello, LinkReport, LinkState, Local};
+use crate::remote::link::{
+    self, CommandSource, LinkCommand, LinkDevice, LinkHello, LinkReport, LinkState, Local,
+};
 
 /// Another device, as the app shows it.
 #[derive(Debug, Clone, PartialEq)]
@@ -33,6 +35,9 @@ pub struct Device {
     pub platform: String,
     /// Signed in to the same account on the same server.
     pub account: bool,
+    /// Whose it is, for a device another account on the server shares with
+    /// this one: playback and the queue only, as on the local network.
+    pub owner: Option<String>,
     /// Connected to over the local network now.
     pub nearby: bool,
     /// Reachable at once. An account device that is not is one iOS has
@@ -99,6 +104,12 @@ struct Store {
     attempt: Option<(u64, String)>,
     /// Bumped by every wake started or abandoned.
     wake_gen: u64,
+    /// The accounts this device lets control it, as the server says.
+    shares: Vec<String>,
+    /// Why the server refused the last change to them.
+    share_error: Option<String>,
+    /// Every account on the server, to share with.
+    accounts: Vec<String>,
 }
 
 /// A stage of waking a device, in the order they are tried.
@@ -124,6 +135,8 @@ struct Departed {
     platform: String,
     account: bool,
     same_library: bool,
+    /// Another account's, shared with this one.
+    shared: bool,
 }
 
 /// One heartbeat: a link that hears nothing for this long pings, and one that
@@ -364,14 +377,16 @@ pub fn set_account(devices: Vec<LinkDevice>) {
                 id: old.id.clone(),
                 name: old.name.clone(),
                 platform: old.platform.clone(),
-                account: true,
+                account: old.owner.is_none(),
+                shared: old.owner.is_some(),
                 same_library: true,
             })
             .collect();
         for d in leaving {
             // Never seen reachable as far as this device knows: gone, rather
-            // than taken for a device seen just now.
-            if !s.live.contains_key(&d.id) {
+            // than taken for a device seen just now. And a device another
+            // account stops sharing is gone at once, not asleep.
+            if !s.live.contains_key(&d.id) || d.shared {
                 continue;
             }
             s.departed.retain(|g| g.id != d.id);
@@ -381,6 +396,93 @@ pub fn set_account(devices: Vec<LinkDevice>) {
         s.fresh = s.linked;
         s.save();
     });
+}
+
+/// The accounts this device is shared with, as the server last said, and
+/// why it refused the last change, if it did.
+pub fn set_shares(grantees: Vec<String>, error: Option<String>, accounts: Vec<String>) {
+    changed(|s| {
+        s.shares = grantees;
+        s.share_error = error;
+        s.accounts = accounts;
+    });
+}
+
+/// The server's accounts, to share this device with.
+pub fn accounts() -> Vec<String> {
+    with(|s| s.accounts.clone())
+}
+
+pub fn shares() -> Vec<String> {
+    with(|s| s.shares.clone())
+}
+
+pub fn share_error() -> Option<String> {
+    with(|s| s.share_error.clone())
+}
+
+/// Signed out, or signed in elsewhere: the shares were that server's.
+pub fn forget_shares() {
+    set_shares(Vec::new(), None, Vec::new());
+}
+
+/// Send `cmd` to `id` because `source` asked this device to: a hand-off.
+///
+/// The account's own request goes anywhere. Anyone else's acts as the asker,
+/// never with this account's powers, so it does not reach this account's own
+/// devices up its link: a stranger's (Playback only) goes over the network or
+/// nowhere; a sharing account's, or a trusted network device's, goes over the
+/// network or to a device that is not this account's (the asker's own,
+/// through the server).
+pub fn send_for(source: CommandSource, id: &str, cmd: LinkCommand) -> Result<(), String> {
+    match source {
+        CommandSource::Account => send(id, cmd),
+        CommandSource::Stranger => send_nearby(id, cmd),
+        CommandSource::Shared | CommandSource::Nearby => {
+            let (nearby, own) = with(|s| {
+                (
+                    s.nearby.iter().any(|n| n.hello.id == id),
+                    s.account
+                        .iter()
+                        .any(|(d, _)| d.id == id && d.owner.is_none()),
+                )
+            });
+            if own && !nearby {
+                return Err(format!("{id} is this account's, not the asker's"));
+            }
+            send(id, cmd)
+        }
+    }
+}
+
+/// Send `cmd` to `id` over the local network only, never up this device's
+/// link. For what a stranger asked of this device: over the network it can
+/// only reach what the stranger could have reached itself; over the link it
+/// would act as this device's account.
+pub fn send_nearby(id: &str, cmd: LinkCommand) -> Result<(), String> {
+    let nearby = with(|s| s.nearby.iter().any(|n| n.hello.id == id));
+    if nearby && cmd.allowed_nearby() && crate::remote::nearby::send(id, cmd) {
+        Ok(())
+    } else {
+        Err(format!("{id} is not on this network"))
+    }
+}
+
+/// Let the account `grantee` on this server control this device, or stop.
+/// The server answers with the list as it now stands.
+pub fn share(grantee: &str, allow: bool) -> Result<(), String> {
+    let grantee = grantee.trim();
+    if grantee.is_empty() {
+        return Err("Name an account on your server.".into());
+    }
+    if link::report(LinkReport::Share {
+        grantee: grantee.to_string(),
+        allow,
+    }) {
+        Ok(())
+    } else {
+        Err("Not connected to your server.".into())
+    }
 }
 
 /// The devices reached on this network before, to dial first.
@@ -449,6 +551,7 @@ pub fn nearby_gone(id: &str) {
             platform: gone.hello.platform.clone(),
             account: false,
             same_library: ours.is_some() && gone.hello.library == ours,
+            shared: false,
         });
         s.save();
     });
@@ -457,7 +560,8 @@ pub fn nearby_gone(id: &str) {
 /// Forget the device `id`: out of the list until it links or is heard on the
 /// network again, which brings it straight back. An account device is
 /// forgotten by the server too, push token and all, and every other device
-/// of the account drops it; only the account's own devices can be. Only a
+/// of the account drops it. A device another account shares with this one
+/// is forgotten by declining the share. Only a
 /// device out of reach is forgotten: one reachable would be back at once.
 pub fn forget(id: &str) -> Result<(), String> {
     let device = list().into_iter().find(|d| d.id == id);
@@ -533,7 +637,8 @@ fn list_at(now: i64) -> Vec<Device> {
                     id: d.id.clone(),
                     name: d.name.clone(),
                     platform: d.platform.clone(),
-                    account: true,
+                    account: d.owner.is_none(),
+                    owner: d.owner.clone(),
                     nearby: near.is_some(),
                     awake,
                     asleep: !awake && !fresh(&d.id),
@@ -567,6 +672,7 @@ fn list_at(now: i64) -> Vec<Device> {
                 name: n.hello.name.clone(),
                 platform: n.hello.platform.clone(),
                 account: false,
+                owner: None,
                 nearby: true,
                 awake: true,
                 asleep: false,
@@ -591,10 +697,14 @@ fn list_at(now: i64) -> Vec<Device> {
                 name: g.name.clone(),
                 platform: g.platform.clone(),
                 account: g.account,
+                owner: None,
                 nearby: false,
                 awake: false,
                 asleep: !fresh(&g.id),
-                wakeable: false,
+                // A stranger met on this network may be woken by the server,
+                // which does so for a device behind the same router as this
+                // one; one of the account's that left the list has no token.
+                wakeable: !g.account && s.linked,
                 last_seen: last,
                 waking: None,
                 same_library: g.same_library,
@@ -616,6 +726,7 @@ fn list_at(now: i64) -> Vec<Device> {
                 name: t.name.clone(),
                 platform: t.platform.clone(),
                 account: false,
+                owner: None,
                 nearby: false,
                 awake: false,
                 asleep: true,
@@ -986,21 +1097,24 @@ pub fn send_live(id: &str, cmd: LinkCommand) -> bool {
 /// Activity's button has while iOS keeps the app's link down.
 pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
     choosable(id)?;
-    let (nearby, account) = with(|s| {
+    let (nearby, own, shared) = with(|s| {
+        let listed = s.account.iter().find(|(d, _)| d.id == id);
         (
             s.nearby.iter().any(|n| n.hello.id == id),
-            s.account.iter().any(|(d, _)| d.id == id),
+            listed.is_some_and(|(d, _)| d.owner.is_none()),
+            listed.is_some_and(|(d, _)| d.owner.is_some()),
         )
     });
-    // The network path proves nothing about who is asking, so a device on it
-    // refuses what only the account may send: that goes through the server,
-    // and only to the account's own devices.
-    if !cmd.allowed_nearby() && !account {
+    // Another account's device, or one on the network, takes the playback
+    // set at most, and decides for itself; what only an account may send its
+    // own devices goes to them alone.
+    if !own && !cmd.allowed_playback() {
         return Err("Only your own devices can be asked that.".into());
     }
-    if nearby && cmd.allowed_nearby() && crate::remote::nearby::send(id, cmd.clone()) {
+    if nearby && crate::remote::nearby::send(id, cmd.clone()) {
         return Ok(());
     }
+    let account = own || shared;
     if link::report(LinkReport::Command {
         to: id.to_string(),
         command: cmd.clone(),
@@ -1016,19 +1130,6 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
     let client = crate::helpers::subsonic_client(&cfg).ok_or("not signed in to a server")?;
     let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
     client.koan_command(id, &json).map_err(|e| e.to_string())
-}
-
-/// Send `cmd` to `id` over the local network only, never up this device's
-/// link. For what a device on the network asked of this one: over the
-/// network it reaches only what the asker could have reached itself; up the
-/// link it would act as this device's account, on that account's devices.
-pub fn send_nearby(id: &str, cmd: LinkCommand) -> Result<(), String> {
-    let nearby = with(|s| s.nearby.iter().any(|n| n.hello.id == id));
-    if nearby && cmd.allowed_nearby() && crate::remote::nearby::send(id, cmd) {
-        Ok(())
-    } else {
-        Err(format!("{id} is not on this network"))
-    }
 }
 
 /// This device's id, as other devices know it.
@@ -1063,6 +1164,7 @@ mod tests {
             }),
             last_seen: None,
             wakeable: None,
+            owner: None,
         }
     }
 
@@ -1367,8 +1469,11 @@ mod tests {
         with(|s| *s = Store::default());
     }
 
+    /// A device met only on the network, asleep, is woken through the
+    /// server, which decides whether it may by where the two devices are; with
+    /// no server to ask, it is not woken at all.
     #[test]
-    fn a_stranger_asleep_on_the_network_is_never_woken() {
+    fn a_stranger_asleep_on_the_network_is_woken_through_the_server_if_linked() {
         let _held = STORE_LOCK.lock();
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
@@ -1378,11 +1483,93 @@ mod tests {
             *s.live.get_mut("stranger").unwrap() -= 10 * 60;
             *s.lan_heard.get_mut("stranger").unwrap() -= 10 * 60;
         });
+        let listed = list().into_iter().find(|d| d.id == "stranger").unwrap();
+        assert!(listed.asleep && !listed.wakeable, "no server to ask");
         wake("stranger");
         assert!(
             with(|s| s.attempt.is_none() && s.waking.is_empty()),
-            "no push, and too long gone for the network"
+            "too long gone for the network, and no server"
         );
+
+        set_linked(true);
+        let listed = list().into_iter().find(|d| d.id == "stranger").unwrap();
+        assert!(listed.asleep && listed.wakeable);
+        assert!(choosable("stranger").is_ok());
+        let plan = wake_plan(false, listed.wakeable);
+        assert_eq!(plan[0].0, Waking::Push, "asks the server");
+        with(|s| *s = Store::default());
+    }
+
+    /// What a stranger or a sharing account asks this device to pass on goes
+    /// over the network or nowhere: never up this device's link, as its
+    /// account, to devices the asker has no claim on.
+    #[test]
+    fn a_hand_off_asked_by_a_stranger_never_goes_up_the_link() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        set_linked(true);
+        set_account(vec![device("mac", false)]);
+        let play = LinkCommand::Play {
+            track_ids: vec!["t".into()],
+            start_at: 0,
+            position_ms: 0,
+            paused: false,
+            handoff: true,
+        };
+        assert!(
+            send_nearby("mac", play).is_err(),
+            "the account's Mac is reached only through the link"
+        );
+        with(|s| *s = Store::default());
+    }
+
+    /// A hand-off asked by anyone but the account acts as the asker: never up
+    /// this device's link to the account's own devices.
+    #[test]
+    fn a_hand_off_for_someone_else_never_reaches_the_accounts_own_devices() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        set_linked(true);
+        set_account(vec![device("mac", false)]);
+        let play = || LinkCommand::Play {
+            track_ids: vec!["t".into()],
+            start_at: 0,
+            position_ms: 0,
+            paused: false,
+            handoff: true,
+        };
+        for source in [
+            CommandSource::Shared,
+            CommandSource::Nearby,
+            CommandSource::Stranger,
+        ] {
+            let refused = send_for(source, "mac", play()).unwrap_err();
+            assert!(
+                refused.contains("this account's") || refused.contains("not on this network"),
+                "{source:?}: {refused}"
+            );
+        }
+        with(|s| *s = Store::default());
+    }
+
+    /// Another account's device that stops being shared is gone at once.
+    #[test]
+    fn a_device_no_longer_shared_is_dropped_at_once() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        set_linked(true);
+        let mut theirs = device("their-phone", false);
+        theirs.owner = Some("k".into());
+        set_account(vec![theirs]);
+        let listed = list().into_iter().find(|d| d.id == "their-phone").unwrap();
+        assert_eq!(listed.owner.as_deref(), Some("k"));
+        assert!(!listed.account, "not this account's own");
+        assert!(send("their-phone", LinkCommand::Sync { full: false }).is_err());
+        set_account(Vec::new());
+        assert!(!list().iter().any(|d| d.id == "their-phone"));
         with(|s| *s = Store::default());
     }
 
