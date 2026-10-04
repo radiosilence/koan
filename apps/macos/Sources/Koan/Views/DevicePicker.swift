@@ -4,13 +4,17 @@ import SwiftUI
 import UIKit
 #endif
 
-/// Where music plays: this device, another of the account's, or any koan app
-/// on the same network.
+/// Where music plays: this device, another of the account's, any koan app on
+/// the same network, or a UPnP amplifier or streamer.
 ///
-/// A row is a device to control. Picking one pauses this device and turns the
-/// transport, the queue and what is playing into that device's, until another
-/// is picked. Nothing moves until "Move here", which sends what the device
-/// being controlled is playing to that row's device and controls it there.
+/// A koan row is a device to control. Picking one pauses this device and turns
+/// the transport, the queue and what is playing into that device's, until
+/// another is picked. Nothing moves until "Move here", which sends what the
+/// device being controlled is playing to that row's device and controls it
+/// there.
+///
+/// A renderer row is different underneath: it becomes this device's output, as
+/// a DAC would, so the transport and queue stay this device's own.
 struct DevicePicker: View {
     @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
@@ -33,28 +37,49 @@ struct DevicePicker: View {
             ForEach(mirror.devices, id: \.id) { device in
                 DeviceRow(device: device)
             }
+            ForEach(mirror.renderers, id: \.udn) { renderer in
+                RendererRow(renderer: renderer)
+            }
+            if let output = player.renderer {
+                RendererVolume(output: output)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+            }
 
             footer
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
         }
         .frame(minWidth: 320)
+        .onAppear { player.searchRenderers() }
     }
 
     private var thisDevice: some View {
         DeviceChoiceRow(
             icon: Self.icon(for: Self.platform),
             name: "This \(Self.deviceNoun)",
-            detail: player.isControllingAnother ? "Paused while you control another device" : "Music plays here",
-            selected: !player.isControllingAnother,
+            detail: thisDetail,
+            selected: !player.isControllingAnother && player.renderer == nil,
             canMove: player.isControllingAnother && player.canMoveMusic(to: nil),
-            onSelect: { player.control(nil) },
+            onSelect: {
+                if player.renderer != nil {
+                    player.playOn(renderer: nil)
+                } else {
+                    player.control(nil)
+                }
+            },
             onMove: { player.moveMusic(to: nil) }
         )
     }
 
+    private var thisDetail: String {
+        if player.isControllingAnother { return "Paused while you control another device" }
+        if let renderer = player.renderer { return "Playing through \(renderer.name)" }
+        return "Music plays here"
+    }
+
     @ViewBuilder private var footer: some View {
-        if mirror.devices.isEmpty {
+        if mirror.devices.isEmpty && mirror.renderers.isEmpty {
             Text(emptyExplanation)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -131,6 +156,75 @@ private struct DeviceRow: View {
         case .playing: return "Playing \(playing)\(library)"
         case .paused: return "Paused · \(playing)\(library)"
         case .stopped: return "Idle\(library)"
+        }
+    }
+}
+
+/// A UPnP renderer: tap to play this device's music through it.
+private struct RendererRow: View {
+    @Environment(PlayerModel.self) private var player
+    let renderer: RendererInfo
+
+    var body: some View {
+        let output = player.renderer?.udn == renderer.udn ? player.renderer : nil
+        DeviceChoiceRow(
+            icon: "hifispeaker",
+            name: renderer.name,
+            detail: detail(output),
+            reach: "wifi",
+            reachHelp: "UPnP, on this network",
+            selected: output != nil,
+            canMove: false,
+            onSelect: { player.playOn(renderer: renderer.udn) },
+            onMove: {}
+        )
+    }
+
+    private func detail(_ output: RendererOutput?) -> String {
+        if let problem = output?.problem { return problem }
+        if output != nil { return "Playing from this \(DevicePicker.deviceNoun)" }
+        let model = [renderer.manufacturer, renderer.model]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return model.isEmpty ? "Amplifier or streamer" : model
+    }
+}
+
+/// The renderer's own volume. koan sends it the original file, so ReplayGain
+/// and fades stay out of the signal; saying so beats ignoring them silently.
+private struct RendererVolume: View {
+    @Environment(PlayerModel.self) private var player
+    let output: RendererOutput
+    @State private var dragging: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let volume = output.volume {
+                HStack(spacing: 8) {
+                    Image(systemName: "speaker.fill")
+                        .foregroundStyle(.secondary)
+                    Slider(
+                        value: Binding(
+                            get: { dragging ?? Double(volume) },
+                            set: { dragging = $0 }
+                        ),
+                        in: 0...100,
+                        onEditingChanged: { editing in
+                            if !editing, let value = dragging {
+                                player.setRendererVolume(UInt8(value.rounded()))
+                                dragging = nil
+                            }
+                        }
+                    )
+                    .accessibilityLabel("Volume on \(output.name)")
+                    Image(systemName: "speaker.wave.3.fill")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text("\(output.name) plays the original files. ReplayGain and fades don't apply.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -264,7 +358,7 @@ struct DevicePickerButton: View {
                         .lineLimit(1)
                 }
             }
-            .foregroundStyle(player.isControllingAnother ? Color.accentColor : .primary)
+            .foregroundStyle(controlledName != nil ? Color.accentColor : .primary)
         }
         .buttonStyle(.plain)
         .help(controlledName.map { "Playing on \($0)" } ?? "Play on another device")
@@ -275,6 +369,7 @@ struct DevicePickerButton: View {
     }
 
     private var controlledName: String? {
+        if let renderer = player.renderer { return renderer.name }
         guard player.isControllingAnother else { return nil }
         return player.controlled?.name ?? "another device"
     }

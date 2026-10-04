@@ -282,6 +282,28 @@ pub struct SharedPlayerState {
     /// to reach it. Everything past that — other clients, the volume stage — is
     /// the system's, and not ours to claim.
     output_sample_rate: AtomicU64,
+
+    /// The playhead of a renderer this koan is playing to, which keeps its
+    /// own clock: where it was last heard to be, and since when it has been
+    /// running from there. Read in place of the timeline while set.
+    renderer_clock: parking_lot::Mutex<Option<RendererClock>>,
+
+    /// The UPnP renderer playing in place of the local output, if one is.
+    renderer: parking_lot::RwLock<Option<crate::upnp::Output>>,
+}
+
+/// A renderer's playhead: `position_ms`, plus the time since `running` if it
+/// is playing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RendererClock {
+    pub position_ms: u64,
+    pub running: Option<std::time::Instant>,
+}
+
+impl RendererClock {
+    pub fn now_ms(&self) -> u64 {
+        self.position_ms + self.running.map_or(0, |at| at.elapsed().as_millis() as u64)
+    }
 }
 
 impl SharedPlayerState {
@@ -297,6 +319,8 @@ impl SharedPlayerState {
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             output_sample_rate: AtomicU64::new(0),
+            renderer_clock: parking_lot::Mutex::new(None),
+            renderer: parking_lot::RwLock::new(None),
         })
     }
 
@@ -314,6 +338,12 @@ impl SharedPlayerState {
     /// Where the playhead is, read off the samples the output has played, so
     /// it is right whenever it is asked and nothing has to keep it up to date.
     pub fn position_ms(&self) -> u64 {
+        let clock = *self.renderer_clock.lock();
+        if let Some(clock) = clock {
+            let at = clock.now_ms();
+            let duration = self.duration_ms();
+            return if duration > 0 { at.min(duration) } else { at };
+        }
         if self.playback_state() != PlaybackState::Stopped
             && let Some((_, at)) = self.timeline.get().and_then(|t| t.playhead())
         {
@@ -334,6 +364,42 @@ impl SharedPlayerState {
         // position would be the tick this whole arrangement removes. A seek, a
         // pause and a track change all move something else here as well, and
         // those are exactly the ones a client has to be told about.
+    }
+
+    /// Set by the player while a renderer is the output. A change to it is a
+    /// change clients are told about: the clock only moves when the renderer
+    /// is heard from, or when a command moved it.
+    pub(crate) fn set_renderer_clock(&self, clock: Option<RendererClock>) {
+        let mut guard = self.renderer_clock.lock();
+        if *guard != clock {
+            *guard = clock;
+            drop(guard);
+            self.changed();
+        }
+    }
+
+    /// The renderer this koan is playing to, when it is not its own output.
+    pub fn renderer(&self) -> Option<crate::upnp::Output> {
+        self.renderer.read().clone()
+    }
+
+    pub(crate) fn set_renderer(&self, output: Option<crate::upnp::Output>) {
+        *self.renderer.write() = output;
+        self.changed();
+    }
+
+    pub(crate) fn update_renderer(&self, f: impl FnOnce(&mut crate::upnp::Output)) {
+        let changed = match self.renderer.write().as_mut() {
+            Some(out) => {
+                let before = out.clone();
+                f(out);
+                *out != before
+            }
+            None => false,
+        };
+        if changed {
+            self.changed();
+        }
     }
 
     pub fn track_info(&self) -> Option<TrackInfo> {

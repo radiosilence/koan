@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Play to UPnP/DLNA amplifiers and streamers.** Renderers on the network are listed under Play on in the Mac app and in the TUI's output device list. Picking one makes it this device's output, as a DAC would be: the queue, transport and history stay here, and each track goes to the amplifier as the original file, so playback is bit-perfect up to its DAC. Gapless where the renderer takes the next track in advance; its own volume from the picker; formats it does not list are skipped with the reason shown in the queue. Tracks are served from a port opened only while a renderer plays, each under a random URL, so nothing else is reachable through it. See [Playing on another device](docs/guide/devices.md#amplifiers-and-streamers-upnp).
+
 ### Fixed
 
 - **Move here resumes where the source stopped.** The source read its playhead before sending and paused afterwards, so whatever played during the send and the fade was heard again on the destination; the destination then started the track from the top and seeked, letting its opening through. The source now pauses first and reports where the fade went silent, and the destination opens the track at that point. A track the destination has to download waits for the whole file rather than starting early, and a paused source arrives paused.

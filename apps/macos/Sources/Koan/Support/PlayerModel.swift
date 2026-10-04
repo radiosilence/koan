@@ -394,6 +394,24 @@ final class PlayerModel {
         attempt { try await self.engine.controlDevice(id: id) }
     }
 
+    /// The renderer playing this device's music, if one is.
+    var renderer: RendererOutput? { mirror.rendererOutput }
+
+    /// Play to the renderer `udn` in place of this device's output, or back
+    /// here with `nil`. The music carries on from where it is.
+    func playOn(renderer udn: String?) {
+        attempt { try await self.engine.playToRenderer(udn: udn) }
+    }
+
+    func setRendererVolume(_ volume: UInt8) {
+        attempt { try await self.engine.setRendererVolume(volume: volume) }
+    }
+
+    /// Look for renderers on the network; they arrive over a second or two.
+    func searchRenderers() {
+        engine.searchRenderers()
+    }
+
     /// Send what the controlled device is playing to `id` (this device with
     /// `nil`), and control it there.
     func moveMusic(to id: String?) {

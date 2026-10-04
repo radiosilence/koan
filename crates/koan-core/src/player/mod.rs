@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod history;
+mod renderer;
 pub mod state;
 pub mod undo;
 
@@ -45,6 +46,12 @@ pub enum PlayerError {
     Backend(#[from] BackendError),
     #[error("decode error: {0}")]
     Decode(#[from] buffer::DecodeError),
+    #[error("renderer: {0}")]
+    Renderer(String),
+    /// The renderer cannot play this track. It is marked as such in the
+    /// queue and skipped.
+    #[error("{0}")]
+    Unplayable(String),
 }
 
 /// Everything needed to read a track that is still downloading: where it is,
@@ -128,6 +135,8 @@ pub struct Player {
     pending_cue: Option<(QueueItemId, u64, Start)>,
     /// Waiting for a pause's fade to reach silence, to hear where it did.
     silence_waiters: Vec<crossbeam_channel::Sender<u64>>,
+    /// The UPnP renderer playing in place of the local output, when one is.
+    renderer: Option<renderer::RendererOutput>,
     /// Playback sessions started — lets tests assert how many engine restarts
     /// an operation costs.
     #[cfg(test)]
@@ -202,6 +211,7 @@ impl Player {
             lead_in_ends: None,
             pending_cue: None,
             silence_waiters: Vec::new(),
+            renderer: None,
             timeline,
             viz_buffer,
             viz_snapshot,
@@ -368,6 +378,15 @@ impl Player {
     pub fn set_output_device(&mut self, name: String) {
         log::info!("switching output device to: {}", name);
         self.output_device_name = Some(name.clone());
+        if self.renderer.is_some() {
+            if let Err(e) = crate::config::Config::persist(|cfg| {
+                cfg.playback.output_device = Some(name);
+            }) {
+                log::error!("failed to save output device config: {}", e);
+            }
+            self.use_renderer(None);
+            return;
+        }
 
         if let Err(e) = crate::config::Config::persist(|cfg| {
             cfg.playback.output_device = Some(name);
@@ -382,6 +401,15 @@ impl Player {
     pub fn clear_output_device(&mut self) {
         log::info!("reverting to system default output device");
         self.output_device_name = None;
+        if self.renderer.is_some() {
+            if let Err(e) = crate::config::Config::persist(|cfg| {
+                cfg.playback.output_device = None;
+            }) {
+                log::error!("failed to save output device config: {}", e);
+            }
+            self.use_renderer(None);
+            return;
+        }
 
         if let Err(e) = crate::config::Config::persist(|cfg| {
             cfg.playback.output_device = None;
@@ -425,11 +453,14 @@ impl Player {
                     log::error!("play failed: {}", e);
                 }
             }
+            // A renderer is handed whole files only: one served while it is
+            // still arriving has no length, and many renderers will not seek
+            // in it. It waits for TrackReady like a track not started at all.
             Some(PlaybackSource::Streaming {
                 path,
                 bytes_written,
                 total,
-            }) => {
+            }) if self.renderer.is_none() => {
                 // Stop what is playing and park here. The probe answers on its
                 // own thread; if it cannot, TrackReady starts the track once
                 // the whole file has landed.
@@ -438,7 +469,7 @@ impl Player {
                 self.shared_state.set_playback_state(PlaybackState::Stopped);
                 self.probe_stream_for_playback(id, &path, bytes_written, total);
             }
-            None => {
+            _ => {
                 // Item not ready — stop current playback, wait for TrackReady.
                 self.report(PlaybackReportState::Stopped);
                 self.stop_engine();
@@ -496,9 +527,19 @@ impl Player {
         {
             self.playback_starts += 1;
         }
-        let result = self.open_playback(id, path, seek_ms, start);
-        if result.is_err() {
-            self.stop_playback_and_clear_state();
+        let result = if self.renderer.is_some() {
+            self.open_on_renderer(id, path, seek_ms, start)
+        } else {
+            self.open_playback(id, path, seek_ms, start)
+        };
+        match result {
+            // Marked failed in the queue, so the walk on cannot land on it again.
+            Err(PlayerError::Unplayable(_)) if self.shared_state.is_cursor(id) => {
+                self.next_track();
+                return Ok(());
+            }
+            Err(_) => self.stop_playback_and_clear_state(),
+            Ok(()) => {}
         }
         self.wake_analyzer();
         result
@@ -744,7 +785,7 @@ impl Player {
         info: buffer::StreamInfo,
         mode: streaming::ProbeMode,
     ) {
-        if !self.shared_state.is_cursor(id) {
+        if !self.shared_state.is_cursor(id) || self.renderer.is_some() {
             return; // Moved on.
         }
         if self.shared_state.playback_state() != PlaybackState::Stopped {
@@ -1000,12 +1041,16 @@ impl Player {
             Start::Playing
         };
 
+        if self.seek_renderer(info.id, position_ms) {
+            return Ok(());
+        }
+
         match self.shared_state.item_playback_source(info.id) {
             Some(PlaybackSource::Streaming {
                 path,
                 bytes_written,
                 total,
-            }) => {
+            }) if self.renderer.is_none() => {
                 // No probe: what is playing already said what this is, and
                 // reading an Ogg's last page to learn it again would mean
                 // waiting for the rest of the download.
@@ -1028,7 +1073,7 @@ impl Player {
             Some(PlaybackSource::Ready(path)) => {
                 self.start_playback(info.id, &path, position_ms, start)?;
             }
-            None => return Ok(()),
+            _ => return Ok(()),
         }
 
         self.report(if was_paused {
@@ -1070,6 +1115,11 @@ impl Player {
     /// A fade leaves the unit running until it reaches silence;
     /// `update_playback_state` stops it from there.
     pub fn pause(&mut self) {
+        if self.renderer.is_some() {
+            self.pause_renderer();
+            self.report(PlaybackReportState::Paused);
+            return;
+        }
         let Some(ref playback) = self.active_playback else {
             return;
         };
@@ -1088,6 +1138,10 @@ impl Player {
     /// Pause without a fade — for a restart that should come back paused,
     /// where there is nothing audible to fade.
     fn pause_now(&mut self) {
+        if self.renderer.is_some() {
+            self.pause_renderer();
+            return;
+        }
         if let Some(ref playback) = self.active_playback {
             if let Err(e) = playback.engine.stop() {
                 log::error!("pause failed: {}", e);
@@ -1104,6 +1158,10 @@ impl Player {
     /// the cursor instead of doing nothing.
     pub fn resume(&mut self) {
         self.answer_silence();
+        if self.renderer.is_some() {
+            self.resume_renderer();
+            return;
+        }
         if self.active_playback.is_none() {
             if let Some(id) = self.shared_state.cursor() {
                 self.play(id);
@@ -1150,6 +1208,7 @@ impl Player {
     /// drops: tearing CoreAudio down under a live producer is the end-of-queue
     /// crash (#89).
     fn stop_engine(&mut self) {
+        self.halt_renderer();
         let Some(playback) = self.active_playback.take() else {
             return;
         };
@@ -1254,7 +1313,10 @@ impl Player {
     /// Called when enough data has been buffered for streaming playback.
     /// If the cursor is waiting on this track and nothing is playing, start streaming.
     pub fn track_stream_ready(&mut self, id: QueueItemId) {
-        if !self.shared_state.is_cursor(id) || self.pending_cue.is_some_and(|(c, ..)| c == id) {
+        if self.renderer.is_some()
+            || !self.shared_state.is_cursor(id)
+            || self.pending_cue.is_some_and(|(c, ..)| c == id)
+        {
             return;
         }
 
@@ -1376,9 +1438,16 @@ impl Player {
     /// counted. Before anything that resets the timeline, which is where the
     /// playhead is read from, and before a track is closed out.
     fn bank_listening(&mut self) {
-        if let Some(f) = self.in_flight.as_mut()
-            && let Some(at) = self.timeline.position_of(f.item)
-        {
+        let Some(item) = self.in_flight.as_ref().map(|f| f.item) else {
+            return;
+        };
+        let at = if self.renderer.is_some() {
+            self.renderer_loaded()
+                .then(|| self.shared_state.position_ms())
+        } else {
+            self.timeline.position_of(item)
+        };
+        if let (Some(f), Some(at)) = (self.in_flight.as_mut(), at) {
             f.advance(at);
         }
     }
@@ -1705,6 +1774,8 @@ impl Player {
                 self.restart_on_current_track();
             }
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
+            PlayerCommand::UseRenderer(connection) => self.use_renderer(connection),
+            PlayerCommand::SetRendererVolume(volume) => self.set_renderer_volume(volume),
         }
     }
 
@@ -1822,22 +1893,31 @@ impl Player {
     ///
     /// Asleep until there is something to do: a command, or one of the two
     /// things that happen without one — see `next_wake`. A paused or stopped
-    /// player does not wake at all.
+    /// player does not wake at all. With a renderer as the output, what it is
+    /// heard to do wakes the loop too.
     pub fn run(&mut self) {
-        use crossbeam_channel::RecvTimeoutError;
-
         let rx = self.commands.rx.clone();
         loop {
-            let received = match self.next_wake() {
-                Some(at) => rx.recv_deadline(at),
-                None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
-            };
-            match received {
-                Ok(cmd) => self.process_command(cmd),
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => break,
+            let deadline = self
+                .next_wake()
+                .map_or_else(crossbeam_channel::never, crossbeam_channel::at);
+            let renderer = self
+                .renderer_events()
+                .unwrap_or_else(crossbeam_channel::never);
+            crossbeam_channel::select! {
+                recv(rx) -> cmd => match cmd {
+                    Ok(cmd) => self.process_command(cmd),
+                    Err(_) => break,
+                },
+                recv(renderer) -> event => {
+                    if let Ok(event) = event {
+                        self.on_renderer_event(event);
+                    }
+                }
+                recv(deadline) -> _ => {}
             }
             self.update_playback_state();
+            self.queue_next_on_renderer();
         }
         self.stop();
     }
@@ -3173,11 +3253,11 @@ mod tests {
 
     /// Backend pinned to one sample rate that refuses every switch, recording
     /// the format the engine is asked for.
-    struct StuckBackend {
-        rate: f64,
-        asked: Arc<std::sync::Mutex<Option<(f64, u32)>>>,
+    pub(super) struct StuckBackend {
+        pub(super) rate: f64,
+        pub(super) asked: Arc<std::sync::Mutex<Option<(f64, u32)>>>,
         /// How many times an engine it made was started.
-        starts: Arc<std::sync::atomic::AtomicUsize>,
+        pub(super) starts: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     struct NullEngine {

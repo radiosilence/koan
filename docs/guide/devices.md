@@ -28,6 +28,41 @@ The device being controlled and the devices last seen are kept between runs,
 so reopening the app shows them at once, still controlling the same device;
 each is checked as the app comes to the front.
 
+## Amplifiers and streamers (UPnP)
+
+Network amplifiers and streamers that act as UPnP/DLNA renderers (WiiM,
+Yamaha MusicCast, Denon and Marantz HEOS, Cambridge, Arcam and most "network
+player" amps) are listed under **Play on** on the Mac, and in the output
+device list (`o`) in the TUI, where they are marked `· UPnP`. Kodi with
+"Allow remote control via UPnP" turned on, gmrender-resurrect and upmpdcli
+are renderers too.
+
+Picking one makes it this device's output, in the same way a USB DAC is. The
+queue, the transport and history stay on this device, and only the audio goes
+to the amplifier. Each track is sent as the original file, so playback is
+bit-perfect up to the amplifier's own DAC. Room correction built into the
+amplifier, such as Dirac Live, still applies. ReplayGain and fades do not,
+since kōan never touches the samples. The volume control in the picker drives
+the amplifier's own volume.
+
+- **Gapless** where the renderer accepts the next track in advance
+  (`SetNextAVTransportURI`). Otherwise there is a short gap between tracks.
+- **Formats the renderer does not list** (often Opus or APE) are skipped and
+  marked in the queue with the reason. They play again when you switch back to
+  this device.
+- **Tracks from a server** play once their download has finished; the next one
+  downloads while the current one plays.
+- **Controls on the amplifier work.** Pausing or resuming there shows in kōan.
+  Stopping there mid-track pauses kōan at that point, and play loads the track
+  again from where it stopped.
+
+kōan finds renderers over SSDP and serves each track from a port it opens
+only while a renderer is the output. Each track has a random URL of its own,
+so nothing else in the library can be fetched from it. On a Mac the first
+connection from the amplifier may bring up the firewall prompt. The iOS app
+cannot search for renderers yet, because Apple requires a multicast entitlement
+for it.
+
 ## Controlling and moving
 
 Picking a device controls it. This device pauses, and the transport, the queue

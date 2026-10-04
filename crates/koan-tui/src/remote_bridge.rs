@@ -436,6 +436,14 @@ fn command_loop(
     local_tx: Sender<PlayerCommand>,
 ) {
     while let Ok(cmd) = rx.recv() {
+        // The output is the client's, a renderer as much as a device.
+        if matches!(
+            cmd,
+            PlayerCommand::UseRenderer(_) | PlayerCommand::SetRendererVolume(_)
+        ) {
+            local_tx.send(cmd).ok();
+            continue;
+        }
         // Forward playback commands to both server (GQL) and local player.
         match &cmd {
             PlayerCommand::Pause => {
@@ -531,6 +539,8 @@ fn command_loop(
             | PlayerCommand::TrackQueued => {
                 log::debug!("ignoring {:?} in remote mode", cmd);
             }
+            // Forwarded above.
+            PlayerCommand::UseRenderer(_) | PlayerCommand::SetRendererVolume(_) => {}
         }
     }
 }

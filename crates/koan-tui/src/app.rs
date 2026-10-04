@@ -48,6 +48,14 @@ pub struct DeviceSelectorState {
     pub cursor: usize,
     /// Name of the currently active device (for marking).
     pub current_device: Option<String>,
+    /// The UPnP renderers listed after the local devices, by UDN, in the
+    /// order their labels end `devices`.
+    pub renderers: Vec<String>,
+}
+
+/// How a UPnP renderer is labelled among the output devices.
+fn renderer_label(name: &str) -> String {
+    format!("{name} · UPnP")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -934,8 +942,17 @@ impl App {
                 device_names.push("System Default".to_string());
                 device_names.extend(devices.iter().map(|d| d.name.clone()));
 
+                // Renderers answer over the next second or two; the list
+                // picks them up as they do (`refresh_device_selector`).
+                koan_core::upnp::discovery::search();
+                let renderers = koan_core::upnp::discovery::renderers();
+                device_names.extend(renderers.iter().map(|r| renderer_label(&r.name)));
+
                 let cfg = koan_core::config::Config::load().unwrap_or_default();
-                let current = cfg.playback.output_device;
+                let current = match self.state.renderer() {
+                    Some(output) => Some(renderer_label(&output.name)),
+                    None => cfg.playback.output_device,
+                };
 
                 // Position cursor: None (system default) → index 0, else find the device.
                 let cursor = current
@@ -947,6 +964,7 @@ impl App {
                     devices: device_names,
                     cursor,
                     current_device: current,
+                    renderers: renderers.into_iter().map(|r| r.udn).collect(),
                 });
                 self.push_mode(Mode::DeviceSelector);
             }
@@ -954,6 +972,30 @@ impl App {
                 log::error!("failed to list output devices: {}", e);
             }
         }
+    }
+
+    /// Follow renderers coming and going while the selector is open.
+    pub fn refresh_device_selector(&mut self) {
+        let Some(selector) = self.device_selector.as_mut() else {
+            return;
+        };
+        let renderers = koan_core::upnp::discovery::renderers();
+        if renderers
+            .iter()
+            .map(|r| &r.udn)
+            .eq(selector.renderers.iter())
+        {
+            return;
+        }
+        let local = selector.devices.len() - selector.renderers.len();
+        selector.devices.truncate(local);
+        selector
+            .devices
+            .extend(renderers.iter().map(|r| renderer_label(&r.name)));
+        selector.renderers = renderers.into_iter().map(|r| r.udn).collect();
+        selector.cursor = selector
+            .cursor
+            .min(selector.devices.len().saturating_sub(1));
     }
 
     fn handle_device_selector_key(&mut self, key: KeyEvent) {
@@ -982,7 +1024,19 @@ impl App {
             }
             KeyCode::Enter => {
                 let idx = selector.cursor;
-                if idx == 0 {
+                let local = selector.devices.len() - selector.renderers.len();
+                if idx >= local {
+                    let udn = selector.renderers[idx - local].clone();
+                    let label = selector.devices[idx].clone();
+                    selector.current_device = Some(label);
+                    let tx = self.tx.clone();
+                    // Opening a session is a few round trips to the renderer.
+                    std::thread::spawn(move || {
+                        if let Err(e) = koan_core::upnp::connect(&udn, &tx) {
+                            log::error!("upnp: {e}");
+                        }
+                    });
+                } else if idx == 0 {
                     // "System Default" — clear the configured device.
                     self.tx.send(PlayerCommand::ClearOutputDevice).ok();
                     if let Some(ref mut sel) = self.device_selector {

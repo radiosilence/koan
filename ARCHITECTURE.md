@@ -162,6 +162,16 @@ The decode thread doesn't stop between tracks. When Symphonia hits EOF:
 
 The decode thread has its own cursor (`decode_cursor`) separate from the UI playlist cursor. Decode only *peeks* ahead — it never moves the real cursor. The player thread moves the cursor when the timeline confirms the transition.
 
+## UPnP renderers
+
+A UPnP MediaRenderer is a second kind of output for the `Player`, chosen in place of the local engine (`player/renderer.rs`). Everything above the output is unchanged: queue, cursor, undo, history and `SharedPlayerState` work as they do with local playback, so every front end follows a renderer without knowing it is one. The alternative, listing renderers as devices under `remote::devices` with a synthesised `LinkState`, would have meant rewriting queue operations, undo and radio against a device that can hold none of them. A renderer knows only the current URI and, optionally, the next one.
+
+- **Starting a track** issues `SetAVTransportURI` and `Play` in place of starting the decode thread. The URI points at `upnp::serve`, a listener koan opens only while a renderer is the output. It serves each track under a random 128-bit token, supports `Range` because renderers seek by byte range, and receives GENA `NOTIFY` callbacks. Only whole files are served: a download in progress has no `Content-Length`, and many renderers will not seek in a response without one.
+- **Position** is the renderer's clock, held in `SharedPlayerState` as a `RendererClock` (a position and when it started running) and read by `position_ms()` in place of the timeline. AVTransport excludes position from its events, so the clock is re-anchored from `GetPositionInfo`.
+- **Events are reasons to look.** A `NOTIFY` that touches the transport makes `upnp::session`'s watcher ask `GetTransportInfo` and `GetPositionInfo`, and the answer goes to the player as a `Snapshot`. Each snapshot carries the command epoch it was asked under. The epoch moves once a command has been acknowledged, so an answer from before the renderer took the last command is dropped instead of undoing it. Renderers that refuse a subscription, or send no initial event after one, are asked once a second, but only while playing.
+- **Track changes**: `CurrentTrackURI` becoming the token handed over with `SetNextAVTransportURI` is a gapless hand-over. `STOPPED` within a few seconds of the end is the end of the track. `STOPPED` anywhere else means someone stopped the renderer, so the player pauses in place.
+- **Renderer events** arrive on a channel of their own that the command loop selects on alongside commands. The session belongs to the player, and if its callback held the command sender the channel could never disconnect.
+
 ## Player state machine
 
 ```
@@ -228,6 +238,17 @@ A download that gives up sends `TrackFailed` instead, and the parked cursor adva
 | `commands.rs` | `PlayerCommand` enum (includes `UpdatePaths`, `InsertInPlaylist`), `CommandChannel` (bounded crossbeam) |
 | `state.rs` | `SharedPlayerState`, `PlaylistItem`, `Playlist`, `QueueItemId`, `LoadState`, `PlaybackState`, `derive_visible_queue()`, `insert_items_after()`, `update_paths()` |
 | `undo.rs` | Undo/redo stack for playlist operations (100-deep). Batching support for multi-step ops (e.g. drag). |
+| `renderer.rs` | The UPnP renderer as an output: starting tracks there, the next-track hand-over, pause/seek/resume, end-of-track and external-stop detection, volume. See "UPnP renderers" |
+
+### `upnp/`
+
+| File | Purpose |
+|---|---|
+| `discovery.rs` | SSDP: `M-SEARCH` on request, then `ssdp:alive`/`byebye` on port 1900. Entries lapse at their `max-age` when next read; no timer |
+| `description.rs` | Device description and SCPD parsing: AVTransport, RenderingControl, ConnectionManager, gapless support, OpenHome noted for later |
+| `session.rs` | One renderer: SOAP actions, GENA subscription and renewal, the watcher that turns events into snapshots, polling fallback |
+| `serve.rs` | The HTTP listener renderers fetch from: tokenised files with `Range`, cover art, `NOTIFY` |
+| `soap.rs` / `didl.rs` / `xml.rs` | Envelopes and faults, DIDL-Lite and MIME choice from `GetProtocolInfo`, a small element tree over quick-xml |
 
 ### `db/`
 

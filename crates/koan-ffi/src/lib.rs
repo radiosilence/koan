@@ -1804,6 +1804,39 @@ impl KoanEngine {
         .await
     }
 
+    // --- Renderers ---------------------------------------------------------
+
+    /// Look for UPnP renderers on the network. They arrive in the
+    /// `Renderers` slice over the next couple of seconds, and the list follows
+    /// the network from then on.
+    pub fn search_renderers(&self) {
+        koan_core::upnp::discovery::search();
+    }
+
+    /// Play to the renderer `udn` in place of this device's own output, or
+    /// back here with `None`. The music carries on from where it is. A
+    /// renderer is this device's output rather than a device to control, so
+    /// picking one stops controlling another koan.
+    pub async fn play_to_renderer(self: Arc<Self>, udn: Option<String>) -> Result<(), KoanError> {
+        offload::sequenced(move || match udn {
+            Some(udn) => {
+                koan_core::remote::devices::set_target(None);
+                koan_core::upnp::connect(&udn, &self.tx)
+                    .map_err(|message| KoanError::Audio { message })
+            }
+            None => {
+                koan_core::upnp::disconnect(&self.tx);
+                Ok(())
+            }
+        })
+        .await
+    }
+
+    /// Set the volume of the renderer being played to, 0–100.
+    pub async fn set_renderer_volume(self: Arc<Self>, volume: u8) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send_local(PlayerCommand::SetRendererVolume(volume))).await
+    }
+
     /// Where the server should push updates to this app's Live Activity
     /// showing the device `device`; `None` once it has ended.
     pub fn set_live_activity(&self, token: Option<String>, device: Option<String>, sandbox: bool) {
@@ -2560,6 +2593,27 @@ impl KoanEngine {
                             engine.publish_remote(list.iter().find(|d| d.id == *t));
                         }
                     }
+
+                    // A handful of rows, compared whole: published only when a
+                    // renderer comes, goes, or the one playing changes.
+                    out.publish(StateSlice::Renderers {
+                        renderers: koan_core::upnp::discovery::renderers()
+                            .into_iter()
+                            .map(|r| RendererInfo {
+                                udn: r.udn,
+                                name: r.name,
+                                manufacturer: r.manufacturer,
+                                model: r.model,
+                                gapless: r.gapless,
+                            })
+                            .collect(),
+                        output: engine.state.renderer().map(|o| RendererOutput {
+                            udn: o.udn,
+                            name: o.name,
+                            volume: o.volume,
+                            problem: o.problem,
+                        }),
+                    });
 
                     // Compared whole rather than on a signature of a few named
                     // fields: the output sample rate moves when another client

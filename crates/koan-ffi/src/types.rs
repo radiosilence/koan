@@ -1027,6 +1027,29 @@ pub struct DeviceInfo {
     pub problem: Option<String>,
 }
 
+/// A UPnP renderer on the network: an amplifier or streamer that plays a
+/// file it is handed a URL to.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct RendererInfo {
+    pub udn: String,
+    pub name: String,
+    pub manufacturer: String,
+    pub model: String,
+    /// Takes the next track before this one ends, so albums play without gaps.
+    pub gapless: bool,
+}
+
+/// The renderer this koan is playing to in place of its own output.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct RendererOutput {
+    pub udn: String,
+    pub name: String,
+    /// 0–100, when the renderer has a volume control.
+    pub volume: Option<u8>,
+    /// Why the last track was skipped there, until one plays.
+    pub problem: Option<String>,
+}
+
 /// What the server this app signs in to turned out to be, and what it and
 /// this device offer. Settings shows it.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

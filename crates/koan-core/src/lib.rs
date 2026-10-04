@@ -15,6 +15,7 @@ pub mod playlists;
 pub mod quiet;
 pub mod remote;
 pub mod signal;
+pub mod upnp;
 
 #[cfg(test)]
 pub mod test_utils;

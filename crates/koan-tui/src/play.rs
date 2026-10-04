@@ -205,6 +205,7 @@ pub fn run_tui(
             app.quit = true;
         }
 
+        app.refresh_device_selector();
         terminal.draw(|f| crate::ui::render(f, &mut app))?;
 
         // Motion coalesces to the latest position; clicks and wheel ticks
