@@ -162,6 +162,10 @@ pub struct Player {
     /// The renderer used last time is being looked for, and is to be gone
     /// back to if it turns up before anyone plays or picks an output.
     resume_renderer: bool,
+    /// What the session restored at launch asked for while that renderer is
+    /// looked for: it waits paused, so nothing starts here that the renderer
+    /// might still take, and is played wherever it lands.
+    held_run: Option<Run>,
 }
 
 struct DspCache {
@@ -341,6 +345,7 @@ impl Player {
             #[cfg(test)]
             renderer_dsp_override: None,
             resume_renderer: false,
+            held_run: None,
         }
     }
 
@@ -1953,16 +1958,41 @@ impl Player {
         // remembered from last time is no longer what to go back to. A cue is
         // how a session is restored at launch, which is what the renderer is
         // to carry on with, so it is not one of them.
+        // So, too, is one that pauses, stops or replaces the session: what was
+        // held for the renderer is no longer wanted anywhere.
         if cmd.asks_to_play() && !matches!(cmd, PlayerCommand::Cue { .. })
             || matches!(
                 cmd,
                 PlayerCommand::UseRenderer(_)
                     | PlayerCommand::SetOutputDevice(_)
                     | PlayerCommand::ClearOutputDevice
+                    | PlayerCommand::Pause
+                    | PlayerCommand::PauseAndReport(_)
+                    | PlayerCommand::Stop
+                    | PlayerCommand::ClearPlaylist
+                    | PlayerCommand::ReplacePlaylist { .. }
             )
         {
             self.resume_renderer = false;
+            self.held_run = None;
         }
+        // The restored session, while the renderer it played on is looked
+        // for: opened paused, its run held for wherever it ends up.
+        let cmd = match cmd {
+            PlayerCommand::Cue {
+                id,
+                position_ms,
+                play: true,
+            } if self.resume_renderer => {
+                self.held_run = Some(Run::Playing);
+                PlayerCommand::Cue {
+                    id,
+                    position_ms,
+                    play: false,
+                }
+            }
+            cmd => cmd,
+        };
         let edits_queue = matches!(
             cmd,
             PlayerCommand::AddToPlaylist(_)
@@ -2170,12 +2200,27 @@ impl Player {
                         connection.session.renderer().name
                     );
                     self.use_renderer(Some(connection));
+                    if self.held_run.take() == Some(Run::Playing) {
+                        self.resume();
+                    }
                 } else {
                     log::info!(
                         "upnp: not going back to {}: playback or the output moved first",
                         connection.session.renderer().name
                     );
                 }
+            }
+            PlayerCommand::ResumeRendererMissed => {
+                if std::mem::take(&mut self.resume_renderer)
+                    && self.held_run.take() == Some(Run::Playing)
+                {
+                    log::info!("upnp: playing here what was held for the renderer");
+                    self.resume();
+                }
+            }
+            PlayerCommand::ReleaseRenderer(reply) => {
+                self.release_renderer();
+                let _ = reply.send(());
             }
             PlayerCommand::SetRendererVolume(volume) => self.set_renderer_volume(volume),
             PlayerCommand::Renderer { session, event } => self.on_renderer_event(session, event),

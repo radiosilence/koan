@@ -134,6 +134,15 @@ extension Notification.Name {
         UIApplication.willResignActiveNotification
         #endif
     }
+
+    /// The app is about to quit.
+    static var appTerminates: Notification.Name {
+        #if canImport(AppKit)
+        NSApplication.willTerminateNotification
+        #else
+        UIApplication.willTerminateNotification
+        #endif
+    }
 }
 
 #if canImport(AppKit)

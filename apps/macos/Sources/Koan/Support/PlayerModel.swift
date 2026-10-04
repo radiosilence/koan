@@ -45,6 +45,8 @@ final class PlayerModel {
     /// slow thing rather than tracking their own spinner.
     weak var activity: ActivityModel?
 
+    @ObservationIgnored private var terminating: NSObjectProtocol?
+
     init(engine: KoanEngine, mirror: EngineMirror) {
         self.engine = engine
         self.mirror = mirror
@@ -54,6 +56,15 @@ final class PlayerModel {
         refreshDevices()
         followDevices()
         followSession()
+        // A renderer plays from a URL this process serves, which goes with
+        // it: stop it rather than leave it to play out and stall. The session
+        // was saved as playing by the autosave, so the next launch resumes
+        // there.
+        terminating = NotificationCenter.default.addObserver(
+            forName: .appTerminates, object: nil, queue: .main
+        ) { [engine] _ in
+            engine.releaseOutput()
+        }
         // The two things that are not views and so have no body to invalidate:
         // where a seek asked to land, and where what is playing lives.
         mirror.follow { [weak self] in self?.followEngine() }
