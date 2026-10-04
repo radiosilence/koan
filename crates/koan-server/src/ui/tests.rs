@@ -379,6 +379,73 @@ async fn streams_serve_ranges_to_a_signed_in_user() {
 }
 
 #[tokio::test]
+async fn every_class_on_every_page_has_a_rule() {
+    let f = setup(true);
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+    let artist = queries::tracks_by_ids(&db.conn, &[f.track_id]).unwrap()[0]
+        .artist_id
+        .unwrap();
+    let access =
+        auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+    let page = |uri: &str| {
+        get(uri)
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let post = |uri: &str, body: &str| {
+        Request::post(uri)
+            .header(header::HOST, HOST)
+            .header(header::COOKIE, format!("koan_access={access}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("datastar-request", "true")
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    };
+    let mut rendered = Vec::new();
+    for uri in [
+        "/albums".to_owned(),
+        "/albums?lossless=1&codec=MP3".to_owned(),
+        format!("/album/{}", f.album_id),
+        "/artists".to_owned(),
+        format!("/artist/{artist}"),
+        "/playlists".to_owned(),
+        "/search?q=Wet".to_owned(),
+        "/search?q=nothing-here".to_owned(),
+        "/queue".to_owned(),
+        "/keys".to_owned(),
+        "/users".to_owned(),
+        "/connect".to_owned(),
+    ] {
+        let r = send(&f.app, page(&uri)).await;
+        assert_eq!(r.status, StatusCode::OK, "{uri}");
+        rendered.push((uri, r.body));
+    }
+    for (uri, body) in [
+        ("/keys", r#"{"keyname":"phone"}"#),
+        ("/users/1/password/form", "{}"),
+    ] {
+        let r = send(&f.app, post(uri, body)).await;
+        assert_eq!(r.status, StatusCode::OK, "{uri}");
+        rendered.push((uri.to_owned(), r.body));
+    }
+    let r = send(&f.app, get("/login").body(Body::empty()).unwrap()).await;
+    rendered.push(("/login".into(), r.body));
+    for (uri, html) in rendered {
+        let missing = crate::share::unstyled_classes(
+            &html,
+            super::UI_CSS,
+            &["page", "browse", "toolbar", "search", "group"],
+        );
+        assert!(
+            missing.is_empty(),
+            "{uri}: no rule in ui.css for {missing:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
     let f = setup(true);
     let uri = format!("/album/{}", f.album_id);
@@ -386,7 +453,7 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
     assert_eq!(full.status, StatusCode::OK);
     assert!(full.body.starts_with("<!doctype html>"));
     assert!(full.body.contains("rel=icon"), "pages carry the favicon");
-    assert!(full.body.contains("<nav class=side"));
+    assert!(full.body.contains("aria-label=Library>"));
     assert!(full.body.contains("Wet &lt;Moss&gt; &amp; Stone"));
     assert!(full.body.contains("Hymn &lt;to&gt; Moisture"));
     assert!(!full.body.contains("<Moss>") && !full.body.contains("<to>"));
@@ -395,6 +462,20 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
         .to_str()
         .unwrap();
     assert!(csp.contains("script-src 'self' 'unsafe-eval';") && !csp.contains("unsafe-inline"));
+    // The stylesheet's URL changes with its contents, so an upgrade never pairs
+    // new markup with a cached stylesheet.
+    let css = &super::ASSETS.css;
+    assert!(css.starts_with("/ui/assets/ui.css?v=") && full.body.contains(css.as_str()));
+    let served = send(&f.app, get(css).body(Body::empty()).unwrap()).await;
+    assert_eq!(served.status, StatusCode::OK);
+    assert!(
+        served.headers[header::CACHE_CONTROL]
+            .to_str()
+            .unwrap()
+            .contains("immutable")
+    );
+    // Every page and patch names it too, so an open tab can catch up.
+    assert_eq!(full.headers["x-koan-css"], super::ASSETS.css_hash.as_str());
 
     let partial = send(
         &f.app,
@@ -404,7 +485,7 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
             .unwrap(),
     )
     .await;
-    assert!(partial.body.starts_with("<section class=\"page album\""));
+    assert!(partial.body.starts_with("<section class=\"page\" "));
     assert!(
         partial
             .body
@@ -526,7 +607,7 @@ async fn sorting_and_filtering_live_in_the_query_string() {
     );
     assert!(r.body.contains("<option value=\"title\" selected>"));
     assert!(r.body.contains("name=lossless value=1 checked"));
-    assert!(r.body.contains("<span class=badge>1</span>"));
+    assert!(r.body.contains(">1</span></summary>"));
 
     let r = page("/albums?codec=MP3").await;
     assert!(r.body.contains("No albums match."));
