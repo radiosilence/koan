@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Asleep devices stay listed until you forget them.** A device out of reach no longer drops off the Control menu after 30 minutes; it stays, asleep, with when it was last seen. **Forget**, from its context menu on the Mac or a long press on iOS, removes it: from this device, and for one of your account's from the server too, with its push token, and from your other devices. A forgotten device that comes back is listed again. The server still forgets an account device unseen for 30 days on its own. `devices.asleep_grace_mins` is gone.
+
 ## 0.52.5
 
 ### Changed

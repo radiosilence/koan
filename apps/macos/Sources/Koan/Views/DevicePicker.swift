@@ -75,6 +75,15 @@ private struct DeviceRow: View {
             onSelect: { player.control(device.id) },
             onMove: { player.moveMusic(to: device.id) }
         )
+        // A context menu on the Mac, a long press on iOS: where each looks
+        // for what can be done to a row beyond choosing it.
+        .contextMenu {
+            if !device.awake {
+                Button("Forget", systemImage: "trash", role: .destructive) {
+                    player.forget(device.id)
+                }
+            }
+        }
     }
 
     private var detail: String {

@@ -1859,6 +1859,16 @@ impl KoanEngine {
 
     // --- Devices -----------------------------------------------------------
 
+    /// Forget the device `id`, which is out of reach: out of the list until it
+    /// is heard from again. One of this account's is forgotten by the server
+    /// too, with its push token, and drops off the account's other devices.
+    pub async fn forget_device(self: Arc<Self>, id: String) -> Result<(), KoanError> {
+        offload::offload(move || {
+            koan_core::remote::devices::forget(&id).map_err(|message| KoanError::Remote { message })
+        })
+        .await
+    }
+
     /// Control the device `id`, or this one with `None`. Picking a device is
     /// picking where music plays: this one pauses, and the transport, the
     /// queue and what is playing all show that device until another is
@@ -4113,6 +4123,7 @@ impl KoanEngine {
             // Taken off the link before it gets here.
             // Answered by the link session itself, which holds the watch.
             LinkCommand::Devices { .. }
+            | LinkCommand::Forgotten { .. }
             | LinkCommand::WatchLevels { .. }
             | LinkCommand::Levels { .. } => Ok(()),
             LinkCommand::SetOutput { output } => {
