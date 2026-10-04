@@ -202,11 +202,10 @@ Requires iOS 26+.
 
 ## Playing on another device
 
-Any kōan app can control another, and hand its queue to it. The Mac app and the TUI also play to UPnP/DLNA amplifiers and streamers, sending the original files. See [Playing on another device](https://koan.rocks/docs/devices/).
+Any kōan app can control another, and hand its queue to it. The Mac app and the TUI also play to UPnP/DLNA amplifiers and streamers: the original files, or, for an amplifier with its own EQ or convolution profile, one stream koan has processed. See [Playing on another device](https://koan.rocks/docs/devices/).
 
 ## Planned
 
-- **EQ and convolution on UPnP renderers** -- processing what a renderer plays by serving it a stream koan has processed, rather than the original file ([#642](https://github.com/radiosilence/koan/issues/642))
 - **Tag editing** -- inline editing, bulk operations, vimv-style external editor ([plan](/.claude/plans/04-tagging.md))
 - **Similar artists** -- from MusicBrainz/Last.fm ([plan](/.claude/plans/09-artist-metadata.md))
 
