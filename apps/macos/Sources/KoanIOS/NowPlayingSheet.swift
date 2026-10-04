@@ -13,6 +13,7 @@ struct NowPlayingSheet: View {
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
     @Environment(UIState.self) private var ui
+    @Environment(AppState.self) private var app
     @Environment(\.dismiss) private var dismiss
     @State private var showingDevices = false
 
@@ -102,11 +103,16 @@ struct NowPlayingSheet: View {
         }
     }
 
+    /// Shuffle and repeat flank the three that move, at the size of the
+    /// extras below: they set how the queue plays rather than moving it.
     private var transport: some View {
-        HStack(spacing: 48) {
+        HStack(spacing: 0) {
+            ShuffleButton().font(.title3)
+            Spacer()
             Button { player.previous() } label: {
                 Image(systemName: Icon.previous).font(.title)
             }
+            Spacer()
             Button { player.togglePlayPause() } label: {
                 Group {
                     if player.isWaitingForTrack {
@@ -120,10 +126,14 @@ struct NowPlayingSheet: View {
                 .frame(width: 56, height: 56)
             }
             .accessibilityLabel(player.isWaitingForTrack ? "Loading" : player.isPlaying ? "Pause" : "Play")
+            Spacer()
             Button { player.next() } label: {
                 Image(systemName: Icon.next).font(.title)
             }
+            Spacer()
+            RepeatButton().font(.title3)
         }
+        .padding(.horizontal, 28)
         .buttonStyle(.plain)
         .disabled(player.currentEntry == nil)
     }
@@ -156,15 +166,50 @@ struct NowPlayingSheet: View {
                     .background(.quaternary, in: Capsule())
             }
 
-            // This phone's own output; nothing it chooses reaches another
-            // device.
+            // This phone's own output and its preset; nothing either chooses
+            // reaches another device.
             if !player.isControllingAnother {
+                if let output, let presets = Presets(dsp: app.dsp, device: output.device, none: output.none) {
+                    PresetMenu(presets: presets, title: output.name) {
+                        RoutePreset(presets: presets, processed: player.currentFormat?.dsp != nil)
+                    }
+                }
                 RoutePicker()
                     .frame(width: 28, height: 28)
             }
         }
         .font(.title3)
         .buttonStyle(.plain)
+    }
+
+    /// What the music is coming out of, as profiles name it: a renderer the
+    /// phone plays to, by its UDN, or else the route. Its preset is the one
+    /// that is heard, so it is the one shown and changed.
+    private var output: (device: String, name: String, none: String)? {
+        if let renderer = player.renderer {
+            return (renderer.udn, renderer.name, "Original file")
+        }
+        return app.dsp.route.map { ($0, $0, "Off") }
+    }
+}
+
+/// The route's preset, beside the route picker: its name, or "Off". Tinted
+/// while what is heard is processed.
+private struct RoutePreset: View {
+    let presets: Presets
+    let processed: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "slider.horizontal.3")
+            Text(presets.current.map { presets.enabled ? $0 : "\($0), off" } ?? presets.none)
+                .lineLimit(1)
+        }
+        .font(.caption)
+        .foregroundStyle(processed ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(.quaternary, in: Capsule())
     }
 }
 

@@ -72,6 +72,7 @@ fn poll_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
                     "PAUSED" => PlaybackState::Paused,
                     _ => PlaybackState::Stopped,
                 });
+                state.set_play_mode(np.mode);
 
                 let current_track_id = np.queue_item_id.clone();
                 if current_track_id != last_track_id && current_track_id.is_some() {
@@ -130,6 +131,7 @@ fn poll_loop(client: GraphQLClient, state: Arc<SharedPlayerState>) {
                             disc: e.disc,
                             duration_ms: e.duration_ms,
                             state: ItemState::Ready,
+                            pre_shuffle: None,
                         }
                     })
                     .collect();
@@ -178,6 +180,12 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             }
             PlayerCommand::PrevTrack => {
                 client.previous().ok();
+            }
+            PlayerCommand::SetShuffle(on) => {
+                client.set_shuffle(*on).ok();
+            }
+            PlayerCommand::SetRepeat(repeat) => {
+                client.set_repeat(*repeat).ok();
             }
             PlayerCommand::Play(id) => {
                 client.play(&id.0.to_string()).ok();
@@ -237,11 +245,13 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             | PlayerCommand::InsertInPlaylist { .. }
             | PlayerCommand::AddToPlaylist(_)
             | PlayerCommand::DecodeFinished(_)
+            | PlayerCommand::RestorePlayMode(_)
             | PlayerCommand::TrackQueued => {
                 log::debug!("ignoring {:?} in remote mode", cmd);
             }
             // The output is the server's in remote mode, renderer or not.
             PlayerCommand::UseRenderer(_)
+            | PlayerCommand::ResumeRenderer(_)
             | PlayerCommand::SetRendererVolume(_)
             | PlayerCommand::Renderer { .. } => {
                 log::debug!("ignoring {:?} in remote mode", cmd);

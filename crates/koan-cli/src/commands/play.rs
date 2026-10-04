@@ -64,7 +64,7 @@ pub fn cmd_play(
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
 
-    let (state, _timeline, viz_snapshot, tx) = Player::spawn();
+    let (state, _timeline, viz_snapshot, tx) = Player::spawn_for_listening();
 
     // Spawn the API server on a background thread if requested.
     if let Some(opts) = api_opts {
@@ -87,8 +87,16 @@ pub fn cmd_play(
             .expect("failed to spawn API server thread");
     }
 
-    if clear_queue && let Ok(db) = koan_core::db::pool::shared().get() {
-        let _ = queries::clear_playback_state(&db.conn);
+    if let Ok(db) = koan_core::db::pool::shared().get() {
+        if clear_queue {
+            let _ = queries::clear_playback_state(&db.conn);
+        }
+        // Before any queue: the mode is the player's, kept with or without
+        // one, and a queue arriving under shuffle is shuffled.
+        if let Ok(mode) = queries::load_play_mode(&db.conn) {
+            tx.send(PlayerCommand::RestorePlayMode(mode))
+                .expect("player thread died");
+        }
     }
 
     let mut expects_playback = track_ids.is_some() || !paths.is_empty();

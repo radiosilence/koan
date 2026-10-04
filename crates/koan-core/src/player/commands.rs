@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 
-use super::state::{PlaylistItem, QueueItemId};
+use super::state::{PlayMode, PlaylistItem, QueueItemId, Repeat};
 
 /// Commands from the UI layer to the audio engine.
 #[derive(Debug)]
@@ -138,8 +138,21 @@ pub enum PlayerCommand {
     /// The session is opened by the caller, off this thread: see
     /// `upnp::connect`.
     UseRenderer(Option<Box<crate::upnp::Connection>>),
+    /// The renderer last used, found on the network after launch. Taken as
+    /// `UseRenderer` would be, unless playback or the output has moved since
+    /// launch, in which case it is dropped: see `upnp::resume`.
+    ResumeRenderer(Box<crate::upnp::Connection>),
     /// Set the volume of the renderer being played to, 0–100.
     SetRendererVolume(u8),
+    /// Turn shuffle on or off: the items after the cursor reordered at
+    /// random, or put back as they were. One undo step.
+    SetShuffle(bool),
+    /// What follows a track at its end: the queue's next, the first again
+    /// after the last, or the same item.
+    SetRepeat(Repeat),
+    /// Take the mode a saved session had, its queue already restored in the
+    /// order it was saved. Shuffle reorders nothing here.
+    RestorePlayMode(PlayMode),
     /// What the renderer was heard to do, during the session numbered
     /// `session`. Dropped once that session is over, like `DecodeFinished`.
     Renderer {
@@ -167,5 +180,20 @@ impl CommandChannel {
     pub fn new() -> Self {
         let (tx, rx) = bounded(16);
         Self { tx, rx }
+    }
+}
+
+impl PlayerCommand {
+    /// Whether it asks for something to be heard.
+    pub fn asks_to_play(&self) -> bool {
+        matches!(
+            self,
+            Self::Play(_)
+                | Self::Cue { play: true, .. }
+                | Self::Resume
+                | Self::NextTrack
+                | Self::PrevTrack
+                | Self::ReplacePlaylist { play: true, .. }
+        )
     }
 }

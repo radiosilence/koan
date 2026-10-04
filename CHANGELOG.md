@@ -6,6 +6,16 @@
 
 - **The server no longer grows with use.** Opening an album grid on a fresh server took it from about 170 MB to over 1 GB, which it then kept. Two things held it. Covers were also kept in memory, 512 of them, alongside the copies on disk; they are now read from disk, where the kernel caches them without counting against koan. And each cover was decoded on whichever thread served the request, so a grid of hundreds decoded in parallel, and glibc's allocator kept every thread's share. Decoding now runs on at most four threads, and koan uses mimalloc, which returns freed memory to the system.
 
+### Added
+
+- **Shuffle and repeat.** The transport has a shuffle button and a repeat button that steps through off, the whole queue and one track: on the Mac's transport bar, in Now Playing on iOS, under `s` and `R` in the TUI, through Control Center's shuffle and repeat controls, and through GraphQL (`nowPlaying { shuffle repeat }`, `setPlayMode`, `setPlayModeOnClient`). Repeating the queue runs the last track into the first without a gap, and the first is downloaded ahead of time like any other upcoming track. Repeating one track plays it again without a gap; each pass is its own entry in history, and Next and Previous still move on. Shuffle reorders the rest of the queue itself, so what the queue shows is what plays; turning it off puts the queue back in its original order, with anything added in the meantime left where it was put, and ⌘Z undoes it as one step. While shuffle is on, a new queue (an album played, a hand-off) starts with the track asked for and plays the rest shuffled. Controlling another device shows and sets that device's modes. The modes are saved with the session. MPRIS `LoopStatus` and `Shuffle` on Linux are not wired yet: souvlaki has no events for them.
+- **The output is remembered across launches, amplifiers included.** kōan goes back to the UPnP renderer it last played to if it turns up on the network within a few seconds of launch, carrying on with the restored session where it stood. Playing something or picking an output before then keeps the music where it is. An audio device that is absent at launch falls back to the system default, as before, and is still remembered.
+- **The route's preset in iOS Now Playing.** Beside the AirPlay button, the preset of the route playing (AirPods, headphones, the speaker), or "Off"; tapping it picks another for that route. It follows the route as it changes, shows a UPnP renderer's preset while the phone plays to one, and is tinted while what is heard is processed.
+
+### Changed
+
+- **The preset menu says when processing is off.** With DSP off everywhere, choosing a preset on the Mac or the phone did nothing audible; the menu now says processing is off and offers to turn it on.
+
 ## 0.52.0
 
 ### Added
