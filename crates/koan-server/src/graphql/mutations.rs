@@ -7,7 +7,7 @@ use koan_core::db::queries;
 use koan_core::db::queries::UidKind;
 use koan_core::db::queries::playback_state::PersistedQueueItem;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState};
+use koan_core::player::state::{PlaylistItem, QueueItemId, SharedPlayerState};
 
 use koan_core::auth::Role;
 use koan_core::remote::link::LinkCommand;
@@ -463,7 +463,7 @@ impl MutationRoot {
         if !resolved.items.is_empty() {
             send_cmd_via(tx, PlayerCommand::AddToPlaylist(resolved.items))?;
 
-            if state.playback_state() == PlaybackState::Stopped
+            if state.is_idle()
                 && let Some(id) = first_id
             {
                 send_cmd_via(tx, PlayerCommand::Play(id))?;
@@ -512,6 +512,8 @@ impl MutationRoot {
                 PlayerCommand::ReplacePlaylist {
                     items: resolved.items,
                     start: start_at.unwrap_or(0).max(0) as usize,
+                    position_ms: 0,
+                    play: true,
                 },
             )?;
 
@@ -879,6 +881,8 @@ impl MutationRoot {
                 PlayerCommand::ReplacePlaylist {
                     items: resolved.items,
                     start: 0,
+                    position_ms: 0,
+                    play: true,
                 },
             )?;
             if !resolved.pending_downloads.is_empty() {

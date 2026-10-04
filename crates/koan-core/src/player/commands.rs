@@ -67,10 +67,14 @@ pub enum PlayerCommand {
     /// album shows track one playing first. It is also three undo entries for
     /// one user action.
     ///
-    /// `start` past the end starts at the beginning.
+    /// `start` past the end starts at the beginning. It opens at
+    /// `position_ms`, playing or paused, as `Cue` does: a hand-off picks up
+    /// where the source stopped without the top of the track being heard.
     ReplacePlaylist {
         items: Vec<PlaylistItem>,
         start: usize,
+        position_ms: u64,
+        play: bool,
     },
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),
@@ -98,8 +102,10 @@ pub enum PlayerCommand {
     /// only thing it listens for, and a track that cannot be fetched never
     /// becomes Ready. That is the offline-library stall.
     TrackFailed(QueueItemId),
-    /// Decode thread exhausted the playlist — auto-advance or stop.
-    DecodeFinished,
+    /// Decode thread exhausted the playlist — auto-advance or stop. Carries
+    /// the session it came from, so one sent just before a play or seek is
+    /// recognised as stale.
+    DecodeFinished(u64),
     /// The decoder queued the next track, so when the playhead reaches it is
     /// now known.
     TrackQueued,

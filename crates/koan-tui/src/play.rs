@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use koan_core::db::queries;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{LoadState, PlaybackState, QueueItemId};
+use koan_core::player::state::PlaybackState;
 
 use crate::app::{self, PickerAction};
 use crate::enqueue::enqueue_playlist;
@@ -93,13 +93,6 @@ fn save_playback_position_from_app(app: &app::App) {
     }
 }
 
-/// Where a restored session left off, applied once its track is ready.
-pub struct RestoredPosition {
-    pub item: QueueItemId,
-    pub position_ms: u64,
-    pub was_playing: bool,
-}
-
 /// Run the Ratatui TUI event loop.
 ///
 /// Called by koan-cli after spawning the player and setting up initial playback.
@@ -111,7 +104,6 @@ pub fn run_tui(
     log_buffer: Arc<Mutex<Vec<String>>>,
     start_in_library: bool,
     expects_playback: bool,
-    restored: Option<RestoredPosition>,
     download_queue: DownloadQueue,
     callbacks: TuiCallbacks,
 ) -> std::io::Result<()> {
@@ -183,8 +175,6 @@ pub fn run_tui(
     }
 
     app.load_favourites();
-
-    let mut pending_restore = restored.filter(|r| r.position_ms > 0 || r.was_playing);
 
     let mut media = crate::media_keys::MediaKeyHandler::new(tx.clone(), app.state.clone());
     let mut last_track_path: Option<PathBuf> = None;
@@ -311,27 +301,6 @@ pub fn run_tui(
         }
 
         app.handle_tick();
-
-        if let Some(r) = &pending_restore {
-            // Anything played in the meantime wins over the restored position.
-            if app.state.playback_state() != PlaybackState::Stopped
-                || app.state.cursor() != Some(r.item)
-            {
-                pending_restore = None;
-            } else if app
-                .state
-                .item_load_state(r.item)
-                .is_some_and(|s| matches!(s, LoadState::Ready))
-            {
-                tx.send(PlayerCommand::Cue {
-                    id: r.item,
-                    position_ms: r.position_ms,
-                    play: r.was_playing,
-                })
-                .ok();
-                pending_restore = None;
-            }
-        }
 
         if let Some(ref mut mk) = media {
             mk.update_playback(&app.state);
