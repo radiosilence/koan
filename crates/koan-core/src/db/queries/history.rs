@@ -60,6 +60,15 @@ pub fn record_plays_at(
     })
 }
 
+/// Only what `user` played since `since` (unix seconds), as play history
+/// records it: the Recently played shelf's narrowing, the same for albums,
+/// artists and tracks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlayedSince {
+    pub user: i64,
+    pub since: i64,
+}
+
 /// What was played lately, each once and newest first by its latest play.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RecentlyPlayed {
