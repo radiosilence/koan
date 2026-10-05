@@ -165,6 +165,7 @@ mod tests {
             label: None,
             remote_id: None,
             added_at: None,
+            on_device: None,
         }
     }
 

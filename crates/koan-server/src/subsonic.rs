@@ -2790,9 +2790,9 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
         .into_response())
 }
 
-/// The tracks whose embedded art answers a `getCoverArt` id, as groups tried
-/// in turn: an album's tracks, a song alone, or an artist's albums one by one.
-/// koan stores no standalone cover images.
+/// The tracks whose art answers a `getCoverArt` id, as groups tried in turn:
+/// an album's tracks, a song alone, or an artist's albums one by one. A
+/// track's art is the cover image beside it or, without one, its embedded art.
 fn cover_tracks(
     db: &Database,
     kind: Option<EntityKind>,
@@ -7250,6 +7250,61 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    /// A library that keeps its covers as `folder.jpg` beside the tracks, with
+    /// nothing embedded, answers `getCoverArt` from the image.
+    #[tokio::test]
+    async fn test_cover_art_from_a_folder_image() {
+        let (state, dir) = test_state();
+        let album = dir.path().join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        let track = album.join("01.flac");
+        std::fs::write(&track, b"no tags here").unwrap();
+        let jpeg = {
+            let mut out = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new(&mut out)
+                .encode_image(&image::RgbImage::from_pixel(
+                    64,
+                    64,
+                    image::Rgb([200, 30, 30]),
+                ))
+                .unwrap();
+            out
+        };
+        std::fs::write(album.join("folder.jpg"), &jpeg).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
+        queries::upsert_track(
+            &db.conn,
+            &track_meta(track.to_str().unwrap(), "Song", "Album", 1),
+        )
+        .unwrap();
+        let track_id = queries::track_id_by_path(&db.conn, track.to_str().unwrap())
+            .unwrap()
+            .unwrap();
+        let album_id = queries::get_track_row(&db.conn, track_id)
+            .unwrap()
+            .unwrap()
+            .album_id
+            .unwrap();
+        let app = build_test_router(state);
+        for id in [format!("al-{album_id}"), format!("mf-{track_id}")] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/rest/getCoverArt?{}&id={id}", auth_query("")))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.headers()[header::CONTENT_TYPE], "image/jpeg");
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(&body[..], &jpeg[..], "a small JPEG is served as it is");
+        }
     }
 
     #[tokio::test]

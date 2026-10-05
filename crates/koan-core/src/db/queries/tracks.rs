@@ -320,6 +320,23 @@ const STALE_CHECK_MIN_ROWS: i64 = 100;
 /// is treated as a mount failure rather than a deletion.
 const MAX_STALE_FRACTION: f64 = 0.2;
 
+/// Tell the apps' cover caches to forget what they hold for the albums and
+/// tracks under `folder`, whose files a rescan has just looked at: a cover
+/// image beside them may have been added, replaced or removed, and nothing
+/// in their rows says so. Returns how many records were named.
+pub fn evict_art_under(conn: &Connection, folder: &Path) -> Result<usize, DbError> {
+    let (lower, upper) = super::folder_prefix_range(folder);
+    Ok(conn.execute(
+        "INSERT INTO art_evictions (kind, id)
+         SELECT 'album', album_id FROM tracks
+          WHERE path >= ?1 AND path < ?2 AND album_id IS NOT NULL
+          GROUP BY album_id
+         UNION ALL
+         SELECT 'track', id FROM tracks WHERE path >= ?1 AND path < ?2",
+        params![lower, upper],
+    )?)
+}
+
 /// Forget the files under `folder` that no longer exist.
 ///
 /// A track the server also has keeps its row and streams from there; one that

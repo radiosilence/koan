@@ -129,6 +129,10 @@ final class LibraryModel {
             carried = query
             albumSort = .recentlyAdded
             trackSort = .artist
+        case .downloaded:
+            filter.downloaded = true
+            albumSort = .downloaded
+            trackSort = .artist
         }
         browseFilter = filter
         return list.section
@@ -797,6 +801,8 @@ private struct Request: Sendable {
             return .history((try? await engine.playHistory(search: search)) ?? [])
         case .recentlyPlayed:
             return (try? await engine.shelfSummary(shelf: .recent)).map { .shelf($0) } ?? .none
+        case .onDevice:
+            return (try? await engine.shelfSummary(shelf: .downloaded)).map { .shelf($0) } ?? .none
         }
     }
 }
