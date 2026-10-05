@@ -987,17 +987,26 @@ pub fn sync_collection_favourite_to_remote(
 pub enum SignInError {
     #[error("the server did not accept those credentials: {0}")]
     Rejected(#[from] crate::remote::client::SubsonicError),
+    /// Subsonic's error 41: the server cannot check the token a client signs
+    /// with over plain HTTP against the account's password, and wants an app
+    /// password or an API key instead.
+    #[error(
+        "this server needs an app password or API key: make one in the server's web UI and sign in with it"
+    )]
+    NeedsKey,
     #[error("could not write the configuration: {0}")]
     Config(#[from] crate::config::ConfigError),
 }
 
-/// Sign in to a Subsonic/Navidrome server and remember it.
+/// Sign in to a Subsonic server with a password and remember it.
 ///
-/// The password goes to `config.local.toml`, which is gitignored and written
-/// `0600`. Subsonic authenticates every request with the password or a salted
-/// MD5 of it, so what koan keeps is password-equivalent wherever it is kept.
-/// An invite (`join_with_invite`) stores an API key instead, which belongs to
-/// this device alone and can be revoked on its own.
+/// A koan server that offers `profile::SIGN_IN` is sent the password once and
+/// answers with an API key for this device, which is what is kept, as joining
+/// with an invite keeps one: the password never goes over the wire again, and
+/// the key can be revoked on its own. Any other server keeps the password in
+/// `config.local.toml`, gitignored and written `0600`; Subsonic signs every
+/// request with it or a salted MD5 of it, so what is kept is
+/// password-equivalent wherever it is kept.
 ///
 /// The credentials are checked against the server before anything is written; a
 /// stored password that does not work is worse than none.
@@ -1009,10 +1018,28 @@ pub fn set_remote_credentials(
     username: &str,
     password: &str,
 ) -> Result<(), SignInError> {
+    use crate::remote::client::{koan_sign_in, offers_unsigned};
     let url = url.trim_end_matches('/');
-    SubsonicClient::new(url, username, password).ping()?;
+    // Asked first, without credentials: the password goes as `p=enc:` only to
+    // a server that will trade it for a key.
+    if offers_unsigned(url, crate::remote::profile::SIGN_IN).unwrap_or(false) {
+        let device = crate::remote::link::LinkIdentity::this_device(None).name;
+        let joined = koan_sign_in(url, username, password, &device).map_err(rejected)?;
+        return adopt_api_key(url, &joined.username, &joined.api_key);
+    }
+    SubsonicClient::new(url, username, password)
+        .ping()
+        .map_err(rejected)?;
 
     remember_remote(url, username, Credential::Password(password.to_string()))
+}
+
+/// A server's refusal, with error 41 told apart: see `SignInError::NeedsKey`.
+fn rejected(e: SubsonicError) -> SignInError {
+    match e {
+        SubsonicError::Api { code: 41, .. } => SignInError::NeedsKey,
+        e => SignInError::Rejected(e),
+    }
 }
 
 /// Join a server with an invite. A token is traded for an API key named after

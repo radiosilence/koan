@@ -52,6 +52,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::SHARES, &[1]),
     (koan_core::remote::profile::PAIR, &[1]),
     (koan_core::remote::profile::HISTORY, &[1]),
+    (koan_core::remote::profile::SIGN_IN, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -767,6 +768,19 @@ struct Caller {
     /// Whose favourites, playlists and history the request reads and writes:
     /// the account's, or the local user's for the shared secret.
     user_id: i64,
+    /// What signed the request.
+    via: Via,
+}
+
+/// How a request authenticated, for the endpoints that care.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Via {
+    ApiKey,
+    /// The account's own password, as `p=`.
+    Password,
+    AppPassword,
+    /// The `[subsonic]` shared secret, which is no account's.
+    SharedSecret,
 }
 
 impl Caller {
@@ -810,6 +824,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
             username: user.username,
             role: user.role,
             user_id: user.id,
+            via: Via::ApiKey,
         });
     }
 
@@ -817,11 +832,12 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         .u
         .as_deref()
         .ok_or_else(|| SubsonicError::missing_param("u"))?;
-    let caller = |(user_id, role)| {
+    let caller = |(user_id, role), via| {
         Ok(Caller {
             username: username.to_owned(),
             role,
             user_id,
+            via,
         })
     };
     let shared = |given: &str| {
@@ -840,7 +856,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         {
             let expected = format!("{:x}", md5::compute(format!("{secret}{salt}")));
             return if bool::from(token.as_bytes().ct_eq(expected.as_bytes())) {
-                caller((queries::LOCAL_USER, Role::User))
+                caller((queries::LOCAL_USER, Role::User), Via::SharedSecret)
             } else {
                 Err(SubsonicError::wrong_auth())
             };
@@ -856,6 +872,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
                 username: user.username,
                 role: user.role,
                 user_id: user.id,
+                via: Via::AppPassword,
             }),
             AppPasswordAuth::Wrong => Err(SubsonicError::wrong_auth()),
             AppPasswordAuth::NoneMade => Err(SubsonicError::token_auth_unsupported()),
@@ -870,7 +887,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         None => p.to_string(),
     };
     if shared(&password) {
-        return caller((queries::LOCAL_USER, Role::User));
+        return caller((queries::LOCAL_USER, Role::User), Via::SharedSecret);
     }
     // An app password costs a decryption to check, the account's own an
     // argon2 hash, so the cheaper goes first.
@@ -882,10 +899,11 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
             username: user.username,
             role: user.role,
             user_id: user.id,
+            via: Via::AppPassword,
         });
     }
     match state.users.verify(username, &password) {
-        Ok(account) => caller(account),
+        Ok(account) => caller(account, Via::Password),
         Err(Refused::Busy) => Err(SubsonicError::busy()),
         Err(Refused::Wrong) => Err(SubsonicError::wrong_auth()),
     }
@@ -4112,6 +4130,36 @@ async fn koan_revoke_key(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
     .await
 }
 
+/// Trade the account's password, proved by this request, for an API key
+/// named `name`: what a koan app does once on signing in with a password, so
+/// it keeps a key of the device's own and never sends the password again.
+/// Answers as `koanJoin` does. Only the account's own password will do: a key
+/// or app password is already a credential of its own, and the shared secret
+/// is no account's.
+async fn koan_sign_in(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            if caller.via != Via::Password {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::NotAuthorized,
+                    "sign in with the account's own password to be given a key",
+                ));
+            }
+            let name = koan_core::invite::device_name(params.get("name").unwrap_or_default());
+            let (_, api_key) = queries::api_keys::create_api_key(&db.conn, caller.user_id, &name)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("join")
+                    .attr("username", &caller.username)
+                    .attr("apiKey", &api_key),
+            ))
+        })
+    })
+    .await
+}
+
 /// Trade an invite token for an API key named `name`. The token is the
 /// credential, so this alone of koan's endpoints asks for no other.
 async fn koan_join(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
@@ -4555,6 +4603,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         )
         .route("/rest/koanInvite", get(koan_invite).post(koan_invite))
         .route("/rest/koanJoin", get(koan_join).post(koan_join))
+        .route("/rest/koanSignIn", get(koan_sign_in).post(koan_sign_in))
         .route(
             "/rest/koanRevokeKey",
             get(koan_revoke_key).post(koan_revoke_key),
@@ -5456,6 +5505,71 @@ mod tests {
         let body = call(format!("/rest/koanPairInfo?pair=ABCD-EFGH&{mate}")).await;
         assert!(body.contains("\"code\":70"), "{body}");
         drop(opened);
+    }
+
+    #[tokio::test]
+    async fn a_password_sign_in_is_traded_for_a_key_of_the_accounts_own() {
+        let (state, _dir) = test_state();
+        let call = |path: String| {
+            let state = state.clone();
+            async move { get_response(build_test_router(state), &path).await.1 }
+        };
+        let enc = |p: &str| p.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+
+        let body = call("/rest/getOpenSubsonicExtensions?f=json".to_owned()).await;
+        assert!(
+            body.contains("koanSignIn"),
+            "listed for clients to find: {body}"
+        );
+
+        let body = call(format!(
+            "/rest/koanSignIn?u=mate&p=enc:{}&name=Mate%27s%20iPhone&v=1.16.1&c=test&f=json",
+            enc("hunter22")
+        ))
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["subsonic-response"]["join"]["username"], "mate", "{body}");
+        let key = v["subsonic-response"]["join"]["apiKey"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let body = call(format!("/rest/ping?apiKey={key}&v=1.16.1&c=test")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let db = state.open_db().unwrap();
+        let mate = koan_core::db::queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let keys = queries::api_keys::list_api_keys(&db.conn, Some(mate.id)).unwrap();
+        assert_eq!(
+            keys.iter().map(|k| k.name.as_str()).collect::<Vec<_>>(),
+            ["Mate's iPhone"],
+            "the account's own key, named for the device"
+        );
+
+        // Only the account's own password: not a key it already holds, not
+        // the shared secret, which is no account's, and not a wrong password.
+        let body = call(format!(
+            "/rest/koanSignIn?apiKey={key}&name=more&v=1.16.1&c=test"
+        ))
+        .await;
+        assert!(body.contains("code=\"50\""), "{body}");
+        let body =
+            call("/rest/koanSignIn?u=testuser&p=testpass&name=shared&v=1.16.1&c=test".to_owned())
+                .await;
+        assert!(body.contains("code=\"50\""), "{body}");
+        let body = call(format!(
+            "/rest/koanSignIn?u=mate&p=enc:{}&name=guess&v=1.16.1&c=test",
+            enc("wrong")
+        ))
+        .await;
+        assert!(body.contains("code=\"40\""), "{body}");
+        assert_eq!(
+            queries::api_keys::list_api_keys(&db.conn, None)
+                .unwrap()
+                .len(),
+            1,
+            "no key made for any of them"
+        );
     }
 
     #[tokio::test]
