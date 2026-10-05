@@ -300,6 +300,8 @@ pub struct NowPlaying {
     pub repeat_mode: RepeatMode,
     /// The sleep timer, while one is set.
     pub sleep: Option<SleepState>,
+    /// The sleep timer is fading playback out: not bit-perfect meanwhile.
+    pub sleep_fading: bool,
 }
 
 /// A sleep timer to set: stop after a while, or at the end of the track or

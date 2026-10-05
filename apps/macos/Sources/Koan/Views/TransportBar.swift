@@ -593,6 +593,7 @@ struct SleepButton: View {
             HStack(spacing: 4) {
                 Image(systemName: sleep == nil ? "moon" : "moon.zzz.fill")
                 switch sleep {
+                case _ where player.sleepFading: Text("Fading")
                 case .at(let unixMs):
                     let now = Date.now
                     Text(timerInterval: now...max(now, Self.date(unixMs)), countsDown: true)
@@ -604,9 +605,11 @@ struct SleepButton: View {
             }
             .foregroundStyle(sleep == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
         }
-        #if os(macOS)
-        .menuStyle(.borderlessButton)
-        #endif
+        // A plain button's label keeps its own colour, as shuffle's and
+        // repeat's do; a borderless menu draws it in the accent whatever it
+        // says, which lit the moon with no timer set.
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
         .help(sleep == nil ? "Sleep timer" : "Sleep timer: \(value(sleep))")
@@ -620,6 +623,7 @@ struct SleepButton: View {
 
     private func value(_ sleep: SleepState?) -> String {
         switch sleep {
+        case _ where player.sleepFading: "Fading out"
         case .at(let unixMs): "Stops at \(Self.date(unixMs).formatted(date: .omitted, time: .shortened))"
         case .endOfTrack: "Stops at the end of the track"
         case .endOfRecord: "Stops at the end of the record"

@@ -141,7 +141,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     .with_seekable_ms(seekable_ms)
     .with_output_rate(app.state.output_sample_rate())
     .with_dsp(app.state.dsp())
-    .with_sleep(app.state.sleep());
+    .with_sleep(app.state.sleep(), app.state.sleep_fading());
     frame.render_widget(transport, text_area);
 
     // Visualizer — renders in the space above the transport text.

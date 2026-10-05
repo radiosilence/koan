@@ -1436,6 +1436,7 @@ impl Player {
         self.queue_next_on_renderer();
         if self.sleeps_between(ended, Some(id)) {
             self.pause();
+            self.end_sleep_fade();
         }
     }
 }
