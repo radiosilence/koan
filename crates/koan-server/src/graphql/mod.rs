@@ -492,6 +492,22 @@ fn fillable_playlist(
     Ok(list)
 }
 
+/// A playlist `user` may rename or give rules: their own, and not one read
+/// from a file in the library, which decides both.
+fn renamable_playlist(
+    db: &Database,
+    user: i64,
+    id: i64,
+) -> async_graphql::Result<koan_core::db::queries::PlaylistRow> {
+    let list = editable_playlist(db, user, id)?;
+    if let Some(path) = &list.source_path {
+        return Err(async_graphql::Error::new(format!(
+            "playlist {id} is read from {path}: edit the file instead"
+        )));
+    }
+    Ok(list)
+}
+
 /// Evaluate the smart playlists `user` can see that are due, and have every
 /// device pull any whose contents moved.
 fn refresh_smart(db: &Database, user: i64) {

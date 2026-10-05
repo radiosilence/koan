@@ -152,6 +152,8 @@ final class PlaylistsModel {
     }
 
     func rename(id: Int64, to name: String) {
+        // Its file names it.
+        guard playlist(id: id)?.fromFile != true else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         act { try await $0.renamePlaylist(playlistId: id, name: trimmed) }

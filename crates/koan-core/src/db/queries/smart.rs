@@ -287,7 +287,20 @@ pub fn refresh(conn: &Connection, id: i64) -> Result<bool, DbError> {
 
 /// [`refresh`] for a read: while a scan or sync holds the write lock it
 /// stores nothing, and the read serves the last contents rather than waiting.
+///
+/// A refused store is remembered for [`REFRESH_SECS`], in memory, so a scan
+/// long enough to span many reads does not have each of them evaluate the
+/// rules again only to be refused.
 fn refresh_for_read(conn: &Connection, id: i64) -> Result<bool, DbError> {
+    let key = (conn.path().unwrap_or_default().to_owned(), id);
+    let now = now_secs();
+    if refused()
+        .lock()
+        .get(&key)
+        .is_some_and(|&at| at > now - REFRESH_SECS)
+    {
+        return Ok(false);
+    }
     let Some(tracks) = select_for_owner(conn, id)? else {
         return Ok(false);
     };
@@ -295,10 +308,53 @@ fn refresh_for_read(conn: &Connection, id: i64) -> Result<bool, DbError> {
         Err(DbError::Sqlite(rusqlite::Error::SqliteFailure(e, _)))
             if e.code == rusqlite::ErrorCode::DatabaseBusy =>
         {
+            refused().lock().insert(key, now);
             Ok(false)
         }
-        other => other,
+        other => {
+            refused().lock().remove(&key);
+            other
+        }
     }
+}
+
+/// When a store was last refused for want of the write lock, by database
+/// file and playlist.
+fn refused() -> &'static parking_lot::Mutex<std::collections::HashMap<(String, i64), i64>> {
+    static REFUSED: std::sync::OnceLock<
+        parking_lot::Mutex<std::collections::HashMap<(String, i64), i64>>,
+    > = std::sync::OnceLock::new();
+    REFUSED.get_or_init(Default::default)
+}
+
+/// After `user` (unresolved) played or favourited something: evaluate at
+/// once their smart playlists whose rules read any of `fields`, whatever
+/// their last evaluation, so devices told to pull see the change. A random
+/// order is left to its daily draw rather than reshuffled on every play.
+/// Returns the ids whose contents changed.
+pub fn refresh_after_activity(
+    conn: &Connection,
+    user: i64,
+    fields: &[Field],
+) -> Result<Vec<i64>, DbError> {
+    let user = resolve_user(conn, user)?;
+    let owned: Vec<(i64, String)> = conn
+        .prepare_cached("SELECT id, rules FROM playlists WHERE rules IS NOT NULL AND user_id = ?1")?
+        .query_map(params![user], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    let mut changed = Vec::new();
+    for (id, json) in owned {
+        let Ok(rules) = Rules::parse(&json) else {
+            continue;
+        };
+        if rules.is_random() || !rules.uses(fields) {
+            continue;
+        }
+        if refresh_for_read(conn, id)? {
+            changed.push(id);
+        }
+    }
+    Ok(changed)
 }
 
 fn select_for_owner(conn: &Connection, id: i64) -> Result<Option<Vec<i64>>, DbError> {
@@ -660,6 +716,40 @@ mod tests {
         assert_eq!(
             super::super::playlist_track_ids(&conn, id).unwrap().len(),
             2
+        );
+    }
+
+    #[test]
+    fn activity_refreshes_only_playlists_that_read_it() {
+        let conn = test_conn();
+        let a = track(&conn, "A", "Artist", "X");
+        let played = create_smart_playlist(
+            &conn,
+            LOCAL_USER,
+            "Played",
+            None,
+            &rules(r#"{"rules":[{"field":"playCount","op":"gt","value":0}]}"#),
+        )
+        .unwrap();
+        let loved = create_smart_playlist(
+            &conn,
+            LOCAL_USER,
+            "Loved",
+            None,
+            &rules(r#"{"rules":[{"field":"favourite","op":"is","value":true}]}"#),
+        )
+        .unwrap();
+        super::super::record_plays_at(&conn, LOCAL_USER, &[(a, now_secs())], "local").unwrap();
+        let plays = [Field::PlayCount, Field::LastPlayed];
+        assert_eq!(
+            refresh_after_activity(&conn, LOCAL_USER, &plays).unwrap(),
+            vec![played],
+            "inside the minute, and only the one reading plays"
+        );
+        assert!(
+            super::super::playlist_track_ids(&conn, loved)
+                .unwrap()
+                .is_empty()
         );
     }
 

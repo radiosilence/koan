@@ -48,6 +48,9 @@ pub struct PlaylistRow {
     pub remote_changed: Option<String>,
     /// A smart playlist's rules, as JSON (see `crate::smart`).
     pub rules: Option<String>,
+    /// The file in a library folder it was read from. The file decides its
+    /// name and what it holds, so neither is edited here.
+    pub source_path: Option<String>,
     /// Its contents are not for editing: a smart playlist, one read from a
     /// file in the library, or one the server says is read-only.
     pub readonly: bool,
@@ -57,7 +60,7 @@ const SELECT: &str = "SELECT p.id, p.name, p.comment, p.public, COALESCE(p.owner
             p.remote_id, p.created_at, p.changed_at, p.sort_order, p.grouped,
             COUNT(pt.track_id), COALESCE(SUM(t.duration_ms), 0), p.user_id,
             COALESCE(p.uid, CAST(p.id AS TEXT)), p.revision, p.synced_revision, p.remote_changed,
-            p.rules, (p.readonly != 0 OR p.source_path IS NOT NULL)
+            p.rules, (p.readonly != 0 OR p.source_path IS NOT NULL), p.source_path
      FROM playlists p
      LEFT JOIN users u ON u.id = p.user_id
      LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
@@ -84,6 +87,7 @@ fn row_to_playlist(row: &rusqlite::Row) -> rusqlite::Result<PlaylistRow> {
         remote_changed: row.get(16)?,
         readonly: row.get::<_, Option<String>>(17)?.is_some() || row.get::<_, i64>(18)? != 0,
         rules: row.get(17)?,
+        source_path: row.get(19)?,
     })
 }
 

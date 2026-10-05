@@ -1,6 +1,6 @@
 # Smart playlists
 
-A smart playlist holds whatever matches its rules: the tracks played most this year, favourites not heard in a month, every 24-bit jazz record added since spring. kōan evaluates the rules again when the playlist is read, at most once a minute, so it follows the library and your listening without anyone editing it.
+A smart playlist holds whatever matches its rules: the tracks played most this year, favourites not heard in a month, every 24-bit jazz record added since spring. kōan evaluates the rules again when the playlist is read, at most once a minute, and at once when a play or a favourite reaches the server that the rules depend on, so it follows the library and your listening without anyone editing it. Devices linked to a kōan server are told to pull a smart playlist whose contents moved.
 
 To every client it is an ordinary playlist that cannot be edited. Subsonic apps see it marked read-only (OpenSubsonic's `readonly`), kōan's apps refuse drops, removals and reorders on it, and it is not offered under Add to Playlist. Change what it holds by changing its rules.
 
@@ -28,7 +28,7 @@ mutation {
 
 `setPlaylistRules(id, rules)` changes the rules of an existing playlist. Given to an ordinary playlist, it becomes a smart one; `rules: null` makes a smart playlist ordinary again, keeping what it holds.
 
-From a file: put a Navidrome smart playlist (`.nsp`) anywhere in a library folder and the next scan reads it. The folder watcher notices new and changed files. The file stays authoritative: editing it changes the playlist, deleting it deletes the playlist.
+From a file: put a Navidrome smart playlist (`.nsp`) anywhere in a library folder and the next scan reads it. The folder watcher notices new and changed files. The file stays authoritative: editing it changes the playlist, deleting it deletes the playlist, and the playlist cannot be renamed or given other rules in kōan.
 
 ## Rules
 

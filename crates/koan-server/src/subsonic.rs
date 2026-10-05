@@ -2618,8 +2618,12 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
             if targets.is_empty() {
                 return Err(SubsonicError::missing_param("id"));
             }
+            let songs = targets.iter().any(|(kind, _)| *kind == EntityKind::Song);
             for (kind, id) in targets {
                 set_star(db, user, kind, id, star)?;
+            }
+            if songs {
+                crate::clients::smart_activity(db, user, &[koan_core::smart::Field::Favourite]);
             }
             // The caller's other apps show hearts too: a track favourited on
             // a phone while it plays on the Mac should light up there.
@@ -2783,7 +2787,15 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
             // The foreign key is the existence check: one id that names no
             // track fails the batch, and the transaction leaves none of it.
             match queries::record_plays_at(&db.conn, user, &plays, queries::SOURCE_SUBSONIC) {
-                Ok(()) => Ok(b),
+                Ok(()) => {
+                    use koan_core::smart::Field;
+                    crate::clients::smart_activity(
+                        db,
+                        user,
+                        &[Field::PlayCount, Field::LastPlayed],
+                    );
+                    Ok(b)
+                }
                 Err(koan_core::db::connection::DbError::Sqlite(
                     rusqlite::Error::SqliteFailure(e, _),
                 )) if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY => {
@@ -3183,6 +3195,12 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
         respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let id = playlist_id(db, params.get("playlistId").or_else(|| params.get("id")))?;
             let list = playlist_for(db, user, id, true)?;
+            if params.get("name").is_some() && list.source_path.is_some() {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::NotAuthorized,
+                    "This playlist is named by its file in the library: rename the file",
+                ));
+            }
             if params.all("songIdToAdd").next().is_some()
                 || params.all("songIndexToRemove").next().is_some()
             {
@@ -5924,6 +5942,23 @@ mod tests {
             body.contains("status=\"ok\""),
             "a rename is allowed: {body}"
         );
+
+        // One read from a file is named by it.
+        let db = Database::open(state.pool.path()).unwrap();
+        db.conn
+            .execute("UPDATE playlists SET source_path = '/music/All.nsp'", [])
+            .unwrap();
+        drop(db);
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/updatePlaylist?{}&playlistId={id}&name=Other",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert!(body.contains("status=\"failed\""), "{body}");
     }
 
     #[tokio::test]

@@ -800,7 +800,7 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("rules: {e}")))?;
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
-            let list = super::editable_playlist(db, user, id)?;
+            let list = super::renamable_playlist(db, user, id)?;
             if list.rules.is_none() && list.readonly {
                 return Err(async_graphql::Error::new(format!(
                     "playlist {id} is read-only on the server it came from"
@@ -851,7 +851,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
-            super::editable_playlist(db, user, id)?;
+            super::renamable_playlist(db, user, id)?;
             if !queries::rename_playlist(&db.conn, id, &name)
                 .map_err(|e| super::internal_error("db", e))?
             {
@@ -1473,6 +1473,7 @@ async fn set_favourite(
         {
             sync_favourite_to_remote(db, track_id, now_starred);
         }
+        crate::clients::smart_activity(db, user, &[koan_core::smart::Field::Favourite]);
         Ok(GqlTrack { row: track })
     })
     .await

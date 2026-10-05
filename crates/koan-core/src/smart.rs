@@ -382,6 +382,21 @@ impl Rules {
         self.sort.iter().any(|s| s.field.is_none())
     }
 
+    /// Whether any condition or sort key reads one of `fields`.
+    pub fn uses(&self, fields: &[Field]) -> bool {
+        fn any(rules: &[Condition], fields: &[Field]) -> bool {
+            rules.iter().any(|c| match c {
+                Condition::Group { rules, .. } => any(rules, fields),
+                Condition::Rule(r) => fields.contains(&r.field),
+            })
+        }
+        any(&self.rules, fields)
+            || self
+                .sort
+                .iter()
+                .any(|s| s.field.is_some_and(|f| fields.contains(&f)))
+    }
+
     /// Every condition takes an operator its field allows, with a value of
     /// the right type; nesting and size stay within bounds.
     pub fn check(&self) -> Result<(), String> {
