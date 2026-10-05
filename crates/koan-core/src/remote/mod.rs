@@ -7,6 +7,7 @@ pub mod link;
 pub mod lrclib;
 pub mod musicbrainz;
 pub mod nearby;
+pub mod offline;
 pub mod outputs;
 pub mod profile;
 pub mod queue;

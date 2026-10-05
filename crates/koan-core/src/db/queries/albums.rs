@@ -243,6 +243,42 @@ impl AlbumOrder {
 /// Codecs that lose nothing, as the indexer names them.
 pub const LOSSLESS_CODECS: [&str; 5] = ["FLAC", "ALAC", "WAV", "AIFF", "PCM"];
 
+/// How much of a record is on this device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OnDevice {
+    pub album_id: i64,
+    /// Tracks with a file here: downloaded, or in the library.
+    pub have: u32,
+    pub total: u32,
+}
+
+/// Every record with any of its tracks on this device: fully there first,
+/// then by how much is, then the most recently downloaded. Derived from the
+/// tracks, so a download landing or being evicted shows at once.
+pub fn on_device(conn: &Connection) -> Result<Vec<OnDevice>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT album_id,
+                SUM(COALESCE(cached_path, path) IS NOT NULL) AS have,
+                COUNT(*) AS total
+         FROM tracks
+         WHERE album_id IS NOT NULL
+         GROUP BY album_id
+         HAVING have > 0
+         ORDER BY have = total DESC,
+                  CAST(have AS REAL) / total DESC,
+                  MAX(COALESCE(cache_download_date, 0)) DESC,
+                  album_id",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(OnDevice {
+            album_id: row.get(0)?,
+            have: row.get(1)?,
+            total: row.get(2)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 /// Narrowing by what the records are, shared by the album and artist listings:
 /// an artist passes when any of their albums does.
 #[derive(Debug, Clone, Copy, Default)]
@@ -257,6 +293,9 @@ pub struct AlbumFilter<'a> {
     pub year_to: Option<i32>,
     /// Records with at least one track tagged with this genre.
     pub genre: Option<&'a str>,
+    /// Records with at least one track that can play here: downloaded, or a
+    /// file in the library. What offline narrows to.
+    pub on_device: bool,
 }
 
 impl AlbumFilter<'_> {
@@ -289,6 +328,13 @@ impl AlbumFilter<'_> {
         if let Some(to) = self.year_to {
             wheres.push(format!("al.date IS NOT NULL AND {year} <= ?"));
             params.push(Box::new(to));
+        }
+        if self.on_device {
+            wheres.push(
+                "EXISTS (SELECT 1 FROM tracks d WHERE d.album_id = al.id
+                         AND COALESCE(d.cached_path, d.path) IS NOT NULL)"
+                    .into(),
+            );
         }
         if let Some(genre) = self.genre {
             wheres.push(
@@ -568,6 +614,64 @@ mod tests {
             crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
         }
         db
+    }
+
+    /// A record fully downloaded comes before one half there, and a record
+    /// with nothing here is neither counted nor offered offline.
+    #[test]
+    fn on_device_counts_what_can_play_here() {
+        let db = test_db();
+        for (title, album) in [
+            ("X1", "Whole"),
+            ("X2", "Whole"),
+            ("Y1", "Half"),
+            ("Y2", "Half"),
+            ("Z1", "None"),
+        ] {
+            let mut meta = crate::db::queries::sample_meta(title, "Artist", album);
+            meta.path = Some(format!("/music/{title}.flac"));
+            crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
+        }
+        // Remote tracks, as a phone has them, two records' worth downloaded.
+        db.conn
+            .execute("UPDATE tracks SET path = NULL", [])
+            .unwrap();
+        db.conn
+            .execute(
+                "UPDATE tracks SET cached_path = '/cache/' || title WHERE title IN ('X1', 'X2', 'Y1')",
+                [],
+            )
+            .unwrap();
+        let album = |title: &str| -> i64 {
+            db.conn
+                .query_row("SELECT id FROM albums WHERE title = ?1", [title], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+
+        assert_eq!(
+            on_device(&db.conn).unwrap(),
+            vec![
+                OnDevice {
+                    album_id: album("Whole"),
+                    have: 2,
+                    total: 2
+                },
+                OnDevice {
+                    album_id: album("Half"),
+                    have: 1,
+                    total: 2
+                },
+            ]
+        );
+        let offline = AlbumFilter {
+            on_device: true,
+            ..Default::default()
+        };
+        let mut listed = titles(&db, offline);
+        listed.sort();
+        assert_eq!(listed, vec!["Half", "Whole"]);
     }
 
     fn titles(db: &Database, filter: AlbumFilter) -> Vec<String> {
