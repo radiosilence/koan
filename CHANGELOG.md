@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The web UI on a phone.** A favourite track shows its heart beside the row's ⋯ again, as a mark; the heart to press is in the menu. History rows give the title the width the tick boxes took: on a phone a play is removed with Remove from History in its menu, as in the apps, and the time is set smaller. On a wide screen the Tracks browser's name field is wide enough for its hint.
+
 ## 0.54.0
 
 The library database moves from schema 16 to 19 (new tables for ratings, bookmarks, scrobbling and smart playlists, and the play history table rebuilt for sharing between devices; every existing row is kept as it was). Builds older than 0.54.0 refuse a schema-19 database, so going back means restoring a copy taken before upgrading.

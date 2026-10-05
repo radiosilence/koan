@@ -220,6 +220,17 @@
       mine.push(item(on ? "Remove Favourite" : "Favourite Track", () => heart.click()));
     }
     if (share) mine.push(item("Share Track", () => share.click()));
+    // A play in History: forgotten through the page's own Forget, as the
+    // apps' Remove from History is, so it is the one way plays leave.
+    const play = li.closest("#history") && li.querySelector("input[type=checkbox][value]");
+    const forget = play
+      ? [item("Remove from History", () => {
+          for (const box of all("#history input:checked")) box.checked = false;
+          play.checked = true;
+          play.dispatchEvent(new Event("change", { bubbles: true }));
+          document.querySelector("[data-act-forget]")?.click();
+        })]
+      : [];
     const go = [];
     if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`/album/${d.albumId}`, true)));
     if (Number(d.artistId)) go.push(item("Go to Artist", () => navigate(`/artist/${d.artistId}`, true)));
@@ -232,6 +243,7 @@
       item("Add to Queue", () => player.append([t])),
       ...group(mine),
       ...group(go),
+      ...group(forget),
     );
     if (!menu.matches(":popover-open")) menu.showPopover();
     if (wide.matches) {

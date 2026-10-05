@@ -184,4 +184,17 @@
   .tracks button svg {
     @apply inline size-[15px] fill-current align-[-2px];
   }
+
+  /* A favourite's heart beside the ⋯ on a narrow screen; see Hearts::mark. */
+  .tracks .fav-mark {
+    @apply hidden flex-none px-1 text-brand;
+  }
+
+  .tracks .fav-mark svg {
+    @apply size-[13px] fill-current;
+  }
+
+  .tracks li:has([data-fav][aria-pressed="true"]) .fav-mark {
+    @apply max-wide:inline-flex;
+  }
 }
