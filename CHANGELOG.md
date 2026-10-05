@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Ratings over the Subsonic API.** Clients that rate songs, albums and artists from one to five can now do so against a kōan server: `setRating` stores a rating per account (0 clears it), every song, album and artist carries the caller's `userRating`, and `getAlbumList2?type=highest` lists rated albums best first instead of nothing. kōan's own apps do not show ratings. The library database moves to schema 17 for the three rating tables; a build older than this one refuses it.
 - **Favourites in the web UI.** The signed-in account's favourite artists, records and tracks on one page, laid out as in the apps: artists as pills, records as tiles, and the tracks as a list that plays on from the one picked. On a phone it sits under a new Library tab with Playlists, which the tab bar had no room to add beside; the sidebar lists both.
 - **Recently played in the web UI.** The artists, records and tracks the signed-in account played in the last 30 days, each once and newest first, on the same layout as Favourites.
 - **History in the web UI.** What the signed-in account has played, most recent first, grouped by day in the browser's own time zone. Tick plays and forget them, as in the apps; only the account's own plays can be forgotten.
