@@ -269,11 +269,15 @@ pub(super) fn see_all(shelf: Shelf, kind: Kind) -> String {
         (Shelf::Favourites, Kind::Artists) | (Shelf::Search(_), Kind::Artists) => "name",
         (Shelf::Favourites, _) | (Shelf::Search(_), Kind::Tracks) => "artist",
         (Shelf::Search(_), Kind::Albums) => "recent",
+        (Shelf::Downloaded, Kind::Artists) => "name",
+        (Shelf::Downloaded, _) => "artist",
     };
     match shelf {
         Shelf::Favourites => b.fav = "1".into(),
         Shelf::Recent => b.recent = "1".into(),
         Shelf::Search(q) => b.q = q.into(),
+        // The web UI downloads nothing, so it has no such shelf to link from.
+        Shelf::Downloaded => {}
     }
     b.sort = sort.into();
     format!("{}?{}", kind.path(), b.query())

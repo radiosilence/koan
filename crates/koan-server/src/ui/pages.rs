@@ -881,7 +881,8 @@ fn results(s: &UiState, user: &AuthUser, q: &str) -> String {
     }
     let shelf = Shelf::Search(q);
     let found = open(&s.pool).and_then(|db| {
-        let summary = shelves::summary(&db.conn, shelf, user.user_id, shelves::now()).ok()?;
+        let summary =
+            shelves::summary(&db.conn, shelf, user.user_id, shelves::now(), false).ok()?;
         let versions = shelf_versions(&db.conn, &summary);
         Some((summary, versions, Hearts::load(&db.conn, user)))
     });
@@ -1098,7 +1099,7 @@ async fn shelf_page(
     let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let summary = shelves::summary(&db.conn, shelf, who.user_id, shelves::now()).ok()?;
+        let summary = shelves::summary(&db.conn, shelf, who.user_id, shelves::now(), false).ok()?;
         let versions = shelf_versions(&db.conn, &summary);
         Some((summary, versions, Hearts::load(&db.conn, &who)))
     })
