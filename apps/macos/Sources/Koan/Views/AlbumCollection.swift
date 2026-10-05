@@ -327,9 +327,13 @@ private final class TileLayout: NSCollectionViewFlowLayout {
 
     required init?(coder: NSCoder) { fatalError("not decoded") }
 
+    /// The width the grid was last laid out for.
+    private var laidOut: CGFloat = 0
+
     override func prepare() {
-        if let width = collectionView?.bounds.width {
-            let usable = width - sectionInset.left - sectionInset.right
+        if collectionView != nil {
+            laidOut = visibleWidth
+            let usable = laidOut - sectionInset.left - sectionInset.right
             let columns = max(1, ((usable + minimumInteritemSpacing) / (minimum + minimumInteritemSpacing)).rounded(.down))
             let side = min(maximum, ((usable - minimumInteritemSpacing * (columns - 1)) / columns).rounded(.down))
             itemSize = NSSize(width: side, height: side + AlbumTile.captionHeight)
@@ -338,7 +342,18 @@ private final class TileLayout: NSCollectionViewFlowLayout {
     }
 
     override func shouldInvalidateLayout(forBoundsChange newBounds: NSRect) -> Bool {
-        newBounds.width != collectionView?.bounds.width
+        newBounds.width != laidOut
+    }
+}
+
+extension NSCollectionViewLayout {
+    /// The width to lay out for: the scroll view's visible width, not the
+    /// collection's own. The collection is as wide as the layout's content
+    /// size, which the layout derives from this, so reading the collection's
+    /// width back holds the page at whatever width it first had: widen the
+    /// window and nothing reflows.
+    var visibleWidth: CGFloat {
+        collectionView?.enclosingScrollView?.contentView.bounds.width ?? collectionView?.bounds.width ?? 0
     }
 }
 
