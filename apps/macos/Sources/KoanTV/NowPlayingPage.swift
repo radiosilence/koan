@@ -12,7 +12,6 @@ struct NowPlayingPage: View {
     @Environment(PlayerModel.self) private var player
     @Environment(UIState.self) private var ui
     @Environment(AppState.self) private var app
-    @Environment(LibraryModel.self) private var library
     @State private var showingDevices = false
     @State private var showingControl = false
     @FocusState private var focus: Focus?
@@ -54,13 +53,10 @@ struct NowPlayingPage: View {
         ContentUnavailableView {
             Label("Nothing playing", systemImage: "music.note")
         } description: {
-            if library.stats?.totalTracks == 0 {
-                Text("Sign in to your music server in Settings → Server.")
-            } else {
-                Text("Choose this Apple TV under Play on, on a phone or Mac, or pick a record from the library.")
-            }
+            // Signed out, the sign-in page covers this; here there is always
+            // an account, if not always any music in it.
+            Text("Choose this Apple TV under Play on, on a phone or Mac, or pick a record from the library.")
         }
-        .task { if library.stats == nil { library.loadStats() } }
     }
 
     /// The sleeve, or the words in its place.

@@ -253,10 +253,9 @@ struct TabShell: View {
     }
 
     /// Signed in by pairing or the account form: load the library, as joining
-    /// with an invite does, and start where the music will be.
+    /// with an invite does.
     private func joined() {
         signedIn = true
-        selection = .library
         let engine = app.engine
         Task {
             let synced = await activity.run(

@@ -105,6 +105,7 @@ struct SignInPage: View {
                     .font(.title2.weight(.semibold))
                 Text("Or enter this code under Settings → Server → Pair a device, or at \(host)/pair:")
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 640, alignment: .leading)
                 Text(pairing.code)
                     .font(.system(size: 72, weight: .semibold, design: .monospaced))
