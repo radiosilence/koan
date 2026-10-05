@@ -226,13 +226,15 @@ struct NowPlayingSheet: View {
             if !player.isControllingAnother, let output,
                let presets = Presets(dsp: app.dsp, device: output.device, none: output.none) {
                 if natural { Spacer(minLength: 8) }
+                let preset = presets.current.map { presets.enabled ? $0 : "\($0), off" } ?? presets.none
                 PresetMenu(presets: presets, title: output.name) {
                     Pill(
                         systemImage: "slider.horizontal.3",
-                        text: presets.current.map { presets.enabled ? $0 : "\($0), off" } ?? presets.none,
+                        text: preset,
                         tinted: player.currentFormat?.dsp != nil
                     )
                 }
+                .accessibilityLabel("Preset: \(preset)")
                 .pillWidth(natural)
             }
             if natural { Spacer(minLength: 0) }
