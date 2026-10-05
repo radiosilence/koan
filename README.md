@@ -200,6 +200,18 @@ just ios-walk     # screenshot every page on a simulator
 
 Requires iOS 26+.
 
+## Apple TV app
+
+The iOS app's engine and pages on a television, built around the remote: Now Playing first, tabs across the top, a long press for a row's menu. It is mostly something the phone and the Mac play to, through Play on, and plays gaplessly from a server through HDMI. It signs in to any OpenSubsonic server with a password or an API key, or a koan server's invite pasted from a phone.
+
+```bash
+just tv-run       # build and launch on an Apple TV simulator
+just tv-device    # install on the Apple TV paired with Xcode
+just tv-walk      # walk every page with the remote on a simulator, screenshotting each
+```
+
+Requires tvOS 26+. tvOS gives an app no storage of its own beyond a cache the system may empty, so a TV can be signed out by a purge and the library resynced.
+
 ## Playing on another device
 
 Any kōan app can control another, and hand its queue to it. The Mac app and the TUI also play to UPnP/DLNA amplifiers and streamers: the original files, or, for an amplifier with its own EQ or convolution profile, one stream koan has processed. See [Playing on another device](https://koan.rocks/docs/devices/).

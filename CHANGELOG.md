@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **kōan on Apple TV.** The engine and the iOS app's pages on tvOS, built for the remote: Now Playing is the first tab, with the sleeve, controls and what comes next; the tabs run across the top; a long press opens a row's menu; Play/Pause works from anywhere. A TV is a device the phone and the Mac play to with Play on, and plays gaplessly through HDMI. It signs in with a password, an OpenSubsonic API key, or a koan invite pasted from a phone, so any OpenSubsonic server works. Share links show as a code to scan, since a television has no pasteboard. tvOS keeps app data only in a cache the system may empty, so a purge signs the TV out.
+- **Signing in with an API key.** The account form takes an OpenSubsonic API key in place of a password, on every platform: one key per device, revocable on its own.
+
 ### Changed
 
 - **Asleep devices stay listed until you forget them.** A device out of reach no longer drops off the Control menu after 30 minutes; it stays, asleep, with when it was last seen. **Forget**, from its context menu on the Mac or a long press on iOS, removes it: from this device, and for one of your account's from the server too, with its push token, and from your other devices. A forgotten device that comes back is listed again. The server still forgets an account device unseen for 30 days on its own. `devices.asleep_grace_mins` is gone.
