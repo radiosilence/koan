@@ -286,6 +286,9 @@
   }
 
   function settle() {
+    // A page chosen from the phone's account sheet replaces what it covered.
+    const sheet = document.getElementById("account");
+    if (sheet && sheet.matches(":popover-open")) sheet.hidePopover();
     const page = main.firstElementChild;
     const title = page && page.dataset.title;
     document.title = title ? `${title} · koan` : "koan";

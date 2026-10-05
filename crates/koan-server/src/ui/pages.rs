@@ -151,7 +151,7 @@ href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></d
         "{head}<script type=module src=\"{datastar}\"></script>\
 <script src=\"{player}\" defer></script><script src=\"{ui}\" defer></script>\
 </head><body><nav class=\"fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r \
-border-rule bg-surface px-2.5 py-4 pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
+border-rule bg-surface px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
 max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto \
 max-wide:flex-row max-wide:gap-0 max-wide:border-t max-wide:border-r-0 max-wide:p-0 \
 max-wide:pb-[env(safe-area-inset-bottom)]\" aria-label=Library>\
@@ -161,11 +161,13 @@ max-wide:hidden\" href=\"/\">kōan</a>\
 <a class=\"{NAV_LINK}\" href=\"/artists\" data-nav=artists>Artists</a>\
 <a class=\"{NAV_LINK}\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
 <a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
-<a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>{side_account}</nav>\
+<a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>\
+<button class=\"{NAV_LINK} border-0 bg-transparent wide:hidden\" popovertarget=account>More</button>{side_account}</nav>\
 <main id=content class=\"ml-(--side-w) min-w-0 px-7 \
 pt-[max(24px,env(safe-area-inset-top))] pb-10 max-wide:ml-0 max-wide:p-4 \
 max-wide:pt-[max(16px,env(safe-area-inset-top))]\">{content}</main>\
-<div class=\"hidden px-4 pt-2 pb-6 max-wide:block\">{foot_account}</div>\
+<div id=account popover class=\"inset-x-0 top-auto bottom-0 m-0 w-full max-w-none border-0 border-t border-rule \
+bg-surface px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] text-ink backdrop:bg-black/50 wide:hidden\">{foot_account}</div>\
 <footer class=\"fixed inset-x-0 bottom-(--tabs-h) z-5 grid h-[calc(var(--bar-h)+env(safe-area-inset-bottom))] \
 grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-4 border-t border-rule bg-surface px-4 \
 pb-[env(safe-area-inset-bottom)] max-wide:bottom-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] \
