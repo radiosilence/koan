@@ -368,6 +368,9 @@
   .w-\[12em\] {
     width: 12em;
   }
+  .w-\[17em\] {
+    width: 17em;
+  }
   .w-auto {
     width: auto;
   }
@@ -1366,6 +1369,22 @@
     height: 15px;
     fill: currentcolor;
     vertical-align: -2px;
+  }
+  .tracks .fav-mark {
+    display: none;
+    flex: none;
+    padding-inline: var(--spacing);
+    color: var(--brand);
+  }
+  .tracks .fav-mark svg {
+    width: 13px;
+    height: 13px;
+    fill: currentcolor;
+  }
+  @media (width < 721px) {
+    .tracks li:has([data-fav][aria-pressed="true"]) .fav-mark {
+      display: inline-flex;
+    }
   }
 }
 @property --tw-border-style {
