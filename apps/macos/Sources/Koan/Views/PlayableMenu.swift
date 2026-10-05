@@ -509,6 +509,8 @@ struct AddToPlaylistMenu: View {
     @Environment(PlaylistsModel.self) private var playlists
 
     var body: some View {
+        // A television plays playlists; they are made and filled elsewhere.
+        #if !os(tvOS)
         Menu("Add to Playlist") {
             Button("New Playlist…") { resolve { playlists.naming = $0 } }
             let fillable = playlists.playlists.filter { !$0.readonly }
@@ -521,5 +523,6 @@ struct AddToPlaylistMenu: View {
                 }
             }
         }
+        #endif
     }
 }

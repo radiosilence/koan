@@ -28,9 +28,13 @@ struct PlaylistsList: View {
             }
         }
         .navigationTitle("Playlists")
+        #if !os(tvOS)
+        // Playlists are made and edited on a phone or a computer; a television
+        // plays them.
         .toolbar {
             Button("New Playlist", systemImage: Icon.add) { playlists.naming = [] }
         }
+        #endif
         .task { playlists.load() }
     }
 }

@@ -20,8 +20,16 @@ struct BrowseFilterButton: View {
                 }
             }
             .accessibilityLabel(count > 0 ? "Filters, \(count) on" : "Filters")
+            #if os(tvOS)
+            // A television's toolbar draws a custom label at body size, and
+            // tinted; the sort menu beside it draws its symbol as a toolbar icon.
+            .font(.title3)
+            #endif
         }
         .help(count > 0 ? "Filters — \(count) on" : "Filters")
+        #if os(tvOS)
+        .tint(.primary)
+        #endif
         #if os(macOS)
         .tint(.primary)
         .popover(isPresented: $open, arrowEdge: .bottom) {
