@@ -160,11 +160,22 @@ max-wide:hidden\" href=\"/\">kōan</a>\
 <a class=\"{NAV_LINK}\" href=\"/albums\" data-nav=albums>Albums</a>\
 <a class=\"{NAV_LINK}\" href=\"/artists\" data-nav=artists>Artists</a>\
 <a class=\"{NAV_LINK} max-wide:hidden\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
+<<<<<<< HEAD
 <a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists recent favourites history\">Library</a>\
+||||||| ae467664
+<a class=\"{NAV_LINK}\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
+=======
+<a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists favourites history\">Library</a>\
+>>>>>>> origin/main
 <a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
 <a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>\
+<<<<<<< HEAD
 <a class=\"{NAV_LINK} mt-3 max-wide:hidden\" href=\"/recent\" data-nav=recent>Recently played</a>\
 <a class=\"{NAV_LINK} max-wide:hidden\" href=\"/favourites\" data-nav=favourites>Favourites</a>\
+||||||| ae467664
+=======
+<a class=\"{NAV_LINK} mt-3 max-wide:hidden\" href=\"/favourites\" data-nav=favourites>Favourites</a>\
+>>>>>>> origin/main
 <a class=\"{NAV_LINK} max-wide:hidden\" href=\"/history\" data-nav=history>History</a>\
 <a class=\"{NAV_LINK} wide:hidden\" href=\"/account\" data-nav=account>Account</a>{account}</nav>\
 <main id=content class=\"ml-(--side-w) min-w-0 px-7 \
@@ -871,6 +882,7 @@ pub(super) async fn library(
 ) -> Response {
     let rows = [
         ("/playlists", "Playlists"),
+<<<<<<< HEAD
         ("/recent", "Recently played"),
         ("/favourites", "Favourites"),
         ("/history", "History"),
@@ -1066,6 +1078,142 @@ is gathered here for a month, each artist, record and track once.",
         },
     );
     respond(&s, &headers, &user, "Recently played", &inner)
+||||||| ae467664
+=======
+        ("/favourites", "Favourites"),
+        ("/history", "History"),
+    ]
+        .iter()
+        .fold(String::new(), |mut out, (href, name)| {
+            let _ = write!(
+                out,
+                "<li><a class=\"{LIST_ROW}\" href=\"{href}\"><span class=\"{LIST_NAME}\">{name}</span></a></li>"
+            );
+            out
+        });
+    let inner = format!("<h1>Library</h1><ul>{rows}</ul>");
+    respond(&s, &headers, &user, "Library", &inner)
+}
+
+/// An artist as a pill, on a shelf.
+fn pills(artists: &[queries::ArtistRow]) -> String {
+    artists.iter().fold(String::new(), |mut out, a| {
+        let _ = write!(
+            out,
+            "<a class=\"inline-flex max-w-full rounded-full border border-rule bg-surface px-3.5 py-1.5 text-ink \
+hover:border-hover hover:no-underline\" href=\"/artist/{}\"><span class=\"truncate\">{}</span></a>",
+            a.id,
+            escape(&a.name)
+        );
+        out
+    })
+}
+
+/// What a shelf page says with nothing on it.
+pub(super) struct EmptyShelf {
+    pub title: &'static str,
+    pub detail: &'static str,
+}
+
+/// A page of artists, records and tracks that answer one question, as the
+/// apps' shelf lays them out: artists as pills, records as tiles, and the
+/// tracks as a list that plays from the row picked to its end.
+pub(super) fn shelf(
+    title: &str,
+    artists: &[queries::ArtistRow],
+    albums: &[AlbumRow],
+    tracks: &[TrackRow],
+    versions: &Versions,
+    empty: &EmptyShelf,
+) -> String {
+    if artists.is_empty() && albums.is_empty() && tracks.is_empty() {
+        return format!(
+            "<h1>{}</h1><p class=\"{EMPTY}\">{}</p><p class=\"{EMPTY}\">{}</p>",
+            escape(title),
+            empty.title,
+            empty.detail
+        );
+    }
+    let mut out = format!("<h1>{}</h1>", escape(title));
+    if !artists.is_empty() {
+        let _ = write!(
+            out,
+            "<h2>Artists</h2><div class=\"mb-6 flex flex-wrap gap-2\">{}</div>",
+            pills(artists)
+        );
+    }
+    if !albums.is_empty() {
+        let _ = write!(
+            out,
+            "<h2>Albums</h2><div class=\"mb-6 {GRID}\">{}</div>",
+            cells(albums, versions)
+        );
+    }
+    if !tracks.is_empty() {
+        let rows: String = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| track_row(t, i + 1, true, true, versions, false))
+            .collect();
+        let _ = write!(
+            out,
+            "<div class=\"{LIST_HEAD}\"><h2>Tracks</h2>\
+<div class=\"{ACTIONS}\"><button class=\"primary\" data-act=play>Play</button>\
+<button data-act=shuffle>Shuffle</button><button data-act=queue>Add to queue</button></div></div>\
+<ol class=\"tracks\" data-context=album>{rows}</ol>"
+        );
+    }
+    out
+}
+
+/// The signed-in account's favourite artists, records and tracks.
+pub(super) async fn favourites(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+) -> Response {
+    let st = s.clone();
+    let found = blocking(move || {
+        let db = open(&st.pool)?;
+        let artists = queries::list_artists(
+            &db.conn,
+            &ArtistQuery {
+                favourites_of: Some(user.user_id),
+                ..Default::default()
+            },
+        )
+        .ok()?;
+        let albums = queries::list_albums(
+            &db.conn,
+            &AlbumQuery {
+                favourites_of: Some(user.user_id),
+                ..Default::default()
+            },
+        )
+        .ok()?;
+        let tracks = queries::favourite_tracks(&db.conn, user.user_id, None).ok()?;
+        let mut versions = album_versions(&db.conn, &albums);
+        versions.extend(track_versions(&db.conn, &tracks));
+        Some((artists, albums, tracks, versions))
+    })
+    .await;
+    let Some((artists, albums, tracks, versions)) = found else {
+        return unavailable();
+    };
+    let inner = shelf(
+        "Favourites",
+        &artists,
+        &albums,
+        &tracks,
+        &versions,
+        &EmptyShelf {
+            title: "Nothing favourited yet.",
+            detail: "Artists, records and tracks favourited in the kōan apps, or in any Subsonic app \
+signed in as you, are listed here.",
+        },
+    );
+    respond(&s, &headers, &user, "Favourites", &inner)
+>>>>>>> origin/main
 }
 
 /// The queue lives in the browser, so the page is a frame the script fills.

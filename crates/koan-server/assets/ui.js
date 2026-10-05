@@ -265,7 +265,13 @@
   }, true);
 
   // --- Navigation ------------------------------------------------------------
+<<<<<<< HEAD
   const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history|recent)?$/;
+||||||| ae467664
+  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account)?$/;
+=======
+  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history)?$/;
+>>>>>>> origin/main
   let navigating = 0;
 
   async function navigate(url, push) {
