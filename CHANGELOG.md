@@ -5,6 +5,12 @@
 ### Added
 
 - **Scrobbling to ListenBrainz.** Each account can connect ListenBrainz on the web UI's Scrobbling page, under Account, by pasting its user token. The server then sends the account's existing history, and from then on every play kōan's apps and other Subsonic clients report, with now-playing notices; no client needs configuring. Plays wait in the database until ListenBrainz accepts them, so an outage or restart delays them rather than losing them. The library database moves to schema 19 for the new `scrobble_services` and `scrobble_outbox` tables; a build older than this one refuses it.
+- **Recently played.** A page in the Mac and iOS apps, laid out like Favourites, for "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first, at most 50 of each. It is worked out from play history, so it follows each play as it is recorded, and History now does too. On the Mac, ⌘6.
+
+## 0.53.0
+
+### Added
+
 - **App passwords for Subsonic apps that only sign in with a password token.** Many Subsonic clients sign in with `t = md5(password + salt)`, which needs the password on the server, and kōan only keeps a hash of yours, so they were refused with error 41. On the Account page you can now make an app password per app: generated, shown once, stored encrypted under a key derived from the server's signing key, and usable as a token or as a password. It is never your real password, it can be revoked on its own, and changing your password revokes them all. The error 41 message says so instead of describing a sign-in that no longer existed. The database moves to schema 16 for the new `app_passwords` table.
 
 ### Fixed
