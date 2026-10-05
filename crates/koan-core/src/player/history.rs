@@ -342,6 +342,7 @@ fn send_report(db: &Database, report: PlaybackReport) {
 }
 
 /// Scrobble a finished listen to the remote server, if it counts as a play.
+/// Held until the server takes it: see `remote::history`.
 fn scrobble_if_heard(db: &Database, track_id: i64, listened_ms: u64, at_ms: u64) {
     let Some((remote_id, duration_ms)) = remote_track(db, track_id) else {
         return;
@@ -349,12 +350,7 @@ fn scrobble_if_heard(db: &Database, track_id: i64, listened_ms: u64, at_ms: u64)
     if !counts_as_heard(listened_ms, duration_ms) {
         return;
     }
-    let Some(client) = remote_client() else {
-        return;
-    };
-    if let Err(e) = client.scrobble(&remote_id, at_ms) {
-        log::warn!("failed to report track {track_id} to remote: {e}");
-    }
+    crate::remote::history::scrobble(db, &remote_id, at_ms as i64);
 }
 
 #[cfg(test)]

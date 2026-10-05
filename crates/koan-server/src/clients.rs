@@ -703,6 +703,7 @@ impl Registry {
             command,
             LinkCommand::Devices { .. }
                 | LinkCommand::Forgotten { .. }
+                | LinkCommand::HistoryChanged
                 | LinkCommand::Levels { .. }
                 | LinkCommand::WatchLevels { .. }
                 | LinkCommand::Shares { .. }

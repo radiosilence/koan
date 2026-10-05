@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 15;
+pub const SCHEMA_VERSION: i64 = 16;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -289,12 +289,36 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             updated_at    TEXT DEFAULT (datetime('now'))
         );
 
+        -- `AUTOINCREMENT` because ids are the cursor devices page a
+        -- server's history by: one handed out again would never reach them.
         CREATE TABLE IF NOT EXISTS play_history (
-            id          INTEGER PRIMARY KEY,
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
             track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
             played_at   INTEGER NOT NULL,
             duration_ms INTEGER,
             source      TEXT DEFAULT 'local'
+        );
+
+        -- Plays forgotten on a server, kept so the account's devices forget
+        -- them too: see `queries::history`. A row without a track forgets
+        -- every play up to `played_at`.
+        CREATE TABLE IF NOT EXISTS play_history_forgotten (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id     INTEGER NOT NULL,
+            track_uid   TEXT,
+            played_at   INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_play_history_forgotten_user
+            ON play_history_forgotten(user_id, id);
+
+        -- Plays and forgets waiting to reach the signed-in server, sent in
+        -- order once it answers. `remote_id` is the track's id there; a
+        -- `clear` has none and forgets every play up to `at_ms`.
+        CREATE TABLE IF NOT EXISTS history_outbox (
+            id          INTEGER PRIMARY KEY,
+            kind        TEXT NOT NULL CHECK (kind IN ('scrobble', 'forget', 'clear')),
+            remote_id   TEXT,
+            at_ms       INTEGER NOT NULL
         );
 
         -- With `played_at`, a track's last play is read off the index.
@@ -477,6 +501,9 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("albums", "title_key", "TEXT"),
     // Where a linked device last connected from: see koan-server's clients.rs.
     ("link_devices", "addr", "TEXT"),
+    // How far this device has read the server's play history: see
+    // `remote::history`.
+    ("remote_servers", "history_cursor", "TEXT"),
 ];
 
 /// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a
@@ -598,6 +625,7 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         [],
     )?;
     cascade_play_history(conn)?;
+    autoincrement_play_history(conn)?;
     snapshots_to_playlists(conn)?;
     per_user_favourites(conn)?;
     name_keys(conn)?;
@@ -623,6 +651,7 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
              DELETE FROM favourite_albums WHERE user_id = OLD.id;
              DELETE FROM favourite_artists WHERE user_id = OLD.id;
              DELETE FROM play_history WHERE user_id = OLD.id;
+             DELETE FROM play_history_forgotten WHERE user_id = OLD.id;
              DELETE FROM playlists WHERE user_id = OLD.id;
              DELETE FROM shares WHERE user_id = OLD.id;
          END;",
@@ -1079,6 +1108,51 @@ fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
          CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
          COMMIT;",
     );
+    conn.pragma_update(None, "foreign_keys", "on")?;
+    rebuild
+}
+
+/// Give `play_history.id` `AUTOINCREMENT`, keeping every row and id.
+///
+/// A server's history is paged by id, so a device that has read up to an id
+/// asks only for those after it. Without the keyword SQLite hands the highest
+/// id out again once that play is forgotten, and the play given it would never
+/// reach a device that had already read past it.
+fn autoincrement_play_history(conn: &Connection) -> rusqlite::Result<()> {
+    let sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'play_history'",
+        [],
+        |r| r.get(0),
+    )?;
+    if sql.to_ascii_uppercase().contains("AUTOINCREMENT") {
+        return Ok(());
+    }
+
+    // Pragma changes are no-ops inside a transaction, so this must bracket it.
+    conn.pragma_update(None, "foreign_keys", "off")?;
+    // Recreated by `apply_migrations`; see `per_user_favourites`. So are the
+    // indexes, which go with the table.
+    let rebuild = conn.execute_batch(
+        "DROP TRIGGER IF EXISTS users_personal_data;
+         BEGIN;
+         CREATE TABLE play_history_new (
+             id          INTEGER PRIMARY KEY AUTOINCREMENT,
+             track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+             played_at   INTEGER NOT NULL,
+             duration_ms INTEGER,
+             source      TEXT DEFAULT 'local',
+             user_id     INTEGER NOT NULL DEFAULT 0
+         );
+         INSERT INTO play_history_new (id, track_id, played_at, duration_ms, source, user_id)
+             SELECT id, track_id, played_at, duration_ms, source, user_id FROM play_history;
+         DROP TABLE play_history;
+         ALTER TABLE play_history_new RENAME TO play_history;
+         CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
+         COMMIT;",
+    );
+    if rebuild.is_err() {
+        let _ = conn.execute_batch("ROLLBACK");
+    }
     conn.pragma_update(None, "foreign_keys", "on")?;
     rebuild
 }

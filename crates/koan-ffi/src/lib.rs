@@ -397,7 +397,11 @@ impl KoanEngine {
             .await?;
         }
         // A sync touches no player state, so it has no place in the lane's order.
-        if matches!(cmd, koan_core::remote::link::LinkCommand::Sync { .. }) {
+        if matches!(
+            cmd,
+            koan_core::remote::link::LinkCommand::Sync { .. }
+                | koan_core::remote::link::LinkCommand::HistoryChanged
+        ) {
             return offload::offload(move || {
                 self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
                 Ok(())
@@ -1138,23 +1142,23 @@ impl KoanEngine {
         .await
     }
 
-    /// Forget specific plays. Returns how many entries were removed.
+    /// Forget specific plays, here and, signed in to a koan server, on every
+    /// device on the account. Returns how many entries were removed.
     pub async fn delete_plays(self: Arc<Self>, ids: Vec<i64>) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let removed =
-                queries::delete_plays(&db.conn, queries::LOCAL_USER, &ids).map_err(db_err)?;
+            let removed = koan_core::remote::history::forget(&db, &ids).map_err(db_err)?;
             Ok(removed as u32)
         })
         .await
     }
 
-    /// Forget every play. Returns how many entries were removed.
+    /// Forget every play, here and, signed in to a koan server, on every
+    /// device on the account. Returns how many entries were removed.
     pub async fn clear_play_history(self: Arc<Self>) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let removed =
-                queries::clear_play_history(&db.conn, queries::LOCAL_USER).map_err(db_err)?;
+            let removed = koan_core::remote::history::clear(&db).map_err(db_err)?;
             Ok(removed as u32)
         })
         .await
@@ -4238,6 +4242,11 @@ impl KoanEngine {
                 log::info!("link: evicted {} cached tracks", ids.len());
                 self.library_changed();
                 Ok(())
+            }),
+            LinkCommand::HistoryChanged => self.db().map(|db| {
+                if koan_core::remote::history::sync(&db).changed() {
+                    self.library_changed();
+                }
             }),
             LinkCommand::Sync { full } => self.db().map(|db| {
                 let walk = if full {
