@@ -151,13 +151,14 @@ impl OpusBridge {
         Ok(&self.pcm_buf[start..total_samples])
     }
 
-    /// Reset the decoder state (e.g. after a seek).
-    pub fn reset(&mut self) {
+    /// Start decoding afresh after a seek. Landing `at_start`, the stream's
+    /// pre-skip is still ahead and is dropped again; anywhere else it is not.
+    pub fn reset(&mut self, at_start: bool) {
         // opus-rs has no reset; a fresh decoder is the same state and cheap.
         if let Ok(decoder) = OpusDecoder::new(48000, self.channels) {
             self.decoder = decoder;
         }
-        self.skipped = self.pre_skip; // After seek, pre-skip already applied.
+        self.skipped = if at_start { 0 } else { self.pre_skip };
     }
 }
 
@@ -222,6 +223,35 @@ mod tests {
 
         let bridge = OpusBridge::new(&params).unwrap();
         assert_eq!(bridge.channels(), 2);
+    }
+
+    #[test]
+    fn pre_skip_is_dropped_at_the_start_and_only_there() {
+        let mut header = vec![0u8; 19];
+        header[..8].copy_from_slice(b"OpusHead");
+        header[8] = 1;
+        header[9] = 2;
+        header[10..12].copy_from_slice(&312u16.to_le_bytes());
+        let mut params = AudioCodecParameters::new();
+        params.with_extra_data(header.into_boxed_slice());
+        let mut bridge = OpusBridge::new(&params).unwrap();
+
+        // One 20 ms stereo frame of a tone.
+        let pcm: Vec<f32> = (0..960 * 2)
+            .map(|i| ((i / 2) as f32 * 0.05).sin() * 0.5)
+            .collect();
+        let mut encoder = opus_rs::OpusEncoder::new(48000, 2, opus_rs::Application::Audio).unwrap();
+        let mut packet = vec![0u8; 1500];
+        let len = encoder.encode(&pcm, 960, &mut packet).unwrap();
+        let packet = &packet[..len];
+
+        let frames = |bridge: &mut OpusBridge| bridge.decode_packet(packet).unwrap().len() / 2;
+        assert_eq!(frames(&mut bridge), 960 - 312);
+        assert_eq!(frames(&mut bridge), 960);
+        bridge.reset(false);
+        assert_eq!(frames(&mut bridge), 960);
+        bridge.reset(true);
+        assert_eq!(frames(&mut bridge), 960 - 312);
     }
 
     #[test]

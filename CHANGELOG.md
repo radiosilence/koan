@@ -5,6 +5,7 @@
 ### Changed
 
 - **Opus is decoded by `opus-rs` instead of `opus-decoder`.** `opus-rs` is a maintained pure-Rust port of libopus 1.6; `opus-decoder` has had no release since the one whose slow transform 0.52.8 patched around. Against libopus itself, `opus-rs` reproduces a 48 kHz stereo music file at 71 dB SNR where `opus-decoder` managed 55, matches it within a few dB at 24 and 32 kbps, and decodes about a quarter faster: 0.20% of a Mac core for a stereo stream. kōan no longer carries a patched decoder of its own.
+- **Seeking in Opus starts clean.** A seek now decodes from 80 ms before the target and discards that, as the Opus spec asks, so the decoder has settled by the first sample heard; it used to start cold at the target. A seek into the first 80 ms also drops the stream's encoder delay again, which it skipped before.
 
 ## 0.52.8
 
