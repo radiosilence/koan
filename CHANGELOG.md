@@ -6,6 +6,8 @@
 
 - **The server stops when asked to.** `koan` now shuts down on SIGTERM as well as SIGINT. In a container it runs as PID 1, where an unhandled SIGTERM is dropped, so every stop waited out the grace period and ended in a kill: about 30 seconds of downtime added to each Kubernetes deploy. Shutdown waits up to 10 seconds for open connections, since subscription websockets and audio streams never close on their own.
 
+- **A device that keeps dropping off the network no longer sets every other kōan dialling.** Each time one reappeared, or a connection to it ended, every device was dialled again at once with its backoff started over, so one flapping device (here a tvOS simulator) had a phone playing in the background connected to about 800 times in a night. A redial now goes only to the device concerned, and a connection must last 30 seconds before its backoff starts over. On Apple platforms an incoming connection also failed its handshake whenever the request arrived a moment after it, which made the dialler try again; it now waits for the request.
+
 ## 0.52.6
 
 ### Added
