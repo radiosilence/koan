@@ -232,9 +232,11 @@
     );
     if (!menu.matches(":popover-open")) menu.showPopover();
     if (wide.matches) {
+      // Just under the pointer, so the button's release lands on the menu and
+      // does not dismiss it as a click outside.
       const r = menu.getBoundingClientRect();
-      menu.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
-      menu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+      menu.style.left = `${Math.max(8, Math.min(x - 4, innerWidth - r.width - 8))}px`;
+      menu.style.top = `${Math.max(8, Math.min(y - 4, innerHeight - r.height - 8))}px`;
     } else {
       menu.style.left = menu.style.top = "";
     }
