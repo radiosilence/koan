@@ -1,0 +1,2 @@
+# Hand-written pages: a formatter re-indents their <pre> blocks, which changes what the code listings show.
+site/public/**/*.html
