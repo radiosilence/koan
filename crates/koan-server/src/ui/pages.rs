@@ -17,6 +17,7 @@ use koan_core::db::queries::{self, AlbumRow, TrackRow};
 use koan_core::helpers::ShareTarget;
 
 use super::browse::{self, Browse, Kind};
+use super::favourite::Hearts;
 use super::{PARTIAL, UiState, events, html, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
