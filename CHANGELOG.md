@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **A shelf's headings open its browsers, in place of See all.** On Favourites, Recently Played and search, in the apps and the web UI, each section's heading reads as a link: its name, how many there are in all, and a chevron. It opens the browser filtered to the shelf, whether or not the section shows all it has. The separate See all is gone.
+
 ### Changed
 
 - **The Control menu lists only devices you use.** A device out of reach was kept, asleep, until it was forgotten, so every phone, simulator and stranger ever seen stayed in the list. Now one is kept asleep only if this device has controlled it or sent it music; one never used goes once it has been gone for a heartbeat. On upgrade only the device being controlled is kept from the old list. Forget still removes one you have used.
