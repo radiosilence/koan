@@ -1234,6 +1234,9 @@
       --tw-outline-style: none;
       outline-style: none;
     }
+    @media (width < 721px) {
+      gap: calc(var(--spacing) * 2);
+    }
   }
   .tracks li.playing {
     border-left-style: var(--tw-border-style);
@@ -1294,6 +1297,9 @@
     font-size: var(--text-input);
     --tw-leading: 1;
     line-height: 1;
+    @media (width < 721px) {
+      padding-inline: calc(var(--spacing) * 2);
+    }
   }
   .tracks button svg {
     display: inline;
