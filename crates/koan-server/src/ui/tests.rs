@@ -419,6 +419,7 @@ async fn every_class_on_every_page_has_a_rule() {
         "/history".to_owned(),
         "/recent".to_owned(),
         "/account".to_owned(),
+        "/scrobbling".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
     ] {

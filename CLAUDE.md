@@ -156,6 +156,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `playlists.rs` | Playlists beyond the database: two-way Subsonic reconciliation, background pushes, M3U8 export |
 | `organize.rs` | File rename using format strings. Preview/execute/undo — one `PlanEntry` per file carrying its destination and outcome. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
+| `scrobbling.rs` | Forwarding plays to ListenBrainz: one sleeping thread, woken when a play is queued, sending the durable `scrobble_outbox` in batches and backing off only while the service is unreachable. Now-playing notices are best effort |
 | `artist_info.rs` | Artist bio and photo: MusicBrainz id → Wikidata → Wikipedia/Commons. Resolved by id, never by name alone; cached per artist, misses included |
 
 ### koan-tui (`crates/koan-tui/src/`)
@@ -260,7 +261,7 @@ follows the top of the stack in front — see `TabShell`.
 | `push.rs` | Apple push notifications to the iOS app: ES256 token auth, HTTP/2 to APNs. A background push wakes a suspended app to link; a play request becomes a notification to tap |
 | `share.rs` | Public share pages and their audio, answering for a share's own tracks only |
 | `../styles/` | Tailwind sources for `assets/ui.css` and `assets/share.css`, on the theme koan.rocks uses (`site/src/theme.css`). The pages are styled with utilities in the templates; these hold element defaults and the rules for classes the scripts toggle or build (`playing`, `busy`, `missing`, the queue's rows). Quote every `class` attribute: Tailwind does not read an unquoted one. Run `just css` after changing either; the compiled files are committed because the crate embeds them |
-| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use. `ui/oauth.rs` is the OAuth 2.1 authorization server for `/mcp`: discovery, stateless registration, consent, PKCE token exchange; `ui/connect.rs` the page explaining how to connect an assistant |
+| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use. `ui/oauth.rs` is the OAuth 2.1 authorization server for `/mcp`: discovery, stateless registration, consent, PKCE token exchange; `ui/connect.rs` the page explaining how to connect an assistant; `ui/scrobbling.rs` the page connecting an account to ListenBrainz |
 
 ### koan-cli (`crates/koan-cli/src/`)
 

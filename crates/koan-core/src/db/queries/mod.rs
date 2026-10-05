@@ -11,6 +11,7 @@ pub mod playback_state;
 pub mod playlists;
 mod ratings;
 mod scan_cache;
+pub mod scrobbling;
 mod search;
 pub mod shares;
 pub(crate) mod sources;

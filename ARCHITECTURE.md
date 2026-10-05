@@ -301,6 +301,7 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 | `queries/stats.rs` | Library statistics |
 | `queries/lyrics.rs` | Lyrics caching (synced + plain, per-track) |
 | `queries/ratings.rs` | One-to-five ratings of tracks, albums and artists, per account, by row id. Subsonic's `setRating`, `userRating` and the `highest` album list. No rating is no row |
+| `queries/scrobbling.rs` | Accounts' scrobbling services and the outbox of plays waiting for them. A trigger on `play_history` queues reported plays as they are recorded; connecting queues the heard history |
 | `queries/favourites.rs` | Favourite/star status by row id (syncs with Navidrome). Favourites, playlists, play history and shares carry a `user_id`: each account on a server has its own, as Navidrome keeps them. `LOCAL_USER` (0) is the caller with no account — the apps, the TUI, auth-disabled mode, the Subsonic shared secret — and resolves to the first admin once one exists, so a local library and a single-user server behave the same (`queries/auth.rs`) |
 | `queries/history.rs` | Play history — one row per play, written when a track starts |
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |
@@ -358,6 +359,7 @@ fb2k-compatible template engine, re-exported from [sift](https://github.com/radi
 | `signal.rs` | `Wake` — a generation counter a reader can wait on, and the process-wide one every front end waits on. What lets koan hold state in versions and atomics without anyone having to look again |
 | `organize.rs` | File renaming using format strings. Preview/execute/undo, all planned by one `plan()` so a preview and the execute that follows it agree. Scoped by track id or by path. Refuses to overwrite; database rows (track paths, scan cache, favourites, playback state) are rewritten in the same transaction as the move. Playlists need no rewriting — they point at library rows, not at paths. Every move is logged for undo. Moves ancillary files (cover art, cue sheets). |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
+| `scrobbling.rs` | Forwarding plays to ListenBrainz: one sleeping thread, woken when a play is queued, sending the durable `scrobble_outbox` in batches and backing off only while the service is unreachable. Now-playing notices are best effort |
 
 ## koan-cli modules
 
