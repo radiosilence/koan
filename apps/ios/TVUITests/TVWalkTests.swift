@@ -55,16 +55,18 @@ final class TVWalkTests: XCTestCase {
         snap("07-now-playing-up-next")
         start(at: .nowPlaying)
         press(.down)
-        press(.right, times: 3)
-        press(.select)
-        pause(3)
+        if focus(app.buttons["lyrics"]) {
+            press(.select)
+            pause(3)
+        }
         snap("08-lyrics")
         start(at: .nowPlaying)
         press(.down)
-        press(.right, times: 7)
-        snap("09-devices-focused")
-        press(.select)
-        pause(2)
+        if focus(app.buttons["output"]) || focus(app.buttons["play-on"]) {
+            snap("09-devices-focused")
+            press(.select)
+            pause(2)
+        }
         snap("10-device-sheet")
 
         start(at: .library)
@@ -115,6 +117,20 @@ final class TVWalkTests: XCTestCase {
         pause(5)
         press(.right, times: tab.rawValue)
         pause(2)
+    }
+
+    /// Move right along a row until `element` has focus, then left if it was
+    /// passed. Counting presses breaks whenever a control comes or goes.
+    @discardableResult
+    private func focus(_ element: XCUIElement) -> Bool {
+        guard element.waitForExistence(timeout: 3) else { return false }
+        for direction in [XCUIRemote.Button.right, .left] {
+            for _ in 0..<12 {
+                if element.hasFocus { return true }
+                press(direction)
+            }
+        }
+        return element.hasFocus
     }
 
     private func press(_ button: XCUIRemote.Button, times: Int = 1) {

@@ -133,13 +133,17 @@ struct NowPlayingPage: View {
             Button { ui.toggleLyrics() } label: {
                 Image(systemName: Icon.lyrics).symbolVariant(ui.showLyrics ? .fill : .none)
             }
+            .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")
+            .accessibilityIdentifier("lyrics")
             ShuffleButton()
             RepeatButton()
             if player.hasOtherDevices || player.isControllingAnother {
                 ControlButton(open: $showingControl, labelled: player.isControllingAnother)
+                    .accessibilityIdentifier("play-on")
             }
             if player.canChooseOutput {
                 OutputButton(open: $showingDevices, labelled: false)
+                    .accessibilityIdentifier("output")
             }
             if !player.isControllingAnother {
                 if let route = app.dsp.route,
