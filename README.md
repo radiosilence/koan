@@ -112,7 +112,7 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 
 ## How it compares
 
-[koan.rocks/compare](https://koan.rocks/compare/) has feature tables against Subsonic, Jellyfin and Plex apps on Apple platforms and Android, desktop players, room-correction software and self-hosted servers. The tables below cover terminal and desktop players only.
+[koan.rocks/compare](https://koan.rocks/compare/) has feature tables against Subsonic, Jellyfin and Plex apps on Apple platforms, desktop players, room-correction software and self-hosted servers. The tables below cover terminal and desktop players only.
 
 No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-style format strings, and file organization in one binary. Most either need a daemon, lack remote support, or skip the audiophile bits.
 
