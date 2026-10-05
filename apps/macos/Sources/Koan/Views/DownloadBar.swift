@@ -12,8 +12,7 @@ import QuartzCore
 /// While any of its tracks download it takes the tint and advances with their
 /// bytes, which `TransferMeter` hands it at the display's rate; when the last
 /// one settles it is still again.
-@MainActor
-final class DownloadBarLayer: CALayer, RecordGauge {
+final class DownloadBarLayer: CALayer {
     private let fill = CALayer()
     private var onDevice: AlbumOnDevice?
     /// The in-flight tracks' progress, summed: how many tracks' worth of
@@ -36,6 +35,7 @@ final class DownloadBarLayer: CALayer, RecordGauge {
 
     /// `downloading` is whether any of the record's tracks are in the download
     /// store and not yet settled.
+    @MainActor
     func show(_ onDevice: AlbumOnDevice?, downloading: Bool, tint: CGColor, muted: CGColor) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -48,6 +48,7 @@ final class DownloadBarLayer: CALayer, RecordGauge {
         CATransaction.commit()
     }
 
+    @MainActor
     func take(_ figures: [TransferFigure]) {
         arriving = figures.reduce(0) { $0 + ($1.progress ?? 0) }
         CATransaction.begin()
@@ -75,6 +76,8 @@ final class DownloadBarLayer: CALayer, RecordGauge {
         CGRect(x: 8, y: flipped ? side - 8 - 3 : 8, width: max(side - 16 - 34, 0), height: 3)
     }
 }
+
+extension DownloadBarLayer: RecordGauge {}
 
 extension EngineMirror {
     /// The tracks still to settle in the download store, by record.
