@@ -68,7 +68,7 @@ private struct DeviceRow: View {
         DeviceChoiceRow(
             icon: DevicePicker.icon(for: device.platform),
             name: device.name,
-            detail: detail,
+            detail: device.owner.map { "Shared by \($0) · \(detail)" } ?? detail,
             reach: device.nearby ? "wifi" : "cloud",
             reachHelp: device.nearby ? "On this network" : "Through your server",
             selected: player.controlled?.id == device.id,

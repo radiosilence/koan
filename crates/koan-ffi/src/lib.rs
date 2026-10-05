@@ -349,6 +349,19 @@ impl KoanEngine {
         log::info!("app: {message}");
     }
 
+    /// The accounts on this server that may control this device.
+    pub fn device_shares(&self) -> Vec<String> {
+        koan_core::remote::devices::shares()
+    }
+
+    /// Let the account `grantee` control this device, or with `allow` false
+    /// stop letting it: playback and the queue, nothing of this account. The
+    /// list in `device_shares` follows once the server has it.
+    pub fn share_device(&self, grantee: String, allow: bool) -> Result<(), KoanError> {
+        koan_core::remote::devices::share(&grantee, allow)
+            .map_err(|message| KoanError::Remote { message })
+    }
+
     /// Where Apple's push service reaches this app, as the OS issued it. The
     /// link sends it to the server, which can then wake the app once iOS has
     /// suspended it. `sandbox` for a development build.
@@ -1904,7 +1917,9 @@ impl KoanEngine {
                 return Ok(0);
             }
             let dropped = match (&from, &to) {
-                (None, Some(to)) => self.hand_off_blocking(to, false)?,
+                (None, Some(to)) => {
+                    self.hand_off_blocking(to, koan_core::remote::link::CommandSource::Account)?
+                }
                 (Some(from), to) => {
                     let to = match to {
                         Some(to) => to.clone(),
@@ -2250,6 +2265,10 @@ impl KoanEngine {
                 fade_on_pause: cfg.playback.fade_on_pause,
                 devices_discoverable: cfg.devices.discoverable,
                 devices_addresses: cfg.devices.addresses.clone(),
+                devices_nearby_control: match cfg.devices.nearby_control {
+                    config::NearbyControl::Full => "full".into(),
+                    config::NearbyControl::Playback => "playback".into(),
+                },
             }
         })
         .await
@@ -2288,6 +2307,10 @@ impl KoanEngine {
                 cfg.playback.fade_on_pause = s.fade_on_pause;
 
                 cfg.devices.discoverable = s.devices_discoverable;
+                cfg.devices.nearby_control = match s.devices_nearby_control.as_str() {
+                    "playback" => config::NearbyControl::Playback,
+                    _ => config::NearbyControl::Full,
+                };
                 cfg.devices.addresses = s
                     .devices_addresses
                     .iter()
@@ -2455,6 +2478,7 @@ impl KoanEngine {
     /// still real, they just cannot be fetched until you sign in again.
     pub async fn sign_out_remote(self: Arc<Self>) -> Result<(), KoanError> {
         offload::offload(move || {
+            koan_core::remote::devices::forget_shares();
             Config::persist(|cfg| {
                 cfg.remote.enabled = false;
                 cfg.remote.password = String::new();
@@ -3271,6 +3295,7 @@ impl KoanEngine {
                     name: d.name.clone(),
                     platform: d.platform.clone(),
                     account: d.account,
+                    owner: d.owner.clone(),
                     nearby: d.nearby,
                     awake: d.awake,
                     asleep: d.asleep,
@@ -4131,15 +4156,19 @@ impl KoanEngine {
             }),
             LinkCommand::Undo => self.send_local(PlayerCommand::Undo),
             LinkCommand::Redo => self.send_local(PlayerCommand::Redo),
-            // From a device on the network, the music goes over the network
-            // or nowhere: up this device's link it would reach the account's
-            // own devices, which the asker has no claim on.
-            LinkCommand::HandOff { to } => self
-                .hand_off_blocking(&to, source != CommandSource::Account)
-                .map(|_| ()),
+            LinkCommand::HandOff { to } => self.hand_off_blocking(&to, source).map(|_| ()),
             // Taken off the link before it gets here.
+            // From a notification tapped or an outbox: the link's own
+            // check, made again.
+            LinkCommand::Shared { command } => {
+                if command.allowed_playback() {
+                    self.handle_link(*command, CommandSource::Shared);
+                }
+                Ok(())
+            }
             // Answered by the link session itself, which holds the watch.
             LinkCommand::Devices { .. }
+            | LinkCommand::Shares { .. }
             | LinkCommand::Forgotten { .. }
             | LinkCommand::WatchLevels { .. }
             | LinkCommand::Levels { .. } => Ok(()),
@@ -4252,9 +4281,14 @@ impl KoanEngine {
     /// Send this device's queue and playhead to `to` and pause here. The
     /// tracks the server does not know are left out, since the other device
     /// could not play them; returns how many.
-    /// Send this device's music to `to`; with `nearby_only`, over the local
-    /// network and never this device's link.
-    fn hand_off_blocking(&self, to: &str, nearby_only: bool) -> Result<u32, KoanError> {
+    /// Send this device's music to `to`, asked by `source`: see
+    /// `devices::send_for`, which keeps a hand-off asked by anyone but the
+    /// account off the account's own devices.
+    fn hand_off_blocking(
+        &self,
+        to: &str,
+        source: koan_core::remote::link::CommandSource,
+    ) -> Result<u32, KoanError> {
         use koan_core::remote::link::LinkCommand;
         let (items, cursor) = self.state.snapshot_playlist();
         let remote = self.remote_ids(&items.iter().filter_map(|i| i.db_id).collect::<Vec<_>>());
@@ -4299,11 +4333,7 @@ impl KoanEngine {
             paused,
             handoff: true,
         };
-        let sent = if nearby_only {
-            koan_core::remote::devices::send_nearby(to, play)
-        } else {
-            koan_core::remote::devices::send(to, play)
-        };
+        let sent = koan_core::remote::devices::send_for(source, to, play);
         if let Err(message) = sent {
             if !paused {
                 self.send_local(PlayerCommand::Resume)?;
@@ -4558,6 +4588,10 @@ fn connection_info() -> ConnectionInfo {
         this_device: devices::local()
             .map(|l| l.identity.name.clone())
             .unwrap_or_default(),
+        sharing: p.as_ref().is_some_and(|p| p.offers(profile::SHARES)),
+        shared_with: devices::shares(),
+        share_error: devices::share_error(),
+        share_accounts: devices::accounts(),
     }
 }
 

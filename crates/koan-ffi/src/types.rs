@@ -1187,6 +1187,10 @@ pub struct Settings {
     pub devices_discoverable: bool,
     /// Devices to reach by address where Bonjour does not: `host:port`.
     pub devices_addresses: Vec<String>,
+    /// What devices on the local network may do with this one: `full`
+    /// (playback, outputs, presets, volume, hand-off) or `playback` (play and
+    /// the queue only).
+    pub devices_nearby_control: String,
 }
 
 /// A scanned folder, and what it contributed.
@@ -1319,6 +1323,8 @@ pub struct DeviceInfo {
     /// Signed in to the same account: reachable from anywhere, through the
     /// server.
     pub account: bool,
+    /// The account that owns it, for a device shared with this one.
+    pub owner: Option<String>,
     /// Found on the local network.
     pub nearby: bool,
     /// Reachable at once. False for a phone iOS has suspended, which a
@@ -1491,6 +1497,14 @@ pub struct ConnectionInfo {
     pub local_network_blocked: bool,
     /// This device, as others see it.
     pub this_device: String,
+    /// The server lets this device be shared with other accounts on it.
+    pub sharing: bool,
+    /// The accounts this device is shared with.
+    pub shared_with: Vec<String>,
+    /// Why the server refused the last change to them.
+    pub share_error: Option<String>,
+    /// The server's other accounts, to share with.
+    pub share_accounts: Vec<String>,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
