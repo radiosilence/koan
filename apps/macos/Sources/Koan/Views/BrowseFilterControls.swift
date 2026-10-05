@@ -57,6 +57,7 @@ private struct BrowseFilterForm: View {
             Section {
                 Toggle("Favourites", isOn: $library.browseFilter.favourites)
                 Toggle("Recently Played", isOn: $library.browseFilter.recent)
+                Toggle("Downloaded", isOn: $library.browseFilter.downloaded)
                 // A track's codec says this already, and the track listing
                 // filters by codec rather than by what its record is in.
                 if library.section != .tracks {

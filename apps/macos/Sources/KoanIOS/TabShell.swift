@@ -122,6 +122,9 @@ struct TabShell: View {
         // A play recorded, or plays forgotten: the pages derived from
         // history ask again.
         .onChange(of: mirror.historyVersion) { _, _ in library.historyChanged() }
+        // Offline narrows every listing to what can play here; going online
+        // widens it again.
+        .onChange(of: mirror.connection?.offline ?? false) { _, _ in library.libraryChanged() }
         .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
             Task { await player.saveSession() }
         }

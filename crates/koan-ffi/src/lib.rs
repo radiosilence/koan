@@ -872,6 +872,7 @@ impl KoanEngine {
                     genre: trimmed(&filter.genre).map(str::to_owned),
                     year_start: filter.year_from,
                     year_end: filter.year_to,
+                    on_device: filter.downloaded || offline(),
                     ..Default::default()
                 },
                 order,
@@ -906,7 +907,20 @@ impl KoanEngine {
     ) -> Result<Vec<Track>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = queries::search_tracks_paged(&db.conn, &query, limit, 0).map_err(db_err)?;
+            let filter = queries::TrackFilter {
+                search: Some(query),
+                on_device: offline(),
+                ..Default::default()
+            };
+            let rows = queries::filter_tracks(
+                &db.conn,
+                &filter,
+                queries::TrackOrder::ArtistAlbumDiscTrack,
+                false,
+                limit,
+                0,
+            )
+            .map_err(db_err)?;
             Ok(self.decorate(&db, rows))
         })
         .await
@@ -955,6 +969,7 @@ impl KoanEngine {
                 &db.conn,
                 &queries::AlbumQuery {
                     ids: Some(&ids),
+                    filter: offline_filter(),
                     ..Default::default()
                 },
             )
@@ -980,6 +995,7 @@ impl KoanEngine {
                 &db.conn,
                 &queries::ArtistQuery {
                     ids: Some(&ids),
+                    filter: offline_filter(),
                     ..Default::default()
                 },
             )
@@ -1239,6 +1255,7 @@ impl KoanEngine {
                 &queries::AlbumQuery {
                     search,
                     limit: Some(RECENT_LIMIT),
+                    filter: offline_filter(),
                     ..Shelf::Recent.albums(user, now)
                 },
             )
@@ -1248,6 +1265,7 @@ impl KoanEngine {
                 &queries::ArtistQuery {
                     search,
                     limit: Some(RECENT_LIMIT),
+                    filter: offline_filter(),
                     ..Shelf::Recent.artists(user, now)
                 },
             )
@@ -1255,8 +1273,9 @@ impl KoanEngine {
             // Narrowed after the cap, as before: a substring over the title,
             // artist and record, which the full-text index does not answer.
             let needle = search.map(str::to_lowercase);
-            let tracks: Vec<_> = Shelf::Recent
-                .tracks(user, now)
+            let mut recent = Shelf::Recent.tracks(user, now);
+            recent.filter.on_device = offline();
+            let tracks: Vec<_> = recent
                 .page(&db.conn, RECENT_LIMIT, 0)
                 .map_err(db_err)?
                 .into_iter()
@@ -1291,9 +1310,16 @@ impl KoanEngine {
                 ShelfKind::Favourites => Shelf::Favourites,
                 ShelfKind::Recent => Shelf::Recent,
                 ShelfKind::Search { query } => Shelf::Search(query),
+                ShelfKind::Downloaded => Shelf::Downloaded,
             };
-            let s = shelves::summary(&db.conn, shelf, queries::LOCAL_USER, shelves::now())
-                .map_err(db_err)?;
+            let s = shelves::summary(
+                &db.conn,
+                shelf,
+                queries::LOCAL_USER,
+                shelves::now(),
+                offline(),
+            )
+            .map_err(db_err)?;
             Ok(ShelfSummary {
                 artists: s.artists.preview.into_iter().map(Artist::from).collect(),
                 artist_total: s.artists.total,
@@ -1304,6 +1330,13 @@ impl KoanEngine {
             })
         })
         .await
+    }
+
+    /// Turn offline mode on or off by hand: the library narrows to what can
+    /// play here, as it does on its own when the server cannot be reached.
+    pub fn set_offline(&self, on: bool) {
+        koan_core::remote::offline::set_manual(on);
+        self.bump_library();
     }
 
     /// Forget specific plays, here and, signed in to a koan server, on every
@@ -1339,8 +1372,21 @@ impl KoanEngine {
     ) -> Result<Vec<Track>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = queries::favourite_tracks(&db.conn, queries::LOCAL_USER, trimmed(&search))
-                .map_err(db_err)?;
+            let mut favourites = koan_core::shelves::Shelf::Favourites
+                .tracks(queries::LOCAL_USER, koan_core::shelves::now());
+            favourites.filter.on_device = offline();
+            let rows = favourites.page(&db.conn, u32::MAX, 0).map_err(db_err)?;
+            let needle = trimmed(&search).map(str::to_lowercase);
+            let rows = rows
+                .into_iter()
+                .filter(|t| {
+                    needle.as_ref().is_none_or(|n| {
+                        [&t.title, &t.artist_name, &t.album_title]
+                            .iter()
+                            .any(|s| s.to_lowercase().contains(n.as_str()))
+                    })
+                })
+                .collect();
             Ok(self.decorate(&db, rows))
         })
         .await
@@ -1357,6 +1403,7 @@ impl KoanEngine {
                 &db.conn,
                 &queries::AlbumQuery {
                     search: trimmed(&search),
+                    filter: offline_filter(),
                     ..koan_core::shelves::Shelf::Favourites
                         .albums(queries::LOCAL_USER, koan_core::shelves::now())
                 },
@@ -1378,6 +1425,7 @@ impl KoanEngine {
                 &db.conn,
                 &queries::ArtistQuery {
                     search: trimmed(&search),
+                    filter: offline_filter(),
                     ..koan_core::shelves::Shelf::Favourites
                         .artists(queries::LOCAL_USER, koan_core::shelves::now())
                 },
@@ -1523,7 +1571,10 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             self.refresh_smart(&db, Some(playlist_id));
-            let entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
+            let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
+            if offline() {
+                entries.retain(|e| e.track.cached_path.is_some() || e.track.path.is_some());
+            }
             let ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
             let tracks = self.decorate(&db, entries.into_iter().map(|e| e.track).collect());
             Ok(ids
@@ -3424,8 +3475,17 @@ impl KoanEngine {
                     if store_version != last_store {
                         last_store = store_version;
                         let transfers = store.all();
+                        let ids: Vec<i64> = transfers.iter().map(|d| d.track_id).collect();
+                        let albums = engine
+                            .db()
+                            .ok()
+                            .and_then(|db| queries::album_ids_for_tracks(&db.conn, &ids).ok())
+                            .unwrap_or_default();
                         out.publish(StateSlice::Transfers {
-                            transfers: transfers.iter().map(Transfer::of).collect(),
+                            transfers: transfers
+                                .iter()
+                                .map(|d| Transfer::of(d, albums.get(&d.track_id).copied()))
+                                .collect(),
                         });
                         let now_running: HashSet<_> = transfers
                             .iter()
@@ -4790,6 +4850,19 @@ fn trimmed(search: &Option<String>) -> Option<&str> {
 /// How many genres the browsers' genre filter offers, most common first.
 const GENRES_OFFERED: u32 = 80;
 
+/// Offline, every listing is narrowed to what can play here.
+fn offline() -> bool {
+    koan_core::remote::offline::active()
+}
+
+/// Nothing narrowed but, offline, to what can play here.
+fn offline_filter() -> queries::AlbumFilter<'static> {
+    queries::AlbumFilter {
+        on_device: offline(),
+        ..Default::default()
+    }
+}
+
 fn album_filter(f: &BrowseFilter) -> queries::AlbumFilter<'_> {
     queries::AlbumFilter {
         lossless: f.lossless,
@@ -4797,6 +4870,7 @@ fn album_filter(f: &BrowseFilter) -> queries::AlbumFilter<'_> {
         year_from: f.year_from,
         year_to: f.year_to,
         genre: trimmed(&f.genre),
+        on_device: f.downloaded || offline(),
     }
 }
 
@@ -4809,6 +4883,7 @@ fn album_order(sort: AlbumSort, seed: i64) -> queries::AlbumOrder {
         AlbumSort::Year => queries::AlbumOrder::YearDesc,
         AlbumSort::Random => queries::AlbumOrder::Random(seed),
         AlbumSort::LastPlayed => queries::AlbumOrder::LastPlayed,
+        AlbumSort::Downloaded => queries::AlbumOrder::Downloaded,
     }
 }
 
@@ -4952,6 +5027,8 @@ fn connection_info() -> ConnectionInfo {
         shared_with: devices::shares(),
         share_error: devices::share_error(),
         share_accounts: devices::accounts(),
+        offline: koan_core::remote::offline::active(),
+        offline_manual: koan_core::remote::offline::manual(),
     }
 }
 

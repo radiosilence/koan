@@ -112,6 +112,9 @@ struct RootView: View {
         // A play recorded, or plays forgotten: the pages derived from
         // history ask again.
         .onChange(of: mirror.historyVersion) { _, _ in library.historyChanged() }
+        // Offline narrows every listing to what can play here; going online
+        // widens it again.
+        .onChange(of: mirror.connection?.offline ?? false) { _, _ in library.libraryChanged() }
         // The toolbar paints its own ground over whatever is behind it, a hard
         // grey strip across the top of a queue washed in the colour of the
         // record. Hidden, the glass controls sit in that colour and the scroll
@@ -497,6 +500,7 @@ private struct StageView: View {
         case .searchResults: SearchResultsView()
         case .favourites: FavouritesView()
         case .recentlyPlayed: RecentlyPlayedView()
+        case .onDevice: OnDeviceView()
         case .playHistory: HistoryView()
         case .downloads: DownloadsView()
         case .playlist(let id): PlaylistView(playlistId: id)
@@ -710,7 +714,9 @@ private struct AlbumSortControls: View {
                     get: { library.albumSort },
                     set: { library.albumSort = $0 }
                 )) {
-                    ForEach(AlbumSort.offered(recent: library.browseFilter.recent), id: \.self) { sort in
+                    ForEach(AlbumSort.offered(
+                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded
+                ), id: \.self) { sort in
                         Text(sort.label).tag(sort)
                     }
                 }
