@@ -2305,8 +2305,13 @@ async fn stream_inner(
     may_transcode: bool,
 ) -> Result<Response, SubsonicError> {
     let lookup = state.clone();
-    let auth = params.auth.clone();
-    let id = params.id.clone();
+    let StreamParams {
+        auth,
+        id,
+        max_bit_rate,
+        format,
+        time_offset,
+    } = params;
     let track = offload(move || {
         let db = authed_db(&lookup, &auth)?;
         let track_id = require_id(&db, id.as_deref(), EntityKind::Song)?;
@@ -2337,9 +2342,9 @@ async fn stream_inner(
     let path = local_path.unwrap();
     if may_transcode && let Some(transcoder) = &state.transcoder {
         let request = crate::transcode::Request {
-            max_bit_rate: params.max_bit_rate.as_deref(),
-            format: params.format.as_deref(),
-            time_offset: params.time_offset.as_deref(),
+            max_bit_rate: max_bit_rate.as_deref(),
+            format: format.as_deref(),
+            time_offset: time_offset.as_deref(),
         };
         let source_kbps = track.bitrate.and_then(|b| u32::try_from(b).ok());
         if let Some(plan) = crate::transcode::plan(&request, track.codec.as_deref(), source_kbps) {
