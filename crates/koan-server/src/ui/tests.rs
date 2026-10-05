@@ -666,9 +666,12 @@ async fn a_shelfs_headings_open_its_browsers_whether_or_not_it_overflows() {
         let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
         queries::add_favourite(&db.conn, 1, f.track_id).unwrap();
     }
-    let body = send(&f.app, authed(&f.state, "/favourites").body(Body::empty()).unwrap())
-        .await
-        .body;
+    let body = send(
+        &f.app,
+        authed(&f.state, "/favourites").body(Body::empty()).unwrap(),
+    )
+    .await
+    .body;
     assert!(!body.contains("See all"), "one track is all of it");
     let heading = body
         .split("<h2>")
