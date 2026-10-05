@@ -138,7 +138,14 @@ struct SignInPage: View {
         waiting?.cancel()
         waiting = Task {
             do {
-                pairing = try await engine.startPairing(url: url)
+                let opened = try await engine.startPairing(url: url)
+                // Cancelling the task does not interrupt the call already in
+                // flight; a pairing opened after "Another Server" is given up.
+                guard !Task.isCancelled else {
+                    engine.cancelPairing()
+                    return
+                }
+                pairing = opened
                 try await engine.awaitPairing()
                 pairing = nil
                 signedIn()
