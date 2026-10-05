@@ -182,9 +182,9 @@ struct NowPlayingSheet: View {
     }
 
     /// Which device plays, through what, and with which preset: one pill
-    /// each, named in full. Spread evenly at their own widths where they fit,
-    /// and in equal thirds that truncate where they do not; every sheet and
-    /// menu they open names its choices in full.
+    /// each, named in full. Spread evenly at their own widths where they fit;
+    /// where they do not, the short ones keep their width and the long one is
+    /// shortened. Every sheet and menu they open names its choices in full.
     private var choices: some View {
         ViewThatFits(in: .horizontal) {
             choiceRow(natural: true)
@@ -275,12 +275,12 @@ private struct Pill: View {
 }
 
 private extension View {
-    /// At its own width, or a share of the row's.
+    /// At its own width, or whatever of the row the others leave it.
     @ViewBuilder func pillWidth(_ natural: Bool) -> some View {
         if natural {
             fixedSize()
         } else {
-            frame(maxWidth: .infinity)
+            self
         }
     }
 }

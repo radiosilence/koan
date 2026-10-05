@@ -17,20 +17,15 @@ final class NowPlayingTests: XCTestCase {
 
     func testRows() {
         pause(Double(env["KOAN_WALK_SETTLE"] ?? "3") ?? 3)
-        // A record's first track, from the albums.
-        let library = app.tabBars.buttons["Library"]
-        if library.waitForExistence(timeout: 3) { library.tap() }
-        pause(1)
-        if open(app.buttons["Albums"].firstMatch) {
-            pause(3)
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.27, dy: 0.3)).tap()
-            pause(3)
-            let first = app.cells.element(boundBy: 0)
-            if first.waitForExistence(timeout: 5) { first.tap() }
-            _ = app.buttons["Pause"].firstMatch.waitForExistence(timeout: 30)
-            pause(3)
-        }
+        // This phone again, should a run before have left it controlling
+        // another device: a track tapped would be sent there.
+        controlThisPhone()
+        // The queue the app restored, played from Now Playing.
         openNowPlaying()
+        let play = onScreen(app.buttons.matching(NSPredicate(format: "label == %@", "Play")))
+        if play.exists { play.tap() }
+        _ = app.buttons["Pause"].firstMatch.waitForExistence(timeout: 30)
+        pause(3)
         snap("01-now-playing")
 
         if open(labelled(beginningWith: "Sleep timer")), open(app.buttons["30 Minutes"]) {
@@ -74,10 +69,23 @@ final class NowPlayingTests: XCTestCase {
                     snap("08-controlled-output-sheet")
                     dismissSheet()
                 }
+                if open(labelled(beginningWith: "Sleep timer")), open(app.buttons["Cancel Sleep Timer"]) {
+                    pause(1)
+                }
+                controlThisPhone()
             } else {
                 dismissSheet()
             }
         }
+    }
+
+    private func controlThisPhone() {
+        let controlling = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Controlling")).firstMatch
+        guard controlling.waitForExistence(timeout: 2) else { return }
+        onScreen(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Controlling"))).tap()
+        pause(2)
+        if open(labelled(containing: "This \(UIDevice.current.model)")) { pause(2) }
+        dismissSheet()
     }
 
     /// The mini player: above the tab bar on a phone, at the foot on an iPad.
