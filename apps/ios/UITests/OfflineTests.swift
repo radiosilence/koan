@@ -52,7 +52,7 @@ final class OfflineTests: XCTestCase {
             app.buttons["Downloaded"].firstMatch.tap()
             XCTAssert(app.images.firstMatch.waitForExistence(timeout: 20), "nothing downloaded")
             let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
-            from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)))
+            from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62)))
             pause(25)
             snap("downloading")
         case "manual":
