@@ -6,6 +6,7 @@ import XCTest
 /// skipped, so `ios-walk` can run the target as a whole.
 ///
 /// - `downloaded`: the Downloaded page.
+/// - `downloading`: the same, with a record downloading meanwhile.
 /// - `manual`: Offline mode turned on in Settings, the Library tab, Albums,
 ///   a search and the queue, then turned off again.
 /// - `cut`: with the server stopped, waits for the app to go offline by
@@ -43,6 +44,17 @@ final class OfflineTests: XCTestCase {
             XCTAssert(app.images.firstMatch.waitForExistence(timeout: 20), "nothing downloaded")
             pause(2)
             snap("downloaded")
+        case "downloading":
+            // A record arriving next to one partly here. The download is
+            // started from outside once the app is up: a relaunch sweeps any
+            // that were in flight.
+            tab("Library")
+            app.buttons["Downloaded"].firstMatch.tap()
+            XCTAssert(app.images.firstMatch.waitForExistence(timeout: 20), "nothing downloaded")
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+            from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45)))
+            pause(25)
+            snap("downloading")
         case "manual":
             setOffline(true)
             tab("Library")
