@@ -748,6 +748,24 @@ impl SubsonicClient {
         Ok(())
     }
 
+    /// The device waiting on pairing `pair`, an id or a code, and where it
+    /// asked from (`koanPairInfo`).
+    pub fn koan_pair_info(&self, pair: &str) -> Result<KoanPair, SubsonicError> {
+        self.get_with_params("koanPairInfo", &[("pair", pair)])?
+            .pair
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Sign the device waiting on `pair` in as this account, or with
+    /// `decline`, turn it away (`koanPairApprove`). Answers with its name.
+    pub fn koan_pair_approve(&self, pair: &str, decline: bool) -> Result<String, SubsonicError> {
+        let decline = if decline { "true" } else { "false" };
+        self.get_with_params("koanPairApprove", &[("pair", pair), ("decline", decline)])?
+            .pair
+            .map(|p| p.device)
+            .ok_or(SubsonicError::BadResponse)
+    }
+
     pub fn koan_set_user_role(&self, username: &str, role: &str) -> Result<(), SubsonicError> {
         self.get_with_params("koanSetUserRole", &[("username", username), ("role", role)])?;
         Ok(())
@@ -810,6 +828,19 @@ struct SubsonicResponse {
     users: Option<KoanUsers>,
     invite: Option<KoanInvite>,
     join: Option<KoanJoined>,
+    pair: Option<KoanPair>,
+}
+
+/// A pairing a koan server holds, as `koanPairInfo` and `koanPairApprove`
+/// describe it: the device, the address it asked from, and whether that
+/// address is on a private network.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanPair {
+    pub device: String,
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub local: bool,
 }
 
 #[derive(Debug, Deserialize)]

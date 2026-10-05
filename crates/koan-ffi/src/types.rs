@@ -1187,6 +1187,10 @@ pub struct Settings {
     pub devices_discoverable: bool,
     /// Devices to reach by address where Bonjour does not: `host:port`.
     pub devices_addresses: Vec<String>,
+    /// What devices on the local network may do with this one: `full`
+    /// (playback, outputs, presets, volume, hand-off) or `playback` (play and
+    /// the queue only).
+    pub devices_nearby_control: String,
 }
 
 /// A scanned folder, and what it contributed.
@@ -1258,6 +1262,35 @@ pub struct Invite {
     pub mailto: String,
 }
 
+/// A pairing this device opened: the code to show, and the link that
+/// approves it.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct PairingCode {
+    pub id: String,
+    /// `XXXX-XXXX`.
+    pub code: String,
+    pub link: String,
+}
+
+/// A device waiting to be signed in, as the server describes it to an
+/// approver.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct PairingInfo {
+    pub device: String,
+    /// The address the request came from, as the server sees it.
+    pub from: String,
+    /// The address is on a private network (RFC 1918, link-local, unique
+    /// local, loopback) rather than the internet.
+    pub local: bool,
+}
+
+/// A pairing link: which server another device is waiting on, and its id.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct PairingLink {
+    pub server: String,
+    pub id: String,
+}
+
 impl From<koan_core::invite::Invite> for Invite {
     fn from(i: koan_core::invite::Invite) -> Self {
         Self {
@@ -1319,6 +1352,8 @@ pub struct DeviceInfo {
     /// Signed in to the same account: reachable from anywhere, through the
     /// server.
     pub account: bool,
+    /// The account that owns it, for a device shared with this one.
+    pub owner: Option<String>,
     /// Found on the local network.
     pub nearby: bool,
     /// Reachable at once. False for a phone iOS has suspended, which a
@@ -1491,6 +1526,17 @@ pub struct ConnectionInfo {
     pub local_network_blocked: bool,
     /// This device, as others see it.
     pub this_device: String,
+    /// The server lets this device be shared with other accounts on it.
+    pub sharing: bool,
+    /// The accounts this device is shared with.
+    pub shared_with: Vec<String>,
+    /// Why the server refused the last change to them.
+    pub share_error: Option<String>,
+    /// The server's other accounts, to share with.
+    pub share_accounts: Vec<String>,
+    /// The server can sign a device without a keyboard in, once someone here
+    /// approves it.
+    pub pairing: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

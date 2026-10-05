@@ -21,6 +21,14 @@ pub const DEVICES: &str = "koanDevices";
 /// Invite links: `/rest/koanJoin` trades the token one carries for an API
 /// key. See `crate::invite`.
 pub const INVITE: &str = "koanInvite";
+/// Sharing a device with other accounts on the server: `LinkReport::Share`
+/// from the device, `LinkCommand::Shares` back, and shared devices in a
+/// grantee's list.
+pub const SHARES: &str = "koanShares";
+/// Signing in a device without a keyboard: `/rest/koanPair` holds the device
+/// open until someone approves it with `/rest/koanPairApprove`. See
+/// `remote::pair`.
+pub const PAIR: &str = "koanPair";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {

@@ -48,6 +48,8 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::LINK, &[1]),
     (koan_core::remote::profile::DEVICES, &[1]),
     (koan_core::remote::profile::INVITE, &[1]),
+    (koan_core::remote::profile::SHARES, &[1]),
+    (koan_core::remote::profile::PAIR, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -3673,6 +3675,69 @@ async fn koan_delete_user(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
     .await
 }
 
+// ---------------------------------------------------------------------------
+// Pairing (koan extension)
+// ---------------------------------------------------------------------------
+
+/// A pairing as an approver sees it: the device's name, the address it asked
+/// from, and whether that address is on a private network.
+fn pair_node(info: &crate::pair::PairInfo) -> XmlNode {
+    XmlNode::new("pair")
+        .attr("device", &info.device)
+        .attr("from", &info.from.to_string())
+        .attr_bool("local", info.local())
+}
+
+/// The device waiting on `pair`, an id or a code, and where it asked from: for
+/// an app to ask whether to sign it in.
+async fn koan_pair_info(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond(&state, &params.auth(), |_, b| {
+            let pair = params
+                .get("pair")
+                .ok_or_else(|| SubsonicError::missing_param("pair"))?;
+            let info = crate::pair::pairings()
+                .info(pair)
+                .ok_or_else(|| SubsonicError::not_found("Pairing"))?;
+            Ok(b.child(pair_node(&info)))
+        })
+    })
+    .await
+}
+
+/// Sign the device waiting on `pair` in as the caller, with an API key of its
+/// own, or with `decline=true` turn it away. Any role: a device is signed in
+/// to the caller's own account, with no more than the caller can do.
+async fn koan_pair_approve(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            let pair = params
+                .get("pair")
+                .ok_or_else(|| SubsonicError::missing_param("pair"))?;
+            let decline = params.get("decline") == Some("true");
+            if !decline && caller.user_id == queries::LOCAL_USER {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::Generic,
+                    "sign in with an account to sign a device in as it",
+                ));
+            }
+            let info = crate::pair::pairings()
+                .settle(&db.conn, pair, caller.user_id, &caller.username, decline)
+                .map_err(|e| match e {
+                    crate::pair::SettleError::NotFound => SubsonicError::not_found("Pairing"),
+                    crate::pair::SettleError::Internal(e) => SubsonicError::internal(e),
+                })?;
+            Ok(b.child(pair_node(&info)))
+        })
+    })
+    .await
+}
+
 /// OpenSubsonic `formPost`: the parameters of an
 /// `application/x-www-form-urlencoded` POST body are appended to the query
 /// string, so every handler reads one set of parameters however they were
@@ -3727,7 +3792,11 @@ async fn koan_link(
     State(state): State<Arc<AppState>>,
     RawQuery(raw): RawQuery,
     ws: axum::extract::WebSocketUpgrade,
+    request: axum::extract::Request,
 ) -> Response {
+    // Where the device is, as the rate limits see it: what lets a device wake
+    // another account's on the same network.
+    let addr = crate::auth::routes::client_ip(&request);
     let params = RawParams::parse(raw.as_deref());
     let json = params.auth().wants_json();
     let caller = {
@@ -3755,6 +3824,7 @@ async fn koan_link(
                 platform,
                 device,
                 wants_devices,
+                addr,
             },
         )
     })
@@ -3766,6 +3836,8 @@ struct LinkPeer {
     platform: String,
     device: String,
     wants_devices: bool,
+    /// The client's address, through a trusted proxy if there is one.
+    addr: std::net::IpAddr,
 }
 
 /// Hand a link command to another of the caller's devices, in one request:
@@ -3804,6 +3876,7 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
         platform,
         device,
         wants_devices,
+        addr,
     } = peer;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let registry = crate::clients::registry();
@@ -3818,7 +3891,10 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
             device.clone(),
         );
         let registered = tokio::task::spawn_blocking(move || {
-            registry.register(&username, &name, &platform, &device, tx, wants_devices)
+            let id = registry.register(&username, &name, &platform, &device, tx, wants_devices);
+            // After `register`, which records the device the address is kept on.
+            registry.seen_at(&device, &username, addr);
+            id
         })
         .await;
         match registered {
@@ -3880,9 +3956,9 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
                             }
                             Ok(LinkReport::Command { to, command }) => {
                                 // Relaying may push to a phone, which blocks.
-                                let username = username.clone();
+                                let (username, device) = (username.clone(), device.clone());
                                 tokio::task::spawn_blocking(move || {
-                                    if let Err(e) = registry.relay(&username, &to, command) {
+                                    if let Err(e) = registry.relay_from(&username, Some(&device), &to, command) {
                                         log::info!("link: relay to {to}: {e}");
                                     }
                                 });
@@ -3898,6 +3974,35 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
                                 let (username, device) = (username.clone(), device.clone());
                                 tokio::task::spawn_blocking(move || {
                                     registry.wake(&username, &device, &to, notify);
+                                });
+                            }
+                            Ok(LinkReport::Share { grantee, allow }) => {
+                                // Only ever about the device sending it: an
+                                // owner shares a device from that device.
+                                let (username, device) = (username.clone(), device.clone());
+                                tokio::task::spawn_blocking(move || {
+                                    let known = koan_core::db::pool::shared()
+                                        .get()
+                                        .ok()
+                                        .and_then(|db| {
+                                            koan_core::db::queries::auth::get_user_by_username(&db.conn, &grantee)
+                                                .ok()
+                                                .flatten()
+                                        })
+                                        .is_some();
+                                    if allow && !known {
+                                        log::info!("share: {username} asked to share with {grantee}, who has no account here");
+                                        registry.send_shares(
+                                            &username,
+                                            &device,
+                                            Some(format!("There is no account called {grantee} on this server.")),
+                                        );
+                                        return;
+                                    }
+                                    if let Err(e) = registry.share(&username, &device, &grantee, allow) {
+                                        log::info!("share: {e}");
+                                        registry.send_shares(&username, &device, Some(e));
+                                    }
                                 });
                             }
                             Ok(LinkReport::Forget { device: forgotten }) => {
@@ -3927,6 +4032,17 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         // koan's own: a koan client's standing connection, for the server to
         // command it. See `crate::clients`.
         .route("/rest/koanLink", get(koan_link))
+        // A device without a keyboard waiting to be signed in, and the
+        // endpoints that sign it in. See `crate::pair`.
+        .route("/rest/koanPair", get(crate::pair::route))
+        .route(
+            "/rest/koanPairInfo",
+            get(koan_pair_info).post(koan_pair_info),
+        )
+        .route(
+            "/rest/koanPairApprove",
+            get(koan_pair_approve).post(koan_pair_approve),
+        )
         .route("/rest/koanUsers", get(koan_users).post(koan_users))
         .route(
             "/rest/koanCreateUser",
@@ -4672,6 +4788,36 @@ mod tests {
         )
         .await;
         assert!(body.contains("adminRole=\"true\""), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_waiting_device_is_paired_with_the_approvers_account() {
+        let (state, _dir) = test_state();
+        let call = |path: String| {
+            let state = state.clone();
+            async move { get_response(build_test_router(state), &path).await.1 }
+        };
+        let mate = "u=mate&p=hunter22&v=1.16.1&c=test&f=json";
+        let opened = crate::pair::pairings()
+            .open("Den TV", "198.51.100.7".parse().unwrap())
+            .unwrap();
+        let code = opened.code.replace('-', "").to_lowercase();
+
+        let body = call(format!("/rest/koanPairInfo?pair={code}")).await;
+        assert!(body.contains("code=\"10\""), "{body}");
+        let body = call(format!("/rest/koanPairInfo?pair={code}&{mate}")).await;
+        assert!(
+            body.contains("\"device\":\"Den TV\",\"from\":\"198.51.100.7\",\"local\":false"),
+            "{body}"
+        );
+
+        let body = call(format!("/rest/koanPairApprove?pair={}&{mate}", opened.id)).await;
+        assert!(body.contains("\"device\":\"Den TV\""), "{body}");
+        let body = call(format!("/rest/koanPairApprove?pair={}&{mate}", opened.id)).await;
+        assert!(body.contains("\"code\":70"), "{body}");
+        let body = call(format!("/rest/koanPairInfo?pair=ABCD-EFGH&{mate}")).await;
+        assert!(body.contains("\"code\":70"), "{body}");
+        drop(opened);
     }
 
     #[tokio::test]

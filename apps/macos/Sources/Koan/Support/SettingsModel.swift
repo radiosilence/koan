@@ -41,6 +41,12 @@ final class SettingsModel {
         Task { settings = await engine.settings() }
     }
 
+    /// Let `account` on this server control this device, or stop. The list
+    /// arrives through the engine's connection slice once the server has it.
+    func shareDevice(with account: String, allow: Bool) throws {
+        try engine.shareDevice(grantee: account, allow: allow)
+    }
+
     // MARK: - Editing
 
     /// Mutate a field and write the result. Every control commits through here,

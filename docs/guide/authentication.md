@@ -94,6 +94,26 @@ shown in the invite) or set one on the Users page or with `setUserPassword`.
 Either signs every device out, invited ones included, since a password change
 revokes the account's sessions and API keys.
 
+### Pairing a device
+
+A device without a keyboard, such as a television, cannot reasonably take a
+password or a pasted invite, so it signs in by being approved from somewhere
+that is already signed in. It opens a WebSocket at `/rest/koanPair` (listed as
+the `koanPair` extension) with no credentials and is given a code, shown as
+`XXXX-XXXX`, and a link, `https://koan.rocks/pair/#s=…&p=…`. Opening the link in
+koan on a phone or Mac, typing the code under Settings → Server → Pair a device,
+or typing it on the server's `/pair` page asks "Sign in this device?"; approving
+makes an API key on the approver's account, named after the device, and the
+server sends it down the waiting socket. The device is told the moment it is
+approved or declined; nothing polls. A pairing lasts ten minutes and lives only
+in the server's memory. Approving signs the device in as you, so approve only a
+device you are setting up yourself: the name it shows is whatever it chose to
+call itself. Every approval screen also says where the request came from: the
+address the server saw (behind a trusted proxy, the client's, as the rate limits
+use it), and whether that is on a private network or the internet. A television
+in the same room asks from your own network; a request from the internet is
+worth declining unless you expected it.
+
 The server sends no mail. Creating an account or inviting one produces the email
 (plain text, rich text with a button, and a `mailto:`) for the admin to send
 themselves.
@@ -127,6 +147,19 @@ koan auth invite alice --server https://music.example.com
 # Delete a user
 koan auth delete-user alice
 ```
+
+## Sharing devices between accounts
+
+An account's devices are its own. To let someone with another account on the
+server control one, share it from the device: see
+[What another device may do](devices.md#what-another-device-may-do).
+The grant names the device, its owner and the other account. The server relays
+the playback set for it (play, the queue, the output, the preset, the volume,
+hand-off) as the other account's request, never with the owner's powers, so
+nothing of the owner's library, settings, favourites, playlists or history is
+reachable. Any signed-in account sees the server's usernames when sharing.
+Deleting either account leaves the grant unused; stopping the share removes
+it.
 
 ## Token lifecycle
 

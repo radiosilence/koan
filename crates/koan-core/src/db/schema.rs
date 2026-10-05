@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 14;
+pub const SCHEMA_VERSION: i64 = 15;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -189,6 +189,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             name       TEXT NOT NULL,
             platform   TEXT NOT NULL,
             last_seen  INTEGER NOT NULL,
+            -- The address it last linked from, which lets a device of another
+            -- account behind the same router wake it.
+            addr       TEXT,
             PRIMARY KEY (device, username)
         );
 
@@ -201,6 +204,16 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             sandbox     INTEGER NOT NULL,
             updated_at  INTEGER NOT NULL,
             PRIMARY KEY (device, username)
+        );
+
+        -- Devices an owner has let other accounts on this server control,
+        -- granted from the device itself: see koan-server's clients.rs.
+        CREATE TABLE IF NOT EXISTS link_grants (
+            device      TEXT NOT NULL,
+            owner       TEXT NOT NULL,
+            grantee     TEXT NOT NULL,
+            created_at  INTEGER NOT NULL,
+            PRIMARY KEY (device, owner, grantee)
         );
 
         CREATE TABLE IF NOT EXISTS link_orders (
@@ -462,6 +475,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     // by triggers, so a row has its key however it was written.
     ("artists", "name_key", "TEXT"),
     ("albums", "title_key", "TEXT"),
+    // Where a linked device last connected from: see koan-server's clients.rs.
+    ("link_devices", "addr", "TEXT"),
 ];
 
 /// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a

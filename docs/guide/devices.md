@@ -40,9 +40,42 @@ not that.
   connect directly, with no server involved and whoever is signed in. A device
   playing from a different server can be controlled but not sent music, since
   its track ids mean nothing here. Settings → Devices turns this off for the
-  device you are on.
+  device you are on, and sets how much they may do (below).
 - **Devices by address.** A tailnet carries no Bonjour; add the other device's
   name and port (`mac-mini:5626`) under Settings → Devices.
+- **Devices shared with you.** Someone with another account on the same kōan
+  server can share a device with yours. It is listed with whose it is, from
+  any network, and woken by push as your own devices are.
+
+### What another device may do
+
+Your own devices, signed in to your account, may do anything with each other.
+Anyone else's device acts as itself and never gains your account's powers:
+whatever it does, nothing reaches your library, the files on disk, your
+settings beyond what is playing and where, or your favourites, playlists and
+history, and a track it names that this device lacks is not synced for.
+Within that, how much it may do depends on how it reaches this device.
+
+- **On the same network**, under Settings → Devices → **Devices on this
+  network**:
+  - **Full control**, the default: play, pause, skip, seek, the queue, the
+    output, the preset and the volume, and moving the music here or away.
+    Moving music away goes over the network, or through your server to the
+    asker's own devices, never to your other devices. A household network is
+    trusted.
+  - **Playback only**: play, pause, skip, seek and the queue. Moving music
+    away stays on the network. Choose this on a network you share with
+    strangers, such as an office or a café.
+- **Shared with another account on your server**: on the device itself,
+  Settings → Devices → **Shared with other accounts** takes another account's
+  username, with the server's accounts offered as you type. That account then
+  sees the device from any network, labelled as yours, and has Full control of
+  it as if it were on your network, waking it as its own. It can move the
+  device's music to its own devices, and pull it back. **Stop sharing** ends
+  its control at once.
+
+A share is between accounts on one server, recorded by the server. The device
+that is shared is the only one that can share or stop sharing it.
 
 A device that is found but cannot be reached is not listed: there is nothing
 to do with it. On iOS, finding anything on the network needs **Local Network**
@@ -68,8 +101,9 @@ An asleep device stays listed until you forget it: right-click it in the
 Control menu on the Mac, or press and hold it on iOS, and choose **Forget**.
 One this device only knows of, such as a stranger's on the network, is
 forgotten here. One of your account's is forgotten by the server too, with the
-token it is woken by, and drops off your other devices. Forgetting is not a
-block: a device that links or is heard on the network again is listed again.
+token it is woken by, and drops off your other devices. Forgetting one another
+account shares with you declines the share; its owner can share it again.
+Forgetting is not a block otherwise: a device that links or is heard on the network again is listed again.
 The server still forgets a device of your account it has not seen for 30 days
 on its own.
 
@@ -85,6 +119,14 @@ The row says which it is on, and says so if none worked.
    never delivers one to an app that was swiped away.
 3. **A notification** on the device, after about six seconds, saying this
    device wants to play there. Tapping it opens kōan, which connects.
+
+A device of another account on your server can be woken too: one shared with
+you, from anywhere, and any other when you are behind the same router as it
+was when it last connected. The server compares the address each device
+connects from, so it treats everyone behind one router as one household: on a
+home network that is the point, and nothing else is granted by it, since what
+may then be done to the device follows the network and sharing rules above. A
+phone on mobile data has another address; sharing covers that.
 
 Each step is logged, on the device choosing (`wake: <name>: Push at +12ms`),
 on the server (`wake: wake push for <name> answered by APNs in 140ms`,
@@ -204,6 +246,7 @@ uses one only where the server lists it:
 | Extension | What it is |
 |-----------|------------|
 | `koanLink` | The app's standing WebSocket at `/rest/koanLink`: the server can command it, and it reports what it is playing. |
+| `koanShares` | Sharing a device with other accounts on the server: the grant from the device, the server's accounts to choose from, and shared devices in each grantee's list, relayed with their outputs for the playback set. |
 | `koanDevices` | The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. Each device's outputs travel with its state; a server older than the apps drops them, so the Output menu for another device needs the server updated too. |
 
 Settings → Server shows what the server said it is and the extensions it
