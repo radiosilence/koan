@@ -13,6 +13,11 @@ final class SeeAllTests: XCTestCase {
 
     override func setUp() async throws {
         continueAfterFailure = false
+        // A signed-in app asks to send notifications on launch.
+        addUIInterruptionMonitor(withDescription: "Notifications") { alert in
+            alert.buttons.element(boundBy: 0).tap()
+            return true
+        }
         app = XCUIApplication()
         app.launch()
     }
