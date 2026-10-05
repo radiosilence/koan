@@ -13,7 +13,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use koan_core::auth::Role;
-use koan_core::db::queries::{self, AlbumOrder, AlbumQuery, AlbumRow, ArtistQuery, TrackRow};
+use koan_core::db::queries::{self, AlbumRow, TrackRow};
 use koan_core::helpers::ShareTarget;
 
 use super::browse::{self, Browse, Kind};
