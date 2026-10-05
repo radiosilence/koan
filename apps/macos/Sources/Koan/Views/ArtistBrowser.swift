@@ -20,7 +20,7 @@ struct ArtistBrowser: View {
             list
             #endif
         }
-        // Once narrowed, how many: what a shelf's See all promised.
+        // Once narrowed, how many: the count a shelf's heading gave.
         .pageSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleArtists.count), "artist") : "")
     }
 

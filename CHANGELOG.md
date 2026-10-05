@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **A shelf's headings open its browsers, in place of See all.** On Favourites, Recently Played and search, in the apps and the web UI, each section's heading reads as a link: its name, how many there are in all, and a chevron. It opens the browser filtered to the shelf, whether or not the section shows all it has. The separate See all is gone.
+
 ### Fixed
 
 - **The web UI on a phone.** A favourite track shows its heart beside the row's ⋯ again, as a mark; the heart to press is in the menu. History rows give the title the width the tick boxes took: on a phone a play is removed with Remove from History in its menu, as in the apps, and the time is set smaller. On a wide screen the Tracks browser's name field is wide enough for its hint.

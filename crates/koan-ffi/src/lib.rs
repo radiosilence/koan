@@ -1297,7 +1297,7 @@ impl KoanEngine {
     }
 
     /// A shelf page: the first few artists, records and tracks on `shelf`,
-    /// with how many there are of each. "See all" is the library's own
+    /// with how many there are of each. A section's heading opens the library's own
     /// listing with the same shelf as its filter; see `koan_core::shelves`.
     pub async fn shelf_summary(
         self: Arc<Self>,
