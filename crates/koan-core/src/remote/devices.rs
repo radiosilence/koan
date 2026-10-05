@@ -9,14 +9,17 @@
 //! kept on disk, so an app iOS suspended or killed opens still controlling the
 //! same device, with the list drawn at once rather than after the link is back.
 //!
-//! A device that stops answering is not dropped on the spot. It stays as it
-//! was for one full heartbeat past when it should have been heard from, so a
-//! single missed signal changes nothing; then it is listed asleep, with when
-//! it was last seen, until it is heard from again or forgotten (`forget`).
+//! A device is listed while it is present: linked, or on the network. One
+//! that stops answering is not dropped on the spot. It stays as it was for
+//! one full heartbeat past when it should have been heard from, so a single
+//! missed signal changes nothing. Then, if this device has used it (controlled
+//! it, or sent it music or a command), it is listed asleep, with when it was
+//! last seen, until it is heard from again or forgotten (`forget`); one never
+//! used is gone, since an asleep device nobody here plays on is only clutter.
 //! Asleep, it can be chosen only if a push can wake it. A device heard from
 //! again at any point is back at once, forgotten or not.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -92,6 +95,8 @@ struct Store {
     live: HashMap<String, i64>,
     /// Devices no list carries any more, kept until they are forgotten.
     departed: Vec<Departed>,
+    /// The devices this one has used, by id: listed asleep when out of reach.
+    used: HashSet<String>,
     /// `account` came down the link that is up now. One held from before the
     /// link last dropped says nothing about who is reachable at this moment.
     fresh: bool,
@@ -158,6 +163,10 @@ struct Saved {
     /// Devices no list carries any more, kept until forgotten.
     #[serde(default)]
     departed: Vec<Departed>,
+    /// The devices this one has used. Absent from a file written before it
+    /// was kept, when only the device being controlled counts.
+    #[serde(default)]
+    used: Option<Vec<String>>,
 }
 
 /// A device reached on the local network, and where: dialled there at once
@@ -261,6 +270,11 @@ impl Store {
             nearby: self.seen.clone(),
             live: self.live.clone(),
             departed: self.departed.clone(),
+            used: Some({
+                let mut used: Vec<String> = self.used.iter().cloned().collect();
+                used.sort();
+                used
+            }),
         };
         if let Ok(json) = serde_json::to_string(&saved) {
             let _ = std::fs::write(saved_path(), json);
@@ -290,7 +304,16 @@ fn restore() {
             .filter(|n| n.at >= cutoff)
             .collect();
         s.live = saved.live;
-        s.departed = saved.departed;
+        s.used = match saved.used {
+            Some(used) => used.into_iter().collect(),
+            None => s.target.iter().map(|t| t.id.clone()).collect(),
+        };
+        let used = &s.used;
+        s.departed = saved
+            .departed
+            .into_iter()
+            .filter(|g| used.contains(&g.id))
+            .collect();
         // Not linked until the server says so, and doing nothing anyone
         // knows of: what it was playing then is not what it is playing now.
         s.account = saved
@@ -581,10 +604,21 @@ pub fn forget(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// This device sent `id` something: from now on it is kept, asleep, when it
+/// is out of reach.
+fn used(id: &str) {
+    with(|s| {
+        if s.used.insert(id.to_string()) {
+            s.save();
+        }
+    });
+}
+
 /// Drop `id` from everything this device remembers of it: the server forgot
 /// it, or this device was asked to.
 pub fn forgotten(id: &str) {
     changed(|s| {
+        s.used.remove(id);
         s.account.retain(|(d, _)| d.id != id);
         s.departed.retain(|g| g.id != id);
         s.seen.retain(|n| n.id != id);
@@ -628,13 +662,18 @@ fn list_at(now: i64) -> Vec<Device> {
         let live = |id: &str| s.live.get(id).copied();
         // Missed for less than a heartbeat.
         let fresh = |id: &str| live(id).is_some_and(|at| now - at <= STALE_SECS);
+        // Out of reach past the heartbeat, only a device used here is listed.
+        let kept = |id: &str| fresh(id) || s.used.contains(id);
         let mut out: Vec<Device> = s
             .account
             .iter()
-            .map(|(d, at)| {
+            .filter_map(|(d, at)| {
                 let near = s.nearby.iter().find(|n| n.hello.id == d.id);
                 let awake = d.linked || near.is_some();
-                Device {
+                if !awake && !kept(&d.id) {
+                    return None;
+                }
+                Some(Device {
                     id: d.id.clone(),
                     name: d.name.clone(),
                     platform: d.platform.clone(),
@@ -661,7 +700,7 @@ fn list_at(now: i64) -> Vec<Device> {
                     },
                     heard: near.map_or(*at, |n| n.at),
                     problem: None,
-                }
+                })
             })
             .collect();
         for n in &s.nearby {
@@ -687,7 +726,7 @@ fn list_at(now: i64) -> Vec<Device> {
             });
         }
         for g in &s.departed {
-            if out.iter().any(|d| d.id == g.id) {
+            if out.iter().any(|d| d.id == g.id) || !kept(&g.id) {
                 continue;
             }
             let last = live(&g.id);
@@ -1013,6 +1052,9 @@ pub fn set_target(id: Option<String>) {
         .as_ref()
         .and_then(|id| list().into_iter().find(|d| d.id == *id));
     changed(|s| {
+        if let Some(id) = &id {
+            s.used.insert(id.clone());
+        }
         s.target = id.map(|id| match listed {
             Some(d) => Remembered {
                 id,
@@ -1098,6 +1140,7 @@ pub fn send_live(id: &str, cmd: LinkCommand) -> bool {
 /// Activity's button has while iOS keeps the app's link down.
 pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
     choosable(id)?;
+    used(id);
     let (nearby, own, shared) = with(|s| {
         let listed = s.account.iter().find(|(d, _)| d.id == id);
         (
@@ -1190,6 +1233,7 @@ mod tests {
         let week = 7 * 24 * 60 * 60;
 
         nearby_hello(hello("stranger"), "10.0.0.5:5626");
+        used("stranger");
         nearby_gone("stranger");
         let now = with(|s| s.live["stranger"]);
         let at = |t: i64| list_at(t).into_iter().find(|d| d.id == "stranger");
@@ -1235,6 +1279,7 @@ mod tests {
         phone.last_seen = Some(now - week);
         phone.wakeable = Some(true);
         set_account(vec![phone]);
+        used("phone");
         let phone = list_at(now).into_iter().find(|d| d.id == "phone").unwrap();
         assert!(phone.asleep && phone.wakeable);
         assert_eq!(phone.last_seen, Some(now - week));
@@ -1244,6 +1289,7 @@ mod tests {
         // for a heartbeat, then asleep, and kept.
         set_linked(true);
         set_account(vec![device("mac", false)]);
+        used("mac");
         set_account(Vec::new());
         let left = with(|s| s.live["mac"]);
         let mac = |t: i64| list_at(t).into_iter().find(|d| d.id == "mac");
@@ -1252,6 +1298,100 @@ mod tests {
         let asleep = mac(left + STALE_SECS + 1).unwrap();
         assert!(asleep.asleep && !asleep.wakeable && asleep.account);
         assert!(mac(left + week).is_some());
+        with(|s| *s = Store::default());
+    }
+
+    /// A device seen and never used is gone once out of reach past the
+    /// heartbeat; one used is kept asleep, across a relaunch, until forgotten.
+    #[test]
+    fn only_a_device_used_here_is_kept_asleep() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+
+        nearby_hello(hello("passing"), "10.0.0.5:5626");
+        nearby_hello(hello("played-on"), "10.0.0.6:5626");
+        used("played-on");
+        nearby_gone("passing");
+        nearby_gone("played-on");
+        let left = with(|s| s.live["passing"]);
+        let listed = |t: i64, id: &str| list_at(t).into_iter().any(|d| d.id == id);
+        assert!(listed(left + 1, "passing"), "reconnecting for a heartbeat");
+        assert!(
+            !listed(left + STALE_SECS + 1, "passing"),
+            "never used: gone"
+        );
+        assert!(listed(left + STALE_SECS + 1, "played-on"), "used: asleep");
+
+        // An account device the server still lists, asleep, never used here.
+        let mut phone = device("old-phone", false);
+        phone.linked = false;
+        phone.last_seen = Some(left - 3600);
+        set_account(vec![phone]);
+        assert!(!listed(left, "old-phone"));
+
+        with(|s| *s = Store::default());
+        restore();
+        let later = left + STALE_SECS + 1;
+        assert!(
+            list_at(later)
+                .iter()
+                .any(|d| d.id == "played-on" && d.asleep),
+            "kept across a relaunch"
+        );
+        assert!(!listed(later, "passing"));
+
+        forget("played-on").unwrap();
+        assert!(!list().iter().any(|d| d.id == "played-on"));
+        with(|s| *s = Store::default());
+        restore();
+        assert!(
+            !list().iter().any(|d| d.id == "played-on"),
+            "forgotten on disk"
+        );
+        with(|s| *s = Store::default());
+    }
+
+    /// The device being controlled is used, whatever else is not; a file from
+    /// before this was kept counts only that one, so old clutter clears.
+    #[test]
+    fn the_controlled_device_is_kept_and_an_old_file_keeps_only_it() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        let gone = |id: &str| Departed {
+            id: id.into(),
+            name: id.into(),
+            platform: "ios".into(),
+            account: false,
+            same_library: false,
+            shared: false,
+        };
+        let old = serde_json::json!({
+            "target": {"id": "tv", "name": "tv", "platform": "tvos"},
+            "account": [],
+            "live": {"tv": 1, "sim": 1},
+            "departed": [gone("tv"), gone("sim")],
+        });
+        std::fs::write(saved_path(), old.to_string()).unwrap();
+        restore();
+        let ids: Vec<String> = list().into_iter().map(|d| d.id).collect();
+        assert_eq!(
+            ids,
+            ["tv"],
+            "the target stays; the simulator nobody used goes"
+        );
+
+        set_target(None);
+        nearby_hello(hello("mac"), "10.0.0.7:5626");
+        set_target(Some("mac".into()));
+        set_target(None);
+        nearby_gone("mac");
+        with(|s| *s.live.get_mut("mac").unwrap() -= STALE_SECS + 10);
+        assert!(
+            list().iter().any(|d| d.id == "mac" && d.asleep),
+            "controlled once: kept"
+        );
         with(|s| *s = Store::default());
     }
 
@@ -1264,6 +1404,7 @@ mod tests {
         with(|s| *s = Store::default());
         nearby_hello(hello("stranger"), "10.0.0.5:5626");
         assert!(forget("stranger").is_err(), "not while it is reachable");
+        used("stranger");
         nearby_gone("stranger");
         // Kept across a relaunch, asleep, until forgotten.
         with(|s| *s = Store::default());
@@ -1295,6 +1436,7 @@ mod tests {
         phone.wakeable = Some(true);
         phone.last_seen = Some(chrono::Utc::now().timestamp() - 3600);
         set_account(vec![phone]);
+        used("phone");
         assert!(
             forget("phone").is_err(),
             "no link here: the server would still list it and wake it"
@@ -1479,6 +1621,7 @@ mod tests {
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
         nearby_hello(hello("stranger"), "10.0.0.5:5626");
+        used("stranger");
         nearby_gone("stranger");
         with(|s| {
             *s.live.get_mut("stranger").unwrap() -= 10 * 60;
@@ -1599,6 +1742,7 @@ mod tests {
         with(|s| *s = Store::default());
         set_linked(true);
         set_account(vec![device("phone", true)]);
+        used("phone");
         // Suspended for hours; the phone left meanwhile.
         with(|s| *s.live.get_mut("phone").unwrap() -= 4 * 60 * 60);
         set_linked(false);
@@ -1634,6 +1778,7 @@ mod tests {
             nearby: Vec::new(),
             live: HashMap::new(),
             departed: Vec::new(),
+            used: None,
         };
         std::fs::write(saved_path(), serde_json::to_string(&saved).unwrap()).unwrap();
         restore();
@@ -1663,6 +1808,7 @@ mod tests {
         phone.wakeable = Some(false);
         phone.last_seen = Some(chrono::Utc::now().timestamp() - 3600);
         set_account(vec![phone]);
+        used("phone");
         let phone = list().into_iter().find(|d| d.id == "phone").unwrap();
         assert!(phone.asleep && !phone.wakeable);
         assert!(choosable("phone").is_err());
