@@ -118,21 +118,27 @@ const ACCOUNT_LINK: &str = "rounded-md px-1.5 py-1 text-meta whitespace-nowrap t
 hover:no-underline aria-[current=page]:bg-rule aria-[current=page]:text-ink";
 
 fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> String {
-    // On a wide screen the sidebar ends with who is signed in; the account
-    // page has everything else. A phone has an Account tab instead.
-    let account = if auth_enabled {
+    // On a wide screen the sidebar ends with who is signed in and the version;
+    // the account page has everything else. A phone has an Account tab instead.
+    let signed_in = if auth_enabled {
         format!(
-            "<form class=\"mt-auto flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted \
-max-wide:hidden\" method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 \
-pb-0.5 text-ink\">{}</span><a class=\"{ACCOUNT_LINK}\" href=\"/account\" data-nav=account>Account</a>\
+            "<form class=\"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted\" \
+method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 pb-0.5 text-ink\">{}</span>\
+<a class=\"{ACCOUNT_LINK}\" href=\"/account\" data-nav=account>Account</a>\
 <button class=\"quiet px-2 py-1 text-meta\">Sign out</button></form>",
             escape(&user.username)
         )
     } else {
         format!(
-            "<a class=\"mt-auto {ACCOUNT_LINK} max-wide:hidden\" href=\"/account\" data-nav=account>Account</a>"
+            "<a class=\"{ACCOUNT_LINK} self-start\" href=\"/account\" data-nav=account>Account</a>"
         )
     };
+    let account = format!(
+        "<div class=\"mt-auto flex min-w-0 flex-col gap-1 max-wide:hidden\">{signed_in}\
+<a class=\"rounded-md px-1 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
+href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
+        v = env!("CARGO_PKG_VERSION")
+    );
     format!(
         "{head}<script type=module src=\"{datastar}\"></script>\
 <script src=\"{player}\" defer></script><script src=\"{ui}\" defer></script>\

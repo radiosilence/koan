@@ -466,6 +466,9 @@
   .gap-y-5 {
     row-gap: calc(var(--spacing) * 5);
   }
+  .self-start {
+    align-self: flex-start;
+  }
   .truncate {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -553,6 +556,9 @@
   }
   .px-\[5px\] {
     padding-inline: 5px;
+  }
+  .py-0\.5 {
+    padding-block: calc(var(--spacing) * 0.5);
   }
   .py-1 {
     padding-block: var(--spacing);
