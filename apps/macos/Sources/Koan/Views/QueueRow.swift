@@ -243,6 +243,19 @@ struct QueueRow: View {
 
     @ViewBuilder
     private var statusIcon: some View {
+        // Offline is not a failure: whatever happened to the download, the
+        // reason this track cannot play now is that it is not here.
+        if unplayable, item.status != .playing {
+            Image(systemName: "icloud.slash")
+                .foregroundStyle(.tertiary)
+                .help("Not on this device")
+        } else {
+            statusSymbol
+        }
+    }
+
+    @ViewBuilder
+    private var statusSymbol: some View {
         switch item.status {
         case nil:
             // The queue has never heard of this track. Its column stays, so

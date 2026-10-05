@@ -53,6 +53,9 @@ final class OfflineTests: XCTestCase {
             tab("Library")
             XCTAssert(app.staticTexts["Offline mode is on"].waitForNonExistence(timeout: 10))
             snap("manual-off")
+            tab("Queue")
+            pause(2)
+            snap("manual-off-queue")
         case "cut":
             tab("Library")
             XCTAssert(app.staticTexts["Can't reach your server"].waitForExistence(timeout: 60), "never went offline")

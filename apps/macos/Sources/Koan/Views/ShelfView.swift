@@ -48,10 +48,14 @@ struct ShelfView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // On iOS the navigation bar already says what the page is; the
+            // counts go under its title.
+            #if os(macOS)
             header
                 .padding(.horizontal, 24)
                 .padding(.top, 18)
                 .padding(.bottom, 16)
+            #endif
 
             if artists.isEmpty && albums.isEmpty && tracks.isEmpty {
                 EmptyState(
@@ -68,6 +72,9 @@ struct ShelfView: View {
                 #endif
             }
         }
+        #if os(iOS)
+        .navigationSubtitle(summary)
+        #endif
     }
 
     #if os(macOS)
