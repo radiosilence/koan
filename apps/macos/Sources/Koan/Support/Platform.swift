@@ -96,9 +96,13 @@ extension View {
     ///
     /// macOS keeps its bordered buttons: a row there is not a control, so there
     /// is nothing to opt out of.
+    /// A television's borderless button is bare text until focused, which in a
+    /// settings row reads as the row's value; there they keep their platters.
     func rowButtons() -> some View {
         #if os(macOS)
         self
+        #elseif os(tvOS)
+        buttonStyle(TelevisionButton())
         #else
         buttonStyle(.borderless)
         #endif
