@@ -49,6 +49,8 @@ final class QueueTableRow: NSTableCellView, TableRow {
         let art: CoverArtCache
         let levels: PlayingLevels
         let toggleFavourite: (Int64) -> Void
+        /// Offline: rows with no file here say so, in place of their status.
+        var offline = false
     }
 
     static let identifier = NSUserInterfaceItemIdentifier("QueueTableRow")
@@ -193,12 +195,15 @@ final class QueueTableRow: NSTableCellView, TableRow {
         }
         guard case .track(let content, let isCurrent, _, let artwork) = line.kind else { return }
         let played = content.status == .played
+        let notHere = context.offline && !content.onDisk && content.status != .playing
+        // Offline, a track with no file here steps back as a played one does.
+        let dimmed = played || notHere
 
         showBars(content.status == .playing, live: context.barsLive && context.isPlaying, context: context, selected: selected)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         status.isHidden = false
-        switch content.status {
+        switch notHere ? nil : content.status {
         case .priorityPending:
             statusImage = Symbol.image("arrow.down.circle", size: 10, colours: [selected ? .white : context.tint], appearance: appearance)
         case .failed:
@@ -213,7 +218,8 @@ final class QueueTableRow: NSTableCellView, TableRow {
         // The one thing a colour cannot dim.
         sleeve.opacity = artwork && played ? 0.5 : 1
         availability.isHidden = false
-        let state: AvailabilityMark.State = content.transferring.map { .transferring(context.meter.figure(for: $0)?.progress) }
+        let state: AvailabilityMark.State = notHere ? .notHere
+            : content.transferring.map { .transferring(context.meter.figure(for: $0)?.progress) }
             ?? (content.onServer || content.onDisk ? .stored(onServer: content.onServer, onDisk: content.onDisk) : .nothing)
         availability.show(state, tint: context.tint, selected: selected, appearance: appearance)
         context.meter.follow(availability, transfer: context.onStage ? content.transferring : nil)
@@ -225,12 +231,13 @@ final class QueueTableRow: NSTableCellView, TableRow {
         )
         CATransaction.commit()
 
-        title.textColor = isCurrent && !selected ? context.tint : (selected ? onAccent : (played ? .secondaryLabelColor : .labelColor))
-        artist.textColor = selected ? onAccent : (played ? .tertiaryLabelColor : .secondaryLabelColor)
-        number.textColor = selected ? onAccent : (played ? .quaternaryLabelColor : .tertiaryLabelColor)
-        codec.textColor = selected ? onAccent : (played ? .quaternaryLabelColor : .tertiaryLabelColor)
-        duration.textColor = selected ? onAccent : (played ? .tertiaryLabelColor : .secondaryLabelColor)
-        toolTip = content.status == .failed ? content.failureReason ?? "Couldn't be fetched"
+        title.textColor = isCurrent && !selected ? context.tint : (selected ? onAccent : (dimmed ? .secondaryLabelColor : .labelColor))
+        artist.textColor = selected ? onAccent : (dimmed ? .tertiaryLabelColor : .secondaryLabelColor)
+        number.textColor = selected ? onAccent : (dimmed ? .quaternaryLabelColor : .tertiaryLabelColor)
+        codec.textColor = selected ? onAccent : (dimmed ? .quaternaryLabelColor : .tertiaryLabelColor)
+        duration.textColor = selected ? onAccent : (dimmed ? .tertiaryLabelColor : .secondaryLabelColor)
+        toolTip = notHere ? AvailabilityMark.help(.notHere, failure: nil)
+            : content.status == .failed ? content.failureReason ?? "Couldn't be fetched"
             : (content.status == .priorityPending ? "Queued for download" : nil)
         needsLayout = true
     }

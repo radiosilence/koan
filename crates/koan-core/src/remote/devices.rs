@@ -335,6 +335,7 @@ pub fn local() -> Option<&'static Local> {
 /// (a Mac asleep, a server restarting) is still the one the person picked,
 /// and the app shows it as out of reach until it is back or another is.
 pub fn set_linked(linked: bool) {
+    crate::remote::offline::link_changed(linked);
     changed(|s| {
         s.linked = linked;
         if !linked {

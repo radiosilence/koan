@@ -26,6 +26,12 @@ Both apps keep what you play. **History** lists every play by day, and is where 
 
 Recently Played and Favourites show the first few of each kind. A section with more offers **See all**, which opens the Albums, Artists or Tracks browser filtered to the shelf, in the shelf's order; the filter shows in the browser's filter control and is cleared there. Search's sections do the same. **Tracks**, beside Albums and Artists, lists every track in the library with the same filters.
 
+## Downloaded and offline
+
+**Downloaded**, in the Mac's sidebar and the iOS Library tab, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
+
+On iOS, when the server cannot be reached for a few seconds while the app is open, kōan goes offline: every list, from Albums and search to Favourites and playlists, shows only what is on the phone, the queue greys out tracks that are not, and the Library tab says so. It goes back online by itself when the server answers again. **Settings → Offline mode** turns it on by hand, for a train with a signal that comes and goes. A server without kōan's link (Navidrome) gives no signal for this, so there only the switch applies.
+
 ## The terminal UI
 
 ```bash

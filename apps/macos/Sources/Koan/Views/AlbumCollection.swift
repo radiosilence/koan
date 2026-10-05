@@ -43,6 +43,8 @@ struct AlbumCollection: NSViewRepresentable {
 
     @Environment(LibraryModel.self) private var library
     @Environment(CoverArtCache.self) private var art
+    @Environment(EngineMirror.self) private var mirror
+    @Environment(TransferMeter.self) private var meter
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -97,7 +99,9 @@ struct AlbumCollection: NSViewRepresentable {
             actions: actions,
             menu: { album in
                 hostedMenu(PlayableMenu(playable: .album(album)), environment: environment)
-            }
+            },
+            arriving: mirror.arrivingByAlbum,
+            meter: meter
         )
         coordinator.show(albums)
         coordinator.rewind(to: rewinds)
@@ -128,9 +132,11 @@ struct AlbumCollection: NSViewRepresentable {
             let favourites: Set<Int64>
             let tint: NSColor
             let usesGlass: Bool
+            let arriving: [Int64: [Int64]]
 
             init?(_ context: AlbumTile.Context?) {
                 guard let context else { return nil }
+                arriving = context.arriving
                 picked = context.picked
                 selecting = context.selecting
                 favourites = context.favourites
@@ -367,6 +373,9 @@ final class AlbumTile: NSCollectionViewItem {
         let usesGlass: Bool
         let actions: Actions
         var menu: (Album) -> NSMenu
+        /// The tracks still arriving, by record — see `DownloadBarLayer`.
+        var arriving: [Int64: [Int64]] = [:]
+        var meter: TransferMeter?
     }
 
     private enum Part { case sleeve, title, artist, elsewhere }
@@ -410,6 +419,8 @@ final class AlbumTile: NSCollectionViewItem {
     private var heart: HeartButton?
     private let ring = CALayer()
     private let tick = CALayer()
+    /// How much of the record is here, when the page says.
+    private let downloadBar = DownloadBarLayer()
 
     // The caption.
     private let titleLabel = NSTextField(labelWithString: "")
@@ -474,6 +485,7 @@ final class AlbumTile: NSCollectionViewItem {
         codec.alignmentMode = .center
         badge.addSublayer(codec)
         layer.addSublayer(badge)
+        layer.addSublayer(downloadBar)
 
         ring.cornerRadius = 6
         ring.cornerCurve = .continuous
@@ -545,6 +557,11 @@ final class AlbumTile: NSCollectionViewItem {
         CATransaction.setDisableActions(true)
         ring.isHidden = !(context.selecting && selected)
         ring.borderColor = context.tint.cgColor
+        let arriving = context.arriving[album.id] ?? []
+        var muted = NSColor.secondaryLabelColor.cgColor
+        view.effectiveAppearance.performAsCurrentDrawingAppearance { muted = NSColor.secondaryLabelColor.cgColor }
+        downloadBar.show(album.onDevice, downloading: !arriving.isEmpty, tint: context.tint.cgColor, muted: muted)
+        context.meter?.follow(downloadBar, transfers: arriving)
         tick.isHidden = !context.selecting
         if context.selecting {
             tick.contents = selected
@@ -689,6 +706,7 @@ final class AlbumTile: NSCollectionViewItem {
         badge.cornerRadius = badge.frame.height / 2
         codec.frame = CGRect(x: 6, y: 2, width: textWidth, height: textHeight)
         codec.contentsScale = view.window?.backingScaleFactor ?? 2
+        downloadBar.frame = DownloadBarLayer.frame(side: side, flipped: true)
         CATransaction.commit()
 
         spinner?.frame = CGRect(x: art.midX - 8, y: art.midY - 8, width: 16, height: 16)

@@ -11,6 +11,7 @@ extension AlbumSort {
         case .year: "year"
         case .random: "random"
         case .lastPlayed: "lastPlayed"
+        case .downloaded: "downloaded"
         }
     }
 
@@ -22,6 +23,7 @@ extension AlbumSort {
         case "year": self = .year
         case "random": self = .random
         case "lastPlayed": self = .lastPlayed
+        case "downloaded": self = .downloaded
         default: return nil
         }
     }
@@ -34,13 +36,16 @@ extension AlbumSort {
         case .year: "Year"
         case .random: "Random"
         case .lastPlayed: "Last Played"
+        case .downloaded: "Most Downloaded"
         }
     }
 
     /// The sorts to offer. Last Played only means something, and is only
-    /// offered, while the Recently Played filter is on.
-    static func offered(recent: Bool) -> [AlbumSort] {
-        (recent ? [.lastPlayed] : []) + [.recentlyAdded, .title, .artist, .year, .random]
+    /// offered, while the Recently Played filter is on; Most Downloaded while
+    /// the Downloaded one is.
+    static func offered(recent: Bool, downloaded: Bool) -> [AlbumSort] {
+        (recent ? [.lastPlayed] : []) + (downloaded ? [.downloaded] : [])
+            + [.recentlyAdded, .title, .artist, .year, .random]
     }
 }
 
