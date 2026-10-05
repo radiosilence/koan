@@ -59,6 +59,17 @@ impl Hearts {
     pub fn artist(&self, id: i64) -> String {
         heart(Kind::Artist, id, self.artists.contains(&id))
     }
+
+    /// A favourite's heart beside a track row's ⋯ on a narrow screen, where
+    /// the row's own heart is in its menu: a mark, not a button. The stylesheet
+    /// shows it while the row's hidden heart is pressed, so it follows a
+    /// toggle made from the menu.
+    pub fn mark(&self) -> String {
+        format!(
+            "<span class=\"fav-mark\" role=img aria-label=Favourite title=Favourite>\
+<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"{HEART}\"/></svg></span>"
+        )
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, serde::Deserialize)]

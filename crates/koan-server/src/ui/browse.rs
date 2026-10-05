@@ -373,7 +373,7 @@ max-wide:inline-flex [&::-webkit-details-marker]:hidden\">{label}</summary>\
 <form class=\"toolbar flex flex-wrap items-center gap-x-3.5 gap-y-2 text-meta text-muted max-wide:mt-2.5 \
 max-wide:flex-col max-wide:items-stretch max-wide:gap-3 max-wide:rounded-[10px] max-wide:border \
 max-wide:border-rule max-wide:bg-surface max-wide:p-3.5 max-wide:text-body\" method=get action=\"{path}\">\
-<label class=\"{LABEL}\">Name<input class=\"w-[12em] {FIELD} max-wide:w-auto max-wide:flex-1\" type=search \
+<label class=\"{LABEL}\">Name<input class=\"{name_width} {FIELD} max-wide:w-auto max-wide:flex-1\" type=search \
 name=q placeholder=\"{name_hint}\" value=\"{q}\" aria-label=\"Filter by name\"></label>{sort_select}{seed}{reshuffle}{fav}{recent}{lossless}{codec}\
 <label class=\"{LABEL}\">Years<input class=\"w-[4.5em] {FIELD}\" name=from inputmode=numeric maxlength=4 \
 placeholder=From value=\"{from}\" aria-label=\"From year\"><span>–</span><input class=\"w-[4.5em] {FIELD}\" \
@@ -397,6 +397,11 @@ name=to inputmode=numeric maxlength=4 placeholder=To value=\"{to}\" aria-label=\
             Kind::Albums => "Album or artist",
             Kind::Artists => "Artist",
             Kind::Tracks => "Title, artist or record",
+        },
+        // Wide enough for the hint.
+        name_width = match kind {
+            Kind::Tracks => "w-[17em]",
+            Kind::Albums | Kind::Artists => "w-[12em]",
         },
         q = escape(&b.q),
         from = escape(&b.from),

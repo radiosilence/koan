@@ -330,6 +330,7 @@ Which track a source belongs to is decided only by `sources::link`, on one norma
 |---|---|
 | `scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → one DB transaction per 1000 files, reads and writes running at the same time |
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
+| `folder_art.rs` | Covers kept as image files beside the tracks: `cover.*`, `folder.*`, `front.*` in that order (Navidrome's default), any case, from a disc folder's parent when the disc folder has none, then embedded art. `cover_art` is the one lookup every front end and the server use. Each directory's listing is kept against its mtime. A watcher rescan of a folder writes its albums and tracks to `art_evictions`, so the apps' caches drop covers an image change made stale |
 | `playlist_files.rs` | Playlist files the scan walk finds: Navidrome `.nsp` into smart playlists, `.m3u`/`.m3u8` into ordinary ones resolved by path. The file stays authoritative: changed, it rewrites the rules; gone from a directory the scan covered completely, it deletes the playlist |
 | `id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
 
@@ -379,7 +380,7 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 | `queue.rs` | `QueueView` widget: album-grouped display with headers, status icons, selection markers, drag target line |
 | `library.rs` | `LibraryState` + `LibraryView`: flattened tree (artist->album->track), expand/collapse, substring filter with cached artist list |
 | `picker.rs` | `PickerState`: Nucleo fuzzy search engine, multi-select, colored result parts. Sentinel helpers for artist drill-down. |
-| `cover_art.rs` | Halfblock rendering: extract from tags -> resize with Lanczos3 -> 2 pixels per terminal cell (upper half block char with FG/BG colors). Forces even pixel height to prevent black bar artifacts. |
+| `cover_art.rs` | Halfblock rendering: the cover (folder image or tags, see `index/folder_art.rs`) -> resize with Lanczos3 -> 2 pixels per terminal cell (upper half block char with FG/BG colors). Forces even pixel height to prevent black bar artifacts. |
 | `track_info.rs` | `TrackInfoOverlay`: modal with full metadata fields + embedded album art |
 | `theme.rs` | Color palette. Cyan for active/cursor, green for albums, DarkGray for hints. |
 | `context_menu.rs` | `ContextMenuOverlay` widget: action list popup (play, remove, favourite, track info, organize, copy share link) |

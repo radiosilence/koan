@@ -1,3 +1,4 @@
+pub mod folder_art;
 mod id3v2_pictures;
 pub mod metadata;
 pub mod playlist_files;
