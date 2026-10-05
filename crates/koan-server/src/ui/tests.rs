@@ -416,6 +416,7 @@ async fn every_class_on_every_page_has_a_rule() {
         "/queue".to_owned(),
         "/library".to_owned(),
         "/favourites".to_owned(),
+        "/history".to_owned(),
         "/account".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
@@ -694,6 +695,68 @@ async fn favourites_are_the_callers_own_as_a_shelf() {
     )
     .await;
     assert!(r.body.contains("href=\"/favourites\"") && r.body.contains("href=\"/playlists\""));
+}
+
+#[tokio::test]
+async fn history_lists_the_callers_own_plays_by_day_and_forgets_only_those() {
+    let f = setup(true);
+    let now = chrono::Utc::now().timestamp();
+    let (mine, theirs) = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        let mine = queries::record_play_at(&db.conn, 1, f.track_id, now, None, "local").unwrap();
+        queries::record_play_at(&db.conn, 1, f.track_id, now - 3 * 86_400, None, "local").unwrap();
+        let theirs =
+            queries::record_play_at(&db.conn, bob, f.track_id, now, None, "local").unwrap();
+        (mine, theirs)
+    };
+    let page = || {
+        authed(&f.state, "/history")
+            .header(header::COOKIE, "koan_tz=0")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let r = send(&f.app, page()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains(">Today</li>"), "grouped by day");
+    assert_eq!(
+        r.body.matches("type=checkbox").count(),
+        2,
+        "alice's two plays, not bob's"
+    );
+    assert!(
+        r.body.contains(&format!("value={mine}")) && !r.body.contains(&format!("value={theirs}"))
+    );
+
+    let forget = |ids: &str| {
+        Request::post("/history/forget")
+            .header(header::HOST, HOST)
+            .header(
+                header::COOKIE,
+                format!("koan_access={}", access_token(&f.state)),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("datastar-request", "true")
+            .body(Body::from(format!("{{\"forget\":{ids}}}")))
+            .unwrap()
+    };
+    // Another account's play, named by id, is left alone.
+    let r = send(&f.app, forget(&format!("[\"{theirs}\"]"))).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = send(&f.app, forget(&format!("[\"{mine}\"]"))).await;
+    assert!(r.body.contains("datastar-patch-elements") && r.body.contains("\"forget\":[]"));
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    let left: Vec<i64> = db
+        .conn
+        .prepare("SELECT id FROM play_history ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .flatten()
+        .collect();
+    assert!(!left.contains(&mine), "alice's play is forgotten");
+    assert!(left.contains(&theirs), "bob's is not");
+    assert_eq!(left.len(), 2);
 }
 
 #[tokio::test]

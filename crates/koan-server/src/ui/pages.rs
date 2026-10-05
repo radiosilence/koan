@@ -155,10 +155,11 @@ max-wide:hidden\" href=\"/\">kōan</a>\
 <a class=\"{NAV_LINK}\" href=\"/albums\" data-nav=albums>Albums</a>\
 <a class=\"{NAV_LINK}\" href=\"/artists\" data-nav=artists>Artists</a>\
 <a class=\"{NAV_LINK} max-wide:hidden\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
-<a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists favourites\">Library</a>\
+<a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists favourites history\">Library</a>\
 <a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
 <a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>\
 <a class=\"{NAV_LINK} mt-3 max-wide:hidden\" href=\"/favourites\" data-nav=favourites>Favourites</a>\
+<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/history\" data-nav=history>History</a>\
 <a class=\"{NAV_LINK} wide:hidden\" href=\"/account\" data-nav=account>Account</a>{account}</nav>\
 <main id=content class=\"ml-(--side-w) min-w-0 px-7 \
 pt-[max(24px,env(safe-area-inset-top))] pb-10 max-wide:ml-0 max-wide:p-4 \
@@ -205,7 +206,7 @@ pub(super) fn respond(
     }
 }
 
-fn unavailable() -> Response {
+pub(super) fn unavailable() -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
         "the library is unavailable",
@@ -238,7 +239,7 @@ fn year(date: Option<&str>) -> &str {
 /// Each album's cover version: when its files last changed. A cover URL
 /// carries it, so the URL changes whenever the art might have and the browser
 /// can keep each one for good. One query for a page of albums.
-type Versions = HashMap<i64, i64>;
+pub(super) type Versions = HashMap<i64, i64>;
 
 fn cover_versions(conn: &rusqlite::Connection, album_ids: &[i64]) -> Versions {
     if album_ids.is_empty() {
@@ -258,7 +259,7 @@ fn cover_versions(conn: &rusqlite::Connection, album_ids: &[i64]) -> Versions {
     .unwrap_or_default()
 }
 
-fn cover_url(album_id: i64, size: u32, versions: &Versions) -> String {
+pub(super) fn cover_url(album_id: i64, size: u32, versions: &Versions) -> String {
     format!(
         "/ui/cover/{album_id}?size={size}&v={}",
         versions.get(&album_id).copied().unwrap_or(0)
@@ -269,7 +270,7 @@ fn album_versions(conn: &rusqlite::Connection, albums: &[AlbumRow]) -> Versions 
     cover_versions(conn, &albums.iter().map(|a| a.id).collect::<Vec<_>>())
 }
 
-fn track_versions(conn: &rusqlite::Connection, tracks: &[TrackRow]) -> Versions {
+pub(super) fn track_versions(conn: &rusqlite::Connection, tracks: &[TrackRow]) -> Versions {
     let mut ids: Vec<i64> = tracks.iter().filter_map(|t| t.album_id).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -862,7 +863,11 @@ pub(super) async fn library(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let rows = [("/playlists", "Playlists"), ("/favourites", "Favourites")]
+    let rows = [
+        ("/playlists", "Playlists"),
+        ("/favourites", "Favourites"),
+        ("/history", "History"),
+    ]
         .iter()
         .fold(String::new(), |mut out, (href, name)| {
             let _ = write!(

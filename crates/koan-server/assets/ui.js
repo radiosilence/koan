@@ -3,6 +3,8 @@
 (() => {
   const main = document.getElementById("content");
   document.documentElement.classList.add("js");
+  // The server groups history by day, and only the browser knows whose day.
+  document.cookie = `koan_tz=${-new Date().getTimezoneOffset()}; path=/; max-age=31536000; samesite=lax`;
   const all = (sel, root = document) => [...root.querySelectorAll(sel)];
   const fmt = (s) => {
     s = Math.max(0, Math.floor(s || 0));
@@ -238,7 +240,7 @@
     const a = e.target.closest("[data-act]");
     if (a) { e.preventDefault(); act(a.dataset.act, a); return; }
     const li = e.target.closest("li[data-id], li[data-q]");
-    if (li && !e.target.closest("a, button")) pick(li);
+    if (li && !e.target.closest("a, button, input, label")) pick(li);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
@@ -263,7 +265,7 @@
   }, true);
 
   // --- Navigation ------------------------------------------------------------
-  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites)?$/;
+  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history)?$/;
   let navigating = 0;
 
   async function navigate(url, push) {

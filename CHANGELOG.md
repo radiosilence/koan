@@ -5,6 +5,7 @@
 ### Added
 
 - **Favourites in the web UI.** The signed-in account's favourite artists, records and tracks on one page, laid out as in the apps: artists as pills, records as tiles, and the tracks as a list that plays on from the one picked. On a phone it sits under a new Library tab with Playlists, which the tab bar had no room to add beside; the sidebar lists both.
+- **History in the web UI.** What the signed-in account has played, most recent first, grouped by day in the browser's own time zone. Tick plays and forget them, as in the apps; only the account's own plays can be forgotten.
 - **Recently played.** A page in the Mac and iOS apps, laid out like Favourites, for "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first, at most 50 of each. It is worked out from play history, so it follows each play as it is recorded, and History now does too. On the Mac, ⌘6.
 
 ## 0.53.0
