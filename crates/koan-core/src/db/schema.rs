@@ -294,6 +294,17 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             PRIMARY KEY (user_id, artist_id)
         );
 
+        -- Where an account is in a track. See `queries::bookmarks`.
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            user_id      INTEGER NOT NULL DEFAULT 0,
+            track_id     INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            position_ms  INTEGER NOT NULL,
+            comment      TEXT,
+            created_at   INTEGER NOT NULL,
+            changed_at   INTEGER NOT NULL,
+            PRIMARY KEY (user_id, track_id)
+        );
+
         CREATE TABLE IF NOT EXISTS playback_state (
             id          INTEGER PRIMARY KEY CHECK (id = 1),
             queue_json  TEXT NOT NULL DEFAULT '[]',
@@ -755,6 +766,12 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
              DELETE FROM track_ratings WHERE user_id = OLD.id;
              DELETE FROM album_ratings WHERE user_id = OLD.id;
              DELETE FROM artist_ratings WHERE user_id = OLD.id;
+         END;",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_bookmarks_track ON bookmarks(track_id);
+         CREATE TRIGGER IF NOT EXISTS users_bookmarks AFTER DELETE ON users BEGIN
+             DELETE FROM bookmarks WHERE user_id = OLD.id;
          END;",
     )?;
     crate::db::queries::auth::adopt_local_rows(conn)?;

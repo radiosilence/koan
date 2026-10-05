@@ -76,52 +76,18 @@ pub fn record_plays_at(
     })
 }
 
-/// How far back Recently played reaches, and how many of each it shows: the
-/// same on every front end.
-pub const RECENT_DAYS: i64 = 30;
+/// Only what `user` played since `since` (unix seconds), as play history
+/// records it: the Recently played shelf's narrowing, the same for albums,
+/// artists and tracks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlayedSince {
+    pub user: i64,
+    pub since: i64,
+}
+
+/// How many of each a page showing all of Recently played at once lists.
+/// The window is `shelves::RECENT_DAYS`.
 pub const RECENT_LIMIT: u32 = 50;
-
-/// What was played lately, each once and newest first by its latest play.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct RecentlyPlayed {
-    pub albums: Vec<i64>,
-    /// By the record's artist, or the track's where it has no record.
-    pub artists: Vec<i64>,
-    pub tracks: Vec<i64>,
-}
-
-/// The records, artists and tracks `user` played since `since` (unix
-/// seconds), each counted once however often it played, ordered by its latest
-/// play, at most `limit` of each. Derived from the history, so plays another
-/// device recorded here count as soon as they arrive.
-pub fn recently_played(
-    conn: &Connection,
-    user: i64,
-    since: i64,
-    limit: u32,
-) -> Result<RecentlyPlayed, DbError> {
-    let user = resolve_user(conn, user)?;
-    let ids = |key: &str| -> Result<Vec<i64>, DbError> {
-        let sql = format!(
-            "SELECT {key}
-             FROM play_history h
-             JOIN tracks t ON t.id = h.track_id
-             LEFT JOIN albums al ON al.id = t.album_id
-             WHERE h.user_id = ?1 AND h.played_at >= ?2 AND {key} IS NOT NULL
-             GROUP BY {key}
-             ORDER BY MAX(h.played_at) DESC, MAX(h.id) DESC
-             LIMIT ?3"
-        );
-        let mut stmt = conn.prepare_cached(&sql)?;
-        let rows = stmt.query_map(params![user, since, limit], |row| row.get(0))?;
-        Ok(rows.collect::<Result<_, _>>()?)
-    };
-    Ok(RecentlyPlayed {
-        albums: ids("t.album_id")?,
-        artists: ids("COALESCE(al.artist_id, t.artist_id)")?,
-        tracks: ids("h.track_id")?,
-    })
-}
 
 /// Record a play that started just now.
 pub fn record_play(
@@ -781,62 +747,6 @@ mod tests {
     /// A record counts once however many of its tracks played, by its latest
     /// play; so do an artist and a track. Plays before `since` do not count,
     /// and each list stops at the limit.
-    #[test]
-    fn recently_played_is_each_once_by_its_latest_play() {
-        let db = test_db();
-        let track = |title: &str, artist: &str, album: &str| {
-            let mut meta = sample_meta(title, artist, album);
-            meta.path = Some(format!("/music/{album}/{title}.flac"));
-            upsert_track(&db.conn, &meta).unwrap();
-            db.conn
-                .query_row(
-                    "SELECT id FROM tracks WHERE title = ?1",
-                    params![title],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap()
-        };
-        let (a1, a2, b1, old) = (
-            track("A1", "Ann", "Alpha"),
-            track("A2", "Ann", "Alpha"),
-            track("B1", "Bob", "Beta"),
-            track("O1", "Old", "Omega"),
-        );
-        let album = |t: i64| -> i64 {
-            db.conn
-                .query_row("SELECT album_id FROM tracks WHERE id = ?1", [t], |r| {
-                    r.get(0)
-                })
-                .unwrap()
-        };
-        let artist = |t: i64| -> i64 {
-            db.conn
-                .query_row(
-                    "SELECT al.artist_id FROM tracks t JOIN albums al ON al.id = t.album_id
-                     WHERE t.id = ?1",
-                    [t],
-                    |r| r.get(0),
-                )
-                .unwrap()
-        };
-        record_plays_at(
-            &db.conn,
-            crate::db::queries::LOCAL_USER,
-            &[(old, 10), (a1, 100), (b1, 200), (a2, 300), (a1, 400)],
-            SOURCE_LOCAL,
-        )
-        .unwrap();
-
-        let recent = recently_played(&db.conn, crate::db::queries::LOCAL_USER, 50, 10).unwrap();
-        assert_eq!(recent.albums, vec![album(a1), album(b1)]);
-        assert_eq!(recent.artists, vec![artist(a1), artist(b1)]);
-        assert_eq!(recent.tracks, vec![a1, a2, b1]);
-
-        let one = recently_played(&db.conn, crate::db::queries::LOCAL_USER, 0, 1).unwrap();
-        assert_eq!(one.albums, vec![album(a1)]);
-        assert_eq!(one.tracks, vec![a1]);
-    }
-
     #[test]
     fn test_record_and_query_play_history() {
         let db = test_db();

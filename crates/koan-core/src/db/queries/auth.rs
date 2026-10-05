@@ -101,6 +101,7 @@ pub fn adopt_local_rows(conn: &Connection) -> Result<(), rusqlite::Error> {
         "track_ratings",
         "album_ratings",
         "artist_ratings",
+        "bookmarks",
         "play_history",
         "play_history_forgotten",
         "playlists",
@@ -681,6 +682,7 @@ mod tests {
             ] {
                 queries::set_rating(&db.conn, user, kind, id, 4).unwrap();
             }
+            queries::save_bookmark(&db.conn, user, track, 1_000, None).unwrap();
             queries::record_play(&db.conn, user, track, None).unwrap();
             queries::record_play_at(&db.conn, user, track, 1, None, queries::SOURCE_SUBSONIC)
                 .unwrap();
@@ -707,6 +709,7 @@ mod tests {
             "track_ratings",
             "album_ratings",
             "artist_ratings",
+            "bookmarks",
             "play_history",
             "play_history_forgotten",
             "playlists",
