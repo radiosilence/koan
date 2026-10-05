@@ -236,20 +236,27 @@ pub fn refuse(conn: &Connection, user: i64, service: &str, error: &str) -> rusql
 mod tests {
     use super::*;
     use crate::db::connection::Database;
-    use crate::db::queries::{SOURCE_LOCAL, SOURCE_SUBSONIC, record_play_at, record_plays_at};
+    use crate::db::queries::{
+        SOURCE_LOCAL, SOURCE_SUBSONIC, record_play_at, record_plays_at, sample_meta, upsert_track,
+    };
 
     fn setup() -> (Database, i64, i64) {
-        let db = Database::open_memory().unwrap();
-        db.conn
-            .execute_batch(
-                "INSERT INTO users (id, username, password_hash, role) VALUES (1, 'mate', 'x', 'user');
-                 INSERT INTO artists (id, name) VALUES (1, 'Burial');
-                 INSERT INTO albums (id, title, artist_id) VALUES (1, 'Untrue', 1);
-                 INSERT INTO tracks (id, album_id, artist_id, title, duration_ms, track_number, mbid)
-                     VALUES (1, 1, 1, 'Archangel', 238000, 2, 'rec-1');",
-            )
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO users (id, username, password_hash, role) VALUES (1, 'mate', 'x', 'user')",
+            [],
+        )
+        .unwrap();
+        let mut meta = sample_meta("Archangel", "Burial", "Untrue");
+        meta.duration_ms = Some(238_000);
+        meta.mbid = Some("rec-1".into());
+        upsert_track(&conn, &meta).unwrap();
+        let track = conn
+            .query_row("SELECT id FROM tracks", [], |r| r.get(0))
             .unwrap();
-        (db, 1, 1)
+        (Database { conn }, 1, track)
     }
 
     #[test]
