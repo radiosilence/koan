@@ -8,9 +8,8 @@ struct FavouritesView: View {
     var body: some View {
         ShelfView(
             title: "Favourites",
-            artists: library.visibleFavouriteArtists,
-            albums: library.visibleFavouriteAlbums,
-            tracks: library.visibleFavourites,
+            shelf: .favourites,
+            summary: library.visibleShelf,
             empty: EmptyShelf(
                 icon: "heart",
                 title: "Nothing favourited yet",
