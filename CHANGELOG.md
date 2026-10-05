@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Ratings over the Subsonic API.** Clients that rate songs, albums and artists from one to five can now do so against a kōan server: `setRating` stores a rating per account (0 clears it), every song, album and artist carries the caller's `userRating`, and `getAlbumList2?type=highest` lists rated albums best first instead of nothing. kōan's own apps do not show ratings. The library database moves to schema 16 for the three rating tables; a build older than this one refuses it.
+
 ## 0.52.6
 
 ### Added

@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 15;
+pub const SCHEMA_VERSION: i64 = 16;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -266,6 +266,31 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             user_id     INTEGER NOT NULL DEFAULT 0,
             artist_id   INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
             created_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, artist_id)
+        );
+
+        -- One to five, per account. See `queries::ratings`.
+        CREATE TABLE IF NOT EXISTS track_ratings (
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            changed_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, track_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS album_ratings (
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            album_id    INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+            rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            changed_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, album_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS artist_ratings (
+            user_id     INTEGER NOT NULL DEFAULT 0,
+            artist_id   INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+            rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+            changed_at  TEXT DEFAULT (datetime('now')),
             PRIMARY KEY (user_id, artist_id)
         );
 
@@ -625,6 +650,16 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
              DELETE FROM play_history WHERE user_id = OLD.id;
              DELETE FROM playlists WHERE user_id = OLD.id;
              DELETE FROM shares WHERE user_id = OLD.id;
+         END;",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_track_ratings_track ON track_ratings(track_id);
+         CREATE INDEX IF NOT EXISTS idx_album_ratings_album ON album_ratings(album_id);
+         CREATE INDEX IF NOT EXISTS idx_artist_ratings_artist ON artist_ratings(artist_id);
+         CREATE TRIGGER IF NOT EXISTS users_ratings AFTER DELETE ON users BEGIN
+             DELETE FROM track_ratings WHERE user_id = OLD.id;
+             DELETE FROM album_ratings WHERE user_id = OLD.id;
+             DELETE FROM artist_ratings WHERE user_id = OLD.id;
          END;",
     )?;
     crate::db::queries::auth::adopt_local_rows(conn)?;

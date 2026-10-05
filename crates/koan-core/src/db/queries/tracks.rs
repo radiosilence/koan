@@ -282,6 +282,10 @@ pub(crate) fn prune_if_empty(
                 "DELETE FROM favourite_albums WHERE album_id = ?1",
                 params![album_id],
             )?;
+            conn.execute(
+                "DELETE FROM album_ratings WHERE album_id = ?1",
+                params![album_id],
+            )?;
         }
     }
 
@@ -295,6 +299,10 @@ pub(crate) fn prune_if_empty(
         if stranded {
             conn.execute(
                 "DELETE FROM favourite_artists WHERE artist_id = ?1",
+                params![artist_id],
+            )?;
+            conn.execute(
+                "DELETE FROM artist_ratings WHERE artist_id = ?1",
                 params![artist_id],
             )?;
             conn.execute("DELETE FROM artists WHERE id = ?1", params![artist_id])?;
