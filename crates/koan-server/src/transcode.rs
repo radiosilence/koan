@@ -267,9 +267,12 @@ impl Transcoder {
     }
 
     /// The headers a transcode would be sent with, for a HEAD request, which
-    /// runs no encoder.
+    /// runs no encoder. The body is a stream of nothing rather than an empty
+    /// body: an empty body has a known size, and would be announced as a
+    /// `Content-Length` of zero.
     pub fn head(plan: &Plan, length: Option<u64>) -> std::io::Result<Response> {
-        Self::response(plan, length, axum::body::Body::empty())
+        let nothing = tokio_stream::empty::<std::io::Result<axum::body::Bytes>>();
+        Self::response(plan, length, axum::body::Body::from_stream(nothing))
     }
 
     fn response(
@@ -665,5 +668,20 @@ mod tests {
         // The permit went with the failed attempt.
         let held: Vec<_> = (0..PER_ACCOUNT).map(|_| t.permits("a")).collect();
         assert!(held.iter().all(Option::is_some));
+    }
+
+    #[test]
+    fn a_head_names_no_length_unless_one_was_estimated() {
+        use axum::body::HttpBody;
+        let plan = Plan {
+            codec: Codec::Mp3,
+            kbps: 128,
+            offset_secs: 0.0,
+        };
+        let head = Transcoder::head(&plan, None).unwrap();
+        assert!(head.headers().get(header::CONTENT_LENGTH).is_none());
+        assert_eq!(head.body().size_hint().exact(), None);
+        let head = Transcoder::head(&plan, Some(4000)).unwrap();
+        assert_eq!(head.headers()[header::CONTENT_LENGTH], "4000");
     }
 }
