@@ -169,6 +169,9 @@ final class LibraryModel {
     private(set) var visibleFavouriteAlbums: [Album] = []
     private(set) var visibleFavouriteArtists: [Artist] = []
     private(set) var visiblePlayHistory: [PlayHistoryEntry] = []
+    private(set) var visibleRecentAlbums: [Album] = []
+    private(set) var visibleRecentArtists: [Artist] = []
+    private(set) var visibleRecentTracks: [Track] = []
 
     // Favourite state is read from here rather than from the copy baked into
     // each Track when it was fetched. A track appears in the album view, the
@@ -266,6 +269,10 @@ final class LibraryModel {
             if artists != visibleFavouriteArtists { visibleFavouriteArtists = artists }
         case .history(let rows):
             if rows != visiblePlayHistory { visiblePlayHistory = rows }
+        case .recent(let recent):
+            if recent.albums != visibleRecentAlbums { visibleRecentAlbums = recent.albums }
+            if recent.artists != visibleRecentArtists { visibleRecentArtists = recent.artists }
+            if recent.tracks != visibleRecentTracks { visibleRecentTracks = recent.tracks }
         }
     }
 
@@ -611,6 +618,15 @@ final class LibraryModel {
         refreshFavourites()
         reload()
     }
+
+    /// A play was recorded or forgotten: the sections derived from history
+    /// ask again, and nothing else does.
+    func historyChanged() {
+        switch section {
+        case .recentlyPlayed, .playHistory: reload()
+        default: break
+        }
+    }
 }
 
 /// Everything a section's query depends on, captured off the model so the
@@ -664,6 +680,8 @@ private struct Request: Sendable {
             )
         case .playHistory:
             return .history((try? await engine.playHistory(search: search)) ?? [])
+        case .recentlyPlayed:
+            return (try? await engine.recentlyPlayed(search: search)).map { .recent($0) } ?? .none
         }
     }
 }
@@ -674,4 +692,5 @@ private enum Rows: Sendable {
     case artists([Artist])
     case favourites(tracks: [Track], albums: [Album], artists: [Artist])
     case history([PlayHistoryEntry])
+    case recent(RecentlyPlayed)
 }
