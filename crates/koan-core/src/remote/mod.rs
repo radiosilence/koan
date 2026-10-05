@@ -9,6 +9,7 @@ pub mod lrclib;
 pub mod musicbrainz;
 pub mod nearby;
 pub mod outputs;
+pub mod pair;
 pub mod profile;
 pub mod queue;
 pub mod sync;

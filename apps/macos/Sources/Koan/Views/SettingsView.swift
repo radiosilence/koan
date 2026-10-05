@@ -331,9 +331,10 @@ private struct RemoteSettings: View {
                     }
                     .rowButtons()
                 }
-                // Accounts are managed from a device that can send an invite.
+                // Accounts and pairings are managed from a device with a keyboard.
                 #if !os(tvOS)
                 PeopleSettings(signedInAs: model.settings.remoteUsername)
+                PairDevice()
                 #endif
                 ServerOffers()
             } else {
@@ -713,6 +714,41 @@ struct DspImportPrompts: ViewModifier {
                     Text("\(device) plays untouched until it has a profile.")
                 }
             }
+    }
+}
+
+/// Signing in a device that has no keyboard, by the code it shows. Offered
+/// where the server lists `koanPair`.
+private struct PairDevice: View {
+    @Environment(AppState.self) private var state
+    @Environment(EngineMirror.self) private var mirror
+    @State private var code = ""
+
+    var body: some View {
+        if mirror.connection?.pairing == true {
+            Section {
+                HStack {
+                    TextField("Code", text: $code, prompt: Text("XXXX-XXXX"))
+                        .verbatimEntry()
+                        .onSubmit(approve)
+                    Button("Approve", action: approve)
+                        .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: {
+                Text("Pair a device")
+            } footer: {
+                Text("A television or another device without a keyboard shows a code while it waits. Enter it here to sign it in as you, with a key of its own that can be revoked on the server.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private func approve() {
+        let typed = code.trimmingCharacters(in: .whitespaces)
+        guard !typed.isEmpty else { return }
+        code = ""
+        Task { await state.offerPairing(typed) }
     }
 }
 

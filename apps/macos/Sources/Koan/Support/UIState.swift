@@ -19,6 +19,8 @@ final class UIState {
     /// An invite that would replace the account already signed in, waiting
     /// for a yes.
     var pendingInvite: Invite?
+    /// A device waiting to be signed in as this account, waiting for a yes.
+    var pendingPairing: PairingRequest?
 
     /// The main window's content size, measured by `RootView`.
     ///

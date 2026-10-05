@@ -42,6 +42,7 @@ struct KoanIOSApp: App {
                         .environment(state.mirror)
                         .environment(\.powerSaving, powerSaving)
                         .modifier(InviteConfirmation(state: state))
+                        .modifier(PairingConfirmation(state: state))
                         .modifier(DspImportPrompts(dsp: state.dsp))
                         .tint(.koanAccent)
                         #if os(tvOS)
