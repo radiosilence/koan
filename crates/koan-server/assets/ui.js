@@ -263,7 +263,7 @@
   }, true);
 
   // --- Navigation ------------------------------------------------------------
-  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account)?$/;
+  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites)?$/;
   let navigating = 0;
 
   async function navigate(url, push) {
@@ -292,7 +292,8 @@
     const section = { "": "albums", album: "albums", artist: "artists", playlist: "playlists" }[location.pathname.split("/")[1]]
       ?? location.pathname.split("/")[1];
     for (const a of all("a[data-nav]")) {
-      if (a.dataset.nav === section) a.setAttribute("aria-current", "page");
+      // A phone's Library tab stands for several of the sidebar's links.
+      if (a.dataset.nav.split(" ").includes(section)) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     }
     const focus = main.querySelector("[autofocus]");

@@ -352,6 +352,9 @@
   .max-w-form {
     max-width: var(--container-form);
   }
+  .max-w-full {
+    max-width: 100%;
+  }
   .max-w-panel {
     max-width: var(--container-panel);
   }
