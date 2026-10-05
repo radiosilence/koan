@@ -851,6 +851,33 @@ tv-pair: (tv-ffi "appletvsimulator") ios-project
     xcrun xcresulttool export attachments --path "$out/pair.xcresult" --output-path "$out"
     echo "screenshots in $out"
 
+# Sign a television in through an invite: the simulator by default, or
+# `device=tv` for the Apple TV paired with Xcode (signed as `tv-device` is).
+tv-join link device="sim": ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{device}}" = tv ]; then
+        just tv-ffi appletvos
+        dest=$(xcrun devicectl list devices | awk '/Apple TV/' \
+            | grep -oE '[0-9a-f]{40}|[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1)
+        APPLE_TEAM_ID=${APPLE_TEAM_ID:-2256Q92VF2} just ios-project
+    else
+        just tv-ffi appletvsimulator
+        dest=$(xcrun simctl list devices available -j \
+            | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    fi
+    auth=(-allowProvisioningUpdates)
+    if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+        auth+=(-authenticationKeyPath "$APPLE_API_KEY_PATH" -authenticationKeyID "$APPLE_API_KEY_ID" -authenticationKeyIssuerID "$APPLE_API_ISSUER_ID")
+    fi
+    rm -rf target/tv-join.xcresult
+    TEST_RUNNER_KOAN_INVITE_LINK='{{link}}' xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
+        -destination "id=$dest" -derivedDataPath target/tv-build \
+        -resultBundlePath target/tv-join.xcresult \
+        -only-testing:KoanTVUITests/TVInviteTests "${auth[@]}"
+    echo "joined through the invite"
+
 # Archive for a device, sign, and upload to TestFlight.
 #
 # Signing is cloud-managed: xcodebuild asks App Store Connect for the

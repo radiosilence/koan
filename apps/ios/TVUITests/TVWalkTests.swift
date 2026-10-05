@@ -37,6 +37,19 @@ final class TVWalkTests: XCTestCase {
         pause(Double(ProcessInfo.processInfo.environment["KOAN_WALK_SETTLE"] ?? "6") ?? 6)
         snap("01-now-playing")
 
+        // Something playing, for the pages about what is playing: the first
+        // record in the grid, from its first track, where opening it leaves
+        // focus.
+        start(at: .library)
+        press(.down)
+        press(.select)
+        pause(4)
+        press(.down)
+        press(.select)
+        pause(4)
+        press(.select)
+        pause(8)
+
         start(at: .queue)
         snap("02-queue")
         press(.down)
@@ -49,22 +62,24 @@ final class TVWalkTests: XCTestCase {
         start(at: .nowPlaying)
         press(.down)
         snap("05-now-playing-controls")
-        press(.up)
+        press(.down)
         snap("06-now-playing-seek")
-        press(.down, times: 2)
+        press(.down)
         snap("07-now-playing-up-next")
         start(at: .nowPlaying)
         press(.down)
-        press(.right, times: 3)
-        press(.select)
-        pause(3)
+        if focus(app.buttons["lyrics"]) {
+            press(.select)
+            pause(3)
+        }
         snap("08-lyrics")
         start(at: .nowPlaying)
         press(.down)
-        press(.right, times: 7)
-        snap("09-devices-focused")
-        press(.select)
-        pause(2)
+        if focus(app.buttons["output"]) || focus(app.buttons["play-on"]) {
+            snap("09-devices-focused")
+            press(.select)
+            pause(2)
+        }
         snap("10-device-sheet")
 
         start(at: .library)
@@ -96,6 +111,15 @@ final class TVWalkTests: XCTestCase {
 
         start(at: .search)
         snap("21-search")
+        press(.down)
+        let field = app.searchFields.firstMatch
+        if field.waitForExistence(timeout: 3) {
+            field.typeText(ProcessInfo.processInfo.environment["KOAN_WALK_SEARCH"] ?? "bliss")
+            pause(4)
+            snap("21b-search-results")
+            press(.down, times: 2)
+            snap("21c-search-focused")
+        }
 
         start(at: .settings)
         snap("22-settings")
@@ -115,6 +139,20 @@ final class TVWalkTests: XCTestCase {
         pause(5)
         press(.right, times: tab.rawValue)
         pause(2)
+    }
+
+    /// Move until `element` has focus: along the row, then down and up the
+    /// page. Counting presses breaks whenever a control comes or goes.
+    @discardableResult
+    private func focus(_ element: XCUIElement) -> Bool {
+        guard element.waitForExistence(timeout: 3) else { return false }
+        for direction in [XCUIRemote.Button.right, .left, .up, .down] {
+            for _ in 0..<10 {
+                if element.hasFocus { return true }
+                press(direction)
+            }
+        }
+        return element.hasFocus
     }
 
     private func press(_ button: XCUIRemote.Button, times: Int = 1) {

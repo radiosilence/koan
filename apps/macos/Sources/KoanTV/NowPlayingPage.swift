@@ -15,6 +15,7 @@ struct NowPlayingPage: View {
     @State private var showingDevices = false
     @State private var showingControl = false
     @FocusState private var focus: Focus?
+    @Namespace private var page
 
     private enum Focus: Hashable { case playPause, seek }
 
@@ -24,11 +25,15 @@ struct NowPlayingPage: View {
                 idle
             } else {
                 VStack(alignment: .leading, spacing: 48) {
+                    // One section the width of the screen: down from the tabs
+                    // enters here, at play/pause, whichever control happens
+                    // to sit nearest the tab that was left.
                     HStack(alignment: .center, spacing: 80) {
                         stage
                             .frame(width: 620, height: 620)
                         details
                     }
+                    .focusSection()
                     UpNext()
                 }
                 .padding(.horizontal, 90)
@@ -44,7 +49,10 @@ struct NowPlayingPage: View {
             }
             .ignoresSafeArea()
         }
-        .defaultFocus($focus, .playPause)
+        // Whenever the remote brings focus into the page, not only when it
+        // first appears.
+        .defaultFocus($focus, .playPause, priority: .userInitiated)
+        .focusScope(page)
         .outputSheet(isPresented: $showingDevices)
         .controlSheet(isPresented: $showingControl)
     }
@@ -101,11 +109,13 @@ struct NowPlayingPage: View {
                     .padding(.vertical, 5)
                     .background(.quaternary, in: Capsule())
             }
+            // The transport above the bar: down from the tabs reaches play/pause
+            // first, then the bar, then what comes next, in the order they sit.
+            controls
+                .padding(.top, 24)
             Scrubber(focused: focus == .seek)
                 .focusable()
                 .focused($focus, equals: .seek)
-                .padding(.top, 24)
-            controls
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentTransition(.opacity)
@@ -122,6 +132,7 @@ struct NowPlayingPage: View {
                     .contentTransition(.symbolEffect(.replace))
             }
             .focused($focus, equals: .playPause)
+            .prefersDefaultFocus(in: page)
             Button { player.next() } label: { Image(systemName: Icon.next) }
             if let trackId = player.currentTrackId {
                 TrackHeart(trackId: trackId, size: .title3)
@@ -129,14 +140,21 @@ struct NowPlayingPage: View {
             Button { ui.toggleLyrics() } label: {
                 Image(systemName: Icon.lyrics).symbolVariant(ui.showLyrics ? .fill : .none)
             }
+            .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")
+            .accessibilityIdentifier("lyrics")
             ShuffleButton()
             RepeatButton()
             if player.hasOtherDevices || player.isControllingAnother {
                 ControlButton(open: $showingControl, labelled: player.isControllingAnother)
+                    .accessibilityIdentifier("play-on")
             }
             if player.canChooseOutput {
                 OutputButton(open: $showingDevices, labelled: false)
+                    .accessibilityIdentifier("output")
             }
+            // The phone's AirPlay picker is left out: a television's audio
+            // route is the system's, chosen in Control Center, and the picker,
+            // a UIKit view, took the page's first focus from play/pause.
             if !player.isControllingAnother {
                 if let route = app.dsp.route,
                    let presets = Presets(dsp: app.dsp, device: route, none: "Off") {
@@ -144,8 +162,6 @@ struct NowPlayingPage: View {
                         Label(presets.current ?? presets.none, systemImage: "slider.horizontal.3")
                     }
                 }
-                RoutePicker()
-                    .frame(width: 66, height: 66)
             }
         }
         .focusSection()
@@ -171,7 +187,8 @@ private struct Scrubber: View {
             .padding(.horizontal, 16)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(.white.opacity(focused ? 0.12 : 0))
+                    .fill(.white.opacity(focused ? 0.18 : 0))
+                    .stroke(.white.opacity(focused ? 0.6 : 0), lineWidth: 2)
             )
             .scaleEffect(focused ? 1.02 : 1)
             .animation(.easeOut(duration: 0.15), value: focused)

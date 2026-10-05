@@ -125,7 +125,7 @@ extension View {
         self
         #elseif os(tvOS)
         Button(action: action) { contentShape(Rectangle()) }
-            .buttonStyle(.plain)
+            .buttonStyle(TelevisionRow())
         #else
         contentShape(Rectangle()).onTapGesture(perform: action)
         #endif
@@ -161,7 +161,7 @@ extension View {
     ) -> some View {
         #if os(tvOS)
         Button(action: action) { contentShape(Rectangle()) }
-            .buttonStyle(.plain)
+            .buttonStyle(TelevisionRow())
             .contextMenu { menu() }
         #else
         primaryTap(action)
@@ -356,9 +356,11 @@ extension View {
 struct SystemSwitch: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         #if os(tvOS)
-        // A television's toggle is a row that says On or Off; tinted, its
-        // label goes mint on the white a focused row turns.
+        // A television's toggle is a row that says On or Off. Its label takes
+        // the tint, which the room sets to the record's colour; the primary
+        // colour lets a focused row draw it dark on white as other rows do.
         Toggle(configuration)
+            .tint(.primary)
         #else
         Toggle(configuration)
             .toggleStyle(.switch)
@@ -495,3 +497,36 @@ extension View {
 enum ShortcutRole {
     case defaultAction, cancelAction
 }
+
+#if os(tvOS)
+/// A list row as a television draws one: the row's own colours at rest, and
+/// focused, a white platter with the row drawn as it would be on a light
+/// screen, so secondary text stays readable on it. A plain button would tint
+/// every label with the accent instead.
+struct TelevisionRow: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Row(label: configuration.label, pressed: configuration.isPressed)
+    }
+
+    private struct Row<Label: View>: View {
+        let label: Label
+        let pressed: Bool
+        @Environment(\.isFocused) private var focused
+
+        var body: some View {
+            label
+                .foregroundStyle(.primary)
+                .environment(\.colorScheme, focused ? .light : .dark)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(.white.opacity(focused ? 1 : 0))
+                        .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
+                )
+                .scaleEffect(pressed ? 0.98 : focused ? 1.02 : 1)
+                .animation(.easeOut(duration: 0.15), value: focused)
+        }
+    }
+}
+#endif

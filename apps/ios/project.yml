@@ -189,6 +189,13 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image
         LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/tv-link/$(PLATFORM_NAME)
         OTHER_LDFLAGS: -lkoan_ffi
+    # A background push is how the server reaches a TV tvOS has suspended,
+    # to link and take what Play on sent it. tvOS shows no notifications, so
+    # there is nothing more to ask for.
+    entitlements:
+      path: ../../target/ios-project/koan-tv.entitlements
+      properties:
+        aps-environment: development
     info:
       path: ../../target/ios-project/TV-Info.plist
       properties:
@@ -198,7 +205,8 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLName: cc.blit.koan
             CFBundleURLSchemes: [koan]
-        UIBackgroundModes: [audio]
+        # `remote-notification`: a background push wakes the app to link.
+        UIBackgroundModes: [audio, remote-notification]
         NSLocalNetworkUsageDescription: >-
           koan connects to your music server when it is on your local network,
           and finds other koan apps on it to play music on.
