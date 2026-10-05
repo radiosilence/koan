@@ -4537,7 +4537,7 @@ fn fillable(db: &Database, playlist_id: i64) -> Result<(), KoanError> {
     match queries::get_playlist(&db.conn, playlist_id).map_err(db_err)? {
         Some(list) if list.readonly => Err(KoanError::BadArgument {
             message: format!(
-                "'{}' is a smart playlist; its rules decide what it holds",
+                "'{}' is read-only: its rules, its file or its server decide what it holds",
                 list.name
             ),
         }),

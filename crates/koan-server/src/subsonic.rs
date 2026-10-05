@@ -3077,12 +3077,13 @@ fn refresh_smart(db: &Database, user: i64) {
     }
 }
 
-/// A smart playlist's contents are its rules', not for editing.
+/// A smart playlist's contents are its rules', and a file's are the file's:
+/// neither is for editing.
 fn refuse_smart(list: &queries::PlaylistRow) -> Result<(), SubsonicError> {
     if list.readonly {
         return Err(SubsonicError::new(
             SubsonicErrorCode::NotAuthorized,
-            "Smart playlists are read-only: change the rules instead",
+            "This playlist is read-only: its rules or its file decide what it holds",
         ));
     }
     Ok(())

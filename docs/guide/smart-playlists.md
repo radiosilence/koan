@@ -53,4 +53,10 @@ A rule set has `match` (`all`, the default, or `any`), a list of `rules`, an opt
 
 kōan reads `.nsp` files with the fields above under Navidrome's names (`loved` for `favourite`, `filetype` for `format`, `filepath` for `path`), its operators, and `sort`/`order`/`limit`, including comma-separated sort keys with a `-` for descending. A file that uses something kōan has no counterpart for (ratings, BPM, comments, other playlists) is skipped and the reason logged: a playlist that ignored one of its conditions would hold more than its author asked for.
 
+## M3U files
+
+`.m3u` and `.m3u8` files in a library folder are read the same way, into ordinary playlists of the tracks they list. Entries may be relative to the file, absolute, or `file://` URLs; Windows separators are understood, and a plain `.m3u` that is not UTF-8 is read as Latin-1. `#PLAYLIST:` names the playlist, otherwise the file does. Entries that are not in the library, stream URLs among them, are left out and counted in the log, and a file that names nothing in the library is not imported.
+
+As with `.nsp` files, the file decides: changing it changes the playlist at the next scan, deleting it deletes the playlist, and the playlist takes no edits in the meantime. To edit one in kōan, make a copy of it.
+
 A playlist that a Subsonic server marks read-only, as OpenSubsonic servers mark their smart playlists, is shown read-only in kōan's apps and never pushed back to the server.
