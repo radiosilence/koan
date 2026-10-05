@@ -1,12 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.52.7
 
 ### Fixed
 
 - **Opus playback uses a fraction of the CPU it did.** The Opus decoder computed the transform inside every audio frame term by term, with a sine and cosine per term: about a third of a phone CPU core to play one stream, which emptied an iPhone's battery overnight while playing in the background. It now runs a real FFT. The fix is a patched copy of `opus-decoder` in `vendor/`, kept until upstream releases one.
 - **The server stops when asked to.** `koan` now shuts down on SIGTERM as well as SIGINT. In a container it runs as PID 1, where an unhandled SIGTERM is dropped, so every stop waited out the grace period and ended in a kill: about 30 seconds of downtime added to each Kubernetes deploy. Shutdown waits up to 10 seconds for open connections, since subscription websockets and audio streams never close on their own.
-
 - **A device that keeps dropping off the network no longer sets every other kōan dialling.** Each time one reappeared, or a connection to it ended, every device was dialled again at once with its backoff started over, so one flapping device (here a tvOS simulator) had a phone playing in the background connected to about 800 times in a night. A redial now goes only to the device concerned, and a connection must last 30 seconds before its backoff starts over. On Apple platforms an incoming connection also failed its handshake whenever the request arrived a moment after it, which made the dialler try again; it now waits for the request.
 
 ## 0.52.6
