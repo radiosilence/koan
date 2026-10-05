@@ -28,8 +28,10 @@ struct NowPlayingSheet: View {
             titles.padding(.horizontal, 28)
             SeekBar().padding(.horizontal, 20)
             transport
-            extras
+            toggles
                 .padding(.horizontal, 28)
+            choices
+                .padding(.horizontal, 20)
                 .padding(.bottom, 12)
         }
         .presentationDragIndicator(.visible)
@@ -106,7 +108,7 @@ struct NowPlayingSheet: View {
     }
 
     /// Shuffle and repeat flank the three that move, at the size of the
-    /// extras below: they set how the queue plays rather than moving it.
+    /// toggles below: they set how the queue plays rather than moving it.
     private var transport: some View {
         HStack(spacing: 0) {
             ShuffleButton().font(.title3)
@@ -140,11 +142,11 @@ struct NowPlayingSheet: View {
         .disabled(player.currentEntry == nil)
     }
 
-    /// What the Mac keeps at the right of its bar: what the output is handed
-    /// and where the sound goes. Lyrics joins them, since there is no
-    /// inspector here for it to open in.
-    private var extras: some View {
-        HStack(spacing: 18) {
+    /// What is switched on or off for listening, and what the output is
+    /// handed: the lyrics, the sleep timer, the format, and AirPlay, which iOS
+    /// owns.
+    private var toggles: some View {
+        HStack(spacing: 0) {
             Button {
                 ui.toggleLyrics()
             } label: {
@@ -153,21 +155,12 @@ struct NowPlayingSheet: View {
             }
             .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")
 
+            Spacer(minLength: 12)
             SleepButton()
                 .font(.subheadline)
 
-            Spacer()
-
-            if player.hasOtherDevices || player.isControllingAnother {
-                ControlButton(open: $showingControl, labelled: player.isControllingAnother)
-                    .font(.subheadline)
-            }
-            if player.canChooseOutput {
-                OutputButton(open: $showingDevices, labelled: true)
-                    .font(.subheadline)
-            }
-
             if let format = player.currentFormat {
+                Spacer(minLength: 12)
                 Text(Format.quality(format))
                     .font(.caption.monospaced())
                     .lineLimit(1)
@@ -177,20 +170,73 @@ struct NowPlayingSheet: View {
                     .background(.quaternary, in: Capsule())
             }
 
-            // This phone's own output and its preset; nothing either chooses
-            // reaches another device.
+            // This phone's own route; nothing it chooses reaches another device.
             if !player.isControllingAnother {
-                if let output, let presets = Presets(dsp: app.dsp, device: output.device, none: output.none) {
-                    PresetMenu(presets: presets, title: output.name) {
-                        RoutePreset(presets: presets, processed: player.currentFormat?.dsp != nil)
-                    }
-                }
+                Spacer(minLength: 12)
                 RoutePicker()
                     .frame(width: 28, height: 28)
             }
         }
         .font(.title3)
         .buttonStyle(.plain)
+    }
+
+    /// Which device plays, through what, and with which preset: one pill
+    /// each, named in full. Spread evenly at their own widths where they fit,
+    /// and in equal thirds that truncate where they do not; every sheet and
+    /// menu they open names its choices in full.
+    private var choices: some View {
+        ViewThatFits(in: .horizontal) {
+            choiceRow(natural: true)
+            choiceRow(natural: false)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func choiceRow(natural: Bool) -> some View {
+        HStack(spacing: natural ? 0 : 8) {
+            if natural { Spacer(minLength: 0) }
+            if player.hasOtherDevices || player.isControllingAnother {
+                Button { showingControl = true } label: {
+                    Pill(
+                        systemImage: Action.control.glyph,
+                        text: player.isControllingAnother
+                            ? player.controlled?.name ?? "Another device"
+                            : "This \(UIDevice.current.model)",
+                        tinted: player.isControllingAnother
+                    )
+                }
+                .accessibilityLabel(player.isControllingAnother ? "Controlling \(player.controlled?.name ?? "another device")" : "Control another kōan")
+                .pillWidth(natural)
+                if natural { Spacer(minLength: 8) }
+            }
+            if player.canChooseOutput {
+                Button { showingDevices = true } label: {
+                    Pill(
+                        systemImage: "hifispeaker",
+                        text: player.outputName ?? "Output",
+                        tinted: player.renderer != nil
+                    )
+                }
+                .accessibilityLabel("Output: \(player.outputName ?? "default")")
+                .pillWidth(natural)
+            }
+            // This phone's own output's preset; another device's is chosen in
+            // Output.
+            if !player.isControllingAnother, let output,
+               let presets = Presets(dsp: app.dsp, device: output.device, none: output.none) {
+                if natural { Spacer(minLength: 8) }
+                PresetMenu(presets: presets, title: output.name) {
+                    Pill(
+                        systemImage: "slider.horizontal.3",
+                        text: presets.current.map { presets.enabled ? $0 : "\($0), off" } ?? presets.none,
+                        tinted: player.currentFormat?.dsp != nil
+                    )
+                }
+                .pillWidth(natural)
+            }
+            if natural { Spacer(minLength: 0) }
+        }
     }
 
     /// What the music is coming out of, as profiles name it: a renderer the
@@ -204,23 +250,36 @@ struct NowPlayingSheet: View {
     }
 }
 
-/// The route's preset, beside the route picker: its name, or "Off". Tinted
-/// while what is heard is processed.
-private struct RoutePreset: View {
-    let presets: Presets
-    let processed: Bool
+/// A device choice under the transport: an icon and a name, tinted while it
+/// is not this phone's own way of playing.
+private struct Pill: View {
+    let systemImage: String
+    let text: String
+    let tinted: Bool
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "slider.horizontal.3")
-            Text(presets.current.map { presets.enabled ? $0 : "\($0), off" } ?? presets.none)
+        HStack(spacing: 5) {
+            Image(systemName: systemImage)
+                .foregroundStyle(tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            Text(text)
                 .lineLimit(1)
+                .foregroundStyle(.primary)
         }
-        .font(.caption)
-        .foregroundStyle(processed ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .font(.subheadline)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .background(.quaternary, in: Capsule())
+    }
+}
+
+private extension View {
+    /// At its own width, or a share of the row's.
+    @ViewBuilder func pillWidth(_ natural: Bool) -> some View {
+        if natural {
+            fixedSize()
+        } else {
+            frame(maxWidth: .infinity)
+        }
     }
 }
 

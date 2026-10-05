@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Now Playing on iOS has room for its controls.** The row under the transport held the lyrics, the sleep timer, the device, output and preset buttons, the format and AirPlay, and at a phone's width the output and preset were cut to a letter or two. It is now two rows: the lyrics, the sleep timer, the format and AirPlay; then the device being controlled, the output and the preset, each named in full where it fits, spread evenly, and shortened only when a name will not fit beside the others.
+
 ## 0.54.0
 
 The library database moves from schema 16 to 19 (new tables for ratings, bookmarks, scrobbling and smart playlists, and the play history table rebuilt for sharing between devices; every existing row is kept as it was). Builds older than 0.54.0 refuse a schema-19 database, so going back means restoring a copy taken before upgrading.
