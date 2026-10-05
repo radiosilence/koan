@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind};
 
 use super::metadata::is_audio_file;
+use super::playlist_files::is_playlist_file;
 
 /// A library folder being watched.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +73,7 @@ pub fn scan_target(kind: &EventKind, path: &Path, roots: &[WatchedRoot]) -> Opti
     }
     let path = root.path.join(rel);
 
-    if is_audio_file(&path) {
+    if is_audio_file(&path) || is_playlist_file(&path) {
         return path.parent().map(Path::to_path_buf);
     }
     match std::fs::metadata(&path) {

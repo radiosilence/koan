@@ -836,6 +836,11 @@ pub(super) struct GqlPlaylist {
     pub duration_ms: i64,
     pub created_at: String,
     pub changed_at: String,
+    /// Its contents cannot be edited: a smart playlist, whose rules decide
+    /// them.
+    pub readonly: bool,
+    /// A smart playlist's rules, in the shape `createSmartPlaylist` takes.
+    pub rules: Option<async_graphql::Json<serde_json::Value>>,
 }
 
 impl From<koan_core::db::queries::PlaylistRow> for GqlPlaylist {
@@ -851,6 +856,12 @@ impl From<koan_core::db::queries::PlaylistRow> for GqlPlaylist {
             duration_ms: p.duration_ms,
             created_at: p.created_at,
             changed_at: p.changed_at,
+            readonly: p.readonly,
+            rules: p
+                .rules
+                .as_deref()
+                .and_then(|r| serde_json::from_str(r).ok())
+                .map(async_graphql::Json),
         }
     }
 }

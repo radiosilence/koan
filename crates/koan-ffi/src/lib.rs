@@ -399,7 +399,11 @@ impl KoanEngine {
             .await?;
         }
         // A sync touches no player state, so it has no place in the lane's order.
-        if matches!(cmd, koan_core::remote::link::LinkCommand::Sync { .. }) {
+        if matches!(
+            cmd,
+            koan_core::remote::link::LinkCommand::Sync { .. }
+                | koan_core::remote::link::LinkCommand::HistoryChanged
+        ) {
             return offload::offload(move || {
                 self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
                 Ok(())
@@ -1268,24 +1272,24 @@ impl KoanEngine {
         self.bump_library();
     }
 
-    /// Forget specific plays. Returns how many entries were removed.
+    /// Forget specific plays, here and, signed in to a koan server, on every
+    /// device on the account. Returns how many entries were removed.
     pub async fn delete_plays(self: Arc<Self>, ids: Vec<i64>) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let removed =
-                queries::delete_plays(&db.conn, queries::LOCAL_USER, &ids).map_err(db_err)?;
+            let removed = koan_core::remote::history::forget(&db, &ids).map_err(db_err)?;
             koan_core::player::history::changed();
             Ok(removed as u32)
         })
         .await
     }
 
-    /// Forget every play. Returns how many entries were removed.
+    /// Forget every play, here and, signed in to a koan server, on every
+    /// device on the account. Returns how many entries were removed.
     pub async fn clear_play_history(self: Arc<Self>) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let removed =
-                queries::clear_play_history(&db.conn, queries::LOCAL_USER).map_err(db_err)?;
+            let removed = koan_core::remote::history::clear(&db).map_err(db_err)?;
             koan_core::player::history::changed();
             Ok(removed as u32)
         })
@@ -1481,6 +1485,7 @@ impl KoanEngine {
     pub async fn playlists(self: Arc<Self>) -> Result<Vec<Playlist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            self.refresh_smart(&db, None);
             Ok(queries::list_playlists(&db.conn, queries::LOCAL_USER)
                 .map_err(db_err)?
                 .into_iter()
@@ -1498,6 +1503,7 @@ impl KoanEngine {
     ) -> Result<Vec<PlaylistEntry>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            self.refresh_smart(&db, Some(playlist_id));
             let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
             if offline() {
                 entries.retain(|e| e.track.cached_path.is_some() || e.track.path.is_some());
@@ -1557,6 +1563,13 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            if let Some(list) = queries::get_playlist(&db.conn, playlist_id).map_err(db_err)?
+                && list.source_path.is_some()
+            {
+                return Err(KoanError::BadArgument {
+                    message: format!("'{}' is named by its file in the library", list.name),
+                });
+            }
             queries::rename_playlist(&db.conn, playlist_id, &name).map_err(db_err)?;
             self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
@@ -1594,6 +1607,7 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            fillable(&db, playlist_id)?;
             self.playlist_history
                 .record(&db.conn, playlist_id)
                 .map_err(db_err)?;
@@ -1622,6 +1636,7 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            fillable(&db, playlist_id)?;
             self.playlist_history
                 .record(&db.conn, playlist_id)
                 .map_err(db_err)?;
@@ -1655,6 +1670,7 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            fillable(&db, playlist_id)?;
             self.playlist_history
                 .record(&db.conn, playlist_id)
                 .map_err(db_err)?;
@@ -1676,6 +1692,7 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            fillable(&db, playlist_id)?;
             self.playlist_history
                 .record(&db.conn, playlist_id)
                 .map_err(db_err)?;
@@ -1695,6 +1712,7 @@ impl KoanEngine {
     pub async fn shuffle_playlist(self: Arc<Self>, playlist_id: i64) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            fillable(&db, playlist_id)?;
             self.playlist_history
                 .record(&db.conn, playlist_id)
                 .map_err(db_err)?;
@@ -4146,6 +4164,28 @@ impl KoanEngine {
         .await
     }
 
+    /// Evaluate smart playlists that are due (one, or every one), and have
+    /// the queue follow any it is locked to whose contents moved.
+    fn refresh_smart(&self, db: &Database, playlist_id: Option<i64>) {
+        let lock = koan_core::playlists::queue_lock(db, &self.state);
+        let changed = match playlist_id {
+            Some(id) => queries::smart::refresh_if_due(&db.conn, id)
+                .map(|moved| if moved { vec![id] } else { Vec::new() }),
+            None => queries::smart::refresh_due(&db.conn, queries::LOCAL_USER),
+        };
+        match changed {
+            Ok(changed) if !changed.is_empty() => {
+                for id in changed {
+                    let locked = lock == Some(koan_core::playlists::QueueLock::Playlist(id));
+                    self.follow_playlist(db, id, locked);
+                }
+                self.bump_library();
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("smart playlists not refreshed: {e}"),
+        }
+    }
+
     /// Whether the queue is still exactly this playlist.
     fn locked_to(&self, db: &Database, playlist_id: i64) -> bool {
         koan_core::playlists::queue_lock(db, &self.state)
@@ -4395,6 +4435,14 @@ impl KoanEngine {
                 log::info!("link: evicted {} cached tracks", ids.len());
                 self.library_changed();
                 Ok(())
+            }),
+            LinkCommand::HistoryChanged => self.db().map(|db| {
+                // History and Recently played follow `player::history::changed`,
+                // which the sync rings; a track it had to sync for is the
+                // library's news too.
+                if koan_core::remote::history::sync(&db).library_synced {
+                    self.library_changed();
+                }
             }),
             LinkCommand::Sync { full } => self.db().map(|db| {
                 let walk = if full {
@@ -4675,6 +4723,22 @@ fn fuzzy_rank(texts: &[&str], query: &str, limit: u32) -> Vec<usize> {
     (0..count as u32)
         .filter_map(|i| snap.get_matched_item(i).map(|item| *item.data as usize))
         .collect()
+}
+
+/// Refuse an edit to the contents of a playlist that takes none.
+fn fillable(db: &Database, playlist_id: i64) -> Result<(), KoanError> {
+    match queries::get_playlist(&db.conn, playlist_id).map_err(db_err)? {
+        Some(list) if list.readonly => Err(KoanError::BadArgument {
+            message: format!(
+                "'{}' is read-only: its rules, its file or its server decide what it holds",
+                list.name
+            ),
+        }),
+        Some(_) => Ok(()),
+        None => Err(KoanError::NotFound {
+            message: format!("playlist {playlist_id}"),
+        }),
+    }
 }
 
 fn db_err(e: impl std::fmt::Display) -> KoanError {

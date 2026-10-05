@@ -24,6 +24,9 @@ pub enum DbError {
     /// play it from, and nothing to know it by again.
     #[error("a track needs a path or a server id")]
     NoSource,
+    /// Smart playlist rules that do not compile; the message says why.
+    #[error("invalid rules: {0}")]
+    InvalidRules(String),
 }
 
 /// Wrapper around a SQLite connection with koan's schema applied.
@@ -133,10 +136,10 @@ const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 ///
 /// For bookkeeping a request should not wait on: a key's last use, a share's
 /// visit count. Skipping one costs a stale number; waiting costs the request.
-pub fn without_waiting<T>(
+pub fn without_waiting<T, E: From<rusqlite::Error>>(
     conn: &Connection,
-    write: impl FnOnce(&Connection) -> rusqlite::Result<T>,
-) -> rusqlite::Result<T> {
+    write: impl FnOnce(&Connection) -> Result<T, E>,
+) -> Result<T, E> {
     conn.busy_timeout(std::time::Duration::ZERO)?;
     let result = write(conn);
     conn.busy_timeout(BUSY_TIMEOUT)?;

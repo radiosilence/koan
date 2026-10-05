@@ -484,9 +484,10 @@ struct AddToPlaylistMenu: View {
     var body: some View {
         Menu("Add to Playlist") {
             Button("New Playlist…") { resolve { playlists.naming = $0 } }
-            if !playlists.playlists.isEmpty {
+            let fillable = playlists.playlists.filter { !$0.readonly }
+            if !fillable.isEmpty {
                 Divider()
-                ForEach(playlists.playlists, id: \.id) { playlist in
+                ForEach(fillable, id: \.id) { playlist in
                     Button(playlist.name) {
                         resolve { playlists.add(trackIds: $0, to: playlist.id) }
                     }
