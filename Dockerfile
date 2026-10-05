@@ -21,9 +21,10 @@ COPY . .
 RUN cargo build --release --locked -p koan-cli
 
 FROM debian:bookworm-slim
-# ALSA and D-Bus are linked by the audio backend and media-key support.
+# ALSA and D-Bus are linked by the audio backend and media-key support; ffmpeg
+# transcodes for Subsonic clients that ask for a lower bitrate.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libasound2 libdbus-1-3 ca-certificates \
+    && apt-get install -y --no-install-recommends libasound2 libdbus-1-3 ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 1000 --create-home koan
 COPY --from=build /src/target/release/koan /usr/local/bin/koan

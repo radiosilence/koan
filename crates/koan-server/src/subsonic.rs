@@ -78,6 +78,8 @@ struct AppState {
     covers: Arc<crate::covers::Covers>,
     /// What `getIndexes`'s `lastModified` was last worked out from.
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
+    /// `ffmpeg`, where transcoding is on and it was found at startup.
+    transcoder: Option<crate::transcode::Transcoder>,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -2263,6 +2265,13 @@ struct StreamParams {
     /// deserialise with a plain-text HTTP 400 *before* the handler runs, which
     /// is neither a Subsonic envelope nor something a client can report.
     id: Option<String>,
+    /// Strings for the same reason as `id`. Read only by `stream`; `download`
+    /// is the original file by definition.
+    #[serde(rename = "maxBitRate")]
+    max_bit_rate: Option<String>,
+    format: Option<String>,
+    #[serde(rename = "timeOffset")]
+    time_offset: Option<String>,
 }
 
 async fn stream(
@@ -2271,7 +2280,19 @@ async fn stream(
     headers: HeaderMap,
 ) -> Response {
     let json = params.auth.wants_json();
-    match stream_inner(state, params, &headers).await {
+    match stream_inner(state, params, &headers, true).await {
+        Ok(resp) => resp,
+        Err(e) => SubsonicResponse::error(json, &e),
+    }
+}
+
+async fn download(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<StreamParams>,
+    headers: HeaderMap,
+) -> Response {
+    let json = params.auth.wants_json();
+    match stream_inner(state, params, &headers, false).await {
         Ok(resp) => resp,
         Err(e) => SubsonicResponse::error(json, &e),
     }
@@ -2281,11 +2302,14 @@ async fn stream_inner(
     state: Arc<AppState>,
     params: StreamParams,
     headers: &HeaderMap,
+    may_transcode: bool,
 ) -> Result<Response, SubsonicError> {
     let lookup = state.clone();
+    let auth = params.auth.clone();
+    let id = params.id.clone();
     let track = offload(move || {
-        let db = authed_db(&lookup, &params.auth)?;
-        let track_id = require_id(&db, params.id.as_deref(), EntityKind::Song)?;
+        let db = authed_db(&lookup, &auth)?;
+        let track_id = require_id(&db, id.as_deref(), EntityKind::Song)?;
         queries::get_track_row(&db.conn, track_id)
             .map_err(|e| SubsonicError::internal(e.to_string()))?
             .ok_or_else(|| SubsonicError::not_found("Track"))
@@ -2311,6 +2335,22 @@ async fn stream_inner(
     }
 
     let path = local_path.unwrap();
+    if may_transcode && let Some(transcoder) = &state.transcoder {
+        let request = crate::transcode::Request {
+            max_bit_rate: params.max_bit_rate.as_deref(),
+            format: params.format.as_deref(),
+            time_offset: params.time_offset.as_deref(),
+        };
+        let source_kbps = track.bitrate.and_then(|b| u32::try_from(b).ok());
+        if let Some(plan) = crate::transcode::plan(&request, track.codec.as_deref(), source_kbps) {
+            match transcoder.stream(&path, &plan) {
+                Ok(resp) => return Ok(resp),
+                Err(e) => {
+                    log::warn!("transcode: could not start ffmpeg, serving the original: {e}")
+                }
+            }
+        }
+    }
     serve_local_file(&path, headers).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             SubsonicError::not_found("File not found on disk")
@@ -2879,11 +2919,20 @@ async fn get_user(
 
 /// Answered without authentication, as OpenSubsonic requires: a client asks
 /// before it knows which sign-in methods it may use.
-async fn get_open_subsonic_extensions(Query(params): Query<SubsonicParams>) -> Response {
+async fn get_open_subsonic_extensions(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    // `timeOffset` seeks a transcode, so it is offered only where one can run.
+    let transcode: &[(&str, &[i64])] = if state.transcoder.is_some() {
+        &[("transcodeOffset", &[1])]
+    } else {
+        &[]
+    };
     SubsonicResponse::ok(params.wants_json())
         .list(
             "openSubsonicExtensions",
-            EXTENSIONS.iter().map(|(name, versions)| {
+            EXTENSIONS.iter().chain(transcode).map(|(name, versions)| {
                 XmlNode::new("openSubsonicExtensions")
                     .attr("name", name)
                     .list(
@@ -4074,8 +4123,8 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/stream.view", get(stream).post(stream))
         // `download` is the untranscoded original, which is all `stream` ever
         // serves here. koan's own download queue fetches through it.
-        .route("/rest/download", get(stream).post(stream))
-        .route("/rest/download.view", get(stream).post(stream))
+        .route("/rest/download", get(download).post(download))
+        .route("/rest/download.view", get(download).post(download))
         .route("/rest/getCoverArt", get(get_cover_art).post(get_cover_art))
         .route(
             "/rest/getCoverArt.view",
@@ -4202,6 +4251,21 @@ pub fn subsonic_router(
         log::info!("Subsonic: no shared secret, so only koan accounts sign in (with p=).");
     }
 
+    let transcoder = cfg
+        .subsonic
+        .transcode
+        .then(|| {
+            let found = crate::transcode::Transcoder::find(&cfg.subsonic.ffmpeg);
+            if found.is_none() {
+                log::info!(
+                    "Subsonic: {} did not run, so clients asking for a lower bitrate get the original.",
+                    cfg.subsonic.ffmpeg
+                );
+            }
+            found
+        })
+        .flatten();
+
     let state = Arc::new(AppState {
         users: crate::auth::password::PasswordVerifier::new(pool.clone()),
         pool,
@@ -4216,6 +4280,7 @@ pub fn subsonic_router(
             .unwrap_or_default(),
         covers,
         last_modified: Default::default(),
+        transcoder,
     });
 
     Some(subsonic_app(state))
@@ -4256,6 +4321,7 @@ mod tests {
             http: reqwest::Client::new(),
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
+            transcoder: None,
         });
         (state, dir)
     }
