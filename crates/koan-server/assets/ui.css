@@ -186,6 +186,9 @@
   .fixed {
     position: fixed;
   }
+  .relative {
+    position: relative;
+  }
   .static {
     position: static;
   }
@@ -197,6 +200,12 @@
   }
   .top-0 {
     top: 0px;
+  }
+  .top-2 {
+    top: calc(var(--spacing) * 2);
+  }
+  .right-2 {
+    right: calc(var(--spacing) * 2);
   }
   .bottom-\(--bar-h\) {
     bottom: var(--bar-h);
@@ -300,6 +309,9 @@
   .hidden {
     display: none;
   }
+  .inline {
+    display: inline;
+  }
   .inline-block {
     display: inline-block;
   }
@@ -323,6 +335,10 @@
   .size-12 {
     width: calc(var(--spacing) * 12);
     height: calc(var(--spacing) * 12);
+  }
+  .size-\[15px\] {
+    width: 15px;
+    height: 15px;
   }
   .size-\[220px\] {
     width: 220px;
@@ -533,6 +549,21 @@
   .bg-surface {
     background-color: var(--surface);
   }
+  .bg-surface\/85 {
+    background-color: var(--surface);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--surface) 85%, transparent);
+    }
+  }
+  .fill-none {
+    fill: none;
+  }
+  .stroke-current {
+    stroke: currentcolor;
+  }
+  .stroke-2 {
+    stroke-width: 2;
+  }
   .object-cover {
     object-fit: cover;
   }
@@ -626,6 +657,9 @@
   .text-center {
     text-align: center;
   }
+  .align-\[-2px\] {
+    vertical-align: -2px;
+  }
   .text-\[11px\] {
     font-size: 11px;
   }
@@ -680,6 +714,9 @@
   .text-muted {
     color: var(--muted);
   }
+  .lowercase {
+    text-transform: lowercase;
+  }
   .uppercase {
     text-transform: uppercase;
   }
@@ -720,6 +757,9 @@
       text-decoration-line: none;
     }
   }
+  :where([aria-pressed="true"]) .in-aria-pressed\:fill-current {
+    fill: currentcolor;
+  }
   :where(:is(.js)) .in-\[\.js\]\:hidden {
     display: none;
   }
@@ -728,6 +768,9 @@
   }
   :where(:is(.playing)) .in-\[\.playing\]\:inline {
     display: inline;
+  }
+  .aria-pressed\:text-brand[aria-pressed="true"] {
+    color: var(--brand);
   }
   .aria-\[current\=page\]\:bg-rule[aria-current="page"] {
     background-color: var(--rule);

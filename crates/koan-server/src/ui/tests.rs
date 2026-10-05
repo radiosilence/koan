@@ -1632,3 +1632,135 @@ async fn the_icon_is_where_favicon_fetchers_look() {
         assert_eq!(r.headers[header::CONTENT_TYPE], "image/png");
     }
 }
+
+#[tokio::test]
+async fn hearts_favourite_for_the_caller_and_redraw_every_copy() {
+    let f = setup(true);
+    let (bob, viewer) = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        let viewer =
+            queries::auth::create_user(&db.conn, "viewer", "hunter4", Role::Readonly).unwrap();
+        (bob, viewer)
+    };
+    let as_user = |id: i64, name: &str, role: Role| {
+        format!(
+            "koan_access={}",
+            auth::mint_access_token(&f.state.private_pem, id, name, role, 900).unwrap()
+        )
+    };
+    let toggle = |cookie: String, uri: String| {
+        Request::post(uri)
+            .header(header::HOST, HOST)
+            .header(header::COOKIE, cookie)
+            .header("datastar-request", "true")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let song = format!("data-fav=\"song-{}\"", f.track_id);
+    let album_page = format!("/album/{}", f.album_id);
+
+    let r = send(
+        &f.app,
+        authed(&f.state, &album_page).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains(&format!("{song} aria-pressed=\"false\"")));
+
+    let r = send(
+        &f.app,
+        toggle(
+            as_user(1, "alice", Role::User),
+            format!("/favourite/song/{}?on=1", f.track_id),
+        ),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("datastar-patch-elements"));
+    assert!(r.body.contains(&format!("{song} aria-pressed=\"true\"")));
+    let r = send(
+        &f.app,
+        toggle(
+            as_user(1, "alice", Role::User),
+            format!("/favourite/album/{}?on=1", f.album_id),
+        ),
+    )
+    .await;
+    assert!(r.body.contains(&format!(
+        "data-fav=\"album-{}\" aria-pressed=\"true\"",
+        f.album_id
+    )));
+
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    assert!(
+        queries::load_favourites(&db.conn, 1)
+            .unwrap()
+            .contains(&f.track_id)
+    );
+    assert!(
+        queries::favourite_album_id_set(&db.conn, 1)
+            .unwrap()
+            .contains(&f.album_id)
+    );
+    assert!(
+        queries::load_favourites(&db.conn, bob).unwrap().is_empty(),
+        "alice's only"
+    );
+
+    let r = send(
+        &f.app,
+        authed(&f.state, &album_page).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(
+        r.body.contains(&format!("{song} aria-pressed=\"true\"")),
+        "drawn on reload"
+    );
+    let r = send(
+        &f.app,
+        get(&album_page)
+            .header(header::COOKIE, as_user(bob, "bob", Role::User))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        r.body.contains(&format!("{song} aria-pressed=\"false\"")),
+        "bob's are his own"
+    );
+
+    // A read-only account is drawn no hearts, and its toggles change nothing.
+    let r = send(
+        &f.app,
+        get(&album_page)
+            .header(header::COOKIE, as_user(viewer, "viewer", Role::Readonly))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(!r.body.contains("data-fav="));
+    send(
+        &f.app,
+        toggle(
+            as_user(viewer, "viewer", Role::Readonly),
+            format!("/favourite/song/{}?on=1", f.track_id),
+        ),
+    )
+    .await;
+    assert!(
+        queries::load_favourites(&db.conn, viewer)
+            .unwrap()
+            .is_empty()
+    );
+
+    let r = send(
+        &f.app,
+        toggle(
+            as_user(1, "alice", Role::User),
+            format!("/favourite/song/{}?on=0", f.track_id),
+        ),
+    )
+    .await;
+    assert!(r.body.contains(&format!("{song} aria-pressed=\"false\"")));
+    assert!(queries::load_favourites(&db.conn, 1).unwrap().is_empty());
+}
