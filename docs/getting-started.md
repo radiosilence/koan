@@ -22,7 +22,9 @@ The iOS app plays from a server; a phone has no music folder to scan. Sign in un
 
 ## History and Recently played
 
-Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's sidebar and the iOS Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first, at most 50 of each. Both follow each play as it is recorded.
+Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's sidebar and the iOS Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first. Both follow each play as it is recorded.
+
+Recently Played and Favourites show the first few of each kind. A section with more offers **See all**, which opens the Albums, Artists or Tracks browser filtered to the shelf, in the shelf's order; the filter shows in the browser's filter control and is cleared there. Search's sections do the same. **Tracks**, beside Albums and Artists, lists every track in the library with the same filters.
 
 ## Downloaded and offline
 

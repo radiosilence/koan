@@ -58,6 +58,8 @@ struct SidebarView: View {
                     .sidebarRow(.albums)
                 Label("Artists", systemImage: Icon.artist)
                     .sidebarRow(.artists)
+                Label("Tracks", systemImage: Icon.track)
+                    .sidebarRow(.tracks)
                 Label("Favourites", systemImage: Icon.favourite)
                     .sidebarRow(.favourites)
                 Label("Recently Played", systemImage: Icon.recentlyPlayed)

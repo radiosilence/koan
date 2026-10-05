@@ -1,12 +1,19 @@
-//! Sorting and filtering the album and artist browsers.
+//! Sorting and filtering the album, artist and track browsers.
 //!
 //! The state is the page's query string and nothing else: a reload, the back
 //! button and a copied link all land on the same listing, and the server reads
 //! it straight into the SQL that narrows and orders the library.
+//!
+//! The shelves are filters here: `fav`, `recent` and `q` narrow a browser
+//! exactly as `koan_core::shelves` narrows a shelf, so a shelf page's "See
+//! all" (`see_all`) opens the listing its preview is the head of.
 
 use std::fmt::Write as _;
 
-use koan_core::db::queries::{AlbumFilter, AlbumOrder, AlbumQuery, ArtistOrder, ArtistQuery};
+use koan_core::db::queries::{
+    AlbumFilter, AlbumOrder, AlbumQuery, ArtistOrder, ArtistQuery, TrackFilter, TrackOrder,
+};
+use koan_core::shelves::{Shelf, Tracks};
 use serde::Deserialize;
 
 use crate::share::escape;
@@ -23,11 +30,15 @@ pub(super) struct Browse {
     /// artist's name on the artist browser.
     q: String,
     fav: String,
+    /// Played in the last `shelves::RECENT_DAYS`.
+    recent: String,
     lossless: String,
     codec: String,
     from: String,
     to: String,
     genre: String,
+    /// The track browser's page, from 0.
+    pub page: u32,
 }
 
 /// Album sorts, as the macOS app offers them.
@@ -44,6 +55,44 @@ const ARTIST_SORTS: [(&str, &str); 3] = [
     ("albums", "Most albums"),
     ("recent", "Recently added"),
 ];
+
+const TRACK_SORTS: [(&str, &str); 4] = [
+    ("artist", "Artist"),
+    ("title", "Title"),
+    ("album", "Album"),
+    ("duration", "Length"),
+];
+
+/// Offered only while the recently played filter is on: there is nothing to
+/// sort by otherwise.
+const PLAYED: (&str, &str) = ("played", "Last played");
+
+/// Which browser.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Kind {
+    Albums,
+    Artists,
+    Tracks,
+}
+
+impl Kind {
+    /// What the browser sorts by when nothing is asked for.
+    fn default_sort(self) -> &'static str {
+        match self {
+            Kind::Albums => ALBUM_SORTS[0].0,
+            Kind::Artists => ARTIST_SORTS[0].0,
+            Kind::Tracks => TRACK_SORTS[0].0,
+        }
+    }
+
+    pub(super) fn path(self) -> &'static str {
+        match self {
+            Kind::Albums => "/albums",
+            Kind::Artists => "/artists",
+            Kind::Tracks => "/tracks",
+        }
+    }
+}
 
 fn set(s: &str) -> Option<&str> {
     Some(s.trim()).filter(|s| !s.is_empty())
@@ -74,46 +123,113 @@ impl Browse {
         }
     }
 
-    /// `user` is whose favourites the favourites toggle narrows to.
-    pub(super) fn albums(&self, user: i64) -> AlbumQuery<'_> {
-        let order = match self.sort.as_str() {
+    fn recent_on(&self) -> bool {
+        set(&self.recent).is_some()
+    }
+
+    /// The sort asked for, or the one the browser opens on: last played while
+    /// the recently played filter is on.
+    fn sort_or(&self, default: &'static str) -> &str {
+        match set(&self.sort) {
+            Some(s) => s,
+            None if self.recent_on() => PLAYED.0,
+            None => default,
+        }
+    }
+
+    /// `user` is whose favourites and plays the shelf filters narrow to, at
+    /// `now`.
+    pub(super) fn albums(&self, user: i64, now: i64) -> AlbumQuery<'_> {
+        let order = match self.sort_or(Kind::Albums.default_sort()) {
             "title" => AlbumOrder::Title,
             "artist" => AlbumOrder::ArtistThenDate,
             "year" => AlbumOrder::YearDesc,
             "random" => AlbumOrder::Random(self.seed.unwrap_or(0)),
+            "played" => AlbumOrder::LastPlayed,
             _ => AlbumOrder::RecentlyAdded,
         };
         AlbumQuery {
             order,
             search: set(&self.q),
-            favourites_of: set(&self.fav).map(|_| user),
+            favourites_of: set(&self.fav).and(Shelf::Favourites.albums(user, now).favourites_of),
+            played: self
+                .recent_on()
+                .then(|| Shelf::Recent.albums(user, now).played)
+                .flatten(),
             filter: self.filter(),
             ..Default::default()
         }
     }
 
-    /// `user` is whose favourites the favourites toggle narrows to.
-    pub(super) fn artists(&self, user: i64) -> ArtistQuery<'_> {
-        let order = match self.sort.as_str() {
+    pub(super) fn artists(&self, user: i64, now: i64) -> ArtistQuery<'_> {
+        let order = match self.sort_or(Kind::Artists.default_sort()) {
             "albums" => ArtistOrder::AlbumCount,
             "recent" => ArtistOrder::RecentlyAdded,
+            "played" => ArtistOrder::LastPlayed,
             _ => ArtistOrder::Name,
         };
         ArtistQuery {
             order,
             search: set(&self.q),
-            favourites_of: set(&self.fav).map(|_| user),
+            favourites_of: set(&self.fav).and(Shelf::Favourites.artists(user, now).favourites_of),
+            played: self
+                .recent_on()
+                .then(|| Shelf::Recent.artists(user, now).played)
+                .flatten(),
             filter: self.filter(),
             ..Default::default()
         }
     }
 
+    /// The track browser's listing. `q` is the full-text index, as the search
+    /// shelf's tracks are.
+    pub(super) fn tracks(&self, user: i64, now: i64) -> Tracks {
+        let (order, descending) = match self.sort_or(Kind::Tracks.default_sort()) {
+            "title" => (TrackOrder::Title, false),
+            "album" => (TrackOrder::Album, false),
+            "duration" => (TrackOrder::Duration, false),
+            "played" => (TrackOrder::LastPlayed, true),
+            _ => (TrackOrder::ArtistAlbumDiscTrack, false),
+        };
+        let shelf = |s: Shelf| s.tracks(user, now).filter;
+        let year = |s: &str| set(s).and_then(|y| y.parse().ok());
+        Tracks {
+            filter: TrackFilter {
+                search: set(&self.q).and_then(|q| Shelf::Search(q).tracks(user, now).filter.search),
+                favourites_of: set(&self.fav).and(shelf(Shelf::Favourites).favourites_of),
+                played: self
+                    .recent_on()
+                    .then(|| shelf(Shelf::Recent).played)
+                    .flatten(),
+                codec: set(&self.codec).map(str::to_owned),
+                genre: set(&self.genre).map(str::to_owned),
+                year_start: year(&self.from),
+                year_end: year(&self.to),
+                ..Default::default()
+            },
+            order,
+            descending,
+        }
+    }
+
+    /// Whether anything narrows the listing.
+    pub(super) fn filtered(&self) -> bool {
+        self.active() > 0
+    }
+
     /// How many filters are on, for the collapsed toolbar's label.
     fn active(&self) -> usize {
-        [&self.q, &self.fav, &self.lossless, &self.codec, &self.genre]
-            .into_iter()
-            .filter(|v| set(v).is_some())
-            .count()
+        [
+            &self.q,
+            &self.fav,
+            &self.recent,
+            &self.lossless,
+            &self.codec,
+            &self.genre,
+        ]
+        .into_iter()
+        .filter(|v| set(v).is_some())
+        .count()
             + usize::from(set(&self.from).is_some() || set(&self.to).is_some())
     }
 
@@ -128,6 +244,7 @@ impl Browse {
             ("seed", &seed),
             ("q", &self.q),
             ("fav", &self.fav),
+            ("recent", &self.recent),
             ("lossless", &self.lossless),
             ("codec", &self.codec),
             ("from", &self.from),
@@ -140,6 +257,26 @@ impl Browse {
         }
         q.finish()
     }
+}
+
+/// Where a shelf section's "See all" goes: the browser for `kind` with the
+/// shelf as its filter and the shelf's order as its sort, so the listing it
+/// opens is the one the preview was the head of.
+pub(super) fn see_all(shelf: Shelf, kind: Kind) -> String {
+    let mut b = Browse::default();
+    let sort = match (shelf, kind) {
+        (Shelf::Recent, _) => PLAYED.0,
+        (Shelf::Favourites, Kind::Artists) | (Shelf::Search(_), Kind::Artists) => "name",
+        (Shelf::Favourites, _) | (Shelf::Search(_), Kind::Tracks) => "artist",
+        (Shelf::Search(_), Kind::Albums) => "recent",
+    };
+    match shelf {
+        Shelf::Favourites => b.fav = "1".into(),
+        Shelf::Recent => b.recent = "1".into(),
+        Shelf::Search(q) => b.q = q.into(),
+    }
+    b.sort = sort.into();
+    format!("{}?{}", kind.path(), b.query())
 }
 
 /// A labelled control in the toolbar; on a phone, label and control at either
@@ -176,26 +313,20 @@ value=1{}>{label}</label>",
 /// The sort and filter controls: a row above the grid on a wide screen, one
 /// "Sort · Filter" button that opens them on a phone. A plain GET form, so it
 /// works without script; with it, a change applies at once.
-pub(super) fn toolbar(
-    b: &Browse,
-    path: &str,
-    artists: bool,
-    codecs: &[String],
-    genres: &[String],
-) -> String {
-    let sorts: Vec<(String, String)> = if artists {
-        &ARTIST_SORTS[..]
-    } else {
-        &ALBUM_SORTS[..]
+pub(super) fn toolbar(b: &Browse, kind: Kind, codecs: &[String], genres: &[String]) -> String {
+    let path = kind.path();
+    let mut sorts: Vec<(String, String)> = match kind {
+        Kind::Albums => &ALBUM_SORTS[..],
+        Kind::Artists => &ARTIST_SORTS[..],
+        Kind::Tracks => &TRACK_SORTS[..],
     }
     .iter()
     .map(|(v, t)| (v.to_string(), t.to_string()))
     .collect();
-    let sort = if b.sort.is_empty() {
-        sorts[0].0.clone()
-    } else {
-        b.sort.clone()
-    };
+    if b.recent_on() {
+        sorts.insert(0, (PLAYED.0.into(), PLAYED.1.into()));
+    }
+    let sort = b.sort_or(kind.default_sort()).to_owned();
     let any = || vec![(String::new(), "Any".to_string())];
     let mut codec_options = any();
     codec_options.extend(codecs.iter().map(|c| (c.clone(), c.clone())));
@@ -216,7 +347,7 @@ pub(super) fn toolbar(
         ("random", Some(seed)) => format!("<input type=hidden name=seed value={seed}>"),
         _ => String::new(),
     };
-    let reshuffle = if sort == "random" && !artists {
+    let reshuffle = if sort == "random" && kind == Kind::Albums {
         let fresh = Browse {
             seed: None,
             ..b.clone()
@@ -245,7 +376,7 @@ max-wide:inline-flex [&::-webkit-details-marker]:hidden\">{label}</summary>\
 max-wide:flex-col max-wide:items-stretch max-wide:gap-3 max-wide:rounded-[10px] max-wide:border \
 max-wide:border-rule max-wide:bg-surface max-wide:p-3.5 max-wide:text-body\" method=get action=\"{path}\">\
 <label class=\"{LABEL}\">Name<input class=\"w-[12em] {FIELD} max-wide:w-auto max-wide:flex-1\" type=search \
-name=q placeholder=\"{name_hint}\" value=\"{q}\" aria-label=\"Filter by name\"></label>{sort_select}{seed}{reshuffle}{fav}{lossless}{codec}\
+name=q placeholder=\"{name_hint}\" value=\"{q}\" aria-label=\"Filter by name\"></label>{sort_select}{seed}{reshuffle}{fav}{recent}{lossless}{codec}\
 <label class=\"{LABEL}\">Years<input class=\"w-[4.5em] {FIELD}\" name=from inputmode=numeric maxlength=4 \
 placeholder=From value=\"{from}\" aria-label=\"From year\"><span>–</span><input class=\"w-[4.5em] {FIELD}\" \
 name=to inputmode=numeric maxlength=4 placeholder=To value=\"{to}\" aria-label=\"To year\"></label>\
@@ -254,10 +385,21 @@ name=to inputmode=numeric maxlength=4 placeholder=To value=\"{to}\" aria-label=\
 <a class=\"text-muted\" href=\"{path}\">Reset</a></div></form></details>",
         sort_select = select("sort", "Sort", &sorts, &sort),
         fav = check("fav", "Favourites", &b.fav),
-        lossless = check("lossless", "Lossless", &b.lossless),
+        recent = check("recent", "Recently played", &b.recent),
+        // A track's codec says as much; the album browsers' lossless means a
+        // whole record.
+        lossless = if kind == Kind::Tracks {
+            String::new()
+        } else {
+            check("lossless", "Lossless", &b.lossless)
+        },
         codec = select("codec", "Codec", &codec_options, &b.codec),
         genre = select("genre", "Genre", &genre_options, &b.genre),
-        name_hint = if artists { "Artist" } else { "Album or artist" },
+        name_hint = match kind {
+            Kind::Albums => "Album or artist",
+            Kind::Artists => "Artist",
+            Kind::Tracks => "Title, artist or record",
+        },
         q = escape(&b.q),
         from = escape(&b.from),
         to = escape(&b.to),
@@ -279,9 +421,9 @@ mod tests {
     fn blank_fields_are_unset_and_the_query_round_trips() {
         let b =
             browse("sort=year&q=+aphex+&fav=&lossless=1&codec=&from=1990&to=&genre=Drum+%26+Bass");
-        let q = b.albums(0);
+        let q = b.albums(0, 0);
         assert_eq!(q.search, Some("aphex"));
-        assert_eq!(b.artists(0).search, Some("aphex"));
+        assert_eq!(b.artists(0, 0).search, Some("aphex"));
         assert_eq!(q.order, AlbumOrder::YearDesc);
         assert!(q.favourites_of.is_none() && q.filter.lossless);
         assert_eq!(
@@ -296,11 +438,60 @@ mod tests {
         assert_eq!(b.active(), 4);
     }
 
+    /// A "See all" opens its shelf's own listing: the same narrowing, the same
+    /// order. The counts and rows matching follow from that; the UI tests
+    /// check them against a library.
+    #[test]
+    fn a_see_all_link_is_its_shelfs_listing() {
+        let (user, now) = (7, 1_800_000_000);
+        for shelf in [Shelf::Favourites, Shelf::Recent, Shelf::Search("moss")] {
+            let open = |kind: Kind| {
+                let link = see_all(shelf, kind);
+                assert!(link.starts_with(kind.path()), "{link}");
+                browse(link.split_once('?').unwrap().1)
+            };
+            let (want, got) = (shelf.albums(user, now), open(Kind::Albums));
+            let got = got.albums(user, now);
+            assert_eq!(
+                (got.order, got.favourites_of, got.played, got.search),
+                (want.order, want.favourites_of, want.played, want.search),
+                "{shelf:?} albums"
+            );
+            let (want, got) = (shelf.artists(user, now), open(Kind::Artists));
+            let got = got.artists(user, now);
+            assert_eq!(
+                (got.order, got.favourites_of, got.played, got.search),
+                (want.order, want.favourites_of, want.played, want.search),
+                "{shelf:?} artists"
+            );
+            let (want, got) = (
+                shelf.tracks(user, now),
+                open(Kind::Tracks).tracks(user, now),
+            );
+            assert_eq!(
+                (
+                    got.order,
+                    got.descending,
+                    got.filter.favourites_of,
+                    got.filter.played
+                ),
+                (
+                    want.order,
+                    want.descending,
+                    want.filter.favourites_of,
+                    want.filter.played
+                ),
+                "{shelf:?} tracks"
+            );
+            assert_eq!(got.filter.search, want.filter.search);
+        }
+    }
+
     #[test]
     fn a_random_order_keeps_its_seed_and_hostile_values_stay_encoded() {
         let b = browse("sort=random").seeded();
         let seed = b.seed.unwrap();
-        assert_eq!(b.albums(0).order, AlbumOrder::Random(seed));
+        assert_eq!(b.albums(0, 0).order, AlbumOrder::Random(seed));
         assert!(b.query().contains(&format!("seed={seed}")));
         let evil = browse("genre=%27%29%3Balert(1)%2F%2F%22%3E%3C");
         let q = evil.query();

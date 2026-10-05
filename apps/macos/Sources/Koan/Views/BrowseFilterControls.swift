@@ -1,7 +1,7 @@
 import KoanFFI
 import SwiftUI
 
-/// The album and artist browsers' filters, behind one control that says how
+/// The album, artist and track browsers' filters, behind one control that says how
 /// many are on: a popover on the Mac, a sheet on iOS. The same filters as the
 /// web UI's toolbar, answered by the same query.
 struct BrowseFilterButton: View {
@@ -54,7 +54,13 @@ private struct BrowseFilterForm: View {
         Form {
             Section {
                 Toggle("Favourites", isOn: $library.browseFilter.favourites)
-                Toggle("Lossless", isOn: $library.browseFilter.lossless)
+                Toggle("Recently Played", isOn: $library.browseFilter.recent)
+                Toggle("Downloaded", isOn: $library.browseFilter.downloaded)
+                // A track's codec says this already, and the track listing
+                // filters by codec rather than by what its record is in.
+                if library.section != .tracks {
+                    Toggle("Lossless", isOn: $library.browseFilter.lossless)
+                }
             }
             Section {
                 Picker("Codec", selection: $library.browseFilter.codec) {

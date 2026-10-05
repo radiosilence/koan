@@ -21,6 +21,7 @@ struct LibraryTab: View {
             }
             row("Albums", Icon.album, .page(.section(.albums)))
             row("Artists", Icon.artist, .page(.section(.artists)))
+            row("Tracks", Icon.track, .page(.section(.tracks)))
             row("Favourites", Icon.favourite, .page(.section(.favourites)))
             row("Playlists", Icon.playlist, .playlists)
             row("Recently Played", Icon.recentlyPlayed, .page(.section(.recentlyPlayed)))

@@ -37,6 +37,10 @@ final class SearchModel {
     private(set) var artists: [Artist] = []
     private(set) var albums: [Album] = []
     private(set) var tracks: [Track] = []
+    /// How many of each kind the query finds in the library as its browsers
+    /// would list them, for See all. The results above are ranked and capped,
+    /// so these can be more.
+    private(set) var totals: ShelfTotals?
     private(set) var isSearching = false
 
     /// A pick across the results, held through new queries — see
@@ -140,11 +144,13 @@ final class SearchModel {
                 (try? await engine.fuzzyAlbums(query: text, limit: 30)) ?? [],
                 (try? await engine.fuzzyArtists(query: text, limit: 30)) ?? []
             )
+            let shelf = try? await engine.shelfSummary(shelf: .search(query: text))
 
             guard !Task.isCancelled else { return }
             tracks = found.0
             albums = found.1
             artists = found.2
+            totals = shelf.map(ShelfTotals.init)
             isSearching = false
             // Moved once there is something to show: the page you were on is a
             // better thing to look at while the answer is being read than an

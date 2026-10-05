@@ -11,8 +11,13 @@ import SwiftUI
 /// replace an account already signed in, which is not a thing to do to
 /// someone unasked.
 extension AppState {
-    /// Whatever the system opened koan with. Anything but an invite is ignored.
+    /// Whatever the system opened koan with. Anything but an invite or a
+    /// pairing link (see `Pairing.swift`) is ignored.
     func open(url: URL) {
+        if let link = engine.parsePairingLink(link: url.absoluteString) {
+            Task { await offer(link) }
+            return
+        }
         guard let invite = engine.parseInvite(link: url.absoluteString) else { return }
         Task { await offer(invite) }
     }

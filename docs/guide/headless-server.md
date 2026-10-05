@@ -99,9 +99,20 @@ With auth disabled, anything that can reach the port is an admin; see [Recovery 
 
 ## Web UI
 
-The server answers `http://host:4000/` with a browser UI: albums, artists, playlists, search, a play queue and share links, laid out for a phone as well as a desktop. Albums and artists sort and filter (name, favourites, lossless or codec, years, genre) through the page URL, the same filters the macOS and iOS apps offer, so a filtered view can be bookmarked or sent. Playlists are the account's own and anyone's public ones, played or queued like an album; they are edited from the apps. Favourites lists the signed-in account's favourite artists, records and tracks, as the apps' page does; Recently played what it played in the last 30 days, each once; and History its plays by day, any of which can be ticked and forgotten. On a phone these sit under a Library tab with Playlists, since the tab bar has room for six. Playback happens in the browser, streaming from the server; the server's own player is not involved.
+The server answers `http://host:4000/` with a browser UI: albums, artists, playlists, search, a play queue and share links, laid out for a phone as well as a desktop. Albums, artists and tracks sort and filter (name, favourites, recently played, lossless or codec, years, genre) through the page URL, the same filters the macOS and iOS apps offer, so a filtered view can be bookmarked or sent. Playlists are the account's own and anyone's public ones, played or queued like an album; they are edited from the apps. Favourites lists the signed-in account's favourite artists, records and tracks, as the apps' page does; Recently played what it played in the last 30 days, each once; each page showing the first few of each kind with a See all that opens the matching filtered browser; and History its plays by day, any of which can be ticked and forgotten. On a phone these sit under a Library tab with Playlists, since the tab bar has room for six. Hearts on tracks, records and artists favourite them for the signed-in account, as the apps do. A track row's menu (right-click, press and hold on a phone, or its ⋯) offers what the apps' does: play next, queue, favourite, share, and the album and artist. Playback happens in the browser, streaming from the server; the server's own player is not involved.
 
 Sign in with a kōan account (`koan auth create-user`). The session is the same pair of `HttpOnly` cookies the JSON login sets, so behind plain HTTP the UI needs `cookie_secure = false`, and a hostname it is reached by must be in `allowed_hosts`. The access cookie lasts `access_token_ttl`; an open page renews it from the refresh cookie, and a page loaded after it lapsed renews on the way in. With `auth_enabled = false` the UI is open to anyone who can reach the port. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
+
+## Subsonic clients
+
+Besides playing, browsing and favourites, Subsonic clients get:
+
+- **Ratings.** `setRating` keeps a rating of one to five per account for songs, albums and artists, returned as `userRating`, and `getAlbumList2?type=highest` lists rated albums best first. kōan's own apps do not show ratings.
+- **Bookmarks.** `createBookmark`, `getBookmarks` and `deleteBookmark` keep one position and note per account and track, for clients that resume long tracks. kōan's own apps do not use them.
+- **Transcoding.** A client that asks `stream` for a lower `maxBitRate` than the file's, or for `format=opus`, `mp3` or `aac`, gets an encode made by `ffmpeg`, so a lossless library does not cost full bandwidth on mobile data. `format=raw` and `download` return the original. The limits, formats and fallbacks are in [Configuration](../reference/configuration.md#subsonic).
+- **Smart playlists**, read-only, as ordinary playlists. See [Smart playlists](smart-playlists.md).
+
+Sign-in, and which credential each kind of client should use, is in [Authentication](authentication.md#subsonic-api).
 
 ## Scrobbling
 

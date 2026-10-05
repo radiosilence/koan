@@ -258,6 +258,12 @@ window.KoanPlayer = (opts = {}) => {
     play(tracks, i = 0) { wake(tracks[i]); queue = tracks.slice(); go(i, 0); },
     // Play these next, starting now, and keep the rest of the queue after them.
     playNow(tracks) { wake(tracks[0]); queue.splice(cur + 1, 0, ...tracks); go(cur + 1, 0); },
+    // Queue these after the playing track, without interrupting it.
+    playNext(tracks) {
+      queue.splice(cur + 1, 0, ...tracks);
+      if (mode === "buffer") requeue();
+      notify();
+    },
     append(tracks) {
       const wasLast = cur === queue.length - 1;
       queue.push(...tracks);

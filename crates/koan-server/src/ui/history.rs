@@ -14,7 +14,8 @@ use axum::response::Response;
 use chrono::{DateTime, Datelike, FixedOffset, TimeZone, Utc};
 use koan_core::db::queries::{self, PlayHistoryRow};
 
-use super::pages::{EMPTY, ERROR, cover_url, track_versions, unavailable};
+use super::favourite::Hearts;
+use super::pages::{EMPTY, ERROR, MORE, cover_url, track_versions, unavailable};
 use super::{UiState, events, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape};
@@ -52,7 +53,12 @@ fn day_label(day: DateTime<FixedOffset>, now: DateTime<FixedOffset>) -> String {
     }
 }
 
-fn plays(rows: &[PlayHistoryRow], versions: &super::pages::Versions, zone: FixedOffset) -> String {
+fn plays(
+    rows: &[PlayHistoryRow],
+    versions: &super::pages::Versions,
+    zone: FixedOffset,
+    hearts: Option<&Hearts>,
+) -> String {
     let now = Utc::now().with_timezone(&zone);
     let mut out = String::new();
     let mut day = None;
@@ -66,11 +72,11 @@ fn plays(rows: &[PlayHistoryRow], versions: &super::pages::Versions, zone: Fixed
         let _ = write!(
             out,
             "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
-data-album=\"{album}\" data-album-id={album_id} data-cover=\"{cover}\">\
+data-album=\"{album}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\">\
 <input type=checkbox class=\"flex-none\" value={play} aria-label=\"Select this play\">\
 <span class=\"n w-auto\">{time}</span><span class=\"t\">{title}<small>{artist} · {album}</small></span>\
-<span class=\"d\">{dur}</span>\
-<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></li>",
+<span class=\"d\">{dur}</span><span class=\"contents max-wide:hidden\">{heart}\
+<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{MORE}</li>",
             id = t.id,
             play = p.id,
             secs = t.duration_ms.unwrap_or(0) / 1000,
@@ -78,42 +84,54 @@ data-album=\"{album}\" data-album-id={album_id} data-cover=\"{cover}\">\
             artist = escape(&t.artist_name),
             album = escape(&t.album_title),
             album_id = t.album_id.unwrap_or(0),
+            artist_id = t.artist_id.unwrap_or(0),
             cover = t
                 .album_id
                 .map(|a| cover_url(a, crate::covers::LARGE, versions))
                 .unwrap_or_default(),
             time = at.format("%H:%M"),
             dur = duration(t.duration_ms),
+            heart = hearts.map(|h| h.track(t.id)).unwrap_or_default(),
         );
     }
     out
 }
 
-/// One page of plays, and whether there are older ones.
-fn read(
-    s: &UiState,
-    user: i64,
-    page: u32,
-) -> Option<(Vec<PlayHistoryRow>, bool, super::pages::Versions)> {
+/// One page of plays, read for one account.
+struct Plays {
+    rows: Vec<PlayHistoryRow>,
+    /// There are older ones.
+    more: bool,
+    versions: super::pages::Versions,
+    hearts: Option<Hearts>,
+}
+
+fn read(s: &UiState, user: &AuthUser, page: u32) -> Option<Plays> {
     let db = open(&s.pool)?;
-    let mut rows =
-        queries::play_history_with_tracks(&db.conn, user, None, Some(PAGE + 1), page * PAGE)
-            .ok()?;
+    let mut rows = queries::play_history_with_tracks(
+        &db.conn,
+        user.user_id,
+        None,
+        Some(PAGE + 1),
+        page * PAGE,
+    )
+    .ok()?;
     let more = rows.len() > PAGE as usize;
     rows.truncate(PAGE as usize);
     let tracks: Vec<_> = rows.iter().map(|r| r.track.clone()).collect();
     let versions = track_versions(&db.conn, &tracks);
-    Some((rows, more, versions))
+    let hearts = Hearts::load(&db.conn, user);
+    Some(Plays {
+        rows,
+        more,
+        versions,
+        hearts,
+    })
 }
 
 /// The list and its paging, as one element the forget action can replace.
-fn list(
-    rows: &[PlayHistoryRow],
-    more: bool,
-    page: u32,
-    versions: &super::pages::Versions,
-    zone: FixedOffset,
-) -> String {
+fn list(p: &Plays, page: u32, zone: FixedOffset) -> String {
+    let (rows, more, versions) = (&p.rows, p.more, &p.versions);
     if rows.is_empty() && page == 0 {
         return format!(
             "<div id=history><p class=\"{EMPTY}\">Nothing played yet.</p>\
@@ -145,7 +163,7 @@ by day.</p></div>"
     };
     format!(
         "<div id=history><ol class=\"tracks\" data-context=one>{}</ol>{nav}</div>",
-        plays(rows, versions, zone)
+        plays(rows, versions, zone, p.hearts.as_ref())
     )
 }
 
@@ -155,8 +173,8 @@ pub(super) async fn page(
     Query(paging): Query<Paging>,
     headers: HeaderMap,
 ) -> Response {
-    let (st, page) = (s.clone(), paging.page);
-    let Some((rows, more, versions)) = blocking(move || read(&st, user.user_id, page)).await else {
+    let (st, page, who) = (s.clone(), paging.page, user.clone());
+    let Some(plays) = blocking(move || read(&st, &who, page)).await else {
         return unavailable();
     };
     // Picked plays collect in `$forget`, read off the boxes ticked whenever
@@ -170,7 +188,7 @@ data-on:change=\"$forget = [...el.querySelectorAll('#history input:checked')].ma
 <button class=\"primary\" data-indicator:_forgetting data-attr:disabled=\"$_forgetting\" \
 data-on:click=\"@post('/history/forget?page={page}')\">Forget</button></div></div>\
 <div id=history-result></div>{}</div>",
-        list(&rows, more, page, &versions, zone(&headers))
+        list(&plays, page, zone(&headers))
     );
     super::pages::respond(&s, &headers, &user, "History", &inner)
 }
@@ -203,12 +221,12 @@ pub(super) async fn forget(
             Some(&user.username),
             koan_core::remote::link::LinkCommand::HistoryChanged,
         );
-        read(&s, user.user_id, page)
+        read(&s, &user, page)
     })
     .await;
     match found {
-        Some((rows, more, versions)) => events(vec![
-            patch(&list(&rows, more, page, &versions, zone(&headers)), None),
+        Some(plays) => events(vec![
+            patch(&list(&plays, page, zone(&headers)), None),
             patch("<div id=history-result></div>", None),
             axum::response::sse::Event::default()
                 .event("datastar-patch-signals")

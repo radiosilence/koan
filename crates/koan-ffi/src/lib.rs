@@ -282,6 +282,13 @@ pub struct KoanEngine {
     /// Each playlist's earlier states, for undo. The queue's own history is
     /// the player's.
     playlist_history: koan_core::playlists::PlaylistHistory,
+    /// The pairing this device is waiting on, until `await_pairing` takes it.
+    pairing: parking_lot::Mutex<Option<koan_core::remote::pair::Pending>>,
+    /// What ends the wait, by the pairing's id.
+    pairing_cancel: parking_lot::Mutex<Option<(String, koan_core::remote::pair::Cancel)>>,
+    /// What the app calls this device — the name the person gave it, where
+    /// the platform says — for the link and for a pairing to ask under.
+    device_name: Option<String>,
 }
 
 /// How far a client's own reckoning of the playhead may drift before it is
@@ -689,11 +696,20 @@ impl KoanEngine {
     ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            let played = recent(&filter);
             let rows = queries::list_artists(
                 &db.conn,
                 &queries::ArtistQuery {
                     search: trimmed(&search),
                     favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
+                    // Recently Played's own order: the artist browser has no
+                    // sort to choose another by.
+                    order: if played.is_some() {
+                        queries::ArtistOrder::LastPlayed
+                    } else {
+                        queries::ArtistOrder::Name
+                    },
+                    played,
                     filter: album_filter(&filter),
                     ..Default::default()
                 },
@@ -744,6 +760,7 @@ impl KoanEngine {
                     search: trimmed(&search),
                     order: album_order(sort, seed),
                     favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
+                    played: recent(&filter),
                     filter: album_filter(&filter),
                     ..Default::default()
                 },
@@ -819,6 +836,56 @@ impl KoanEngine {
     ) -> Result<Vec<Track>, KoanError> {
         offload::offload(move || self.tracks_blocking(album_id, artist_id, sort, limit, offset))
             .await
+    }
+
+    /// A page of the track browser: the library's tracks narrowed by `search`
+    /// (the full-text index, as search's tracks are) and `filter`, ordered by
+    /// `sort`, with how many pass in all. Paged, unlike the album and artist
+    /// listings: a library has tens of thousands of tracks. `filter.lossless`
+    /// does not apply to tracks.
+    pub async fn track_listing(
+        self: Arc<Self>,
+        sort: TrackBrowseSort,
+        search: Option<String>,
+        filter: BrowseFilter,
+        limit: u32,
+        offset: u32,
+    ) -> Result<TrackListing, KoanError> {
+        use koan_core::shelves::{self, Shelf};
+        offload::offload(move || {
+            let db = self.db()?;
+            let (order, descending) = match sort {
+                TrackBrowseSort::Artist => (queries::TrackOrder::ArtistAlbumDiscTrack, false),
+                TrackBrowseSort::Title => (queries::TrackOrder::Title, false),
+                TrackBrowseSort::Album => (queries::TrackOrder::Album, false),
+                TrackBrowseSort::Duration => (queries::TrackOrder::Duration, false),
+                TrackBrowseSort::LastPlayed => (queries::TrackOrder::LastPlayed, true),
+            };
+            let (user, now) = (queries::LOCAL_USER, shelves::now());
+            let listing = shelves::Tracks {
+                filter: queries::TrackFilter {
+                    search: trimmed(&search)
+                        .and_then(|q| Shelf::Search(q).tracks(user, now).filter.search),
+                    favourites_of: filter.favourites.then_some(user),
+                    played: recent(&filter),
+                    codec: trimmed(&filter.codec).map(str::to_owned),
+                    genre: trimmed(&filter.genre).map(str::to_owned),
+                    year_start: filter.year_from,
+                    year_end: filter.year_to,
+                    on_device: filter.downloaded || offline(),
+                    ..Default::default()
+                },
+                order,
+                descending,
+            };
+            let total = listing.count(&db.conn).map_err(db_err)?;
+            let rows = listing.page(&db.conn, limit, offset).map_err(db_err)?;
+            Ok(TrackListing {
+                tracks: self.decorate(&db, rows),
+                total,
+            })
+        })
+        .await
     }
 
     pub async fn track(self: Arc<Self>, track_id: i64) -> Result<Option<Track>, KoanError> {
@@ -2552,6 +2619,99 @@ impl KoanEngine {
         koan_core::invite::Invite::parse(&link).map(Into::into)
     }
 
+    // -- Pairing: signing in a device without a keyboard (`koanPair`) --
+
+    /// Ask the server at `url` to sign this device in, once someone signed in
+    /// elsewhere approves it. The code and link come back to show;
+    /// `await_pairing` waits for the answer. A pairing already waiting is
+    /// given up.
+    pub async fn start_pairing(self: Arc<Self>, url: String) -> Result<PairingCode, KoanError> {
+        self.cancel_pairing();
+        offload::offload(move || {
+            let device =
+                koan_core::remote::link::LinkIdentity::this_device(self.device_name.clone()).name;
+            let pending = koan_core::remote::pair::start(&url, &device).map_err(pair_error)?;
+            let code = PairingCode {
+                id: pending.id.clone(),
+                code: pending.code.clone(),
+                link: pending.link.clone(),
+            };
+            *self.pairing_cancel.lock() = pending.canceller().map(|c| (pending.id.clone(), c));
+            *self.pairing.lock() = Some(pending);
+            Ok(code)
+        })
+        .await
+    }
+
+    /// Wait for the pairing `start_pairing` opened to be approved, declined
+    /// or to lapse. Approved, the app is signed in.
+    pub async fn await_pairing(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let pending = self
+                .pairing
+                .lock()
+                .take()
+                .ok_or_else(|| KoanError::BadArgument {
+                    message: "no pairing is waiting".into(),
+                })?;
+            let id = pending.id.clone();
+            let outcome = pending.wait();
+            let mut cancel = self.pairing_cancel.lock();
+            if cancel.as_ref().is_some_and(|(held, _)| *held == id) {
+                *cancel = None;
+            }
+            outcome.map_err(pair_error)
+        })
+        .await
+    }
+
+    /// Give up the pairing this device is waiting on.
+    pub fn cancel_pairing(&self) {
+        if let Some((_, cancel)) = self.pairing_cancel.lock().take() {
+            cancel.cancel();
+        }
+        self.pairing.lock().take();
+    }
+
+    /// The device waiting on `pair`, an id or the code it shows, on the
+    /// signed-in server, and where it asked from.
+    pub async fn pairing_info(self: Arc<Self>, pair: String) -> Result<PairingInfo, KoanError> {
+        offload::offload(move || {
+            koan_core::remote::pair::info(&pair)
+                .map(|p| PairingInfo {
+                    device: p.device,
+                    from: p.from,
+                    local: p.local,
+                })
+                .map_err(pair_error)
+        })
+        .await
+    }
+
+    /// Sign the device waiting on `pair` in as this account. Answers with its
+    /// name.
+    pub async fn approve_pairing(self: Arc<Self>, pair: String) -> Result<String, KoanError> {
+        offload::offload(move || koan_core::remote::pair::approve(&pair).map_err(pair_error)).await
+    }
+
+    pub async fn decline_pairing(self: Arc<Self>, pair: String) -> Result<(), KoanError> {
+        offload::offload(move || {
+            koan_core::remote::pair::decline(&pair)
+                .map(drop)
+                .map_err(pair_error)
+        })
+        .await
+    }
+
+    /// Read a pairing link (`koan.rocks/pair/#s=…&p=…`). `None` for anything
+    /// else.
+    pub fn parse_pairing_link(&self, link: String) -> Option<PairingLink> {
+        koan_core::remote::pair::PairLink::parse(&link).map(|l| PairingLink {
+            server: l.server,
+            id: l.id,
+        })
+    }
+
     // -- Accounts on the signed-in server: koan servers, admins only --
 
     /// The server's accounts. Fails on a server that is not koan, or for an
@@ -3870,6 +4030,9 @@ impl KoanEngine {
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
             fuzzy: queries::CorpusCache::default(),
             playlist_history: Default::default(),
+            pairing: Default::default(),
+            pairing_cancel: Default::default(),
+            device_name: device_name.clone(),
         });
         engine.spawn_watcher();
         engine.spawn_figures();
@@ -4680,7 +4843,7 @@ fn album_filter(f: &BrowseFilter) -> queries::AlbumFilter<'_> {
         year_from: f.year_from,
         year_to: f.year_to,
         genre: trimmed(&f.genre),
-        on_device: offline(),
+        on_device: f.downloaded || offline(),
     }
 }
 
@@ -4692,7 +4855,21 @@ fn album_order(sort: AlbumSort, seed: i64) -> queries::AlbumOrder {
         AlbumSort::Artist => queries::AlbumOrder::ArtistThenDate,
         AlbumSort::Year => queries::AlbumOrder::YearDesc,
         AlbumSort::Random => queries::AlbumOrder::Random(seed),
+        AlbumSort::LastPlayed => queries::AlbumOrder::LastPlayed,
+        AlbumSort::Downloaded => queries::AlbumOrder::Downloaded,
     }
+}
+
+/// The Recently Played shelf's window, when the filter asks for it.
+fn recent(f: &BrowseFilter) -> Option<queries::PlayedSince> {
+    use koan_core::shelves::{self, Shelf};
+    f.recent
+        .then(|| {
+            Shelf::Recent
+                .albums(queries::LOCAL_USER, shelves::now())
+                .played
+        })
+        .flatten()
 }
 
 /// `rows` in the order of `ids`, for rows read back by id in whatever order
@@ -4819,6 +4996,7 @@ fn connection_info() -> ConnectionInfo {
             .map(|l| l.identity.name.clone())
             .unwrap_or_default(),
         sharing: p.as_ref().is_some_and(|p| p.offers(profile::SHARES)),
+        pairing: p.as_ref().is_some_and(|p| p.offers(profile::PAIR)),
         shared_with: devices::shares(),
         share_error: devices::share_error(),
         share_accounts: devices::accounts(),
@@ -4899,6 +5077,21 @@ fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, Ko
             message: "no remote server configured".into(),
         }
     })
+}
+
+/// A pairing that was turned away or lapsed is an answer; a connection that
+/// failed is worth retrying.
+fn pair_error(e: koan_core::remote::pair::PairError) -> KoanError {
+    use koan_core::remote::pair::PairError;
+    match e {
+        PairError::Remote(e) => remote_error(e),
+        e @ (PairError::Connect(_) | PairError::Closed) => KoanError::Remote {
+            message: e.to_string(),
+        },
+        e => KoanError::BadArgument {
+            message: e.to_string(),
+        },
+    }
 }
 
 /// A server that answered and refused is a bad request; one that did not

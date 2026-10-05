@@ -990,6 +990,12 @@ pub enum AlbumSort {
     /// order, page after page; a new seed is a new order — which is the point,
     /// it's for turning up records you'd forgotten.
     Random,
+    /// Most recently played first. Only with [`BrowseFilter::recent`], which
+    /// is what knows when; without it, `RecentlyAdded`.
+    LastPlayed,
+    /// Fully on this device first, then by how much is: the Downloaded
+    /// shelf's order.
+    Downloaded,
 }
 
 /// Narrowing the album and artist browsers by what the records are. The web
@@ -998,6 +1004,11 @@ pub enum AlbumSort {
 #[derive(uniffi::Record, Debug, Clone, Default, PartialEq, Eq)]
 pub struct BrowseFilter {
     pub favourites: bool,
+    /// Only what was played in the last `koan_core::shelves::RECENT_DAYS`:
+    /// the Recently Played shelf as a filter.
+    pub recent: bool,
+    /// Only what can play on this device: the Downloaded shelf as a filter.
+    pub downloaded: bool,
     /// Only records in a lossless codec.
     pub lossless: bool,
     /// Only records in this codec, as `BrowseChoices::codecs` names it.
@@ -1015,6 +1026,27 @@ pub struct BrowseFilter {
 pub struct BrowseChoices {
     pub codecs: Vec<String>,
     pub genres: Vec<String>,
+}
+
+/// How the track browser orders the library.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackBrowseSort {
+    /// Artist, then record, disc and track: the library as it would be shelved.
+    Artist,
+    Title,
+    /// By record title, then in running order.
+    Album,
+    Duration,
+    /// Most recently played first. Only with [`BrowseFilter::recent`]; without
+    /// it, by title.
+    LastPlayed,
+}
+
+/// A page of the track browser, and how many tracks pass its filters in all.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct TrackListing {
+    pub tracks: Vec<Track>,
+    pub total: u64,
 }
 
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -1362,6 +1394,35 @@ pub struct Invite {
     pub mailto: String,
 }
 
+/// A pairing this device opened: the code to show, and the link that
+/// approves it.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct PairingCode {
+    pub id: String,
+    /// `XXXX-XXXX`.
+    pub code: String,
+    pub link: String,
+}
+
+/// A device waiting to be signed in, as the server describes it to an
+/// approver.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct PairingInfo {
+    pub device: String,
+    /// The address the request came from, as the server sees it.
+    pub from: String,
+    /// The address is on a private network (RFC 1918, link-local, unique
+    /// local, loopback) rather than the internet.
+    pub local: bool,
+}
+
+/// A pairing link: which server another device is waiting on, and its id.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct PairingLink {
+    pub server: String,
+    pub id: String,
+}
+
 impl From<koan_core::invite::Invite> for Invite {
     fn from(i: koan_core::invite::Invite) -> Self {
         Self {
@@ -1610,6 +1671,9 @@ pub struct ConnectionInfo {
     pub offline: bool,
     /// Turned on by hand, rather than by the server being out of reach.
     pub offline_manual: bool,
+    /// The server can sign a device without a keyboard in, once someone here
+    /// approves it.
+    pub pairing: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

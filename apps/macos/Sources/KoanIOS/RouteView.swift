@@ -52,13 +52,16 @@ private struct SectionPage: View {
             .navigationTitle(title)
             .modifier(SectionFilter(placeholder: section.filterPlaceholder))
             .toolbar {
-                if section == .albums || section == .artists {
+                if section.isBrowser {
                     ToolbarItem(placement: .topBarTrailing) {
                         BrowseFilterButton()
                     }
                 }
                 if section == .albums {
                     AlbumSortControls()
+                }
+                if section == .tracks {
+                    TrackSortControls()
                 }
             }
     }
@@ -69,6 +72,7 @@ private struct SectionPage: View {
         case .searchResults: SearchResultsView()
         case .albums: AlbumBrowser()
         case .artists: ArtistBrowser()
+        case .tracks: TrackBrowser()
         case .favourites: FavouritesView()
         case .recentlyPlayed: RecentlyPlayedView()
         case .onDevice: OnDeviceView()
@@ -84,6 +88,7 @@ private struct SectionPage: View {
         case .searchResults: "Search"
         case .albums: "Albums"
         case .artists: "Artists"
+        case .tracks: "Tracks"
         case .favourites: "Favourites"
         case .recentlyPlayed: "Recently Played"
         case .onDevice: "Downloaded"
@@ -110,6 +115,28 @@ private struct SectionFilter: ViewModifier {
     }
 }
 
+/// The track browser's sort, in the navigation bar.
+private struct TrackSortControls: ToolbarContent {
+    @Environment(LibraryModel.self) private var library
+
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                Picker("Sort", selection: Binding(
+                    get: { library.trackSort },
+                    set: { library.trackSort = $0 }
+                )) {
+                    ForEach(TrackBrowseSort.offered(recent: library.browseFilter.recent), id: \.self) { sort in
+                        Text(sort.label).tag(sort)
+                    }
+                }
+            } label: {
+                Label("Sort", systemImage: "arrow.up.arrow.down")
+            }
+        }
+    }
+}
+
 /// The Mac's album sort, in the navigation bar. Reshuffle is its own button
 /// for the same reason as there: it is pressed repeatedly.
 private struct AlbumSortControls: ToolbarContent {
@@ -131,7 +158,9 @@ private struct AlbumSortControls: ToolbarContent {
                     get: { library.albumSort },
                     set: { library.albumSort = $0 }
                 )) {
-                    ForEach(AlbumSort.all, id: \.self) { sort in
+                    ForEach(AlbumSort.offered(
+                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded
+                ), id: \.self) { sort in
                         Text(sort.label).tag(sort)
                     }
                 }

@@ -9,9 +9,9 @@ struct SearchResultsView: View {
     @Environment(Navigator.self) private var nav
     @Environment(UIState.self) private var ui
     @Environment(\.onStage) private var onStage
+    @Environment(LibraryModel.self) private var library
     #if os(macOS)
     @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
     @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
@@ -156,6 +156,8 @@ struct SearchResultsView: View {
                 },
                 pick: pick,
                 counts: true,
+                totals: search.totals,
+                seeAll: { nav.show(library.seeAll($0, of: .search(query: search.query))) },
                 insets: insets
             )
         }
@@ -164,7 +166,9 @@ struct SearchResultsView: View {
 
     private var artistSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeading("Artists", count: search.artists.count)
+            SectionHeading("Artists", count: search.artists.count, total: search.totals?.artists) {
+                nav.show(library.seeAll(.artists, of: .search(query: search.query)))
+            }
             FlowLayout(spacing: 8) {
                 ForEach(search.artists, id: \.id) { artist in
                     ArtistPill(name: artist.name, artistId: artist.id, selection: search.selection)
@@ -175,7 +179,9 @@ struct SearchResultsView: View {
 
     private var albumSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeading("Albums", count: search.albums.count)
+            SectionHeading("Albums", count: search.albums.count, total: search.totals?.albums) {
+                nav.show(library.seeAll(.albums, of: .search(query: search.query)))
+            }
             LazyVGrid(columns: columns, spacing: 18) {
                 ForEach(search.albums, id: \.id) { album in
                     AlbumGridCell(album: album, selection: search.selection)
@@ -188,7 +194,9 @@ struct SearchResultsView: View {
 
     private var trackSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeading("Tracks", count: search.tracks.count)
+            SectionHeading("Tracks", count: search.tracks.count, total: search.totals?.tracks) {
+                nav.show(library.seeAll(.tracks, of: .search(query: search.query)))
+            }
             VStack(spacing: 0) {
                 ForEach(search.tracks, id: \.id) { track in
                     SearchTrackRow(track: track, selection: search.selection)
@@ -201,10 +209,15 @@ struct SearchResultsView: View {
 private struct SectionHeading: View {
     let title: String
     let count: Int
+    /// How many the library has, when it is more than the results show.
+    let total: UInt64?
+    let seeAll: () -> Void
 
-    init(_ title: String, count: Int) {
+    init(_ title: String, count: Int, total: UInt64?, seeAll: @escaping () -> Void) {
         self.title = title
         self.count = count
+        self.total = total
+        self.seeAll = seeAll
     }
 
     var body: some View {
@@ -214,6 +227,12 @@ private struct SectionHeading: View {
             Text("\(count)")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.tertiary)
+            Spacer()
+            if let total, total > UInt64(count) {
+                Button("See all (\(total))", action: seeAll)
+                    .buttonStyle(.borderless)
+                    .font(.subheadline)
+            }
         }
     }
 }

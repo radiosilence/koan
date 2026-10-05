@@ -25,6 +25,10 @@ pub const INVITE: &str = "koanInvite";
 /// from the device, `LinkCommand::Shares` back, and shared devices in a
 /// grantee's list.
 pub const SHARES: &str = "koanShares";
+/// Signing in a device without a keyboard: `/rest/koanPair` holds the device
+/// open until someone approves it with `/rest/koanPairApprove`. See
+/// `remote::pair`.
+pub const PAIR: &str = "koanPair";
 /// The account's play history as the record every device reads:
 /// `/rest/koanHistory` pages it, `/rest/koanForgetPlays` forgets from it, and
 /// `LinkCommand::HistoryChanged` says when it moved. See `remote::history`.

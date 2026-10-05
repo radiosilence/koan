@@ -126,6 +126,12 @@ pub(super) struct Play {
     /// Told to play since the track was loaded. Until it has been, a renderer
     /// is meant to say `STOPPED`, and saying so means nothing.
     played: bool,
+    /// A paused reading that disagreed with the clock, waiting for the next
+    /// to agree. A snapshot is two calls, `GetTransportInfo` then
+    /// `GetPositionInfo`, so a stop landing between them reads as paused at
+    /// 0:00; a renderer at rest has no reason to move, so one reading alone
+    /// does not move the playhead.
+    paused_reading: Option<u64>,
     /// When koan last asked it to play or pause; what it asked is the
     /// session's run. A renderer still opening a file drops commands, so for
     /// `INTENT_HOLD` one that contradicts the request is asked again.
@@ -205,6 +211,7 @@ impl Play {
             look_at: Vec::new(),
             started: now,
             played: false,
+            paused_reading: None,
             asked: Asked {
                 at: now,
                 resent: now,
@@ -1330,6 +1337,7 @@ impl Player {
         // Settling after a command, or not yet where koan sent it: either way
         // the reading says where it was, not where the music is meant to be.
         let settling = Instant::now() < play.settle_until || play.pending_seek.is_some();
+        let paused_reading = play.paused_reading;
         let correction = snap.position_ms.filter(|_| !settling).and_then(|at| {
             let width = if at % 1000 == 0 { 999 } else { 0 };
             // The clock as it stood when the renderer answered.
@@ -1341,6 +1349,18 @@ impl Player {
             let inside = then + READING_SLACK_MS >= at && then <= at + width + READING_SLACK_MS;
             (!inside).then_some(at + width / 2)
         });
+        // Paused, a correction stands only once two readings agree.
+        let correction = if running {
+            correction
+        } else {
+            let confirmed = correction.filter(|at| paused_reading == Some(*at));
+            if let Some((_, session)) = self.on_renderer()
+                && let Output::Renderer(play) = &mut session.output
+            {
+                play.paused_reading = correction.filter(|_| confirmed.is_none());
+            }
+            confirmed
+        };
         match correction {
             Some(at) => self.set_clock(Some(RendererClock {
                 position_ms: at,
@@ -2030,6 +2050,32 @@ mod tests {
         r.pump_until(|p| p.shared_state.playback_state() == PlaybackState::Paused);
         assert!(!r.player.renderer_loaded());
         assert!((2_000..3_000).contains(&r.player.shared_state.position_ms()));
+    }
+
+    /// A snapshot is two calls, so a stop landing between them reads as
+    /// paused at 0:00. One such reading leaves the playhead where it was;
+    /// a renderer that stays there was seeked from its own controls.
+    #[test]
+    fn a_single_paused_reading_does_not_move_the_playhead() {
+        let mut r = rig(WAV, false, &["a.wav"]);
+        r.player.play(r.ids[0]);
+        r.at(4_000);
+        r.player.pause();
+        r.past_grace();
+        let paused_at = |ms| session::Snapshot {
+            epoch: 0,
+            transport: session::Transport::Paused,
+            track_uri: String::new(),
+            position_ms: Some(ms),
+            duration_ms: None,
+            at: Instant::now(),
+        };
+        r.player.follow_renderer_clock(&paused_at(0), false);
+        let held = r.player.shared_state.position_ms();
+        assert!((4_000..5_000).contains(&held), "held at {held}ms");
+        r.player.follow_renderer_clock(&paused_at(0), false);
+        let moved = r.player.shared_state.position_ms();
+        assert!(moved < 1_000, "followed to {moved}ms");
     }
 
     #[test]
