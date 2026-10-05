@@ -339,7 +339,7 @@ const ICON_SHARE: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=true>\
 fn share_track_button(t: &TrackRow) -> String {
     match t.album_id {
         Some(album) => format!(
-            "<button class=\"quiet\" data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
+            "<button class=\"quiet max-wide:hidden\" data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
 data-on:click=\"@post('/album/{album}/share?track={id}')\" aria-label=\"Share this track\" \
 title=\"Share this track\">{ICON_SHARE}</button>",
             id = t.id
