@@ -78,7 +78,13 @@ cache_dir = "/custom/path"     # explicit cache dir (default: ~/.config/koan/cac
 
 ## Favourites and playlists
 
-Favourites and playlists sync both ways. A change made in kōan is sent to the server at once; one made in another client arrives with the next sync.
+Favourites and playlists sync both ways. A change made in kōan is sent to the server at once; one made in another client arrives with the next sync. A playlist the server marks read-only, such as a [smart playlist](smart-playlists.md), comes down like any other and is never edited or pushed back.
+
+## Play history
+
+Each device records every track it starts, and scrobbles to the server the ones heard long enough to count as plays: half the track or four minutes, and nothing under thirty seconds, as Last.fm counts them. A scrobble that cannot be sent waits on the device and goes, dated to when the track started, once the server answers again.
+
+Signed in to a kōan server, history is shared. The server keeps the account's plays, and each device's History shows the plays the account's other devices made alongside its own, arriving as they are scrobbled. A device's own skips stay on that device. Forgetting a play, or clearing history, forgets it on the server and on every device on the account, including plays recorded before history was shared. A Navidrome server keeps plays too, but has nothing to share them with, so each device shows only its own.
 
 ## Configuration reference
 

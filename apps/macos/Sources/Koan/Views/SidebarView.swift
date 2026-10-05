@@ -203,6 +203,7 @@ struct SidebarView: View {
             renameTo = playlist.name
             renaming = playlist
         }
+        .disabled(playlist.fromFile)
         #if os(macOS)
         Button("Export as M3U8…") { export(playlist) }
         #endif

@@ -159,6 +159,10 @@ pub enum LinkCommand {
     Forgotten {
         device: String,
     },
+    /// The account's play history on the server moved: a play recorded or
+    /// forgotten on one of its devices. The device reads what changed
+    /// (`remote::history::sync`).
+    HistoryChanged,
     /// Play through this output from now on, carrying on from where the music
     /// is, as the device's own output menu would.
     SetOutput {
@@ -237,6 +241,7 @@ impl LinkCommand {
             | Self::Shares { .. }
             | Self::Shared { .. }
             | Self::Forgotten { .. }
+            | Self::HistoryChanged
             | Self::Levels { .. } => false,
         }
     }
@@ -265,6 +270,7 @@ impl LinkCommand {
                 | Self::Evict { .. }
                 | Self::Devices { .. }
                 | Self::Forgotten { .. }
+                | Self::HistoryChanged
                 | Self::Levels { .. }
                 | Self::SetOutput { .. }
                 | Self::SetRendererVolume { .. }
@@ -361,6 +367,7 @@ impl LinkCommand {
             | Self::Devices { .. }
             | Self::Shares { .. }
             | Self::Forgotten { .. }
+            | Self::HistoryChanged
             | Self::WatchLevels { .. }
             | Self::Levels { .. }
             | Self::SetOutput { .. }
