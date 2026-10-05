@@ -13,6 +13,10 @@
 - **Sleep timer** ([#795](https://github.com/radiosilence/koan/issues/795)). Stop playback after 15, 30, 45 or 60 minutes, fading out over a few seconds, or at the end of the track or record playing. It pauses rather than clearing the queue, so playing again carries on from there. The timer is the player's, so it holds while iOS suspends the app, and it is set on the device playing: a phone controlling a Mac sets the Mac's, over the link. From the moon in the Mac and iOS transport, `T` in the terminal UI, and `setSleepTimerOnClient` for assistants. See [Sleep timer](docs/guide/sleep-timer.md).
 - **Recently played.** A page in the Mac and iOS apps, laid out like Favourites, for "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first, at most 50 of each. It is worked out from play history, so it follows each play as it is recorded, and History now does too. On the Mac, ⌘6.
 
+### Fixed
+
+- **Resuming on an amplifier after it was stopped while paused continues from where it was.** koan reads a renderer's state and position with two separate calls, so a stop landing between them read as paused at 0:00, and resuming could start the track again. A paused renderer's position now moves only when two readings agree.
+
 ## 0.53.0
 
 ### Added
