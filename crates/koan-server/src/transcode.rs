@@ -342,7 +342,6 @@ impl Transcoder {
                 let chunk = match length {
                     Some(n) if sent + chunk.len() as u64 >= n => {
                         let cut = chunk.slice(..(n - sent) as usize);
-                        sent = n;
                         if !cut.is_empty() {
                             yield Ok(cut);
                         }
