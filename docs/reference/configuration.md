@@ -28,7 +28,7 @@ Three kinds of setting are machine-scoped and always land in
 | Kind | Settings |
 |------|----------|
 | Secrets | `remote.password`, `subsonic.password` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username`, `devices.discoverable/port/addresses/nearby_control`, everything under `dsp` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.discoverable/port/addresses/nearby_control`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
@@ -350,9 +350,13 @@ kōan's Subsonic API, served at `/rest/*`. Clients sign in with a kōan account;
 enabled = false               # serve /rest/* on the main port (default: false)
 port = 4040                   # also serve it on a port of its own (default: none)
 username = "koan"             # the shared secret's username (default: koan)
+transcode = true              # transcode stream for clients that ask (default: true)
+ffmpeg = "ffmpeg"             # the ffmpeg transcoding runs, on PATH or a path (default: ffmpeg)
 ```
 
 `koan subsonic setup` enables it and generates a shared secret, written to `config.local.toml` and printed once. The secret signs in as `username` with `user` rights, for a client that has no account of its own; `koan play --server` streams with it. It is generated rather than chosen because Subsonic token auth sends `md5(secret + salt)` with every request, and a captured digest of a human-chosen password can be cracked offline.
+
+A client that asks `stream` for a `maxBitRate` below the file's bitrate, or for `format=opus`, `format=mp3` or `format=aac` (also `m4a`), gets a transcode made by `ffmpeg`: Opus unless another format was asked for, at the requested bitrate or 128 kbps (Opus) and 192 kbps (MP3, AAC). AAC is AAC-LC from ffmpeg's built-in encoder, sent as ADTS (`audio/aac`); a file already in the requested format and within the limit is sent as it is. `format=raw`, and `download`, always return the original. A transcode has no length until it ends, so it is sent without one, unless the client passes `estimateContentLength=true` (the body is then cut or padded to the bitrate times the duration), and without Range support; clients seek with `timeOffset`, offered as the OpenSubsonic `transcodeOffset` extension. The server runs at most one transcode per CPU core and three per account; beyond that, and whenever ffmpeg produces nothing, the original is served. Where `ffmpeg` does not run or has none of `libopus`, `libmp3lame` and `aac`, the server logs it once at startup and serves originals. The container image includes it.
 
 ---
 

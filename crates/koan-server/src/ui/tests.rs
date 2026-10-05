@@ -417,6 +417,7 @@ async fn every_class_on_every_page_has_a_rule() {
         "/library".to_owned(),
         "/favourites".to_owned(),
         "/history".to_owned(),
+        "/recent".to_owned(),
         "/account".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
@@ -757,6 +758,40 @@ async fn history_lists_the_callers_own_plays_by_day_and_forgets_only_those() {
     assert!(!left.contains(&mine), "alice's play is forgotten");
     assert!(left.contains(&theirs), "bob's is not");
     assert_eq!(left.len(), 2);
+}
+
+#[tokio::test]
+async fn recently_played_is_the_callers_own_each_once() {
+    let f = setup(true);
+    let now = chrono::Utc::now().timestamp();
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        queries::record_play_at(&db.conn, bob, f.track_id, now, None, "local").unwrap();
+    }
+    let page = || authed(&f.state, "/recent").body(Body::empty()).unwrap();
+    let r = send(&f.app, page()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Nothing played in the last 30 days"),
+        "bob's play is not alice's"
+    );
+
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        for ago in [0, 60, 120] {
+            queries::record_play_at(&db.conn, 1, f.track_id, now - ago, None, "local").unwrap();
+        }
+        // Older than the month, and not counted.
+        queries::record_play_at(&db.conn, 1, f.track_id, now - 40 * 86_400, None, "local").unwrap();
+    }
+    let r = send(&f.app, page()).await;
+    assert_eq!(
+        r.body.matches(&format!("data-id={}", f.track_id)).count(),
+        1,
+        "three plays, one track"
+    );
+    assert!(r.body.contains(&format!("href=\"/album/{}\"", f.album_id)));
 }
 
 #[tokio::test]
