@@ -42,6 +42,9 @@ struct Running {
     /// (announced, or remembered from a previous run), `bonjour:<name>` when
     /// an announcement carried none, or the address as typed.
     dialers: HashMap<String, Dialer>,
+    /// `devices.nearby` was off when last applied, so turning it on knows to
+    /// start looking again.
+    off: bool,
 }
 
 struct Dialer {
@@ -233,16 +236,17 @@ impl Stop {
 /// first at the addresses devices were last reached at, which answers before
 /// Bonjour has said anything, then wherever Bonjour finds them.
 pub fn start(local: Local) {
-    // Nothing runs, so `reconfigure`, `wake` and `suspend` find nothing to do.
-    if !Config::load().map(|c| c.devices.nearby).unwrap_or(true) {
-        log::info!("nearby: off (devices.nearby = false)");
-        return;
-    }
     *RUNNING.lock() = Some(Running {
         local,
         listener: None,
         dialers: HashMap::new(),
+        off: false,
     });
+    // Paused before it starts when the network is off, so it never browses.
+    #[cfg(target_vendor = "apple")]
+    if !enabled() {
+        bonjour::pause();
+    }
     reconfigure();
     dial_remembered();
     #[cfg(target_vendor = "apple")]
@@ -250,6 +254,11 @@ pub fn start(local: Local) {
         .name("koan-bonjour".into())
         .spawn(bonjour::browse_forever)
         .expect("failed to spawn the Bonjour thread");
+}
+
+/// `devices.nearby`: whether this device takes part in the local network.
+fn enabled() -> bool {
+    Config::load().map(|c| c.devices.nearby).unwrap_or(true)
 }
 
 /// Stop looking for other devices, and hang up on them: a phone in the
@@ -269,6 +278,9 @@ pub fn suspend() {
 
 /// Look for other devices again, as at startup.
 pub fn wake() {
+    if !enabled() {
+        return;
+    }
     reconfigure();
     dial_remembered();
     #[cfg(target_vendor = "apple")]
@@ -278,7 +290,7 @@ pub fn wake() {
 /// Dial the devices reached before, at the addresses they were reached at,
 /// which answers before Bonjour has said anything.
 fn dial_remembered() {
-    if !crate::quiet::awake() {
+    if !crate::quiet::awake() || !enabled() {
         return;
     }
     if let Some(r) = RUNNING.lock().as_mut() {
@@ -308,6 +320,25 @@ pub fn reconfigure() {
     let cfg = Config::load().unwrap_or_default();
     let mut running = RUNNING.lock();
     let Some(r) = running.as_mut() else { return };
+    // Off: no listener, no dialers, no browsing, until it is turned on again.
+    if !cfg.devices.nearby {
+        if let Some(stop) = r.listener.take() {
+            stop.stop();
+        }
+        for (_, d) in r.dialers.drain() {
+            d.stop.stop();
+        }
+        FOUND.lock().clear();
+        if !r.off {
+            log::info!("nearby: off (devices.nearby = false)");
+            r.off = true;
+            devices::touch();
+            #[cfg(target_vendor = "apple")]
+            bonjour::pause();
+        }
+        return;
+    }
+    let turned_on = std::mem::replace(&mut r.off, false);
     match (
         &r.listener,
         cfg.devices.discoverable && crate::quiet::findable(),
@@ -350,6 +381,13 @@ pub fn reconfigure() {
         if !r.dialers.contains_key(&addr) {
             spawn_dialer(r, addr.clone(), addr);
         }
+    }
+    if turned_on {
+        log::info!("nearby: on");
+        drop(running);
+        dial_remembered();
+        #[cfg(target_vendor = "apple")]
+        bonjour::restart();
     }
 }
 
