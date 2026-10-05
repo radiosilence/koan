@@ -209,7 +209,7 @@ impl SubsonicError {
     fn token_auth_unsupported() -> Self {
         Self::auth(
             SubsonicErrorCode::TokenAuthUnsupported,
-            "Token authentication needs an app password for this account: make one on the API keys page of kōan's web UI, or sign in with your password or an API key",
+            "Token authentication needs an app password for this account: make one on the Account page of kōan's web UI, or sign in with your password or an API key",
         )
     }
 
@@ -2778,7 +2778,7 @@ fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response
     let bytes = groups
         .iter()
         .find_map(|tracks| state.covers.cover(tracks, size))
-        .ok_or_else(|| SubsonicError::not_found("No cover art embedded"))?;
+        .ok_or_else(|| SubsonicError::not_found("Cover art"))?;
     Ok((
         StatusCode::OK,
         [

@@ -24,6 +24,7 @@
 ### Fixed
 
 - **The web UI on a phone.** A favourite track shows its heart beside the row's ⋯ again, as a mark; the heart to press is in the menu. History rows give the title the width the tick boxes took: on a phone a play is removed with Remove from History in its menu, as in the apps, and the time is set smaller. On a wide screen the Tracks browser's name field is wide enough for its hint.
+- **Two Subsonic error messages read wrongly.** `getCoverArt` for a record with no art said "No cover art embedded not found"; it now says "Cover art not found". Error 41 pointed at an "API keys page" that is now the Account page.
 - **Resuming on an amplifier after it was stopped while paused continues from where it was.** koan reads a renderer's state and position with two separate calls, so a stop landing between them read as paused at 0:00, and resuming could start the track again. A paused renderer's position now moves only when two readings agree.
 - **Plays made offline reach the server.** A scrobble the server did not take was dropped. It now waits on the device and is sent, dated to when the track started, once the server answers again, to Navidrome as well as kōan.
 
