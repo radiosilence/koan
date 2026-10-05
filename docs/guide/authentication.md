@@ -244,6 +244,11 @@ Refresh tokens are stored in the database as `sha256(token)`, so a database read
 
 `/rest/*` is kōan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`), and koan's own. Clients sign in with one of:
 
+- **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
+- **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. argon2 is expensive by design, so at most one check per core (2 to 8) runs at once and a request arriving when all are busy gets error 0, "server busy", rather than waiting. The protocol sends the password with every request, so use it only over HTTPS.
+- **App password** (`u` + `t` + `s`, or `p=`) — for clients that only sign in with Subsonic token auth. Made per app on the web UI's Account page, shown once, and usable until revoked; changing the account's password revokes them all.
+- **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret and its username, acting as `user`, for clients that have no account.
+
 Which credential a client should use:
 
 | Client | Credential |
@@ -252,11 +257,6 @@ Which credential a client should use:
 | kōan's apps, and Subsonic clients that support OpenSubsonic API keys | An API key (kōan's apps get one from an invite) |
 | Subsonic clients that sign in with a token (`t`/`s`) | An app password |
 | Older clients that send the password itself (`p=`) | The account's password over HTTPS, or an app password |
-
-- **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
-- **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. argon2 is expensive by design, so at most one check per core (2 to 8) runs at once and a request arriving when all are busy gets error 0, "server busy", rather than waiting. The protocol sends the password with every request, so use it only over HTTPS.
-- **App password** (`u` + `t` + `s`, or `p=`) — for clients that only sign in with Subsonic token auth. Made per app on the web UI's Account page, shown once, and usable until revoked; changing the account's password revokes them all.
-- **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret and its username, acting as `user`, for clients that have no account.
 
 Subsonic token auth (`t = md5(password + salt)`) cannot be checked against the account's own password, because the server keeps only its argon2 hash; a password the server can read back is one its admins and anyone with the database can read too. App passwords are the exception made for token-only clients. Each is random, never the account's password, and stored sealed with ChaCha20-Poly1305 under a key derived (HKDF) from the server's Ed25519 signing key and bound to its account, so a copy of the database alone does not yield them, and regenerating the keypair retires them with every session. An account without app passwords gets error 41 for a token, which tells a client to fall back to a password or a key. Token auth still protects little in transit — a captured token replays — so use HTTPS.
 
