@@ -138,8 +138,47 @@ fn parse_m3u(text: &str) -> M3u {
 
 /// `.m3u8` is UTF-8 by definition; plain `.m3u` is often Latin-1, from the
 /// players that first wrote it. Valid UTF-8 is taken as such either way.
+/// UTF-16 is taken when the file opens with its byte order mark, as Windows
+/// tools write it.
 fn decode(bytes: Vec<u8>) -> String {
+    let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
+        let units: Vec<u16> = rest.chunks_exact(2).map(|c| unit([c[0], c[1]])).collect();
+        String::from_utf16_lossy(&units)
+    };
+    match bytes.as_slice() {
+        [0xff, 0xfe, rest @ ..] => return utf16(rest, u16::from_le_bytes),
+        [0xfe, 0xff, rest @ ..] => return utf16(rest, u16::from_be_bytes),
+        _ => {}
+    }
     String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect())
+}
+
+/// Resolve every playlist read from an M3U file again: after tracks were
+/// added, entries naming them may now be in the library. A file unchanged
+/// that resolves to the same tracks writes nothing.
+pub fn refresh_m3u(db: &Database) {
+    let sources: Vec<String> = match db
+        .conn
+        .prepare("SELECT source_path FROM playlists WHERE source_path IS NOT NULL")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| r.get(0))?
+                .collect::<Result<Vec<String>, _>>()
+        }) {
+        Ok(sources) => sources,
+        Err(e) => {
+            log::warn!("could not list playlist files to resolve again: {e}");
+            return;
+        }
+    };
+    for source in sources {
+        let path = Path::new(&source);
+        if is_m3u(path)
+            && path.is_file()
+            && let Err(e) = import_m3u(db, path)
+        {
+            log::warn!("playlist {source} not resolved again: {e}");
+        }
+    }
 }
 
 /// The file an entry names, if it names one: absolute, relative to the
@@ -221,10 +260,12 @@ fn import_m3u(db: &Database, path: &Path) -> Result<bool, String> {
             Ok::<_, DbError>(renamed || refilled)
         })
         .map_err(db_err),
-        None if tracks.is_empty() => Err(format!(
-            "none of its {} entries are in the library",
-            m3u.entries.len()
-        )),
+        // Only stream URLs: nothing a scan could ever add. Files not in the
+        // library yet may be, so a list of them is kept, empty, and resolved
+        // again as tracks arrive.
+        None if m3u.entries.iter().all(|e| entry_path(e, dir).is_none()) => {
+            Err("it lists no files".into())
+        }
         None => {
             queries::atomically(conn, || {
                 let id = queries::create_playlist(conn, LOCAL_USER, &name, None)?;
@@ -427,13 +468,60 @@ mod tests {
     }
 
     #[test]
-    fn an_m3u_naming_nothing_in_the_library_is_not_imported() {
+    fn an_m3u_of_streams_only_is_not_imported() {
         let tmp = tempfile::tempdir().unwrap();
         let db = test_db(tmp.path());
         let file = tmp.path().join("Radio.m3u");
         std::fs::write(&file, "http://radio/stream\n").unwrap();
         assert_eq!(import(&db, std::slice::from_ref(&file), &[]), 0);
         assert!(sourced(&db).is_empty());
+    }
+
+    /// A list read before the folder it names was indexed fills in once the
+    /// tracks arrive.
+    #[test]
+    fn an_m3u_naming_tracks_not_yet_indexed_fills_in_later() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = test_db(tmp.path());
+        let music = tmp.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        let file = music.join("Later.m3u");
+        std::fs::write(&file, "Album/A.flac\n").unwrap();
+
+        assert_eq!(import(&db, std::slice::from_ref(&file), &[]), 1);
+        let id: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM playlists WHERE source_path IS NOT NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            queries::playlist_track_ids(&db.conn, id)
+                .unwrap()
+                .is_empty()
+        );
+
+        let mut meta = queries::sample_meta("A", "Artist", "Album");
+        meta.path = Some(music.join("Album/A.flac").to_string_lossy().into_owned());
+        let a = queries::upsert_track(&db.conn, &meta).unwrap();
+        refresh_m3u(&db);
+        assert_eq!(queries::playlist_track_ids(&db.conn, id).unwrap(), vec![a]);
+    }
+
+    #[test]
+    fn utf16_with_a_byte_order_mark_is_read() {
+        let le: Vec<u8> = [0xff, 0xfe]
+            .into_iter()
+            .chain("Bébé\n".encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        assert_eq!(decode(le), "Bébé\n");
+        let be: Vec<u8> = [0xfe, 0xff]
+            .into_iter()
+            .chain("Bébé".encode_utf16().flat_map(u16::to_be_bytes))
+            .collect();
+        assert_eq!(decode(be), "Bébé");
     }
 
     #[test]

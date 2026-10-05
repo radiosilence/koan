@@ -134,6 +134,9 @@ pub fn scan_folders(
         }
         merge(&mut total, result);
     }
+    if total.added > 0 {
+        super::playlist_files::refresh_m3u(db);
+    }
     total
 }
 
@@ -243,6 +246,9 @@ pub fn scan_dirs(
         remove_stale(db, dir, true, &mut result);
     }
     result.playlists += super::playlist_files::import(db, &playlists, &settled);
+    if result.added > 0 {
+        super::playlist_files::refresh_m3u(db);
+    }
     result
 }
 
@@ -642,6 +648,9 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
         result
             .errors
             .push((PathBuf::new(), format!("db error: {e}")));
+    }
+    if result.added > 0 {
+        super::playlist_files::refresh_m3u(db);
     }
 
     result

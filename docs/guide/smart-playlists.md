@@ -55,8 +55,8 @@ kōan reads `.nsp` files with the fields above under Navidrome's names (`loved` 
 
 ## M3U files
 
-`.m3u` and `.m3u8` files in a library folder are read the same way, into ordinary playlists of the tracks they list. Entries may be relative to the file, absolute, or `file://` URLs; Windows separators are understood, and a plain `.m3u` that is not UTF-8 is read as Latin-1. `#PLAYLIST:` names the playlist, otherwise the file does. Entries that are not in the library, stream URLs among them, are left out and counted in the log, and a file that names nothing in the library is not imported.
+`.m3u` and `.m3u8` files in a library folder are read the same way, into ordinary playlists of the tracks they list. Entries may be relative to the file, absolute, or `file://` URLs; Windows separators are understood, a plain `.m3u` that is not UTF-8 is read as Latin-1, and UTF-16 is read when the file starts with a byte order mark. `#PLAYLIST:` names the playlist, otherwise the file does. Entries that are not in the library, stream URLs among them, are left out and counted in the log. A file listing tracks that are not indexed yet is kept, and its entries resolved again after any scan or drop that adds tracks; one listing only stream URLs is not imported.
 
-As with `.nsp` files, the file decides: changing it changes the playlist at the next scan, deleting it deletes the playlist, and the playlist takes no edits in the meantime. To edit one in kōan, make a copy of it.
+As with `.nsp` files, the file decides: changing it changes the playlist at the next scan, deleting it deletes the playlist, and the playlist cannot be renamed or edited in the meantime. To edit one in kōan, make a copy of it.
 
 A playlist that a Subsonic server marks read-only, as OpenSubsonic servers mark their smart playlists, is shown read-only in kōan's apps and never pushed back to the server.
