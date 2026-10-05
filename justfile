@@ -731,6 +731,41 @@ ios-phone config="Debug": (ios-ffi "iphoneos")
         "target/ios-build/Build/Products/{{config}}-iphoneos/koan.app"
     xcrun devicectl device process launch --device "$phone" {{bundle_id}}
 
+# Type-check the shared SwiftUI sources against the tvOS SDK: what
+# `ios-typecheck` is for the phone. The excluded files are the Mac's shell and
+# sidebar, and the phone's Live Activity, none of which tvOS has.
+tv-typecheck: macos-ffi
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shell=(KoanApp Hotkeys TextFocus EditCommands MenuShortcuts ShortcutsSheet SidebarView)
+    find_args=()
+    for f in "${shell[@]}"; do find_args+=(! -name "$f.swift"); done
+    mod=$(mktemp -d)
+    trap 'rm -rf "$mod"' EXIT
+    ffi={{app_dir}}/Sources/koan_ffiFFI
+    target=arm64-apple-tvos{{tv_deployment_target}}-simulator
+    xcrun -sdk appletvsimulator swiftc -target "$target" -swift-version 6 \
+        -package-name koan \
+        -emit-module -module-name KoanFFI -emit-module-path "$mod/KoanFFI.swiftmodule" \
+        -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
+        {{app_dir}}/Sources/KoanFFI/koan_ffi.swift
+    xcrun -sdk appletvsimulator swiftc -target "$target" -swift-version 6 \
+        -package-name koan \
+        -wmo -emit-sil -o /dev/null -module-name Koan -I "$mod" \
+        -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
+        $(find {{app_dir}}/Sources/KoanIOS -name '*.swift' ! -name 'RemoteActivity*') \
+        $(find {{app_dir}}/Sources/KoanTV -name '*.swift') \
+        $(find {{app_dir}}/Sources/Koan -name '*.swift' "${find_args[@]}")
+    echo "the shared sources still build for tvOS"
+
+# Build the television app for the simulator, unsigned: the engine for tvOS,
+# the bindings from it, and the Xcode project's KoanTV scheme. What CI runs.
+tv-build: (tv-ffi "appletvsimulator") ios-project
+    xcodebuild build -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
+        -destination 'generic/platform=tvOS Simulator' \
+        -derivedDataPath target/tv-build CODE_SIGNING_ALLOWED=NO
+
 # Build the Rust engine for a tvOS SDK and stage it for the Swift link.
 #
 # `appletvsimulator` or `appletvos`, staged under the SDK's own name so the
