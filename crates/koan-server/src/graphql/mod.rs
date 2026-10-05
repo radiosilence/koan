@@ -485,8 +485,8 @@ fn fillable_playlist(
     let list = editable_playlist(db, user, id)?;
     if list.readonly {
         return Err(async_graphql::Error::new(format!(
-            "playlist {id} is a smart playlist: its rules decide what it holds \
-             (setPlaylistRules changes them)"
+            "playlist {id} is read-only: its rules (setPlaylistRules changes \
+             them), its file in the library or its server decide what it holds"
         )));
     }
     Ok(list)

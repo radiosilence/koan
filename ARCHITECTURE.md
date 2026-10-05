@@ -329,7 +329,7 @@ Which track a source belongs to is decided only by `sources::link`, on one norma
 |---|---|
 | `scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → one DB transaction per 1000 files, reads and writes running at the same time |
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
-| `playlist_files.rs` | Navidrome `.nsp` files the scan walk finds, read into smart playlists. The file stays authoritative: changed, it rewrites the rules; gone from a directory the scan covered completely, it deletes the playlist |
+| `playlist_files.rs` | Playlist files the scan walk finds: Navidrome `.nsp` into smart playlists, `.m3u`/`.m3u8` into ordinary ones resolved by path. The file stays authoritative: changed, it rewrites the rules; gone from a directory the scan covered completely, it deletes the playlist |
 | `id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
 
 ### `format` (from sift)

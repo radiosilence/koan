@@ -17,7 +17,6 @@ These Navidrome features have no kōan equivalent today:
 
 - **Transcoding.** kōan streams the original file. A client that asks for a lower bitrate gets the original, so lossless libraries cost full bandwidth on mobile data. kōan's own apps cache what they play, which limits the cost to the first play.
 - **Scrobbling to Last.fm.** kōan forwards plays to ListenBrainz (see [Scrobbling](headless-server.md#scrobbling)), not to Last.fm.
-- **Importing `.m3u` files** from the music folder.
 - **Serving under a sub-path** (`ND_BASEURL`). kōan expects its own hostname.
 - **Reverse-proxy authentication** (`ND_REVERSEPROXYUSERHEADER`). Accounts are kōan's own.
 - **Per-library permissions.** Every account sees the whole library.

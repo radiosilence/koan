@@ -51,8 +51,8 @@ pub struct PlaylistRow {
     /// The file in a library folder it was read from. The file decides its
     /// name and what it holds, so neither is edited here.
     pub source_path: Option<String>,
-    /// Its contents are not for editing: a smart playlist here, or one the
-    /// server says is read-only.
+    /// Its contents are not for editing: a smart playlist, one read from a
+    /// file in the library, or one the server says is read-only.
     pub readonly: bool,
 }
 
@@ -60,7 +60,7 @@ const SELECT: &str = "SELECT p.id, p.name, p.comment, p.public, COALESCE(p.owner
             p.remote_id, p.created_at, p.changed_at, p.sort_order, p.grouped,
             COUNT(pt.track_id), COALESCE(SUM(t.duration_ms), 0), p.user_id,
             COALESCE(p.uid, CAST(p.id AS TEXT)), p.revision, p.synced_revision, p.remote_changed,
-            p.rules, p.readonly, p.source_path
+            p.rules, (p.readonly != 0 OR p.source_path IS NOT NULL), p.source_path
      FROM playlists p
      LEFT JOIN users u ON u.id = p.user_id
      LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
@@ -677,11 +677,12 @@ pub fn playlist_cover_album_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, 
 }
 
 /// `user`'s playlists that have never been pushed to a server. Smart ones
-/// are never pushed: the server would hold a copy of today's selection that
-/// nothing keeps up to date.
+/// and ones read from files are never pushed: the server would hold a copy
+/// that nothing keeps up to date.
 pub fn playlists_without_remote(conn: &Connection, user: i64) -> Result<Vec<PlaylistRow>, DbError> {
     let mut stmt = conn.prepare(&format!(
         "{SELECT} WHERE p.remote_id IS NULL AND p.user_id = ?1 AND p.rules IS NULL
+           AND p.source_path IS NULL
          GROUP BY p.id ORDER BY p.sort_order"
     ))?;
     let rows = stmt
