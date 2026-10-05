@@ -69,7 +69,11 @@ struct PlaylistView: View {
                 EmptyState(
                     icon: "music.note.list",
                     title: playlists.isLoading ? "Loading…" : "Nothing in here yet",
-                    detail: "Drag records, artists or tracks onto it — or onto its row in the sidebar."
+                    detail: playlist?.smart == true
+                        ? "Nothing in the library matches its rules yet."
+                        : playlist?.readonly == true
+                        ? "None of its tracks are in the library."
+                        : "Drag records, artists or tracks onto it — or onto its row in the sidebar."
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -306,6 +310,7 @@ struct PlaylistView: View {
                     renameTo = playlist?.name ?? ""
                     renaming = true
                 }
+                .disabled(playlist?.fromFile == true)
                 Divider()
                 Button("Delete Playlist", role: .destructive) {
                     playlists.delete(id: playlistId)

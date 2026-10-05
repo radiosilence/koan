@@ -308,6 +308,10 @@ integers in queries; pass them to the client mutations as strings.
 - Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
 - Playlists: `playlists`, `playlistTracks`, `createPlaylist`, `addToPlaylist`, \
 `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`
+- Smart playlists stay up to date by themselves (\"what I played most last month\", \
+\"favourites I have not heard in a while\"): `createSmartPlaylist(name, rules)` and \
+`setPlaylistRules`; the rule format is in the schema's description of `createSmartPlaylist`. \
+Their contents cannot be edited (`readonly`); change the rules instead.
 - History: `playHistory`
 - Sharing: `createShare(trackIds, description)` makes a public link anyone can open without an \
 account; confirm with the user first. `shares`, `updateShare`, `deleteShare` manage them.
@@ -335,7 +339,9 @@ duration, favourites), `randomTracks`, `fuzzySearch`
     choosing_by_style!(),
     "- Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
 - Playlists: `playlists`, `playlistTracks`, `createPlaylist`, `saveQueueAsPlaylist`, \
-`addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist`
+`addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist`; \
+`createSmartPlaylist(name, rules)` and `setPlaylistRules` for ones that stay up to date by \
+themselves (rule format in the schema)
 - History: `playHistory`
 - Sharing: `createShare(trackIds, description)` makes a public link; confirm with the user first.
 

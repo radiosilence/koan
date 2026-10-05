@@ -211,8 +211,15 @@ pub(super) async fn forget(
     let page = paging.page;
     let found = blocking(move || {
         let db = open(&s.pool)?;
-        queries::delete_plays(&db.conn, user.user_id, &ids).ok()?;
+        queries::forget_shared_entries(&db.conn, user.user_id, &ids).ok()?;
+        use koan_core::smart::Field;
+        crate::clients::smart_activity(&db, user.user_id, &[Field::PlayCount, Field::LastPlayed]);
         drop(db);
+        // The account's linked devices forget them too.
+        crate::clients::registry().broadcast(
+            Some(&user.username),
+            koan_core::remote::link::LinkCommand::HistoryChanged,
+        );
         read(&s, &user, page)
     })
     .await;

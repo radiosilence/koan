@@ -50,6 +50,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::DEVICES, &[1]),
     (koan_core::remote::profile::INVITE, &[1]),
     (koan_core::remote::profile::SHARES, &[1]),
+    (koan_core::remote::profile::HISTORY, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -2127,6 +2128,94 @@ async fn get_song(State(state): State<Arc<AppState>>, Query(params): Query<IdPar
     .await
 }
 
+/// `getBookmarks`: the caller's places in tracks, most recently changed first,
+/// each with the track as its `entry`.
+async fn get_bookmarks(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    offload_response(move || {
+        respond_db_caller(&state, &params, Role::Readonly, |db, caller, b| {
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let marks = queries::bookmarks(&db.conn, caller.user_id).map_err(internal)?;
+            let ids: Vec<i64> = marks.iter().map(|m| m.track_id).collect();
+            let tracks: HashMap<i64, queries::TrackRow> = queries::tracks_by_ids(&db.conn, &ids)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .into_iter()
+                .map(|t| (t.id, t))
+                .collect();
+            let extras = song_extras(db, caller.user_id, tracks.values())?;
+            Ok(b.child(XmlNode::new("bookmarks").list(
+                "bookmark",
+                marks.iter().filter_map(|m| {
+                    let track = tracks.get(&m.track_id)?;
+                    Some(
+                        XmlNode::new("bookmark")
+                            .attr_int("position", m.position_ms)
+                            .attr("username", &caller.username)
+                            .attr_opt("comment", m.comment.as_deref())
+                            .attr("created", &iso(m.created_at))
+                            .attr("changed", &iso(m.changed_at))
+                            .child(track_node(track, "entry", &extras)),
+                    )
+                }),
+            )))
+        })
+    })
+    .await
+}
+
+/// A note on a place in a track. Longer is refused rather than cut, so a
+/// client never reads back something other than what it saved.
+const MAX_BOOKMARK_COMMENT: usize = 1024;
+
+/// `createBookmark`: save where the caller is in the song `id` names, as
+/// `position` milliseconds and an optional `comment`. One per song; a second
+/// replaces the first.
+async fn create_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let track_id = require_id(db, params.get("id"), EntityKind::Song)?;
+            let position = params
+                .get("position")
+                .ok_or_else(|| SubsonicError::missing_param("position"))?
+                .parse::<i64>()
+                .ok()
+                .filter(|p| *p >= 0)
+                .ok_or_else(|| SubsonicError::bad_param("position"))?;
+            let comment = params.get("comment");
+            if comment.is_some_and(|c| c.chars().count() > MAX_BOOKMARK_COMMENT) {
+                return Err(SubsonicError::bad_param("comment"));
+            }
+            queries::get_track_row(&db.conn, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Song"))?;
+            queries::save_bookmark(&db.conn, user, track_id, position, comment)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
+/// `deleteBookmark`: forget the caller's place in the song `id` names. One
+/// that was never saved is already forgotten, as Navidrome answers it.
+async fn delete_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let track_id = require_id(db, params.get("id"), EntityKind::Song)?;
+            queries::delete_bookmark(&db.conn, user, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
 /// The lyrics koan has cached for a song, as one `structuredLyrics` entry, or
 /// none. Only the cache is read: fetching from LRCLIB is the player's job, and
 /// not something to do inside a client's request.
@@ -2782,8 +2871,12 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
             if targets.is_empty() {
                 return Err(SubsonicError::missing_param("id"));
             }
+            let songs = targets.iter().any(|(kind, _)| *kind == EntityKind::Song);
             for (kind, id) in targets {
                 set_star(db, user, kind, id, star)?;
+            }
+            if songs {
+                crate::clients::smart_activity(db, user, &[koan_core::smart::Field::Favourite]);
             }
             // The caller's other apps show hearts too: a track favourited on
             // a phone while it plays on the Mac should light up there.
@@ -2959,7 +3052,8 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
-        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
+            let user = caller.user_id;
             // An offline session flushes hundreds at once: the uids among
             // them are resolved in one query rather than one each.
             let raws: Vec<&str> = params.all("id").collect();
@@ -2987,6 +3081,12 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
 
             // `submission=false` is a now-playing notice, not a play.
             if params.get("submission") == Some("false") {
+                if let (Ok(user), Some(&track_id)) = (
+                    queries::auth::resolve_user(&db.conn, user),
+                    track_ids.first(),
+                ) {
+                    koan_core::scrobbling::now_playing(user, track_id);
+                }
                 return Ok(b);
             }
 
@@ -3012,7 +3112,17 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
             // The foreign key is the existence check: one id that names no
             // track fails the batch, and the transaction leaves none of it.
             match queries::record_plays_at(&db.conn, user, &plays, queries::SOURCE_SUBSONIC) {
-                Ok(()) => Ok(b),
+                Ok(()) => {
+                    koan_core::scrobbling::wake();
+                    use koan_core::smart::Field;
+                    crate::clients::smart_activity(
+                        db,
+                        user,
+                        &[Field::PlayCount, Field::LastPlayed],
+                    );
+                    history_changed(&caller.username);
+                    Ok(b)
+                }
                 Err(koan_core::db::connection::DbError::Sqlite(
                     rusqlite::Error::SqliteFailure(e, _),
                 )) if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY => {
@@ -3020,6 +3130,120 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
                 }
                 Err(e) => Err(SubsonicError::from(format!("Database error: {}", e))),
             }
+        })
+    })
+    .await
+}
+
+/// Tell the account's linked apps that its play history moved, so each reads
+/// what changed (`koanHistory`).
+fn history_changed(username: &str) {
+    crate::clients::registry().broadcast(
+        Some(username),
+        koan_core::remote::link::LinkCommand::HistoryChanged,
+    );
+}
+
+/// The caller's play history after `since` (`play.forgotten`, from the last
+/// page; absent for the start), at most `count` plays and `count`
+/// forgettings: koan's `koanHistory`. Times are ms since the epoch.
+async fn koan_history(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::Readonly, |db, user, b| {
+            let since = match params.get("since") {
+                Some(raw) => queries::HistoryCursor::parse(raw)
+                    .ok_or_else(|| SubsonicError::bad_param("since"))?,
+                None => queries::HistoryCursor::default(),
+            };
+            let count = params
+                .get("count")
+                .and_then(|c| c.parse::<u32>().ok())
+                .unwrap_or(500)
+                .clamp(1, 1000);
+            let page = queries::history_since(&db.conn, user, since, count)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("koanHistory")
+                    .attr("cursor", &page.cursor.to_string())
+                    .attr_bool("more", page.more)
+                    .list(
+                        "play",
+                        page.plays.iter().map(|p| {
+                            XmlNode::new("play")
+                                .attr("id", &p.track_uid)
+                                .attr_int("seq", p.seq)
+                                .attr_int("played", p.played_at * 1000)
+                                .attr_opt_int("listenedMs", p.listened_ms)
+                        }),
+                    )
+                    .list(
+                        "forgotten",
+                        page.forgotten.iter().map(|f| {
+                            XmlNode::new("forgotten")
+                                .attr_opt("id", f.track_uid.as_deref())
+                                .attr_int("played", f.played_at * 1000)
+                        }),
+                    ),
+            ))
+        })
+    })
+    .await
+}
+
+/// Forget plays from the caller's history, for every one of the account's
+/// devices: each `id` with its `time` (ms, when the play started, as
+/// `scrobble` takes it), or with `through` every play up to then. koan's
+/// `koanForgetPlays`.
+async fn koan_forget_plays(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::User, |db, caller, b| {
+            let failed =
+                |e: koan_core::db::connection::DbError| SubsonicError::internal(e.to_string());
+            if let Some(through) = params.get("through") {
+                let through: i64 = through
+                    .parse()
+                    .map_err(|_| SubsonicError::bad_param("through"))?;
+                queries::forget_shared_plays_through(&db.conn, caller.user_id, through / 1000)
+                    .map_err(failed)?;
+            } else {
+                let ids: Vec<&str> = params.all("id").collect();
+                let times: Vec<i64> = params
+                    .all("time")
+                    .map(|t| t.parse().map_err(|_| SubsonicError::bad_param("time")))
+                    .collect::<Result<_, _>>()?;
+                if ids.is_empty() {
+                    return Err(SubsonicError::missing_param("id"));
+                }
+                if ids.len() != times.len() {
+                    return Err(SubsonicError::missing_param("time"));
+                }
+                // A track that has left the library took its plays with it.
+                let plays: Vec<(i64, i64)> = ids
+                    .iter()
+                    .zip(&times)
+                    .filter_map(|(raw, time)| {
+                        resolve_as(db, raw, EntityKind::Song, "id")
+                            .ok()
+                            .map(|track| (track, time / 1000))
+                    })
+                    .collect();
+                queries::forget_shared_plays(&db.conn, caller.user_id, &plays).map_err(failed)?;
+            }
+            use koan_core::smart::Field;
+            crate::clients::smart_activity(
+                db,
+                caller.user_id,
+                &[Field::PlayCount, Field::LastPlayed],
+            );
+            history_changed(&caller.username);
+            Ok(b)
         })
     })
     .await
@@ -3225,6 +3449,7 @@ async fn get_playlists(
 ) -> Response {
     offload_response(move || {
         respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
+            refresh_smart(db, user);
             let lists = queries::list_playlists(&db.conn, user)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
@@ -3253,7 +3478,9 @@ fn playlist_attrs(node: XmlNode, list: &queries::PlaylistRow, username: &str) ->
         .attr("owner", list.owner.as_deref().unwrap_or(username))
         .attr_bool("public", list.public)
         .attr("created", &list.created_at)
-        .attr("changed", &list.changed_at);
+        .attr("changed", &list.changed_at)
+        // OpenSubsonic: a smart playlist takes no edits to its contents.
+        .attr_bool("readonly", list.readonly);
     match &list.comment {
         Some(comment) => node.attr("comment", comment),
         None => node,
@@ -3301,6 +3528,29 @@ fn playlist_for(
     Ok(list)
 }
 
+/// Evaluate the smart playlists `user` can see that are due, and have every
+/// device pull any whose contents moved. A failure leaves the last contents
+/// in place, which is what a read should serve anyway.
+fn refresh_smart(db: &Database, user: i64) {
+    match queries::smart::refresh_due(&db.conn, user) {
+        Ok(changed) if !changed.is_empty() => crate::clients::changed(),
+        Ok(_) => {}
+        Err(e) => log::warn!("smart playlists not refreshed: {e}"),
+    }
+}
+
+/// A smart playlist's contents are its rules', and a file's are the file's:
+/// neither is for editing.
+fn refuse_smart(list: &queries::PlaylistRow) -> Result<(), SubsonicError> {
+    if list.readonly {
+        return Err(SubsonicError::new(
+            SubsonicErrorCode::NotAuthorized,
+            "This playlist is read-only: its rules or its file decide what it holds",
+        ));
+    }
+    Ok(())
+}
+
 /// After a playlist write: push it to the upstream, if there is one, and have
 /// the account's devices pull it, as the GraphQL mutations do. A koan app's
 /// own edits arrive through these endpoints.
@@ -3324,6 +3574,12 @@ async fn get_playlist(
     offload_response(move || {
         respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
             let id = playlist_id(db, params.id.as_deref())?;
+            playlist_for(db, user, id, false)?;
+            match queries::smart::refresh_if_due(&db.conn, id) {
+                Ok(true) => crate::clients::changed(),
+                Ok(false) => {}
+                Err(e) => log::warn!("smart playlist {id} not refreshed: {e}"),
+            }
             let list = playlist_for(db, user, id, false)?;
             Ok(b.child(playlist_node(db, user, &list, &state.username)?))
         })
@@ -3346,7 +3602,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
             let id = queries::atomically(&db.conn, || match params.get("playlistId") {
                 Some(existing) => {
                     let id = playlist_id(db, Some(existing))?;
-                    playlist_for(db, user, id, true)?;
+                    refuse_smart(&playlist_for(db, user, id, true)?)?;
                     if let Some(name) = params.get("name") {
                         queries::rename_playlist(&db.conn, id, name)
                             .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -3388,7 +3644,18 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
 
         respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let id = playlist_id(db, params.get("playlistId").or_else(|| params.get("id")))?;
-            playlist_for(db, user, id, true)?;
+            let list = playlist_for(db, user, id, true)?;
+            if params.get("name").is_some() && list.source_path.is_some() {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::NotAuthorized,
+                    "This playlist is named by its file in the library: rename the file",
+                ));
+            }
+            if params.all("songIdToAdd").next().is_some()
+                || params.all("songIndexToRemove").next().is_some()
+            {
+                refuse_smart(&list)?;
+            }
             let added = song_ids(db, params.all("songIdToAdd"));
 
             // One transaction: the indexes to remove are against the list as
@@ -4226,6 +4493,19 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             get(koan_delete_user).post(koan_delete_user),
         )
         .route("/rest/koanCommand", get(koan_command).post(koan_command))
+        .route("/rest/koanHistory", get(koan_history).post(koan_history))
+        .route(
+            "/rest/koanHistory.view",
+            get(koan_history).post(koan_history),
+        )
+        .route(
+            "/rest/koanForgetPlays",
+            get(koan_forget_plays).post(koan_forget_plays),
+        )
+        .route(
+            "/rest/koanForgetPlays.view",
+            get(koan_forget_plays).post(koan_forget_plays),
+        )
         .route(
             "/rest/koanCommand.view",
             get(koan_command).post(koan_command),
@@ -4328,6 +4608,27 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route(
             "/rest/getStarred2.view",
             get(get_starred2).post(get_starred2),
+        )
+        .route("/rest/getBookmarks", get(get_bookmarks).post(get_bookmarks))
+        .route(
+            "/rest/getBookmarks.view",
+            get(get_bookmarks).post(get_bookmarks),
+        )
+        .route(
+            "/rest/createBookmark",
+            get(create_bookmark).post(create_bookmark),
+        )
+        .route(
+            "/rest/createBookmark.view",
+            get(create_bookmark).post(create_bookmark),
+        )
+        .route(
+            "/rest/deleteBookmark",
+            get(delete_bookmark).post(delete_bookmark),
+        )
+        .route(
+            "/rest/deleteBookmark.view",
+            get(delete_bookmark).post(delete_bookmark),
         )
         .route("/rest/setRating", get(set_rating).post(set_rating))
         .route("/rest/setRating.view", get(set_rating).post(set_rating))
@@ -5629,6 +5930,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bookmarks_save_replace_list_and_delete() {
+        let (state, _dir) = test_state();
+        let [alpha, beta, _] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let call = |path: String| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("f=json")),
+                )
+                .await
+            }
+        };
+        let (alpha, beta) = (
+            uid_of(&state, queries::UidKind::Track, alpha),
+            uid_of(&state, queries::UidKind::Track, beta),
+        );
+
+        call(format!(
+            "createBookmark?id={alpha}&position=1000&comment=intro"
+        ))
+        .await;
+        call(format!("createBookmark?id={beta}&position=5000")).await;
+        call(format!("createBookmark?id={alpha}&position=2500")).await;
+        let v = call("getBookmarks?".into()).await;
+        let marks = v["bookmarks"]["bookmark"].as_array().unwrap();
+        assert_eq!(marks.len(), 2, "{v}");
+        let mark = marks.iter().find(|m| m["entry"]["id"] == alpha).unwrap();
+        assert_eq!(
+            mark["position"], 2500,
+            "a second bookmark replaces the first"
+        );
+        assert!(mark["comment"].is_null());
+        assert_eq!(mark["username"], "testuser");
+        assert!(mark["created"].is_string() && mark["changed"].is_string());
+
+        let v = call(format!("createBookmark?id={alpha}")).await;
+        assert_eq!(v["error"]["code"], 10, "position is required");
+
+        call(format!("deleteBookmark?id={alpha}")).await;
+        let v = call("getBookmarks?".into()).await;
+        assert_eq!(v["bookmarks"]["bookmark"].as_array().unwrap().len(), 1);
+        let v = call(format!("deleteBookmark?id={alpha}")).await;
+        assert_eq!(v["status"], "ok", "deleting twice is not an error");
+
+        let long = "x".repeat(MAX_BOOKMARK_COMMENT + 1);
+        let v = call(format!(
+            "createBookmark?id={beta}&position=1&comment={long}"
+        ))
+        .await;
+        assert_eq!(v["error"]["code"], 10, "an overlong comment is refused");
+        let v = call("getBookmarks?".into()).await;
+        assert_eq!(v["bookmarks"]["bookmark"][0]["position"], 5000, "{v}");
+    }
+
+    #[tokio::test]
     async fn random_songs_filter_in_sql() {
         let (state, _dir) = test_state();
         seed_shelves(&state);
@@ -5725,7 +6084,10 @@ mod tests {
         let app = build_test_router(state);
         let (_, body) = get_response(
             app,
-            &format!("/rest/getBookmarks.view?{}", auth_query("f=json")),
+            &format!(
+                "/rest/getInternetRadioStations.view?{}",
+                auth_query("f=json")
+            ),
         )
         .await;
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -6192,6 +6554,87 @@ mod tests {
         assert_eq!(left, vec![c, a]);
     }
 
+    /// A smart playlist is served like any other, marked read-only, and its
+    /// contents refuse edits while its name does not.
+    #[tokio::test]
+    async fn smart_playlists_are_served_read_only() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(state.pool.path()).unwrap();
+        let tracks = queries::all_tracks(&db.conn).unwrap();
+        let rules = koan_core::smart::Rules::parse(r#"{"rules":[]}"#).unwrap();
+        let row = queries::smart::create_smart_playlist(
+            &db.conn,
+            queries::LOCAL_USER,
+            "Everything",
+            None,
+            &rules,
+        )
+        .unwrap();
+        let id = queries::get_playlist(&db.conn, row).unwrap().unwrap().uid;
+        drop(db);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(app, &format!("/rest/getPlaylists?{}", auth_query(""))).await;
+        assert!(body.contains("name=\"Everything\""), "{body}");
+        assert!(body.contains("readonly=\"true\""), "{body}");
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getPlaylist?{}&id={id}", auth_query("")),
+        )
+        .await;
+        assert_eq!(body.matches("<entry ").count(), tracks.len(), "{body}");
+
+        for edit in [
+            format!(
+                "updatePlaylist?playlistId={id}&songIdToAdd={}",
+                tracks[0].id
+            ),
+            format!("updatePlaylist?playlistId={id}&songIndexToRemove=0"),
+            format!("createPlaylist?playlistId={id}&songId={}", tracks[0].id),
+        ] {
+            let (path, query) = edit.split_once('?').unwrap();
+            let app = build_test_router(state.clone());
+            let (_, body) =
+                get_response(app, &format!("/rest/{path}?{}&{query}", auth_query(""))).await;
+            assert!(body.contains("status=\"failed\""), "{edit}: {body}");
+        }
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/updatePlaylist?{}&playlistId={id}&name=All",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert!(
+            body.contains("status=\"ok\""),
+            "a rename is allowed: {body}"
+        );
+
+        // One read from a file is named by it.
+        let db = Database::open(state.pool.path()).unwrap();
+        db.conn
+            .execute("UPDATE playlists SET source_path = '/music/All.nsp'", [])
+            .unwrap();
+        drop(db);
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/updatePlaylist?{}&playlistId={id}&name=Other",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert!(body.contains("status=\"failed\""), "{body}");
+    }
+
     #[tokio::test]
     async fn test_scrobble() {
         let (state, _dir) = test_state();
@@ -6234,6 +6677,28 @@ mod tests {
         );
     }
 
+    /// A client that lost the answer to a batch sends it again; each play is
+    /// recorded once.
+    #[tokio::test]
+    async fn a_scrobble_batch_sent_twice_records_each_play_once() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let db = Database::open(state.pool.path()).unwrap();
+        let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
+        let path = format!(
+            "/rest/scrobble?{}&id={track_id}&time=1000000&id={track_id}&time=2000000",
+            auth_query("f=json")
+        );
+        for _ in 0..2 {
+            let v = json_of(build_test_router(state.clone()), &path).await;
+            assert_eq!(v["status"], "ok", "{v}");
+        }
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, track_id).unwrap(),
+            2
+        );
+    }
+
     /// A batch naming one track that does not exist records none of it, so a
     /// client retrying after fixing the batch does not double the rest.
     #[tokio::test]
@@ -6256,6 +6721,110 @@ mod tests {
             queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, track_id).unwrap(),
             0
         );
+    }
+
+    /// Plays scrobbled come back from `koanHistory` after the cursor; a play
+    /// forgotten goes from the history and comes back as forgotten, and the
+    /// next page from the cursor holds only what changed since.
+    #[tokio::test]
+    async fn history_pages_plays_and_forgettings_after_a_cursor() {
+        let (state, _dir) = test_state();
+        let shelves = seed_shelves(&state);
+        let db = Database::open(state.pool.path()).unwrap();
+        let (a, b) = (shelves[0], shelves[1]);
+        let (a_uid, b_uid) = (
+            uid_of(&state, queries::UidKind::Track, a),
+            uid_of(&state, queries::UidKind::Track, b),
+        );
+        let get = |path: String| {
+            let state = state.clone();
+            async move { json_of(build_test_router(state), &path).await }
+        };
+
+        get(format!(
+            "/rest/scrobble?{}&id={a_uid}&time=1000000&id={b_uid}&time=2000000",
+            auth_query("f=json")
+        ))
+        .await;
+        let v = get(format!("/rest/koanHistory?{}", auth_query("f=json"))).await;
+        let page = &v["koanHistory"];
+        let plays: Vec<(String, i64)> = page["play"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                (
+                    p["id"].as_str().unwrap().to_owned(),
+                    p["played"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            plays,
+            [(a_uid.clone(), 1_000_000), (b_uid.clone(), 2_000_000)]
+        );
+        assert_eq!(page["more"], false);
+        let cursor = page["cursor"].as_str().unwrap().to_owned();
+
+        // Forgotten a second off: a play is named by when it started, and the
+        // device that recorded it read its clock a moment apart.
+        let v = get(format!(
+            "/rest/koanForgetPlays?{}&id={a_uid}&time=1001000",
+            auth_query("f=json")
+        ))
+        .await;
+        assert_eq!(v["status"], "ok", "{v}");
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, a).unwrap(),
+            0
+        );
+        let v = get(format!(
+            "/rest/koanHistory?{}&since={cursor}",
+            auth_query("f=json")
+        ))
+        .await;
+        let page = &v["koanHistory"];
+        assert!(page["play"].as_array().is_none_or(|p| p.is_empty()), "{v}");
+        assert_eq!(page["forgotten"][0]["id"], a_uid.as_str());
+        assert_eq!(page["forgotten"][0]["played"], 1_001_000);
+
+        // Forgetting a play nobody has records nothing.
+        let cursor = page["cursor"].as_str().unwrap().to_owned();
+        get(format!(
+            "/rest/koanForgetPlays?{}&id={a_uid}&time=9000000",
+            auth_query("f=json")
+        ))
+        .await;
+        let v = get(format!(
+            "/rest/koanHistory?{}&since={cursor}",
+            auth_query("f=json")
+        ))
+        .await;
+        assert!(
+            v["koanHistory"]["forgotten"]
+                .as_array()
+                .is_none_or(|f| f.is_empty()),
+            "{v}"
+        );
+
+        // `through` forgets everything up to then, as one entry with no track.
+        get(format!(
+            "/rest/koanForgetPlays?{}&through=5000000",
+            auth_query("f=json")
+        ))
+        .await;
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, b).unwrap(),
+            0
+        );
+        let v = get(format!(
+            "/rest/koanHistory?{}&since={cursor}",
+            auth_query("f=json")
+        ))
+        .await;
+        let forgotten = &v["koanHistory"]["forgotten"][0];
+        assert!(forgotten.get("id").is_none_or(|id| id.is_null()), "{v}");
+        assert_eq!(forgotten["played"], 5_000_000);
     }
 
     #[tokio::test]

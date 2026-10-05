@@ -11,6 +11,15 @@ use super::auth::resolve_user;
 /// is another client scrobbling to koan's own Subsonic endpoint.
 pub const SOURCE_LOCAL: &str = "local";
 pub const SOURCE_SUBSONIC: &str = "subsonic";
+/// A play another device made, adopted from the signed-in koan server's
+/// history: see `remote::history`.
+pub const SOURCE_SYNCED: &str = "synced";
+
+/// How far apart, in seconds, two entries for a track can be and still be one
+/// play. A device records a play when it starts and dates its scrobble to the
+/// same moment, but the two clocks are read a moment apart, and the server
+/// keeps whole seconds.
+pub const SAME_PLAY_SECS: i64 = 5;
 
 /// Record a play at an explicit time. Returns the new entry's id.
 ///
@@ -40,7 +49,8 @@ pub fn record_play_at(
 }
 
 /// Record several plays, `(track_id, played_at)`, as one transaction: all of
-/// them or, if any names a track that does not exist, none.
+/// them or, if any names a track that does not exist, none. A play already
+/// recorded for the track at the same second is not recorded again.
 pub fn record_plays_at(
     conn: &Connection,
     user: i64,
@@ -49,9 +59,15 @@ pub fn record_plays_at(
 ) -> Result<(), DbError> {
     let user = resolve_user(conn, user)?;
     super::atomically(conn, || {
+        // A client that lost the answer sends the batch again: a play already
+        // recorded at that second is that play.
         let mut insert = conn.prepare_cached(
             "INSERT INTO play_history (user_id, track_id, played_at, source)
-             VALUES (?1, ?2, ?3, ?4)",
+             SELECT ?1, ?2, ?3, ?4
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM play_history
+                 WHERE user_id = ?1 AND track_id = ?2 AND played_at = ?3
+             )",
         )?;
         for &(track_id, played_at) in plays {
             insert.execute(params![user, track_id, played_at, source])?;
@@ -270,6 +286,429 @@ pub fn clear_play_history(conn: &Connection, user: i64) -> Result<usize, DbError
         "DELETE FROM play_history WHERE user_id = ?1",
         [resolve_user(conn, user)?],
     )?)
+}
+
+// --- History shared through a server ---------------------------------------
+//
+// A koan server's history is the account's record. Its devices read it in
+// pages after a cursor of two ids, one into `play_history` and one into
+// `play_history_forgotten`; both tables are `AUTOINCREMENT`, so neither id is
+// ever handed out twice. A play is named by its track's uid and when it
+// started, which is what every device can agree on.
+
+/// One page of a server's history: plays recorded and plays forgotten since
+/// the cursor, oldest first.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HistoryPage {
+    pub plays: Vec<SharedPlay>,
+    pub forgotten: Vec<ForgottenPlay>,
+    /// Where the next page starts: the last play and the last forgetting
+    /// included.
+    pub cursor: HistoryCursor,
+    /// Whether either list stopped at the page size.
+    pub more: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SharedPlay {
+    /// Its id in the server's history: what a device that cannot place the
+    /// track yet holds its cursor before.
+    pub seq: i64,
+    pub track_uid: String,
+    /// Seconds since the epoch.
+    pub played_at: i64,
+    pub listened_ms: Option<i64>,
+}
+
+/// A play forgotten, or with no track every play up to `played_at`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgottenPlay {
+    pub track_uid: Option<String>,
+    pub played_at: i64,
+}
+
+/// How far a device has read a server's history.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HistoryCursor {
+    pub play: i64,
+    pub forgotten: i64,
+}
+
+impl HistoryCursor {
+    /// `play.forgotten`, as it travels.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let (play, forgotten) = raw.split_once('.')?;
+        Some(Self {
+            play: play.parse().ok()?,
+            forgotten: forgotten.parse().ok()?,
+        })
+    }
+}
+
+impl std::fmt::Display for HistoryCursor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.play, self.forgotten)
+    }
+}
+
+/// `user`'s plays and forgettings after `after`, at most `count` of each.
+pub fn history_since(
+    conn: &Connection,
+    user: i64,
+    after: HistoryCursor,
+    count: u32,
+) -> Result<HistoryPage, DbError> {
+    let user = resolve_user(conn, user)?;
+    let mut page = HistoryPage {
+        cursor: after,
+        ..Default::default()
+    };
+    let mut plays = conn.prepare_cached(
+        "SELECT h.id, t.uid, h.played_at, h.duration_ms FROM play_history h
+         JOIN tracks t ON t.id = h.track_id
+         WHERE h.user_id = ?1 AND h.id > ?2
+         ORDER BY h.id LIMIT ?3",
+    )?;
+    let mut rows = plays.query(params![user, after.play, count])?;
+    let mut read = 0;
+    while let Some(row) = rows.next()? {
+        read += 1;
+        page.cursor.play = row.get(0)?;
+        if let Some(track_uid) = row.get::<_, Option<String>>(1)? {
+            page.plays.push(SharedPlay {
+                seq: page.cursor.play,
+                track_uid,
+                played_at: row.get(2)?,
+                listened_ms: row.get(3)?,
+            });
+        }
+    }
+    let mut forgotten = conn.prepare_cached(
+        "SELECT id, track_uid, played_at FROM play_history_forgotten
+         WHERE user_id = ?1 AND id > ?2
+         ORDER BY id LIMIT ?3",
+    )?;
+    let mut rows = forgotten.query(params![user, after.forgotten, count])?;
+    let mut forgot = 0;
+    while let Some(row) = rows.next()? {
+        forgot += 1;
+        page.cursor.forgotten = row.get(0)?;
+        page.forgotten.push(ForgottenPlay {
+            track_uid: row.get(1)?,
+            played_at: row.get(2)?,
+        });
+    }
+    page.more = read == count || forgot == count;
+    Ok(page)
+}
+
+/// Delete `user`'s plays of `track_id` within [`SAME_PLAY_SECS`] of
+/// `played_at`. Returns how many went.
+pub fn forget_play_near(
+    conn: &Connection,
+    user: i64,
+    track_id: i64,
+    played_at: i64,
+) -> Result<usize, DbError> {
+    Ok(conn.execute(
+        "DELETE FROM play_history
+         WHERE user_id = ?1 AND track_id = ?2 AND played_at BETWEEN ?3 AND ?4",
+        params![
+            resolve_user(conn, user)?,
+            track_id,
+            played_at - SAME_PLAY_SECS,
+            played_at + SAME_PLAY_SECS
+        ],
+    )?)
+}
+
+/// Delete every one of `user`'s plays up to and including `played_at`.
+pub fn forget_plays_through(
+    conn: &Connection,
+    user: i64,
+    played_at: i64,
+) -> Result<usize, DbError> {
+    Ok(conn.execute(
+        "DELETE FROM play_history WHERE user_id = ?1 AND played_at <= ?2",
+        params![resolve_user(conn, user)?, played_at],
+    )?)
+}
+
+/// On a server: forget these plays, `(track_id, played_at)`, and record each
+/// that removed anything, so the account's devices forget it too. One
+/// transaction. Returns how many entries went.
+pub fn forget_shared_plays(
+    conn: &Connection,
+    user: i64,
+    plays: &[(i64, i64)],
+) -> Result<usize, DbError> {
+    let user = resolve_user(conn, user)?;
+    super::atomically(conn, || {
+        let mut removed = 0;
+        for &(track_id, played_at) in plays {
+            let n = forget_play_near(conn, user, track_id, played_at)?;
+            if n > 0 {
+                conn.execute(
+                    "INSERT INTO play_history_forgotten (user_id, track_uid, played_at)
+                     SELECT ?1, uid, ?3 FROM tracks WHERE id = ?2",
+                    params![user, track_id, played_at],
+                )?;
+            }
+            removed += n;
+        }
+        Ok(removed)
+    })
+}
+
+/// On a server: forget these entries of `user`'s history by id, and record
+/// each, so the account's devices forget it too. Ids that are not `user`'s
+/// are left alone. One transaction. Returns how many entries went.
+pub fn forget_shared_entries(conn: &Connection, user: i64, ids: &[i64]) -> Result<usize, DbError> {
+    let user = resolve_user(conn, user)?;
+    super::atomically(conn, || {
+        let mut record = conn.prepare_cached(
+            "INSERT INTO play_history_forgotten (user_id, track_uid, played_at)
+             SELECT h.user_id, t.uid, h.played_at
+               FROM play_history h JOIN tracks t ON t.id = h.track_id
+              WHERE h.id = ?1 AND h.user_id = ?2",
+        )?;
+        let mut delete =
+            conn.prepare_cached("DELETE FROM play_history WHERE id = ?1 AND user_id = ?2")?;
+        let mut removed = 0;
+        for &id in ids {
+            record.execute(params![id, user])?;
+            removed += delete.execute(params![id, user])?;
+        }
+        Ok(removed)
+    })
+}
+
+/// On a server: forget every play up to `played_at`, and record it.
+pub fn forget_shared_plays_through(
+    conn: &Connection,
+    user: i64,
+    played_at: i64,
+) -> Result<usize, DbError> {
+    let user = resolve_user(conn, user)?;
+    super::atomically(conn, || {
+        let removed = forget_plays_through(conn, user, played_at)?;
+        conn.execute(
+            "INSERT INTO play_history_forgotten (user_id, track_uid, played_at)
+             VALUES (?1, NULL, ?2)",
+            params![user, played_at],
+        )?;
+        Ok(removed)
+    })
+}
+
+/// Adopt plays from the server's history, `(track_id, played_at,
+/// listened_ms)`, leaving out any this database already holds: a play this
+/// device made comes back from the server it was scrobbled to. Returns how
+/// many were new.
+pub fn adopt_plays(
+    conn: &Connection,
+    user: i64,
+    plays: &[(i64, i64, Option<i64>)],
+) -> Result<usize, DbError> {
+    let user = resolve_user(conn, user)?;
+    super::atomically(conn, || {
+        let mut insert = conn.prepare_cached(
+            "INSERT INTO play_history (user_id, track_id, played_at, duration_ms, source)
+             SELECT ?1, ?2, ?3, ?4, ?5
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM play_history
+                 WHERE user_id = ?1 AND track_id = ?2 AND played_at BETWEEN ?6 AND ?7
+             )",
+        )?;
+        let mut adopted = 0;
+        for &(track_id, played_at, listened_ms) in plays {
+            adopted += insert.execute(params![
+                user,
+                track_id,
+                played_at,
+                listened_ms,
+                SOURCE_SYNCED,
+                played_at - SAME_PLAY_SECS,
+                played_at + SAME_PLAY_SECS
+            ])?;
+        }
+        Ok(adopted)
+    })
+}
+
+/// The server's id for the track of each of these plays of `user`'s, and when
+/// it started. Plays of tracks the server does not have are left out.
+pub fn remote_ids_of_plays(
+    conn: &Connection,
+    user: i64,
+    ids: &[i64],
+) -> Result<Vec<(String, i64)>, DbError> {
+    let user = resolve_user(conn, user)?;
+    let mut stmt = conn.prepare_cached(
+        "SELECT t.remote_id, h.played_at FROM play_history h
+         JOIN tracks t ON t.id = h.track_id
+         WHERE h.id = ?1 AND h.user_id = ?2 AND t.remote_id IS NOT NULL",
+    )?;
+    let mut out = Vec::new();
+    for id in ids {
+        if let Some(row) = stmt
+            .query_row(params![id, user], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                e => Err(e),
+            })?
+        {
+            out.push(row);
+        }
+    }
+    Ok(out)
+}
+
+/// What waits in the history outbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutboxKind {
+    Scrobble,
+    Forget,
+    Clear,
+}
+
+impl OutboxKind {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "scrobble" => Some(Self::Scrobble),
+            "forget" => Some(Self::Forget),
+            "clear" => Some(Self::Clear),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboxEntry {
+    pub id: i64,
+    pub kind: OutboxKind,
+    /// The track's id on the server; `None` for a clear.
+    pub remote_id: Option<String>,
+    /// When the play started, or for a clear the moment it covers up to.
+    pub at_ms: i64,
+}
+
+/// Hold a scrobble until the server takes it.
+pub fn queue_scrobble(conn: &Connection, remote_id: &str, at_ms: i64) -> Result<(), DbError> {
+    conn.execute(
+        "INSERT INTO history_outbox (kind, remote_id, at_ms) VALUES ('scrobble', ?1, ?2)",
+        params![remote_id, at_ms],
+    )?;
+    Ok(())
+}
+
+/// Hold the forgetting of a play until the server takes it. A play whose
+/// scrobble has not left yet is forgotten by not sending it.
+pub fn queue_forget(conn: &Connection, remote_id: &str, at_ms: i64) -> Result<(), DbError> {
+    super::atomically(conn, || {
+        let slack = SAME_PLAY_SECS * 1000;
+        let unsent = conn.execute(
+            "DELETE FROM history_outbox
+             WHERE kind = 'scrobble' AND remote_id = ?1 AND at_ms BETWEEN ?2 AND ?3",
+            params![remote_id, at_ms - slack, at_ms + slack],
+        )?;
+        if unsent == 0 {
+            conn.execute(
+                "INSERT INTO history_outbox (kind, remote_id, at_ms) VALUES ('forget', ?1, ?2)",
+                params![remote_id, at_ms],
+            )?;
+        }
+        Ok(())
+    })
+}
+
+/// Hold the forgetting of every play up to `at_ms`. What was waiting to be
+/// sent from before then goes unsent.
+pub fn queue_clear(conn: &Connection, at_ms: i64) -> Result<(), DbError> {
+    super::atomically(conn, || {
+        conn.execute(
+            "DELETE FROM history_outbox WHERE kind = 'forget' OR at_ms <= ?1",
+            params![at_ms],
+        )?;
+        conn.execute(
+            "INSERT INTO history_outbox (kind, remote_id, at_ms) VALUES ('clear', NULL, ?1)",
+            params![at_ms],
+        )?;
+        Ok(())
+    })
+}
+
+/// The oldest `limit` entries waiting, in the order they were queued.
+pub fn history_outbox(conn: &Connection, limit: u32) -> Result<Vec<OutboxEntry>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, kind, remote_id, at_ms FROM history_outbox ORDER BY id LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map([limit], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, kind, remote_id, at_ms)| {
+            Some(OutboxEntry {
+                id,
+                kind: OutboxKind::parse(&kind)?,
+                remote_id,
+                at_ms,
+            })
+        })
+        .collect())
+}
+
+/// Take entries out of the outbox: sent, or refused for good.
+pub fn drop_from_outbox(conn: &Connection, ids: &[i64]) -> Result<(), DbError> {
+    super::atomically(conn, || {
+        let mut stmt = conn.prepare_cached("DELETE FROM history_outbox WHERE id = ?1")?;
+        for id in ids {
+            stmt.execute([id])?;
+        }
+        Ok(())
+    })
+}
+
+/// Where this device has read `url`'s history up to.
+pub fn history_cursor(conn: &Connection, url: &str) -> Result<HistoryCursor, DbError> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT history_cursor FROM remote_servers WHERE url = ?1",
+            [url],
+            |row| row.get(0),
+        )
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            e => Err(e),
+        })?;
+    Ok(raw
+        .as_deref()
+        .and_then(HistoryCursor::parse)
+        .unwrap_or_default())
+}
+
+pub fn set_history_cursor(
+    conn: &Connection,
+    url: &str,
+    username: &str,
+    cursor: HistoryCursor,
+) -> Result<(), DbError> {
+    conn.execute(
+        "INSERT INTO remote_servers (url, username, history_cursor)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(url) DO UPDATE SET history_cursor = ?3",
+        params![url, username, cursor.to_string()],
+    )?;
+    Ok(())
 }
 
 fn now_secs() -> i64 {
@@ -649,6 +1088,176 @@ mod tests {
         assert_eq!(
             play_count(&db.conn, crate::db::queries::LOCAL_USER, id).unwrap(),
             0
+        );
+    }
+
+    const USER: i64 = crate::db::queries::LOCAL_USER;
+
+    fn plays_of(db: &Database, track: i64) -> Vec<(i64, String)> {
+        let mut stmt = db
+            .conn
+            .prepare(
+                "SELECT played_at, source FROM play_history WHERE track_id = ?1 ORDER BY played_at",
+            )
+            .unwrap();
+        stmt.query_map([track], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_batch_sent_again_records_each_play_once() {
+        let db = test_db();
+        let a = seed_track(&db, "A");
+        let batch = [(a, 100), (a, 200)];
+        record_plays_at(&db.conn, USER, &batch, SOURCE_SUBSONIC).unwrap();
+        record_plays_at(&db.conn, USER, &batch, SOURCE_SUBSONIC).unwrap();
+        assert_eq!(play_count(&db.conn, USER, a).unwrap(), 2);
+        record_plays_at(&db.conn, USER, &[(a, 300)], SOURCE_SUBSONIC).unwrap();
+        assert_eq!(play_count(&db.conn, USER, a).unwrap(), 3);
+    }
+
+    #[test]
+    fn history_pages_after_its_cursor() {
+        let db = test_db();
+        let a = seed_track(&db, "A");
+        for at in [100, 200, 300] {
+            record_play_at(&db.conn, USER, a, at, None, SOURCE_SUBSONIC).unwrap();
+        }
+        let first = history_since(&db.conn, USER, HistoryCursor::default(), 2).unwrap();
+        assert_eq!(
+            first.plays.iter().map(|p| p.played_at).collect::<Vec<_>>(),
+            [100, 200]
+        );
+        assert!(first.more);
+        let rest = history_since(&db.conn, USER, first.cursor, 2).unwrap();
+        assert_eq!(
+            rest.plays.iter().map(|p| p.played_at).collect::<Vec<_>>(),
+            [300]
+        );
+        assert!(!rest.more);
+        assert_eq!(
+            HistoryCursor::parse(&rest.cursor.to_string()),
+            Some(rest.cursor)
+        );
+
+        // Forgetting the newest play and recording another: the new one's id
+        // is past the cursor, never the forgotten one's again.
+        forget_shared_plays(&db.conn, USER, &[(a, 302)]).unwrap();
+        record_play_at(&db.conn, USER, a, 400, None, SOURCE_SUBSONIC).unwrap();
+        let next = history_since(&db.conn, USER, rest.cursor, 10).unwrap();
+        assert_eq!(
+            next.plays.iter().map(|p| p.played_at).collect::<Vec<_>>(),
+            [400]
+        );
+        assert_eq!(next.forgotten.len(), 1);
+        assert_eq!(next.forgotten[0].played_at, 302);
+        assert!(next.forgotten[0].track_uid.is_some());
+    }
+
+    #[test]
+    fn a_forgetting_is_recorded_only_when_it_removed_a_play() {
+        let db = test_db();
+        let a = seed_track(&db, "A");
+        record_play_at(&db.conn, USER, a, 1000, None, SOURCE_SUBSONIC).unwrap();
+        assert_eq!(
+            forget_shared_plays(&db.conn, USER, &[(a, 5000)]).unwrap(),
+            0
+        );
+        assert_eq!(
+            forget_shared_plays(&db.conn, USER, &[(a, 1004)]).unwrap(),
+            1
+        );
+        let page = history_since(&db.conn, USER, HistoryCursor::default(), 10).unwrap();
+        assert_eq!(page.forgotten.len(), 1);
+
+        record_play_at(&db.conn, USER, a, 2000, None, SOURCE_SUBSONIC).unwrap();
+        assert_eq!(
+            forget_shared_plays_through(&db.conn, USER, 3000).unwrap(),
+            1
+        );
+        let page = history_since(&db.conn, USER, page.cursor, 10).unwrap();
+        assert_eq!(
+            page.forgotten,
+            [ForgottenPlay {
+                track_uid: None,
+                played_at: 3000
+            }]
+        );
+    }
+
+    #[test]
+    fn adopting_leaves_out_plays_already_here() {
+        let db = test_db();
+        let a = seed_track(&db, "A");
+        // This device's own play, which comes back from the server a second
+        // off.
+        record_play_at(&db.conn, USER, a, 1000, None, SOURCE_LOCAL).unwrap();
+        let adopted = adopt_plays(
+            &db.conn,
+            USER,
+            &[(a, 1001, Some(200_000)), (a, 5000, None), (a, 5000, None)],
+        )
+        .unwrap();
+        assert_eq!(adopted, 1, "the second copy of 5000 is the first one");
+        assert_eq!(
+            plays_of(&db, a),
+            [
+                (1000, SOURCE_LOCAL.to_owned()),
+                (5000, SOURCE_SYNCED.to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn forgetting_a_play_not_yet_sent_unsends_it() {
+        let db = test_db();
+        queue_scrobble(&db.conn, "x", 10_000).unwrap();
+        queue_scrobble(&db.conn, "y", 10_000).unwrap();
+        queue_forget(&db.conn, "x", 11_000).unwrap();
+        queue_forget(&db.conn, "z", 20_000).unwrap();
+        let waiting = history_outbox(&db.conn, 10).unwrap();
+        assert_eq!(
+            waiting
+                .iter()
+                .map(|e| (e.kind, e.remote_id.as_deref()))
+                .collect::<Vec<_>>(),
+            [
+                (OutboxKind::Scrobble, Some("y")),
+                (OutboxKind::Forget, Some("z"))
+            ]
+        );
+
+        // A clear supersedes everything from before it.
+        queue_scrobble(&db.conn, "w", 40_000).unwrap();
+        queue_clear(&db.conn, 30_000).unwrap();
+        let waiting = history_outbox(&db.conn, 10).unwrap();
+        assert_eq!(
+            waiting.iter().map(|e| e.kind).collect::<Vec<_>>(),
+            [OutboxKind::Scrobble, OutboxKind::Clear]
+        );
+        drop_from_outbox(&db.conn, &waiting.iter().map(|e| e.id).collect::<Vec<_>>()).unwrap();
+        assert!(history_outbox(&db.conn, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_cursor_is_kept_per_server() {
+        let db = test_db();
+        let url = "https://music.example.com";
+        assert_eq!(
+            history_cursor(&db.conn, url).unwrap(),
+            HistoryCursor::default()
+        );
+        let at = HistoryCursor {
+            play: 7,
+            forgotten: 2,
+        };
+        set_history_cursor(&db.conn, url, "me", at).unwrap();
+        assert_eq!(history_cursor(&db.conn, url).unwrap(), at);
+        assert_eq!(
+            history_cursor(&db.conn, "https://other.example.com").unwrap(),
+            HistoryCursor::default()
         );
     }
 }

@@ -265,7 +265,7 @@
   }, true);
 
   // --- Navigation ------------------------------------------------------------
-  const INTERNAL = /^\/(albums|tracks|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history|recent)?$/;
+  const INTERNAL = /^\/(albums|tracks|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history|recent|scrobbling)?$/;
   let navigating = 0;
 
   async function navigate(url, push) {
