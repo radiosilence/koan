@@ -433,6 +433,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
                     tokio::select! {
                         r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
                         r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
+                        _ = drain_deadline() => log::info!("shutting down with connections still open"),
                     }
                     return Ok(());
                 }
@@ -446,8 +447,9 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             }
         }
 
-        if let Err(e) = gql_server.await {
-            log::error!("GraphQL server error: {e}");
+        tokio::select! {
+            r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
+            _ = drain_deadline() => log::info!("shutting down with connections still open"),
         }
         Ok(())
     })
@@ -605,10 +607,34 @@ fn is_graphql_content_type(request: &axum::extract::Request) -> bool {
     })
 }
 
+/// Resolves on SIGINT, or SIGTERM where there is one. SIGTERM is how a service
+/// manager stops a process, and as PID 1 in a container an unhandled one is
+/// dropped by the kernel, leaving the server running until it is killed.
 async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut terminate = signal(SignalKind::terminate()).expect("failed to listen for SIGTERM");
+        tokio::select! {
+            r = tokio::signal::ctrl_c() => r.expect("failed to listen for ctrl+c"),
+            _ = terminate.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
     tokio::signal::ctrl_c()
         .await
         .expect("failed to listen for ctrl+c");
+}
+
+/// How long shutdown waits for open connections before giving up on them.
+const DRAIN: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Resolves `DRAIN` after a shutdown signal. Graceful shutdown waits for every
+/// connection to close, and subscription websockets and audio streams never
+/// close on their own, so without a deadline the wait ends only in a kill.
+async fn drain_deadline() {
+    shutdown_signal().await;
+    tokio::time::sleep(DRAIN).await;
 }
 
 async fn graphql_handler(

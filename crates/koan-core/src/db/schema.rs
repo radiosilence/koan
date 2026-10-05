@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 16;
+pub const SCHEMA_VERSION: i64 = 19;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -368,6 +368,20 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+
+        -- Generated passwords for Subsonic clients that only speak token auth,
+        -- sealed under a key derived from the server's signing key: see
+        -- queries/app_passwords.rs.
+        CREATE TABLE IF NOT EXISTS app_passwords (
+            id           INTEGER PRIMARY KEY,
+            user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name         TEXT NOT NULL,
+            sealed       BLOB NOT NULL,
+            created_at   INTEGER NOT NULL,
+            last_used_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_app_passwords_user ON app_passwords(user_id);
 
         -- Listening services an account forwards its plays to, with the
         -- credential each takes. `error` is set when the service refuses the
