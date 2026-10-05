@@ -284,6 +284,9 @@ pub struct KoanEngine {
     pairing: parking_lot::Mutex<Option<koan_core::remote::pair::Pending>>,
     /// What ends the wait, by the pairing's id.
     pairing_cancel: parking_lot::Mutex<Option<(String, koan_core::remote::pair::Cancel)>>,
+    /// What the app calls this device — the name the person gave it, where
+    /// the platform says — for the link and for a pairing to ask under.
+    device_name: Option<String>,
 }
 
 /// How far a client's own reckoning of the playhead may drift before it is
@@ -2397,7 +2400,8 @@ impl KoanEngine {
     pub async fn start_pairing(self: Arc<Self>, url: String) -> Result<PairingCode, KoanError> {
         self.cancel_pairing();
         offload::offload(move || {
-            let device = koan_core::remote::link::LinkIdentity::this_device(None).name;
+            let device =
+                koan_core::remote::link::LinkIdentity::this_device(self.device_name.clone()).name;
             let pending = koan_core::remote::pair::start(&url, &device).map_err(pair_error)?;
             let code = PairingCode {
                 id: pending.id.clone(),
@@ -3787,6 +3791,7 @@ impl KoanEngine {
             playlist_history: Default::default(),
             pairing: Default::default(),
             pairing_cancel: Default::default(),
+            device_name: device_name.clone(),
         });
         engine.spawn_watcher();
         engine.spawn_figures();
