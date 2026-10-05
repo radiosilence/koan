@@ -69,12 +69,23 @@ pub async fn auth_middleware(
             .into_response();
     };
 
+    let mark = auth::account_mark();
     let user = match auth::validate_access_token(&state.public_pem, &token) {
-        Ok(claims) => super::current_user(&state.pool, claims).await,
+        Ok(claims) => {
+            let expires = claims.exp;
+            super::current_user(&state.pool, claims)
+                .await
+                .map(|user| (user, expires))
+        }
         Err(_) => None,
     };
     match user {
-        Some(user) => {
+        Some((user, expires)) => {
+            request.extensions_mut().insert(super::Lease {
+                user_id: user.user_id,
+                mark,
+                expires: Some(expires),
+            });
             request.extensions_mut().insert(user);
             next.run(request).await
         }

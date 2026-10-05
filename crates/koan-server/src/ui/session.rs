@@ -83,10 +83,12 @@ pub(super) async fn login(
             .into_response(),
         Err(resp) => {
             let status = resp.status();
-            let message = if status == StatusCode::UNAUTHORIZED {
-                "Wrong username or password."
-            } else {
-                "Signing in failed. Try again."
+            let message = match status {
+                StatusCode::UNAUTHORIZED => "Wrong username or password.",
+                StatusCode::TOO_MANY_REQUESTS => {
+                    "Too many failed sign-ins for this account. Try again in a minute."
+                }
+                _ => "Signing in failed. Try again.",
             };
             html(status, pages::login(next, Some(message)))
         }

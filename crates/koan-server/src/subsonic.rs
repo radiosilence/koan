@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path as UrlPath, Query, RawQuery, Request, State};
@@ -24,6 +24,8 @@ use koan_core::db::queries::app_passwords::AppPasswordAuth;
 use koan_core::remote::client::SubsonicAuth;
 use serde::Deserialize;
 use tokio::io::AsyncReadExt as _;
+
+use crate::auth::password::{FailureLimiter, PasswordVerifier};
 
 const SUBSONIC_API_VERSION: &str = "1.16.1";
 const SUBSONIC_XMLNS: &str = "http://subsonic.org/restapi";
@@ -67,7 +69,7 @@ struct AppState {
     username: String,
     /// The `[subsonic]` shared secret; without one, only accounts sign in.
     password: Option<String>,
-    users: crate::auth::password::PasswordVerifier,
+    users: Arc<PasswordVerifier>,
     /// What app passwords are sealed under; `None` until the server has a
     /// signing key, and with it no app passwords.
     app_key: Option<[u8; 32]>,
@@ -387,43 +389,9 @@ struct AuthFailed;
 const AUTH_FAILURES_PER_MINUTE: u32 = 10;
 /// Failed sign-ins allowed per client, whatever the username, in a minute.
 const AUTH_FAILURES_PER_ADDRESS_PER_MINUTE: u32 = 30;
-const AUTH_WINDOW: Duration = Duration::from_secs(60);
 
-/// Failed sign-ins by key, in fixed one-minute windows.
-struct FailureLimiter<K> {
-    limit: u32,
-    windows: Mutex<HashMap<K, (std::time::Instant, u32)>>,
-}
-
-impl<K: std::hash::Hash + Eq> FailureLimiter<K> {
-    fn new(limit: u32) -> Self {
-        Self {
-            limit,
-            windows: Mutex::default(),
-        }
-    }
-
-    fn exhausted(&self, key: &K) -> bool {
-        let windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        windows
-            .get(key)
-            .is_some_and(|(start, count)| start.elapsed() < AUTH_WINDOW && *count >= self.limit)
-    }
-
-    fn record(&self, key: K) {
-        let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        if windows.len() > 4096 {
-            windows.retain(|_, (start, _)| start.elapsed() < AUTH_WINDOW);
-        }
-        let entry = windows.entry(key).or_insert((std::time::Instant::now(), 0));
-        if entry.0.elapsed() >= AUTH_WINDOW {
-            *entry = (std::time::Instant::now(), 0);
-        }
-        entry.1 += 1;
-    }
-}
-
-/// Failed sign-ins counted two ways.
+/// Failed sign-ins counted three ways. An address is an IPv6 client's /64
+/// (see `routes::network`).
 ///
 /// By client address and username: behind a relay that does not pass
 /// addresses on, every outside client arrives from the relay's, and a tight
@@ -433,9 +401,13 @@ impl<K: std::hash::Hash + Eq> FailureLimiter<K> {
 ///
 /// By address alone, with a looser limit: otherwise a new username per request
 /// gets a fresh allowance every time.
+///
+/// By username alone, from every address and every door that takes a
+/// password, with the loosest: the verifier's `failures`.
 struct AuthThrottle {
     per_account: FailureLimiter<(std::net::IpAddr, String)>,
     per_address: FailureLimiter<std::net::IpAddr>,
+    users: Arc<PasswordVerifier>,
     /// The `[subsonic]` user, whose token is checked against a random 256-bit
     /// secret rather than a password. `None` without a secret: the name is then
     /// an ordinary account's, and its tokens are checked against its password.
@@ -443,10 +415,11 @@ struct AuthThrottle {
 }
 
 impl AuthThrottle {
-    fn new(shared_username: Option<String>) -> Self {
+    fn new(shared_username: Option<String>, users: Arc<PasswordVerifier>) -> Self {
         Self {
             per_account: FailureLimiter::new(AUTH_FAILURES_PER_MINUTE),
             per_address: FailureLimiter::new(AUTH_FAILURES_PER_ADDRESS_PER_MINUTE),
+            users,
             shared_username,
         }
     }
@@ -461,6 +434,11 @@ impl AuthThrottle {
 /// library is never slowed. API keys and the shared secret's token are random
 /// and not worth guessing, so they are never throttled: a flood of wrong
 /// passwords for an account cannot lock out the apps signed in with either.
+///
+/// The exemption follows `validate_auth` exactly. A request with an API key
+/// has no other credential checked; one for the shared username with both `t`
+/// and `s` is checked against the secret alone. Anything else — `t` without
+/// `s` falls through to `p` — is a password sign-in and counted.
 async fn throttle_auth(
     State(throttle): State<Arc<AuthThrottle>>,
     request: axum::extract::Request,
@@ -470,17 +448,20 @@ async fn throttle_auth(
     let username = params.get("u").unwrap_or_default().to_owned();
     let unguessable = params.get("apiKey").is_some()
         || (params.get("t").is_some()
+            && params.get("s").is_some()
             && throttle.shared_username.as_deref() == Some(username.as_str()));
     if unguessable {
         return next.run(request).await;
     }
 
-    let ip = crate::auth::routes::client_ip(&request);
+    let ip = crate::auth::routes::network(crate::auth::routes::client_ip(&request));
     let key = (ip, username);
     let refusal = if throttle.per_account.exhausted(&key) {
         Some("Too many failed sign-ins for this account from this address; try again in a minute")
     } else if throttle.per_address.exhausted(&ip) {
         Some("Too many failed sign-ins from this address; try again in a minute")
+    } else if throttle.users.failures.exhausted(&key.1) {
+        Some("Too many failed sign-ins for this account; try again in a minute")
     } else {
         None
     };
@@ -493,6 +474,7 @@ async fn throttle_auth(
     }
     let response = next.run(request).await;
     if response.extensions().get::<AuthFailed>().is_some() {
+        throttle.users.failures.record(key.1.clone());
         throttle.per_account.record(key);
         throttle.per_address.record(ip);
     }
@@ -885,7 +867,7 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
         });
     }
     match state.users.verify(username, &password) {
-        Ok(account) => caller(account),
+        Ok(account) => caller((account.id, account.role)),
         Err(Refused::Busy) => Err(SubsonicError::busy()),
         Err(Refused::Wrong) => Err(SubsonicError::wrong_auth()),
     }
@@ -4304,6 +4286,7 @@ async fn koan_link(
     let addr = crate::auth::routes::client_ip(&request);
     let params = RawParams::parse(raw.as_deref());
     let json = params.auth().wants_json();
+    let mark = koan_core::auth::account_mark();
     let caller = {
         let auth = params.auth();
         match tokio::task::spawn_blocking(move || validate_auth(&auth, &state)).await {
@@ -4320,10 +4303,16 @@ async fn koan_link(
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let wants_devices = params.get("devices") == Some("1");
+    let lease = crate::auth::Lease {
+        user_id: caller.user_id,
+        mark,
+        expires: None,
+    };
     ws.on_upgrade(move |socket| {
         link_session(
             socket,
             caller.username,
+            lease,
             LinkPeer {
                 name,
                 platform,
@@ -4374,8 +4363,16 @@ const LINK_CHECK: Duration = Duration::from_secs(15);
 /// Over twice the client's idle ping interval.
 const LINK_SILENCE: Duration = Duration::from_secs(100);
 
-async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String, peer: LinkPeer) {
-    use axum::extract::ws::Message;
+/// A link until the device goes, a newer link from it replaces this one, or
+/// the account changes (see `Lease`). The device reconnects after that last,
+/// as it does after any close, and is authenticated afresh.
+async fn link_session(
+    mut socket: axum::extract::ws::WebSocket,
+    username: String,
+    lease: crate::auth::Lease,
+    peer: LinkPeer,
+) {
+    use axum::extract::ws::{CloseFrame, Message, close_code};
     let LinkPeer {
         name,
         platform,
@@ -4412,8 +4409,19 @@ async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String
     // has suspended never closes its socket, so one that goes quiet is gone.
     let mut last_heard = tokio::time::Instant::now();
     let mut check = tokio::time::interval(LINK_CHECK);
+    let ended = lease.ended();
+    tokio::pin!(ended);
     loop {
         tokio::select! {
+            _ = &mut ended => {
+                let _ = socket
+                    .send(Message::Close(Some(CloseFrame {
+                        code: close_code::NORMAL,
+                        reason: "sign in again".into(),
+                    })))
+                    .await;
+                break;
+            }
             _ = check.tick() => {
                 if last_heard.elapsed() > LINK_SILENCE {
                     break;
@@ -4786,6 +4794,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
 fn subsonic_app(state: Arc<AppState>) -> axum::Router {
     let throttle = Arc::new(AuthThrottle::new(
         state.password.is_some().then(|| state.username.clone()),
+        state.users.clone(),
     ));
     register_subsonic_routes(axum::Router::new())
         .with_state(state)
@@ -4805,6 +4814,7 @@ fn subsonic_app(state: Arc<AppState>) -> axum::Router {
 pub fn subsonic_router(
     pool: Arc<Pool>,
     covers: Arc<crate::covers::Covers>,
+    users: Arc<PasswordVerifier>,
 ) -> Option<axum::Router> {
     let cfg = Config::load().unwrap_or_default();
 
@@ -4834,7 +4844,7 @@ pub fn subsonic_router(
         .flatten();
 
     let state = Arc::new(AppState {
-        users: crate::auth::password::PasswordVerifier::new(pool.clone()),
+        users,
         pool,
         username: cfg.subsonic.username.clone(),
         password,
@@ -4883,7 +4893,7 @@ mod tests {
 
         let pool = Arc::new(Pool::new(db_path));
         let state = Arc::new(AppState {
-            users: crate::auth::password::PasswordVerifier::new(pool.clone()),
+            users: Arc::new(PasswordVerifier::new(pool.clone())),
             pool,
             username: "testuser".into(),
             password: Some("testpass".into()),
@@ -4943,7 +4953,12 @@ mod tests {
         }
         axum::Router::new().route("/rest/ping", get(refuse)).layer(
             axum::middleware::from_fn_with_state(
-                Arc::new(AuthThrottle::new(shared_username.map(str::to_owned))),
+                Arc::new(AuthThrottle::new(
+                    shared_username.map(str::to_owned),
+                    Arc::new(PasswordVerifier::new(Arc::new(Pool::new(
+                        "/nonexistent/koan.db".into(),
+                    )))),
+                )),
                 throttle_auth,
             ),
         )
@@ -4962,6 +4977,127 @@ mod tests {
             "{}",
             body
         );
+    }
+
+    #[tokio::test]
+    async fn a_token_without_a_salt_is_a_password_sign_in() {
+        // `validate_auth` checks `p` when `s` is missing, so the shared
+        // username's exemption must not cover it.
+        let guess = "/rest/ping?u=koan&t=0123&p=guess";
+        let app = refusing_app(Some("koan"));
+        for _ in 0..AUTH_FAILURES_PER_MINUTE {
+            let (_, body) = get_response(app.clone(), guess).await;
+            assert!(body.contains("code=\"40\""), "{}", body);
+        }
+        let (_, body) = get_response(app, guess).await;
+        assert!(body.contains("Too many failed sign-ins"), "{}", body);
+    }
+
+    #[tokio::test]
+    async fn failures_are_also_counted_per_username_from_every_address() {
+        let app = refusing_app(None);
+        let from = |n: u32, query: &str| {
+            let mut request = Request::builder()
+                .uri(format!("/rest/ping?{query}"))
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from(([198, 51, (n / 256) as u8, (n % 256) as u8], 1234)),
+            ));
+            request
+        };
+        let body = |response: Response| async {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        // One guess from each address stays under every per-address limit.
+        for n in 0..crate::auth::password::FAILURES_PER_USERNAME_PER_MINUTE {
+            let response = app.clone().oneshot(from(n, "u=mate&p=x")).await.unwrap();
+            assert!(body(response).await.contains("code=\"40\""));
+        }
+        let response = app.clone().oneshot(from(999, "u=mate&p=x")).await.unwrap();
+        assert!(
+            body(response)
+                .await
+                .contains("Too many failed sign-ins for this account;")
+        );
+        // Another account, and an API key, are untouched.
+        let response = app.clone().oneshot(from(999, "u=other&p=x")).await.unwrap();
+        assert!(body(response).await.contains("code=\"40\""));
+        let response = app.oneshot(from(999, "apiKey=k")).await.unwrap();
+        assert!(body(response).await.contains("code=\"40\""));
+    }
+
+    #[tokio::test]
+    async fn an_ipv6_client_is_throttled_by_its_64() {
+        let app = refusing_app(None);
+        for n in 0..AUTH_FAILURES_PER_ADDRESS_PER_MINUTE {
+            let mut request = Request::builder()
+                .uri(format!("/rest/ping?u=user{n}&p=x"))
+                .body(Body::empty())
+                .unwrap();
+            let ip: std::net::Ipv6Addr = format!("2001:db8:1:2::{n:x}").parse().unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from((ip, 1234)),
+            ));
+            app.clone().oneshot(request).await.unwrap();
+        }
+        let mut request = Request::builder()
+            .uri("/rest/ping?u=fresh&p=x")
+            .body(Body::empty())
+            .unwrap();
+        let ip: std::net::Ipv6Addr = "2001:db8:1:2:abcd::1".parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                ip, 1234,
+            ))));
+        let response = app.oneshot(request).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("from this address"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_link_closes_when_its_account_changes() {
+        let (state, _dir) = test_state();
+        let pool = state.pool.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        let url = format!(
+            "ws://{addr}/rest/koanLink?u=mate&p=hunter22&v=1.16.1&c=test&device=account-change-test"
+        );
+        let mut socket = tokio::task::spawn_blocking(move || {
+            let (socket, _) = tungstenite::connect(url.as_str()).unwrap();
+            if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = socket.get_ref() {
+                tcp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            }
+            socket
+        })
+        .await
+        .unwrap();
+        tokio::task::spawn_blocking(move || {
+            let db = pool.get().unwrap();
+            queries::auth::update_role(&db.conn, "mate", Role::User).unwrap();
+        })
+        .await
+        .unwrap();
+        let closed = tokio::task::spawn_blocking(move || {
+            loop {
+                match socket.read() {
+                    Ok(tungstenite::Message::Close(_)) => return true,
+                    Ok(_) => continue,
+                    Err(_) => return false,
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(closed, "the link outlived a change to its account");
     }
 
     #[tokio::test]

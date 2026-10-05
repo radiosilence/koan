@@ -4,7 +4,7 @@
 //! user's current role, until revoked. Only `sha256(key)` is stored, so the key
 //! itself is shown once, when it is made.
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use subtle::ConstantTimeEq;
 
 use crate::auth::{self, Role};
@@ -77,26 +77,42 @@ pub fn revoke_api_key(
     id: i64,
     user_id: Option<i64>,
 ) -> Result<bool, rusqlite::Error> {
-    let n = conn.execute(
-        "DELETE FROM api_keys WHERE id = ?1 AND (?2 IS NULL OR user_id = ?2)",
-        params![id, user_id],
-    )?;
-    Ok(n > 0)
+    let owner: Option<i64> = conn
+        .query_row(
+            "DELETE FROM api_keys WHERE id = ?1 AND (?2 IS NULL OR user_id = ?2) RETURNING user_id",
+            params![id, user_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(owner) = owner {
+        auth::account_changed(owner);
+    }
+    Ok(owner.is_some())
 }
 
 /// Revoke the key `key` itself: for a client giving up a key it holds, signed
 /// in with that key. Returns whether one went.
 pub fn revoke_api_key_value(conn: &Connection, key: &str) -> Result<bool, rusqlite::Error> {
-    let n = conn.execute(
-        "DELETE FROM api_keys WHERE key_hash = ?1",
-        params![auth::sha256_hex(key)],
-    )?;
-    Ok(n > 0)
+    let owner: Option<i64> = conn
+        .query_row(
+            "DELETE FROM api_keys WHERE key_hash = ?1 RETURNING user_id",
+            params![auth::sha256_hex(key)],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(owner) = owner {
+        auth::account_changed(owner);
+    }
+    Ok(owner.is_some())
 }
 
 /// Revoke every key a user has. Returns how many went.
 pub fn revoke_user_api_keys(conn: &Connection, user_id: i64) -> Result<usize, rusqlite::Error> {
-    conn.execute("DELETE FROM api_keys WHERE user_id = ?1", params![user_id])
+    let n = conn.execute("DELETE FROM api_keys WHERE user_id = ?1", params![user_id])?;
+    if n > 0 {
+        auth::account_changed(user_id);
+    }
+    Ok(n)
 }
 
 /// The user a key belongs to, if it is a live key.

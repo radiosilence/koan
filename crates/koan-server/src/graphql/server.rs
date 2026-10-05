@@ -220,7 +220,10 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
 
     crate::auth::set_signing_keys(Arc::new(private_pem.clone()), Arc::new(public_pem.clone()));
 
+    // One for every door a password comes through, so its limits are shared.
+    let users = Arc::new(crate::auth::password::PasswordVerifier::new(pool.clone()));
     let auth_route_state = AuthRouteState {
+        users: users.clone(),
         pool: pool.clone(),
         private_pem: Arc::new(private_pem),
         public_pem: Arc::new(public_pem),
@@ -338,7 +341,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // remote TUI bridge builds its stream URL off the GraphQL base. Built
         // once and cloned for the dedicated listener, since each build reads
         // the config from disk.
-        let subsonic_merged = crate::subsonic::subsonic_router(pool, covers);
+        let subsonic_merged = crate::subsonic::subsonic_router(pool, covers, users);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
 
@@ -653,23 +656,48 @@ async fn graphql_handler(
     schema.execute(request).await.into()
 }
 
+/// Subscriptions over a WebSocket, as the account the upgrade request
+/// authenticated. Closed when that account changes or its token lapses (see
+/// `Lease`); without a lease, as when auth is off, it stays open.
 async fn graphql_ws_handler(
     axum::Extension(user): axum::Extension<AuthUser>,
+    lease: Option<axum::Extension<crate::auth::Lease>>,
     axum::extract::State(schema): axum::extract::State<KoanSchema>,
     protocol: async_graphql_axum::GraphQLProtocol,
     websocket: axum::extract::WebSocketUpgrade,
 ) -> axum::response::Response {
+    use axum::extract::ws::{CloseFrame, Message, close_code};
+    use futures_util::{SinkExt, StreamExt};
     websocket
         .protocols(async_graphql::http::ALL_WEBSOCKET_PROTOCOLS)
-        .on_upgrade(move |stream| {
-            let stream = async_graphql_axum::GraphQLWebSocket::new(stream, schema, protocol)
-                .on_connection_init(move |_| async move {
-                    let mut data = async_graphql::Data::default();
-                    data.insert(user);
-                    Ok(data)
-                });
-            async move {
-                stream.serve().await;
+        .on_upgrade(move |socket| async move {
+            let (mut sink, stream) = socket.split();
+            let serve = async_graphql_axum::GraphQLWebSocket::new_with_pair(
+                &mut sink, stream, schema, protocol,
+            )
+            .on_connection_init(move |_| async move {
+                let mut data = async_graphql::Data::default();
+                data.insert(user);
+                Ok(data)
+            })
+            .serve();
+            let ended = async {
+                match lease {
+                    Some(axum::Extension(lease)) => lease.ended().await,
+                    None => std::future::pending().await,
+                }
+            };
+            let ended = tokio::select! {
+                _ = serve => false,
+                _ = ended => true,
+            };
+            if ended {
+                let _ = sink
+                    .send(Message::Close(Some(CloseFrame {
+                        code: close_code::NORMAL,
+                        reason: "sign in again".into(),
+                    })))
+                    .await;
             }
         })
 }
