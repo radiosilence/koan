@@ -20,6 +20,10 @@ Everything is set up in Settings: **Library** adds folders and scans them, **Ser
 
 The iOS app plays from a server; a phone has no music folder to scan. Sign in under Settings → Server, or open an invite link from the server's admin. It needs iOS 26 or later.
 
+## History and Recently played
+
+Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's sidebar and the iOS Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first, at most 50 of each. Both follow each play as it is recorded.
+
 ## The terminal UI
 
 ```bash

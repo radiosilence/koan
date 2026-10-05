@@ -954,24 +954,39 @@ fn decode_single(
     // frame headers and is truthful about both, for 1.5-3ms on files up to
     // 79MB. The timeline records where playback actually resumed, so the
     // transport shows the position being heard.
+    //
+    // Opus lands `OPUS_PREROLL_MS` early and decodes its way to the request,
+    // discarding what it decoded: its decoder carries state from packet to
+    // packet, and a fresh one needs that long to converge (RFC 7845 §4.6).
+    // Starting cold at the request would play its first frames wrong.
     let mut seek_samples = 0;
+    let mut discard = 0usize;
     if seek_ms > 0 {
+        let preroll = if is_opus_codec { OPUS_PREROLL_MS } else { 0 };
         let seeked = reader
             .seek(
                 SeekMode::Accurate,
                 SeekTo::Time {
-                    time: Time::from_millis_u64(seek_ms),
+                    time: Time::from_millis_u64(seek_ms.saturating_sub(preroll)),
                     track_id: Some(track_id),
                 },
             )
             .map_err(|e| DecodeError::Decode(format!("seek failed: {}", e)))?;
         seek_samples = landing_samples(time_base, seeked.actual_ts, sample_rate, channels)
-            .unwrap_or(seek_ms * sample_rate as u64 * channels as u64 / 1000);
+            .unwrap_or(
+                seek_ms.saturating_sub(preroll) * sample_rate as u64 * channels as u64 / 1000,
+            );
+        let landed_at_start = seek_samples == 0;
+        if preroll > 0 {
+            let wanted = seek_ms * sample_rate as u64 / 1000 * channels as u64;
+            discard = wanted.saturating_sub(seek_samples) as usize;
+            seek_samples += discard as u64;
+        }
         if let Some(ref mut dec) = symphonia_decoder {
             dec.reset();
         }
         if let Some(ref mut opus) = opus_bridge {
-            opus.reset();
+            opus.reset(landed_at_start);
         }
     }
 
@@ -1086,6 +1101,13 @@ fn decode_single(
             &sample_buf[..]
         };
 
+        let samples = if discard > 0 {
+            let dropped = discard.min(samples.len());
+            discard -= dropped;
+            &samples[dropped..]
+        } else {
+            samples
+        };
         if samples.is_empty() {
             continue;
         }
@@ -1111,6 +1133,10 @@ fn decode_single(
         timeline.add_written(length);
     }
 }
+
+/// How far before a seek's target Opus starts decoding, for its decoder to
+/// converge before anything is heard (RFC 7845 recommends at least 80 ms).
+const OPUS_PREROLL_MS: u64 = 80;
 
 /// Interleaved sample offset of a seek's landing point.
 ///
