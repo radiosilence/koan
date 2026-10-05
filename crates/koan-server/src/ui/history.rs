@@ -73,10 +73,10 @@ fn plays(
             out,
             "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
 data-album=\"{album}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\">\
-<input type=checkbox class=\"flex-none\" value={play} aria-label=\"Select this play\">\
-<span class=\"n w-auto\">{time}</span><span class=\"t\">{title}<small>{artist} · {album}</small></span>\
+<input type=checkbox class=\"flex-none max-wide:hidden\" value={play} aria-label=\"Select this play\">\
+<span class=\"n w-auto max-wide:text-meta\">{time}</span><span class=\"t\">{title}<small>{artist} · {album}</small></span>\
 <span class=\"d\">{dur}</span><span class=\"contents max-wide:hidden\">{heart}\
-<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{MORE}</li>",
+<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{mark}{MORE}</li>",
             id = t.id,
             play = p.id,
             secs = t.duration_ms.unwrap_or(0) / 1000,
@@ -92,6 +92,7 @@ data-album=\"{album}\" data-album-id={album_id} data-artist-id={artist_id} data-
             time = at.format("%H:%M"),
             dur = duration(t.duration_ms),
             heart = hearts.map(|h| h.track(t.id)).unwrap_or_default(),
+            mark = hearts.map(Hearts::mark).unwrap_or_default(),
         );
     }
     out
@@ -185,7 +186,7 @@ data-on:change=\"$forget = [...el.querySelectorAll('#history input:checked')].ma
 <h1>History</h1><div class=\"flex items-center gap-2\" data-show=\"$forget.length > 0\">\
 <span class=\"text-meta text-muted\" data-text=\"$forget.length + ' selected'\"></span>\
 <button data-on:click=\"el.closest('.page').querySelectorAll('#history input:checked').forEach(i => i.checked = false); $forget = []\">Deselect</button>\
-<button class=\"primary\" data-indicator:_forgetting data-attr:disabled=\"$_forgetting\" \
+<button class=\"primary\" data-act-forget data-indicator:_forgetting data-attr:disabled=\"$_forgetting\" \
 data-on:click=\"@post('/history/forget?page={page}')\">Forget</button></div></div>\
 <div id=history-result></div>{}</div>",
         list(&plays, page, zone(&headers))

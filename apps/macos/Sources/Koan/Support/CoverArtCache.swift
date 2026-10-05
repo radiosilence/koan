@@ -408,6 +408,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// Forget what is cached for records the library has deleted since last
     /// asked. SQLite gives a freed id to the next row it inserts, so a cover
     /// cached under an old album's id would otherwise be shown for a new one.
+    /// Records whose cover image on disk may have changed are named too.
     func applyEvictions() async {
         let mark = "artEvictionSeq"
         let after = Int64(UserDefaults.standard.integer(forKey: mark))

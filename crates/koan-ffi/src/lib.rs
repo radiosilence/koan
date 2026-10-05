@@ -2008,7 +2008,9 @@ impl KoanEngine {
 
     /// Albums, artists and tracks deleted since `after` (a `seq` this returned
     /// before; 0 the first time), for a cache keyed by their ids: SQLite reuses
-    /// a freed id, and art cached under it would show for another record.
+    /// a freed id, and art cached under it would show for another record. Also
+    /// those under a folder the library watcher rescanned, whose cover image
+    /// beside the tracks may have changed.
     pub async fn art_evictions(self: Arc<Self>, after: i64) -> Result<ArtEvictions, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -3494,11 +3496,8 @@ impl KoanEngine {
         };
         let track_id = row.id;
 
-        if let Some(path) = row.path.as_ref().or(row.cached_path.as_ref())
-            && let Some(data) = koan_core::index::metadata::extract_cover_art(Path::new(path))
-        {
-            let mime = sniff_mime(&data).to_string();
-            return Ok(Some(CoverArt { data, mime }));
+        if let Some(art) = local_cover_art(&row) {
+            return Ok(Some(art));
         }
 
         let Some(remote_id) = row.remote_id else {
@@ -4732,11 +4731,22 @@ fn sort_rows(mut rows: Vec<queries::TrackRow>, sort: TrackSort) -> Vec<queries::
     rows
 }
 
+/// A track's cover from disk: the image beside its file or the art embedded
+/// in it (see `koan_core::index::folder_art`).
+fn local_cover_art(row: &queries::TrackRow) -> Option<CoverArt> {
+    let path = row.path.as_ref().or(row.cached_path.as_ref())?;
+    let data = koan_core::index::folder_art::cover_art(Path::new(path))?;
+    let mime = sniff_mime(&data).to_string();
+    Some(CoverArt { data, mime })
+}
+
 fn sniff_mime(data: &[u8]) -> &'static str {
     if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         "image/png"
     } else if data.starts_with(&[0xFF, 0xD8]) {
         "image/jpeg"
+    } else if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        "image/webp"
     } else {
         "application/octet-stream"
     }
@@ -5052,10 +5062,36 @@ mod fuzzy_tests {
 }
 
 #[cfg(test)]
+mod cover_tests {
+    use super::*;
+
+    /// What the apps' cover cache is handed for a record whose art is only a
+    /// `folder.png` beside its files.
+    #[test]
+    fn the_apps_get_the_image_beside_a_track() {
+        let dir = tempfile::tempdir().unwrap();
+        let album = dir.path().join("Album").join("CD1");
+        std::fs::create_dir_all(&album).unwrap();
+        let track = album.join("01.flac");
+        std::fs::write(&track, b"no tags").unwrap();
+        let png = b"\x89PNG\r\n\x1a\nimage".to_vec();
+        std::fs::write(dir.path().join("Album").join("Folder.png"), &png).unwrap();
+
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let id = super::restore_tests::track(&db, "One", &track);
+        let row = queries::get_track_row(&db.conn, id).unwrap().unwrap();
+
+        let art = local_cover_art(&row).expect("the folder image");
+        assert_eq!(art.data, png);
+        assert_eq!(art.mime, "image/png");
+    }
+}
+
+#[cfg(test)]
 mod restore_tests {
     use super::*;
 
-    fn track(db: &Database, title: &str, path: &Path) -> i64 {
+    pub(super) fn track(db: &Database, title: &str, path: &Path) -> i64 {
         let meta = queries::TrackMeta {
             title: title.into(),
             artist: "Artist".into(),

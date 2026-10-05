@@ -390,7 +390,7 @@ fn track_row(
 data-album=\"{album_title}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\">\
 <span class=\"n\">{n}</span><span class=\"t\">{title}{sub}</span><span class=\"d\">{dur}</span>\
 <span class=\"contents max-wide:hidden\">{heart}{share}\
-<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{MORE}</li>",
+<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{mark}{MORE}</li>",
         id = t.id,
         secs = t.duration_ms.unwrap_or(0) / 1000,
         title = escape(&t.title),
@@ -404,6 +404,7 @@ data-album=\"{album_title}\" data-album-id={album_id} data-artist-id={artist_id}
             .unwrap_or_default(),
         dur = duration(t.duration_ms),
         heart = hearts.map(|h| h.track(t.id)).unwrap_or_default(),
+        mark = hearts.map(Hearts::mark).unwrap_or_default(),
         share = if share {
             share_track_button(t)
         } else {

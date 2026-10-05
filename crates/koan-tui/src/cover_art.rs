@@ -55,7 +55,7 @@ impl CoverArtCache {
     pub fn get(&mut self, path: &Path) -> Option<&DynamicImage> {
         if self.path.as_deref() != Some(path) {
             self.path = Some(path.to_path_buf());
-            self.image = koan_core::index::metadata::extract_cover_art(path)
+            self.image = koan_core::index::folder_art::cover_art(path)
                 .and_then(|bytes| image::load_from_memory(&bytes).ok());
             self.rendered = None; // invalidate render cache on new image
             self.rendered_centered = None;
