@@ -417,11 +417,7 @@ async fn every_class_on_every_page_has_a_rule() {
         "/library".to_owned(),
         "/favourites".to_owned(),
         "/history".to_owned(),
-<<<<<<< HEAD
         "/recent".to_owned(),
-||||||| ae467664
-=======
->>>>>>> origin/main
         "/account".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
@@ -765,7 +761,6 @@ async fn history_lists_the_callers_own_plays_by_day_and_forgets_only_those() {
 }
 
 #[tokio::test]
-<<<<<<< HEAD
 async fn recently_played_is_the_callers_own_each_once() {
     let f = setup(true);
     let now = chrono::Utc::now().timestamp();
@@ -800,9 +795,6 @@ async fn recently_played_is_the_callers_own_each_once() {
 }
 
 #[tokio::test]
-||||||| ae467664
-=======
->>>>>>> origin/main
 async fn playlists_list_the_callers_own_and_play_like_albums() {
     let f = setup(true);
     let (mine, theirs) = {
