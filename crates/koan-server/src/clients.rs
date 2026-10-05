@@ -1239,7 +1239,7 @@ pub fn smart_activity(
     fields: &[koan_core::smart::Field],
 ) {
     match koan_core::db::queries::smart::refresh_after_activity(&db.conn, user, fields) {
-        Ok(changed) if !changed.is_empty() => changed(),
+        Ok(moved) if !moved.is_empty() => changed(),
         Ok(_) => {}
         Err(e) => log::warn!("smart playlists not refreshed after activity: {e}"),
     }
