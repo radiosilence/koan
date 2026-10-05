@@ -25,6 +25,7 @@ struct AlbumGridCell: View {
         #endif
     }
 
+    #if os(tvOS)
     /// The tile as one card a remote focuses and clicks to open the record.
     /// Playing it is a click away on the record's page, or in the menu a long
     /// press brings up.
@@ -49,6 +50,8 @@ struct AlbumGridCell: View {
             }
         }
     }
+
+    #endif
 
     private var tile: some View {
         VStack(alignment: .leading, spacing: 7) {
