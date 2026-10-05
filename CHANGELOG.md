@@ -6,6 +6,10 @@
 
 - **Smart playlists.** A playlist can hold whatever matches a set of rules instead of a list: text, number and date conditions over title, artists, album, genre, format, path, year, duration, bit depth, sample rate, play count, last played, date added and favourites, grouped with all/any, sorted (or shuffled) and limited. Plays and favourites are the owner's. kōan evaluates the rules when the playlist is read, at most once a minute (a random order once a day), and at once when a scrobble or a favourite the rules read reaches the server, telling linked devices to pull; it rewrites its contents only when they change, keeping entry ids so a queue following it keeps its place. Every client sees an ordinary playlist that cannot be edited: Subsonic apps get OpenSubsonic's `readonly`, kōan's apps refuse drops, removals and reorders and leave it out of Add to Playlist. Made with `createSmartPlaylist` and changed with `setPlaylistRules` over GraphQL, so an assistant connected over MCP can make one, or read from Navidrome `.nsp` files in the library folders, which scans and the folder watcher pick up; the file names the playlist and decides its rules, so neither is edited in kōan. A playlist a Subsonic server marks read-only is mirrored read-only and never pushed back. The library database moves to schema 16 for the playlist columns; a build older than this one refuses it. See [Smart playlists](docs/guide/smart-playlists.md).
 
+### Fixed
+
+- **The server stops when asked to.** `koan` now shuts down on SIGTERM as well as SIGINT. In a container it runs as PID 1, where an unhandled SIGTERM is dropped, so every stop waited out the grace period and ended in a kill: about 30 seconds of downtime added to each Kubernetes deploy. Shutdown waits up to 10 seconds for open connections, since subscription websockets and audio streams never close on their own.
+
 ## 0.52.6
 
 ### Added
