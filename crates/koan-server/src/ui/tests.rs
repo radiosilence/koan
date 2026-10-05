@@ -851,6 +851,33 @@ async fn app_passwords_are_shown_once_sealed_and_revoked() {
 }
 
 #[tokio::test]
+async fn an_app_password_does_not_sign_in_to_the_web_ui() {
+    let f = setup(true);
+    let password = {
+        let db = Database::open(f.state.pool.path()).unwrap();
+        let user = queries::auth::get_user_by_username(&db.conn, "alice")
+            .unwrap()
+            .unwrap();
+        let key = koan_core::auth::app_password_key(&f.state.private_pem);
+        queries::app_passwords::create_app_password(&db.conn, &key, user.id, "arpeggi")
+            .unwrap()
+            .1
+    };
+    // Apps only: the web sign-in, and with it GraphQL, MCP and OAuth, takes
+    // the account's own password.
+    let r = send(
+        &f.app,
+        form(
+            "/login",
+            &format!("username=alice&password={password}&next=%2F"),
+        ),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert!(r.cookies().is_empty());
+}
+
+#[tokio::test]
 async fn admins_create_invite_and_remove_accounts() {
     static CONFIG: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
     koan_core::config::set_config_dir(CONFIG.get_or_init(|| tempfile::tempdir().unwrap()).path());
