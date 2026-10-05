@@ -5,6 +5,32 @@
 ### Added
 
 - **The web UI can sign in through an authenticating reverse proxy.** With `graphql.proxy_auth_header` naming the header a proxy such as Authelia or Authentik sets (`Remote-User`), and `graphql.proxy_auth_from` the addresses that proxy connects from, the web UI signs in the account the header names without asking for a password. The header is read only on web UI pages and the MCP consent page, ignored from any other address and when it carries more than one value, and an account the server lacks is refused, not created. The proxy must cover those pages and strip the header from incoming requests; [Behind an authenticating proxy](docs/guide/headless-server.md#behind-an-authenticating-proxy) lists the exact paths to exempt, with Caddy and Traefik examples. A browser whose proxy sign-in changes is handed to the new account. The Subsonic API, GraphQL, MCP and kōan's apps keep kōan's own sign-in. This is Navidrome's `ND_REVERSEPROXYUSERHEADER`.
+- **App passwords for Subsonic apps that only sign in with a password token.** Many Subsonic clients sign in with `t = md5(password + salt)`, which needs the password on the server, and kōan only keeps a hash of yours, so they were refused with error 41. On the Account page you can now make an app password per app: generated, shown once, stored encrypted under a key derived from the server's signing key, and usable as a token or as a password. It is never your real password, it can be revoked on its own, and changing your password revokes them all. The error 41 message says so instead of describing a sign-in that no longer existed. The database moves to schema 16 for the new `app_passwords` table.
+
+### Fixed
+
+- **The web UI's account settings can be reached on a phone.** Users, API keys, Assistants and signing out sat under the page on a phone, behind the player and the tab bar, and at the foot of a sidebar that could not scroll in landscape. They are now one Account page, reached from an Account tab on a phone and from the foot of the sidebar, which scrolls when the window is shorter than it. `/keys` redirects there.
+
+## 0.52.9
+
+### Changed
+
+- **Opus is decoded by `opus-rs` instead of `opus-decoder`.** `opus-rs` is a maintained pure-Rust port of libopus 1.6; `opus-decoder` has had no release since the one whose slow transform 0.52.8 patched around. Against libopus itself, `opus-rs` reproduces a 48 kHz stereo music file at 71 dB SNR where `opus-decoder` managed 55, matches it within a few dB at 24 and 32 kbps, and decodes about a quarter faster: 0.20% of a Mac core for a stereo stream. kōan no longer carries a patched decoder of its own.
+- **Seeking in Opus starts clean.** A seek now decodes from 80 ms before the target and discards that, as the Opus spec asks, so the decoder has settled by the first sample heard; it used to start cold at the target. A seek into the first 80 ms also drops the stream's encoder delay again, which it skipped before.
+
+## 0.52.8
+
+### Fixed
+
+- **The server's container image builds again.** 0.52.7's failed, because the patched Opus decoder in `vendor/` was not copied in before the dependencies were built. 0.52.7's other changes ship in this release.
+
+## 0.52.7
+
+### Fixed
+
+- **Opus playback uses a fraction of the CPU it did.** The Opus decoder computed the transform inside every audio frame term by term, with a sine and cosine per term: about a third of a phone CPU core to play one stream, which emptied an iPhone's battery overnight while playing in the background. It now runs a real FFT. The fix is a patched copy of `opus-decoder` in `vendor/`, kept until upstream releases one.
+- **The server stops when asked to.** `koan` now shuts down on SIGTERM as well as SIGINT. In a container it runs as PID 1, where an unhandled SIGTERM is dropped, so every stop waited out the grace period and ended in a kill: about 30 seconds of downtime added to each Kubernetes deploy. Shutdown waits up to 10 seconds for open connections, since subscription websockets and audio streams never close on their own.
+- **A device that keeps dropping off the network no longer sets every other kōan dialling.** Each time one reappeared, or a connection to it ended, every device was dialled again at once with its backoff started over, so one flapping device (here a tvOS simulator) had a phone playing in the background connected to about 800 times in a night. A redial now goes only to the device concerned, and a connection must last 30 seconds before its backoff starts over. On Apple platforms an incoming connection also failed its handshake whenever the request arrived a moment after it, which made the dialler try again; it now waits for the request.
 
 ## 0.52.6
 

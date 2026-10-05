@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::os::fd::AsRawFd;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -50,6 +50,15 @@ struct Dialer {
     /// Bonjour makes.
     #[cfg_attr(not(target_vendor = "apple"), allow(dead_code))]
     addr: Arc<Mutex<String>>,
+    /// Set to have this dialer try again at once, its backoff started over.
+    redial: Arc<AtomicBool>,
+}
+
+impl Dialer {
+    fn redial(&self) {
+        self.redial.store(true, Ordering::Relaxed);
+        self.stop.waker.wake();
+    }
 }
 
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
@@ -74,9 +83,6 @@ static FOUND: Mutex<Vec<(String, Found)>> = Mutex::new(Vec::new());
 
 /// The system refused this app the local network: the person has not allowed it.
 static BLOCKED: AtomicBool = AtomicBool::new(false);
-
-/// Bumped to have every dialer try again at once.
-static REDIAL: AtomicU64 = AtomicU64::new(0);
 
 /// Every device announced here or listed by address that is not this one.
 pub fn found() -> Vec<Found> {
@@ -147,7 +153,7 @@ pub fn refresh() {
         stop.stop();
     }
     reconfigure();
-    redial(None);
+    redial_all();
     #[cfg(target_vendor = "apple")]
     bonjour::restart();
 }
@@ -155,17 +161,32 @@ pub fn refresh() {
 /// Dial every device now, rather than when its backoff runs out: the first
 /// thing tried when waking one, which may not be suspended yet.
 pub fn dial_now() {
-    redial(None);
+    redial_all();
 }
 
-/// Dial every device now rather than when its backoff runs out, `except` the
-/// dialer asking.
-fn redial(except: Option<&str>) {
-    REDIAL.fetch_add(1, Ordering::Relaxed);
+/// Dial every device now rather than when its backoff runs out.
+fn redial_all() {
     if let Some(r) = RUNNING.lock().as_ref() {
-        for (key, d) in &r.dialers {
-            if Some(key.as_str()) != except {
-                d.stop.waker.wake();
+        for d in r.dialers.values() {
+            d.redial();
+        }
+    }
+}
+
+/// Dial `id` now by every other way it is known, `except` the dialer asking.
+/// Only that device: one that comes and goes must not set every dialer here
+/// going again, or it is dialled once for each time the other one flaps.
+fn redial_device(id: &str, except: &str) {
+    let keys: Vec<String> = FOUND
+        .lock()
+        .iter()
+        .filter(|(k, f)| k != except && f.id.as_deref() == Some(id))
+        .map(|(k, _)| k.clone())
+        .collect();
+    if let Some(r) = RUNNING.lock().as_ref() {
+        for key in keys {
+            if let Some(d) = r.dialers.get(&key) {
+                d.redial();
             }
         }
     }
@@ -444,6 +465,9 @@ impl Stop {
 
 /// Serve one device that connected to this one.
 fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), String> {
+    // Apple's accept hands back the listener's non-blocking mode, under which
+    // a request that arrives a moment after the connection fails the handshake.
+    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .map_err(|e| e.to_string())?;
@@ -552,15 +576,18 @@ fn for_the_network(state: LinkState, full: bool) -> LinkState {
 
 const RETRY_MIN: Duration = Duration::from_secs(2);
 const RETRY_MAX: Duration = Duration::from_secs(60);
+const SERVED_LONG_ENOUGH: Duration = Duration::from_secs(30);
 
 fn spawn_dialer(r: &mut Running, key: String, addr: String) {
     let Some(stop) = Stop::new() else { return };
     let addr = Arc::new(Mutex::new(addr));
+    let redial = Arc::new(AtomicBool::new(false));
     r.dialers.insert(
         key.clone(),
         Dialer {
             stop: stop.clone(),
             addr: addr.clone(),
+            redial: redial.clone(),
         },
     );
     {
@@ -582,16 +609,17 @@ fn spawn_dialer(r: &mut Running, key: String, addr: String) {
     devices::touch();
     let _ = std::thread::Builder::new()
         .name("koan-nearby-dial".into())
-        .spawn(move || dial(key, addr, stop));
+        .spawn(move || dial(key, addr, stop, redial));
 }
 
 /// Stay connected to `addr` until stopped, or until it turns out to be this
 /// device.
-fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>) {
+fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<AtomicBool>) {
     let mut wait = RETRY_MIN;
     while !stop.stopped() {
         let addr = at.lock().clone();
         let mut served = false;
+        let started = Instant::now();
         match connect(&addr) {
             Ok(mut socket) => {
                 let fd = socket.get_ref().as_raw_fd();
@@ -617,9 +645,10 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>) {
                         devices::nearby_gone(id);
                         // A dialer that found this device already served has been
                         // backing off; it is wanted now.
-                        redial(Some(&key));
+                        redial_device(id, &key);
                     })
-                    .is_some();
+                    .is_some()
+                    && started.elapsed() >= SERVED_LONG_ENOUGH;
                 if session.this_device {
                     FOUND.lock().retain(|(k, _)| *k != key);
                     devices::touch();
@@ -637,7 +666,6 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>) {
                 note(&key, Some(explain(&e)));
             }
         }
-        let redials = REDIAL.load(Ordering::Relaxed);
         let mut fds = [libc::pollfd {
             fd: stop.waker_fd(),
             events: libc::POLLIN,
@@ -646,15 +674,16 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>) {
         // SAFETY: a live array of the length given.
         unsafe { libc::poll(fds.as_mut_ptr(), 1, wait.as_millis() as i32) };
         stop.drain();
-        wait = next_wait(wait, served, REDIAL.load(Ordering::Relaxed) != redials);
+        wait = next_wait(wait, served, redial.swap(false, Ordering::Relaxed));
     }
 }
 
 /// How long to wait before dialling again.
 ///
-/// Only a connection that served starts the backoff over. A device already
-/// connected another way answers every dial and is hung up on, and resetting
-/// on that would dial it every two seconds for as long as both are awake.
+/// Only a connection that served, for `SERVED_LONG_ENOUGH`, starts the backoff
+/// over. A device already connected another way answers every dial and is hung
+/// up on, and one that keeps dropping out answers and is gone again; resetting
+/// on either would dial it every few seconds for as long as both are awake.
 fn next_wait(wait: Duration, served: bool, redialed: bool) -> Duration {
     if redialed {
         RETRY_MIN
@@ -822,8 +851,7 @@ fn announced(name: String, host: String, port: u16, id: Option<String>, platform
         // backoff runs out.
         Some(d) => {
             *d.addr.lock() = addr;
-            REDIAL.fetch_add(1, Ordering::Relaxed);
-            d.stop.waker.wake();
+            d.redial();
         }
         None => spawn_dialer(r, key, addr),
     }

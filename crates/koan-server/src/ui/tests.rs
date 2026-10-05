@@ -423,7 +423,7 @@ async fn every_class_on_every_page_has_a_rule() {
         "/search?q=Wet".to_owned(),
         "/search?q=nothing-here".to_owned(),
         "/queue".to_owned(),
-        "/keys".to_owned(),
+        "/account".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
     ] {
@@ -432,7 +432,8 @@ async fn every_class_on_every_page_has_a_rule() {
         rendered.push((uri, r.body));
     }
     for (uri, body) in [
-        ("/keys", r#"{"keyname":"phone"}"#),
+        ("/account/keys", r#"{"keyname":"phone"}"#),
+        ("/account/app-passwords", r#"{"appname":"Arpeggi"}"#),
         ("/users/1/password/form", "{}"),
     ] {
         let r = send(&f.app, post(uri, body)).await;
@@ -723,19 +724,27 @@ async fn api_keys_are_shown_once_listed_and_revoked() {
 
     let r = send(
         &f.app,
-        authed(&f.state, "/keys").body(Body::empty()).unwrap(),
+        authed(&f.state, "/account").body(Body::empty()).unwrap(),
     )
     .await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(r.body.contains("No keys yet."), "{}", r.body);
 
-    let r = send(&f.app, post("/keys", r#"{"keyname":"phone"}"#, false)).await;
+    let r = send(
+        &f.app,
+        post("/account/keys", r#"{"keyname":"phone"}"#, false),
+    )
+    .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
-    let r = send(&f.app, post("/keys", r#"{"keyname":"phone"}"#, true)).await;
+    let r = send(
+        &f.app,
+        post("/account/keys", r#"{"keyname":"phone"}"#, true),
+    )
+    .await;
     let key = r
         .body
-        .split("id=new-key readonly value=\"")
+        .split("id=key-result-value readonly value=\"")
         .nth(1)
         .and_then(|rest| rest.split('"').next())
         .unwrap_or_else(|| panic!("no key in {}", r.body))
@@ -748,7 +757,7 @@ async fn api_keys_are_shown_once_listed_and_revoked() {
 
     let r = send(
         &f.app,
-        authed(&f.state, "/keys").body(Body::empty()).unwrap(),
+        authed(&f.state, "/account").body(Body::empty()).unwrap(),
     )
     .await;
     assert!(
@@ -759,13 +768,122 @@ async fn api_keys_are_shown_once_listed_and_revoked() {
     assert!(!r.body.contains(&key));
 
     let id = queries::api_keys::list_api_keys(&db.conn, Some(user.id)).unwrap()[0].id;
-    let r = send(&f.app, post(&format!("/keys/{id}/revoke"), "{}", true)).await;
+    let r = send(
+        &f.app,
+        post(&format!("/account/keys/{id}/revoke"), "{}", true),
+    )
+    .await;
     assert!(r.body.contains("No keys yet."), "{}", r.body);
     assert!(
         queries::api_keys::authenticate_api_key(&db.conn, &key)
             .unwrap()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn app_passwords_are_shown_once_sealed_and_revoked() {
+    let f = setup(true);
+    let post = |uri: &str, body: &str| {
+        Request::post(uri)
+            .header(header::HOST, HOST)
+            .header(
+                header::COOKIE,
+                format!("koan_access={}", access_token(&f.state)),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("datastar-request", "true")
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    };
+    let r = send(
+        &f.app,
+        authed(&f.state, "/account").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains("No app passwords yet."), "{}", r.body);
+
+    let r = send(
+        &f.app,
+        post("/account/app-passwords", r#"{"appname":"Arpeggi"}"#),
+    )
+    .await;
+    let password = r
+        .body
+        .split("id=app-password-result-value readonly value=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("no app password in {}", r.body))
+        .to_owned();
+
+    // Sealed in the database, never kept or listed as itself.
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let stored: Vec<u8> = db
+        .conn
+        .query_row("SELECT sealed FROM app_passwords", [], |row| row.get(0))
+        .unwrap();
+    assert!(
+        !stored
+            .windows(password.len())
+            .any(|w| w == password.as_bytes())
+    );
+    let r = send(
+        &f.app,
+        authed(&f.state, "/account").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains("Arpeggi") && !r.body.contains(&password));
+
+    let key = koan_core::auth::app_password_key(&f.state.private_pem);
+    let signed_in = |db: &Database| {
+        matches!(
+            queries::app_passwords::authenticate_app_password(&db.conn, &key, "alice", |p| {
+                p == password
+            })
+            .unwrap(),
+            queries::app_passwords::AppPasswordAuth::Matched(_)
+        )
+    };
+    assert!(signed_in(&db));
+
+    let user = queries::auth::get_user_by_username(&db.conn, "alice")
+        .unwrap()
+        .unwrap();
+    let id = queries::app_passwords::list_app_passwords(&db.conn, user.id).unwrap()[0].id;
+    let r = send(
+        &f.app,
+        post(&format!("/account/app-passwords/{id}/revoke"), "{}"),
+    )
+    .await;
+    assert!(r.body.contains("No app passwords yet."), "{}", r.body);
+    assert!(!signed_in(&db));
+}
+
+#[tokio::test]
+async fn an_app_password_does_not_sign_in_to_the_web_ui() {
+    let f = setup(true);
+    let password = {
+        let db = Database::open(f.state.pool.path()).unwrap();
+        let user = queries::auth::get_user_by_username(&db.conn, "alice")
+            .unwrap()
+            .unwrap();
+        let key = koan_core::auth::app_password_key(&f.state.private_pem);
+        queries::app_passwords::create_app_password(&db.conn, &key, user.id, "arpeggi")
+            .unwrap()
+            .1
+    };
+    // Apps only: the web sign-in, and with it GraphQL, MCP and OAuth, takes
+    // the account's own password.
+    let r = send(
+        &f.app,
+        form(
+            "/login",
+            &format!("username=alice&password={password}&next=%2F"),
+        ),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert!(r.cookies().is_empty());
 }
 
 #[tokio::test]
