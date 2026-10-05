@@ -28,6 +28,9 @@ use axum::response::Response;
 pub enum Codec {
     Opus,
     Mp3,
+    /// AAC-LC in ADTS, from ffmpeg's own encoder: libfdk_aac is non-free and
+    /// absent from most builds.
+    Aac,
 }
 
 impl Codec {
@@ -35,6 +38,7 @@ impl Codec {
         match format.to_ascii_lowercase().as_str() {
             "opus" => Some(Self::Opus),
             "mp3" => Some(Self::Mp3),
+            "aac" | "m4a" => Some(Self::Aac),
             _ => None,
         }
     }
@@ -43,6 +47,7 @@ impl Codec {
         match self {
             Self::Opus => "audio/ogg",
             Self::Mp3 => "audio/mpeg",
+            Self::Aac => "audio/aac",
         }
     }
 
@@ -51,6 +56,7 @@ impl Codec {
         match self {
             Self::Opus => 128,
             Self::Mp3 => 192,
+            Self::Aac => 192,
         }
     }
 
@@ -59,6 +65,7 @@ impl Codec {
         match self {
             Self::Opus => (16, 256),
             Self::Mp3 => (32, 320),
+            Self::Aac => (64, 320),
         }
     }
 
@@ -67,6 +74,7 @@ impl Codec {
         match self {
             Self::Opus => source_codec.eq_ignore_ascii_case("opus"),
             Self::Mp3 => source_codec.eq_ignore_ascii_case("mp3"),
+            Self::Aac => source_codec.eq_ignore_ascii_case("aac"),
         }
     }
 }
@@ -166,6 +174,7 @@ pub struct Transcoder {
     ffmpeg: PathBuf,
     opus: bool,
     mp3: bool,
+    aac: bool,
     global: Arc<Semaphore>,
     accounts: Mutex<HashMap<String, Arc<Semaphore>>>,
 }
@@ -184,15 +193,16 @@ impl Transcoder {
             .filter(|o| o.status.success())?;
         let listed = String::from_utf8_lossy(&out.stdout);
         let has = |name: &str| listed.split_whitespace().any(|w| w == name);
-        let (opus, mp3) = (has("libopus"), has("libmp3lame"));
-        if !opus && !mp3 {
-            log::info!("Subsonic: {ffmpeg} has neither libopus nor libmp3lame.");
+        let (opus, mp3, aac) = (has("libopus"), has("libmp3lame"), has("aac"));
+        if !opus && !mp3 && !aac {
+            log::info!("Subsonic: {ffmpeg} has none of libopus, libmp3lame and aac.");
             return None;
         }
         Some(Self {
             ffmpeg: PathBuf::from(ffmpeg),
             opus,
             mp3,
+            aac,
             global: Arc::new(Semaphore::new(global_limit())),
             accounts: Mutex::new(HashMap::new()),
         })
@@ -203,6 +213,7 @@ impl Transcoder {
         match codec {
             Codec::Opus => self.opus,
             Codec::Mp3 => self.mp3,
+            Codec::Aac => self.aac,
         }
     }
 
@@ -241,6 +252,7 @@ impl Transcoder {
         let (encoder, muxer) = match plan.codec {
             Codec::Opus => ("libopus", "ogg"),
             Codec::Mp3 => ("libmp3lame", "mp3"),
+            Codec::Aac => ("aac", "adts"),
         };
         args.extend([
             "-c:a".into(),
@@ -455,9 +467,49 @@ mod tests {
 
     #[test]
     fn an_unsupported_format_leaves_the_limit_to_decide() {
-        assert_eq!(plan(&req(None, Some("aac")), Some("FLAC"), Some(900)), None);
-        let p = plan(&req(Some("128"), Some("aac")), Some("FLAC"), Some(900)).unwrap();
+        assert_eq!(plan(&req(None, Some("wma")), Some("FLAC"), Some(900)), None);
+        let p = plan(&req(Some("128"), Some("wma")), Some("FLAC"), Some(900)).unwrap();
         assert_eq!(p.codec, Codec::Opus);
+    }
+
+    #[test]
+    fn aac_is_asked_for_as_aac_or_m4a() {
+        for format in ["aac", "m4a", "AAC"] {
+            let p = plan(&req(None, Some(format)), Some("FLAC"), Some(900)).unwrap();
+            assert_eq!((p.codec, p.kbps), (Codec::Aac, 192));
+        }
+        let p = plan(&req(Some("32"), Some("aac")), Some("FLAC"), Some(900)).unwrap();
+        assert_eq!(p.kbps, 64);
+        let p = plan(&req(Some("128"), Some("aac")), Some("FLAC"), Some(900)).unwrap();
+        assert_eq!((p.codec, p.kbps), (Codec::Aac, 128));
+    }
+
+    #[test]
+    fn aac_within_the_limit_passes_through() {
+        assert_eq!(plan(&req(None, Some("aac")), Some("AAC"), Some(256)), None);
+        assert_eq!(
+            plan(&req(Some("320"), Some("m4a")), Some("AAC"), Some(256)),
+            None
+        );
+        let p = plan(&req(Some("128"), Some("aac")), Some("AAC"), Some(256)).unwrap();
+        assert_eq!((p.codec, p.kbps), (Codec::Aac, 128));
+        // ALAC sits in the same container and is not AAC.
+        assert!(plan(&req(None, Some("m4a")), Some("ALAC"), Some(900)).is_some());
+    }
+
+    #[test]
+    fn aac_is_muxed_as_adts_by_the_native_encoder() {
+        let plan = Plan {
+            codec: Codec::Aac,
+            kbps: 128,
+            offset_secs: 0.0,
+        };
+        let args: Vec<String> = Transcoder::args(Path::new("/m/a.flac"), &plan)
+            .into_iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.windows(2).any(|w| w == ["-c:a", "aac"]));
+        assert!(args.windows(2).any(|w| w == ["-f", "adts"]));
     }
 
     #[test]
@@ -516,6 +568,7 @@ mod tests {
             ffmpeg: PathBuf::from("ffmpeg"),
             opus: true,
             mp3: true,
+            aac: true,
             global: Arc::new(Semaphore::new(global)),
             accounts: Mutex::new(HashMap::new()),
         }
