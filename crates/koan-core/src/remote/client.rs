@@ -1073,6 +1073,10 @@ pub struct SubsonicPlaylist {
     pub duration: Option<i64>,
     pub created: Option<String>,
     pub changed: Option<String>,
+    /// OpenSubsonic: the server takes no edits to its contents (a smart
+    /// playlist).
+    #[serde(default)]
+    pub readonly: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

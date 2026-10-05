@@ -14,6 +14,7 @@ mod scan_cache;
 pub mod scrobbling;
 mod search;
 pub mod shares;
+pub mod smart;
 pub(crate) mod sources;
 mod stats;
 pub mod tracks;

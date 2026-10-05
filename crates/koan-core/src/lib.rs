@@ -15,6 +15,7 @@ pub mod quiet;
 pub mod remote;
 pub mod scrobbling;
 pub mod signal;
+pub mod smart;
 pub mod upnp;
 
 pub use sift::format;

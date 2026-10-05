@@ -234,10 +234,13 @@ pub fn reconcile_playlists(
         let local = queries::playlist_by_remote_id(&db.conn, &summary.id)
             .ok()
             .flatten();
-        let ours = summary
-            .owner
-            .as_deref()
-            .is_none_or(|owner| owner == username);
+        // A read-only playlist (a smart one on the server) is pulled and
+        // never pushed, whoever owns it.
+        let ours = !summary.readonly
+            && summary
+                .owner
+                .as_deref()
+                .is_none_or(|owner| owner == username);
 
         if let Some(local) = &local {
             let server_moved = summary.changed.as_deref() != local.remote_changed.as_deref();
@@ -282,6 +285,7 @@ pub fn reconcile_playlists(
         };
 
         let _ = queries::rename_playlist(&db.conn, id, &summary.name);
+        let _ = queries::set_playlist_readonly(&db.conn, id, summary.readonly);
         let _ = queries::set_playlist_remote(
             &db.conn,
             id,
@@ -370,6 +374,11 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
     let Ok(Some(local)) = queries::get_playlist(&db.conn, id) else {
         return Err(());
     };
+    // A smart playlist here, or a read-only one there: neither side's copy
+    // is for the other to overwrite.
+    if local.readonly {
+        return Err(());
+    }
     let remote_id = local.remote_id.as_deref();
     let song_ids = queries::remote_ids_for_playlist(&db.conn, id).unwrap_or_default();
 

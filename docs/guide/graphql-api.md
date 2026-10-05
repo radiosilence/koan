@@ -145,6 +145,15 @@ mutation { addToPlaylist(id: 3, trackIds: [42, 43]) { ok } }
 # A reorder, a removal and a shuffle are all the same call: the list you want.
 mutation { setPlaylistTracks(id: 3, trackIds: [43, 42]) { ok } }
 mutation { playPlaylist(id: 3, shuffled: true) { ok } }
+
+# Smart playlists: rules instead of a list. See Smart playlists for the format.
+mutation {
+  createSmartPlaylist(name: "On repeat", rules: {
+    rules: [{ field: "lastPlayed", op: "inTheLast", value: 14 }]
+    sort: [{ field: "playCount", desc: true }], limit: 25
+  }) { id, trackCount, readonly, rules }
+}
+mutation { setPlaylistRules(id: 4, rules: null) { id, readonly } }
 ```
 
 ### Filtering

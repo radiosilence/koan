@@ -560,6 +560,14 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("albums", "title_key", "TEXT"),
     // Where a linked device last connected from: see koan-server's clients.rs.
     ("link_devices", "addr", "TEXT"),
+    // Smart playlists: the rules as JSON (see `crate::smart`), when they were
+    // last evaluated (unix seconds), and the file they were read from, if
+    // any. `readonly` is a server's word that a playlist there takes no
+    // edits, kept by clients that sync from it.
+    ("playlists", "rules", "TEXT"),
+    ("playlists", "refreshed_at", "INTEGER"),
+    ("playlists", "source_path", "TEXT"),
+    ("playlists", "readonly", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 /// A UUIDv7 in SQL, for the triggers that give every new row its `uid`: a

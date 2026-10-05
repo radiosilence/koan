@@ -475,6 +475,49 @@ fn editable_playlist(
     }
 }
 
+/// A playlist whose contents `user` may change: their own, and not a smart
+/// one.
+fn fillable_playlist(
+    db: &Database,
+    user: i64,
+    id: i64,
+) -> async_graphql::Result<koan_core::db::queries::PlaylistRow> {
+    let list = editable_playlist(db, user, id)?;
+    if list.readonly {
+        return Err(async_graphql::Error::new(format!(
+            "playlist {id} is a smart playlist: its rules decide what it holds \
+             (setPlaylistRules changes them)"
+        )));
+    }
+    Ok(list)
+}
+
+/// A playlist `user` may rename or give rules: their own, and not one read
+/// from a file in the library, which decides both.
+fn renamable_playlist(
+    db: &Database,
+    user: i64,
+    id: i64,
+) -> async_graphql::Result<koan_core::db::queries::PlaylistRow> {
+    let list = editable_playlist(db, user, id)?;
+    if let Some(path) = &list.source_path {
+        return Err(async_graphql::Error::new(format!(
+            "playlist {id} is read from {path}: edit the file instead"
+        )));
+    }
+    Ok(list)
+}
+
+/// Evaluate the smart playlists `user` can see that are due, and have every
+/// device pull any whose contents moved.
+fn refresh_smart(db: &Database, user: i64) {
+    match koan_core::db::queries::smart::refresh_due(&db.conn, user) {
+        Ok(changed) if !changed.is_empty() => crate::clients::changed(),
+        Ok(_) => {}
+        Err(e) => log::warn!("smart playlists not refreshed: {e}"),
+    }
+}
+
 /// Whose linked clients the current user may see and command: their own,
 /// whatever their role.
 fn client_scope(ctx: &Context<'_>) -> Option<String> {
@@ -911,6 +954,64 @@ mod tests {
             .execute(format!("{{ track(id: \"{album}\") {{ id }} }}"))
             .await;
         assert!(!resp.errors.is_empty(), "an album's uid named a track");
+    }
+
+    /// A smart playlist made over the API selects by its rules, reports them
+    /// back, refuses edits to its contents, and becomes ordinary on request.
+    #[tokio::test]
+    async fn smart_playlists_over_the_api() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        let a = insert_test_track(&db_path, "Archangel", "Burial", "Untrue");
+        insert_test_track(&db_path, "Teardrop", "Massive Attack", "Mezzanine");
+
+        let resp = schema
+            .execute(
+                r#"mutation { createSmartPlaylist(name: "Burial", rules: {
+                    rules: [{ field: "artist", op: "is", value: "burial" }]
+                }) { id trackCount readonly rules } }"#,
+            )
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let made = &data["createSmartPlaylist"];
+        assert_eq!(made["trackCount"], 1);
+        assert_eq!(made["readonly"], true);
+        assert_eq!(made["rules"]["rules"][0]["field"], "artist");
+        let id = made["id"].to_string();
+
+        let resp = schema
+            .execute(format!(
+                "mutation {{ addToPlaylist(id: {id}, trackIds: [{a}]) {{ ok }} }}"
+            ))
+            .await;
+        assert!(
+            !resp.errors.is_empty(),
+            "an edit to a smart playlist's contents"
+        );
+
+        let resp = schema
+            .execute(
+                r#"mutation { createSmartPlaylist(name: "Bad", rules: {
+                    rules: [{ field: "plays", op: "gt", value: 1 }]
+                }) { id } }"#,
+            )
+            .await;
+        let message = &resp.errors[0].message;
+        assert!(message.contains("unknown field 'plays'"), "{message}");
+
+        let resp = schema
+            .execute(format!(
+                "mutation {{ setPlaylistRules(id: {id}, rules: null) {{ readonly rules trackCount }} }}"
+            ))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["setPlaylistRules"]["readonly"], false);
+        assert_eq!(
+            data["setPlaylistRules"]["trackCount"], 1,
+            "keeps what it held"
+        );
     }
 
     /// The whole life of a playlist over the API: made, added to, reordered,
