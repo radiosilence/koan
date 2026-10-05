@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Signing in to a kōan server with a password ends in an API key** ([#819](https://github.com/radiosilence/koan/issues/819)). The apps and terminal UI send the password once, over plain HTTP too, to the new `/rest/koanSignIn`, and keep the API key it returns for the device in place of the password, as an invite does. Signing in over plain HTTP no longer fails with error 41. Other Subsonic servers are unchanged, and error 41 from one now reads as needing an app password or API key. Servers list the `koanSignIn` extension.
+
 ## 0.54.0
 
 The library database moves from schema 16 to 19 (new tables for ratings, bookmarks, scrobbling and smart playlists, and the play history table rebuilt for sharing between devices; every existing row is kept as it was). Builds older than 0.54.0 refuse a schema-19 database, so going back means restoring a copy taken before upgrading.
