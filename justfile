@@ -760,11 +760,13 @@ tv-typecheck: macos-ffi
 
 # Build the television app for the simulator, unsigned: the engine for tvOS,
 # the bindings from it, and the Xcode project's KoanTV scheme. What CI runs.
+# arm64 only: a generic simulator destination also builds x86_64, which the
+# engine is not built for.
 tv-build: (tv-ffi "appletvsimulator") ios-project
     xcodebuild build -quiet \
         -project apps/ios/Koan.xcodeproj -scheme KoanTV \
         -destination 'generic/platform=tvOS Simulator' \
-        -derivedDataPath target/tv-build CODE_SIGNING_ALLOWED=NO
+        -derivedDataPath target/tv-build CODE_SIGNING_ALLOWED=NO ARCHS=arm64
 
 # Build the Rust engine for a tvOS SDK and stage it for the Swift link.
 #
