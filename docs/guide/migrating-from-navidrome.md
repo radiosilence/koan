@@ -104,10 +104,10 @@ The invite is a link that signs kōan's apps in directly and shows the details f
 Change the server URL and sign in with the kōan account. kōan accepts every way Subsonic clients sign in:
 
 - **Password**, plain or hex-encoded.
-- **Token and salt**, which most clients use by default.
-- **API key** (OpenSubsonic `apiKeyAuthentication`). Each person can make and revoke keys on the web UI's API keys page, one per client.
+- **Token and salt**, which most clients use by default, with an app password in place of the account's password.
+- **API key** (OpenSubsonic `apiKeyAuthentication`).
 
-A client that reports error 41 is using Subsonic token auth, which kōan refuses for accounts. Set it to send the password, over HTTPS, or give it an API key. See [Authentication](authentication.md#subsonic-api).
+Make API keys and app passwords on the web UI's Account page, one per client. A client that reports error 41 is using token auth with the account's own password, which kōan cannot check because it keeps only a hash: give it an app password instead. See [Authentication](authentication.md#subsonic-api).
 
 ### Favourites, play counts and playlists
 

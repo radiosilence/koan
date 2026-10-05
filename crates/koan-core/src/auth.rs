@@ -186,6 +186,97 @@ pub fn sha256_hex(input: &str) -> String {
         .collect()
 }
 
+/// The key Subsonic app passwords are sealed under, derived from the server's
+/// signing key. A copy of the database alone does not open them, and
+/// regenerating the keypair retires every app password along with every
+/// session.
+pub fn app_password_key(private_pem: &[u8]) -> [u8; 32] {
+    use ring::hkdf;
+
+    let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, b"koan").extract(private_pem);
+    let mut key = [0u8; 32];
+    prk.expand(&[b"subsonic app passwords v1"], hkdf::HKDF_SHA256)
+        .and_then(|okm| okm.fill(&mut key))
+        .expect("HKDF-SHA256 yields 32 bytes");
+    key
+}
+
+/// Seal an app password for `user_id`: a random nonce, then the ciphertext and
+/// its tag. The user id is authenticated with it, so a sealed password moved to
+/// another account's row does not open.
+pub fn seal_app_password(
+    key: &[u8; 32],
+    user_id: i64,
+    password: &str,
+) -> Result<Vec<u8>, AuthError> {
+    use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
+    use ring::rand::SecureRandom;
+
+    let sealing = LessSafeKey::new(
+        UnboundKey::new(&CHACHA20_POLY1305, key).map_err(|_| AuthError::Hash("bad key".into()))?,
+    );
+    let mut nonce = [0u8; NONCE_LEN];
+    ring::rand::SystemRandom::new()
+        .fill(&mut nonce)
+        .map_err(|_| AuthError::Hash("rng failure".into()))?;
+    let mut sealed = password.as_bytes().to_vec();
+    sealing
+        .seal_in_place_append_tag(
+            Nonce::assume_unique_for_key(nonce),
+            Aad::from(user_id.to_le_bytes()),
+            &mut sealed,
+        )
+        .map_err(|_| AuthError::Hash("seal failure".into()))?;
+    let mut out = nonce.to_vec();
+    out.extend_from_slice(&sealed);
+    Ok(out)
+}
+
+/// The app password `seal_app_password` sealed, if `key` and `user_id` are the
+/// ones it was sealed with.
+pub fn open_app_password(key: &[u8; 32], user_id: i64, sealed: &[u8]) -> Option<String> {
+    use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
+
+    let opening = LessSafeKey::new(UnboundKey::new(&CHACHA20_POLY1305, key).ok()?);
+    let (nonce, ciphertext) = sealed.split_at_checked(NONCE_LEN)?;
+    let mut buf = ciphertext.to_vec();
+    let plain = opening
+        .open_in_place(
+            Nonce::try_assume_unique_for_key(nonce).ok()?,
+            Aad::from(user_id.to_le_bytes()),
+            &mut buf,
+        )
+        .ok()?;
+    String::from_utf8(plain.to_vec()).ok()
+}
+
+/// A new app password: four groups of five from an alphabet without the
+/// characters a phone keyboard or a reader confuses, about 98 bits. It is
+/// typed into an app once, so it is made to be typed.
+pub fn random_app_password() -> Result<String, AuthError> {
+    use ring::rand::SecureRandom;
+
+    const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+    let rng = ring::rand::SystemRandom::new();
+    let mut out = String::with_capacity(23);
+    let mut byte = [0u8; 1];
+    let mut drawn = 0;
+    while drawn < 20 {
+        rng.fill(&mut byte)
+            .map_err(|_| AuthError::Hash("rng failure".into()))?;
+        // Rejecting the top of the range keeps every character equally likely.
+        if byte[0] as usize >= ALPHABET.len() * (256 / ALPHABET.len()) {
+            continue;
+        }
+        if drawn > 0 && drawn % 5 == 0 {
+            out.push('-');
+        }
+        out.push(ALPHABET[byte[0] as usize % ALPHABET.len()] as char);
+        drawn += 1;
+    }
+    Ok(out)
+}
+
 // ---------------------------------------------------------------------------
 // Ed25519 Keypair management
 // ---------------------------------------------------------------------------

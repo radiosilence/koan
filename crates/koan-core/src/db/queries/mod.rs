@@ -1,5 +1,6 @@
 mod albums;
 pub mod api_keys;
+pub mod app_passwords;
 mod artists;
 pub mod auth;
 pub mod batch;

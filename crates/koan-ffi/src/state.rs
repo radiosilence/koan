@@ -76,6 +76,8 @@ pub enum StateSlice {
     /// so a client can hold a copy is the opposite of the point. What a client
     /// needs is to know to ask again.
     Library { version: u64 },
+    /// Moves whenever the play history does. Pages derived from it ask again.
+    History { version: u64 },
     /// What koan is doing on its own: the startup and watched-folder scan, and
     /// the automatic sync with a server.
     ///
@@ -124,6 +126,7 @@ enum Slot {
     Transfers,
     Figures,
     Library,
+    History,
     Tasks,
     Sync,
     Connection,
@@ -131,7 +134,7 @@ enum Slot {
     Outputs,
 }
 
-const SLOTS: usize = 13;
+const SLOTS: usize = 14;
 
 impl StateSlice {
     fn slot(&self) -> Slot {
@@ -143,6 +146,7 @@ impl StateSlice {
             Self::Transfers { .. } => Slot::Transfers,
             Self::Figures { .. } => Slot::Figures,
             Self::Library { .. } => Slot::Library,
+            Self::History { .. } => Slot::History,
             Self::Tasks { .. } => Slot::Tasks,
             Self::Sync { .. } => Slot::Sync,
             Self::Devices { .. } => Slot::Devices,
