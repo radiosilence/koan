@@ -1006,8 +1006,50 @@ fn as_kind(meta: &TrackMeta, kind: Kind) -> TrackMeta {
     meta
 }
 
+/// The file a new path is, moved there: a file held at another path that is
+/// no longer there, with the same MusicBrainz recording on the same release
+/// when both name one, or else the same slot and the same size or length, or
+/// failing that the same size, length and modification time, which a rename
+/// keeps and an untagged file's title (its name) does not. Only when exactly
+/// one such file is gone; several is ambiguity, and declined.
+fn moved_from(conn: &Connection, key: &str, meta: &TrackMeta) -> Result<Option<String>, DbError> {
+    let gone: Vec<String> = conn
+        .prepare_cached(
+            "SELECT path FROM local_files
+              WHERE path != ?1
+                AND ((?2 IS NOT NULL AND ?3 IS NOT NULL AND mbid = ?2 AND album_mbid IS ?3)
+                  OR ((?2 IS NULL OR mbid IS NULL) AND slot_key = ?4
+                      AND (size_bytes = ?5 OR duration_ms = ?6))
+                  OR (size_bytes = ?5 AND duration_ms = ?6 AND mtime = ?7))",
+        )?
+        .query_map(
+            params![
+                key,
+                nonempty(&meta.mbid),
+                nonempty(&meta.album_mbid),
+                slot_key(meta),
+                meta.size_bytes,
+                meta.duration_ms,
+                meta.mtime,
+            ],
+            |r| r.get::<_, String>(0),
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|path| crate::index::known_missing(std::path::Path::new(path)))
+        .collect();
+    Ok(match <[String; 1]>::try_from(gone) {
+        Ok([only]) => Some(only),
+        Err(_) => None,
+    })
+}
+
 /// Record what a source says, linking and deriving as needed. Returns the
 /// track and whether this source made a new one.
+///
+/// A file at a new path that is a file gone from another (see [`moved_from`])
+/// takes over that file's source, so a move or rename outside koan keeps the
+/// track, its id and uid, and everything attached to it.
 ///
 /// `seen` is the server ids a sync has listed so far. An entry the sync has
 /// not listed, in the same slot, is taken to be this one under the id it had
@@ -1047,6 +1089,17 @@ pub(crate) fn record(
                 .execute(params![key, old])?;
             stored = load(conn, kind, key)?;
         }
+    }
+
+    if stored.is_none()
+        && kind == Kind::Local
+        && let Some(old) = moved_from(conn, key, &meta)?
+    {
+        log::info!("{old} moved to {key}; it keeps its track");
+        conn.prepare_cached("DELETE FROM scan_cache WHERE path = ?1")?
+            .execute(params![old])?;
+        rename_file(conn, &old, key)?;
+        stored = load(conn, kind, key)?;
     }
 
     if let Some((track, old)) = stored {

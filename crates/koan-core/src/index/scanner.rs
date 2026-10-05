@@ -116,9 +116,13 @@ pub fn scan_folders(
         );
     }
 
-    let mut total = ScanResult::default();
+    // Every folder is indexed before any is pruned, so a file moved from one
+    // library folder to another is found at its new path before it is missed
+    // at its old one, and keeps its track.
+    let mut indexed = Vec::new();
+    let mut cancelled = false;
     for (path, found, mut result) in walked {
-        if total.cancelled {
+        if cancelled {
             break;
         }
         // A folder with no audio is taken for one not mounted, as stale
@@ -128,9 +132,18 @@ pub fn scan_folders(
         } else {
             vec![path.clone()]
         };
-        index_folder(db, &path, found.audio, &opts, on_track, &mut result);
+        let prune = index_folder(db, &path, found.audio, &opts, on_track, &mut result);
+        cancelled |= result.cancelled;
+        indexed.push((path, found.playlists, settled, prune, result));
+    }
+
+    let mut total = ScanResult::default();
+    for (path, playlists, settled, prune, mut result) in indexed {
+        if prune && !cancelled {
+            remove_stale(db, &path, opts.force_remove, &mut result);
+        }
         if !result.cancelled {
-            result.playlists += super::playlist_files::import(db, &found.playlists, &settled);
+            result.playlists += super::playlist_files::import(db, &playlists, &settled);
         }
         merge(&mut total, result);
     }
@@ -140,6 +153,8 @@ pub fn scan_folders(
     total
 }
 
+/// Index a library folder's files. Whether its stale rows may then be
+/// removed.
 fn index_folder(
     db: &Database,
     path: &Path,
@@ -147,19 +162,19 @@ fn index_folder(
     opts: &ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
     result: &mut ScanResult,
-) {
+) -> bool {
     let total_files = audio_files.len();
     log::info!("found {} audio files in {}", total_files, path.display());
 
     if !index_files(db, audio_files, opts, on_track, result, path) {
-        return;
+        return false;
     }
 
     if result.cancelled {
         // Stale removal decides what is missing by what the scan did *not* see.
         // After a cancellation that is most of the folder, so it would delete a
         // library rather than tidy one.
-        return;
+        return false;
     }
 
     // Remove tracks for files that no longer exist. A folder that yielded nothing
@@ -171,10 +186,9 @@ fn index_folder(
              If this folder should have music in it, it is probably not mounted or not readable.",
             path.display()
         );
-        return;
+        return false;
     }
-
-    remove_stale(db, path, opts.force_remove, result);
+    true
 }
 
 /// Rescan directories inside the library folders, and nothing else.
@@ -772,7 +786,7 @@ mod tests {
     }
 
     #[test]
-    fn a_renamed_file_leaves_no_row_at_its_old_path() {
+    fn a_renamed_file_keeps_its_track() {
         let dir = tempfile::tempdir().unwrap();
         let music = dir.path().join("music");
         let album = music.join("Squire Of Gothos").join("Album");
@@ -788,6 +802,10 @@ mod tests {
         }
         let db = test_db(dir.path());
         scan_folder(&db, &music, ScanOptions::default(), None);
+        let before = tracks_with_uids(&db);
+        let first = before[0].0;
+        queries::record_play(&db.conn, queries::LOCAL_USER, first, Some(1000)).unwrap();
+        queries::add_favourite(&db.conn, queries::LOCAL_USER, first).unwrap();
 
         // What a retag that re-files does: the artist folder and file names
         // change case.
@@ -804,20 +822,69 @@ mod tests {
         }
         let result = scan_folder(&db, &music, ScanOptions::default(), None);
 
-        let paths: Vec<String> = db
+        assert_eq!(
+            (result.added, result.removed),
+            (0, 0),
+            "{:?}",
+            result.errors
+        );
+        let paths = track_paths(&db);
+        assert_eq!(paths.len(), 3, "{paths:#?}");
+        assert!(paths.iter().all(|p| Path::new(p).exists()), "{paths:#?}");
+        let after = tracks_with_uids(&db);
+        assert_eq!(
+            before.iter().map(|t| (t.0, &t.1)).collect::<Vec<_>>(),
+            after.iter().map(|t| (t.0, &t.1)).collect::<Vec<_>>(),
+            "same rows, same uids"
+        );
+        let kept: (i64, i64) = db
             .conn
-            .prepare("SELECT path FROM tracks ORDER BY path")
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM play_history WHERE track_id = ?1),
+                        (SELECT COUNT(*) FROM favourites WHERE track_id = ?1)",
+                [first],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kept, (1, 1), "history and favourite kept");
+    }
+
+    /// Moved from one library folder to another: every folder is indexed
+    /// before any is pruned, so the old path is not missed first.
+    #[test]
+    fn a_file_moved_between_library_folders_keeps_its_track() {
+        let dir = tempfile::tempdir().unwrap();
+        let (one, two) = (dir.path().join("one"), dir.path().join("two"));
+        std::fs::create_dir_all(one.join("Album")).unwrap();
+        std::fs::create_dir_all(&two).unwrap();
+        test_utils::generate_wav(&one.join("Album/a.wav"), 44100, 1, 0.2, 16);
+        test_utils::generate_wav(&one.join("b.wav"), 44100, 1, 0.3, 16);
+        test_utils::generate_wav(&two.join("c.wav"), 44100, 1, 0.4, 16);
+        let db = test_db(dir.path());
+        let folders = [one.clone(), two.clone()];
+        scan_folders(&db, &folders, ScanOptions::default(), None, None);
+        let before = tracks_with_uids(&db);
+
+        std::fs::rename(one.join("Album"), two.join("Album")).unwrap();
+        let r = scan_folders(&db, &folders, ScanOptions::default(), None, None);
+        assert_eq!((r.added, r.removed), (0, 0), "{:?}", r.errors);
+        let after = tracks_with_uids(&db);
+        assert_eq!(
+            before.iter().map(|t| (t.0, &t.1)).collect::<Vec<_>>(),
+            after.iter().map(|t| (t.0, &t.1)).collect::<Vec<_>>()
+        );
+        assert!(after.iter().any(|t| t.2.ends_with("two/Album/a.wav")));
+    }
+
+    /// Track ids, uids and paths, by id.
+    fn tracks_with_uids(db: &Database) -> Vec<(i64, String, String)> {
+        db.conn
+            .prepare("SELECT id, uid, path FROM tracks ORDER BY id")
             .unwrap()
-            .query_map([], |r| r.get(0))
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .unwrap()
             .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!((result.added, result.removed), (3, 3));
-        assert_eq!(paths.len(), 3, "{paths:#?}");
-        assert!(
-            paths.iter().all(|p| std::path::Path::new(p).exists()),
-            "{paths:#?}"
-        );
+            .unwrap()
     }
 
     fn track_paths(db: &Database) -> Vec<String> {
