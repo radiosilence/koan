@@ -111,6 +111,8 @@ Make API keys and app passwords on the web UI's Account page, one per client. A 
 
 There is no importer for Navidrome's database yet; [#651](https://github.com/radiosilence/koan/issues/651) tracks one. Until then, favourites, ratings, play counts and the playlists made in Navidrome stay there and start empty in kōan.
 
+Covers kept as image files beside the tracks carry over. kōan looks for `cover.*`, `folder.*` and `front.*` (JPEG, PNG or WebP, any case) in that order, then for art embedded in the files, which is Navidrome's default `CoverArtPriority`. A different `CoverArtPriority` is not read; kōan always uses this order.
+
 Playlists kept as files in the music folder carry over: kōan reads Navidrome's smart playlists (`.nsp`) and `.m3u`/`.m3u8` files when it scans. See [Smart playlists](smart-playlists.md#from-navidrome).
 
 ## Running both

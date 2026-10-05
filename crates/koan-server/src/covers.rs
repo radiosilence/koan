@@ -1,12 +1,14 @@
-//! Album covers for the web UI and share pages: embedded art, resized to one
-//! of a few sizes, encoded as JPEG, and kept.
+//! Album covers for the web UI, share pages and Subsonic: an image beside the
+//! tracks or the art embedded in them, resized to one of a few sizes, encoded
+//! as JPEG, and kept.
 //!
 //! Reading embedded art means opening the audio file and parsing its tags, and
 //! the art itself is often megabytes; doing that per tile made an albums grid
 //! pull tens of megabytes and seconds of server time. Resized covers are kept
 //! on disk under the config directory, keyed by the source file's path, size
-//! and mtime so a re-tag is a new key. An album with no art is remembered too,
-//! so a grid of them does not reopen every file on every visit.
+//! and mtime so a re-tag or a replaced image is a new key. An album with no
+//! art is remembered too, so a grid of them does not reopen every file on
+//! every visit.
 //!
 //! Nothing is held in memory: the kernel's page cache keeps hot files for
 //! free and gives the memory back under pressure, where a cache of our own
@@ -68,27 +70,37 @@ impl Covers {
     }
 
     /// A cover from the first of `tracks` that has art, at `size` (one of
-    /// `SIZES`), as JPEG. Blocking: call it off the async workers.
+    /// `SIZES`), as JPEG. An image beside a track comes before the art
+    /// embedded in it (see `koan_core::index::folder_art`). Blocking: call it
+    /// off the async workers.
     pub(crate) fn cover(&self, tracks: &[TrackRow], size: u32) -> Option<Bytes> {
-        let sources: Vec<(PathBuf, String)> = tracks
+        let sources: Vec<(Source, String)> = tracks
             .iter()
             .filter_map(|t| crate::subsonic::track_file_path(t).map(PathBuf::from))
             .take(TRACKS_TRIED)
             .map(|p| {
-                let key = key(&p, size);
-                (p, key)
+                let source = match koan_core::index::folder_art::folder_cover(&p) {
+                    Some(image) => Source::Image(image),
+                    None => Source::Embedded(p),
+                };
+                let key = key(source.path(), size);
+                (source, key)
             })
             .collect();
         // Keyed on the first candidate: that is the file whose art is shown
-        // whenever it has any.
+        // whenever it has any. An image added beside it is a new key, so a
+        // remembered miss does not outlive it.
         let (_, first_key) = sources.first()?;
         if let Some(hit) = self.read_disk(first_key) {
             return hit;
         }
         let art = DECODE.install(|| {
-            sources.iter().find_map(|(p, _)| {
-                koan_core::index::metadata::extract_cover_art(p)
-                    .and_then(|bytes| encode(&bytes, size))
+            sources.iter().find_map(|(source, _)| {
+                let bytes = match source {
+                    Source::Image(p) => std::fs::read(p).ok(),
+                    Source::Embedded(p) => koan_core::index::metadata::extract_cover_art(p),
+                };
+                bytes.and_then(|bytes| encode(&bytes, size))
             })
         });
         self.write_disk(first_key, art.as_deref());
@@ -116,6 +128,22 @@ impl Covers {
             && std::fs::rename(&tmp, self.dir.join(key)).is_err()
         {
             let _ = std::fs::remove_file(&tmp);
+        }
+    }
+}
+
+/// Where a cover is read from.
+enum Source {
+    /// An image file beside the track.
+    Image(PathBuf),
+    /// The art embedded in the track itself.
+    Embedded(PathBuf),
+}
+
+impl Source {
+    fn path(&self) -> &Path {
+        match self {
+            Self::Image(p) | Self::Embedded(p) => p,
         }
     }
 }
