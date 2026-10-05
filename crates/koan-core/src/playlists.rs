@@ -196,8 +196,15 @@ pub struct PlaylistSync {
 /// Playlists that have never been to the server are created there. Ones the
 /// server no longer has are dropped locally: deleting a playlist on Navidrome
 /// and having it reappear on the next sync would make deletion impossible.
+/// A listing that would drop all of them, or most of several, reads as a
+/// server answering wrongly rather than a user deleting, and drops none.
 /// Playlists tied to another server or account are first made local again, so
 /// signing in somewhere else never reads them as deleted.
+///
+/// A server copy naming a song the library does not have yet — one a library
+/// sync has not reached — is not taken: the local copy could not hold that
+/// entry, and storing it without the entry as the server's copy would have
+/// the next push delete it there. It is taken once the library has the song.
 pub fn reconcile_playlists(
     db: &Database,
     client: &SubsonicClient,
@@ -231,9 +238,13 @@ pub fn reconcile_playlists(
 
     for summary in &remote {
         seen_remote_ids.push(summary.id.clone());
-        let local = queries::playlist_by_remote_id(&db.conn, &summary.id)
-            .ok()
-            .flatten();
+        let local = match queries::playlist_by_remote_id(&db.conn, &summary.id) {
+            Ok(local) => local,
+            Err(e) => {
+                log::warn!("could not look up playlist {}: {e}", summary.name);
+                continue;
+            }
+        };
         // A read-only playlist (a smart one on the server) is pulled and
         // never pushed, whoever owns it.
         let ours = !summary.readonly
@@ -266,61 +277,89 @@ pub fn reconcile_playlists(
             }
         };
 
-        let id = match local {
-            Some(local) => local.id,
-            None => {
-                match queries::create_playlist(
+        let remote_song_ids: Vec<String> = full.entry.iter().map(|s| s.id.clone()).collect();
+        let track_ids = match queries::track_ids_for_remote_ids(&db.conn, &remote_song_ids) {
+            Ok(ids) => ids,
+            Err(e) => {
+                log::warn!("could not read playlist {}: {e}", summary.name);
+                continue;
+            }
+        };
+        let unknown = track_ids.iter().filter(|t| t.is_none()).count();
+        if unknown > 0 {
+            log::info!(
+                "playlist {}: {unknown} of {} songs are not in the library yet; \
+                 keeping the local copy until a library sync has them",
+                summary.name,
+                track_ids.len()
+            );
+            continue;
+        }
+        let track_ids: Vec<i64> = track_ids.into_iter().flatten().collect();
+
+        // All of it or none: a copy renamed but not refilled, or refilled but
+        // not marked synced, would push back as an edit nobody made.
+        let stored = queries::atomically(&db.conn, || {
+            let id = match &local {
+                Some(local) => local.id,
+                None => queries::create_playlist(
                     &db.conn,
                     queries::LOCAL_USER,
                     &summary.name,
                     summary.comment.as_deref(),
-                ) {
-                    Ok(id) => id,
-                    Err(e) => {
-                        log::warn!("could not store playlist {}: {e}", summary.name);
-                        continue;
-                    }
-                }
-            }
-        };
-
-        let _ = queries::rename_playlist(&db.conn, id, &summary.name);
-        let _ = queries::set_playlist_readonly(&db.conn, id, summary.readonly);
-        let _ = queries::set_playlist_remote(
-            &db.conn,
-            id,
-            &summary.id,
-            summary.owner.as_deref(),
-            summary.public,
-            &account,
-        );
-
-        let remote_song_ids: Vec<String> = full.entry.iter().map(|s| s.id.clone()).collect();
-        let track_ids: Vec<i64> = queries::track_ids_for_remote_ids(&db.conn, &remote_song_ids)
-            .unwrap_or_default()
-            .into_iter()
-            .flatten()
-            .collect();
-        if let Err(e) = queries::merge_server_tracks(&db.conn, id, &track_ids) {
-            log::warn!(
-                "could not store playlist contents for {}: {e}",
-                summary.name
-            );
-            continue;
+                )?,
+            };
+            queries::rename_playlist(&db.conn, id, &summary.name)?;
+            queries::set_playlist_readonly(&db.conn, id, summary.readonly)?;
+            queries::set_playlist_remote(
+                &db.conn,
+                id,
+                &summary.id,
+                summary.owner.as_deref(),
+                summary.public,
+                &account,
+            )?;
+            queries::merge_server_tracks(&db.conn, id, &track_ids)?;
+            // The rename stamped the local copy as changed; this is the
+            // server's copy, so what is here now is what the server has.
+            queries::mark_playlist_synced(&db.conn, id, summary.changed.as_deref(), None)
+        });
+        match stored {
+            Ok(()) => out.pulled += 1,
+            Err(e) => log::warn!("could not store playlist {}: {e}", summary.name),
         }
-        // The rename stamped the local copy as changed; this is the server's
-        // copy, so what is here now is what the server has.
-        let _ = queries::mark_playlist_synced(&db.conn, id, summary.changed.as_deref(), None);
-        out.pulled += 1;
     }
 
     // A playlist we hold a server id for that the server no longer lists was
     // deleted there.
-    for local in queries::list_playlists(&db.conn, queries::LOCAL_USER).unwrap_or_default() {
-        if let Some(remote_id) = &local.remote_id
-            && !seen_remote_ids.contains(remote_id)
-        {
-            let _ = queries::delete_playlist(&db.conn, local.id);
+    let held = match queries::list_playlists(&db.conn, queries::LOCAL_USER) {
+        Ok(lists) => lists,
+        Err(e) => {
+            log::warn!("could not list playlists to check for deletions: {e}");
+            Vec::new()
+        }
+    };
+    let synced = held.iter().filter(|l| l.remote_id.is_some()).count();
+    let gone: Vec<&queries::PlaylistRow> = held
+        .iter()
+        .filter(|l| {
+            l.remote_id
+                .as_ref()
+                .is_some_and(|id| !seen_remote_ids.contains(id))
+        })
+        .collect();
+    if !gone.is_empty() && (remote.is_empty() || (gone.len() > 2 && gone.len() * 2 > synced)) {
+        log::warn!(
+            "the server lists {} playlists, which would delete {} of the {synced} held here; \
+             deleting none",
+            remote.len(),
+            gone.len()
+        );
+    } else {
+        for local in gone {
+            if let Err(e) = queries::delete_playlist(&db.conn, local.id) {
+                log::warn!("could not delete playlist {}: {e}", local.name);
+            }
         }
     }
 
@@ -380,12 +419,57 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
         return Err(());
     }
     let remote_id = local.remote_id.as_deref();
-    let song_ids = queries::remote_ids_for_playlist(&db.conn, id).unwrap_or_default();
+    let song_ids = match queries::remote_ids_for_playlist(&db.conn, id) {
+        Ok(ids) => ids,
+        Err(e) => {
+            log::warn!("could not read playlist '{}' to push it: {e}", local.name);
+            return Err(());
+        }
+    };
 
     // A playlist made entirely of local files has nothing the server could
-    // point at. Creating an empty one there would be worse than not creating it.
-    if remote_id.is_none() && song_ids.is_empty() {
+    // point at. Creating an empty one there would be worse than not creating
+    // it, and emptying one there is only right when it is empty here too.
+    if song_ids.is_empty() && (remote_id.is_none() || local.track_count > 0) {
+        if remote_id.is_some() {
+            log::warn!(
+                "playlist '{}' holds nothing the server has; not emptying the server's copy",
+                local.name
+            );
+        }
         return Err(());
+    }
+
+    // The push replaces the server's copy wholesale, so a song there that the
+    // library does not know would be deleted by it without anyone having
+    // chosen to: this copy never held it.
+    if let Some(remote_id) = remote_id {
+        let unknown = client
+            .get_playlist(remote_id)
+            .map_err(|e| e.to_string())
+            .and_then(|full| {
+                let ids: Vec<String> = full.entry.into_iter().map(|s| s.id).collect();
+                queries::track_ids_for_remote_ids(&db.conn, &ids).map_err(|e| e.to_string())
+            })
+            .map(|ids| ids.iter().filter(|t| t.is_none()).count());
+        match unknown {
+            Ok(0) => {}
+            Ok(n) => {
+                log::warn!(
+                    "playlist '{}' on the server holds {n} songs the library does not have yet; \
+                     not pushing until a library sync has them",
+                    local.name
+                );
+                return Err(());
+            }
+            Err(e) => {
+                log::warn!(
+                    "could not read playlist '{}' on the server before pushing: {e}",
+                    local.name
+                );
+                return Err(());
+            }
+        }
     }
 
     // The name has to travel on its own. Navidrome's `createPlaylist` with a
@@ -416,20 +500,29 @@ fn push(db: &Database, client: &SubsonicClient, account: &str, id: i64) -> Resul
             if let Some(new_id) = new_id {
                 let changed = created.as_ref().and_then(|c| c.playlist.changed.clone());
                 let owner = created.as_ref().and_then(|c| c.playlist.owner.clone());
-                let _ = queries::set_playlist_remote(
-                    &db.conn,
-                    id,
-                    &new_id,
-                    owner.as_deref(),
-                    local.public,
-                    account,
-                );
-                let _ = queries::mark_playlist_synced(
-                    &db.conn,
-                    id,
-                    changed.as_deref(),
-                    Some(local.revision),
-                );
+                let recorded = queries::atomically(&db.conn, || {
+                    queries::set_playlist_remote(
+                        &db.conn,
+                        id,
+                        &new_id,
+                        owner.as_deref(),
+                        local.public,
+                        account,
+                    )?;
+                    queries::mark_playlist_synced(
+                        &db.conn,
+                        id,
+                        changed.as_deref(),
+                        Some(local.revision),
+                    )
+                });
+                if let Err(e) = recorded {
+                    log::warn!(
+                        "playlist '{}' was pushed but its server id was not recorded: {e}",
+                        local.name
+                    );
+                    return Err(());
+                }
             }
             Ok(())
         }
@@ -976,6 +1069,123 @@ mod tests {
         let fourth = reconcile_playlists(&db, &client, &url, "u");
         assert_eq!(fourth.pulled, 1);
         assert_eq!(entries(&db, id), [before[1], before[2]]);
+    }
+
+    /// A song on the server's copy that the library has not seen yet holds
+    /// the pull back, and blocks any push that would delete it there. Once a
+    /// library sync has the song, the pull goes through whole.
+    #[test]
+    fn a_server_song_the_library_lacks_is_never_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let r1 = upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+        let r2 = upsert_track(&db.conn, &remote_meta("Two", "s2")).unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), vec!["s1".into()], 1)],
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = queries::playlist_by_remote_id(&db.conn, "p1")
+            .unwrap()
+            .unwrap()
+            .id;
+
+        {
+            let mut server = server.lock();
+            server.lists[0].1 = vec!["s1".into(), "s9".into()];
+            server.lists[0].2 += 1;
+        }
+        let held_back = reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!(held_back.pulled, 0);
+        assert_eq!(
+            entries(&db, id).iter().map(|e| e.1).collect::<Vec<_>>(),
+            [r1]
+        );
+
+        queries::add_tracks(&db.conn, id, &[r2]).unwrap();
+        assert!(push(&db, &client, &account_key(&url, "u"), id).is_err());
+        assert_eq!(server.lock().lists[0].1, ["s1", "s9"], "nothing deleted");
+
+        queries::remove_entries(&db.conn, id, &[entries(&db, id)[1].0]).unwrap();
+        queries::mark_playlist_synced(&db.conn, id, Some("1"), None).unwrap();
+        let r9 = upsert_track(&db.conn, &remote_meta("Nine", "s9")).unwrap();
+        let caught_up = reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!(caught_up.pulled, 1);
+        assert_eq!(
+            entries(&db, id).iter().map(|e| e.1).collect::<Vec<_>>(),
+            [r1, r9]
+        );
+    }
+
+    /// A copy holding entries none of which the server can name is not
+    /// pushed as an empty list over the server's. One emptied on purpose is.
+    #[test]
+    fn only_an_empty_playlist_empties_the_server_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+        let local = upsert_track(&db.conn, &meta("Here", &dir.path().join("l.flac"))).unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![("p1".into(), vec!["s1".into()], 1)],
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        let account = account_key(&url, "u");
+        reconcile_playlists(&db, &client, &url, "u");
+        let id = queries::playlist_by_remote_id(&db.conn, "p1")
+            .unwrap()
+            .unwrap()
+            .id;
+
+        let only = entries(&db, id);
+        queries::add_tracks(&db.conn, id, &[local]).unwrap();
+        queries::remove_entries(&db.conn, id, &[only[0].0]).unwrap();
+        assert!(push(&db, &client, &account, id).is_err());
+        assert_eq!(server.lock().lists[0].1, ["s1"]);
+
+        let rest = entries(&db, id);
+        queries::remove_entries(&db.conn, id, &[rest[0].0]).unwrap();
+        assert!(push(&db, &client, &account, id).is_ok());
+        assert!(server.lock().lists[0].1.is_empty());
+    }
+
+    /// A listing with none of the playlists held here is a server answering
+    /// wrongly far more often than a user deleting every one of them.
+    #[test]
+    fn an_empty_listing_deletes_no_playlists() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        upsert_track(&db.conn, &remote_meta("One", "s1")).unwrap();
+
+        let server = std::sync::Arc::new(parking_lot::Mutex::new(Server {
+            lists: vec![
+                ("p1".into(), vec!["s1".into()], 1),
+                ("p2".into(), vec!["s1".into()], 2),
+            ],
+            ..Default::default()
+        }));
+        let url = serve(server.clone());
+        let client = SubsonicClient::new(&url, "u", "pw");
+        reconcile_playlists(&db, &client, &url, "u");
+        let held = || {
+            queries::list_playlists(&db.conn, queries::LOCAL_USER)
+                .unwrap()
+                .len()
+        };
+        assert_eq!(held(), 2);
+
+        let lists = std::mem::take(&mut server.lock().lists);
+        reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!(held(), 2, "nothing deleted on an empty listing");
+
+        server.lock().lists = lists[1..].to_vec();
+        reconcile_playlists(&db, &client, &url, "u");
+        assert_eq!(held(), 1, "one deleted on the server is deleted here");
     }
 
     #[test]

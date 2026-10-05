@@ -27,7 +27,7 @@ pub fn is_playlist_file(path: &Path) -> bool {
         })
 }
 
-fn is_m3u(path: &Path) -> bool {
+pub(crate) fn is_m3u(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("m3u") || ext.eq_ignore_ascii_case("m3u8"))
@@ -208,6 +208,92 @@ fn entry_path(entry: &str, dir: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
+/// Rewrite an M3U file's entries after files moved: `moved` maps where each
+/// was to where it is, and `was_at` is where the list itself was, which its
+/// relative entries are read against. Entries naming a moved file are given
+/// its new place; relative ones are kept relative where they still can be.
+/// Everything else in the file is left as it was. Whether it was rewritten.
+///
+/// What organize runs after moving files, since an M3U names its tracks by
+/// path and the next scan would otherwise read every moved one as missing.
+pub(crate) fn follow_moves(
+    path: &Path,
+    was_at: &Path,
+    moved: &std::collections::HashMap<PathBuf, PathBuf>,
+) -> std::io::Result<bool> {
+    let bytes = std::fs::read(path)?;
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        return Err(std::io::Error::other("UTF-16 playlists are not rewritten"));
+    }
+    let utf8 = std::str::from_utf8(&bytes).is_ok();
+    let text = decode(bytes);
+    let old_dir = was_at.parent().unwrap_or(Path::new("/"));
+    let new_dir = path.parent().unwrap_or(Path::new("/"));
+
+    let mut changed = false;
+    let mut lines = Vec::new();
+    for line in text.split('\n') {
+        let (body, cr) = match line.strip_suffix('\r') {
+            Some(body) => (body, "\r"),
+            None => (line, ""),
+        };
+        let bom = if body.starts_with('\u{feff}') {
+            "\u{feff}"
+        } else {
+            ""
+        };
+        let entry = body.trim().trim_start_matches('\u{feff}');
+        let rewritten = (!entry.is_empty() && !entry.starts_with('#'))
+            .then(|| entry_path(entry, old_dir))
+            .flatten()
+            .and_then(|old| {
+                let url = entry.starts_with("file://");
+                let relative = !url && !Path::new(&entry.replace('\\', "/")).is_absolute();
+                let target = match moved.get(&old) {
+                    Some(target) => target.clone(),
+                    None if relative && old_dir != new_dir => old,
+                    None => return None,
+                };
+                if url {
+                    return url::Url::from_file_path(&target).ok().map(String::from);
+                }
+                let written = match target.strip_prefix(new_dir) {
+                    Ok(inside) if relative => inside,
+                    _ => target.as_path(),
+                };
+                Some(written.to_string_lossy().into_owned())
+            });
+        match rewritten {
+            Some(entry) => {
+                changed = true;
+                lines.push(format!("{bom}{entry}{cr}"));
+            }
+            None => lines.push(line.to_owned()),
+        }
+    }
+    if !changed {
+        return Ok(false);
+    }
+
+    let text = lines.join("\n");
+    // A list that was not UTF-8 is written back as the Latin-1 it was read as,
+    // where the new paths allow.
+    let bytes = match text.chars().map(|c| u8::try_from(c as u32)).collect() {
+        Ok(latin1) if !utf8 => latin1,
+        _ => text.into_bytes(),
+    };
+    let temp = path.with_extension("koan-rewrite");
+    std::fs::write(&temp, bytes)?;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let _ = std::fs::set_permissions(&temp, meta.permissions());
+    }
+    if let Err(e) = std::fs::rename(&temp, path) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e);
+    }
+    Ok(true)
+}
+
 fn import_m3u(db: &Database, path: &Path) -> Result<bool, String> {
     let m3u = parse_m3u(&decode(std::fs::read(path).map_err(|e| e.to_string())?));
     let dir = path.parent().unwrap_or(Path::new("/"));
@@ -294,9 +380,8 @@ fn forget_missing(db: &Database, settled: &[PathBuf]) -> Result<(), DbError> {
         .collect::<Result<_, _>>()?;
     for (id, source) in sourced {
         let path = Path::new(&source);
-        // `try_exists` errs when it cannot tell, which is not "gone".
-        if settled.iter().any(|dir| path.starts_with(dir)) && matches!(path.try_exists(), Ok(false))
-        {
+        // A path that cannot be reached is not "gone".
+        if settled.iter().any(|dir| path.starts_with(dir)) && super::known_missing(path) {
             queries::delete_playlist(&db.conn, id)?;
             log::info!("{source} is gone; deleted its playlist");
         }

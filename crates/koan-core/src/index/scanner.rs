@@ -189,7 +189,8 @@ fn index_folder(
 /// Removal is only trusted while the library folder holding the directory is
 /// itself readable and non-empty: an unmounted volume leaves an empty mount
 /// point, and every directory under it would otherwise read as deleted. A
-/// directory that could not be read in full removes nothing. Directories
+/// directory that could not be read in full, or one reached through a symlink
+/// whose target is gone, removes nothing. Directories
 /// outside every library folder are ignored; one that is a library folder
 /// gets the same treatment as `scan_folder`.
 pub fn scan_dirs(
@@ -234,7 +235,11 @@ pub fn scan_dirs(
                     settled.push(dir);
                 }
             }
-            Ok(false) => settled.push(dir),
+            Ok(false) if super::known_missing(&dir) => settled.push(dir),
+            Ok(false) => log::warn!(
+                "{} is behind a link that leads nowhere — not scanning it",
+                dir.display()
+            ),
             Err(e) => log::warn!("cannot tell whether {} exists: {e}", dir.display()),
         }
     }
@@ -299,10 +304,19 @@ struct Walked {
 /// Every audio and playlist file under `path`. `follow_links` means a symlink
 /// pointing at a sibling directory inside the library indexes its files under
 /// both paths.
+///
+/// A path that is not UTF-8 is left out: the database stores paths as text, so
+/// it would be stored under a name no stat finds, and the same scan would
+/// remove it again along with its play history.
 fn walk(path: &Path, result: &mut ScanResult) -> Walked {
     let mut found = Walked::default();
     for entry in walkdir::WalkDir::new(path).follow_links(true) {
         match entry {
+            Ok(e) if e.path().to_str().is_none() => {
+                if e.file_type().is_file() {
+                    log::warn!("skipping a path that is not UTF-8: {}", e.path().display());
+                }
+            }
             Ok(e) if e.file_type().is_file() && is_audio_file(e.path()) => {
                 found.audio.push(e.path().to_path_buf())
             }
@@ -587,6 +601,13 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
             .into_iter()
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_file() && is_audio_file(e.path()))
+            .filter(|e| {
+                let utf8 = e.path().to_str().is_some();
+                if !utf8 {
+                    log::warn!("skipping a path that is not UTF-8: {}", e.path().display());
+                }
+                utf8
+            })
             .map(|e| e.path().to_path_buf())
             .collect();
         found.sort();
@@ -957,6 +978,65 @@ mod tests {
             None,
         );
         assert_eq!(r.removed, 0);
+        assert_eq!(track_paths(&db).len(), 1);
+    }
+
+    /// A share linked into the library and gone away leaves a dangling
+    /// symlink, through which every file reads as deleted. Neither a full
+    /// scan nor the watcher's forced rescan may take that as a deletion.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_is_not_a_deletion() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        let local = music.join("Local");
+        let share = dir.path().join("share");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(share.join("Album")).unwrap();
+        test_utils::generate_wav(&local.join("a.wav"), 44100, 1, 0.2, 16);
+        test_utils::generate_wav(&share.join("Album/b.wav"), 44100, 1, 0.2, 16);
+        std::os::unix::fs::symlink(&share, music.join("nas")).unwrap();
+        let db = test_db(dir.path());
+        assert_eq!(
+            scan_folder(&db, &music, ScanOptions::default(), None).added,
+            2
+        );
+
+        std::fs::remove_dir_all(&share).unwrap();
+        let full = scan_folder(&db, &music, ScanOptions::default(), None);
+        assert_eq!(full.removed, 0, "{:?}", full.removed_paths);
+        let watched = scan_dirs(
+            &db,
+            std::slice::from_ref(&music),
+            &[music.join("nas/Album")],
+            ScanOptions::default(),
+            None,
+        );
+        assert_eq!(watched.removed, 0, "{:?}", watched.removed_paths);
+        assert_eq!(track_paths(&db).len(), 2);
+
+        // The link itself removed is a deletion like any other.
+        std::fs::remove_file(music.join("nas")).unwrap();
+        let removed = scan_folder(&db, &music, ScanOptions::default(), None);
+        assert_eq!(removed.removed, 1);
+    }
+
+    /// A name that is not UTF-8 would be stored under a different one, which
+    /// no stat finds: the same scan would add it and remove it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_path_that_is_not_utf8_is_skipped() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        test_utils::generate_wav(&music.join("a.wav"), 44100, 1, 0.2, 16);
+        let odd = music.join(std::ffi::OsStr::from_bytes(b"caf\xe9.wav"));
+        test_utils::generate_wav(&odd, 44100, 1, 0.2, 16);
+        let db = test_db(dir.path());
+
+        let r = scan_folder(&db, &music, ScanOptions::default(), None);
+        assert_eq!((r.added, r.removed), (1, 0));
         assert_eq!(track_paths(&db).len(), 1);
     }
 

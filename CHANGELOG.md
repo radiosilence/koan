@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Playlist sync no longer removes songs from the server's copy.** A server playlist naming a song the library had not synced yet was stored without it, and the next edit pushed that shorter list back, deleting the song on the server. Such a playlist is now left as it was until the library has the song, and no push replaces a server copy holding songs the library does not know. A database error while reading a playlist is reported rather than read as an empty list, and a playlist whose entries are all local files no longer empties its server copy; only one emptied by hand does.
+- **A server that lists no playlists no longer deletes yours.** Playlists the server stops listing are deleted locally, as before, except when the listing is empty or would remove most of several at once, which reads as the server answering wrongly. A failed lookup no longer creates a duplicate of a playlist, and a playlist's name, owner, contents and sync state are stored together or not at all.
+- **Organize keeps playlists read from M3U files.** Moving an album moved its `.m3u` with it, and the next scan read the list as deleted, made a new playlist under a new id, and dropped every entry whose file had been renamed. Organize now rewrites the M3U files in the library to name the files where they went, and moves the playlist with its file; undo puts both back.
+- **Organize undo survives an unplugged drive.** Undo dropped the record of any move whose destination it could not see, including every file on a drive that was disconnected. It now drops one only when the file is gone from a folder that is still there, and otherwise keeps it for when the drive is back.
+- **A symlinked share going away no longer deletes its tracks.** With part of the library linked in from a network share, the share being unmounted made every file under the link read as deleted, and a rescan removed those tracks with their play history, whatever the size of the removal. A file is now taken as deleted only when the folder that should hold it is there.
+- **Files whose names are not UTF-8 no longer lose their history on every scan (Linux).** The name was stored altered, so the same scan that added a track removed it. Such files are now skipped with a warning.
+
 ## 0.54.1
 
 ### Added
