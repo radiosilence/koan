@@ -4,7 +4,7 @@
 
 ### Added
 
-- **A shelf's headings open its browsers.** On Favourites, Recently Played and search, in the apps and the web UI, the Artists, Albums and Tracks headings open the browser filtered to the shelf, as See all does, whether or not the section shows all it has. See all stays where it gives the count.
+- **A shelf's headings open its browsers, in place of See all.** On Favourites, Recently Played and search, in the apps and the web UI, each section's heading reads as a link: its name, how many there are in all, and a chevron. It opens the browser filtered to the shelf, whether or not the section shows all it has. The separate See all is gone.
 
 ### Fixed
 

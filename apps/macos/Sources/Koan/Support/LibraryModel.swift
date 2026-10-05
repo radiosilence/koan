@@ -44,7 +44,7 @@ final class LibraryModel {
     /// albums.
     struct Listing {
         let section: Section
-        /// The name filter it was read with: empty, unless a See all carried
+        /// The name filter it was read with: empty, unless a shelf's heading carried
         /// one in.
         let filter: String
         fileprivate let rows: Rows
@@ -60,7 +60,7 @@ final class LibraryModel {
         guard section != self.section else { return nil }
         // Nothing carries over: a filter you left behind on another view is
         // invisible here, and an apparently empty library is the result. The
-        // one exception is a See all, which arrives with the shelf's query.
+        // one exception is a shelf's heading, which arrives with the shelf's query.
         let filter = carried ?? ""
         carried = nil
         return await Listing(
@@ -87,7 +87,7 @@ final class LibraryModel {
         continueTracks()
     }
 
-    // MARK: - See all
+    // MARK: - Shelves
 
     /// Which listing a shelf section opens.
     enum ShelfList {
@@ -112,7 +112,7 @@ final class LibraryModel {
     ///
     /// The filters replace whatever was set, as a link does, and stay set,
     /// shown in the filter control and cleared from it like any other.
-    func seeAll(_ list: ShelfList, of shelf: ShelfKind) -> Section {
+    func browse(_ list: ShelfList, of shelf: ShelfKind) -> Section {
         seeding = true
         defer { seeding = false }
         var filter = BrowseFilter.none
@@ -134,7 +134,7 @@ final class LibraryModel {
         return list.section
     }
 
-    /// True while a See all sets the browser up, which is one change and asks
+    /// True while a shelf's heading sets the browser up, which is one change and asks
     /// for nothing until the move it precedes.
     @ObservationIgnored private var seeding = false
 
@@ -723,7 +723,7 @@ final class LibraryModel {
 }
 
 /// How many artists, records and tracks a shelf has in all, beside the
-/// first few it shows: what See all promises.
+/// first few it shows: what its headings say.
 struct ShelfTotals: Equatable {
     let artists: UInt64
     let albums: UInt64

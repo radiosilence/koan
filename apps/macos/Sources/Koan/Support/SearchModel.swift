@@ -38,7 +38,7 @@ final class SearchModel {
     private(set) var albums: [Album] = []
     private(set) var tracks: [Track] = []
     /// How many of each kind the query finds in the library as its browsers
-    /// would list them, for See all. The results above are ranked and capped,
+    /// would list them, for each section's heading. The results above are ranked and capped,
     /// so these can be more.
     private(set) var totals: ShelfTotals?
     private(set) var isSearching = false

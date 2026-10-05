@@ -38,9 +38,9 @@ struct MixedCollection: NSViewRepresentable {
     /// How many are in each section, beside its title.
     var counts = false
     /// How many there are of each kind in all, where the page shows the first
-    /// few: a section with more than it shows offers See all.
+    /// few: each heading then gives the count and opens its browser.
     var totals: ShelfTotals?
-    var seeAll: (LibraryModel.ShelfList) -> Void = { _ in }
+    var openSection: (LibraryModel.ShelfList) -> Void = { _ in }
     var selectAllToken = 0
     let insets: EdgeInsets
 
@@ -264,21 +264,19 @@ struct MixedCollection: NSViewRepresentable {
 
         private func configure(_ header: SectionHeader, _ section: Section) {
             header.title.stringValue = section.title
-            header.count.stringValue = parent?.counts == true ? "\(count(of: section))" : ""
             let total: UInt64? = switch section {
             case .artists: parent?.totals?.artists
             case .albums: parent?.totals?.albums
             case .tracks: parent?.totals?.tracks
             }
-            // The heading opens the browser wherever the page has one to
-            // open, and See all adds the count when the preview is short of it.
+            // Where the page knows how many there are in all, the heading
+            // says so and opens the browser on them; the preview may be fewer.
             if let total {
-                let seeAll = parent?.seeAll
-                header.open = { seeAll?(section.list) }
-                header.all.title = "See all (\(total))"
-                header.all.isHidden = total <= UInt64(count(of: section))
+                header.count.stringValue = "\(total)"
+                let open = parent?.openSection
+                header.open = { open?(section.list) }
             } else {
-                header.all.isHidden = true
+                header.count.stringValue = parent?.counts == true ? "\(count(of: section))" : ""
                 header.open = nil
             }
             header.chevron.isHidden = header.open == nil
@@ -660,12 +658,12 @@ final class MixedCollectionView: NSCollectionView {
 
 // MARK: - Items
 
-/// A section's title, and its See all.
+/// A section's heading: its title and count, and where a page offers it, a
+/// chevron and a link to the section's browser.
 private final class SectionHeader: NSView, NSCollectionViewElement {
     static let identifier = NSUserInterfaceItemIdentifier("SectionHeader")
     let title = NSTextField(labelWithString: "")
     let count = NSTextField(labelWithString: "")
-    let all = NSButton(title: "", target: nil, action: nil)
     let chevron = NSImageView()
     /// Which section it heads, for refreshing it in place.
     var section: Int?
@@ -680,35 +678,27 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
         count.textColor = .tertiaryLabelColor
         addSubview(title)
         addSubview(count)
-        all.isBordered = false
-        all.font = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize)
-        all.contentTintColor = .controlAccentColor
-        all.target = self
-        all.action = #selector(seeAll)
-        all.isHidden = true
-        addSubview(all)
         chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
         chevron.contentTintColor = .secondaryLabelColor
         chevron.isHidden = true
         addSubview(chevron)
-        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(seeAll)))
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(follow)))
     }
 
-    @objc private func seeAll() { open?() }
+    @objc private func follow() { open?() }
 
-    /// The title and its chevron are the heading's link.
-    private var link: CGRect { title.frame.union(chevron.frame) }
+    /// The title, its count and its chevron are the heading's link.
+    private var link: CGRect { title.frame.union(count.frame).union(chevron.frame) }
 
     override func resetCursorRects() {
         if open != nil { addCursorRect(link, cursor: .pointingHand) }
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // Only the link and the button take clicks; the rest of the header
-        // is the gap between sections.
+        // Only the link takes clicks; the rest of the header is the gap
+        // between sections.
         let local = convert(point, from: superview)
-        if !all.isHidden, all.frame.contains(local) { return all }
         return open != nil && link.contains(local) ? self : nil
     }
 
@@ -725,12 +715,6 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
         let countWidth = count.stringValue.isEmpty ? 0 : ceil(count.intrinsicContentSize.width) + 4
         count.frame = CGRect(x: width + 4, y: title.frame.maxY - countHeight - 1, width: max(countWidth, 0), height: countHeight)
         chevron.frame = CGRect(x: width + 4 + countWidth, y: title.frame.midY - 6, width: 10, height: 12)
-        all.sizeToFit()
-        let size = all.frame.size
-        all.frame = CGRect(
-            x: bounds.width - size.width, y: title.frame.midY - size.height / 2,
-            width: size.width, height: size.height
-        )
     }
 }
 

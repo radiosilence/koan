@@ -660,31 +660,7 @@ fn row_ids(body: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn a_shelfs_headings_open_its_browsers_whether_or_not_it_overflows() {
-    let f = setup(true);
-    {
-        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
-        queries::add_favourite(&db.conn, 1, f.track_id).unwrap();
-    }
-    let body = send(
-        &f.app,
-        authed(&f.state, "/favourites").body(Body::empty()).unwrap(),
-    )
-    .await
-    .body;
-    assert!(!body.contains("See all"), "one track is all of it");
-    let heading = body
-        .split("<h2>")
-        .find(|h| h.contains("Tracks<svg"))
-        .expect("a Tracks heading");
-    assert!(
-        heading.starts_with("<a ") && heading.contains("href=\"/tracks?sort=artist&amp;fav=1\""),
-        "{heading}"
-    );
-}
-
-#[tokio::test]
-async fn see_all_opens_the_browser_its_preview_is_the_head_of() {
+async fn a_shelf_heading_opens_the_browser_its_preview_is_the_head_of() {
     let f = setup(true);
     {
         let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
@@ -701,12 +677,15 @@ async fn see_all_opens_the_browser_its_preview_is_the_head_of() {
     let shelf = send(&f.app, get("/favourites")).await.body;
     let preview = row_ids(&shelf);
     assert_eq!(preview.len(), 10, "ten in the preview");
-    let link = shelf
-        .split("See all (12)")
-        .next()
-        .unwrap()
-        .rsplit("href=\"")
-        .next()
+    // The Tracks heading: a link, with the shelf's whole count in it.
+    let heading = shelf
+        .split("<h2>")
+        .find(|h| h.contains(">Tracks<"))
+        .expect("a Tracks heading");
+    assert!(heading.contains(">12</span>"), "{heading}");
+    let link = heading
+        .split("href=\"")
+        .nth(1)
         .unwrap()
         .split('"')
         .next()
@@ -715,7 +694,7 @@ async fn see_all_opens_the_browser_its_preview_is_the_head_of() {
     assert!(link.starts_with("/tracks?"), "{link}");
 
     let browser = send(&f.app, get(&link)).await.body;
-    assert!(browser.contains("12 tracks"), "the count See all promised");
+    assert!(browser.contains("12 tracks"), "the count the heading gave");
     assert_eq!(
         row_ids(&browser)[..10],
         preview[..],

@@ -426,7 +426,7 @@ fn album_list(
     Some((albums, versions, Hearts::load(&db.conn, user)))
 }
 
-/// "12 albums", once a filter is on: what a shelf's "See all" promised.
+/// "12 albums", once a filter is on: the count a shelf's heading gave.
 fn counted(n: usize, one: &str, many: &str, b: &Browse) -> String {
     if b.filtered() {
         format!(
@@ -1001,26 +1001,16 @@ fn shelf_versions(conn: &rusqlite::Connection, s: &Summary) -> Versions {
     versions
 }
 
-/// A section's heading, which opens the browser with the shelf as its filter,
-/// and "See all (n)" beside it when the preview is not all of it.
-fn section_head(
-    title: &str,
-    total: u64,
-    shown: usize,
-    shelf: Shelf,
-    kind: Kind,
-    extra: &str,
-) -> String {
-    let href = escape(&browse::see_all(shelf, kind));
-    let all = if total as usize > shown {
-        format!("<a class=\"text-meta\" href=\"{href}\">See all ({total})</a>")
-    } else {
-        String::new()
-    };
+/// A section's heading: its name, how many the shelf has in all, and a
+/// chevron, the whole of it a link to the browser with the shelf as its
+/// filter. The preview below may show fewer.
+fn section_head(title: &str, total: u64, shelf: Shelf, kind: Kind, extra: &str) -> String {
+    let href = escape(&browse::shelf_browser(shelf, kind));
     format!(
-        "<div class=\"{LIST_HEAD}\"><h2><a class=\"inline-flex items-center gap-1 text-[inherit] \
-hover:text-brand hover:no-underline\" href=\"{href}\">{title}{ICON_CHEVRON}</a></h2>\
-<div class=\"{ACTIONS}\">{extra}{all}</div></div>"
+        "<div class=\"{LIST_HEAD}\"><h2><a class=\"inline-flex items-center gap-1.5 text-[inherit] \
+hover:text-brand hover:no-underline\" href=\"{href}\">{title}\
+<span class=\"font-normal text-muted tabular-nums\">{total}</span>{ICON_CHEVRON}</a></h2>\
+<div class=\"{ACTIONS}\">{extra}</div></div>"
     )
 }
 
@@ -1038,14 +1028,7 @@ fn shelf_sections(
         let _ = write!(
             out,
             "{}<div class=\"mb-6 flex flex-wrap gap-2\">{}</div>",
-            section_head(
-                "Artists",
-                s.artists.total,
-                s.artists.preview.len(),
-                shelf,
-                Kind::Artists,
-                ""
-            ),
+            section_head("Artists", s.artists.total, shelf, Kind::Artists, ""),
             pills(&s.artists.preview)
         );
     }
@@ -1053,14 +1036,7 @@ fn shelf_sections(
         let _ = write!(
             out,
             "{}<div class=\"mb-6 {GRID}\">{}</div>",
-            section_head(
-                "Albums",
-                s.albums.total,
-                s.albums.preview.len(),
-                shelf,
-                Kind::Albums,
-                ""
-            ),
+            section_head("Albums", s.albums.total, shelf, Kind::Albums, ""),
             cells(&s.albums.preview, versions, hearts)
         );
     }
@@ -1078,7 +1054,6 @@ fn shelf_sections(
             section_head(
                 "Tracks",
                 s.tracks.total,
-                s.tracks.preview.len(),
                 shelf,
                 Kind::Tracks,
                 "<button class=\"primary\" data-act=play>Play</button>\

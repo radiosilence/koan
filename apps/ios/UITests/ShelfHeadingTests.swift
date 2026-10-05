@@ -1,14 +1,14 @@
 import XCTest
 
-/// A shelf's See all opens the browser filtered to the shelf: the count the
-/// shelf gave is the browser's, and the preview's tracks are the head of its
-/// listing, in the same order.
+/// A shelf's section headings open the browser filtered to the shelf: the
+/// count a heading gives is the browser's, and the preview's tracks are the
+/// head of its listing, in the same order, whether or not the preview shows
+/// them all.
 ///
 /// Runs against whatever library the simulator holds, so sign it in to a
-/// server whose shelves have more than their previews show. A section that
-/// shows all it has offers no See all, and is skipped.
+/// server with something on its shelves.
 @MainActor
-final class SeeAllTests: XCTestCase {
+final class ShelfHeadingTests: XCTestCase {
     private var app: XCUIApplication!
 
     override func setUp() async throws {
@@ -30,18 +30,20 @@ final class SeeAllTests: XCTestCase {
         var checked = 0
         for list in ["tracks", "albums", "artists"] {
             open(name)
-            let button = app.buttons["see-all-\(list)"]
-            guard reveal(button) else { continue }
-            let total = try XCTUnwrap(Int(button.label.filter(\.isNumber)), "no count in \(button.label)")
+            let heading = app.buttons["heading-\(list)"]
+            guard reveal(heading) else { continue }
+            let total = try XCTUnwrap(
+                Int(heading.label.filter(\.isNumber)), "no count in “\(heading.label)”"
+            )
             let preview = list == "tracks" ? trackIds() : []
             snap("\(name)-\(list)-shelf")
-            button.tap()
+            heading.tap()
 
-            let noun = list.dropLast()
-            let count = "\(total) \(total == 1 ? String(noun) : list)"
+            let noun = String(list.dropLast())
+            let count = "\(total) \(total == 1 ? noun : list)"
             XCTAssert(
                 app.staticTexts[count].waitForExistence(timeout: 10),
-                "\(name): See all (\(total)) opened a browser without “\(count)”"
+                "\(name): the \(list) heading said \(total) and opened a browser without “\(count)”"
             )
             if list == "tracks" {
                 let listed = trackIds()
@@ -53,40 +55,6 @@ final class SeeAllTests: XCTestCase {
                 )
             }
             snap("\(name)-\(list)-browser")
-            checked += 1
-        }
-        if checked == 0 { throw XCTSkip("\(name) shows everything it has") }
-    }
-
-    func testFavouritesHeadings() throws { try headings("Favourites") }
-
-    func testRecentlyPlayedHeadings() throws { try headings("Recently Played") }
-
-    /// Each section's heading opens the same browser as See all, whether or
-    /// not the section shows everything it has: the shelf's count for that
-    /// kind, in its header, is the browser's.
-    private func headings(_ name: String) throws {
-        var checked = 0
-        for list in ["tracks", "albums", "artists"] {
-            open(name)
-            let heading = app.buttons["heading-\(list)"]
-            guard reveal(heading) else { continue }
-            // The header's counts read "14 artists · 15 albums · 22 tracks".
-            let counts = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", " \(list)"))
-                .allElementsBoundByIndex.map(\.label).joined(separator: " · ")
-            let noun = String(list.dropLast())
-            let total = counts.components(separatedBy: " · ")
-                .first { $0.hasSuffix(" \(list)") || $0.hasSuffix(" \(noun)") }
-                .flatMap { Int($0.prefix { $0.isNumber }) }
-            let expected = try XCTUnwrap(total, "no \(list) count in “\(counts)”")
-            let overflows = app.buttons["see-all-\(list)"].exists
-            heading.tap()
-            let count = "\(expected) \(expected == 1 ? noun : list)"
-            XCTAssert(
-                app.staticTexts[count].waitForExistence(timeout: 10),
-                "\(name): the \(list) heading opened a browser without “\(count)”"
-            )
-            snap("\(name)-\(list)-heading\(overflows ? "" : "-whole")")
             checked += 1
         }
         if checked == 0 { throw XCTSkip("\(name) is empty") }
