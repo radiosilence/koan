@@ -20,7 +20,7 @@ These Navidrome features have no kōan equivalent today:
 - **Serving under a sub-path** (`ND_BASEURL`). kōan expects its own hostname.
 - **Reverse-proxy authentication** (`ND_REVERSEPROXYUSERHEADER`). Accounts are kōan's own.
 - **Per-library permissions.** Every account sees the whole library.
-- **Internet radio, bookmarks and server-side play queues** (`getPlayQueue`, `savePlayQueue`). Clients that use these lose the feature against kōan; the rest of the client works.
+- **Internet radio and server-side play queues** (`getPlayQueue`, `savePlayQueue`). Clients that use these lose the feature against kōan; the rest of the client works.
 
 ## Translating a Navidrome setup
 
