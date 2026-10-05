@@ -623,6 +623,12 @@ pub struct Playlist {
     pub changed_at: String,
     /// How this machine likes to look at it. `None` follows the app default.
     pub grouped: Option<bool>,
+    /// Its contents are not for editing: rules decide them, here or on the
+    /// server. Adds, removals and reorders are refused.
+    pub readonly: bool,
+    /// Rules here decide its contents (a smart playlist on this machine,
+    /// rather than one mirrored from a server).
+    pub smart: bool,
 }
 
 impl From<queries::PlaylistRow> for Playlist {
@@ -639,6 +645,8 @@ impl From<queries::PlaylistRow> for Playlist {
             created_at: p.created_at,
             changed_at: p.changed_at,
             grouped: p.grouped,
+            readonly: p.readonly,
+            smart: p.rules.is_some(),
         }
     }
 }

@@ -11,6 +11,7 @@ pub mod playlists;
 mod scan_cache;
 mod search;
 pub mod shares;
+pub mod smart;
 pub(crate) mod sources;
 mod stats;
 pub mod tracks;

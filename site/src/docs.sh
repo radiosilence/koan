@@ -15,6 +15,7 @@ pages=(
   "Server|docs/guide/authentication.md"
   "Server|docs/guide/remote-servers.md"
   "Library|docs/guide/file-organization.md"
+  "Library|docs/guide/smart-playlists.md"
   "Library|docs/format-strings.md"
   "Library|docs/recipes/cache-management.md"
   "Playback|docs/guide/devices.md"

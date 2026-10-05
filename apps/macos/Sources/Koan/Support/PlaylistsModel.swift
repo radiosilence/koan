@@ -166,8 +166,14 @@ final class PlaylistsModel {
         act { _ = try await $0.deletePlaylist(playlistId: id) }
     }
 
+    /// Whether the playlist takes edits to what it holds. A smart playlist's
+    /// rules decide that, so drops, removals and reorders on one do nothing.
+    func fillable(_ id: Int64) -> Bool {
+        playlist(id: id)?.readonly != true
+    }
+
     func add(trackIds: [Int64], to id: Int64) {
-        guard !trackIds.isEmpty else { return }
+        guard !trackIds.isEmpty, fillable(id) else { return }
         act {
             _ = try await $0.addToPlaylist(playlistId: id, trackIds: trackIds)
         }
@@ -187,6 +193,7 @@ final class PlaylistsModel {
     /// engine adds and reorders in one go — doing it in two from here would be
     /// reordering against the list as it was before the add landed.
     func insert(dropped: [PlayableTransfer], into id: Int64, at position: Int) {
+        guard fillable(id) else { return }
         Task {
             let ids = await resolve(dropped)
             guard !ids.isEmpty else { return }
@@ -201,13 +208,14 @@ final class PlaylistsModel {
     /// Put the entries in this order. Ids survive, so the queue keeps knowing
     /// which row each of its items came from.
     func reorder(entryIds: [Int64], in id: Int64) {
+        guard fillable(id) else { return }
         act {
             try await $0.reorderPlaylist(playlistId: id, entryIds: entryIds)
         }
     }
 
     func remove(entryIds: [Int64], from id: Int64) {
-        guard !entryIds.isEmpty else { return }
+        guard !entryIds.isEmpty, fillable(id) else { return }
         act {
             _ = try await $0.removeFromPlaylist(playlistId: id, entryIds: entryIds)
         }
@@ -216,6 +224,7 @@ final class PlaylistsModel {
     /// Shuffle the playlist itself, permanently. Distinct from playing it
     /// shuffled, which leaves it alone.
     func shuffle(id: Int64) {
+        guard fillable(id) else { return }
         act { try await $0.shufflePlaylist(playlistId: id) }
     }
 

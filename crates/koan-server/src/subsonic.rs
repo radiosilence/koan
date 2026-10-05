@@ -2987,6 +2987,7 @@ async fn get_playlists(
 ) -> Response {
     offload_response(move || {
         respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
+            refresh_smart(db, user);
             let lists = queries::list_playlists(&db.conn, user)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
@@ -3015,7 +3016,9 @@ fn playlist_attrs(node: XmlNode, list: &queries::PlaylistRow, username: &str) ->
         .attr("owner", list.owner.as_deref().unwrap_or(username))
         .attr_bool("public", list.public)
         .attr("created", &list.created_at)
-        .attr("changed", &list.changed_at);
+        .attr("changed", &list.changed_at)
+        // OpenSubsonic: a smart playlist takes no edits to its contents.
+        .attr_bool("readonly", list.readonly);
     match &list.comment {
         Some(comment) => node.attr("comment", comment),
         None => node,
@@ -3063,6 +3066,28 @@ fn playlist_for(
     Ok(list)
 }
 
+/// Evaluate the smart playlists `user` can see that are due, and have every
+/// device pull any whose contents moved. A failure leaves the last contents
+/// in place, which is what a read should serve anyway.
+fn refresh_smart(db: &Database, user: i64) {
+    match queries::smart::refresh_due(&db.conn, user) {
+        Ok(changed) if !changed.is_empty() => crate::clients::changed(),
+        Ok(_) => {}
+        Err(e) => log::warn!("smart playlists not refreshed: {e}"),
+    }
+}
+
+/// A smart playlist's contents are its rules', not for editing.
+fn refuse_smart(list: &queries::PlaylistRow) -> Result<(), SubsonicError> {
+    if list.readonly {
+        return Err(SubsonicError::new(
+            SubsonicErrorCode::NotAuthorized,
+            "Smart playlists are read-only: change the rules instead",
+        ));
+    }
+    Ok(())
+}
+
 /// After a playlist write: push it to the upstream, if there is one, and have
 /// the account's devices pull it, as the GraphQL mutations do. A koan app's
 /// own edits arrive through these endpoints.
@@ -3086,6 +3111,12 @@ async fn get_playlist(
     offload_response(move || {
         respond_db_user(&state, &params.auth, Role::Readonly, |db, user, b| {
             let id = playlist_id(db, params.id.as_deref())?;
+            playlist_for(db, user, id, false)?;
+            match queries::smart::refresh_if_due(&db.conn, id) {
+                Ok(true) => crate::clients::changed(),
+                Ok(false) => {}
+                Err(e) => log::warn!("smart playlist {id} not refreshed: {e}"),
+            }
             let list = playlist_for(db, user, id, false)?;
             Ok(b.child(playlist_node(db, user, &list, &state.username)?))
         })
@@ -3108,7 +3139,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
             let id = queries::atomically(&db.conn, || match params.get("playlistId") {
                 Some(existing) => {
                     let id = playlist_id(db, Some(existing))?;
-                    playlist_for(db, user, id, true)?;
+                    refuse_smart(&playlist_for(db, user, id, true)?)?;
                     if let Some(name) = params.get("name") {
                         queries::rename_playlist(&db.conn, id, name)
                             .map_err(|e| SubsonicError::internal(e.to_string()))?;
@@ -3150,7 +3181,12 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
 
         respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let id = playlist_id(db, params.get("playlistId").or_else(|| params.get("id")))?;
-            playlist_for(db, user, id, true)?;
+            let list = playlist_for(db, user, id, true)?;
+            if params.all("songIdToAdd").next().is_some()
+                || params.all("songIndexToRemove").next().is_some()
+            {
+                refuse_smart(&list)?;
+            }
             let added = song_ids(db, params.all("songIdToAdd"));
 
             // One transaction: the indexes to remove are against the list as
@@ -5823,6 +5859,70 @@ mod tests {
             .unwrap();
         let left = queries::playlist_track_ids(&db.conn, row).unwrap();
         assert_eq!(left, vec![c, a]);
+    }
+
+    /// A smart playlist is served like any other, marked read-only, and its
+    /// contents refuse edits while its name does not.
+    #[tokio::test]
+    async fn smart_playlists_are_served_read_only() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(state.pool.path()).unwrap();
+        let tracks = queries::all_tracks(&db.conn).unwrap();
+        let rules = koan_core::smart::Rules::parse(r#"{"rules":[]}"#).unwrap();
+        let row = queries::smart::create_smart_playlist(
+            &db.conn,
+            queries::LOCAL_USER,
+            "Everything",
+            None,
+            &rules,
+        )
+        .unwrap();
+        let id = queries::get_playlist(&db.conn, row).unwrap().unwrap().uid;
+        drop(db);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(app, &format!("/rest/getPlaylists?{}", auth_query(""))).await;
+        assert!(body.contains("name=\"Everything\""), "{body}");
+        assert!(body.contains("readonly=\"true\""), "{body}");
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getPlaylist?{}&id={id}", auth_query("")),
+        )
+        .await;
+        assert_eq!(body.matches("<entry ").count(), tracks.len(), "{body}");
+
+        for edit in [
+            format!(
+                "updatePlaylist?playlistId={id}&songIdToAdd={}",
+                tracks[0].id
+            ),
+            format!("updatePlaylist?playlistId={id}&songIndexToRemove=0"),
+            format!("createPlaylist?playlistId={id}&songId={}", tracks[0].id),
+        ] {
+            let (path, query) = edit.split_once('?').unwrap();
+            let app = build_test_router(state.clone());
+            let (_, body) =
+                get_response(app, &format!("/rest/{path}?{}&{query}", auth_query(""))).await;
+            assert!(body.contains("status=\"failed\""), "{edit}: {body}");
+        }
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/updatePlaylist?{}&playlistId={id}&name=All",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert!(
+            body.contains("status=\"ok\""),
+            "a rename is allowed: {body}"
+        );
     }
 
     #[tokio::test]
