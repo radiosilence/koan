@@ -629,6 +629,8 @@ pub struct Playlist {
     /// Rules here decide its contents (a smart playlist on this machine,
     /// rather than one mirrored from a server).
     pub smart: bool,
+    /// Read from a file in the library, which decides its name and contents.
+    pub from_file: bool,
 }
 
 impl From<queries::PlaylistRow> for Playlist {
@@ -647,6 +649,7 @@ impl From<queries::PlaylistRow> for Playlist {
             grouped: p.grouped,
             readonly: p.readonly,
             smart: p.rules.is_some(),
+            from_file: p.source_path.is_some(),
         }
     }
 }

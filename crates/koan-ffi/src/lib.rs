@@ -1409,6 +1409,13 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            if let Some(list) = queries::get_playlist(&db.conn, playlist_id).map_err(db_err)?
+                && list.source_path.is_some()
+            {
+                return Err(KoanError::BadArgument {
+                    message: format!("'{}' is named by its file in the library", list.name),
+                });
+            }
             queries::rename_playlist(&db.conn, playlist_id, &name).map_err(db_err)?;
             self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);

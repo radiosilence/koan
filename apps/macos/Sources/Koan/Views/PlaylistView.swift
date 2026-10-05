@@ -308,6 +308,7 @@ struct PlaylistView: View {
                     renameTo = playlist?.name ?? ""
                     renaming = true
                 }
+                .disabled(playlist?.fromFile == true)
                 Divider()
                 Button("Delete Playlist", role: .destructive) {
                     playlists.delete(id: playlistId)
