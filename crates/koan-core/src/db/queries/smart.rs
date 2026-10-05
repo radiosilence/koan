@@ -754,6 +754,40 @@ mod tests {
     }
 
     #[test]
+    fn a_forgotten_play_leaves_the_playlists_that_read_plays() {
+        let conn = test_conn();
+        let a = track(&conn, "A", "Artist", "X");
+        let played = create_smart_playlist(
+            &conn,
+            LOCAL_USER,
+            "Played",
+            None,
+            &rules(r#"{"rules":[{"field":"playCount","op":"gt","value":0}]}"#),
+        )
+        .unwrap();
+        super::super::record_plays_at(&conn, LOCAL_USER, &[(a, now_secs())], "subsonic").unwrap();
+        let plays = [Field::PlayCount, Field::LastPlayed];
+        refresh_after_activity(&conn, LOCAL_USER, &plays).unwrap();
+        assert_eq!(
+            super::super::playlist_track_ids(&conn, played).unwrap(),
+            vec![a]
+        );
+        let entry: i64 = conn
+            .query_row("SELECT id FROM play_history", [], |r| r.get(0))
+            .unwrap();
+        super::super::forget_shared_entries(&conn, LOCAL_USER, &[entry]).unwrap();
+        assert_eq!(
+            refresh_after_activity(&conn, LOCAL_USER, &plays).unwrap(),
+            vec![played]
+        );
+        assert!(
+            super::super::playlist_track_ids(&conn, played)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn smart_playlists_read_as_readonly() {
         let conn = test_conn();
         let id = create_smart_playlist(&conn, LOCAL_USER, "All", None, &rules(r#"{"rules":[]}"#))

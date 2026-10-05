@@ -3047,6 +3047,12 @@ async fn koan_forget_plays(
                     .collect();
                 queries::forget_shared_plays(&db.conn, caller.user_id, &plays).map_err(failed)?;
             }
+            use koan_core::smart::Field;
+            crate::clients::smart_activity(
+                db,
+                caller.user_id,
+                &[Field::PlayCount, Field::LastPlayed],
+            );
             history_changed(&caller.username);
             Ok(b)
         })
