@@ -1358,6 +1358,7 @@ impl Player {
     /// The renderer started the track it had been given next.
     fn renderer_moved_on(&mut self) {
         self.bank_listening();
+        let ended = self.shared_state.cursor();
         let Some(next) = self.renderer_play().and_then(|p| p.next.as_ref()) else {
             return;
         };
@@ -1413,6 +1414,9 @@ impl Player {
         // again.
         self.begin_play(id, 0, 0);
         self.queue_next_on_renderer();
+        if self.sleeps_between(ended, Some(id)) {
+            self.pause();
+        }
     }
 }
 

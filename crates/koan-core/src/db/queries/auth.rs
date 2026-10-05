@@ -98,6 +98,9 @@ pub fn adopt_local_rows(conn: &Connection) -> Result<(), rusqlite::Error> {
         "favourites",
         "favourite_albums",
         "favourite_artists",
+        "track_ratings",
+        "album_ratings",
+        "artist_ratings",
         "bookmarks",
         "play_history",
         "playlists",
@@ -671,6 +674,13 @@ mod tests {
             queries::add_favourite(&db.conn, user, track).unwrap();
             queries::set_favourite_album(&db.conn, user, row.album_id.unwrap(), true).unwrap();
             queries::set_favourite_artist(&db.conn, user, row.artist_id.unwrap(), true).unwrap();
+            for (kind, id) in [
+                (queries::RatingKind::Track, track),
+                (queries::RatingKind::Album, row.album_id.unwrap()),
+                (queries::RatingKind::Artist, row.artist_id.unwrap()),
+            ] {
+                queries::set_rating(&db.conn, user, kind, id, 4).unwrap();
+            }
             queries::save_bookmark(&db.conn, user, track, 1_000, None).unwrap();
             queries::record_play(&db.conn, user, track, None).unwrap();
             queries::create_playlist(&db.conn, user, "List", None).unwrap();
@@ -692,6 +702,9 @@ mod tests {
             "favourites",
             "favourite_albums",
             "favourite_artists",
+            "track_ratings",
+            "album_ratings",
+            "artist_ratings",
             "bookmarks",
             "play_history",
             "playlists",
