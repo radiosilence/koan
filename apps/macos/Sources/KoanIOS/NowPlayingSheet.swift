@@ -194,32 +194,26 @@ struct NowPlayingSheet: View {
     }
 
     private func choiceRow(natural: Bool) -> some View {
-        HStack(spacing: natural ? 0 : 8) {
+        let device = player.isControllingAnother
+            ? player.controlled?.name ?? "Another device"
+            : "This \(UIDevice.current.model)"
+        let outputName = player.outputName ?? "Output"
+        return HStack(spacing: natural ? 0 : 8) {
             if natural { Spacer(minLength: 0) }
             if player.hasOtherDevices || player.isControllingAnother {
                 Button { showingControl = true } label: {
-                    Pill(
-                        systemImage: Action.control.glyph,
-                        text: player.isControllingAnother
-                            ? player.controlled?.name ?? "Another device"
-                            : "This \(UIDevice.current.model)",
-                        tinted: player.isControllingAnother
-                    )
+                    Pill(systemImage: Action.control.glyph, text: device, tinted: player.isControllingAnother)
                 }
-                .accessibilityLabel(player.isControllingAnother ? "Controlling \(player.controlled?.name ?? "another device")" : "Control another kōan")
-                .pillWidth(natural)
+                .accessibilityLabel(player.isControllingAnother ? "Controlling \(device)" : "Control another kōan")
+                .pillWidth(natural, name: device)
                 if natural { Spacer(minLength: 8) }
             }
             if player.canChooseOutput {
                 Button { showingDevices = true } label: {
-                    Pill(
-                        systemImage: "hifispeaker",
-                        text: player.outputName ?? "Output",
-                        tinted: player.renderer != nil
-                    )
+                    Pill(systemImage: "hifispeaker", text: outputName, tinted: player.renderer != nil)
                 }
                 .accessibilityLabel("Output: \(player.outputName ?? "default")")
-                .pillWidth(natural)
+                .pillWidth(natural, name: outputName)
             }
             // This phone's own output's preset; another device's is chosen in
             // Output.
@@ -235,7 +229,7 @@ struct NowPlayingSheet: View {
                     )
                 }
                 .accessibilityLabel("Preset: \(preset)")
-                .pillWidth(natural)
+                .pillWidth(natural, name: preset)
             }
             if natural { Spacer(minLength: 0) }
         }
@@ -275,12 +269,14 @@ private struct Pill: View {
 }
 
 private extension View {
-    /// At its own width, or whatever of the row the others leave it.
-    @ViewBuilder func pillWidth(_ natural: Bool) -> some View {
+    /// At its own width, or, where the row is short, sized shortest name
+    /// first: a stack shares out what is left evenly among views that can all
+    /// shrink, which would cut a short name for the sake of a long one.
+    @ViewBuilder func pillWidth(_ natural: Bool, name: String) -> some View {
         if natural {
             fixedSize()
         } else {
-            self
+            layoutPriority(-Double(name.count))
         }
     }
 }

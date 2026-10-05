@@ -91,8 +91,11 @@ final class NowPlayingTests: XCTestCase {
     /// The mini player: above the tab bar on a phone, at the foot on an iPad.
     private func openNowPlaying() {
         let pad = UIDevice.current.userInterfaceIdiom == .pad
-        app.coordinate(withNormalizedOffset: CGVector(dx: pad ? 0.2 : 0.35, dy: pad ? 0.965 : 0.868)).tap()
-        _ = app.buttons["Show lyrics"].waitForExistence(timeout: 5)
+        // A tap while the app is busy can be lost; tried until the sheet is up.
+        for _ in 0..<3 where !app.buttons["Show lyrics"].exists {
+            app.coordinate(withNormalizedOffset: CGVector(dx: pad ? 0.2 : 0.35, dy: pad ? 0.965 : 0.86)).tap()
+            _ = app.buttons["Show lyrics"].waitForExistence(timeout: 5)
+        }
         pause(2)
     }
 
