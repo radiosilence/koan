@@ -680,6 +680,7 @@ async fn a_shelf_heading_opens_the_browser_its_preview_is_the_head_of() {
     // The Tracks heading: a link, with the shelf's whole count in it.
     let heading = shelf
         .split("<h2>")
+        .skip(1)
         .find(|h| h.contains(">Tracks<"))
         .expect("a Tracks heading");
     assert!(heading.contains(">12</span>"), "{heading}");
