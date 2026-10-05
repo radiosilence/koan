@@ -233,6 +233,7 @@ pub fn update_password(
         if let Some(user) = get_user_by_username(conn, username)? {
             revoke_all_user_tokens(conn, user.id)?;
             super::api_keys::revoke_user_api_keys(conn, user.id)?;
+            super::app_passwords::revoke_user_app_passwords(conn, user.id)?;
         }
     }
     Ok(updated > 0)
