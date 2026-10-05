@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-server", "crates/koan-tui", "crates/koan-cli", "tools/uniffi-bindgen"]
-# Patched crates kept here until upstream ships the fix: see vendor/README.md.
-exclude = ["vendor"]
 
 [workspace.package]
 version = "0.52.8"
@@ -32,7 +30,9 @@ reqwest = { version = "0.13", default-features = false, features = [
 rusqlite = { version = "0.40", features = ["bundled"] }
 walkdir = "2.5"
 
-# opus-decoder 0.1.1 computes CELT's FFT as a direct DFT with a sin/cos per
-# term; the copy in vendor/ plans a real FFT. See vendor/README.md.
+# opus-decoder 0.1.1, the latest release, computes CELT's FFT as a direct DFT
+# with a sin/cos per term: a third of a phone core to play one Opus stream.
+# Upstream replaced it (TadeuszWolfGang/Rusopus#2) but has not released it.
+# Drop this once a release past 0.1.1 is on crates.io.
 [patch.crates-io]
-opus-decoder = { path = "vendor/opus-decoder" }
+opus-decoder = { git = "https://github.com/TadeuszWolfGang/Rusopus", rev = "ecb22cf694314eb09384de32a9b9a68059b6ff54" }

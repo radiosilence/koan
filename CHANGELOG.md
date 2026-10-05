@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The Opus decoder is upstream's fix rather than our patched copy.** opus-decoder's own replacement for the slow transform (Rusopus #2), which also reuses its buffers and is checked against the RFC 8251 test vectors, is merged but not yet released, so kōan builds it from that commit until a release reaches crates.io. Decoding costs the same: about 0.25% of a Mac core for a 48 kHz stereo stream, against 17% before 0.52.8. `vendor/` is gone.
+
 ## 0.52.8
 
 ### Fixed

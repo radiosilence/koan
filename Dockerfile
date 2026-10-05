@@ -16,9 +16,6 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS build
 COPY --from=planner /src/recipe.json recipe.json
-# Patched dependencies (`[patch.crates-io]`) are outside the workspace, so the
-# recipe does not carry them; the cook needs them in place.
-COPY vendor vendor
 RUN cargo chef cook --release --locked -p koan-cli --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --locked -p koan-cli
