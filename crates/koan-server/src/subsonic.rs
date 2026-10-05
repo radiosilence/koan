@@ -2080,6 +2080,10 @@ async fn get_bookmarks(
     .await
 }
 
+/// A note on a place in a track. Longer is refused rather than cut, so a
+/// client never reads back something other than what it saved.
+const MAX_BOOKMARK_COMMENT: usize = 1024;
+
 /// `createBookmark`: save where the caller is in the song `id` names, as
 /// `position` milliseconds and an optional `comment`. One per song; a second
 /// replaces the first.
@@ -2096,10 +2100,14 @@ async fn create_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                 .ok()
                 .filter(|p| *p >= 0)
                 .ok_or_else(|| SubsonicError::bad_param("position"))?;
+            let comment = params.get("comment");
+            if comment.is_some_and(|c| c.chars().count() > MAX_BOOKMARK_COMMENT) {
+                return Err(SubsonicError::bad_param("comment"));
+            }
             queries::get_track_row(&db.conn, track_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?
                 .ok_or_else(|| SubsonicError::not_found("Song"))?;
-            queries::save_bookmark(&db.conn, user, track_id, position, params.get("comment"))
+            queries::save_bookmark(&db.conn, user, track_id, position, comment)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b)
         })
@@ -2107,18 +2115,16 @@ async fn create_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
     .await
 }
 
-/// `deleteBookmark`: forget the caller's place in the song `id` names.
+/// `deleteBookmark`: forget the caller's place in the song `id` names. One
+/// that was never saved is already forgotten, as Navidrome answers it.
 async fn delete_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
         let auth = params.auth();
         respond_db_user(&state, &auth, Role::User, |db, user, b| {
             let track_id = require_id(db, params.get("id"), EntityKind::Song)?;
-            if !queries::delete_bookmark(&db.conn, user, track_id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?
-            {
-                return Err(SubsonicError::not_found("Bookmark"));
-            }
+            queries::delete_bookmark(&db.conn, user, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b)
         })
     })
@@ -5410,7 +5416,16 @@ mod tests {
         let v = call("getBookmarks?".into()).await;
         assert_eq!(v["bookmarks"]["bookmark"].as_array().unwrap().len(), 1);
         let v = call(format!("deleteBookmark?id={alpha}")).await;
-        assert_eq!(v["error"]["code"], 70, "nothing left to delete");
+        assert_eq!(v["status"], "ok", "deleting twice is not an error");
+
+        let long = "x".repeat(MAX_BOOKMARK_COMMENT + 1);
+        let v = call(format!(
+            "createBookmark?id={beta}&position=1&comment={long}"
+        ))
+        .await;
+        assert_eq!(v["error"]["code"], 10, "an overlong comment is refused");
+        let v = call("getBookmarks?".into()).await;
+        assert_eq!(v["bookmarks"]["bookmark"][0]["position"], 5000, "{v}");
     }
 
     #[tokio::test]
