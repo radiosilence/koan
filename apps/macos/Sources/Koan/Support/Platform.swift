@@ -392,6 +392,16 @@ extension View {
         listStyle(.inset)
         #endif
     }
+
+    /// `navigationSubtitle`, which tvOS does not have: its tab pages carry no
+    /// title bar to put one under.
+    func pageSubtitle(_ subtitle: String) -> some View {
+        #if os(tvOS)
+        self
+        #else
+        navigationSubtitle(subtitle)
+        #endif
+    }
 }
 
 /// Drag and drop, text selection and row separators, none of which tvOS has.

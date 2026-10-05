@@ -13,13 +13,15 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use koan_core::auth::Role;
-use koan_core::db::queries::{self, AlbumOrder, AlbumQuery, AlbumRow, ArtistQuery, TrackRow};
+use koan_core::db::queries::{self, AlbumRow, TrackRow};
 use koan_core::helpers::ShareTarget;
 
-use super::browse::{self, Browse};
+use super::browse::{self, Browse, Kind};
+use super::favourite::Hearts;
 use super::{PARTIAL, UiState, events, html, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
+use koan_core::shelves::{self, Shelf, Summary};
 
 const GENRES_OFFERED: u32 = 80;
 
@@ -32,6 +34,18 @@ const ICON_PLAY: &str = "<svg class=\"in-[.playing]:hidden\" viewBox=\"0 0 24 24
      <path d=\"M7 4v16l13-8z\"/></svg>";
 const ICON_PAUSE: &str = "<svg class=\"hidden in-[.playing]:inline\" viewBox=\"0 0 24 24\" aria-hidden=true>\
      <path d=\"M6 4h4v16H6zM14 4h4v16h-4z\"/></svg>";
+
+/// A track row's actions on a narrow screen: one button opening the row's
+/// menu, which right-click and long-press open on any screen. The row's own
+/// buttons stand beside it on a wide screen only.
+pub(super) const MORE: &str = "<button class=\"quiet wide:hidden\" data-act=menu aria-haspopup=menu \
+aria-label=\"More\" title=\"More\">⋯</button>";
+
+/// The menu every track row opens, filled for the row by the UI's script.
+/// Beside the pointer on a wide screen, a sheet above the bar on a phone.
+const TRACK_MENU: &str = "<div id=track-menu popover=manual role=menu class=\"fixed inset-auto m-0 hidden min-w-52 \
+flex-col open:flex rounded-lg border border-rule bg-surface p-1.5 text-ink shadow-lg max-wide:inset-x-3 max-wide:w-auto \
+max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]\" aria-label=Track></div>";
 
 pub(super) const KICKER: &str = "m-0 text-fine tracking-[.08em] text-muted uppercase";
 pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";
@@ -159,8 +173,9 @@ max-wide:pb-[env(safe-area-inset-bottom)]\" aria-label=Library>\
 max-wide:hidden\" href=\"/\">kōan</a>\
 <a class=\"{NAV_LINK}\" href=\"/albums\" data-nav=albums>Albums</a>\
 <a class=\"{NAV_LINK}\" href=\"/artists\" data-nav=artists>Artists</a>\
+<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/tracks\" data-nav=tracks>Tracks</a>\
 <a class=\"{NAV_LINK} max-wide:hidden\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
-<a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists recent favourites history\">Library</a>\
+<a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists recent favourites history tracks\">Library</a>\
 <a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
 <a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>\
 <a class=\"{NAV_LINK} mt-3 max-wide:hidden\" href=\"/recent\" data-nav=recent>Recently played</a>\
@@ -183,7 +198,7 @@ max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule
 <img class=\"size-12 flex-none rounded-sm bg-rule object-cover max-wide:size-10\" data-np=cover alt=\"\" hidden>\
 <span class=\"flex min-w-0 flex-col\"><span class=\"truncate\" data-np=title>Nothing playing</span>\
 <span class=\"truncate text-meta text-muted\" data-np=artist></span></span></a>\
-<div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer></body></html>",
+<div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer>{TRACK_MENU}</body></html>",
         head = head(title),
         datastar = super::ASSETS.datastar_js,
         player = super::ASSETS.player_js,
@@ -283,16 +298,19 @@ pub(super) fn track_versions(conn: &rusqlite::Connection, tracks: &[TrackRow]) -
     cover_versions(conn, &ids)
 }
 
-fn cells(albums: &[AlbumRow], versions: &Versions) -> String {
+/// Record tiles, each with its heart over the corner where the account may
+/// favourite.
+fn cells(albums: &[AlbumRow], versions: &Versions, hearts: Option<&Hearts>) -> String {
     albums.iter().fold(String::new(), |mut out, a| {
         let _ = write!(
             out,
-            "<a class=\"group flex min-w-0 flex-col gap-0.5 text-ink hover:no-underline\" href=\"/album/{id}\">\
+            "<div class=\"relative min-w-0\"><a class=\"group flex min-w-0 flex-col gap-0.5 text-ink hover:no-underline\" href=\"/album/{id}\">\
 <img class=\"mb-1.5 aspect-square h-auto w-full rounded-md border border-rule bg-surface object-cover \
 group-hover:border-hover [&.missing]:visible [&.missing]:text-transparent\" loading=lazy decoding=async \
 width={size} height={size} src=\"{src}\" alt=\"\">\
-<span class=\"truncate\">{title}</span><span class=\"truncate text-meta text-muted\">{artist}</span></a>",
+<span class=\"truncate\">{title}</span><span class=\"truncate text-meta text-muted\">{artist}</span></a>{heart}</div>",
             id = a.id,
+            heart = hearts.map(|h| h.tile(a.id)).unwrap_or_default(),
             size = crate::covers::GRID,
             src = cover_url(a.id, crate::covers::GRID, versions),
             title = escape(&a.title),
@@ -333,7 +351,7 @@ const ICON_SHARE: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=true>\
 fn share_track_button(t: &TrackRow) -> String {
     match t.album_id {
         Some(album) => format!(
-            "<button class=\"quiet\" data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
+            "<button class=\"quiet\" data-act-share data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
 data-on:click=\"@post('/album/{album}/share?track={id}')\" aria-label=\"Share this track\" \
 title=\"Share this track\">{ICON_SHARE}</button>",
             id = t.id
@@ -351,6 +369,7 @@ fn track_row(
     album: bool,
     versions: &Versions,
     share: bool,
+    hearts: Option<&Hearts>,
 ) -> String {
     let mut sub = Vec::new();
     if show_artist {
@@ -366,20 +385,24 @@ fn track_row(
     };
     format!(
         "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
-data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><span class=\"n\">{n}</span>\
-<span class=\"t\">{title}{sub}</span><span class=\"d\">{dur}</span>{share}\
-<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></li>",
+data-album=\"{album_title}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\">\
+<span class=\"n\">{n}</span><span class=\"t\">{title}{sub}</span><span class=\"d\">{dur}</span>\
+<span class=\"contents max-wide:hidden\">{heart}{share}\
+<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{mark}{MORE}</li>",
         id = t.id,
         secs = t.duration_ms.unwrap_or(0) / 1000,
         title = escape(&t.title),
         artist = escape(&t.artist_name),
         album_title = escape(&t.album_title),
         album_id = t.album_id.unwrap_or(0),
+        artist_id = t.artist_id.unwrap_or(0),
         cover = t
             .album_id
             .map(|a| cover_url(a, crate::covers::LARGE, versions))
             .unwrap_or_default(),
         dur = duration(t.duration_ms),
+        heart = hearts.map(|h| h.track(t.id)).unwrap_or_default(),
+        mark = hearts.map(Hearts::mark).unwrap_or_default(),
         share = if share {
             share_track_button(t)
         } else {
@@ -390,11 +413,27 @@ data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><sp
 
 /// Every album `b` lets through, in its order. Whole, as the apps list them:
 /// the covers load lazily, so the page costs markup and not images.
-fn album_list(s: &UiState, user: i64, b: &Browse) -> Option<(Vec<AlbumRow>, Versions)> {
+fn album_list(
+    s: &UiState,
+    user: &AuthUser,
+    b: &Browse,
+) -> Option<(Vec<AlbumRow>, Versions, Option<Hearts>)> {
     let db = open(&s.pool)?;
-    let albums = queries::list_albums(&db.conn, &b.albums(user)).ok()?;
+    let albums = queries::list_albums(&db.conn, &b.albums(user.user_id, shelves::now())).ok()?;
     let versions = album_versions(&db.conn, &albums);
-    Some((albums, versions))
+    Some((albums, versions, Hearts::load(&db.conn, user)))
+}
+
+/// "12 albums", once a filter is on: what a shelf's "See all" promised.
+fn counted(n: usize, one: &str, many: &str, b: &Browse) -> String {
+    if b.filtered() {
+        format!(
+            "<p class=\"{SUB}\">{n} {}</p>",
+            if n == 1 { one } else { many }
+        )
+    } else {
+        String::new()
+    }
 }
 
 pub(super) async fn albums(
@@ -404,9 +443,9 @@ pub(super) async fn albums(
     headers: HeaderMap,
 ) -> Response {
     let b = b.seeded();
-    let (st, bb, id) = (s.clone(), b.clone(), user.user_id);
-    let found = blocking(move || Some((album_list(&st, id, &bb)?, filter_options(&st)?))).await;
-    let Some(((albums, versions), options)) = found else {
+    let (st, bb, who) = (s.clone(), b.clone(), user.clone());
+    let found = blocking(move || Some((album_list(&st, &who, &bb)?, filter_options(&st)?))).await;
+    let Some(((albums, versions, hearts), options)) = found else {
         return unavailable();
     };
     let grid = if albums.is_empty() {
@@ -414,12 +453,13 @@ pub(super) async fn albums(
     } else {
         format!(
             "<div class=\"{GRID}\" id=albums>{}</div>",
-            cells(&albums, &versions)
+            cells(&albums, &versions, hearts.as_ref())
         )
     };
     let inner = format!(
-        "<h1>Albums</h1>{}{grid}",
-        browse::toolbar(&b, "/albums", false, &options.0, &options.1)
+        "<h1>Albums</h1>{}{}{grid}",
+        counted(albums.len(), "album", "albums", &b),
+        browse::toolbar(&b, Kind::Albums, &options.0, &options.1)
     );
     respond(&s, &headers, &user, "Albums", &inner)
 }
@@ -430,16 +470,16 @@ pub(super) async fn album(
     Path(id): Path<i64>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
+    let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
         let album = queries::get_album(&db.conn, id).ok()??;
         let tracks = queries::tracks_for_album(&db.conn, id).ok()?;
         let versions = cover_versions(&db.conn, &[id]);
-        Some((album, tracks, versions))
+        Some((album, tracks, versions, Hearts::load(&db.conn, &who)))
     })
     .await;
-    let Some((album, tracks, versions)) = found else {
+    let Some((album, tracks, versions, hearts)) = found else {
         return not_found();
     };
     let can_share = user.role.has_permission(Role::User);
@@ -462,6 +502,7 @@ pub(super) async fn album(
             false,
             &versions,
             can_share,
+            hearts.as_ref(),
         ));
     }
     let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
@@ -497,8 +538,12 @@ data-on:click=\"@post('/album/{}/share')\">Share</button>",
 <div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Album</p><h1 class=\"mb-1\">{title}</h1><p class=\"{SUB}\">{sub}</p>\
 <div class=\"{ACTIONS}\">\
 <button class=\"primary\" data-act=play>Play</button><button data-act=shuffle>Shuffle</button>\
-<button data-act=queue>Add to queue</button>{share}</div><div id=share-result></div></div></header>\
+<button data-act=queue>Add to queue</button>{share}{heart}</div><div id=share-result></div></div></header>\
 <ol class=\"tracks\" data-context=album>{rows}</ol>",
+        heart = hearts
+            .as_ref()
+            .map(|h| h.album(album.id))
+            .unwrap_or_default(),
         cover = cover_url(album.id, crate::covers::LARGE, &versions),
         large = crate::covers::LARGE,
         title = escape(&album.title),
@@ -584,7 +629,7 @@ fn artist_list(artists: &[queries::ArtistRow]) -> String {
 
 fn artist_rows(s: &UiState, user: i64, b: &Browse) -> Option<Vec<queries::ArtistRow>> {
     let db = open(&s.pool)?;
-    queries::list_artists(&db.conn, &b.artists(user)).ok()
+    queries::list_artists(&db.conn, &b.artists(user, shelves::now())).ok()
 }
 
 pub(super) async fn artists(
@@ -604,10 +649,86 @@ pub(super) async fn artists(
         format!("<ul id=artists>{}</ul>", artist_list(&artists))
     };
     let inner = format!(
-        "<h1>Artists</h1>{}{list}",
-        browse::toolbar(&b, "/artists", true, &options.0, &options.1)
+        "<h1>Artists</h1>{}{}{list}",
+        counted(artists.len(), "artist", "artists", &b),
+        browse::toolbar(&b, Kind::Artists, &options.0, &options.1)
     );
     respond(&s, &headers, &user, "Artists", &inner)
+}
+
+/// Tracks on one page of the track browser.
+const TRACKS_PAGE: u32 = 200;
+
+/// Every track the filters let through, a page at a time. Picking one plays on
+/// through the page.
+pub(super) async fn tracks(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Query(b): Query<Browse>,
+    headers: HeaderMap,
+) -> Response {
+    let page = b.page;
+    let (st, bb, who) = (s.clone(), b.clone(), user.clone());
+    let found = blocking(move || {
+        let db = open(&st.pool)?;
+        let listing = bb.tracks(who.user_id, shelves::now());
+        let total = listing.count(&db.conn).ok()?;
+        let rows = listing
+            .page(&db.conn, TRACKS_PAGE, page * TRACKS_PAGE)
+            .ok()?;
+        let versions = track_versions(&db.conn, &rows);
+        let hearts = Hearts::load(&db.conn, &who);
+        drop(db);
+        Some((rows, total, versions, hearts, filter_options(&st)?))
+    })
+    .await;
+    let Some((rows, total, versions, hearts, options)) = found else {
+        return unavailable();
+    };
+    let first = (page * TRACKS_PAGE) as usize;
+    let list = if rows.is_empty() {
+        format!("<p class=\"{EMPTY}\">No tracks match.</p>")
+    } else {
+        let items: String = rows
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                track_row(
+                    t,
+                    first + i + 1,
+                    true,
+                    true,
+                    &versions,
+                    false,
+                    hearts.as_ref(),
+                )
+            })
+            .collect();
+        format!("<ol class=\"tracks\" data-context=album>{items}</ol>")
+    };
+    let mut nav = Vec::new();
+    let at = |p: u32| {
+        let q = b.query();
+        let sep = if q.is_empty() { "" } else { "&" };
+        format!("/tracks?{q}{sep}page={p}")
+    };
+    if page > 0 {
+        nav.push(format!("<a href=\"{}\">Previous</a>", at(page - 1)));
+    }
+    if (((page + 1) * TRACKS_PAGE) as u64) < total {
+        nav.push(format!("<a href=\"{}\">Next</a>", at(page + 1)));
+    }
+    let nav = if nav.is_empty() {
+        String::new()
+    } else {
+        format!("<p class=\"mt-5 flex gap-4\">{}</p>", nav.join(""))
+    };
+    let inner = format!(
+        "<h1>Tracks</h1><p class=\"{SUB}\">{total} track{}</p>{}{list}{nav}",
+        if total == 1 { "" } else { "s" },
+        browse::toolbar(&b, Kind::Tracks, &options.0, &options.1)
+    );
+    respond(&s, &headers, &user, "Tracks", &inner)
 }
 
 pub(super) async fn artist(
@@ -616,27 +737,28 @@ pub(super) async fn artist(
     Path(id): Path<i64>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
+    let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
         let artist = queries::get_artist(&db.conn, id).ok()??;
         let albums = queries::albums_for_artist(&db.conn, id).ok()?;
         let versions = album_versions(&db.conn, &albums);
-        Some((artist, albums, versions))
+        Some((artist, albums, versions, Hearts::load(&db.conn, &who)))
     })
     .await;
-    let Some((artist, albums, versions)) = found else {
+    let Some((artist, albums, versions, hearts)) = found else {
         return not_found();
     };
-    let share = if user.role.has_permission(Role::User) {
-        format!(
+    // Sharing and favouriting are the same accounts' to do.
+    let share = match &hearts {
+        Some(h) => format!(
             "<div class=\"mb-5 {ACTIONS}\"><button data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
-data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{}/share')\">Share</button></div>\
+data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{id}/share')\">Share</button>{heart}</div>\
 <div id=share-result></div>",
-            artist.id
-        )
-    } else {
-        String::new()
+            id = artist.id,
+            heart = h.artist(artist.id),
+        ),
+        None => String::new(),
     };
     let inner = format!(
         "<p class=\"{KICKER}\">Artist</p><h1>{}</h1><p class=\"{SUB}\">{} album{} · {} tracks</p>{share}\
@@ -645,7 +767,7 @@ data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{}/share')\">Share<
         artist.album_count,
         if artist.album_count == 1 { "" } else { "s" },
         artist.track_count,
-        cells(&albums, &versions)
+        cells(&albums, &versions, hearts.as_ref())
     );
     respond(&s, &headers, &user, &artist.name, &inner)
 }
@@ -694,25 +816,25 @@ pub(super) async fn playlist(
     Path(id): Path<i64>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
+    let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let me = queries::auth::resolve_user(&db.conn, user.user_id).ok()?;
+        let me = queries::auth::resolve_user(&db.conn, who.user_id).ok()?;
         let list = queries::get_playlist(&db.conn, id)
             .ok()?
             .filter(|p| p.readable_by(me))?;
         let tracks = queries::playlist_tracks(&db.conn, id).ok()?;
         let versions = track_versions(&db.conn, &tracks);
-        Some((list, tracks, versions))
+        Some((list, tracks, versions, Hearts::load(&db.conn, &who)))
     })
     .await;
-    let Some((list, tracks, versions)) = found else {
+    let Some((list, tracks, versions, hearts)) = found else {
         return not_found();
     };
     let rows: String = tracks
         .iter()
         .enumerate()
-        .map(|(i, t)| track_row(t, i + 1, true, true, &versions, false))
+        .map(|(i, t)| track_row(t, i + 1, true, true, &versions, false, hearts.as_ref()))
         .collect();
     let cover = tracks
         .iter()
@@ -753,71 +875,32 @@ pub(super) async fn playlist(
     respond(&s, &headers, &user, &list.name, &inner)
 }
 
-fn results(s: &UiState, q: &str) -> String {
+fn results(s: &UiState, user: &AuthUser, q: &str) -> String {
     let q = q.trim();
     if q.is_empty() {
         return "<div id=results></div>".into();
     }
-    let found = open(&s.pool).map(|db| {
-        let albums = queries::list_albums(
-            &db.conn,
-            &AlbumQuery {
-                search: Some(q),
-                order: AlbumOrder::RecentlyAdded,
-                limit: Some(12),
-                ..Default::default()
-            },
-        )
-        .unwrap_or_default();
-        let artists = queries::list_artists(
-            &db.conn,
-            &ArtistQuery {
-                search: Some(q),
-                limit: Some(10),
-                ..Default::default()
-            },
-        )
-        .unwrap_or_default();
-        let tracks = queries::search_tracks_paged(&db.conn, q, 50, 0).unwrap_or_default();
-        let mut versions = album_versions(&db.conn, &albums);
-        versions.extend(track_versions(&db.conn, &tracks));
-        (albums, artists, tracks, versions)
+    let shelf = Shelf::Search(q);
+    let found = open(&s.pool).and_then(|db| {
+        let summary = shelves::summary(&db.conn, shelf, user.user_id, shelves::now()).ok()?;
+        let versions = shelf_versions(&db.conn, &summary);
+        Some((summary, versions, Hearts::load(&db.conn, user)))
     });
-    let Some((albums, artists, tracks, versions)) = found else {
+    let Some((summary, versions, hearts)) = found else {
         return format!(
             "<div id=results><p class=\"{ERROR}\">The library is unavailable.</p></div>"
         );
     };
-    if albums.is_empty() && artists.is_empty() && tracks.is_empty() {
+    if summary.is_empty() {
         return format!(
             "<div id=results><p class=\"{EMPTY}\">Nothing matches “{}”.</p></div>",
             escape(q)
         );
     }
-    let mut out = String::from("<div id=results>");
-    if !artists.is_empty() {
-        let _ = write!(out, "<h2>Artists</h2><ul>{}</ul>", artist_list(&artists));
-    }
-    if !albums.is_empty() {
-        let _ = write!(
-            out,
-            "<h2>Albums</h2><div class=\"{GRID}\">{}</div>",
-            cells(&albums, &versions)
-        );
-    }
-    if !tracks.is_empty() {
-        let rows: String = tracks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| track_row(t, i + 1, true, true, &versions, false))
-            .collect();
-        let _ = write!(
-            out,
-            "<h2>Tracks</h2><ol class=\"tracks\" data-context=one>{rows}</ol>"
-        );
-    }
-    out.push_str("</div>");
-    out
+    format!(
+        "<div id=results>{}</div>",
+        shelf_sections(&summary, shelf, &versions, hearts.as_ref())
+    )
 }
 
 pub(super) async fn search(
@@ -827,9 +910,9 @@ pub(super) async fn search(
     headers: HeaderMap,
 ) -> Response {
     let q = params.get("q").cloned().unwrap_or_default();
-    let st = s.clone();
+    let (st, who) = (s.clone(), user.clone());
     let query = q.clone();
-    let found = blocking(move || Some(results(&st, &query)))
+    let found = blocking(move || Some(results(&st, &who, &query)))
         .await
         .unwrap_or_default();
     // Without script the form is an ordinary GET; with it, results follow typing.
@@ -848,6 +931,7 @@ data-on:input__debounce.250ms=\"@get('/search/results')\"></form>{found}",
 /// Datastar sends its signals as JSON in `datastar`; a plain request sends `q`.
 pub(super) async fn search_results(
     State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
     let q = params
@@ -856,7 +940,7 @@ pub(super) async fn search_results(
         .and_then(|v| v.get("q")?.as_str().map(str::to_owned))
         .or_else(|| params.get("q").cloned())
         .unwrap_or_default();
-    let html = blocking(move || Some(results(&s, &q)))
+    let html = blocking(move || Some(results(&s, &user, &q)))
         .await
         .unwrap_or_default();
     events(vec![patch(&html, None)])
@@ -871,6 +955,7 @@ pub(super) async fn library(
 ) -> Response {
     let rows = [
         ("/playlists", "Playlists"),
+        ("/tracks", "Tracks"),
         ("/recent", "Recently played"),
         ("/favourites", "Favourites"),
         ("/history", "History"),
@@ -907,55 +992,133 @@ pub(super) struct EmptyShelf {
     pub detail: &'static str,
 }
 
-/// A page of artists, records and tracks that answer one question, as the
-/// apps' shelf lays them out: artists as pills, records as tiles, and the
-/// tracks as a list that plays from the row picked to its end.
-pub(super) fn shelf(
+/// The covers a shelf's previews show.
+fn shelf_versions(conn: &rusqlite::Connection, s: &Summary) -> Versions {
+    let mut versions = album_versions(conn, &s.albums.preview);
+    versions.extend(track_versions(conn, &s.tracks.preview));
+    versions
+}
+
+/// A section's heading, with "See all (n)" when the preview is not all of
+/// it. The link opens the browser with the shelf as its filter.
+fn section_head(
     title: &str,
-    artists: &[queries::ArtistRow],
-    albums: &[AlbumRow],
-    tracks: &[TrackRow],
-    versions: &Versions,
-    empty: &EmptyShelf,
+    total: u64,
+    shown: usize,
+    shelf: Shelf,
+    kind: Kind,
+    extra: &str,
 ) -> String {
-    if artists.is_empty() && albums.is_empty() && tracks.is_empty() {
-        return format!(
-            "<h1>{}</h1><p class=\"{EMPTY}\">{}</p><p class=\"{EMPTY}\">{}</p>",
-            escape(title),
-            empty.title,
-            empty.detail
-        );
-    }
-    let mut out = format!("<h1>{}</h1>", escape(title));
-    if !artists.is_empty() {
+    let all = if total as usize > shown {
+        format!(
+            "<a class=\"text-meta\" href=\"{}\">See all ({total})</a>",
+            escape(&browse::see_all(shelf, kind))
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "<div class=\"{LIST_HEAD}\"><h2>{title}</h2><div class=\"{ACTIONS}\">{extra}{all}</div></div>"
+    )
+}
+
+/// The previews of a shelf, as the apps' shelf lays them out: artists as
+/// pills, records as tiles, and the tracks as a list that plays on from the
+/// row picked.
+fn shelf_sections(
+    s: &Summary,
+    shelf: Shelf,
+    versions: &Versions,
+    hearts: Option<&Hearts>,
+) -> String {
+    let mut out = String::new();
+    if !s.artists.preview.is_empty() {
         let _ = write!(
             out,
-            "<h2>Artists</h2><div class=\"mb-6 flex flex-wrap gap-2\">{}</div>",
-            pills(artists)
+            "{}<div class=\"mb-6 flex flex-wrap gap-2\">{}</div>",
+            section_head(
+                "Artists",
+                s.artists.total,
+                s.artists.preview.len(),
+                shelf,
+                Kind::Artists,
+                ""
+            ),
+            pills(&s.artists.preview)
         );
     }
-    if !albums.is_empty() {
+    if !s.albums.preview.is_empty() {
         let _ = write!(
             out,
-            "<h2>Albums</h2><div class=\"mb-6 {GRID}\">{}</div>",
-            cells(albums, versions)
+            "{}<div class=\"mb-6 {GRID}\">{}</div>",
+            section_head(
+                "Albums",
+                s.albums.total,
+                s.albums.preview.len(),
+                shelf,
+                Kind::Albums,
+                ""
+            ),
+            cells(&s.albums.preview, versions, hearts)
         );
     }
-    if !tracks.is_empty() {
-        let rows: String = tracks
+    if !s.tracks.preview.is_empty() {
+        let rows: String = s
+            .tracks
+            .preview
             .iter()
             .enumerate()
-            .map(|(i, t)| track_row(t, i + 1, true, true, versions, false))
+            .map(|(i, t)| track_row(t, i + 1, true, true, versions, false, hearts))
             .collect();
         let _ = write!(
             out,
-            "<div class=\"{LIST_HEAD}\"><h2>Tracks</h2>\
-<div class=\"{ACTIONS}\"><button class=\"primary\" data-act=play>Play</button>\
-<button data-act=shuffle>Shuffle</button><button data-act=queue>Add to queue</button></div></div>\
-<ol class=\"tracks\" data-context=album>{rows}</ol>"
+            "{}<ol class=\"tracks\" data-context=album>{rows}</ol>",
+            section_head(
+                "Tracks",
+                s.tracks.total,
+                s.tracks.preview.len(),
+                shelf,
+                Kind::Tracks,
+                "<button class=\"primary\" data-act=play>Play</button>\
+<button data-act=shuffle>Shuffle</button><button data-act=queue>Add to queue</button>",
+            ),
         );
     }
     out
+}
+
+/// A shelf page: its title, then its previews, or what it says when empty.
+async fn shelf_page(
+    s: UiState,
+    user: AuthUser,
+    headers: HeaderMap,
+    shelf: Shelf<'static>,
+    title: &'static str,
+    empty: EmptyShelf,
+) -> Response {
+    let (st, who) = (s.clone(), user.clone());
+    let found = blocking(move || {
+        let db = open(&st.pool)?;
+        let summary = shelves::summary(&db.conn, shelf, who.user_id, shelves::now()).ok()?;
+        let versions = shelf_versions(&db.conn, &summary);
+        Some((summary, versions, Hearts::load(&db.conn, &who)))
+    })
+    .await;
+    let Some((summary, versions, hearts)) = found else {
+        return unavailable();
+    };
+    let inner = if summary.is_empty() {
+        format!(
+            "<h1>{title}</h1><p class=\"{EMPTY}\">{}</p><p class=\"{EMPTY}\">{}</p>",
+            empty.title, empty.detail
+        )
+    } else {
+        format!(
+            "<h1>{title}</h1>{}",
+            shelf_sections(&summary, shelf, &versions, hearts.as_ref())
+        )
+    };
+    respond(&s, &headers, &user, title, &inner)
 }
 
 /// The signed-in account's favourite artists, records and tracks.
@@ -964,102 +1127,41 @@ pub(super) async fn favourites(
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
-    let found = blocking(move || {
-        let db = open(&st.pool)?;
-        let artists = queries::list_artists(
-            &db.conn,
-            &ArtistQuery {
-                favourites_of: Some(user.user_id),
-                ..Default::default()
-            },
-        )
-        .ok()?;
-        let albums = queries::list_albums(
-            &db.conn,
-            &AlbumQuery {
-                favourites_of: Some(user.user_id),
-                ..Default::default()
-            },
-        )
-        .ok()?;
-        let tracks = queries::favourite_tracks(&db.conn, user.user_id, None).ok()?;
-        let mut versions = album_versions(&db.conn, &albums);
-        versions.extend(track_versions(&db.conn, &tracks));
-        Some((artists, albums, tracks, versions))
-    })
-    .await;
-    let Some((artists, albums, tracks, versions)) = found else {
-        return unavailable();
-    };
-    let inner = shelf(
+    shelf_page(
+        s,
+        user,
+        headers,
+        Shelf::Favourites,
         "Favourites",
-        &artists,
-        &albums,
-        &tracks,
-        &versions,
-        &EmptyShelf {
+        EmptyShelf {
             title: "Nothing favourited yet.",
             detail: "Artists, records and tracks favourited in the kōan apps, or in any Subsonic app \
 signed in as you, are listed here.",
         },
-    );
-    respond(&s, &headers, &user, "Favourites", &inner)
+    )
+    .await
 }
 
-/// The artists, records and tracks the signed-in account played lately, each
-/// once and newest first by its latest play: the apps' Recently played.
+/// What the signed-in account played lately, each once and newest first by
+/// its latest play: the apps' Recently played.
 pub(super) async fn recent(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
-    let found = blocking(move || {
-        let db = open(&st.pool)?;
-        let shelf = koan_core::shelves::Shelf::Recent;
-        let now = koan_core::shelves::now();
-        let artists = queries::list_artists(
-            &db.conn,
-            &ArtistQuery {
-                limit: Some(queries::RECENT_LIMIT),
-                ..shelf.artists(user.user_id, now)
-            },
-        )
-        .ok()?;
-        let albums = queries::list_albums(
-            &db.conn,
-            &AlbumQuery {
-                limit: Some(queries::RECENT_LIMIT),
-                ..shelf.albums(user.user_id, now)
-            },
-        )
-        .ok()?;
-        let tracks = shelf
-            .tracks(user.user_id, now)
-            .page(&db.conn, queries::RECENT_LIMIT, 0)
-            .ok()?;
-        let mut versions = album_versions(&db.conn, &albums);
-        versions.extend(track_versions(&db.conn, &tracks));
-        Some((artists, albums, tracks, versions))
-    })
-    .await;
-    let Some((artists, albums, tracks, versions)) = found else {
-        return unavailable();
-    };
-    let inner = shelf(
+    shelf_page(
+        s,
+        user,
+        headers,
+        Shelf::Recent,
         "Recently played",
-        &artists,
-        &albums,
-        &tracks,
-        &versions,
-        &EmptyShelf {
+        EmptyShelf {
             title: "Nothing played in the last 30 days.",
             detail: "What you play here, in the kōan apps or in a Subsonic app signed in as you, \
 is gathered here for a month, each artist, record and track once.",
         },
-    );
-    respond(&s, &headers, &user, "Recently played", &inner)
+    )
+    .await
 }
 
 /// The queue lives in the browser, so the page is a frame the script fills.

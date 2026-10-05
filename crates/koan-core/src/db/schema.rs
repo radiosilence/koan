@@ -168,7 +168,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 
         -- Rows deleted from albums, artists and tracks, for front ends that
         -- cache by id: SQLite hands a freed id to the next row, and a cover
-        -- cached under it would be shown for the wrong record.
+        -- cached under it would be shown for the wrong record. Rows under a
+        -- rescanned folder are named too, since a cover image beside them
+        -- may have changed.
         CREATE TABLE IF NOT EXISTS art_evictions (
             seq   INTEGER PRIMARY KEY AUTOINCREMENT,
             kind  TEXT NOT NULL,

@@ -13,11 +13,15 @@ struct ArtistBrowser: View {
     #endif
 
     var body: some View {
-        #if os(macOS)
-        table
-        #else
-        list
-        #endif
+        Group {
+            #if os(macOS)
+            table
+            #else
+            list
+            #endif
+        }
+        // Once narrowed, how many: what a shelf's See all promised.
+        .pageSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleArtists.count), "artist") : "")
     }
 
     #if os(macOS)

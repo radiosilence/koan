@@ -502,6 +502,7 @@ private struct StageView: View {
         case .playlist(let id): PlaylistView(playlistId: id)
         case .albums: AlbumBrowser()
         case .artists: ArtistBrowser()
+        case .tracks: TrackBrowser()
         case .queue: EmptyView()
         }
     }
@@ -657,18 +658,19 @@ private struct PageToolbar: ToolbarContent {
         ToolbarSpacer(.fixed, placement: .primaryAction)
 
         ToolbarItem(placement: .primaryAction) {
-            if nav.section == .albums || nav.section == .artists {
+            if nav.section?.isBrowser == true {
                 HStack(spacing: 2) {
                     BrowseFilterButton()
                     if nav.section == .albums {
                         AlbumSortControls()
                     }
+                    if nav.section == .tracks {
+                        TrackSortControls()
+                    }
                 }
             }
         }
-        .sharedBackgroundVisibility(
-            nav.section == .albums || nav.section == .artists ? .automatic : .hidden
-        )
+        .sharedBackgroundVisibility(nav.section?.isBrowser == true ? .automatic : .hidden)
 
         // Last, and apart from the filter: what you do with a pick is not part
         // of narrowing the grid, and next to the field the two read as one
@@ -708,7 +710,7 @@ private struct AlbumSortControls: View {
                     get: { library.albumSort },
                     set: { library.albumSort = $0 }
                 )) {
-                    ForEach(AlbumSort.all, id: \.self) { sort in
+                    ForEach(AlbumSort.offered(recent: library.browseFilter.recent), id: \.self) { sort in
                         Text(sort.label).tag(sort)
                     }
                 }
@@ -735,6 +737,30 @@ private struct AlbumSortControls: View {
                 .help("Shuffle again")
             }
         }
+    }
+}
+
+/// The track browser's sort.
+private struct TrackSortControls: View {
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        Menu {
+            Picker("Sort", selection: Binding(
+                get: { library.trackSort },
+                set: { library.trackSort = $0 }
+            )) {
+                ForEach(TrackBrowseSort.offered(recent: library.browseFilter.recent), id: \.self) { sort in
+                    Text(sort.label).tag(sort)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+        }
+        .tint(.primary)
+        .help("Sort tracks — \(library.trackSort.label)")
     }
 }
 
