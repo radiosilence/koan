@@ -145,6 +145,25 @@ pub struct RecentlyPlayed {
     pub tracks: Vec<Track>,
 }
 
+/// Which shelf: see `koan_core::shelves::Shelf`.
+#[derive(uniffi::Enum, Debug, Clone)]
+pub enum ShelfKind {
+    Favourites,
+    Recent,
+    Search { query: String },
+}
+
+/// The first few of each kind on a shelf, and how many there are in all.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct ShelfSummary {
+    pub artists: Vec<Artist>,
+    pub artist_total: u64,
+    pub albums: Vec<Album>,
+    pub album_total: u64,
+    pub tracks: Vec<Track>,
+    pub track_total: u64,
+}
+
 /// One play, with the track it played.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct PlayHistoryEntry {

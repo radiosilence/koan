@@ -1017,34 +1017,28 @@ pub(super) async fn recent(
     let st = s.clone();
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let since = chrono::Utc::now().timestamp() - queries::RECENT_DAYS * 24 * 60 * 60;
-        let recent =
-            queries::recently_played(&db.conn, user.user_id, since, queries::RECENT_LIMIT).ok()?;
-        // In the order played: the listings come back in their own.
-        fn in_order<T>(ids: &[i64], rows: Vec<T>, id: impl Fn(&T) -> i64) -> Vec<T> {
-            let mut by_id: HashMap<i64, T> = rows.into_iter().map(|r| (id(&r), r)).collect();
-            ids.iter().filter_map(|i| by_id.remove(i)).collect()
-        }
+        let shelf = koan_core::shelves::Shelf::Recent;
+        let now = koan_core::shelves::now();
         let artists = queries::list_artists(
             &db.conn,
             &ArtistQuery {
-                ids: Some(&recent.artists),
-                ..Default::default()
+                limit: Some(queries::RECENT_LIMIT),
+                ..shelf.artists(user.user_id, now)
             },
         )
         .ok()?;
         let albums = queries::list_albums(
             &db.conn,
             &AlbumQuery {
-                ids: Some(&recent.albums),
-                ..Default::default()
+                limit: Some(queries::RECENT_LIMIT),
+                ..shelf.albums(user.user_id, now)
             },
         )
         .ok()?;
-        let tracks = queries::tracks_by_ids(&db.conn, &recent.tracks).ok()?;
-        let artists = in_order(&recent.artists, artists, |a| a.id);
-        let albums = in_order(&recent.albums, albums, |a| a.id);
-        let tracks = in_order(&recent.tracks, tracks, |t| t.id);
+        let tracks = shelf
+            .tracks(user.user_id, now)
+            .page(&db.conn, queries::RECENT_LIMIT, 0)
+            .ok()?;
         let mut versions = album_versions(&db.conn, &albums);
         versions.extend(track_versions(&db.conn, &tracks));
         Some((artists, albums, tracks, versions))

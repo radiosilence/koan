@@ -82,6 +82,8 @@ struct AppState {
     covers: Arc<crate::covers::Covers>,
     /// What `getIndexes`'s `lastModified` was last worked out from.
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
+    /// `ffmpeg`, where transcoding is on and it was found at startup.
+    transcoder: Option<crate::transcode::Transcoder>,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -2125,6 +2127,94 @@ async fn get_song(State(state): State<Arc<AppState>>, Query(params): Query<IdPar
     .await
 }
 
+/// `getBookmarks`: the caller's places in tracks, most recently changed first,
+/// each with the track as its `entry`.
+async fn get_bookmarks(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    offload_response(move || {
+        respond_db_caller(&state, &params, Role::Readonly, |db, caller, b| {
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let marks = queries::bookmarks(&db.conn, caller.user_id).map_err(internal)?;
+            let ids: Vec<i64> = marks.iter().map(|m| m.track_id).collect();
+            let tracks: HashMap<i64, queries::TrackRow> = queries::tracks_by_ids(&db.conn, &ids)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .into_iter()
+                .map(|t| (t.id, t))
+                .collect();
+            let extras = song_extras(db, caller.user_id, tracks.values())?;
+            Ok(b.child(XmlNode::new("bookmarks").list(
+                "bookmark",
+                marks.iter().filter_map(|m| {
+                    let track = tracks.get(&m.track_id)?;
+                    Some(
+                        XmlNode::new("bookmark")
+                            .attr_int("position", m.position_ms)
+                            .attr("username", &caller.username)
+                            .attr_opt("comment", m.comment.as_deref())
+                            .attr("created", &iso(m.created_at))
+                            .attr("changed", &iso(m.changed_at))
+                            .child(track_node(track, "entry", &extras)),
+                    )
+                }),
+            )))
+        })
+    })
+    .await
+}
+
+/// A note on a place in a track. Longer is refused rather than cut, so a
+/// client never reads back something other than what it saved.
+const MAX_BOOKMARK_COMMENT: usize = 1024;
+
+/// `createBookmark`: save where the caller is in the song `id` names, as
+/// `position` milliseconds and an optional `comment`. One per song; a second
+/// replaces the first.
+async fn create_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let track_id = require_id(db, params.get("id"), EntityKind::Song)?;
+            let position = params
+                .get("position")
+                .ok_or_else(|| SubsonicError::missing_param("position"))?
+                .parse::<i64>()
+                .ok()
+                .filter(|p| *p >= 0)
+                .ok_or_else(|| SubsonicError::bad_param("position"))?;
+            let comment = params.get("comment");
+            if comment.is_some_and(|c| c.chars().count() > MAX_BOOKMARK_COMMENT) {
+                return Err(SubsonicError::bad_param("comment"));
+            }
+            queries::get_track_row(&db.conn, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Song"))?;
+            queries::save_bookmark(&db.conn, user, track_id, position, comment)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
+/// `deleteBookmark`: forget the caller's place in the song `id` names. One
+/// that was never saved is already forgotten, as Navidrome answers it.
+async fn delete_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let track_id = require_id(db, params.get("id"), EntityKind::Song)?;
+            queries::delete_bookmark(&db.conn, user, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
 /// The lyrics koan has cached for a song, as one `structuredLyrics` entry, or
 /// none. Only the cache is read: fetching from LRCLIB is the player's job, and
 /// not something to do inside a client's request.
@@ -2345,15 +2435,53 @@ struct StreamParams {
     /// deserialise with a plain-text HTTP 400 *before* the handler runs, which
     /// is neither a Subsonic envelope nor something a client can report.
     id: Option<String>,
+    /// Strings for the same reason as `id`. Read only by `stream`; `download`
+    /// is the original file by definition.
+    #[serde(rename = "maxBitRate")]
+    max_bit_rate: Option<String>,
+    format: Option<String>,
+    #[serde(rename = "timeOffset")]
+    time_offset: Option<String>,
+    #[serde(rename = "estimateContentLength")]
+    estimate_content_length: Option<String>,
+}
+
+/// What `stream_inner` may send in place of the file itself.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    /// The original, always: `download`.
+    Original,
+    /// A transcode where the request asks for one.
+    Transcode,
+    /// The headers a transcode would have, without running one: `stream`'s HEAD.
+    TranscodeHead,
 }
 
 async fn stream(
+    State(state): State<Arc<AppState>>,
+    method: axum::http::Method,
+    Query(params): Query<StreamParams>,
+    headers: HeaderMap,
+) -> Response {
+    let json = params.auth.wants_json();
+    let delivery = if method == axum::http::Method::HEAD {
+        Delivery::TranscodeHead
+    } else {
+        Delivery::Transcode
+    };
+    match stream_inner(state, params, &headers, delivery).await {
+        Ok(resp) => resp,
+        Err(e) => SubsonicResponse::error(json, &e),
+    }
+}
+
+async fn download(
     State(state): State<Arc<AppState>>,
     Query(params): Query<StreamParams>,
     headers: HeaderMap,
 ) -> Response {
     let json = params.auth.wants_json();
-    match stream_inner(state, params, &headers).await {
+    match stream_inner(state, params, &headers, Delivery::Original).await {
         Ok(resp) => resp,
         Err(e) => SubsonicResponse::error(json, &e),
     }
@@ -2363,14 +2491,25 @@ async fn stream_inner(
     state: Arc<AppState>,
     params: StreamParams,
     headers: &HeaderMap,
+    delivery: Delivery,
 ) -> Result<Response, SubsonicError> {
     let lookup = state.clone();
-    let track = offload(move || {
-        let db = authed_db(&lookup, &params.auth)?;
-        let track_id = require_id(&db, params.id.as_deref(), EntityKind::Song)?;
-        queries::get_track_row(&db.conn, track_id)
+    let StreamParams {
+        auth,
+        id,
+        max_bit_rate,
+        format,
+        time_offset,
+        estimate_content_length,
+    } = params;
+    let (username, track) = offload(move || {
+        let caller = validate_auth(&auth, &lookup)?;
+        let db = lookup.open_db()?;
+        let track_id = require_id(&db, id.as_deref(), EntityKind::Song)?;
+        let track = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Track"))
+            .ok_or_else(|| SubsonicError::not_found("Track"))?;
+        Ok((caller.username, track))
     })
     .await?;
 
@@ -2393,6 +2532,37 @@ async fn stream_inner(
     }
 
     let path = local_path.unwrap();
+    if delivery != Delivery::Original
+        && let Some(transcoder) = &state.transcoder
+    {
+        let request = crate::transcode::Request {
+            max_bit_rate: max_bit_rate.as_deref(),
+            format: format.as_deref(),
+            time_offset: time_offset.as_deref(),
+        };
+        let source_kbps = track.bitrate.and_then(|b| u32::try_from(b).ok());
+        let plan = crate::transcode::plan(&request, track.codec.as_deref(), source_kbps)
+            .filter(|plan| transcoder.encodes(plan.codec));
+        if let Some(plan) = plan {
+            let length = (estimate_content_length.as_deref() == Some("true"))
+                .then(|| crate::transcode::estimated_length(&plan, track.duration_ms))
+                .flatten();
+            if delivery == Delivery::TranscodeHead {
+                return crate::transcode::Transcoder::head(&plan, length)
+                    .map_err(|e| SubsonicError::internal(e.to_string()));
+            }
+            match transcoder.permits(&username) {
+                None => log::info!("transcode: at the limit, serving {username} the original"),
+                Some(permits) => match transcoder.stream(&path, &plan, length, permits).await {
+                    Ok(Some(resp)) => return Ok(resp),
+                    Ok(None) => {}
+                    Err(e) => {
+                        log::warn!("transcode: could not start ffmpeg, serving the original: {e}")
+                    }
+                },
+            }
+        }
+    }
     serve_local_file(&path, headers).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             SubsonicError::not_found("File not found on disk")
@@ -3007,11 +3177,20 @@ async fn get_user(
 
 /// Answered without authentication, as OpenSubsonic requires: a client asks
 /// before it knows which sign-in methods it may use.
-async fn get_open_subsonic_extensions(Query(params): Query<SubsonicParams>) -> Response {
+async fn get_open_subsonic_extensions(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    // `timeOffset` seeks a transcode, so it is offered only where one can run.
+    let transcode: &[(&str, &[i64])] = if state.transcoder.is_some() {
+        &[("transcodeOffset", &[1])]
+    } else {
+        &[]
+    };
     SubsonicResponse::ok(params.wants_json())
         .list(
             "openSubsonicExtensions",
-            EXTENSIONS.iter().map(|(name, versions)| {
+            EXTENSIONS.iter().chain(transcode).map(|(name, versions)| {
                 XmlNode::new("openSubsonicExtensions")
                     .attr("name", name)
                     .list(
@@ -4202,8 +4381,8 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/stream.view", get(stream).post(stream))
         // `download` is the untranscoded original, which is all `stream` ever
         // serves here. koan's own download queue fetches through it.
-        .route("/rest/download", get(stream).post(stream))
-        .route("/rest/download.view", get(stream).post(stream))
+        .route("/rest/download", get(download).post(download))
+        .route("/rest/download.view", get(download).post(download))
         .route("/rest/getCoverArt", get(get_cover_art).post(get_cover_art))
         .route(
             "/rest/getCoverArt.view",
@@ -4218,6 +4397,27 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route(
             "/rest/getStarred2.view",
             get(get_starred2).post(get_starred2),
+        )
+        .route("/rest/getBookmarks", get(get_bookmarks).post(get_bookmarks))
+        .route(
+            "/rest/getBookmarks.view",
+            get(get_bookmarks).post(get_bookmarks),
+        )
+        .route(
+            "/rest/createBookmark",
+            get(create_bookmark).post(create_bookmark),
+        )
+        .route(
+            "/rest/createBookmark.view",
+            get(create_bookmark).post(create_bookmark),
+        )
+        .route(
+            "/rest/deleteBookmark",
+            get(delete_bookmark).post(delete_bookmark),
+        )
+        .route(
+            "/rest/deleteBookmark.view",
+            get(delete_bookmark).post(delete_bookmark),
         )
         .route("/rest/setRating", get(set_rating).post(set_rating))
         .route("/rest/setRating.view", get(set_rating).post(set_rating))
@@ -4332,6 +4532,21 @@ pub fn subsonic_router(
         log::info!("Subsonic: no shared secret, so only koan accounts sign in (with p=).");
     }
 
+    let transcoder = cfg
+        .subsonic
+        .transcode
+        .then(|| {
+            let found = crate::transcode::Transcoder::find(&cfg.subsonic.ffmpeg);
+            if found.is_none() {
+                log::info!(
+                    "Subsonic: {} did not run, so clients asking for a lower bitrate get the original.",
+                    cfg.subsonic.ffmpeg
+                );
+            }
+            found
+        })
+        .flatten();
+
     let state = Arc::new(AppState {
         users: crate::auth::password::PasswordVerifier::new(pool.clone()),
         pool,
@@ -4349,6 +4564,7 @@ pub fn subsonic_router(
             .unwrap_or_default(),
         covers,
         last_modified: Default::default(),
+        transcoder,
     });
 
     Some(subsonic_app(state))
@@ -4390,6 +4606,7 @@ mod tests {
             http: reqwest::Client::new(),
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
+            transcoder: None,
         });
         (state, dir)
     }
@@ -5502,6 +5719,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bookmarks_save_replace_list_and_delete() {
+        let (state, _dir) = test_state();
+        let [alpha, beta, _] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let call = |path: String| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("f=json")),
+                )
+                .await
+            }
+        };
+        let (alpha, beta) = (
+            uid_of(&state, queries::UidKind::Track, alpha),
+            uid_of(&state, queries::UidKind::Track, beta),
+        );
+
+        call(format!(
+            "createBookmark?id={alpha}&position=1000&comment=intro"
+        ))
+        .await;
+        call(format!("createBookmark?id={beta}&position=5000")).await;
+        call(format!("createBookmark?id={alpha}&position=2500")).await;
+        let v = call("getBookmarks?".into()).await;
+        let marks = v["bookmarks"]["bookmark"].as_array().unwrap();
+        assert_eq!(marks.len(), 2, "{v}");
+        let mark = marks.iter().find(|m| m["entry"]["id"] == alpha).unwrap();
+        assert_eq!(
+            mark["position"], 2500,
+            "a second bookmark replaces the first"
+        );
+        assert!(mark["comment"].is_null());
+        assert_eq!(mark["username"], "testuser");
+        assert!(mark["created"].is_string() && mark["changed"].is_string());
+
+        let v = call(format!("createBookmark?id={alpha}")).await;
+        assert_eq!(v["error"]["code"], 10, "position is required");
+
+        call(format!("deleteBookmark?id={alpha}")).await;
+        let v = call("getBookmarks?".into()).await;
+        assert_eq!(v["bookmarks"]["bookmark"].as_array().unwrap().len(), 1);
+        let v = call(format!("deleteBookmark?id={alpha}")).await;
+        assert_eq!(v["status"], "ok", "deleting twice is not an error");
+
+        let long = "x".repeat(MAX_BOOKMARK_COMMENT + 1);
+        let v = call(format!(
+            "createBookmark?id={beta}&position=1&comment={long}"
+        ))
+        .await;
+        assert_eq!(v["error"]["code"], 10, "an overlong comment is refused");
+        let v = call("getBookmarks?".into()).await;
+        assert_eq!(v["bookmarks"]["bookmark"][0]["position"], 5000, "{v}");
+    }
+
+    #[tokio::test]
     async fn random_songs_filter_in_sql() {
         let (state, _dir) = test_state();
         seed_shelves(&state);
@@ -5598,7 +5873,10 @@ mod tests {
         let app = build_test_router(state);
         let (_, body) = get_response(
             app,
-            &format!("/rest/getBookmarks.view?{}", auth_query("f=json")),
+            &format!(
+                "/rest/getInternetRadioStations.view?{}",
+                auth_query("f=json")
+            ),
         )
         .await;
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
