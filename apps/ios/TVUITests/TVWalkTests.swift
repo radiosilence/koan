@@ -87,13 +87,18 @@ final class TVWalkTests: XCTestCase {
 
         start(at: .library)
         snap("11-library")
-        for (offset, name) in ["12-albums", "13-artists", "14-favourites", "15-playlists", "16-history"].enumerated() {
+        // Each page by its place in the library index, counted from the tab bar.
+        let pages = [
+            ("12-albums", 1), ("13-artists", 2), ("13b-tracks", 3), ("14-favourites", 4),
+            ("15-playlists", 5), ("15b-recently-played", 6), ("15c-downloaded", 7), ("16-history", 8),
+        ]
+        for (name, place) in pages {
             start(at: .library)
-            press(.down, times: offset + 1)
+            press(.down, times: place)
             press(.select)
             pause(4)
             snap(name)
-            if offset == 0 {
+            if place == 1 {
                 press(.down)
                 press(.select)
                 pause(4)
@@ -104,7 +109,7 @@ final class TVWalkTests: XCTestCase {
                 pause(1.5)
                 snap("19-track-menu")
             }
-            if offset == 1 {
+            if place == 2 {
                 press(.down)
                 press(.select)
                 pause(4)
