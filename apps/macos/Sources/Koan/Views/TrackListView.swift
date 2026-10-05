@@ -238,9 +238,11 @@ struct TrackListView: View {
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: Columns.headerGap) {
+                    #if !os(tvOS)
                     if let playable {
                         PlayableHeaderButton(playable: playable)
                     }
+                    #endif
                     Text(Format.title(title))
                         .font(.system(size: Columns.title, weight: .semibold))
                         .lineLimit(2)

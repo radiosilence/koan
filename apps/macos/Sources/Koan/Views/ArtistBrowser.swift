@@ -269,12 +269,14 @@ struct ArtistDetailView: View {
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(alignment: .firstTextBaseline, spacing: 14) {
+                            #if !os(tvOS)
                             if let artist {
                                 PlayableHeaderButton(
                                     playable: .artist(id: artist.id, name: artist.name)
                                 )
                                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] * 0.78 }
                             }
+                            #endif
                             Text(artist?.name ?? "Artist")
                                 .font(.system(size: 26, weight: .semibold))
                         }

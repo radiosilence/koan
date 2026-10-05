@@ -31,6 +31,14 @@ struct LinkText: View {
     }
 
     var body: some View {
+        #if os(tvOS)
+        // A row is one focusable thing on a television; a link inside it can
+        // never be reached, so it reads as the name it is.
+        Text(text)
+            .font(font)
+            .foregroundStyle(prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            .lineLimit(1)
+        #else
         if let target {
             Text(text)
                 .font(font)
@@ -65,6 +73,7 @@ struct LinkText: View {
                 .foregroundStyle(prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                 .lineLimit(1)
         }
+        #endif
     }
 }
 

@@ -28,7 +28,11 @@ struct SettingsView: View {
         @ViewBuilder _ content: @escaping () -> Content
     ) -> some View {
         NavigationLink {
-            content().navigationTitle(title)
+            content()
+                .navigationTitle(title)
+                #if os(tvOS)
+                .roomBackground()
+                #endif
         } label: {
             #if os(tvOS)
             // The symbols are of different widths; at television size a

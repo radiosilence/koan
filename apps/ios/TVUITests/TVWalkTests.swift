@@ -7,6 +7,10 @@ import XCTest
 /// these pages is how they look and where focus goes. `just tv-walk` runs it
 /// against the server named in the `KOAN_REMOTE__*` environment and exports the
 /// screenshots.
+///
+/// Each stop starts from a fresh launch, with focus on the first tab. Back at a
+/// tab's root leaves the app on tvOS, so a walk that found its way home by
+/// pressing it would end on the system's Home screen at the first misstep.
 @MainActor
 final class TVWalkTests: XCTestCase {
     private var app: XCUIApplication!
@@ -21,17 +25,19 @@ final class TVWalkTests: XCTestCase {
         for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("KOAN_") {
             app.launchEnvironment[key] = value
         }
-        app.launch()
+    }
+
+    /// The tabs, left to right.
+    private enum Tab: Int {
+        case nowPlaying, queue, library, search, settings
     }
 
     func testWalk() {
-        pause(Double(ProcessInfo.processInfo.environment["KOAN_WALK_SETTLE"] ?? "8") ?? 8)
+        start(at: .nowPlaying)
+        pause(Double(ProcessInfo.processInfo.environment["KOAN_WALK_SETTLE"] ?? "6") ?? 6)
         snap("01-now-playing")
 
-        // Up to the tab bar, then across it.
-        press(.up)
-        press(.right)
-        pause(2)
+        start(at: .queue)
         snap("02-queue")
         press(.down)
         snap("03-queue-focused")
@@ -39,106 +45,73 @@ final class TVWalkTests: XCTestCase {
         pause(4)
         snap("04-queue-played")
 
-        press(.up, times: 6)
-        press(.left)
-        pause(2)
-        snap("05-now-playing-playing")
+        start(at: .nowPlaying)
         press(.down)
+        snap("05-now-playing-controls")
+        press(.up)
         snap("06-now-playing-seek")
-        press(.down)
+        press(.down, times: 2)
         snap("07-now-playing-up-next")
-
-        press(.up, times: 6)
-        press(.right, times: 2)
-        pause(2)
-        snap("08-library")
-        press(.down)
-        press(.select)
-        pause(4)
-        snap("09-albums")
-        press(.down)
-        press(.select)
-        pause(4)
-        snap("10-album")
-        press(.down)
-        snap("11-album-track-focused")
-        press(.menu)
-        press(.menu)
-        pause(1)
-
-        press(.up, times: 6)
-        press(.right)
-        pause(2)
-        snap("12-search")
-
-        press(.up, times: 6)
-        press(.right)
-        pause(2)
-        snap("13-settings")
-        for (index, pane) in ["14-settings-server", "15-settings-playback", "16-settings-devices"].enumerated() {
-            press(.down, times: index + 1)
-            press(.select)
-            pause(2)
-            snap(pane)
-            press(.menu)
-            pause(1)
-            press(.up, times: 6)
-        }
-
-        // The rest of the library, one section at a time.
-        press(.left, times: 2)
-        pause(1)
-        for (index, section) in ["17-artists", "18-favourites", "19-playlists", "20-history"].enumerated() {
-            press(.down, times: index + 2)
-            press(.select)
-            pause(4)
-            snap(section)
-            if index == 0 {
-                press(.down)
-                press(.select)
-                pause(4)
-                snap("21-artist")
-                press(.menu)
-                pause(1)
-            }
-            press(.menu)
-            pause(1)
-            press(.up, times: 8)
-        }
-
-        // A record's menu, held open from the album grid.
-        press(.down)
-        press(.select)
-        pause(4)
-        press(.down)
-        remote.press(.select, forDuration: 1.5)
-        pause(1.5)
-        snap("22-album-menu")
-        press(.menu)
-        press(.menu)
-        pause(1)
-
-        // Lyrics and the device sheets, from Now Playing.
-        press(.up, times: 8)
-        press(.left, times: 4)
-        pause(2)
-        press(.down)
+        press(.up)
         press(.right, times: 4)
         press(.select)
         pause(3)
-        snap("23-lyrics")
+        snap("08-lyrics")
         press(.select)
+        pause(1)
         press(.right, times: 4)
         press(.select)
         pause(2)
-        snap("24-devices-sheet")
-        press(.menu)
-        pause(1)
-        press(.right)
-        press(.select)
+        snap("09-device-sheet")
+
+        start(at: .library)
+        snap("10-library")
+        for (offset, name) in ["11-albums", "12-artists", "13-favourites", "14-playlists", "15-history"].enumerated() {
+            start(at: .library)
+            press(.down, times: offset + 1)
+            press(.select)
+            pause(4)
+            snap(name)
+            if offset == 0 {
+                press(.down)
+                press(.select)
+                pause(4)
+                snap("16-album")
+                press(.down)
+                snap("17-album-track")
+                remote.press(.select, forDuration: 1.5)
+                pause(1.5)
+                snap("18-track-menu")
+            }
+            if offset == 1 {
+                press(.down)
+                press(.select)
+                pause(4)
+                snap("19-artist")
+            }
+        }
+
+        start(at: .search)
+        snap("20-search")
+
+        start(at: .settings)
+        snap("21-settings")
+        for (offset, name) in ["22-settings-server", "23-settings-playback", "24-settings-devices"].enumerated() {
+            start(at: .settings)
+            press(.down, times: offset + 1)
+            press(.select)
+            pause(2)
+            snap(name)
+        }
+    }
+
+    /// Launch afresh and move along the tab bar to `tab`, then into its page.
+    private func start(at tab: Tab) {
+        app.terminate()
+        app.launch()
+        pause(5)
+        press(.right, times: tab.rawValue)
         pause(2)
-        snap("25-output-sheet")
-        press(.menu)
     }
 
     private func press(_ button: XCUIRemote.Button, times: Int = 1) {

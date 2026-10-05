@@ -263,9 +263,11 @@ struct PlaylistView: View {
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
+                #if !os(tvOS)
                 if let playable {
                     PlayableHeaderButton(playable: playable)
                 }
+                #endif
                 Text(playlist?.name ?? "Playlist")
                     .font(.system(size: 26, weight: .semibold))
                     .lineLimit(2)
@@ -274,6 +276,12 @@ struct PlaylistView: View {
             Text(summary)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            #if os(tvOS)
+            if let playable {
+                PlayableHeaderButton(playable: playable)
+                    .padding(.top, 12)
+            }
+            #endif
         }
     }
 

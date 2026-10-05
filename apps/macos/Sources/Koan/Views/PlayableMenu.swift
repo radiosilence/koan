@@ -421,6 +421,11 @@ struct PlayableHeaderButton: View {
                 if case .artist = playable { nav.showQueueWhenReady(watching: player) }
             }
         } label: {
+            #if os(tvOS)
+            // A television's play is a labelled button leading the row of
+            // actions, the first thing focus lands on in a record's header.
+            Label(loading ? "Loading" : "Play", systemImage: Icon.play)
+            #else
             ZStack {
                 Circle()
                     .fill(.tint)
@@ -434,8 +439,11 @@ struct PlayableHeaderButton: View {
                         .offset(x: 1)  // optical centring for a triangle
                 }
             }
+            #endif
         }
+        #if !os(tvOS)
         .buttonStyle(.plain)
+        #endif
         .help("Play \(playable.name)")
     }
 }
