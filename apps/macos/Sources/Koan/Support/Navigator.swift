@@ -28,6 +28,7 @@ final class Navigator {
         case tracks
         case favourites
         case recentlyPlayed
+        case onDevice
         case playHistory
         case downloads
         /// One playlist. A sidebar row like any other — which is what makes
@@ -37,7 +38,7 @@ final class Navigator {
         var id: Self { self }
 
         /// The library's own listings, which the browse filters and a shelf's
-        /// See all narrow.
+        /// headings narrow.
         var isBrowser: Bool { self == .albums || self == .artists || self == .tracks }
 
         /// What the toolbar's filter field says — and, by its absence, which
@@ -50,10 +51,12 @@ final class Navigator {
             case .tracks: "Filter tracks"
             case .playHistory: "Filter history"
             // A shelf shows the first few of each kind, and narrowing is what
-            // its See all opens: the browser, filtered to the shelf.
+            // its headings open: the browser, filtered to the shelf.
             case .favourites, .recentlyPlayed: nil
             // Short, and ordered by what is happening rather than by name.
             case .downloads: nil
+            // A shelf: the first few of each kind, not a list to narrow.
+            case .onDevice: nil
             // A playlist is a sequence someone chose, and narrowing it hides
             // part of that sequence rather than telling you anything.
             case .queue, .searchResults, .playlist: nil

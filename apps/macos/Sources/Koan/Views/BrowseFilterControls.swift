@@ -10,16 +10,29 @@ struct BrowseFilterButton: View {
 
     var body: some View {
         let count = library.browseFilter.activeCount
+        #if os(tvOS)
+        // The button is already round; a circled symbol inside it reads small.
+        let symbol = count > 0 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease"
+        #else
+        let symbol = count > 0
+            ? "line.3.horizontal.decrease.circle.fill"
+            : "line.3.horizontal.decrease.circle"
+        #endif
         Button { open = true } label: {
+            #if os(tvOS)
+            // A television's toolbar draws a custom label small and tinted; a
+            // `Label` it draws as an icon, like the sort menu beside it. The
+            // filled symbol says filters are on.
+            Label(count > 0 ? "Filters, \(count) on" : "Filters", systemImage: symbol)
+            #else
             HStack(spacing: 3) {
-                Image(systemName: count > 0
-                    ? "line.3.horizontal.decrease.circle.fill"
-                    : "line.3.horizontal.decrease.circle")
+                Image(systemName: symbol)
                 if count > 0 {
                     Text("\(count)").monospacedDigit()
                 }
             }
             .accessibilityLabel(count > 0 ? "Filters, \(count) on" : "Filters")
+            #endif
         }
         .help(count > 0 ? "Filters — \(count) on" : "Filters")
         #if os(macOS)
@@ -57,6 +70,7 @@ private struct BrowseFilterForm: View {
             Section {
                 Toggle("Favourites", isOn: $library.browseFilter.favourites)
                 Toggle("Recently Played", isOn: $library.browseFilter.recent)
+                Toggle("Downloaded", isOn: $library.browseFilter.downloaded)
                 // A track's codec says this already, and the track listing
                 // filters by codec rather than by what its record is in.
                 if library.section != .tracks {

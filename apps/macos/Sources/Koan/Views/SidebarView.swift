@@ -64,6 +64,8 @@ struct SidebarView: View {
                     .sidebarRow(.favourites)
                 Label("Recently Played", systemImage: Icon.recentlyPlayed)
                     .sidebarRow(.recentlyPlayed)
+                Label("Downloaded", systemImage: Icon.onDevice)
+                    .sidebarRow(.onDevice)
                 Label("History", systemImage: Icon.history)
                     .sidebarRow(.playHistory)
                 DownloadsRowLabel()

@@ -157,7 +157,7 @@ struct SearchResultsView: View {
                 pick: pick,
                 counts: true,
                 totals: search.totals,
-                seeAll: { nav.show(library.seeAll($0, of: .search(query: search.query))) },
+                openSection: { nav.show(library.browse($0, of: .search(query: search.query))) },
                 insets: insets
             )
         }
@@ -167,7 +167,7 @@ struct SearchResultsView: View {
     private var artistSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeading("Artists", count: search.artists.count, total: search.totals?.artists) {
-                nav.show(library.seeAll(.artists, of: .search(query: search.query)))
+                nav.show(library.browse(.artists, of: .search(query: search.query)))
             }
             FlowLayout(spacing: 8) {
                 ForEach(search.artists, id: \.id) { artist in
@@ -180,7 +180,7 @@ struct SearchResultsView: View {
     private var albumSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeading("Albums", count: search.albums.count, total: search.totals?.albums) {
-                nav.show(library.seeAll(.albums, of: .search(query: search.query)))
+                nav.show(library.browse(.albums, of: .search(query: search.query)))
             }
             LazyVGrid(columns: columns, spacing: 18) {
                 ForEach(search.albums, id: \.id) { album in
@@ -195,7 +195,7 @@ struct SearchResultsView: View {
     private var trackSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionHeading("Tracks", count: search.tracks.count, total: search.totals?.tracks) {
-                nav.show(library.seeAll(.tracks, of: .search(query: search.query)))
+                nav.show(library.browse(.tracks, of: .search(query: search.query)))
             }
             VStack(spacing: 0) {
                 ForEach(search.tracks, id: \.id) { track in
@@ -206,34 +206,38 @@ struct SearchResultsView: View {
     }
 }
 
+/// A results section's heading: its name, how many the library has (the
+/// results' own count until that is known), and a chevron, the whole of it
+/// opening the browser on the whole set.
 private struct SectionHeading: View {
     let title: String
     let count: Int
-    /// How many the library has, when it is more than the results show.
     let total: UInt64?
-    let seeAll: () -> Void
+    let open: () -> Void
 
-    init(_ title: String, count: Int, total: UInt64?, seeAll: @escaping () -> Void) {
+    init(_ title: String, count: Int, total: UInt64?, open: @escaping () -> Void) {
         self.title = title
         self.count = count
         self.total = total
-        self.seeAll = seeAll
+        self.open = open
     }
 
     var body: some View {
-        HStack(spacing: 7) {
-            Text(title)
-                .font(.title3.weight(.semibold))
-            Text("\(count)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
-            Spacer()
-            if let total, total > UInt64(count) {
-                Button("See all (\(total))", action: seeAll)
-                    .buttonStyle(.borderless)
-                    .font(.subheadline)
+        Button(action: open) {
+            HStack(spacing: 7) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                Text("\(total ?? UInt64(count))")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 }
 

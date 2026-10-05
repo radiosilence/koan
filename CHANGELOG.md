@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **A shelf's headings open its browsers, in place of See all.** On Favourites, Recently Played and search, in the apps and the web UI, each section's heading reads as a link: its name, how many there are in all, and a chevron. It opens the browser filtered to the shelf, whether or not the section shows all it has. The separate See all is gone.
+
 ### Fixed
 
 - **The web UI on a phone.** A favourite track shows its heart beside the row's ⋯ again, as a mark; the heart to press is in the menu. History rows give the title the width the tick boxes took: on a phone a play is removed with Remove from History in its menu, as in the apps, and the time is set smaller. On a wide screen the Tracks browser's name field is wide enough for its hint.
@@ -33,6 +37,7 @@ The library database moves from schema 16 to 19 (new tables for ratings, bookmar
 - **Play history is shared between devices on a kōan server.** Signed in to a kōan server, History on each device shows the plays the account's other devices made alongside its own, arriving as they are scrobbled. Forgetting a play or clearing history, in the apps or on the web UI's History page, does so on every device on the account. A device's skips stay on that device, since the server keeps only plays heard long enough to count. Servers list the `koanHistory` extension. The library database moves to schema 19 for the new `play_history_forgotten` and `history_outbox` tables, and `play_history` is rebuilt so its ids are never reused; a build older than this one refuses it.
 - **Covers from image files beside the tracks** ([#814](https://github.com/radiosilence/koan/issues/814)). A `cover`, `folder` or `front` image (JPEG, PNG or WebP, any case) in an album's folder is now its cover, ahead of art embedded in the files, in Navidrome's default order, so a library that keeps its art that way shows it everywhere: the apps, the terminal UI, the web UI, share pages, the Subsonic API, GraphQL and UPnP renderers. An album split into disc folders takes the image from the folder above them. Adding, replacing or removing an image is noticed by the folder watcher; the apps drop the cover they had cached for that folder's records.
 - **See all, and a Tracks browser, in the Mac and iOS apps.** Favourites, Recently Played and search show the first few artists, records and tracks with how many there are, and See all opens the browser filtered to the shelf, in its order, as the web UI does. The browsers gain a Recently Played filter and a Last Played sort, and Tracks is a new browser beside Albums and Artists (⌘7 on the Mac). The Favourites and Recently Played pages no longer have a filter field: narrowing them is what See all opens.
+- **Downloaded, and offline mode on iOS.** A Downloaded page on the Mac and iOS lists the records with files on this device, fully there first, each with a bar showing how much of it is. On iOS, when the server has been out of reach for a few seconds with the app open, the library narrows to what is on the phone: every list, browse, search, shelves and playlists, shows only that, and the queue greys out what cannot play. It lifts by itself when the server answers, and Settings → Offline mode turns it on by hand.
 - **Recently played.** A page in the Mac and iOS apps, laid out like Favourites, for "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first, at most 50 of each. It is worked out from play history, so it follows each play as it is recorded, and History now does too. On the Mac, ⌘6.
 
 ### Fixed

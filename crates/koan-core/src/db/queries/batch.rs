@@ -76,6 +76,7 @@ pub fn albums_for_artists(
             label: row.get(8)?,
             remote_id: row.get(9)?,
             added_at: row.get(10)?,
+            on_device: None,
         })
     })?;
 
@@ -351,6 +352,8 @@ pub struct TrackFilter {
     pub favourites_of: Option<i64>,
     /// Only tracks played since then.
     pub played: Option<super::history::PlayedSince>,
+    /// Only tracks that can play here: downloaded, or a file in the library.
+    pub on_device: bool,
 }
 
 /// Fetch a page of tracks matching `filter`.
@@ -444,6 +447,10 @@ fn track_body(
     if let Some(query) = &filter.search {
         clauses.push("t.id IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH ?)".to_string());
         binds.push(Box::new(super::search::sanitize_fts_query(query)));
+    }
+
+    if filter.on_device {
+        clauses.push("COALESCE(t.cached_path, t.path) IS NOT NULL".to_string());
     }
 
     if let Some(album_id) = filter.album_id {

@@ -5,8 +5,8 @@
 //! it straight into the SQL that narrows and orders the library.
 //!
 //! The shelves are filters here: `fav`, `recent` and `q` narrow a browser
-//! exactly as `koan_core::shelves` narrows a shelf, so a shelf page's "See
-//! all" (`see_all`) opens the listing its preview is the head of.
+//! exactly as `koan_core::shelves` narrows a shelf, so a shelf page's section
+//! heading (`shelf_browser`) opens the listing its preview is the head of.
 
 use std::fmt::Write as _;
 
@@ -118,6 +118,8 @@ impl Browse {
             year_from: year(&self.from),
             year_to: year(&self.to),
             genre: set(&self.genre),
+            // The server's library is all on the server.
+            on_device: false,
         }
     }
 
@@ -257,21 +259,25 @@ impl Browse {
     }
 }
 
-/// Where a shelf section's "See all" goes: the browser for `kind` with the
+/// Where a shelf section's heading goes: the browser for `kind` with the
 /// shelf as its filter and the shelf's order as its sort, so the listing it
 /// opens is the one the preview was the head of.
-pub(super) fn see_all(shelf: Shelf, kind: Kind) -> String {
+pub(super) fn shelf_browser(shelf: Shelf, kind: Kind) -> String {
     let mut b = Browse::default();
     let sort = match (shelf, kind) {
         (Shelf::Recent, _) => PLAYED.0,
         (Shelf::Favourites, Kind::Artists) | (Shelf::Search(_), Kind::Artists) => "name",
         (Shelf::Favourites, _) | (Shelf::Search(_), Kind::Tracks) => "artist",
         (Shelf::Search(_), Kind::Albums) => "recent",
+        (Shelf::Downloaded, Kind::Artists) => "name",
+        (Shelf::Downloaded, _) => "artist",
     };
     match shelf {
         Shelf::Favourites => b.fav = "1".into(),
         Shelf::Recent => b.recent = "1".into(),
         Shelf::Search(q) => b.q = q.into(),
+        // The web UI downloads nothing, so it has no such shelf to link from.
+        Shelf::Downloaded => {}
     }
     b.sort = sort.into();
     format!("{}?{}", kind.path(), b.query())
@@ -441,15 +447,15 @@ mod tests {
         assert_eq!(b.active(), 4);
     }
 
-    /// A "See all" opens its shelf's own listing: the same narrowing, the same
+    /// A shelf's heading opens its own listing: the same narrowing, the same
     /// order. The counts and rows matching follow from that; the UI tests
     /// check them against a library.
     #[test]
-    fn a_see_all_link_is_its_shelfs_listing() {
+    fn a_shelf_heading_links_to_its_shelfs_listing() {
         let (user, now) = (7, 1_800_000_000);
         for shelf in [Shelf::Favourites, Shelf::Recent, Shelf::Search("moss")] {
             let open = |kind: Kind| {
-                let link = see_all(shelf, kind);
+                let link = shelf_browser(shelf, kind);
                 assert!(link.starts_with(kind.path()), "{link}");
                 browse(link.split_once('?').unwrap().1)
             };

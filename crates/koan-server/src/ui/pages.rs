@@ -29,6 +29,8 @@ const ICON_PREV: &str =
     "<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M6 5h2v14H6zM20 5v14L9 12z\"/></svg>";
 const ICON_NEXT: &str =
     "<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M16 5h2v14h-2zM4 5v14l11-7z\"/></svg>";
+const ICON_CHEVRON: &str = "<svg class=\"size-[0.8em] fill-none stroke-current stroke-[2.5]\" \
+viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M9 5l7 7-7 7\"/></svg>";
 // `playing` is on the body while music plays.
 const ICON_PLAY: &str = "<svg class=\"in-[.playing]:hidden\" viewBox=\"0 0 24 24\" aria-hidden=true>\
      <path d=\"M7 4v16l13-8z\"/></svg>";
@@ -424,7 +426,7 @@ fn album_list(
     Some((albums, versions, Hearts::load(&db.conn, user)))
 }
 
-/// "12 albums", once a filter is on: what a shelf's "See all" promised.
+/// "12 albums", once a filter is on: the count a shelf's heading gave.
 fn counted(n: usize, one: &str, many: &str, b: &Browse) -> String {
     if b.filtered() {
         format!(
@@ -882,7 +884,8 @@ fn results(s: &UiState, user: &AuthUser, q: &str) -> String {
     }
     let shelf = Shelf::Search(q);
     let found = open(&s.pool).and_then(|db| {
-        let summary = shelves::summary(&db.conn, shelf, user.user_id, shelves::now()).ok()?;
+        let summary =
+            shelves::summary(&db.conn, shelf, user.user_id, shelves::now(), false).ok()?;
         let versions = shelf_versions(&db.conn, &summary);
         Some((summary, versions, Hearts::load(&db.conn, user)))
     });
@@ -999,26 +1002,16 @@ fn shelf_versions(conn: &rusqlite::Connection, s: &Summary) -> Versions {
     versions
 }
 
-/// A section's heading, with "See all (n)" when the preview is not all of
-/// it. The link opens the browser with the shelf as its filter.
-fn section_head(
-    title: &str,
-    total: u64,
-    shown: usize,
-    shelf: Shelf,
-    kind: Kind,
-    extra: &str,
-) -> String {
-    let all = if total as usize > shown {
-        format!(
-            "<a class=\"text-meta\" href=\"{}\">See all ({total})</a>",
-            escape(&browse::see_all(shelf, kind))
-        )
-    } else {
-        String::new()
-    };
+/// A section's heading: its name, how many the shelf has in all, and a
+/// chevron, the whole of it a link to the browser with the shelf as its
+/// filter. The preview below may show fewer.
+fn section_head(title: &str, total: u64, shelf: Shelf, kind: Kind, extra: &str) -> String {
+    let href = escape(&browse::shelf_browser(shelf, kind));
     format!(
-        "<div class=\"{LIST_HEAD}\"><h2>{title}</h2><div class=\"{ACTIONS}\">{extra}{all}</div></div>"
+        "<div class=\"{LIST_HEAD}\"><h2><a class=\"inline-flex items-center gap-1.5 text-[inherit] \
+hover:text-brand hover:no-underline\" href=\"{href}\">{title}\
+<span class=\"font-normal text-muted tabular-nums\">{total}</span>{ICON_CHEVRON}</a></h2>\
+<div class=\"{ACTIONS}\">{extra}</div></div>"
     )
 }
 
@@ -1036,14 +1029,7 @@ fn shelf_sections(
         let _ = write!(
             out,
             "{}<div class=\"mb-6 flex flex-wrap gap-2\">{}</div>",
-            section_head(
-                "Artists",
-                s.artists.total,
-                s.artists.preview.len(),
-                shelf,
-                Kind::Artists,
-                ""
-            ),
+            section_head("Artists", s.artists.total, shelf, Kind::Artists, ""),
             pills(&s.artists.preview)
         );
     }
@@ -1051,14 +1037,7 @@ fn shelf_sections(
         let _ = write!(
             out,
             "{}<div class=\"mb-6 {GRID}\">{}</div>",
-            section_head(
-                "Albums",
-                s.albums.total,
-                s.albums.preview.len(),
-                shelf,
-                Kind::Albums,
-                ""
-            ),
+            section_head("Albums", s.albums.total, shelf, Kind::Albums, ""),
             cells(&s.albums.preview, versions, hearts)
         );
     }
@@ -1076,7 +1055,6 @@ fn shelf_sections(
             section_head(
                 "Tracks",
                 s.tracks.total,
-                s.tracks.preview.len(),
                 shelf,
                 Kind::Tracks,
                 "<button class=\"primary\" data-act=play>Play</button>\
@@ -1099,7 +1077,7 @@ async fn shelf_page(
     let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let summary = shelves::summary(&db.conn, shelf, who.user_id, shelves::now()).ok()?;
+        let summary = shelves::summary(&db.conn, shelf, who.user_id, shelves::now(), false).ok()?;
         let versions = shelf_versions(&db.conn, &summary);
         Some((summary, versions, Hearts::load(&db.conn, &who)))
     })

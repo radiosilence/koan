@@ -112,6 +112,7 @@ fn update(f: impl FnOnce(&mut State)) {
     if before.awake != now.awake {
         if now.awake {
             log::info!("quiet: awake");
+            crate::remote::offline::woke();
             crate::remote::nearby::wake();
             crate::remote::devices::resume();
         } else {

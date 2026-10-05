@@ -146,6 +146,9 @@ pub struct AlbumRow {
     /// When the album entered the library — the server's `created` for remote
     /// albums, otherwise the time it was first indexed.
     pub added_at: Option<String>,
+    /// How much of it can play here, when the listing was narrowed to this
+    /// device or ordered by it.
+    pub on_device: Option<OnDevice>,
 }
 
 #[derive(Debug, Clone)]

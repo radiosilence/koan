@@ -117,6 +117,7 @@ struct QueueView: View {
     private func table(_ rows: [Row]) -> some View {
         let lines = rows.map(line)
         let live = onStage && !reduceMotion && graphics.animatesIndicators
+        let offline = mirror.connection?.offline == true
         let jumpTarget: String? = switch ui.queueJumpTarget {
         case .top: rows.first?.id
         case .bottom: rows.last?.id
@@ -129,7 +130,7 @@ struct QueueView: View {
         }
         let key: [AnyHashable] = [
             AnyHashable(player.isPlaying), AnyHashable(live), AnyHashable(onStage), AnyHashable(tint),
-            AnyHashable(library.favouriteTrackIds),
+            AnyHashable(library.favouriteTrackIds), AnyHashable(offline),
         ]
         return SafeAreaReader { insets in
             KoanTable(
@@ -144,7 +145,8 @@ struct QueueView: View {
                     onStage: onStage,
                     art: art,
                     levels: levels,
-                    toggleFavourite: { library.toggleFavourite(track: $0) }
+                    toggleFavourite: { library.toggleFavourite(track: $0) },
+                    offline: offline
                 ),
                 contextKey: AnyHashable(key),
                 selection: $selection,
