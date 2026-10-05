@@ -51,7 +51,16 @@ struct LibraryTab: View {
 
     private func row(_ title: String, _ symbol: String, _ route: Route) -> some View {
         NavigationLink(value: route) {
+            #if os(tvOS)
+            // The symbols are of different widths; at television size a
+            // label's own spacing lets the wide ones touch their titles.
+            HStack(spacing: 24) {
+                Image(systemName: symbol).frame(width: 56)
+                Text(title)
+            }
+            #else
             Label(title, systemImage: symbol)
+            #endif
         }
         .listLink()
     }
