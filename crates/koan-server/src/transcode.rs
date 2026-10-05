@@ -31,13 +31,6 @@ impl Codec {
         }
     }
 
-    pub fn suffix(self) -> &'static str {
-        match self {
-            Self::Opus => "opus",
-            Self::Mp3 => "mp3",
-        }
-    }
-
     pub fn content_type(self) -> &'static str {
         match self {
             Self::Opus => "audio/ogg",
