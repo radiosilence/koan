@@ -137,6 +137,14 @@ pub struct Track {
     pub is_favourite: bool,
 }
 
+/// What was played lately, each once and newest first by its latest play.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct RecentlyPlayed {
+    pub albums: Vec<Album>,
+    pub artists: Vec<Artist>,
+    pub tracks: Vec<Track>,
+}
+
 /// One play, with the track it played.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct PlayHistoryEntry {

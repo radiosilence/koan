@@ -36,6 +36,7 @@ struct RootView: View {
     @Environment(UIState.self) private var ui
     @Environment(CoverArtCache.self) private var art
     @Environment(LibraryModel.self) private var library
+    @Environment(EngineMirror.self) private var mirror
     @Environment(Navigator.self) private var nav
     @Environment(SearchModel.self) private var search
     /// Held for `reloading` below; nothing on it is read in this body.
@@ -107,6 +108,9 @@ struct RootView: View {
             library.libraryChanged()
             playlists.load()
         }
+        // A play recorded, or plays forgotten: the pages derived from
+        // history ask again.
+        .onChange(of: mirror.historyVersion) { _, _ in library.historyChanged() }
         // The toolbar paints its own ground over whatever is behind it, a hard
         // grey strip across the top of a queue washed in the colour of the
         // record. Hidden, the glass controls sit in that colour and the scroll
@@ -488,6 +492,7 @@ private struct StageView: View {
         switch section {
         case .searchResults: SearchResultsView()
         case .favourites: FavouritesView()
+        case .recentlyPlayed: RecentlyPlayedView()
         case .playHistory: HistoryView()
         case .downloads: DownloadsView()
         case .playlist(let id): PlaylistView(playlistId: id)
