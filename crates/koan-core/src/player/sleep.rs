@@ -66,7 +66,7 @@ pub(super) enum SleepFade {
 impl Player {
     /// When the fade runs: from its start to the moment the timer ends
     /// playback. `None` while nothing plays toward a timer.
-    pub(super) fn sleep_window(&self) -> Option<(Instant, Instant)> {
+    pub(super) fn sleep_window(&self, now: Instant) -> Option<(Instant, Instant)> {
         let set = self.sleep?;
         if self.intent() != Some(Run::Playing) {
             return None;
@@ -88,8 +88,7 @@ impl Player {
                 return None;
             }
         }
-        let end =
-            Instant::now() + Duration::from_millis(duration.saturating_sub(state.position_ms()));
+        let end = now + Duration::from_millis(duration.saturating_sub(state.position_ms()));
         let length = TRACK_FADE.min(Duration::from_millis(duration));
         Some((end.checked_sub(length).unwrap_or(end), end))
     }
@@ -100,7 +99,7 @@ impl Player {
         match self.sleep_fade {
             Some(SleepFade::Restoring { .. }) => Some(now + TICK),
             Some(SleepFade::Falling { .. }) => Some(now + self.sleep_tick_period()),
-            None => self.sleep_window().map(|(start, _)| start.max(now)),
+            None => self.sleep_window(now).map(|(start, _)| start.max(now)),
         }
     }
 
@@ -131,7 +130,7 @@ impl Player {
                 return;
             }
         }
-        let window = self.sleep_window().filter(|(start, _)| now >= *start);
+        let window = self.sleep_window(now).filter(|(start, _)| now >= *start);
         match (window, self.sleep_fade) {
             (Some((start, end)), fade) => {
                 let length = (end - start).as_secs_f32().max(0.001);
