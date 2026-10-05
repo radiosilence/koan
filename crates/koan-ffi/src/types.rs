@@ -972,6 +972,9 @@ pub enum AlbumSort {
     /// order, page after page; a new seed is a new order — which is the point,
     /// it's for turning up records you'd forgotten.
     Random,
+    /// Most recently played first. Only with [`BrowseFilter::recent`], which
+    /// is what knows when; without it, `RecentlyAdded`.
+    LastPlayed,
 }
 
 /// Narrowing the album and artist browsers by what the records are. The web
@@ -980,6 +983,9 @@ pub enum AlbumSort {
 #[derive(uniffi::Record, Debug, Clone, Default, PartialEq, Eq)]
 pub struct BrowseFilter {
     pub favourites: bool,
+    /// Only what was played in the last `koan_core::shelves::RECENT_DAYS`:
+    /// the Recently Played shelf as a filter.
+    pub recent: bool,
     /// Only records in a lossless codec.
     pub lossless: bool,
     /// Only records in this codec, as `BrowseChoices::codecs` names it.
@@ -997,6 +1003,27 @@ pub struct BrowseFilter {
 pub struct BrowseChoices {
     pub codecs: Vec<String>,
     pub genres: Vec<String>,
+}
+
+/// How the track browser orders the library.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackBrowseSort {
+    /// Artist, then record, disc and track: the library as it would be shelved.
+    Artist,
+    Title,
+    /// By record title, then in running order.
+    Album,
+    Duration,
+    /// Most recently played first. Only with [`BrowseFilter::recent`]; without
+    /// it, by title.
+    LastPlayed,
+}
+
+/// A page of the track browser, and how many tracks pass its filters in all.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct TrackListing {
+    pub tracks: Vec<Track>,
+    pub total: u64,
 }
 
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]

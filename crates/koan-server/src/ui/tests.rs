@@ -418,6 +418,9 @@ async fn every_class_on_every_page_has_a_rule() {
         "/favourites".to_owned(),
         "/history".to_owned(),
         "/recent".to_owned(),
+        "/tracks".to_owned(),
+        "/tracks?fav=1&recent=1&sort=played".to_owned(),
+        "/albums?recent=1".to_owned(),
         "/account".to_owned(),
         "/scrobbling".to_owned(),
         "/users".to_owned(),
@@ -645,6 +648,58 @@ async fn sorting_and_filtering_live_in_the_query_string() {
     assert!(
         r.body.contains("<input type=hidden name=seed value="),
         "the shuffle is pinned"
+    );
+}
+
+/// The `data-id`s of the track rows on a page, in order.
+fn row_ids(body: &str) -> Vec<String> {
+    body.split("<li tabindex=0 data-id=")
+        .skip(1)
+        .map(|r| r.split(' ').next().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn see_all_opens_the_browser_its_preview_is_the_head_of() {
+    let f = setup(true);
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        queries::add_favourite(&db.conn, 1, f.track_id).unwrap();
+        for n in 2..=12 {
+            let path = f.dir.path().join(format!("{n}.flac"));
+            std::fs::write(&path, b"x").unwrap();
+            let id =
+                queries::upsert_track(&db.conn, &meta(&path, &format!("Track {n:02}"), n)).unwrap();
+            queries::add_favourite(&db.conn, 1, id).unwrap();
+        }
+    }
+    let get = |uri: &str| authed(&f.state, uri).body(Body::empty()).unwrap();
+    let shelf = send(&f.app, get("/favourites")).await.body;
+    let preview = row_ids(&shelf);
+    assert_eq!(preview.len(), 10, "ten in the preview");
+    let link = shelf
+        .split("See all (12)")
+        .next()
+        .unwrap()
+        .rsplit("href=\"")
+        .next()
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .replace("&amp;", "&");
+    assert!(link.starts_with("/tracks?"), "{link}");
+
+    let browser = send(&f.app, get(&link)).await.body;
+    assert!(browser.contains("12 tracks"), "the count See all promised");
+    assert_eq!(
+        row_ids(&browser)[..10],
+        preview[..],
+        "the same tracks, in the same order"
+    );
+    assert!(
+        browser.contains("name=fav value=1 checked"),
+        "the filter shows, to be cleared"
     );
 }
 
@@ -1659,4 +1714,163 @@ async fn the_icon_is_where_favicon_fetchers_look() {
         assert_eq!(r.status, StatusCode::OK, "{uri}");
         assert_eq!(r.headers[header::CONTENT_TYPE], "image/png");
     }
+}
+
+#[tokio::test]
+async fn hearts_favourite_for_the_caller_and_redraw_every_copy() {
+    let f = setup(true);
+    let (bob, viewer) = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        let viewer =
+            queries::auth::create_user(&db.conn, "viewer", "hunter4", Role::Readonly).unwrap();
+        (bob, viewer)
+    };
+    let as_user = |id: i64, name: &str, role: Role| {
+        format!(
+            "koan_access={}",
+            auth::mint_access_token(&f.state.private_pem, id, name, role, 900).unwrap()
+        )
+    };
+    let toggle = |cookie: String, uri: String| {
+        Request::post(uri)
+            .header(header::HOST, HOST)
+            .header(header::COOKIE, cookie)
+            .header("datastar-request", "true")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let song = format!("data-fav=\"song-{}\"", f.track_id);
+    let album_page = format!("/album/{}", f.album_id);
+
+    let r = send(
+        &f.app,
+        authed(&f.state, &album_page).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains(&format!("{song} aria-pressed=\"false\"")));
+
+    let r = send(
+        &f.app,
+        toggle(
+            as_user(1, "alice", Role::User),
+            format!("/favourite/song/{}?on=1", f.track_id),
+        ),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("datastar-patch-elements"));
+    assert!(r.body.contains(&format!("{song} aria-pressed=\"true\"")));
+    let r = send(
+        &f.app,
+        toggle(
+            as_user(1, "alice", Role::User),
+            format!("/favourite/album/{}?on=1", f.album_id),
+        ),
+    )
+    .await;
+    assert!(r.body.contains(&format!(
+        "data-fav=\"album-{}\" aria-pressed=\"true\"",
+        f.album_id
+    )));
+
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    assert!(
+        queries::load_favourites(&db.conn, 1)
+            .unwrap()
+            .contains(&f.track_id)
+    );
+    assert!(
+        queries::favourite_album_id_set(&db.conn, 1)
+            .unwrap()
+            .contains(&f.album_id)
+    );
+    assert!(
+        queries::load_favourites(&db.conn, bob).unwrap().is_empty(),
+        "alice's only"
+    );
+
+    let r = send(
+        &f.app,
+        authed(&f.state, &album_page).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(
+        r.body.contains(&format!("{song} aria-pressed=\"true\"")),
+        "drawn on reload"
+    );
+    let r = send(
+        &f.app,
+        get(&album_page)
+            .header(header::COOKIE, as_user(bob, "bob", Role::User))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        r.body.contains(&format!("{song} aria-pressed=\"false\"")),
+        "bob's are his own"
+    );
+
+    // A read-only account is drawn no hearts, and its toggles change nothing.
+    let r = send(
+        &f.app,
+        get(&album_page)
+            .header(header::COOKIE, as_user(viewer, "viewer", Role::Readonly))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(!r.body.contains("data-fav="));
+    send(
+        &f.app,
+        toggle(
+            as_user(viewer, "viewer", Role::Readonly),
+            format!("/favourite/song/{}?on=1", f.track_id),
+        ),
+    )
+    .await;
+    assert!(
+        queries::load_favourites(&db.conn, viewer)
+            .unwrap()
+            .is_empty()
+    );
+
+    let r = send(
+        &f.app,
+        toggle(
+            as_user(1, "alice", Role::User),
+            format!("/favourite/song/{}?on=0", f.track_id),
+        ),
+    )
+    .await;
+    assert!(r.body.contains(&format!("{song} aria-pressed=\"false\"")));
+    assert!(queries::load_favourites(&db.conn, 1).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn track_rows_carry_what_the_track_menu_needs() {
+    let f = setup(true);
+    let r = send(
+        &f.app,
+        authed(&f.state, &format!("/album/{}", f.album_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        r.body.contains("<div id=track-menu popover"),
+        "the shell's one menu"
+    );
+    let row = r
+        .body
+        .split("<li tabindex=0 data-id=")
+        .nth(1)
+        .expect("a track row");
+    let row = &row[..row.find("</li>").unwrap()];
+    assert!(row.contains(&format!("data-album-id={}", f.album_id)));
+    assert!(row.contains("data-artist-id="), "for Go to Artist");
+    assert!(row.contains("data-act=menu"), "the phone's way in");
+    assert!(row.contains("data-fav="), "the heart the menu presses");
+    assert!(row.contains("data-act-share"), "the share the menu presses");
 }

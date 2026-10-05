@@ -244,6 +244,10 @@ pub fn scan_dirs(
     }
     for dir in &settled {
         remove_stale(db, dir, true, &mut result);
+        // A cover image changing is a reason to be here that no row records.
+        if let Err(e) = queries::evict_art_under(&db.conn, dir) {
+            log::warn!("cover art under {} not refreshed: {e}", dir.display());
+        }
     }
     result.playlists += super::playlist_files::import(db, &playlists, &settled);
     if result.added > 0 {
@@ -851,6 +855,52 @@ mod tests {
         );
         assert_eq!((r.added, r.skipped, r.removed), (1, 0, 0), "{:?}", r.errors);
         assert_eq!(track_paths(&db).len(), 2);
+    }
+
+    #[test]
+    fn rescanning_a_directory_tells_the_apps_its_art_may_have_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        let (album, other) = (music.join("Album"), music.join("Other"));
+        std::fs::create_dir_all(album.join("CD1")).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        test_utils::generate_wav(&album.join("CD1/a.wav"), 44100, 1, 0.2, 16);
+        test_utils::generate_wav(&other.join("b.wav"), 44100, 1, 0.2, 16);
+        let db = test_db(dir.path());
+        scan_folder(&db, &music, ScanOptions::default(), None);
+        let evicted = |db: &Database| -> Vec<(String, i64)> {
+            db.conn
+                .prepare("SELECT kind, id FROM art_evictions ORDER BY seq")
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert!(evicted(&db).is_empty());
+
+        // The watcher names the album's folder when a cover lands in it.
+        std::fs::write(album.join("cover.jpg"), b"").unwrap();
+        scan_dirs(
+            &db,
+            std::slice::from_ref(&music),
+            std::slice::from_ref(&album),
+            ScanOptions::default(),
+            None,
+        );
+        let (album_id, track_id): (i64, i64) = db
+            .conn
+            .query_row(
+                "SELECT album_id, id FROM tracks WHERE path LIKE '%/CD1/a.wav'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            evicted(&db),
+            vec![("album".into(), album_id), ("track".into(), track_id)],
+            "only the records under the folder rescanned"
+        );
     }
 
     #[test]

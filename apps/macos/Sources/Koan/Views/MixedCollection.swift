@@ -37,6 +37,10 @@ struct MixedCollection: NSViewRepresentable {
     var pick: PlayableSelection?
     /// How many are in each section, beside its title.
     var counts = false
+    /// How many there are of each kind in all, where the page shows the first
+    /// few: a section with more than it shows offers See all.
+    var totals: ShelfTotals?
+    var seeAll: (LibraryModel.ShelfList) -> Void = { _ in }
     var selectAllToken = 0
     let insets: EdgeInsets
 
@@ -48,6 +52,14 @@ struct MixedCollection: NSViewRepresentable {
             case .artists: "Artists"
             case .albums: "Albums"
             case .tracks: "Tracks"
+            }
+        }
+
+        var list: LibraryModel.ShelfList {
+            switch self {
+            case .artists: .artists
+            case .albums: .albums
+            case .tracks: .tracks
             }
         }
     }
@@ -146,6 +158,15 @@ struct MixedCollection: NSViewRepresentable {
             self.environment = environment
             guard let collection else { return }
             let now = (parent.artists.map(\.id), parent.albums.map(\.id), parent.tracks.map(\.id))
+            // A total can move while the preview stays the same: one more
+            // favourite past the first few.
+            if now == shown {
+                for view in collection.visibleSupplementaryViews(ofKind: NSCollectionView.elementKindSectionHeader) {
+                    guard let header = view as? SectionHeader, let index = header.section,
+                          index < sections.count else { continue }
+                    configure(header, sections[index])
+                }
+            }
             if now != shown {
                 shown = now
                 shownKey = parent.contextKey
@@ -236,11 +257,29 @@ struct MixedCollection: NSViewRepresentable {
             let header = collectionView.makeSupplementaryView(
                 ofKind: kind, withIdentifier: SectionHeader.identifier, for: indexPath
             ) as? SectionHeader ?? SectionHeader()
-            let section = sections[indexPath.section]
+            header.section = indexPath.section
+            configure(header, sections[indexPath.section])
+            return header
+        }
+
+        private func configure(_ header: SectionHeader, _ section: Section) {
             header.title.stringValue = section.title
             header.count.stringValue = parent?.counts == true ? "\(count(of: section))" : ""
+            let total: UInt64? = switch section {
+            case .artists: parent?.totals?.artists
+            case .albums: parent?.totals?.albums
+            case .tracks: parent?.totals?.tracks
+            }
+            if let total, total > UInt64(count(of: section)) {
+                header.all.title = "See all (\(total))"
+                header.all.isHidden = false
+                let seeAll = parent?.seeAll
+                header.open = { seeAll?(section.list) }
+            } else {
+                header.all.isHidden = true
+                header.open = nil
+            }
             header.needsLayout = true
-            return header
         }
 
         private func count(of section: Section) -> Int {
@@ -617,11 +656,15 @@ final class MixedCollectionView: NSCollectionView {
 
 // MARK: - Items
 
-/// A section's title.
+/// A section's title, and its See all.
 private final class SectionHeader: NSView, NSCollectionViewElement {
     static let identifier = NSUserInterfaceItemIdentifier("SectionHeader")
     let title = NSTextField(labelWithString: "")
     let count = NSTextField(labelWithString: "")
+    let all = NSButton(title: "", target: nil, action: nil)
+    /// Which section it heads, for refreshing it in place.
+    var section: Int?
+    var open: (() -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -631,7 +674,16 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
         count.textColor = .tertiaryLabelColor
         addSubview(title)
         addSubview(count)
+        all.isBordered = false
+        all.font = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize)
+        all.contentTintColor = .controlAccentColor
+        all.target = self
+        all.action = #selector(seeAll)
+        all.isHidden = true
+        addSubview(all)
     }
+
+    @objc private func seeAll() { open?() }
 
     required init?(coder: NSCoder) { fatalError("not decoded") }
 
@@ -644,6 +696,12 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
         title.frame = CGRect(x: 0, y: bounds.height - height - 6, width: width, height: height)
         let countHeight = ceil(count.intrinsicContentSize.height)
         count.frame = CGRect(x: width + 4, y: title.frame.maxY - countHeight - 1, width: 60, height: countHeight)
+        all.sizeToFit()
+        let size = all.frame.size
+        all.frame = CGRect(
+            x: bounds.width - size.width, y: title.frame.midY - size.height / 2,
+            width: size.width, height: size.height
+        )
     }
 }
 
