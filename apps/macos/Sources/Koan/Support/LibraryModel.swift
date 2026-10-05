@@ -722,6 +722,20 @@ final class LibraryModel {
     }
 }
 
+/// How many artists, records and tracks a shelf has in all, beside the
+/// first few it shows: what See all promises.
+struct ShelfTotals: Equatable {
+    let artists: UInt64
+    let albums: UInt64
+    let tracks: UInt64
+
+    init(_ summary: ShelfSummary) {
+        artists = summary.artistTotal
+        albums = summary.albumTotal
+        tracks = summary.trackTotal
+    }
+}
+
 /// Everything a section's query depends on, captured off the model so the
 /// answer that lands belongs to the question that was asked. Anything that
 /// changes one cancels the task holding it.

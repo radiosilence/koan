@@ -39,26 +39,8 @@ struct MixedCollection: NSViewRepresentable {
     var counts = false
     /// How many there are of each kind in all, where the page shows the first
     /// few: a section with more than it shows offers See all.
-    var totals: Totals?
+    var totals: ShelfTotals?
     var seeAll: (LibraryModel.ShelfList) -> Void = { _ in }
-
-    struct Totals: Equatable {
-        let artists: UInt64
-        let albums: UInt64
-        let tracks: UInt64
-
-        init(_ summary: ShelfSummary) {
-            artists = summary.artistTotal
-            albums = summary.albumTotal
-            tracks = summary.trackTotal
-        }
-
-        init(artists: UInt64, albums: UInt64, tracks: UInt64) {
-            self.artists = artists
-            self.albums = albums
-            self.tracks = tracks
-        }
-    }
     var selectAllToken = 0
     let insets: EdgeInsets
 

@@ -144,7 +144,7 @@ struct ShelfView: View {
                 trackMenu: { ids, environment in hostedMenu(menu(for: ids), environment: environment) },
                 openArtist: { nav.open(artist: $0) },
                 primaryAction: play,
-                totals: summary.map { MixedCollection.Totals($0) },
+                totals: summary.map(ShelfTotals.init),
                 seeAll: seeAll,
                 selectAllToken: ui.selectAllToken,
                 insets: insets
