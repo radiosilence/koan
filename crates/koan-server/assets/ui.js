@@ -265,7 +265,13 @@
   }, true);
 
   // --- Navigation ------------------------------------------------------------
+<<<<<<< HEAD
   const INTERNAL = /^\/(albums|tracks|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history|recent)?$/;
+||||||| d54e74ac
+  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history|recent)?$/;
+=======
+  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account|library|favourites|history|recent|scrobbling)?$/;
+>>>>>>> origin/main
   let navigating = 0;
 
   async function navigate(url, push) {
