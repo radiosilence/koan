@@ -110,9 +110,23 @@ in the server's memory. Approving signs the device in as you, so approve only a
 device you are setting up yourself: the name it shows is whatever it chose to
 call itself. Every approval screen also says where the request came from: the
 address the server saw (behind a trusted proxy, the client's, as the rate limits
-use it), and whether that is on a private network or the internet. A television
-in the same room asks from your own network; a request from the internet is
-worth declining unless you expected it.
+use it), and whether that is on a private network or the internet. Private
+means RFC 1918, shared (100.64.0.0/10, which Tailscale uses), link-local,
+unique local or loopback. The classification is the server's view: with the
+server on the same network, a television in the same room asks from a private
+address and a request from the internet is worth declining unless you expected
+it; with the server on the internet, every device at home asks from your public
+address.
+
+A reverse proxy or tunnel in front of the server must send `X-Forwarded-For`.
+Without it the server sees the proxy's address, which is usually loopback or
+private, so every request, from wherever, is shown as on your network.
+
+`/rest/koanPair` refuses any request carrying an `Origin` header, which every
+browser sends on a WebSocket and the apps do not: otherwise a web page someone
+on your network visits could open a pairing from their address and read the key
+sent when they approve it. One address, or one IPv6 /64, can have three
+pairings waiting at a time.
 
 The server sends no mail. Creating an account or inviting one produces the email
 (plain text, rich text with a button, and a `mailto:`) for the admin to send

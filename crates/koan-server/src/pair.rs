@@ -27,6 +27,10 @@ use crate::auth::routes::RateLimiter;
 pub const TTL: Duration = Duration::from_secs(600);
 /// Pairings waiting at once, across every address: each holds a socket.
 const MAX_PENDING: usize = 256;
+/// Pairings waiting at once from one address, or one IPv6 /64: a household
+/// sets up a device or two at a time, and a few addresses must not be able to
+/// fill `MAX_PENDING`.
+const MAX_PENDING_PER_ADDRESS: usize = 3;
 /// Crockford's base32: no I, L, O or U, so a code read off a screen cannot be
 /// mistyped as another.
 const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -91,15 +95,31 @@ impl PairInfo {
     }
 }
 
-/// RFC 1918, link-local, unique local and loopback addresses.
+/// RFC 1918, shared (CGNAT, which Tailscale addresses come from),
+/// link-local, unique local and loopback addresses.
 fn is_local(ip: IpAddr) -> bool {
     match ip.to_canonical() {
-        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local() || v4.is_loopback(),
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            v4.is_private()
+                || (a == 100 && (b & 0xc0) == 64)
+                || v4.is_link_local()
+                || v4.is_loopback()
+        }
         IpAddr::V6(v6) => {
             v6.is_loopback()
                 || (v6.segments()[0] & 0xfe00) == 0xfc00
                 || (v6.segments()[0] & 0xffc0) == 0xfe80
         }
+    }
+}
+
+/// The network an address counts against the per-address cap as: itself, or
+/// for IPv6 its /64, which one subscriber is usually given whole.
+fn network(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(_) => ip,
+        IpAddr::V6(v6) => IpAddr::V6((u128::from(v6) & !((1u128 << 64) - 1)).into()),
     }
 }
 
@@ -130,6 +150,8 @@ impl Taken {
 #[derive(Debug, PartialEq, Eq)]
 pub enum OpenError {
     Full,
+    /// This address already has `MAX_PENDING_PER_ADDRESS` waiting.
+    Busy,
     Entropy,
 }
 
@@ -150,6 +172,14 @@ impl Pairings {
         if entries.len() >= MAX_PENDING {
             return Err(OpenError::Full);
         }
+        let from = from.to_canonical();
+        let waiting = entries
+            .values()
+            .filter(|e| network(e.from) == network(from))
+            .count();
+        if waiting >= MAX_PENDING_PER_ADDRESS {
+            return Err(OpenError::Busy);
+        }
         let code = loop {
             let code = new_code()?;
             if !entries.values().any(|e| e.code == code) {
@@ -161,7 +191,7 @@ impl Pairings {
             Entry {
                 code: code.clone(),
                 device: koan_core::invite::device_name(device),
-                from: from.to_canonical(),
+                from,
                 created: Instant::now(),
                 outcome: tx,
             },
@@ -308,6 +338,13 @@ pub(crate) async fn route(
     ws: WebSocketUpgrade,
     request: axum::extract::Request,
 ) -> Response {
+    // Browsers send an Origin with every WebSocket and apps do not. Without
+    // this, a page someone on the network visits could open a pairing from
+    // their address, have them approve it as "on your network", and read the
+    // key it was sent.
+    if request.headers().contains_key(axum::http::header::ORIGIN) {
+        return (StatusCode::FORBIDDEN, "pairing is not open to web pages").into_response();
+    }
     let from = crate::auth::routes::client_ip(&request);
     if !OPENS.allow(from) {
         return (StatusCode::TOO_MANY_REQUESTS, "too many pairings").into_response();
@@ -321,6 +358,11 @@ pub(crate) async fn route(
         Err(OpenError::Full) => {
             (StatusCode::SERVICE_UNAVAILABLE, "too many pairings waiting").into_response()
         }
+        Err(OpenError::Busy) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many pairings waiting from this address",
+        )
+            .into_response(),
         Err(OpenError::Entropy) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -379,6 +421,16 @@ mod tests {
 
     const LAN: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 20));
 
+    /// A distinct address per `i`, so the per-address cap stays out of the way.
+    fn host(i: usize) -> IpAddr {
+        IpAddr::V4(std::net::Ipv4Addr::new(
+            10,
+            9,
+            (i / 256) as u8,
+            (i % 256) as u8,
+        ))
+    }
+
     fn leaked(ttl: Duration) -> &'static Pairings {
         Box::leak(Box::new(Pairings::new(ttl)))
     }
@@ -401,7 +453,7 @@ mod tests {
     #[test]
     fn ids_are_unguessable_and_distinct() {
         let p = leaked(TTL);
-        let opened: Vec<_> = (0..100).map(|_| p.open("tv", LAN).unwrap()).collect();
+        let opened: Vec<_> = (0..100).map(|i| p.open("tv", host(i)).unwrap()).collect();
         let ids: std::collections::HashSet<_> = opened.iter().map(|o| o.id.clone()).collect();
         assert_eq!(ids.len(), 100);
         assert!(opened.iter().all(|o| o.id.len() == 43));
@@ -577,6 +629,9 @@ mod tests {
             "192.168.1.20",
             "169.254.10.1",
             "127.0.0.1",
+            "100.64.0.1",
+            "100.101.102.103",
+            "100.127.255.254",
             "::1",
             "fd12:3456::1",
             "fe80::1",
@@ -588,6 +643,8 @@ mod tests {
             "203.0.113.9",
             "8.8.8.8",
             "172.32.0.1",
+            "100.63.255.255",
+            "100.128.0.1",
             "2001:db8::1",
             "2a00:1450::1",
             "::ffff:8.8.8.8",
@@ -623,10 +680,36 @@ mod tests {
     fn pairings_are_capped() {
         let p = leaked(TTL);
         let held: Vec<_> = (0..MAX_PENDING)
-            .map(|_| p.open("tv", LAN).unwrap())
+            .map(|i| p.open("tv", host(i)).unwrap())
             .collect();
         assert_eq!(p.open("tv", LAN).err(), Some(OpenError::Full));
         drop(held);
         assert!(p.open("tv", LAN).is_ok());
+    }
+
+    #[test]
+    fn one_address_holds_three_at_most() {
+        let p = leaked(TTL);
+        let held: Vec<_> = (0..3).map(|_| p.open("tv", LAN).unwrap()).collect();
+        assert_eq!(p.open("tv", LAN).err(), Some(OpenError::Busy));
+        // The same address written as IPv4-mapped IPv6 is the same address.
+        let mapped: IpAddr = "::ffff:192.168.1.20".parse().unwrap();
+        assert_eq!(p.open("tv", mapped).err(), Some(OpenError::Busy));
+        assert!(p.open("tv", host(1)).is_ok());
+
+        // IPv6 counts by /64: a client picks any address in its own.
+        let v6: Vec<_> = ["2001:db8:1:2::1", "2001:db8:1:2::2", "2001:db8:1:2:ffff::9"]
+            .into_iter()
+            .map(|a| p.open("tv", a.parse().unwrap()).unwrap())
+            .collect();
+        assert_eq!(
+            p.open("tv", "2001:db8:1:2:abcd::1".parse().unwrap()).err(),
+            Some(OpenError::Busy)
+        );
+        assert!(p.open("tv", "2001:db8:1:3::1".parse().unwrap()).is_ok());
+
+        drop(held);
+        assert!(p.open("tv", LAN).is_ok());
+        drop(v6);
     }
 }
