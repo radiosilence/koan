@@ -70,10 +70,34 @@
         Rust core. Now there's a native SwiftUI macOS app (no Electron) that links that core directly, an iOS app, a
         server, and soon a tvOS app. The UX takes what I like about Apple Music and fb2k and fixes the things I thought
         were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.</p>
+
+    </section>
+
+    <div class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
+      <figure>
+        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-favourites.webp" width="1600"
+          height="1000" loading="lazy" decoding="async" alt="Favourites in the macOS app: artists, records and tracks">
+      </figure>
+      <figure>
+        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-artist.webp" width="1600"
+          height="1000" loading="lazy" decoding="async" alt="An artist page in the macOS app, with a photo and a biography from Wikipedia">
+      </figure>
+    </div>
+
+    <section class="mx-auto max-w-2xl px-5">
       <p>I wanted UX that makes it easy as hell to do what you want, while staying SUPER low on resources (and now
         battery). And I wanted the stuff you don't really see in the self-hosted space: device control and handoff, EQ
         profiles and convolution, DLNA output (with EQ!), and a cache built for a commuter who often has no signal, so
         you never have to remember to download your whole queue first. The best of every world, why not?</p>
+
+    </section>
+
+    <figure class="mx-auto my-8 max-w-5xl px-5">
+      <img class="h-auto w-full" src="/screens/mac-output.webp" width="1600" height="990" loading="lazy" decoding="async"
+        alt="The Output menu in the macOS app: the Mac's own devices and UPnP amplifiers on the network, each with an EQ button">
+    </figure>
+
+    <section class="mx-auto max-w-2xl px-5">
       <p>My philosophy is that you should lead with your opinions, but let people customise and tweak them to match
         theirs.</p>
       <p>Because it grew organically, and I've insisted on staying compatible with OpenSubsonic, every part works on its
@@ -84,6 +108,20 @@
       <p>One thing I've noticed: when you mix self-hosted apps with proprietary tech, say AirPlay from the fantastically
         solid play:Sub, you're treated as a second-class citizen. The audio has to stream over the wire from your phone,
         which is laggy. With kōan's remote features, the device you send it to plays its own copy.</p>
+
+    </section>
+
+    <figure class="mx-auto my-8 grid max-w-5xl items-end gap-6 px-5 md:grid-cols-[3fr_1fr]">
+      <img class="h-auto w-full" src="/screens/mac-control.webp" width="1600" height="794" loading="lazy"
+        decoding="async" alt="The Control menu in the macOS app, listing an Apple TV, an iPad and an iPhone with what each is playing">
+      <img class="mx-auto h-auto w-full max-w-[260px] rounded-[2rem] shadow-2xl shadow-black/40" src="/screens/ios-control.webp"
+        width="600" height="1299" loading="lazy" decoding="async"
+        alt="The Control sheet on iPhone, listing a Mac that is playing, two Apple TVs, an iPad and an iPhone, each with Move here">
+      <figcaption class="text-muted md:col-span-2">Control, on a Mac and on a phone: every kōan device on your account and your network, what each
+        one is playing, and Move here to send the music over. The asleep ones get woken up when you pick them.</figcaption>
+    </figure>
+
+    <section class="mx-auto max-w-2xl px-5">
       <p>I did use AI-assisted coding for this project. I've been building fairly high-quality software for a
         <em>loooong</em> time (decades) before AI existed, and I'd like to think the decisions reflect that rather than
         vibing slop. I probably could have written it myself, but I wanted to step back and be more of an architect,
@@ -192,17 +230,6 @@
           the track, so they follow it when the file moves.</li>
       </ul>
     </section>
-
-    <div class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-favourites.webp" width="1600"
-          height="1000" loading="lazy" decoding="async" alt="Favourites in the macOS app: artists, records and tracks">
-      </figure>
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-artist.webp" width="1600"
-          height="1000" loading="lazy" decoding="async" alt="An artist page in the macOS app, with a photo and a biography from Wikipedia">
-      </figure>
-    </div>
 
     <section id="pieces" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>The pieces</h2>
@@ -434,11 +461,6 @@ sift import ~/Downloads/some-album</code></pre>
       <p class="text-muted">Not there yet: tag editing. It's planned.</p>
     </section>
 
-    <figure class="mx-auto my-8 max-w-5xl px-5">
-      <img class="h-auto w-full" src="/screens/mac-output.webp" width="1600" height="990" loading="lazy" decoding="async"
-        alt="The Output menu in the macOS app: the Mac's own devices and UPnP amplifiers on the network, each with an EQ button">
-    </figure>
-
     <section id="app" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>The macOS app</h2>
       <p>A SwiftUI app built for macOS 26. Browse and search the library (<kbd>⌘K</kbd>), build and reorder the queue,
@@ -473,16 +495,6 @@ sift import ~/Downloads/some-album</code></pre>
         thing only, sorry. EQ and convolution profiles follow the route, so your AirPods and your wired headphones each
         get their own.</p>
     </section>
-
-    <figure class="mx-auto my-8 grid max-w-5xl items-end gap-6 px-5 md:grid-cols-[3fr_1fr]">
-      <img class="h-auto w-full" src="/screens/mac-control.webp" width="1600" height="794" loading="lazy"
-        decoding="async" alt="The Control menu in the macOS app, listing an Apple TV, an iPad and an iPhone with what each is playing">
-      <img class="mx-auto h-auto w-full max-w-[260px] rounded-[2rem] shadow-2xl shadow-black/40" src="/screens/ios-control.webp"
-        width="600" height="1299" loading="lazy" decoding="async"
-        alt="The Control sheet on iPhone, listing a Mac that is playing, two Apple TVs, an iPad and an iPhone, each with Move here">
-      <figcaption class="text-muted md:col-span-2">Control, on a Mac and on a phone: every kōan device on your account and your network, what each
-        one is playing, and Move here to send the music over. The asleep ones get woken up when you pick them.</figcaption>
-    </figure>
 
     <section id="tui" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>The terminal UI</h2>
