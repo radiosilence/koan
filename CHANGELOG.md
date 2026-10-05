@@ -4,7 +4,7 @@
 
 ### Added
 
-- **The Subsonic API transcodes for clients that ask.** A client that asks `stream` for a `maxBitRate` below the file's, or for `format=opus` or `format=mp3`, gets an Opus or MP3 encode made by `ffmpeg` instead of the original, so a lossless library no longer costs full bandwidth on mobile data. `format=raw` and `download` still return the original. Seeking within a transcode uses `timeOffset` (OpenSubsonic `transcodeOffset`). The container image now includes `ffmpeg`; elsewhere `[subsonic] ffmpeg` names it, and where it does not run, originals are served as before. `[subsonic] transcode = false` turns it off.
+- **The Subsonic API transcodes for clients that ask.** A client that asks `stream` for a `maxBitRate` below the file's, or for `format=opus` or `format=mp3`, gets an Opus or MP3 encode made by `ffmpeg` instead of the original, so a lossless library no longer costs full bandwidth on mobile data. `format=raw` and `download` still return the original. Seeking within a transcode uses `timeOffset` (OpenSubsonic `transcodeOffset`). The container image now includes `ffmpeg`; elsewhere `[subsonic] ffmpeg` names it, and where it does not run, or a server or account is at its limit of concurrent transcodes, originals are served as before. `[subsonic] transcode = false` turns it off.
 
 ## 0.52.6
 

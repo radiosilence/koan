@@ -2272,15 +2272,34 @@ struct StreamParams {
     format: Option<String>,
     #[serde(rename = "timeOffset")]
     time_offset: Option<String>,
+    #[serde(rename = "estimateContentLength")]
+    estimate_content_length: Option<String>,
+}
+
+/// What `stream_inner` may send in place of the file itself.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    /// The original, always: `download`.
+    Original,
+    /// A transcode where the request asks for one.
+    Transcode,
+    /// The headers a transcode would have, without running one: `stream`'s HEAD.
+    TranscodeHead,
 }
 
 async fn stream(
     State(state): State<Arc<AppState>>,
+    method: axum::http::Method,
     Query(params): Query<StreamParams>,
     headers: HeaderMap,
 ) -> Response {
     let json = params.auth.wants_json();
-    match stream_inner(state, params, &headers, true).await {
+    let delivery = if method == axum::http::Method::HEAD {
+        Delivery::TranscodeHead
+    } else {
+        Delivery::Transcode
+    };
+    match stream_inner(state, params, &headers, delivery).await {
         Ok(resp) => resp,
         Err(e) => SubsonicResponse::error(json, &e),
     }
@@ -2292,7 +2311,7 @@ async fn download(
     headers: HeaderMap,
 ) -> Response {
     let json = params.auth.wants_json();
-    match stream_inner(state, params, &headers, false).await {
+    match stream_inner(state, params, &headers, Delivery::Original).await {
         Ok(resp) => resp,
         Err(e) => SubsonicResponse::error(json, &e),
     }
@@ -2302,7 +2321,7 @@ async fn stream_inner(
     state: Arc<AppState>,
     params: StreamParams,
     headers: &HeaderMap,
-    may_transcode: bool,
+    delivery: Delivery,
 ) -> Result<Response, SubsonicError> {
     let lookup = state.clone();
     let StreamParams {
@@ -2311,13 +2330,16 @@ async fn stream_inner(
         max_bit_rate,
         format,
         time_offset,
+        estimate_content_length,
     } = params;
-    let track = offload(move || {
-        let db = authed_db(&lookup, &auth)?;
+    let (username, track) = offload(move || {
+        let caller = validate_auth(&auth, &lookup)?;
+        let db = lookup.open_db()?;
         let track_id = require_id(&db, id.as_deref(), EntityKind::Song)?;
-        queries::get_track_row(&db.conn, track_id)
+        let track = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Track"))
+            .ok_or_else(|| SubsonicError::not_found("Track"))?;
+        Ok((caller.username, track))
     })
     .await?;
 
@@ -2340,19 +2362,34 @@ async fn stream_inner(
     }
 
     let path = local_path.unwrap();
-    if may_transcode && let Some(transcoder) = &state.transcoder {
+    if delivery != Delivery::Original
+        && let Some(transcoder) = &state.transcoder
+    {
         let request = crate::transcode::Request {
             max_bit_rate: max_bit_rate.as_deref(),
             format: format.as_deref(),
             time_offset: time_offset.as_deref(),
         };
         let source_kbps = track.bitrate.and_then(|b| u32::try_from(b).ok());
-        if let Some(plan) = crate::transcode::plan(&request, track.codec.as_deref(), source_kbps) {
-            match transcoder.stream(&path, &plan) {
-                Ok(resp) => return Ok(resp),
-                Err(e) => {
-                    log::warn!("transcode: could not start ffmpeg, serving the original: {e}")
-                }
+        let plan = crate::transcode::plan(&request, track.codec.as_deref(), source_kbps)
+            .filter(|plan| transcoder.encodes(plan.codec));
+        if let Some(plan) = plan {
+            let length = (estimate_content_length.as_deref() == Some("true"))
+                .then(|| crate::transcode::estimated_length(&plan, track.duration_ms))
+                .flatten();
+            if delivery == Delivery::TranscodeHead {
+                return crate::transcode::Transcoder::head(&plan, length)
+                    .map_err(|e| SubsonicError::internal(e.to_string()));
+            }
+            match transcoder.permits(&username) {
+                None => log::info!("transcode: at the limit, serving {username} the original"),
+                Some(permits) => match transcoder.stream(&path, &plan, length, permits).await {
+                    Ok(Some(resp)) => return Ok(resp),
+                    Ok(None) => {}
+                    Err(e) => {
+                        log::warn!("transcode: could not start ffmpeg, serving the original: {e}")
+                    }
+                },
             }
         }
     }
