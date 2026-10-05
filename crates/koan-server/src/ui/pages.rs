@@ -160,10 +160,11 @@ max-wide:hidden\" href=\"/\">kōan</a>\
 <a class=\"{NAV_LINK}\" href=\"/albums\" data-nav=albums>Albums</a>\
 <a class=\"{NAV_LINK}\" href=\"/artists\" data-nav=artists>Artists</a>\
 <a class=\"{NAV_LINK} max-wide:hidden\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
-<a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists favourites history\">Library</a>\
+<a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists recent favourites history\">Library</a>\
 <a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
 <a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>\
-<a class=\"{NAV_LINK} mt-3 max-wide:hidden\" href=\"/favourites\" data-nav=favourites>Favourites</a>\
+<a class=\"{NAV_LINK} mt-3 max-wide:hidden\" href=\"/recent\" data-nav=recent>Recently played</a>\
+<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/favourites\" data-nav=favourites>Favourites</a>\
 <a class=\"{NAV_LINK} max-wide:hidden\" href=\"/history\" data-nav=history>History</a>\
 <a class=\"{NAV_LINK} wide:hidden\" href=\"/account\" data-nav=account>Account</a>{account}</nav>\
 <main id=content class=\"ml-(--side-w) min-w-0 px-7 \
@@ -870,6 +871,7 @@ pub(super) async fn library(
 ) -> Response {
     let rows = [
         ("/playlists", "Playlists"),
+        ("/recent", "Recently played"),
         ("/favourites", "Favourites"),
         ("/history", "History"),
     ]
@@ -1003,6 +1005,67 @@ signed in as you, are listed here.",
         },
     );
     respond(&s, &headers, &user, "Favourites", &inner)
+}
+
+/// The artists, records and tracks the signed-in account played lately, each
+/// once and newest first by its latest play: the apps' Recently played.
+pub(super) async fn recent(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+) -> Response {
+    let st = s.clone();
+    let found = blocking(move || {
+        let db = open(&st.pool)?;
+        let since = chrono::Utc::now().timestamp() - queries::RECENT_DAYS * 24 * 60 * 60;
+        let recent =
+            queries::recently_played(&db.conn, user.user_id, since, queries::RECENT_LIMIT).ok()?;
+        // In the order played: the listings come back in their own.
+        fn in_order<T>(ids: &[i64], rows: Vec<T>, id: impl Fn(&T) -> i64) -> Vec<T> {
+            let mut by_id: HashMap<i64, T> = rows.into_iter().map(|r| (id(&r), r)).collect();
+            ids.iter().filter_map(|i| by_id.remove(i)).collect()
+        }
+        let artists = queries::list_artists(
+            &db.conn,
+            &ArtistQuery {
+                ids: Some(&recent.artists),
+                ..Default::default()
+            },
+        )
+        .ok()?;
+        let albums = queries::list_albums(
+            &db.conn,
+            &AlbumQuery {
+                ids: Some(&recent.albums),
+                ..Default::default()
+            },
+        )
+        .ok()?;
+        let tracks = queries::tracks_by_ids(&db.conn, &recent.tracks).ok()?;
+        let artists = in_order(&recent.artists, artists, |a| a.id);
+        let albums = in_order(&recent.albums, albums, |a| a.id);
+        let tracks = in_order(&recent.tracks, tracks, |t| t.id);
+        let mut versions = album_versions(&db.conn, &albums);
+        versions.extend(track_versions(&db.conn, &tracks));
+        Some((artists, albums, tracks, versions))
+    })
+    .await;
+    let Some((artists, albums, tracks, versions)) = found else {
+        return unavailable();
+    };
+    let inner = shelf(
+        "Recently played",
+        &artists,
+        &albums,
+        &tracks,
+        &versions,
+        &EmptyShelf {
+            title: "Nothing played in the last 30 days.",
+            detail: "What you play here, in the kōan apps or in a Subsonic app signed in as you, \
+is gathered here for a month, each artist, record and track once.",
+        },
+    );
+    respond(&s, &headers, &user, "Recently played", &inner)
 }
 
 /// The queue lives in the browser, so the page is a frame the script fills.

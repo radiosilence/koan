@@ -60,6 +60,11 @@ pub fn record_plays_at(
     })
 }
 
+/// How far back Recently played reaches, and how many of each it shows: the
+/// same on every front end.
+pub const RECENT_DAYS: i64 = 30;
+pub const RECENT_LIMIT: u32 = 50;
+
 /// What was played lately, each once and newest first by its latest play.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct RecentlyPlayed {

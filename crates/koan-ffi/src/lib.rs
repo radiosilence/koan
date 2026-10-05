@@ -32,9 +32,7 @@ use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedP
 use koan_core::remote::client::SubsonicError;
 use uuid::Uuid;
 
-/// How far back Recently played reaches, and how many of each it shows.
-const RECENT_DAYS: i64 = 30;
-const RECENT_LIMIT: u32 = 50;
+use koan_core::db::queries::{RECENT_DAYS, RECENT_LIMIT};
 
 mod offload;
 mod state;
