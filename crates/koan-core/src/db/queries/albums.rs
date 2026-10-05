@@ -216,6 +216,9 @@ pub enum AlbumOrder {
     /// Seeded, so every page of one shuffle belongs to the same shuffle. A new
     /// seed is a new order — that is what the reshuffle button asks for.
     Random(i64),
+    /// Most recently played first. Only with `AlbumQuery::played`, which is
+    /// what knows when; without it, `RecentlyAdded`.
+    LastPlayed,
     /// Insertion order. The one order a new album cannot land in the middle
     /// of, which is what makes an offset walk over the whole list exact.
     Id,
@@ -237,6 +240,7 @@ impl AlbumOrder {
                                a.name COLLATE LIBRARY, al.title COLLATE LIBRARY"
             }
             Self::Random(_) => "koan_shuffle(al.id, ?)",
+            Self::LastPlayed => "p.last DESC, p.last_id DESC",
             Self::Id => "al.id",
         }
     }
@@ -314,6 +318,8 @@ pub struct AlbumQuery<'a> {
     pub order: AlbumOrder,
     /// Only records this user has favourited.
     pub favourites_of: Option<i64>,
+    /// Only records with a track played since then.
+    pub played: Option<super::history::PlayedSince>,
     pub filter: AlbumFilter<'a>,
     /// `None` for the whole listing. A client that scrolls should page.
     pub limit: Option<u32>,
@@ -329,17 +335,71 @@ pub struct AlbumQuery<'a> {
 /// fold accented letters, so `MOTLEY` finds `Motley` but `MÖTLEY` does not find
 /// `Mötley`.
 pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, DbError> {
-    let mut sql = String::from(
+    let (body, mut params) = album_body(conn, q)?;
+    let mut sql = format!(
         "SELECT al.id, al.title, al.artist_id, a.name, al.date,
                 al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
                 al.added_at
-         FROM albums al
+         {body} ORDER BY "
+    );
+    let order = match q.order {
+        AlbumOrder::LastPlayed if q.played.is_none() => AlbumOrder::RecentlyAdded,
+        order => order,
+    };
+    if let AlbumOrder::Random(seed) = order {
+        params.push(Box::new(seed));
+    }
+    sql.push_str(order.clause());
+
+    if let Some(limit) = q.limit {
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(q.offset as i64));
+        sql.push_str(" LIMIT ? OFFSET ?");
+    }
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), album_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// How many albums `list_albums` would list for `q`, ignoring its paging: what
+/// a "See all" says, from the same narrowing as the list it opens.
+pub fn count_albums(conn: &Connection, q: &AlbumQuery) -> Result<u64, DbError> {
+    let (body, params) = album_body(conn, q)?;
+    let n: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) {body}"),
+        rusqlite::params_from_iter(params.iter()),
+        |r| r.get(0),
+    )?;
+    Ok(n as u64)
+}
+
+/// The FROM and WHERE that `list_albums` and `count_albums` share, and their
+/// parameters, in order.
+fn album_body(
+    conn: &Connection,
+    q: &AlbumQuery,
+) -> Result<(String, Vec<Box<dyn rusqlite::ToSql>>), DbError> {
+    let mut sql = String::from(
+        "FROM albums al
          LEFT JOIN artists a ON al.artist_id = a.id",
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(user) = q.favourites_of {
         params.push(Box::new(super::auth::resolve_user(conn, user)?));
         sql.push_str(" JOIN favourite_albums f ON f.album_id = al.id AND f.user_id = ?");
+    }
+    if let Some(played) = q.played {
+        params.push(Box::new(super::auth::resolve_user(conn, played.user)?));
+        params.push(Box::new(played.since));
+        sql.push_str(
+            " JOIN (SELECT t.album_id AS id, MAX(h.played_at) AS last, MAX(h.id) AS last_id
+                      FROM play_history h JOIN tracks t ON t.id = h.track_id
+                     WHERE h.user_id = ? AND h.played_at >= ? AND t.album_id IS NOT NULL
+                     GROUP BY t.album_id) p ON p.id = al.id",
+        );
     }
     let mut wheres: Vec<String> = Vec::new();
     if let Some(ids) = q.ids {
@@ -367,24 +427,7 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
         sql.push_str(" WHERE ");
         sql.push_str(&wheres.join(" AND "));
     }
-
-    sql.push_str(" ORDER BY ");
-    if let AlbumOrder::Random(seed) = q.order {
-        params.push(Box::new(seed));
-    }
-    sql.push_str(q.order.clause());
-
-    if let Some(limit) = q.limit {
-        params.push(Box::new(limit as i64));
-        params.push(Box::new(q.offset as i64));
-        sql.push_str(" LIMIT ? OFFSET ?");
-    }
-
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(rusqlite::params_from_iter(params.iter()), album_row)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
+    Ok((sql, params))
 }
 
 /// How `played_albums` orders a user's listening.
