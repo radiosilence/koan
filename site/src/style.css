@@ -163,7 +163,7 @@
 
 /*
  * The comparison tables at /compare/. Each scrolls in its own box, so the header row and the feature column stay in
- * view on both axes. A cell holds a mark (yes, partial, no, unknown, or in an open pull request) and an optional note.
+ * view on both axes. A cell holds a mark (yes, partial, no, unknown, in an open pull request, or planned) and an optional note.
  */
 @layer components {
   .cmp {
@@ -221,6 +221,10 @@
 
   .cmp .s {
     @apply rounded-sm border border-brand px-1 text-[11px] text-brand;
+  }
+
+  .cmp .l {
+    @apply rounded-sm border border-rule px-1 text-[11px] font-semibold;
   }
 }
 
