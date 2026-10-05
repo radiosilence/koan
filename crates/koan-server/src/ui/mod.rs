@@ -15,6 +15,7 @@
 mod account;
 mod browse;
 mod connect;
+mod history;
 mod oauth;
 mod pages;
 mod session;
@@ -125,6 +126,8 @@ pub fn router(
         .route("/queue", get(pages::queue))
         .route("/library", get(pages::library))
         .route("/favourites", get(pages::favourites))
+        .route("/history", get(history::page))
+        .route("/history/forget", post(history::forget))
         .route("/connect", get(connect::page))
         .route("/account", get(account::page))
         .route("/account/keys", post(account::create_key))
