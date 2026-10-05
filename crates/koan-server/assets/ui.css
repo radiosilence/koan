@@ -1213,6 +1213,23 @@
     padding-inline: calc(var(--spacing) * 3);
     padding-block: calc(var(--spacing) * 2);
     text-align: left;
+    color: var(--ink);
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--rule);
+      }
+    }
+  }
+  #track-menu p {
+    margin: 0px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-inline: calc(var(--spacing) * 3);
+    padding-top: calc(var(--spacing) * 1.5);
+    padding-bottom: var(--spacing);
+    font-size: var(--text-meta);
+    color: var(--muted);
   }
   #track-menu hr {
     margin-block: var(--spacing);

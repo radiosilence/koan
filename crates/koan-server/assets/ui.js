@@ -223,7 +223,10 @@
     const go = [];
     if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`/album/${d.albumId}`, true)));
     if (Number(d.artistId)) go.push(item("Go to Artist", () => navigate(`/artist/${d.artistId}`, true)));
+    const head = document.createElement("p");
+    head.textContent = [t.title, t.artist].filter(Boolean).join(" · ");
     menu.replaceChildren(
+      head,
       item("Play", () => pick(li)),
       item("Play Next", () => player.playNext([t])),
       item("Add to Queue", () => player.append([t])),

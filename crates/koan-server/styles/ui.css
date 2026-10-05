@@ -118,7 +118,11 @@
 
   /* The track menu; ui.js fills it. */
   #track-menu button {
-    @apply rounded-md px-3 py-2 text-left;
+    @apply rounded-md px-3 py-2 text-left text-ink hover:bg-rule;
+  }
+
+  #track-menu p {
+    @apply m-0 truncate px-3 pt-1.5 pb-1 text-meta text-muted;
   }
 
   #track-menu hr {
