@@ -16,6 +16,8 @@ final class TVInviteTests: XCTestCase {
         else { throw XCTSkip("no invite given") }
 
         let app = XCUIApplication()
+        // Nothing here needs the local network; see `TVWalkTests`.
+        app.launchEnvironment["KOAN_DEVICES__NEARBY"] = "false"
         app.launch()
         app.open(url)
 

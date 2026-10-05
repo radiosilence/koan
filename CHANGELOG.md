@@ -4,18 +4,20 @@
 
 ### Added
 
+<<<<<<< HEAD
 - **Sign in a device by approving it.** A device with no keyboard, such as a television, can open a pairing on the server and show a code and a link instead of asking for a password. Opening the link in kōan on a phone or Mac, typing the code in Settings → Server → Pair a device, or typing it on the server's `/pair` page asks whether to sign the device in; approving signs it in as you, with an API key of its own named after it, revocable like any other. The device hears the answer the moment it is given, over the socket it opened. Each approval screen says where the request came from, and whether that is your network or the internet, since anyone can send a link to approve. A pairing lasts ten minutes and is kept only in memory. Servers list the `koanPair` extension.
+||||||| f4ac99b7
+=======
+- **kōan on Apple TV.** The engine and the iOS app's pages on tvOS, built for the remote: Now Playing is the first tab, with the sleeve, controls and what comes next; the tabs run across the top; a long press opens a row's menu; Play/Pause works from anywhere. A TV is a device the phone and the Mac play to with Play on, and plays gaplessly through HDMI. It signs in with a password, an OpenSubsonic API key, or a koan invite pasted from a phone, so any OpenSubsonic server works. Share links show as a code to scan, since a television has no pasteboard. tvOS keeps app data only in a cache the system may empty, so a purge signs the TV out.
+- **Signing in with an API key.** The account form takes an OpenSubsonic API key in place of a password, on every platform: one key per device, revocable on its own.
+- **`devices.nearby`.** Off, a device takes no part in the local network: it neither listens nor announces itself, and neither looks for other devices nor dials them, reaching them only through the server. For a shared network, and for test runs that relaunch an app over and over, which would otherwise announce it to every device in the house each time; the television's UI tests set it.
+>>>>>>> origin/tvos
 
 ## 0.52.6
 
 ### Added
 
 - **Share a device with other accounts on your server.** On the device, Settings → Devices → Shared with other accounts names another account, offered from the server's accounts as you type. That account then sees the device in its Control menu from any network, labelled with whose it is, and controls it as a device on your own network would: play, pause, skip, the queue, the output, preset and volume, and moving the music to its own devices and back, waking it by push as its own. It acts as itself, never with the owner's powers: nothing of the owner's library, settings, favourites, playlists or history. Stopping the share ends its control at once. Servers list the `koanShares` extension. The library database moves to schema 15 for the new `link_grants` table; a build older than this one refuses it.
-
-### Added
-
-- **kōan on Apple TV.** The engine and the iOS app's pages on tvOS, built for the remote: Now Playing is the first tab, with the sleeve, controls and what comes next; the tabs run across the top; a long press opens a row's menu; Play/Pause works from anywhere. A TV is a device the phone and the Mac play to with Play on, and plays gaplessly through HDMI. It signs in with a password, an OpenSubsonic API key, or a koan invite pasted from a phone, so any OpenSubsonic server works. Share links show as a code to scan, since a television has no pasteboard. tvOS keeps app data only in a cache the system may empty, so a purge signs the TV out.
-- **Signing in with an API key.** The account form takes an OpenSubsonic API key in place of a password, on every platform: one key per device, revocable on its own.
 
 ### Changed
 

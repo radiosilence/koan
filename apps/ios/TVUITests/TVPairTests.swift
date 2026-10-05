@@ -18,6 +18,8 @@ final class TVPairTests: XCTestCase {
 
         let app = XCUIApplication()
         app.launchEnvironment["KOAN_REMOTE__URL"] = server
+        // Nothing here needs the local network; see `TVWalkTests`.
+        app.launchEnvironment["KOAN_DEVICES__NEARBY"] = "false"
         app.launch()
 
         let getCode = app.buttons["Get a Code"]

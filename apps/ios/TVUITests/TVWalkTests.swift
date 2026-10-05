@@ -25,6 +25,9 @@ final class TVWalkTests: XCTestCase {
         for (key, value) in ProcessInfo.processInfo.environment where key.hasPrefix("KOAN_") {
             app.launchEnvironment[key] = value
         }
+        // The walk relaunches the app at every stop; on the network, each
+        // launch would announce it to, and dial, every device in the house.
+        app.launchEnvironment["KOAN_DEVICES__NEARBY"] = "false"
     }
 
     /// The tabs, left to right.

@@ -779,7 +779,7 @@ tv-run: (tv-ffi "appletvsimulator") ios-project
 tv-device config="Debug": (tv-ffi "appletvos")
     #!/usr/bin/env bash
     set -euo pipefail
-    tv=$(xcrun devicectl list devices | awk '/Apple TV/' \
+    tv=$(xcrun devicectl list devices | awk '/Apple TV/ && /physical/' \
         | grep -oE '[0-9a-f]{40}|[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1 || true)
     [ -n "$tv" ] || { echo "No Apple TV found — pair it in Xcode, and wake it." >&2; exit 1; }
     APPLE_TEAM_ID=${APPLE_TEAM_ID:-2256Q92VF2} just ios-project
@@ -809,6 +809,8 @@ tv-walk: (tv-ffi "appletvsimulator") ios-project
     [ -n "$sim" ] || { echo "No Apple TV simulator." >&2; exit 1; }
     xcrun simctl boot "$sim" 2>/dev/null || true
     xcrun simctl bootstatus "$sim" -b >/dev/null
+    # A booted simulator is a running copy of tvOS; leave none behind.
+    trap 'xcrun simctl shutdown "$sim"' EXIT
     for v in KOAN_REMOTE__ENABLED KOAN_REMOTE__URL KOAN_REMOTE__USERNAME KOAN_REMOTE__API_KEY KOAN_REMOTE__PASSWORD KOAN_WALK_SETTLE; do
         [ -n "${!v:-}" ] && export "TEST_RUNNER_$v=${!v}"
     done
@@ -840,6 +842,7 @@ tv-pair: (tv-ffi "appletvsimulator") ios-project
         | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
     xcrun simctl boot "$sim" 2>/dev/null || true
     xcrun simctl bootstatus "$sim" -b >/dev/null
+    trap 'kill $server 2>/dev/null; rm -rf "$dir"; xcrun simctl shutdown "$sim"' EXIT
     # Signed out from the start: a fresh install holds no account.
     xcrun simctl uninstall "$sim" {{bundle_id}} 2>/dev/null || true
     TEST_RUNNER_KOAN_PAIR_SERVER=http://127.0.0.1:4799 TEST_RUNNER_KOAN_PAIR_USER=owner \
@@ -858,13 +861,14 @@ tv-join link device="sim": ios-project
     set -euo pipefail
     if [ "{{device}}" = tv ]; then
         just tv-ffi appletvos
-        dest=$(xcrun devicectl list devices | awk '/Apple TV/' \
+        dest=$(xcrun devicectl list devices | awk '/Apple TV/ && /physical/' \
             | grep -oE '[0-9a-f]{40}|[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1)
         APPLE_TEAM_ID=${APPLE_TEAM_ID:-2256Q92VF2} just ios-project
     else
         just tv-ffi appletvsimulator
         dest=$(xcrun simctl list devices available -j \
             | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+        trap 'xcrun simctl shutdown "$dest"' EXIT
     fi
     auth=(-allowProvisioningUpdates)
     if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
