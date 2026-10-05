@@ -4,7 +4,7 @@
 
 ### Changed
 
-- **The Opus decoder is upstream's fix rather than our patched copy.** opus-decoder's own replacement for the slow transform (Rusopus #2), which also reuses its buffers and is checked against the RFC 8251 test vectors, is merged but not yet released, so kōan builds it from that commit until a release reaches crates.io. Decoding costs the same: about 0.25% of a Mac core for a 48 kHz stereo stream, against 17% before 0.52.8. `vendor/` is gone.
+- **The Opus decoder comes from our fork of Rusopus rather than a copy in this repository.** The fork is upstream's master, whose own replacement for the slow transform (Rusopus #2) reuses its buffers and is checked against the RFC 8251 test vectors but has not been released, plus our fixes, each sent upstream. The first is the CELT collapse-mask shift that could panic on some stereo streams. Decoding costs the same: about 0.25% of a Mac core for a 48 kHz stereo stream, against 17% before 0.52.8. `vendor/` is gone.
 
 ## 0.52.8
 

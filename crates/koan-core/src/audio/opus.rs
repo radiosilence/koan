@@ -123,11 +123,10 @@ impl OpusBridge {
             return Ok(&[]);
         }
 
-        // `opus-decoder` 0.1.1 overflows a shift in CELT's collapse mask on
-        // the first packet of some stereo streams — a panic in debug, a wrong
-        // mask in release. It is the only Opus decoder on crates.io that isn't
-        // libopus over FFI, and it is unmaintained at 0.1.1, so contain it
-        // rather than let one bad packet take the decode thread with it.
+        // `opus-decoder` is a young port with no release past 0.1.1, built from
+        // our fork with the fixes it needed (a shift that panicked on CELT's
+        // collapse mask among them). Contain it all the same, rather than let
+        // one bad packet take the decode thread with it.
         let decoder = &mut self.decoder;
         let pcm_buf = &mut self.pcm_buf;
         let frames_per_channel = match catch_unwind(AssertUnwindSafe(|| {

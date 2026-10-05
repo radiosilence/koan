@@ -30,9 +30,9 @@ reqwest = { version = "0.13", default-features = false, features = [
 rusqlite = { version = "0.40", features = ["bundled"] }
 walkdir = "2.5"
 
-# opus-decoder 0.1.1, the latest release, computes CELT's FFT as a direct DFT
-# with a sin/cos per term: a third of a phone core to play one Opus stream.
-# Upstream replaced it (TadeuszWolfGang/Rusopus#2) but has not released it.
-# Drop this once a release past 0.1.1 is on crates.io.
+# opus-decoder from radiosilence/Rusopus: upstream master, which replaces the
+# direct-DFT CELT transform 0.1.1 shipped (a third of a phone core per stream,
+# TadeuszWolfGang/Rusopus#2, unreleased), plus our fixes on top, each sent
+# upstream. Fix bugs there; drop this once a release carries them.
 [patch.crates-io]
-opus-decoder = { git = "https://github.com/TadeuszWolfGang/Rusopus", rev = "ecb22cf694314eb09384de32a9b9a68059b6ff54" }
+opus-decoder = { git = "https://github.com/radiosilence/Rusopus", rev = "b935bbe0d92085b801b4dc46406b92b8b45f9b76" }
