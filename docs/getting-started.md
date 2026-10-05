@@ -26,9 +26,9 @@ Both apps keep what you play. **History** lists every play by day, and is where 
 
 ## Downloaded and offline
 
-**Downloaded**, in the Mac's sidebar and the iOS Library tab, lists the records with files on this device, fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
+**Downloaded**, in the Mac's sidebar and the iOS Library tab, is a shelf like Favourites: the artists, records and tracks with files on this device, records fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
 
-On iOS, when the server cannot be reached for a few seconds while the app is open, kōan goes offline: Albums, Artists and search show only what is on the phone, the queue greys out tracks that are not, and the Library tab says so. It goes back online by itself when the server answers again. **Settings → Offline mode** turns it on by hand, for a train with a signal that comes and goes. A server without kōan's link (Navidrome) gives no signal for this, so there only the switch applies.
+On iOS, when the server cannot be reached for a few seconds while the app is open, kōan goes offline: every list, from Albums and search to Favourites and playlists, shows only what is on the phone, the queue greys out tracks that are not, and the Library tab says so. It goes back online by itself when the server answers again. **Settings → Offline mode** turns it on by hand, for a train with a signal that comes and goes. A server without kōan's link (Navidrome) gives no signal for this, so there only the switch applies.
 
 ## The terminal UI
 
