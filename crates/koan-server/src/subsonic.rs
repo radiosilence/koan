@@ -6016,6 +6016,111 @@ mod tests {
         );
     }
 
+    /// Plays scrobbled come back from `koanHistory` after the cursor; a play
+    /// forgotten goes from the history and comes back as forgotten, and the
+    /// next page from the cursor holds only what changed since.
+    #[tokio::test]
+    async fn history_pages_plays_and_forgettings_after_a_cursor() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let db = Database::open(state.pool.path()).unwrap();
+        let tracks = queries::all_tracks(&db.conn).unwrap();
+        let (a, b) = (tracks[0].id, tracks[1].id);
+        let (a_uid, b_uid) = (
+            uid_of(&state, queries::UidKind::Track, a),
+            uid_of(&state, queries::UidKind::Track, b),
+        );
+        let get = |path: String| {
+            let state = state.clone();
+            async move { json_of(build_test_router(state), &path).await }
+        };
+
+        get(format!(
+            "/rest/scrobble?{}&id={a_uid}&time=1000000&id={b_uid}&time=2000000",
+            auth_query("f=json")
+        ))
+        .await;
+        let v = get(format!("/rest/koanHistory?{}", auth_query("f=json"))).await;
+        let page = &v["koanHistory"];
+        let plays: Vec<(String, i64)> = page["play"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                (
+                    p["id"].as_str().unwrap().to_owned(),
+                    p["played"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            plays,
+            [(a_uid.clone(), 1_000_000), (b_uid.clone(), 2_000_000)]
+        );
+        assert_eq!(page["more"], false);
+        let cursor = page["cursor"].as_str().unwrap().to_owned();
+
+        // Forgotten a second off: a play is named by when it started, and the
+        // device that recorded it read its clock a moment apart.
+        let v = get(format!(
+            "/rest/koanForgetPlays?{}&id={a_uid}&time=1001000",
+            auth_query("f=json")
+        ))
+        .await;
+        assert_eq!(v["status"], "ok", "{v}");
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, a).unwrap(),
+            0
+        );
+        let v = get(format!(
+            "/rest/koanHistory?{}&since={cursor}",
+            auth_query("f=json")
+        ))
+        .await;
+        let page = &v["koanHistory"];
+        assert!(page["play"].as_array().is_none_or(|p| p.is_empty()), "{v}");
+        assert_eq!(page["forgotten"][0]["id"], a_uid.as_str());
+        assert_eq!(page["forgotten"][0]["played"], 1_001_000);
+
+        // Forgetting a play nobody has records nothing.
+        let cursor = page["cursor"].as_str().unwrap().to_owned();
+        get(format!(
+            "/rest/koanForgetPlays?{}&id={a_uid}&time=9000000",
+            auth_query("f=json")
+        ))
+        .await;
+        let v = get(format!(
+            "/rest/koanHistory?{}&since={cursor}",
+            auth_query("f=json")
+        ))
+        .await;
+        assert!(
+            v["koanHistory"]["forgotten"]
+                .as_array()
+                .is_none_or(|f| f.is_empty()),
+            "{v}"
+        );
+
+        // `through` forgets everything up to then, as one entry with no track.
+        get(format!(
+            "/rest/koanForgetPlays?{}&through=5000000",
+            auth_query("f=json")
+        ))
+        .await;
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, b).unwrap(),
+            0
+        );
+        let v = get(format!(
+            "/rest/koanHistory?{}&since={cursor}",
+            auth_query("f=json")
+        ))
+        .await;
+        let forgotten = &v["koanHistory"]["forgotten"][0];
+        assert!(forgotten.get("id").is_none_or(|id| id.is_null()), "{v}");
+        assert_eq!(forgotten["played"], 5_000_000);
+    }
+
     #[tokio::test]
     async fn test_star_album_by_prefixed_id() {
         let (state, _dir) = test_state();

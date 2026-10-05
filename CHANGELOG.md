@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Play history is shared between devices on a kōan server.** Signed in to a kōan server, History on each device shows the plays the account's other devices made alongside its own, arriving as they are scrobbled. Forgetting a play or clearing history does so on every device on the account. A device's skips stay on that device, since the server keeps only plays heard long enough to count. Servers list the `koanHistory` extension. The library database moves to schema 16 for the new `play_history_forgotten` and `history_outbox` tables, and `play_history` is rebuilt so its ids are never reused; a build older than this one refuses it.
+
+### Fixed
+
+- **Plays made offline reach the server.** A scrobble the server did not take was dropped. It now waits on the device and is sent, dated to when the track started, once the server answers again, to Navidrome as well as kōan.
+
 ## 0.52.6
 
 ### Added

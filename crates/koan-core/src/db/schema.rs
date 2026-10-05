@@ -2046,6 +2046,44 @@ mod tests {
     }
 
     #[test]
+    fn play_history_ids_are_never_handed_out_again_after_the_rebuild() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        super::create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE play_history;
+             CREATE TABLE play_history (
+                 id          INTEGER PRIMARY KEY,
+                 track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+                 played_at   INTEGER NOT NULL,
+                 duration_ms INTEGER,
+                 source      TEXT DEFAULT 'local',
+                 user_id     INTEGER NOT NULL DEFAULT 0
+             );
+             INSERT INTO play_history (id, track_id, played_at) VALUES (1, NULL, 10), (2, NULL, 20);
+             PRAGMA user_version = 15;",
+        )
+        .unwrap();
+        super::create_tables(&conn).unwrap();
+        let ids: Vec<i64> = conn
+            .prepare("SELECT id FROM play_history ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(ids, [1, 2]);
+        conn.execute_batch(
+            "DELETE FROM play_history WHERE id = 2;
+             INSERT INTO play_history (track_id, played_at) VALUES (NULL, 30);",
+        )
+        .unwrap();
+        let newest: i64 = conn
+            .query_row("SELECT MAX(id) FROM play_history", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(newest, 3);
+    }
+
+    #[test]
     fn cascading_play_history_is_idempotent() {
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();

@@ -527,14 +527,6 @@ pub enum OutboxKind {
 }
 
 impl OutboxKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Scrobble => "scrobble",
-            Self::Forget => "forget",
-            Self::Clear => "clear",
-        }
-    }
-
     fn parse(raw: &str) -> Option<Self> {
         match raw {
             "scrobble" => Some(Self::Scrobble),
@@ -1046,6 +1038,164 @@ mod tests {
         assert_eq!(
             play_count(&db.conn, crate::db::queries::LOCAL_USER, id).unwrap(),
             0
+        );
+    }
+
+    const USER: i64 = crate::db::queries::LOCAL_USER;
+
+    fn plays_of(db: &Database, track: i64) -> Vec<(i64, String)> {
+        let mut stmt = db
+            .conn
+            .prepare(
+                "SELECT played_at, source FROM play_history WHERE track_id = ?1 ORDER BY played_at",
+            )
+            .unwrap();
+        stmt.query_map([track], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn history_pages_after_its_cursor() {
+        let db = test_db();
+        let a = seed_track(&db, "A");
+        for at in [100, 200, 300] {
+            record_play_at(&db.conn, USER, a, at, None, SOURCE_SUBSONIC).unwrap();
+        }
+        let first = history_since(&db.conn, USER, HistoryCursor::default(), 2).unwrap();
+        assert_eq!(
+            first.plays.iter().map(|p| p.played_at).collect::<Vec<_>>(),
+            [100, 200]
+        );
+        assert!(first.more);
+        let rest = history_since(&db.conn, USER, first.cursor, 2).unwrap();
+        assert_eq!(
+            rest.plays.iter().map(|p| p.played_at).collect::<Vec<_>>(),
+            [300]
+        );
+        assert!(!rest.more);
+        assert_eq!(
+            HistoryCursor::parse(&rest.cursor.to_string()),
+            Some(rest.cursor)
+        );
+
+        // Forgetting the newest play and recording another: the new one's id
+        // is past the cursor, never the forgotten one's again.
+        forget_shared_plays(&db.conn, USER, &[(a, 302)]).unwrap();
+        record_play_at(&db.conn, USER, a, 400, None, SOURCE_SUBSONIC).unwrap();
+        let next = history_since(&db.conn, USER, rest.cursor, 10).unwrap();
+        assert_eq!(
+            next.plays.iter().map(|p| p.played_at).collect::<Vec<_>>(),
+            [400]
+        );
+        assert_eq!(next.forgotten.len(), 1);
+        assert_eq!(next.forgotten[0].played_at, 302);
+        assert!(next.forgotten[0].track_uid.is_some());
+    }
+
+    #[test]
+    fn a_forgetting_is_recorded_only_when_it_removed_a_play() {
+        let db = test_db();
+        let a = seed_track(&db, "A");
+        record_play_at(&db.conn, USER, a, 1000, None, SOURCE_SUBSONIC).unwrap();
+        assert_eq!(
+            forget_shared_plays(&db.conn, USER, &[(a, 5000)]).unwrap(),
+            0
+        );
+        assert_eq!(
+            forget_shared_plays(&db.conn, USER, &[(a, 1004)]).unwrap(),
+            1
+        );
+        let page = history_since(&db.conn, USER, HistoryCursor::default(), 10).unwrap();
+        assert_eq!(page.forgotten.len(), 1);
+
+        record_play_at(&db.conn, USER, a, 2000, None, SOURCE_SUBSONIC).unwrap();
+        assert_eq!(
+            forget_shared_plays_through(&db.conn, USER, 3000).unwrap(),
+            1
+        );
+        let page = history_since(&db.conn, USER, page.cursor, 10).unwrap();
+        assert_eq!(
+            page.forgotten,
+            [ForgottenPlay {
+                track_uid: None,
+                played_at: 3000
+            }]
+        );
+    }
+
+    #[test]
+    fn adopting_leaves_out_plays_already_here() {
+        let db = test_db();
+        let a = seed_track(&db, "A");
+        // This device's own play, which comes back from the server a second
+        // off.
+        record_play_at(&db.conn, USER, a, 1000, None, SOURCE_LOCAL).unwrap();
+        let adopted = adopt_plays(
+            &db.conn,
+            USER,
+            &[(a, 1001, Some(200_000)), (a, 5000, None), (a, 5000, None)],
+        )
+        .unwrap();
+        assert_eq!(adopted, 1, "the second copy of 5000 is the first one");
+        assert_eq!(
+            plays_of(&db, a),
+            [
+                (1000, SOURCE_LOCAL.to_owned()),
+                (5000, SOURCE_SYNCED.to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn forgetting_a_play_not_yet_sent_unsends_it() {
+        let db = test_db();
+        queue_scrobble(&db.conn, "x", 10_000).unwrap();
+        queue_scrobble(&db.conn, "y", 10_000).unwrap();
+        queue_forget(&db.conn, "x", 11_000).unwrap();
+        queue_forget(&db.conn, "z", 20_000).unwrap();
+        let waiting = history_outbox(&db.conn, 10).unwrap();
+        assert_eq!(
+            waiting
+                .iter()
+                .map(|e| (e.kind, e.remote_id.as_deref()))
+                .collect::<Vec<_>>(),
+            [
+                (OutboxKind::Scrobble, Some("y")),
+                (OutboxKind::Forget, Some("z"))
+            ]
+        );
+
+        // A clear supersedes everything from before it.
+        queue_scrobble(&db.conn, "w", 40_000).unwrap();
+        queue_clear(&db.conn, 30_000).unwrap();
+        let waiting = history_outbox(&db.conn, 10).unwrap();
+        assert_eq!(
+            waiting.iter().map(|e| e.kind).collect::<Vec<_>>(),
+            [OutboxKind::Scrobble, OutboxKind::Clear]
+        );
+        drop_from_outbox(&db.conn, &waiting.iter().map(|e| e.id).collect::<Vec<_>>()).unwrap();
+        assert!(history_outbox(&db.conn, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_cursor_is_kept_per_server() {
+        let db = test_db();
+        let url = "https://music.example.com";
+        assert_eq!(
+            history_cursor(&db.conn, url).unwrap(),
+            HistoryCursor::default()
+        );
+        let at = HistoryCursor {
+            play: 7,
+            forgotten: 2,
+        };
+        set_history_cursor(&db.conn, url, "me", at).unwrap();
+        assert_eq!(history_cursor(&db.conn, url).unwrap(), at);
+        assert_eq!(
+            history_cursor(&db.conn, "https://other.example.com").unwrap(),
+            HistoryCursor::default()
         );
     }
 }
