@@ -47,6 +47,7 @@ struct BrowseFilterButton: View {
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { open = false }
+                                .toolbarButton()
                         }
                     }
             }
