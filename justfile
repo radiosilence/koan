@@ -839,6 +839,7 @@ tv-join link device="sim": ios-project
     if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
         auth+=(-authenticationKeyPath "$APPLE_API_KEY_PATH" -authenticationKeyID "$APPLE_API_KEY_ID" -authenticationKeyIssuerID "$APPLE_API_ISSUER_ID")
     fi
+    rm -rf target/tv-join.xcresult
     TEST_RUNNER_KOAN_INVITE_LINK='{{link}}' xcodebuild test -quiet \
         -project apps/ios/Koan.xcodeproj -scheme KoanTV \
         -destination "id=$dest" -derivedDataPath target/tv-build \
