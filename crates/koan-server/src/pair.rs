@@ -154,8 +154,11 @@ impl Pairings {
         Some(Taken { id, entry })
     }
 
+    /// Unless its device went while it was out.
     pub fn put_back(&self, taken: Taken) {
-        self.entries.lock().insert(taken.id, taken.entry);
+        if !taken.entry.outcome.is_closed() {
+            self.entries.lock().insert(taken.id, taken.entry);
+        }
     }
 
     /// Approve the pairing `pair` as the account `user_id` (`username`), with an
@@ -464,7 +467,7 @@ mod tests {
         // The socket closes while an approval holds the pairing.
         let taken = p.take(&id).unwrap();
         drop(o);
-        p.put_back(taken);
+        p.entries.lock().insert(taken.id, taken.entry);
         assert_eq!(
             p.settle(&db.conn, &id, alice, "alice", false),
             Err(SettleError::NotFound)
