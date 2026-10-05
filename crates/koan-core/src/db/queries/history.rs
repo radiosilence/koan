@@ -82,12 +82,12 @@ pub fn recently_played(
     let user = resolve_user(conn, user)?;
     let ids = |key: &str| -> Result<Vec<i64>, DbError> {
         let sql = format!(
-            "SELECT {key} AS id
+            "SELECT {key}
              FROM play_history h
              JOIN tracks t ON t.id = h.track_id
              LEFT JOIN albums al ON al.id = t.album_id
              WHERE h.user_id = ?1 AND h.played_at >= ?2 AND {key} IS NOT NULL
-             GROUP BY id
+             GROUP BY {key}
              ORDER BY MAX(h.played_at) DESC, MAX(h.id) DESC
              LIMIT ?3"
         );
@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn recently_played_is_each_once_by_its_latest_play() {
         let db = test_db();
-        let mut track = |title: &str, artist: &str, album: &str| {
+        let track = |title: &str, artist: &str, album: &str| {
             let mut meta = sample_meta(title, artist, album);
             meta.path = Some(format!("/music/{album}/{title}.flac"));
             upsert_track(&db.conn, &meta).unwrap();
