@@ -694,6 +694,14 @@ pub struct Playlist {
     pub changed_at: String,
     /// How this machine likes to look at it. `None` follows the app default.
     pub grouped: Option<bool>,
+    /// Its contents are not for editing: rules or a playlist file decide
+    /// them, here or on the server. Adds, removals and reorders are refused.
+    pub readonly: bool,
+    /// Rules here decide its contents (a smart playlist on this machine,
+    /// rather than one mirrored from a server).
+    pub smart: bool,
+    /// Read from a file in the library, which decides its name and contents.
+    pub from_file: bool,
 }
 
 impl From<queries::PlaylistRow> for Playlist {
@@ -710,6 +718,9 @@ impl From<queries::PlaylistRow> for Playlist {
             created_at: p.created_at,
             changed_at: p.changed_at,
             grouped: p.grouped,
+            readonly: p.readonly,
+            smart: p.rules.is_some(),
+            from_file: p.source_path.is_some(),
         }
     }
 }
@@ -1333,6 +1344,35 @@ pub struct Invite {
     pub mailto: String,
 }
 
+/// A pairing this device opened: the code to show, and the link that
+/// approves it.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct PairingCode {
+    pub id: String,
+    /// `XXXX-XXXX`.
+    pub code: String,
+    pub link: String,
+}
+
+/// A device waiting to be signed in, as the server describes it to an
+/// approver.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct PairingInfo {
+    pub device: String,
+    /// The address the request came from, as the server sees it.
+    pub from: String,
+    /// The address is on a private network (RFC 1918, link-local, unique
+    /// local, loopback) rather than the internet.
+    pub local: bool,
+}
+
+/// A pairing link: which server another device is waiting on, and its id.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct PairingLink {
+    pub server: String,
+    pub id: String,
+}
+
 impl From<koan_core::invite::Invite> for Invite {
     fn from(i: koan_core::invite::Invite) -> Self {
         Self {
@@ -1576,6 +1616,9 @@ pub struct ConnectionInfo {
     pub share_error: Option<String>,
     /// The server's other accounts, to share with.
     pub share_accounts: Vec<String>,
+    /// The server can sign a device without a keyboard in, once someone here
+    /// approves it.
+    pub pairing: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

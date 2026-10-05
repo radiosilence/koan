@@ -548,6 +548,11 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
         )?;
         removed += u64::from(!kept);
     }
+    // What waited for this server, and how far its history was read.
+    tx.execute_batch(
+        "DELETE FROM history_outbox;
+         UPDATE remote_servers SET history_cursor = NULL;",
+    )?;
     tx.commit()?;
     Ok(removed)
 }
@@ -776,6 +781,7 @@ pub struct Synced {
     pub library: crate::remote::sync::SyncResult,
     pub favourites: FavouriteSync,
     pub playlists: crate::playlists::PlaylistSync,
+    pub history: crate::remote::history::HistorySync,
 }
 
 /// Whether a sync walks the server's library.
@@ -839,6 +845,7 @@ pub fn sync_remote(
         library,
         favourites: reconcile_favourites(db, client),
         playlists: crate::playlists::reconcile_playlists(db, client, url, username),
+        history: crate::remote::history::reconcile(db, client, url, username),
     })
 }
 
@@ -1017,39 +1024,41 @@ pub fn join_with_invite(invite: &crate::invite::Invite) -> Result<(), SignInErro
         (Some(token), _) => {
             let device = crate::remote::link::LinkIdentity::this_device(None).name;
             let joined = crate::remote::client::redeem_invite(url, token, &device)?;
-            // The key this device held on the same account, which the new one
-            // replaces: left valid, it would sit in the key list unused.
-            let replaced = Config::load()
-                .ok()
-                .filter(|c| c.remote.url.trim_end_matches('/') == url)
-                .filter(|c| c.remote.username == joined.username)
-                .map(|c| c.remote.api_key)
-                .filter(|k| !k.is_empty() && *k != joined.api_key);
-            // Revoked best-effort: a key signs in to give itself up.
-            let revoke = |key: &str| {
-                let credential = Credential::ApiKey(key.to_string());
-                let client = SubsonicClient::from_auth(SubsonicAuth::with(
-                    url,
-                    &joined.username,
-                    credential,
-                ));
-                if let Err(e) = client.koan_revoke_own_key() {
-                    log::warn!("could not revoke an unused API key: {e}");
-                }
-            };
-            let credential = Credential::ApiKey(joined.api_key.clone());
-            if let Err(e) = remember_remote(url, &joined.username, credential) {
-                revoke(&joined.api_key);
-                return Err(e);
-            }
-            if let Some(old) = replaced {
-                revoke(&old);
-            }
-            Ok(())
+            adopt_api_key(url, &joined.username, &joined.api_key)
         }
         (None, Some(password)) => set_remote_credentials(url, &invite.username, password),
         (None, None) => Err(SignInError::Rejected(SubsonicError::BadResponse)),
     }
+}
+
+/// Sign in with an API key the server just made for this device: by an
+/// invite, or by pairing. The key this device held on the same account is
+/// revoked, since left valid it would sit in the key list unused; so is the new
+/// one if it cannot be stored.
+pub(crate) fn adopt_api_key(url: &str, username: &str, api_key: &str) -> Result<(), SignInError> {
+    let url = url.trim_end_matches('/');
+    let replaced = Config::load()
+        .ok()
+        .filter(|c| c.remote.url.trim_end_matches('/') == url)
+        .filter(|c| c.remote.username == username)
+        .map(|c| c.remote.api_key)
+        .filter(|k| !k.is_empty() && k != api_key);
+    // Revoked best-effort: a key signs in to give itself up.
+    let revoke = |key: &str| {
+        let credential = Credential::ApiKey(key.to_string());
+        let client = SubsonicClient::from_auth(SubsonicAuth::with(url, username, credential));
+        if let Err(e) = client.koan_revoke_own_key() {
+            log::warn!("could not revoke an unused API key: {e}");
+        }
+    };
+    if let Err(e) = remember_remote(url, username, Credential::ApiKey(api_key.to_string())) {
+        revoke(api_key);
+        return Err(e);
+    }
+    if let Some(old) = replaced {
+        revoke(&old);
+    }
+    Ok(())
 }
 
 /// Store a credential already checked against the server, replacing whichever

@@ -418,7 +418,11 @@ async fn every_class_on_every_page_has_a_rule() {
         "/favourites".to_owned(),
         "/history".to_owned(),
         "/recent".to_owned(),
+        "/tracks".to_owned(),
+        "/tracks?fav=1&recent=1&sort=played".to_owned(),
+        "/albums?recent=1".to_owned(),
         "/account".to_owned(),
+        "/scrobbling".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
     ] {
@@ -647,6 +651,58 @@ async fn sorting_and_filtering_live_in_the_query_string() {
     );
 }
 
+/// The `data-id`s of the track rows on a page, in order.
+fn row_ids(body: &str) -> Vec<String> {
+    body.split("<li tabindex=0 data-id=")
+        .skip(1)
+        .map(|r| r.split(' ').next().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn see_all_opens_the_browser_its_preview_is_the_head_of() {
+    let f = setup(true);
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        queries::add_favourite(&db.conn, 1, f.track_id).unwrap();
+        for n in 2..=12 {
+            let path = f.dir.path().join(format!("{n}.flac"));
+            std::fs::write(&path, b"x").unwrap();
+            let id =
+                queries::upsert_track(&db.conn, &meta(&path, &format!("Track {n:02}"), n)).unwrap();
+            queries::add_favourite(&db.conn, 1, id).unwrap();
+        }
+    }
+    let get = |uri: &str| authed(&f.state, uri).body(Body::empty()).unwrap();
+    let shelf = send(&f.app, get("/favourites")).await.body;
+    let preview = row_ids(&shelf);
+    assert_eq!(preview.len(), 10, "ten in the preview");
+    let link = shelf
+        .split("See all (12)")
+        .next()
+        .unwrap()
+        .rsplit("href=\"")
+        .next()
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .replace("&amp;", "&");
+    assert!(link.starts_with("/tracks?"), "{link}");
+
+    let browser = send(&f.app, get(&link)).await.body;
+    assert!(browser.contains("12 tracks"), "the count See all promised");
+    assert_eq!(
+        row_ids(&browser)[..10],
+        preview[..],
+        "the same tracks, in the same order"
+    );
+    assert!(
+        browser.contains("name=fav value=1 checked"),
+        "the filter shows, to be cleared"
+    );
+}
+
 #[tokio::test]
 async fn favourites_are_the_callers_own_as_a_shelf() {
     let f = setup(true);
@@ -758,6 +814,14 @@ async fn history_lists_the_callers_own_plays_by_day_and_forgets_only_those() {
     assert!(!left.contains(&mine), "alice's play is forgotten");
     assert!(left.contains(&theirs), "bob's is not");
     assert_eq!(left.len(), 2);
+    // Recorded, so the account's devices forget it too; bob's is not.
+    let forgotten: i64 = db
+        .conn
+        .query_row("SELECT COUNT(*) FROM play_history_forgotten", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(forgotten, 1);
 }
 
 #[tokio::test]
@@ -1234,6 +1298,80 @@ fn assert_closed(
         rx.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
     ));
+}
+
+#[tokio::test]
+async fn a_waiting_device_is_approved_from_the_pair_page() {
+    let f = setup(true);
+    let r = send(&f.app, get("/pair/ABCD-EFGH").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.location(), "/auth/resume?next=%2Fpair%2FABCD-EFGH");
+
+    let opened = crate::pair::pairings()
+        .open("Living <room> TV", "10.0.0.8".parse().unwrap())
+        .unwrap();
+    let typed = opened.code.to_lowercase();
+    let r = send(
+        &f.app,
+        authed(&f.state, &format!("/pair?code={typed}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.location(), format!("/pair/{typed}"));
+    let r = send(
+        &f.app,
+        authed(&f.state, r.location()).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Sign in Living &lt;room&gt; TV?"),
+        "{}",
+        r.body
+    );
+    assert!(r.body.contains("<strong>alice</strong>"));
+    assert!(r.body.contains("Requested from 10.0.0.8, on your network."));
+    let far = crate::pair::pairings()
+        .open("Far TV", "2001:db8::7".parse().unwrap())
+        .unwrap();
+    let r = send(
+        &f.app,
+        authed(&f.state, &format!("/pair/{}", far.code))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        r.body
+            .contains("Requested from 2001:db8::7, from the internet."),
+        "{}",
+        r.body
+    );
+    drop(far);
+
+    let post = |origin: &str| {
+        Request::post(format!("/pair/{typed}/approve"))
+            .header(header::HOST, HOST)
+            .header(header::ORIGIN, origin)
+            .header(
+                header::COOKIE,
+                format!("koan_access={}", access_token(&f.state)),
+            )
+            .body(Body::empty())
+            .unwrap()
+    };
+    let r = send(&f.app, post("https://evil.test")).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = send(&f.app, post(ORIGIN)).await;
+    assert!(r.body.contains("Signed in"), "{}", r.body);
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    let keys = queries::api_keys::list_api_keys(&db.conn, Some(1)).unwrap();
+    assert_eq!(keys[0].name, "Living <room> TV");
+
+    // Settled: the code no longer names anything.
+    let r = send(&f.app, post(ORIGIN)).await;
+    assert!(r.body.contains("Nothing to sign in"));
+    drop(opened);
 }
 
 mod oauth {

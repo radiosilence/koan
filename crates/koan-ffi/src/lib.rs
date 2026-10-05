@@ -282,6 +282,13 @@ pub struct KoanEngine {
     /// Each playlist's earlier states, for undo. The queue's own history is
     /// the player's.
     playlist_history: koan_core::playlists::PlaylistHistory,
+    /// The pairing this device is waiting on, until `await_pairing` takes it.
+    pairing: parking_lot::Mutex<Option<koan_core::remote::pair::Pending>>,
+    /// What ends the wait, by the pairing's id.
+    pairing_cancel: parking_lot::Mutex<Option<(String, koan_core::remote::pair::Cancel)>>,
+    /// What the app calls this device — the name the person gave it, where
+    /// the platform says — for the link and for a pairing to ask under.
+    device_name: Option<String>,
 }
 
 /// How far a client's own reckoning of the playhead may drift before it is
@@ -399,7 +406,11 @@ impl KoanEngine {
             .await?;
         }
         // A sync touches no player state, so it has no place in the lane's order.
-        if matches!(cmd, koan_core::remote::link::LinkCommand::Sync { .. }) {
+        if matches!(
+            cmd,
+            koan_core::remote::link::LinkCommand::Sync { .. }
+                | koan_core::remote::link::LinkCommand::HistoryChanged
+        ) {
             return offload::offload(move || {
                 self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
                 Ok(())
@@ -1236,24 +1247,24 @@ impl KoanEngine {
         .await
     }
 
-    /// Forget specific plays. Returns how many entries were removed.
+    /// Forget specific plays, here and, signed in to a koan server, on every
+    /// device on the account. Returns how many entries were removed.
     pub async fn delete_plays(self: Arc<Self>, ids: Vec<i64>) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let removed =
-                queries::delete_plays(&db.conn, queries::LOCAL_USER, &ids).map_err(db_err)?;
+            let removed = koan_core::remote::history::forget(&db, &ids).map_err(db_err)?;
             koan_core::player::history::changed();
             Ok(removed as u32)
         })
         .await
     }
 
-    /// Forget every play. Returns how many entries were removed.
+    /// Forget every play, here and, signed in to a koan server, on every
+    /// device on the account. Returns how many entries were removed.
     pub async fn clear_play_history(self: Arc<Self>) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let removed =
-                queries::clear_play_history(&db.conn, queries::LOCAL_USER).map_err(db_err)?;
+            let removed = koan_core::remote::history::clear(&db).map_err(db_err)?;
             koan_core::player::history::changed();
             Ok(removed as u32)
         })
@@ -1434,6 +1445,7 @@ impl KoanEngine {
     pub async fn playlists(self: Arc<Self>) -> Result<Vec<Playlist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            self.refresh_smart(&db, None);
             Ok(queries::list_playlists(&db.conn, queries::LOCAL_USER)
                 .map_err(db_err)?
                 .into_iter()
@@ -1451,6 +1463,7 @@ impl KoanEngine {
     ) -> Result<Vec<PlaylistEntry>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            self.refresh_smart(&db, Some(playlist_id));
             let entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
             let ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
             let tracks = self.decorate(&db, entries.into_iter().map(|e| e.track).collect());
@@ -1507,6 +1520,13 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            if let Some(list) = queries::get_playlist(&db.conn, playlist_id).map_err(db_err)?
+                && list.source_path.is_some()
+            {
+                return Err(KoanError::BadArgument {
+                    message: format!("'{}' is named by its file in the library", list.name),
+                });
+            }
             queries::rename_playlist(&db.conn, playlist_id, &name).map_err(db_err)?;
             self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
@@ -1544,6 +1564,7 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            fillable(&db, playlist_id)?;
             self.playlist_history
                 .record(&db.conn, playlist_id)
                 .map_err(db_err)?;
@@ -1572,6 +1593,7 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            fillable(&db, playlist_id)?;
             self.playlist_history
                 .record(&db.conn, playlist_id)
                 .map_err(db_err)?;
@@ -1605,6 +1627,7 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            fillable(&db, playlist_id)?;
             self.playlist_history
                 .record(&db.conn, playlist_id)
                 .map_err(db_err)?;
@@ -1626,6 +1649,7 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            fillable(&db, playlist_id)?;
             self.playlist_history
                 .record(&db.conn, playlist_id)
                 .map_err(db_err)?;
@@ -1645,6 +1669,7 @@ impl KoanEngine {
     pub async fn shuffle_playlist(self: Arc<Self>, playlist_id: i64) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            fillable(&db, playlist_id)?;
             self.playlist_history
                 .record(&db.conn, playlist_id)
                 .map_err(db_err)?;
@@ -2482,6 +2507,99 @@ impl KoanEngine {
     /// to join only when what was pasted is one.
     pub fn parse_invite(&self, link: String) -> Option<Invite> {
         koan_core::invite::Invite::parse(&link).map(Into::into)
+    }
+
+    // -- Pairing: signing in a device without a keyboard (`koanPair`) --
+
+    /// Ask the server at `url` to sign this device in, once someone signed in
+    /// elsewhere approves it. The code and link come back to show;
+    /// `await_pairing` waits for the answer. A pairing already waiting is
+    /// given up.
+    pub async fn start_pairing(self: Arc<Self>, url: String) -> Result<PairingCode, KoanError> {
+        self.cancel_pairing();
+        offload::offload(move || {
+            let device =
+                koan_core::remote::link::LinkIdentity::this_device(self.device_name.clone()).name;
+            let pending = koan_core::remote::pair::start(&url, &device).map_err(pair_error)?;
+            let code = PairingCode {
+                id: pending.id.clone(),
+                code: pending.code.clone(),
+                link: pending.link.clone(),
+            };
+            *self.pairing_cancel.lock() = pending.canceller().map(|c| (pending.id.clone(), c));
+            *self.pairing.lock() = Some(pending);
+            Ok(code)
+        })
+        .await
+    }
+
+    /// Wait for the pairing `start_pairing` opened to be approved, declined
+    /// or to lapse. Approved, the app is signed in.
+    pub async fn await_pairing(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let pending = self
+                .pairing
+                .lock()
+                .take()
+                .ok_or_else(|| KoanError::BadArgument {
+                    message: "no pairing is waiting".into(),
+                })?;
+            let id = pending.id.clone();
+            let outcome = pending.wait();
+            let mut cancel = self.pairing_cancel.lock();
+            if cancel.as_ref().is_some_and(|(held, _)| *held == id) {
+                *cancel = None;
+            }
+            outcome.map_err(pair_error)
+        })
+        .await
+    }
+
+    /// Give up the pairing this device is waiting on.
+    pub fn cancel_pairing(&self) {
+        if let Some((_, cancel)) = self.pairing_cancel.lock().take() {
+            cancel.cancel();
+        }
+        self.pairing.lock().take();
+    }
+
+    /// The device waiting on `pair`, an id or the code it shows, on the
+    /// signed-in server, and where it asked from.
+    pub async fn pairing_info(self: Arc<Self>, pair: String) -> Result<PairingInfo, KoanError> {
+        offload::offload(move || {
+            koan_core::remote::pair::info(&pair)
+                .map(|p| PairingInfo {
+                    device: p.device,
+                    from: p.from,
+                    local: p.local,
+                })
+                .map_err(pair_error)
+        })
+        .await
+    }
+
+    /// Sign the device waiting on `pair` in as this account. Answers with its
+    /// name.
+    pub async fn approve_pairing(self: Arc<Self>, pair: String) -> Result<String, KoanError> {
+        offload::offload(move || koan_core::remote::pair::approve(&pair).map_err(pair_error)).await
+    }
+
+    pub async fn decline_pairing(self: Arc<Self>, pair: String) -> Result<(), KoanError> {
+        offload::offload(move || {
+            koan_core::remote::pair::decline(&pair)
+                .map(drop)
+                .map_err(pair_error)
+        })
+        .await
+    }
+
+    /// Read a pairing link (`koan.rocks/pair/#s=…&p=…`). `None` for anything
+    /// else.
+    pub fn parse_pairing_link(&self, link: String) -> Option<PairingLink> {
+        koan_core::remote::pair::PairLink::parse(&link).map(|l| PairingLink {
+            server: l.server,
+            id: l.id,
+        })
     }
 
     // -- Accounts on the signed-in server: koan servers, admins only --
@@ -3793,6 +3911,9 @@ impl KoanEngine {
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
             fuzzy: queries::CorpusCache::default(),
             playlist_history: Default::default(),
+            pairing: Default::default(),
+            pairing_cancel: Default::default(),
+            device_name: device_name.clone(),
         });
         engine.spawn_watcher();
         engine.spawn_figures();
@@ -4096,6 +4217,28 @@ impl KoanEngine {
         .await
     }
 
+    /// Evaluate smart playlists that are due (one, or every one), and have
+    /// the queue follow any it is locked to whose contents moved.
+    fn refresh_smart(&self, db: &Database, playlist_id: Option<i64>) {
+        let lock = koan_core::playlists::queue_lock(db, &self.state);
+        let changed = match playlist_id {
+            Some(id) => queries::smart::refresh_if_due(&db.conn, id)
+                .map(|moved| if moved { vec![id] } else { Vec::new() }),
+            None => queries::smart::refresh_due(&db.conn, queries::LOCAL_USER),
+        };
+        match changed {
+            Ok(changed) if !changed.is_empty() => {
+                for id in changed {
+                    let locked = lock == Some(koan_core::playlists::QueueLock::Playlist(id));
+                    self.follow_playlist(db, id, locked);
+                }
+                self.bump_library();
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("smart playlists not refreshed: {e}"),
+        }
+    }
+
     /// Whether the queue is still exactly this playlist.
     fn locked_to(&self, db: &Database, playlist_id: i64) -> bool {
         koan_core::playlists::queue_lock(db, &self.state)
@@ -4345,6 +4488,14 @@ impl KoanEngine {
                 log::info!("link: evicted {} cached tracks", ids.len());
                 self.library_changed();
                 Ok(())
+            }),
+            LinkCommand::HistoryChanged => self.db().map(|db| {
+                // History and Recently played follow `player::history::changed`,
+                // which the sync rings; a track it had to sync for is the
+                // library's news too.
+                if koan_core::remote::history::sync(&db).library_synced {
+                    self.library_changed();
+                }
             }),
             LinkCommand::Sync { full } => self.db().map(|db| {
                 let walk = if full {
@@ -4613,6 +4764,22 @@ fn fuzzy_rank(texts: &[&str], query: &str, limit: u32) -> Vec<usize> {
         .collect()
 }
 
+/// Refuse an edit to the contents of a playlist that takes none.
+fn fillable(db: &Database, playlist_id: i64) -> Result<(), KoanError> {
+    match queries::get_playlist(&db.conn, playlist_id).map_err(db_err)? {
+        Some(list) if list.readonly => Err(KoanError::BadArgument {
+            message: format!(
+                "'{}' is read-only: its rules, its file or its server decide what it holds",
+                list.name
+            ),
+        }),
+        Some(_) => Ok(()),
+        None => Err(KoanError::NotFound {
+            message: format!("playlist {playlist_id}"),
+        }),
+    }
+}
+
 fn db_err(e: impl std::fmt::Display) -> KoanError {
     KoanError::Database {
         message: e.to_string(),
@@ -4682,6 +4849,7 @@ fn connection_info() -> ConnectionInfo {
             .map(|l| l.identity.name.clone())
             .unwrap_or_default(),
         sharing: p.as_ref().is_some_and(|p| p.offers(profile::SHARES)),
+        pairing: p.as_ref().is_some_and(|p| p.offers(profile::PAIR)),
         shared_with: devices::shares(),
         share_error: devices::share_error(),
         share_accounts: devices::accounts(),
@@ -4760,6 +4928,21 @@ fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, Ko
             message: "no remote server configured".into(),
         }
     })
+}
+
+/// A pairing that was turned away or lapsed is an answer; a connection that
+/// failed is worth retrying.
+fn pair_error(e: koan_core::remote::pair::PairError) -> KoanError {
+    use koan_core::remote::pair::PairError;
+    match e {
+        PairError::Remote(e) => remote_error(e),
+        e @ (PairError::Connect(_) | PairError::Closed) => KoanError::Remote {
+            message: e.to_string(),
+        },
+        e => KoanError::BadArgument {
+            message: e.to_string(),
+        },
+    }
 }
 
 /// A server that answered and refused is a bad request; one that did not

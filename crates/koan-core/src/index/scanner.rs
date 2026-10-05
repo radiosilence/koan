@@ -10,6 +10,7 @@ use crate::db::connection::Database;
 use crate::db::queries::{self, TrackMeta};
 
 use super::metadata::{self, is_audio_file};
+use super::playlist_files::is_playlist_file;
 
 /// Result of a folder scan.
 #[derive(Debug, Default)]
@@ -21,6 +22,8 @@ pub struct ScanResult {
     /// Directory entries walkdir could not read — unreadable subtrees, symlink
     /// loops. Their contents are absent from the scan entirely.
     pub unreadable: usize,
+    /// Playlist files read into new or changed playlists.
+    pub playlists: usize,
     /// Paths of the tracks deleted or demoted to remote-only, so a caller can
     /// show what a removal actually took.
     pub removed_paths: Vec<String>,
@@ -92,7 +95,7 @@ pub fn scan_folders(
     on_started: Option<&dyn Fn(u64)>,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
-    let walked: Vec<(PathBuf, Vec<PathBuf>, ScanResult)> = folders
+    let walked: Vec<(PathBuf, Walked, ScanResult)> = folders
         .iter()
         .map(|folder| {
             // The files under it are stored as the directory spells them; the
@@ -100,21 +103,39 @@ pub fn scan_folders(
             // scan stored.
             let path = super::spelling::on_disk(folder);
             let mut result = ScanResult::default();
-            let files = walk_audio(&path, &mut result);
-            (path, files, result)
+            let found = walk(&path, &mut result);
+            (path, found, result)
         })
         .collect();
     if let Some(started) = on_started {
-        started(walked.iter().map(|(_, files, _)| files.len() as u64).sum());
+        started(
+            walked
+                .iter()
+                .map(|(_, found, _)| found.audio.len() as u64)
+                .sum(),
+        );
     }
 
     let mut total = ScanResult::default();
-    for (path, files, mut result) in walked {
+    for (path, found, mut result) in walked {
         if total.cancelled {
             break;
         }
-        index_folder(db, &path, files, &opts, on_track, &mut result);
+        // A folder with no audio is taken for one not mounted, as stale
+        // removal takes it: its playlists are read but none forgotten.
+        let settled = if found.audio.is_empty() || result.unreadable > 0 {
+            Vec::new()
+        } else {
+            vec![path.clone()]
+        };
+        index_folder(db, &path, found.audio, &opts, on_track, &mut result);
+        if !result.cancelled {
+            result.playlists += super::playlist_files::import(db, &found.playlists, &settled);
+        }
         merge(&mut total, result);
+    }
+    if total.added > 0 {
+        super::playlist_files::refresh_m3u(db);
     }
     total
 }
@@ -184,6 +205,7 @@ pub fn scan_dirs(
     let dirs: Vec<PathBuf> = dirs.iter().map(|d| spelling.on_disk(d)).collect();
 
     let mut files = Vec::new();
+    let mut playlists = Vec::new();
     let mut settled = Vec::new();
     for dir in minimal_dirs(dirs) {
         let Some(root) = library.iter().find(|root| dir.starts_with(root)) else {
@@ -205,7 +227,9 @@ pub fn scan_dirs(
         match dir.try_exists() {
             Ok(true) => {
                 let before = result.unreadable;
-                files.extend(walk_audio(&dir, &mut result));
+                let found = walk(&dir, &mut result);
+                files.extend(found.audio);
+                playlists.extend(found.playlists);
                 if result.unreadable == before {
                     settled.push(dir);
                 }
@@ -220,6 +244,10 @@ pub fn scan_dirs(
     }
     for dir in &settled {
         remove_stale(db, dir, true, &mut result);
+    }
+    result.playlists += super::playlist_files::import(db, &playlists, &settled);
+    if result.added > 0 {
+        super::playlist_files::refresh_m3u(db);
     }
     result
 }
@@ -251,18 +279,31 @@ fn merge(total: &mut ScanResult, r: ScanResult) {
     total.removed += r.removed;
     total.skipped += r.skipped;
     total.unreadable += r.unreadable;
+    total.playlists += r.playlists;
     total.removed_paths.extend(r.removed_paths);
     total.errors.extend(r.errors);
 }
 
-/// Every audio file under `path`. `follow_links` means a symlink pointing at a
-/// sibling directory inside the library indexes its files under both paths.
-fn walk_audio(path: &Path, result: &mut ScanResult) -> Vec<PathBuf> {
-    let mut audio_files = Vec::new();
+/// What a walk of a directory found.
+#[derive(Default)]
+struct Walked {
+    audio: Vec<PathBuf>,
+    /// Playlist files: see `playlist_files`.
+    playlists: Vec<PathBuf>,
+}
+
+/// Every audio and playlist file under `path`. `follow_links` means a symlink
+/// pointing at a sibling directory inside the library indexes its files under
+/// both paths.
+fn walk(path: &Path, result: &mut ScanResult) -> Walked {
+    let mut found = Walked::default();
     for entry in walkdir::WalkDir::new(path).follow_links(true) {
         match entry {
             Ok(e) if e.file_type().is_file() && is_audio_file(e.path()) => {
-                audio_files.push(e.path().to_path_buf())
+                found.audio.push(e.path().to_path_buf())
+            }
+            Ok(e) if e.file_type().is_file() && is_playlist_file(e.path()) => {
+                found.playlists.push(e.path().to_path_buf())
             }
             Ok(_) => {}
             Err(e) => {
@@ -271,7 +312,7 @@ fn walk_audio(path: &Path, result: &mut ScanResult) -> Vec<PathBuf> {
             }
         }
     }
-    audio_files
+    found
 }
 
 /// Read and store the files that changed since they were last indexed.
@@ -607,6 +648,9 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
         result
             .errors
             .push((PathBuf::new(), format!("db error: {e}")));
+    }
+    if result.added > 0 {
+        super::playlist_files::refresh_m3u(db);
     }
 
     result

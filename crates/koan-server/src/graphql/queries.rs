@@ -552,6 +552,7 @@ impl QueryRoot {
     async fn playlists(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlPlaylist>> {
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
+            super::refresh_smart(db, user);
             let list = queries::list_playlists(&db.conn, user)
                 .map_err(|e| super::internal_error("db", e))?;
             Ok(list.into_iter().map(GqlPlaylist::from).collect())
@@ -569,6 +570,11 @@ impl QueryRoot {
         let user = super::user_id(ctx);
         with_db(ctx, move |db| {
             super::readable_playlist(db, user, id)?;
+            match queries::smart::refresh_if_due(&db.conn, id) {
+                Ok(true) => crate::clients::changed(),
+                Ok(false) => {}
+                Err(e) => log::warn!("smart playlist {id} not refreshed: {e}"),
+            }
             let rows = queries::playlist_tracks(&db.conn, id)
                 .map_err(|e| super::internal_error("db", e))?;
             Ok(rows.into_iter().map(|row| GqlTrack { row }).collect())

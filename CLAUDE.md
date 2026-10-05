@@ -132,8 +132,9 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `db/schema.rs` | DDL: artists, albums, tracks, scan_cache, remote_servers, organize_log, tracks_fts (FTS5) |
 | `db/connection.rs` | `Database::open()`, WAL mode, pragmas |
 | `db/pool.rs` | Connections opened once and kept. What every front end reads through — `Database::open` checks the schema and checkpoints the WAL, which is not a thing to do per query |
-| `db/queries/` | Row types, upsert, `sources` (track identity: source rows, link, derive), FTS5 search, scan cache, stats, playlists, `batch` (SQL-side track filtering, batched parent→child reads) |
+| `db/queries/` | Row types, upsert, `sources` (track identity: source rows, link, derive), FTS5 search, scan cache, stats, playlists, `smart` (smart playlist rules compiled to SQL, evaluated on read into the playlist's entries), `batch` (SQL-side track filtering, batched parent→child reads) |
 | `index/scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → batched DB transactions. `ScanOptions` carries a cancel flag and an optional progress sink. `import_paths` indexes named files where they lie (Finder drops), removing nothing; `scan_dirs` rescans named directories inside the library, removals included — what the folder watcher runs |
+| `index/playlist_files.rs` | Playlist files found by scans, keyed by `source_path`: Navidrome `.nsp` into smart playlists, `.m3u`/`.m3u8` into read-only ordinary ones. A file gone from a settled directory deletes its playlist |
 | `index/watch.rs` | Which filesystem events can change the index, and the directory each one means a scan of. Drops access, metadata, hidden and Syncthing paths, partial downloads |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
 | `index/id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
@@ -141,7 +142,9 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
 | `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
 | `remote/sync.rs` | Library sync: album list, then songs paged in bulk via empty-query `search3` (per-album `getAlbum` for servers that cannot), one transaction per page, progress per page. Every sync walks everything; `helpers::sync_remote` decides whether to walk, by the server's `getIndexes` `lastModified` |
+| `remote/history.rs` | Play history shared through a koan server: the outbox of scrobbles and forgettings (offline plays reach the server dated to when they started), and adopting the account's other devices' plays after a cursor. Gated on `koanHistory` |
 | `remote/link.rs` | The standing WebSocket a client keeps to a koan server (`/rest/koanLink`), and the `LinkCommand`s the server sends down it: play, enqueue, pause, skip. Reconnects on its own; ids are resolved to local tracks, syncing first if one is new |
+| `remote/pair.rs` | A device without a keyboard signing in: opens `/rest/koanPair`, shows the code and `koan.rocks/pair/` link, and blocks until the server sends the outcome; an approved key is stored as an invite's is. Also the approver's calls (`info`, `approve`, `decline`) and `PairLink` |
 | `remote/profile.rs` | What the signed-in server is: `ping` + `getOpenSubsonicExtensions`, once per sign-in. Gate koan features on the extension (`koanLink`, `koanDevices`), never on the server's name |
 | `remote/devices.rs` | The devices this one can play on — the account's from the link, the network's from `nearby` — which one the app controls, and getting a command to it |
 | `remote/nearby.rs` | LAN control: listener on `devices.port`, Bonjour via `dns_sd`, a connection per device found or listed by address. Strangers get playback and the queue only (`LinkCommand::allowed_nearby`) |
@@ -153,10 +156,12 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `quiet.rs` | What runs in the background on iOS: nothing nobody asked for. Link, nearby browse and dial, sync and rescans wait here; a phone playing stays findable. Lifted by controlling another device or a push |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
 | `helpers.rs` | Shared by every front end: sign-in, favourite reconciliation, sharing, auto-sync and folder watching, forget-folder/forget-remote, cache and index maintenance |
-| `playlists.rs` | Playlists beyond the database: two-way Subsonic reconciliation, background pushes, M3U8 export |
+| `playlists.rs` | Playlists beyond the database: two-way Subsonic reconciliation, background pushes, M3U8 export. Read-only playlists (smart ones here, `readonly` ones there) are never pushed |
+| `smart.rs` | Smart playlist rules: the typed model and its JSON, checked with errors that name the problem, and Navidrome `.nsp` parsing into it |
 | `shelves.rs` | Favourites, Recently played and a search as filters on the album, artist and track listings (`AlbumQuery`, `ArtistQuery`, `TrackFilter`). A shelf page's previews are the head of those listings, with counts from the same query, so a preview and its "See all" agree. What each shelf holds, its window and its order live here; front ends ask by name |
 | `organize.rs` | File rename using format strings. Preview/execute/undo — one `PlanEntry` per file carrying its destination and outcome. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
+| `scrobbling.rs` | Forwarding plays to ListenBrainz: one sleeping thread, woken when a play is queued, sending the durable `scrobble_outbox` in batches and backing off only while the service is unreachable. Now-playing notices are best effort |
 | `artist_info.rs` | Artist bio and photo: MusicBrainz id → Wikidata → Wikipedia/Commons. Resolved by id, never by name alone; cached per artist, misses included |
 
 ### koan-tui (`crates/koan-tui/src/`)
@@ -207,6 +212,7 @@ follows the top of the stack in front — see `TabShell`.
 | `KoanApp.swift` | `@main`, `AppState`, menu commands, keyboard shortcuts |
 | `KoanIOS/PushDelegate.swift` | Push: registers for a token and sends it up the link; wakes to link on a background push; runs the command a tapped notification carries |
 | `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Each task declares what it holds — files on disk, local rows, remote rows, downloads — and a new one is disabled only where those overlap |
+| `Support/Pairing.swift` | Approving a device that is waiting to sign in: a `koan.rocks/pair/` link arriving through `AppState.open(url:)`, or a code typed in Settings, asks the server for the device's name and then the person, as invites do |
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
 | `Support/EngineMirror.swift` | The engine's state as SwiftUI sees it. `Observable` by hand: one property per slice, invalidated only where a slice actually moved |
 | `Support/PlayerModel.swift` | What the app *does* to the player — commands, and the little that is genuinely local. Reads everything through the mirror |
@@ -259,10 +265,11 @@ follows the top of the stack in front — see `TabShell`.
 | `clients.rs` | Linked koan apps by account, and sending them `LinkCommand`s — what `clients`, `playOnClient` and `controlClient` use. Sends each link the account's other devices as they change, relays commands between them (`koanCommand` too), pushes Live Activity updates |
 | `mcp.rs` | MCP server (schema_sdl + graphql tools): stdio for `koan mcp`, `/mcp` on the main port behind koan's own tokens, admin capped at `user` |
 | `push.rs` | Apple push notifications to the iOS app: ES256 token auth, HTTP/2 to APNs. A background push wakes a suspended app to link; a play request becomes a notification to tap |
+| `pair.rs` | Pairings waiting to be approved, in memory: id, Crockford code, device name, ten-minute lapse, the socket route that holds the device, and `settle`, which mints the approver's key and sends it down. `/rest/koanPairInfo` and `/rest/koanPairApprove` in `subsonic.rs` and the web UI's `/pair` (`ui/pair.rs`) settle through it |
 | `transcode.rs` | Subsonic `stream` transcoding: whether a request gets the original or an `ffmpeg` Opus, MP3 or AAC encode, and running it |
 | `share.rs` | Public share pages and their audio, answering for a share's own tracks only |
 | `../styles/` | Tailwind sources for `assets/ui.css` and `assets/share.css`, on the theme koan.rocks uses (`site/src/theme.css`). The pages are styled with utilities in the templates; these hold element defaults and the rules for classes the scripts toggle or build (`playing`, `busy`, `missing`, the queue's rows). Quote every `class` attribute: Tailwind does not read an unquoted one. Run `just css` after changing either; the compiled files are committed because the crate embeds them |
-| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use. `ui/oauth.rs` is the OAuth 2.1 authorization server for `/mcp`: discovery, stateless registration, consent, PKCE token exchange; `ui/connect.rs` the page explaining how to connect an assistant |
+| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use. `ui/oauth.rs` is the OAuth 2.1 authorization server for `/mcp`: discovery, stateless registration, consent, PKCE token exchange; `ui/connect.rs` the page explaining how to connect an assistant; `ui/scrobbling.rs` the page connecting an account to ListenBrainz |
 
 ### koan-cli (`crates/koan-cli/src/`)
 
