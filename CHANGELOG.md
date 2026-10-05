@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The web UI's account pages can be reached on a phone.** Users, API keys, Assistants and signing out sat under the page on a phone, behind the player and the tab bar, and at the foot of a sidebar that could not scroll in landscape. On a phone a More tab now opens them in a sheet, and the sidebar scrolls when the window is shorter than it.
+
 ## 0.52.9
 
 ### Changed
