@@ -83,6 +83,9 @@ final class OfflineTests: XCTestCase {
             field.typeText("Harmonic")
             pause(2)
             snap("\(name)-search")
+            // The keyboard covers the tab bar.
+            field.typeText("\n")
+            pause(1)
         }
         tab("Queue")
         pause(2)
@@ -91,7 +94,8 @@ final class OfflineTests: XCTestCase {
 
     private func setOffline(_ on: Bool) {
         tab("Settings")
-        app.buttons["Server"].firstMatch.tap()
+        // The tab keeps the page it was left on.
+        if !app.switches["Offline mode"].exists { app.buttons["Server"].firstMatch.tap() }
         let toggle = app.switches["Offline mode"].firstMatch
         XCTAssert(toggle.waitForExistence(timeout: 10), "no Offline mode switch")
         if (toggle.value as? String == "1") != on {
