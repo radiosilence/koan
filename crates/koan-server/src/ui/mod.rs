@@ -123,6 +123,8 @@ pub fn router(
         .route("/search", get(pages::search))
         .route("/search/results", get(pages::search_results))
         .route("/queue", get(pages::queue))
+        .route("/library", get(pages::library))
+        .route("/favourites", get(pages::favourites))
         .route("/connect", get(connect::page))
         .route("/account", get(account::page))
         .route("/account/keys", post(account::create_key))

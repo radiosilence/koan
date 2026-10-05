@@ -414,6 +414,8 @@ async fn every_class_on_every_page_has_a_rule() {
         "/search?q=Wet".to_owned(),
         "/search?q=nothing-here".to_owned(),
         "/queue".to_owned(),
+        "/library".to_owned(),
+        "/favourites".to_owned(),
         "/account".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
@@ -641,6 +643,57 @@ async fn sorting_and_filtering_live_in_the_query_string() {
         r.body.contains("<input type=hidden name=seed value="),
         "the shuffle is pinned"
     );
+}
+
+#[tokio::test]
+async fn favourites_are_the_callers_own_as_a_shelf() {
+    let f = setup(true);
+    let artist = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        queries::add_favourite(&db.conn, bob, f.track_id).unwrap();
+        queries::set_favourite_album(&db.conn, bob, f.album_id, true).unwrap();
+        queries::tracks_by_ids(&db.conn, &[f.track_id]).unwrap()[0]
+            .artist_id
+            .unwrap()
+    };
+    let page = || authed(&f.state, "/favourites").body(Body::empty()).unwrap();
+
+    let r = send(&f.app, page()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Nothing favourited yet") && !r.body.contains("data-id="),
+        "another account's favourites are not alice's"
+    );
+
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        queries::add_favourite(&db.conn, 1, f.track_id).unwrap();
+        queries::set_favourite_album(&db.conn, 1, f.album_id, true).unwrap();
+        queries::set_favourite_artist(&db.conn, 1, artist, true).unwrap();
+    }
+    let r = send(&f.app, page()).await;
+    assert!(
+        r.body.contains(&format!("href=\"/artist/{artist}\"")),
+        "the artist, as a pill"
+    );
+    assert!(
+        r.body.contains(&format!("href=\"/album/{}\"", f.album_id)),
+        "the record, as a tile"
+    );
+    assert!(
+        r.body.contains(&format!("data-id={}", f.track_id))
+            && r.body.contains("data-context=album")
+            && r.body.contains("Wet &lt;Moss&gt; &amp; Stone"),
+        "the track, in a list that plays on"
+    );
+
+    let r = send(
+        &f.app,
+        authed(&f.state, "/library").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains("href=\"/favourites\"") && r.body.contains("href=\"/playlists\""));
 }
 
 #[tokio::test]
