@@ -107,11 +107,12 @@ pub(super) fn head(title: &str) -> String {
     )
 }
 
-/// The sidebar's links, which become the tab bar on a phone.
+/// The sidebar's links, which become the tab bar on a phone: six tabs, each as
+/// wide as its label, which fit a 360 px screen at the meta size.
 const NAV_LINK: &str = "rounded-md px-2.5 py-2 text-muted hover:text-ink hover:no-underline \
-aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:flex max-wide:flex-1 max-wide:items-center \
-max-wide:justify-center max-wide:rounded-none max-wide:text-control max-wide:aria-[current=page]:bg-transparent \
-max-wide:aria-[current=page]:text-brand";
+aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:flex max-wide:flex-auto max-wide:items-center \
+max-wide:justify-center max-wide:rounded-none max-wide:px-0 max-wide:text-meta \
+max-wide:aria-[current=page]:bg-transparent max-wide:aria-[current=page]:text-brand";
 
 /// The account's links in the sidebar.
 const ACCOUNT_LINK: &str = "rounded-md px-1.5 py-1 text-meta whitespace-nowrap text-muted hover:text-ink \
