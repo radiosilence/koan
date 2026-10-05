@@ -103,6 +103,20 @@ The server answers `http://host:4000/` with a browser UI: albums, artists, playl
 
 Sign in with a kōan account (`koan auth create-user`). The session is the same pair of `HttpOnly` cookies the JSON login sets, so behind plain HTTP the UI needs `cookie_secure = false`, and a hostname it is reached by must be in `allowed_hosts`. The access cookie lasts `access_token_ttl`; an open page renews it from the refresh cookie, and a page loaded after it lapsed renews on the way in. With `auth_enabled = false` the UI is open to anyone who can reach the port. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
 
+### Behind an authenticating proxy
+
+When a proxy such as Authelia, Authentik or oauth2-proxy signs people in before they reach kōan, the web UI can take the account from the header the proxy sets instead of asking for a password:
+
+```toml
+[graphql]
+proxy_auth_header = "Remote-User"
+proxy_auth_from = ["172.18.0.0/16"]   # where the proxy connects from
+```
+
+The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it. Anything else that can reach the port sends the header for nothing and sees the usual sign-in page, so keep the range narrow. A proxy must replace the header rather than append to one a client sent; a request carrying it twice is not believed. The account must already exist in kōan: a name the server has no account for is refused, not created. The UI follows the proxy, so a browser whose proxy sign-in changes to another account is handed over to that account, and signing out is done at the proxy.
+
+This covers the web UI and the MCP consent page only. Subsonic clients, kōan's apps and MCP clients cannot pass through an interactive proxy sign-in, so the proxy has to let `/rest`, `/graphql`, `/auth`, `/oauth`, `/mcp` and `/.well-known` through untouched, and they keep signing in with kōan's own credentials.
+
 ## Sharing
 
 A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic client's own share button) returns `https://<public_url>/share/<id>`, a page anyone can open without an account, with a player for each shared track. Set where the server is reached from outside:

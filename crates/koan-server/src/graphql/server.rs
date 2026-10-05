@@ -294,6 +294,10 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             covers.clone(),
             cfg.sharing.public_url.clone(),
             cfg.mcp.redirect_hosts.clone(),
+            crate::ui::ProxyAuth::from_config(
+                &cfg.graphql.proxy_auth_header,
+                &cfg.graphql.proxy_auth_from,
+            ),
         );
 
         // Auth routes — always accessible (no auth middleware).

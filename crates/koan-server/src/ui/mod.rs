@@ -23,6 +23,7 @@ mod tests;
 mod users;
 
 pub use oauth::RESOURCE_METADATA;
+pub use session::ProxyAuth;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -90,6 +91,8 @@ pub struct UiState {
     codes: oauth::Codes,
     /// `mcp.redirect_hosts`.
     redirect_hosts: Arc<Vec<String>>,
+    /// `graphql.proxy_auth_header`, when an authenticating proxy is trusted.
+    proxy_auth: Option<ProxyAuth>,
 }
 
 pub fn router(
@@ -99,6 +102,7 @@ pub fn router(
     covers: Arc<Covers>,
     public_url: Option<String>,
     redirect_hosts: Vec<String>,
+    proxy_auth: Option<ProxyAuth>,
 ) -> axum::Router {
     let state = UiState {
         pool,
@@ -109,6 +113,7 @@ pub fn router(
         public_url,
         codes: oauth::Codes::default(),
         redirect_hosts: Arc::new(redirect_hosts),
+        proxy_auth,
     };
     let gated = axum::Router::new()
         .route("/", get(pages::albums))
@@ -242,14 +247,19 @@ fn is_navigation(req: &Request) -> bool {
 }
 
 /// Let a signed-in user through; send a page load to resume its session, and
-/// refuse anything else.
+/// refuse anything else. Behind an authenticating proxy a session is good only
+/// for the account the proxy names, so a browser whose proxy sign-in changed
+/// hands over to the new account.
 async fn gate(State(s): State<UiState>, mut req: Request, next: Next) -> Response {
     let user = if s.auth_enabled {
+        let vouched = session::vouched(&s, req.headers(), req.extensions()).map(str::to_owned);
         match cookie(req.headers(), "koan_access")
             .and_then(|t| auth::validate_access_token(&s.auth.public_pem, t).ok())
         {
-            Some(claims) => crate::auth::current_user(&s.pool, claims).await,
-            None => None,
+            Some(claims) if vouched.as_ref().is_none_or(|v| *v == claims.username) => {
+                crate::auth::current_user(&s.pool, claims).await
+            }
+            _ => None,
         }
     } else {
         Some(AuthUser::anonymous_admin())

@@ -59,6 +59,14 @@ fn setup(auth_enabled: bool) -> Fixture {
 
 /// `setup`, with `sharing.public_url` set when OAuth needs one.
 fn setup_at(auth_enabled: bool, public_url: Option<&str>) -> Fixture {
+    setup_full(auth_enabled, public_url, None)
+}
+
+fn setup_full(
+    auth_enabled: bool,
+    public_url: Option<&str>,
+    proxy_auth: Option<super::ProxyAuth>,
+) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("koan.db");
     let db = Database::open(&db_path).unwrap();
@@ -88,6 +96,7 @@ fn setup_at(auth_enabled: bool, public_url: Option<&str>) -> Fixture {
             Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             public_url.map(str::to_owned),
             Vec::new(),
+            proxy_auth,
         ),
         dir,
         state,
@@ -1307,4 +1316,144 @@ async fn the_icon_is_where_favicon_fetchers_look() {
         assert_eq!(r.status, StatusCode::OK, "{uri}");
         assert_eq!(r.headers[header::CONTENT_TYPE], "image/png");
     }
+}
+
+/// Behind an authenticating proxy at 10.0.0.1 that names the account in
+/// `Remote-User`.
+fn setup_behind_proxy() -> Fixture {
+    let proxy = super::ProxyAuth::from_config("Remote-User", &["10.0.0.1".into()]);
+    setup_full(true, None, proxy)
+}
+
+fn from_peer(builder: axum::http::request::Builder, peer: &str) -> axum::http::request::Builder {
+    let addr: std::net::SocketAddr = format!("{peer}:50000").parse().unwrap();
+    builder.extension(axum::extract::ConnectInfo(addr))
+}
+
+#[tokio::test]
+async fn the_proxy_signs_in_the_account_it_names() {
+    let f = setup_behind_proxy();
+    let r = send(
+        &f.app,
+        from_peer(get("/login?next=/artists"), "10.0.0.1")
+            .header("remote-user", "alice")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.location(), "/auth/resume?next=%2Fartists");
+
+    let r = send(
+        &f.app,
+        from_peer(get("/auth/resume?next=/artists"), "10.0.0.1")
+            .header("remote-user", "alice")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.location(), "/artists");
+    let access = r.cookie("koan_access");
+    let claims = auth::validate_access_token(&f.state.public_pem, &access).unwrap();
+    assert_eq!(claims.username, "alice");
+}
+
+#[tokio::test]
+async fn the_header_counts_only_from_the_proxy_and_only_once() {
+    let f = setup_behind_proxy();
+    let stranger = from_peer(get("/auth/resume"), "203.0.113.9")
+        .header("remote-user", "alice")
+        .body(Body::empty())
+        .unwrap();
+    let doubled = from_peer(get("/auth/resume"), "10.0.0.1")
+        .header("remote-user", "mallory")
+        .header("remote-user", "alice")
+        .body(Body::empty())
+        .unwrap();
+    let unknown_peer = get("/auth/resume")
+        .header("remote-user", "alice")
+        .body(Body::empty())
+        .unwrap();
+    for req in [stranger, doubled, unknown_peer] {
+        let r = send(&f.app, req).await;
+        assert_eq!(r.status, StatusCode::SEE_OTHER);
+        assert_eq!(r.location(), "/login?next=%2F");
+    }
+    let r = send(
+        &f.app,
+        from_peer(get("/login"), "203.0.113.9")
+            .header("remote-user", "alice")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn an_account_the_server_lacks_is_refused() {
+    let f = setup_behind_proxy();
+    let r = send(
+        &f.app,
+        from_peer(get("/auth/resume"), "10.0.0.1")
+            .header("remote-user", "bob")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert!(r.cookies().is_empty());
+}
+
+#[tokio::test]
+async fn a_session_for_another_account_than_the_proxy_names_is_resumed() {
+    let f = setup_behind_proxy();
+    let r = send(
+        &f.app,
+        from_peer(authed(&f.state, "/albums"), "10.0.0.1")
+            .header("remote-user", "bob")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.location(), "/auth/resume?next=%2Falbums");
+
+    let r = send(
+        &f.app,
+        from_peer(authed(&f.state, "/albums"), "10.0.0.1")
+            .header("remote-user", "alice")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+}
+
+#[test]
+fn proxy_auth_needs_a_header_and_a_proxy() {
+    use super::ProxyAuth;
+    assert!(ProxyAuth::from_config("", &["10.0.0.1".into()]).is_none());
+    assert!(ProxyAuth::from_config("Remote-User", &[]).is_none());
+    assert!(ProxyAuth::from_config("Remote-User", &["not an address".into()]).is_none());
+    assert!(ProxyAuth::from_config("Remote User", &["10.0.0.1".into()]).is_none());
+
+    let proxy =
+        ProxyAuth::from_config("Remote-User", &["junk".into(), "172.18.0.0/16".into()]).unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert("remote-user", "alice".parse().unwrap());
+    let at = |peer: &str| {
+        let mut ext = axum::http::Extensions::new();
+        ext.insert(axum::extract::ConnectInfo(
+            peer.parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        ext
+    };
+    assert_eq!(proxy.user(&headers, &at("172.18.0.5:1")), Some("alice"));
+    assert_eq!(
+        proxy.user(&headers, &at("[::ffff:172.18.0.5]:1")),
+        Some("alice")
+    );
+    assert_eq!(proxy.user(&headers, &at("172.19.0.5:1")), None);
 }

@@ -1,15 +1,91 @@
 //! Signing in and out of the web UI, on koan's own login and refresh tokens.
 
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
+
 use axum::Form;
-use axum::extract::{Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::extract::{ConnectInfo, Query, State};
+use axum::http::{Extensions, HeaderMap, HeaderName, StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use ipnet::IpNet;
 use serde::Deserialize;
 
 use koan_core::db::queries::auth as auth_queries;
 
 use super::{UiState, encode, html, pages, see_other};
-use crate::auth::routes::{authenticate, refresh_token_from, rotate};
+use crate::auth::routes::{authenticate, refresh_token_from, rotate, session_for};
+
+/// An authenticating reverse proxy in front of the web UI, whose header names
+/// the account signed in to it.
+#[derive(Clone)]
+pub struct ProxyAuth {
+    header: HeaderName,
+    from: Arc<Vec<IpNet>>,
+}
+
+impl ProxyAuth {
+    /// From `graphql.proxy_auth_header` and `graphql.proxy_auth_from`: none
+    /// unless both name something. An entry that is neither an address nor a
+    /// range is left out, which only narrows who is believed.
+    pub fn from_config(header: &str, from: &[String]) -> Option<Self> {
+        let header = header.trim();
+        if header.is_empty() {
+            return None;
+        }
+        let Ok(header) = HeaderName::from_bytes(header.as_bytes()) else {
+            log::error!("graphql.proxy_auth_header {header:?} is not a header name");
+            return None;
+        };
+        let from: Vec<IpNet> = from
+            .iter()
+            .map(|entry| entry.trim())
+            .filter_map(|entry| {
+                let net = entry
+                    .parse::<IpNet>()
+                    .or_else(|_| entry.parse::<IpAddr>().map(IpNet::from));
+                if net.is_err() {
+                    log::error!("graphql.proxy_auth_from: {entry:?} is not an address or range");
+                }
+                net.ok()
+            })
+            .collect();
+        if from.is_empty() {
+            log::error!(
+                "graphql.proxy_auth_header is set but proxy_auth_from names no proxy: proxy sign-in is off"
+            );
+            return None;
+        }
+        log::info!("web UI: signing in the account {header} names, from {from:?}");
+        Some(Self {
+            header,
+            from: Arc::new(from),
+        })
+    }
+
+    /// The username the proxy vouches for: only on a connection from the
+    /// proxy itself, and only when it sent the header once. A proxy that
+    /// appended to a client's own header would otherwise let the client name
+    /// the account.
+    pub(super) fn user<'a>(&self, headers: &'a HeaderMap, ext: &Extensions) -> Option<&'a str> {
+        let ConnectInfo(peer) = ext.get::<ConnectInfo<SocketAddr>>()?;
+        let peer = peer.ip().to_canonical();
+        if !self.from.iter().any(|net| net.contains(&peer)) {
+            return None;
+        }
+        let mut values = headers.get_all(&self.header).iter();
+        let name = values.next()?.to_str().ok()?.trim();
+        (values.next().is_none() && !name.is_empty()).then_some(name)
+    }
+}
+
+/// The username a request's proxy vouches for, when proxy sign-in is on.
+pub(super) fn vouched<'a>(
+    s: &UiState,
+    headers: &'a HeaderMap,
+    ext: &Extensions,
+) -> Option<&'a str> {
+    s.proxy_auth.as_ref()?.user(headers, ext)
+}
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -57,10 +133,18 @@ fn cross_site() -> Response {
     (StatusCode::FORBIDDEN, "cross-site request refused").into_response()
 }
 
-pub(super) async fn login_form(State(s): State<UiState>, Query(q): Query<NextParam>) -> Response {
+pub(super) async fn login_form(
+    State(s): State<UiState>,
+    Query(q): Query<NextParam>,
+    headers: HeaderMap,
+    ext: Extensions,
+) -> Response {
     let next = local_path(&q.next);
     if !s.auth_enabled {
         return see_other(next);
+    }
+    if vouched(&s, &headers, &ext).is_some() {
+        return see_other(&format!("/auth/resume?next={}", encode(next)));
     }
     html(StatusCode::OK, pages::login(next, None))
 }
@@ -94,17 +178,28 @@ pub(super) async fn login(
 }
 
 /// Spend the refresh cookie for a new session. A page load lands here when its
-/// access cookie has lapsed.
+/// access cookie has lapsed, or names another account than the proxy does.
+/// Behind an authenticating proxy, the account it names is signed in instead.
 pub(super) async fn resume(
     State(s): State<UiState>,
     Query(q): Query<NextParam>,
     headers: HeaderMap,
+    ext: Extensions,
 ) -> Response {
     let next = local_path(&q.next).to_owned();
     if !s.auth_enabled {
         return see_other(&next);
     }
-    match rotate_from(&s, &headers).await {
+    let session = match vouched(&s, &headers, &ext) {
+        // Never the refresh cookie here: it may be another account's, and the
+        // gate would send its session straight back.
+        Some(name) => match session_for(&s.auth, name).await {
+            Some(session) => Some(session),
+            None => return unknown_account(name),
+        },
+        None => rotate_from(&s, &headers).await,
+    };
+    match session {
         Some((access, refresh)) => (
             StatusCode::SEE_OTHER,
             [
@@ -136,6 +231,18 @@ pub(super) async fn renew(State(s): State<UiState>, headers: HeaderMap) -> Respo
             .into_response(),
         None => StatusCode::UNAUTHORIZED.into_response(),
     }
+}
+
+/// The proxy signed in someone this server has no account for. Accounts are
+/// made by an admin; a proxy cannot create one.
+fn unknown_account(name: &str) -> Response {
+    log::info!("web UI: the sign-in proxy named {name:?}, who has no account");
+    (
+        StatusCode::FORBIDDEN,
+        [(header::CACHE_CONTROL, "no-store")],
+        "Your sign-in proxy names an account this server does not have. Ask an admin to create it.",
+    )
+        .into_response()
 }
 
 async fn rotate_from(s: &UiState, headers: &HeaderMap) -> Option<(String, String)> {

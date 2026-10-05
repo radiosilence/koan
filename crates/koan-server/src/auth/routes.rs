@@ -421,6 +421,36 @@ fn authenticate_blocking(
         ));
     }
 
+    let (access_token, refresh_token_id) = issue_session(state, &db, &user)?;
+    Ok((user, access_token, refresh_token_id))
+}
+
+/// Sign in an account that has proved itself to the web UI by a header its
+/// authenticating proxy set. No password is checked: the caller has already
+/// established that the request came through that proxy. An unknown username
+/// is refused.
+pub(crate) async fn session_for(
+    state: &AuthRouteState,
+    username: &str,
+) -> Option<(String, String)> {
+    let state = state.clone();
+    let username = username.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let db = state.open_db().ok()?;
+        let user = auth_queries::get_user_by_username(&db.conn, &username).ok()??;
+        issue_session(&state, &db, &user).ok()
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// A fresh access token and refresh token for an account that has signed in.
+fn issue_session(
+    state: &AuthRouteState,
+    db: &Handle<'_>,
+    user: &auth_queries::UserRow,
+) -> Result<(String, String), Box<Response>> {
     let access_token = match auth::mint_access_token(
         &state.private_pem,
         user.id,
@@ -459,7 +489,7 @@ fn authenticate_blocking(
     // Clear out expired tokens; a failure here does not fail the sign-in.
     let _ = auth_queries::cleanup_expired_tokens(&db.conn);
 
-    Ok((user, access_token, refresh_token_id))
+    Ok((access_token, refresh_token_id))
 }
 
 async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest>) -> Response {
