@@ -82,7 +82,10 @@ pub fn sync(db: &Database) -> HistorySync {
         out
     };
     if out.library_synced {
+        // Which reads the history again, through `reconcile`.
         crate::remote::link::sync(db, crate::helpers::Walk::IfChanged);
+    } else if out.changed() {
+        crate::player::history::changed();
     }
     out
 }
@@ -97,6 +100,9 @@ pub fn reconcile(db: &Database, client: &SubsonicClient, url: &str, username: &s
     };
     if let Err(e) = pull(db, client, url, username, false, &mut out) {
         log::warn!("history: could not read the server's: {e}");
+    }
+    if out.changed() {
+        crate::player::history::changed();
     }
     out
 }
