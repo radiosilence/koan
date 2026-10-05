@@ -138,8 +138,8 @@ pub fn get_or_create_album(
     Ok(conn.last_insert_rowid())
 }
 
-/// Fold album `gone` into `keep`: its tracks, favourites and shares move
-/// across, `keep` fills its gaps from it, and it is deleted. The koan server's
+/// Fold album `gone` into `keep`: its tracks, favourites, ratings and
+/// shares move across, `keep` fills its gaps from it, and it is deleted. The koan server's
 /// uid goes with the server's id, so the album stays one id on every device.
 pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite::Result<()> {
     let server_uid: Option<String> = conn
@@ -155,6 +155,7 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         for sql in [
             "UPDATE tracks SET album_id = ?1 WHERE album_id = ?2",
             "UPDATE OR IGNORE favourite_albums SET album_id = ?1 WHERE album_id = ?2",
+            "UPDATE OR IGNORE album_ratings SET album_id = ?1 WHERE album_id = ?2",
             "UPDATE shares SET subject_id = ?1 WHERE kind = 'album' AND subject_id = ?2",
             "UPDATE albums SET
                  remote_id = COALESCE(remote_id, (SELECT remote_id FROM albums WHERE id = ?2)),
@@ -173,6 +174,7 @@ pub(crate) fn merge_albums(conn: &Connection, keep: i64, gone: i64) -> rusqlite:
         }
         for sql in [
             "DELETE FROM favourite_albums WHERE album_id = ?1",
+            "DELETE FROM album_ratings WHERE album_id = ?1",
             "DELETE FROM albums WHERE id = ?1",
         ] {
             conn.execute(sql, params![gone])?;
@@ -464,6 +466,34 @@ pub fn played_albums(
          LIMIT ?2 OFFSET ?3"
     );
     let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(
+            params![super::auth::resolve_user(conn, user)?, limit, offset],
+            album_row,
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// `user`'s rated albums, highest first and, within a rating, most recently
+/// rated first: Subsonic's `highest` list.
+pub fn highest_rated_albums(
+    conn: &Connection,
+    user: i64,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<AlbumRow>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT al.id, al.title, al.artist_id, a.name, al.date,
+                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
+                al.added_at
+         FROM album_ratings r
+         JOIN albums al ON al.id = r.album_id
+         LEFT JOIN artists a ON al.artist_id = a.id
+         WHERE r.user_id = ?1
+         ORDER BY r.rating DESC, r.changed_at DESC, al.id
+         LIMIT ?2 OFFSET ?3",
+    )?;
     let rows = stmt
         .query_map(
             params![super::auth::resolve_user(conn, user)?, limit, offset],
