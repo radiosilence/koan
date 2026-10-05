@@ -356,6 +356,10 @@ private struct RemoteSettings: View {
             }
 
             #if os(iOS)
+            // Offline is from a server: nothing to be offline from before
+            // signing in, and the switch would sit between the form and its
+            // button.
+            if model.settings.remoteSignedIn {
             Section {
                 Toggle("Offline mode", isOn: Binding(
                     get: { mirror.connection?.offlineManual ?? false },
@@ -365,6 +369,7 @@ private struct RemoteSettings: View {
                 Text("Shows only what is on this iPhone. It turns on by itself when your server cannot be reached, and off again when it can.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
+            }
             }
             #endif
 
