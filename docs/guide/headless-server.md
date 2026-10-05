@@ -103,6 +103,12 @@ The server answers `http://host:4000/` with a browser UI: albums, artists, playl
 
 Sign in with a kōan account (`koan auth create-user`). The session is the same pair of `HttpOnly` cookies the JSON login sets, so behind plain HTTP the UI needs `cookie_secure = false`, and a hostname it is reached by must be in `allowed_hosts`. The access cookie lasts `access_token_ttl`; an open page renews it from the refresh cookie, and a page loaded after it lapsed renews on the way in. With `auth_enabled = false` the UI is open to anyone who can reach the port. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
 
+## Scrobbling
+
+Each account can forward its plays to ListenBrainz from the web UI's Scrobbling page, linked from Account: paste the user token from ListenBrainz's settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
+
+Plays wait in the database until ListenBrainz accepts them, so a restart or an outage delays them rather than losing them; the page shows how many are waiting. A token ListenBrainz stops accepting is shown there, and plays are kept until the account connects again. Plays the server's own player records are forwarded in the history sent on connecting, when they were listened to for half the track or four minutes, but not as they happen. Tracks without an artist or title are not sent.
+
 ## Sharing
 
 A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic client's own share button) returns `https://<public_url>/share/<id>`, a page anyone can open without an account, with a player for each shared track. Set where the server is reached from outside:
