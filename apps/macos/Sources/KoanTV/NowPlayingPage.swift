@@ -16,6 +16,7 @@ struct NowPlayingPage: View {
     @State private var showingDevices = false
     @State private var showingControl = false
     @FocusState private var focus: Focus?
+    @Namespace private var page
 
     private enum Focus: Hashable { case playPause, seek }
 
@@ -25,11 +26,15 @@ struct NowPlayingPage: View {
                 idle
             } else {
                 VStack(alignment: .leading, spacing: 48) {
+                    // One section the width of the screen: down from the tabs
+                    // enters here, at play/pause, whichever control happens
+                    // to sit nearest the tab that was left.
                     HStack(alignment: .center, spacing: 80) {
                         stage
                             .frame(width: 620, height: 620)
                         details
                     }
+                    .focusSection()
                     UpNext()
                 }
                 .padding(.horizontal, 90)
@@ -46,6 +51,7 @@ struct NowPlayingPage: View {
             .ignoresSafeArea()
         }
         .defaultFocus($focus, .playPause)
+        .focusScope(page)
         .outputSheet(isPresented: $showingDevices)
         .controlSheet(isPresented: $showingControl)
     }
@@ -126,6 +132,7 @@ struct NowPlayingPage: View {
                     .contentTransition(.symbolEffect(.replace))
             }
             .focused($focus, equals: .playPause)
+            .prefersDefaultFocus(in: page)
             Button { player.next() } label: { Image(systemName: Icon.next) }
             if let trackId = player.currentTrackId {
                 TrackHeart(trackId: trackId, size: .title3)
