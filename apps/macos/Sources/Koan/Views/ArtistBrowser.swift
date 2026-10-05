@@ -21,7 +21,7 @@ struct ArtistBrowser: View {
             #endif
         }
         // Once narrowed, how many: what a shelf's See all promised.
-        .navigationSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleArtists.count), "artist") : "")
+        .pageSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleArtists.count), "artist") : "")
     }
 
     #if os(macOS)

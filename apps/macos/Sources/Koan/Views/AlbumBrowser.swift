@@ -30,7 +30,7 @@ struct AlbumBrowser: View {
     var body: some View {
         albums
             // Once narrowed, how many: what a shelf's See all promised.
-            .navigationSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleAlbums.count), "album") : "")
+            .pageSubtitle(library.isNarrowed ? Format.count(Int64(library.visibleAlbums.count), "album") : "")
             // ⌘A picks everything the filter is showing, starting a selection
             // if there was none. Escape and leaving the page drop it.
             .onChange(of: ui.selectAllToken) { _, _ in library.selection.selectAll() }
