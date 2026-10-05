@@ -225,7 +225,7 @@ struct TrackListView: View {
     @ViewBuilder private var sleeve: some View {
         if let artwork {
             AlbumArtwork(source: artwork, cornerRadius: 8)
-                .frame(width: 132, height: 132)
+                .frame(width: Columns.sleeve, height: Columns.sleeve)
                 .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
                 .showsArtworkFullSize(
                     source: artwork,
@@ -237,12 +237,12 @@ struct TrackListView: View {
 
     private var titleBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
+                HStack(spacing: Columns.headerGap) {
                     if let playable {
                         PlayableHeaderButton(playable: playable)
                     }
                     Text(Format.title(title))
-                        .font(.system(size: 26, weight: .semibold))
+                        .font(.system(size: Columns.title, weight: .semibold))
                         .lineLimit(2)
                         // Beside the play button the row offers one line's
                         // height; asked for two, it has to be let grow.
@@ -368,13 +368,13 @@ struct TrackRow: View {
                 Text(quality)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)
-                    .frame(width: 92, alignment: .trailing)
+                    .frame(width: Columns.quality, alignment: .trailing)
             }
 
             Text(Format.duration(track.durationMs))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 48, alignment: .trailing)
+                .frame(width: Columns.duration, alignment: .trailing)
         }
         #if os(iOS) || os(tvOS)
         .frame(minHeight: showsAlbum ? RowMetrics.art : RowMetrics.text)
@@ -450,4 +450,23 @@ private struct TrackAvailability: View {
             EmptyView()
         }
     }
+}
+
+/// The widths of a track row's fixed columns, and the header's sizes. A
+/// television sets type at twice a Mac's size, is read from across a room, and
+/// grows a focused button into its neighbours.
+private enum Columns {
+    #if os(tvOS)
+    static let quality = 190.0
+    static let duration = 96.0
+    static let headerGap = 32.0
+    static let sleeve = 260.0
+    static let title = 48.0
+    #else
+    static let quality = 92.0
+    static let duration = 48.0
+    static let headerGap = 12.0
+    static let sleeve = 132.0
+    static let title = 26.0
+    #endif
 }

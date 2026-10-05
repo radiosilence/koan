@@ -47,8 +47,10 @@ extension View {
     /// its own: a stack paints an opaque ground behind every page it shows.
     func roomBackground() -> some View {
         #if os(tvOS)
-        // tvOS has no navigation container background; the page draws its own.
-        background { WashLayer().ignoresSafeArea() }
+        // tvOS has no navigation container background; the page draws its own,
+        // to the edges of the screen whatever its content's height.
+        frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background { WashLayer().ignoresSafeArea() }
         #else
         containerBackground(for: .navigation) { WashLayer() }
         #endif
