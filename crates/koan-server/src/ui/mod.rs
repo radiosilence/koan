@@ -18,6 +18,7 @@ mod connect;
 mod history;
 mod oauth;
 mod pages;
+mod scrobbling;
 mod session;
 #[cfg(test)]
 mod tests;
@@ -140,6 +141,12 @@ pub fn router(
         )
         // Where the keys page was.
         .route("/keys", get(|| async { see_other("/account") }))
+        .route("/scrobbling", get(scrobbling::page))
+        .route("/scrobbling/listenbrainz", post(scrobbling::connect))
+        .route(
+            "/scrobbling/listenbrainz/disconnect",
+            post(scrobbling::disconnect),
+        )
         .route("/users", get(users::page).post(users::create))
         .route("/users/{id}/invite", post(users::invite))
         .route("/users/{id}/password", post(users::set_password))

@@ -548,6 +548,11 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
         )?;
         removed += u64::from(!kept);
     }
+    // What waited for this server, and how far its history was read.
+    tx.execute_batch(
+        "DELETE FROM history_outbox;
+         UPDATE remote_servers SET history_cursor = NULL;",
+    )?;
     tx.commit()?;
     Ok(removed)
 }
@@ -776,6 +781,7 @@ pub struct Synced {
     pub library: crate::remote::sync::SyncResult,
     pub favourites: FavouriteSync,
     pub playlists: crate::playlists::PlaylistSync,
+    pub history: crate::remote::history::HistorySync,
 }
 
 /// Whether a sync walks the server's library.
@@ -839,6 +845,7 @@ pub fn sync_remote(
         library,
         favourites: reconcile_favourites(db, client),
         playlists: crate::playlists::reconcile_playlists(db, client, url, username),
+        history: crate::remote::history::reconcile(db, client, url, username),
     })
 }
 

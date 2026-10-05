@@ -25,6 +25,10 @@ pub const INVITE: &str = "koanInvite";
 /// from the device, `LinkCommand::Shares` back, and shared devices in a
 /// grantee's list.
 pub const SHARES: &str = "koanShares";
+/// The account's play history as the record every device reads:
+/// `/rest/koanHistory` pages it, `/rest/koanForgetPlays` forgets from it, and
+/// `LinkCommand::HistoryChanged` says when it moved. See `remote::history`.
+pub const HISTORY: &str = "koanHistory";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {
