@@ -1949,7 +1949,9 @@ impl KoanEngine {
 
     /// Albums, artists and tracks deleted since `after` (a `seq` this returned
     /// before; 0 the first time), for a cache keyed by their ids: SQLite reuses
-    /// a freed id, and art cached under it would show for another record.
+    /// a freed id, and art cached under it would show for another record. Also
+    /// those under a folder the library watcher rescanned, whose cover image
+    /// beside the tracks may have changed.
     pub async fn art_evictions(self: Arc<Self>, after: i64) -> Result<ArtEvictions, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -3436,7 +3438,7 @@ impl KoanEngine {
         let track_id = row.id;
 
         if let Some(path) = row.path.as_ref().or(row.cached_path.as_ref())
-            && let Some(data) = koan_core::index::metadata::extract_cover_art(Path::new(path))
+            && let Some(data) = koan_core::index::folder_art::cover_art(Path::new(path))
         {
             let mime = sniff_mime(&data).to_string();
             return Ok(Some(CoverArt { data, mime }));
@@ -4678,6 +4680,8 @@ fn sniff_mime(data: &[u8]) -> &'static str {
         "image/png"
     } else if data.starts_with(&[0xFF, 0xD8]) {
         "image/jpeg"
+    } else if data.len() >= 12 && &data[..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        "image/webp"
     } else {
         "application/octet-stream"
     }

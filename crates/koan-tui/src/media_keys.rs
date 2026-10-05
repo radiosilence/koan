@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
-use koan_core::index::metadata::extract_cover_art;
+use koan_core::index::folder_art::cover_art;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, SharedPlayerState};
 use souvlaki::{
@@ -151,7 +151,7 @@ impl MediaKeyHandler {
     /// Reuses a single temp path — overwritten each track change.
     fn write_cover_art(&mut self, track_path: Option<&PathBuf>) -> Option<String> {
         let path = track_path?;
-        let bytes = extract_cover_art(path)?;
+        let bytes = cover_art(path)?;
 
         let tmp = self.cover_art_path.get_or_insert_with(|| {
             std::env::temp_dir().join(format!("koan-cover-{}", std::process::id()))
