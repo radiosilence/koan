@@ -107,51 +107,44 @@ pub(super) fn head(title: &str) -> String {
     )
 }
 
-/// The sidebar's links, which become the tab bar on a phone.
+/// The sidebar's links, which become the tab bar on a phone: six tabs, each as
+/// wide as its label, which fit a 360 px screen at the meta size.
 const NAV_LINK: &str = "rounded-md px-2.5 py-2 text-muted hover:text-ink hover:no-underline \
-aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:flex max-wide:flex-1 max-wide:items-center \
-max-wide:justify-center max-wide:rounded-none max-wide:text-control max-wide:aria-[current=page]:bg-transparent \
-max-wide:aria-[current=page]:text-brand";
+aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:flex max-wide:flex-auto max-wide:items-center \
+max-wide:justify-center max-wide:rounded-none max-wide:px-0 max-wide:text-meta \
+max-wide:aria-[current=page]:bg-transparent max-wide:aria-[current=page]:text-brand";
 
-/// The account's links sit in the sidebar on a wide screen and under the page
-/// on a phone, where they are plain links.
+/// The account's links in the sidebar.
 const ACCOUNT_LINK: &str = "rounded-md px-1.5 py-1 text-meta whitespace-nowrap text-muted hover:text-ink \
-hover:no-underline aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:text-brand \
-max-wide:hover:text-brand max-wide:hover:underline max-wide:aria-[current=page]:bg-transparent \
-max-wide:aria-[current=page]:text-brand";
+hover:no-underline aria-[current=page]:bg-rule aria-[current=page]:text-ink";
 
 fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> String {
-    let signout = if auth_enabled {
-        let users = if user.role == Role::Admin {
-            format!("<a class=\"{ACCOUNT_LINK}\" href=\"/users\" data-nav=users>Users</a>")
-        } else {
-            String::new()
-        };
+    // On a wide screen the sidebar ends with who is signed in and the version;
+    // the account page has everything else. A phone has an Account tab instead.
+    let signed_in = if auth_enabled {
         format!(
             "<form class=\"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted\" \
 method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 pb-0.5 text-ink\">{}</span>\
-{users}<a class=\"{ACCOUNT_LINK}\" href=\"/keys\" data-nav=keys>API keys</a>\
-<a class=\"{ACCOUNT_LINK}\" href=\"/connect\" data-nav=connect>Assistants</a>\
+<a class=\"{ACCOUNT_LINK}\" href=\"/account\" data-nav=account>Account</a>\
 <button class=\"quiet px-2 py-1 text-meta\">Sign out</button></form>",
             escape(&user.username)
         )
     } else {
-        String::new()
-    };
-    // `place` hides the sidebar's copy on a phone.
-    let account = |place: &str| {
         format!(
-            "<div class=\"mt-auto flex min-w-0 flex-col gap-1 {place}\">{signout}\
-<a class=\"rounded-md px-1 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
-href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
-            v = env!("CARGO_PKG_VERSION")
+            "<a class=\"{ACCOUNT_LINK} self-start\" href=\"/account\" data-nav=account>Account</a>"
         )
     };
+    let account = format!(
+        "<div class=\"mt-auto flex min-w-0 flex-col gap-1 max-wide:hidden\">{signed_in}\
+<a class=\"rounded-md px-1 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
+href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
+        v = env!("CARGO_PKG_VERSION")
+    );
     format!(
         "{head}<script type=module src=\"{datastar}\"></script>\
 <script src=\"{player}\" defer></script><script src=\"{ui}\" defer></script>\
 </head><body><nav class=\"fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r \
-border-rule bg-surface px-2.5 py-4 pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
+border-rule bg-surface px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
 max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto \
 max-wide:flex-row max-wide:gap-0 max-wide:border-t max-wide:border-r-0 max-wide:p-0 \
 max-wide:pb-[env(safe-area-inset-bottom)]\" aria-label=Library>\
@@ -161,11 +154,12 @@ max-wide:hidden\" href=\"/\">kōan</a>\
 <a class=\"{NAV_LINK}\" href=\"/artists\" data-nav=artists>Artists</a>\
 <a class=\"{NAV_LINK}\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
 <a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
-<a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>{side_account}</nav>\
+<a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>\
+<a class=\"{NAV_LINK} wide:hidden\" href=\"/account\" data-nav=account>Account</a>{account}</nav>\
 <main id=content class=\"ml-(--side-w) min-w-0 px-7 \
 pt-[max(24px,env(safe-area-inset-top))] pb-10 max-wide:ml-0 max-wide:p-4 \
 max-wide:pt-[max(16px,env(safe-area-inset-top))]\">{content}</main>\
-<div class=\"hidden px-4 pt-2 pb-6 max-wide:block\">{foot_account}</div>\
+\
 <footer class=\"fixed inset-x-0 bottom-(--tabs-h) z-5 grid h-[calc(var(--bar-h)+env(safe-area-inset-bottom))] \
 grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-4 border-t border-rule bg-surface px-4 \
 pb-[env(safe-area-inset-bottom)] max-wide:bottom-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] \
@@ -185,8 +179,6 @@ max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule
         ui = super::ASSETS.ui_js,
         buttons = buttons(false),
         scrub = scrub("max-wide:hidden"),
-        side_account = account("max-wide:hidden"),
-        foot_account = account(""),
     )
 }
 
