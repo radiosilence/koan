@@ -696,11 +696,20 @@ impl KoanEngine {
     ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            let played = recent(&filter);
             let rows = queries::list_artists(
                 &db.conn,
                 &queries::ArtistQuery {
                     search: trimmed(&search),
                     favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
+                    // Recently Played's own order: the artist browser has no
+                    // sort to choose another by.
+                    order: if played.is_some() {
+                        queries::ArtistOrder::LastPlayed
+                    } else {
+                        queries::ArtistOrder::Name
+                    },
+                    played,
                     filter: album_filter(&filter),
                     ..Default::default()
                 },
@@ -751,6 +760,7 @@ impl KoanEngine {
                     search: trimmed(&search),
                     order: album_order(sort, seed),
                     favourites_of: filter.favourites.then_some(queries::LOCAL_USER),
+                    played: recent(&filter),
                     filter: album_filter(&filter),
                     ..Default::default()
                 },
@@ -826,6 +836,55 @@ impl KoanEngine {
     ) -> Result<Vec<Track>, KoanError> {
         offload::offload(move || self.tracks_blocking(album_id, artist_id, sort, limit, offset))
             .await
+    }
+
+    /// A page of the track browser: the library's tracks narrowed by `search`
+    /// (the full-text index, as search's tracks are) and `filter`, ordered by
+    /// `sort`, with how many pass in all. Paged, unlike the album and artist
+    /// listings: a library has tens of thousands of tracks. `filter.lossless`
+    /// does not apply to tracks.
+    pub async fn track_listing(
+        self: Arc<Self>,
+        sort: TrackBrowseSort,
+        search: Option<String>,
+        filter: BrowseFilter,
+        limit: u32,
+        offset: u32,
+    ) -> Result<TrackListing, KoanError> {
+        use koan_core::shelves::{self, Shelf};
+        offload::offload(move || {
+            let db = self.db()?;
+            let (order, descending) = match sort {
+                TrackBrowseSort::Artist => (queries::TrackOrder::ArtistAlbumDiscTrack, false),
+                TrackBrowseSort::Title => (queries::TrackOrder::Title, false),
+                TrackBrowseSort::Album => (queries::TrackOrder::Album, false),
+                TrackBrowseSort::Duration => (queries::TrackOrder::Duration, false),
+                TrackBrowseSort::LastPlayed => (queries::TrackOrder::LastPlayed, true),
+            };
+            let (user, now) = (queries::LOCAL_USER, shelves::now());
+            let listing = shelves::Tracks {
+                filter: queries::TrackFilter {
+                    search: trimmed(&search)
+                        .and_then(|q| Shelf::Search(q).tracks(user, now).filter.search),
+                    favourites_of: filter.favourites.then_some(user),
+                    played: recent(&filter),
+                    codec: trimmed(&filter.codec).map(str::to_owned),
+                    genre: trimmed(&filter.genre).map(str::to_owned),
+                    year_start: filter.year_from,
+                    year_end: filter.year_to,
+                    ..Default::default()
+                },
+                order,
+                descending,
+            };
+            let total = listing.count(&db.conn).map_err(db_err)?;
+            let rows = listing.page(&db.conn, limit, offset).map_err(db_err)?;
+            Ok(TrackListing {
+                tracks: self.decorate(&db, rows),
+                total,
+            })
+        })
+        .await
     }
 
     pub async fn track(self: Arc<Self>, track_id: i64) -> Result<Option<Track>, KoanError> {
@@ -4722,7 +4781,20 @@ fn album_order(sort: AlbumSort, seed: i64) -> queries::AlbumOrder {
         AlbumSort::Artist => queries::AlbumOrder::ArtistThenDate,
         AlbumSort::Year => queries::AlbumOrder::YearDesc,
         AlbumSort::Random => queries::AlbumOrder::Random(seed),
+        AlbumSort::LastPlayed => queries::AlbumOrder::LastPlayed,
     }
+}
+
+/// The Recently Played shelf's window, when the filter asks for it.
+fn recent(f: &BrowseFilter) -> Option<queries::PlayedSince> {
+    use koan_core::shelves::{self, Shelf};
+    f.recent
+        .then(|| {
+            Shelf::Recent
+                .albums(queries::LOCAL_USER, shelves::now())
+                .played
+        })
+        .flatten()
 }
 
 /// `rows` in the order of `ids`, for rows read back by id in whatever order
