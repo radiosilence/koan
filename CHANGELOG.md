@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.52.8
+
+### Fixed
+
+- **The server's container image builds again.** 0.52.7's failed, because the patched Opus decoder in `vendor/` was not copied in before the dependencies were built. 0.52.7's other changes ship in this release.
+
 ## 0.52.7
 
 ### Fixed
