@@ -779,7 +779,7 @@ tv-run: (tv-ffi "appletvsimulator") ios-project
 tv-device config="Debug": (tv-ffi "appletvos")
     #!/usr/bin/env bash
     set -euo pipefail
-    tv=$(xcrun devicectl list devices | awk '/Apple TV/' \
+    tv=$(xcrun devicectl list devices | awk '/Apple TV/ && /physical/' \
         | grep -oE '[0-9a-f]{40}|[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1 || true)
     [ -n "$tv" ] || { echo "No Apple TV found — pair it in Xcode, and wake it." >&2; exit 1; }
     APPLE_TEAM_ID=${APPLE_TEAM_ID:-2256Q92VF2} just ios-project
@@ -827,7 +827,7 @@ tv-join link device="sim": ios-project
     set -euo pipefail
     if [ "{{device}}" = tv ]; then
         just tv-ffi appletvos
-        dest=$(xcrun devicectl list devices | awk '/Apple TV/' \
+        dest=$(xcrun devicectl list devices | awk '/Apple TV/ && /physical/' \
             | grep -oE '[0-9a-f]{40}|[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1)
         APPLE_TEAM_ID=${APPLE_TEAM_ID:-2256Q92VF2} just ios-project
     else
