@@ -149,6 +149,26 @@ extension View {
     }
 }
 
+extension View {
+    /// `primaryTap`, with the row's menu. A list hands rows their menus through
+    /// its selection on the Mac and the phone; a television's list has none,
+    /// so there the menu goes on the row's own button, where a long press of
+    /// the remote finds it.
+    @ViewBuilder
+    func primaryTap<Menu: View>(
+        _ action: @escaping () -> Void,
+        @ViewBuilder menu: @escaping () -> Menu
+    ) -> some View {
+        #if os(tvOS)
+        Button(action: action) { contentShape(Rectangle()) }
+            .buttonStyle(.plain)
+            .contextMenu { menu() }
+        #else
+        primaryTap(action)
+        #endif
+    }
+}
+
 extension Notification.Name {
     /// The app giving up the foreground — on iOS the last dependable moment
     /// before it is suspended and perhaps killed without another word.
@@ -335,9 +355,15 @@ extension View {
 /// white, in dark mode, under a white knob.
 struct SystemSwitch: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
+        #if os(tvOS)
+        // A television's toggle is a row that says On or Off; tinted, its
+        // label goes mint on the white a focused row turns.
+        Toggle(configuration)
+        #else
         Toggle(configuration)
             .toggleStyle(.switch)
             .tint(.green)
+        #endif
     }
 }
 #endif

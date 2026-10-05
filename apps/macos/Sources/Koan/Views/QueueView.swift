@@ -401,7 +401,7 @@ struct QueueView: View {
                 artwork: true
             )
             .rowBehaviour()
-            .primaryTap { play(rowIds: [item.queueItemId]) }
+            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { menu(forRows: [item.queueItemId]) }
         case .track(let item):
             QueueRow(
                 item: QueueRowContent(item: item),
@@ -416,7 +416,7 @@ struct QueueView: View {
                 artwork: !grouped
             )
             .rowBehaviour()
-            .primaryTap { play(rowIds: [item.queueItemId]) }
+            .primaryTap { play(rowIds: [item.queueItemId]) } menu: { menu(forRows: [item.queueItemId]) }
         }
     }
 

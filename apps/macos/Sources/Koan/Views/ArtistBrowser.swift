@@ -74,7 +74,9 @@ struct ArtistBrowser: View {
         ScrollViewReader { proxy in
         List(library.visibleArtists, id: \.id, selection: $selection) { artist in
             ArtistRow(artist: artist)
-                .primaryTap { nav.open(artist: artist.id) }
+                .primaryTap { nav.open(artist: artist.id) } menu: {
+                    PlayableMenu(playable: .artist(id: artist.id, name: artist.name))
+                }
                 .onAppear { library.artistsShown.insert(artist.id) }
                 .onDisappear { library.artistsShown.remove(artist.id) }
         }

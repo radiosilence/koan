@@ -361,7 +361,7 @@ struct PlaylistView: View {
             dropTarget(
                 PlaylistEntryRow(entry: entry, position: position, artwork: !grouped)
                     .rowBehaviour()
-                    .primaryTap { play(rowIds: [row.id]) }
+                    .primaryTap { play(rowIds: [row.id]) } menu: { menu(forRows: [row.id]) }
                     // Carries where it came from, so dropping it back into this
                     // playlist is a move of *this* row rather than of its track —
                     // and dropping it anywhere else is just a track.

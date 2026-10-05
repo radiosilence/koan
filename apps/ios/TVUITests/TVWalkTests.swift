@@ -45,6 +45,7 @@ final class TVWalkTests: XCTestCase {
         pause(4)
         snap("04-queue-played")
 
+        // Down from the tab bar lands on play/pause.
         start(at: .nowPlaying)
         press(.down)
         snap("05-now-playing-controls")
@@ -52,21 +53,23 @@ final class TVWalkTests: XCTestCase {
         snap("06-now-playing-seek")
         press(.down, times: 2)
         snap("07-now-playing-up-next")
-        press(.up)
-        press(.right, times: 4)
+        start(at: .nowPlaying)
+        press(.down)
+        press(.right, times: 3)
         press(.select)
         pause(3)
         snap("08-lyrics")
-        press(.select)
-        pause(1)
-        press(.right, times: 4)
+        start(at: .nowPlaying)
+        press(.down)
+        press(.right, times: 7)
+        snap("09-devices-focused")
         press(.select)
         pause(2)
-        snap("09-device-sheet")
+        snap("10-device-sheet")
 
         start(at: .library)
-        snap("10-library")
-        for (offset, name) in ["11-albums", "12-artists", "13-favourites", "14-playlists", "15-history"].enumerated() {
+        snap("11-library")
+        for (offset, name) in ["12-albums", "13-artists", "14-favourites", "15-playlists", "16-history"].enumerated() {
             start(at: .library)
             press(.down, times: offset + 1)
             press(.select)
@@ -76,27 +79,27 @@ final class TVWalkTests: XCTestCase {
                 press(.down)
                 press(.select)
                 pause(4)
-                snap("16-album")
+                snap("17-album")
                 press(.down)
-                snap("17-album-track")
+                snap("18-album-track")
                 remote.press(.select, forDuration: 1.5)
                 pause(1.5)
-                snap("18-track-menu")
+                snap("19-track-menu")
             }
             if offset == 1 {
                 press(.down)
                 press(.select)
                 pause(4)
-                snap("19-artist")
+                snap("20-artist")
             }
         }
 
         start(at: .search)
-        snap("20-search")
+        snap("21-search")
 
         start(at: .settings)
-        snap("21-settings")
-        for (offset, name) in ["22-settings-server", "23-settings-playback", "24-settings-devices"].enumerated() {
+        snap("22-settings")
+        for (offset, name) in ["23-settings-server", "24-settings-playback", "25-settings-devices"].enumerated() {
             start(at: .settings)
             press(.down, times: offset + 1)
             press(.select)
