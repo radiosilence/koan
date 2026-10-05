@@ -69,6 +69,8 @@ impl Browse {
             year_from: year(&self.from),
             year_to: year(&self.to),
             genre: set(&self.genre),
+            // The server's library is all on the server.
+            on_device: false,
         }
     }
 
