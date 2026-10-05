@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 15;
+pub const SCHEMA_VERSION: i64 = 16;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -267,6 +267,17 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             artist_id   INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
             created_at  TEXT DEFAULT (datetime('now')),
             PRIMARY KEY (user_id, artist_id)
+        );
+
+        -- Where an account is in a track. See `queries::bookmarks`.
+        CREATE TABLE IF NOT EXISTS bookmarks (
+            user_id      INTEGER NOT NULL DEFAULT 0,
+            track_id     INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            position_ms  INTEGER NOT NULL,
+            comment      TEXT,
+            created_at   INTEGER NOT NULL,
+            changed_at   INTEGER NOT NULL,
+            PRIMARY KEY (user_id, track_id)
         );
 
         CREATE TABLE IF NOT EXISTS playback_state (
@@ -625,6 +636,12 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
              DELETE FROM play_history WHERE user_id = OLD.id;
              DELETE FROM playlists WHERE user_id = OLD.id;
              DELETE FROM shares WHERE user_id = OLD.id;
+         END;",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_bookmarks_track ON bookmarks(track_id);
+         CREATE TRIGGER IF NOT EXISTS users_bookmarks AFTER DELETE ON users BEGIN
+             DELETE FROM bookmarks WHERE user_id = OLD.id;
          END;",
     )?;
     crate::db::queries::auth::adopt_local_rows(conn)?;

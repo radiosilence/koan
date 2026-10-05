@@ -300,6 +300,7 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 | `queries/scan_cache.rs` | Mtime+size change detection to skip unchanged files |
 | `queries/stats.rs` | Library statistics |
 | `queries/lyrics.rs` | Lyrics caching (synced + plain, per-track) |
+| `queries/bookmarks.rs` | Subsonic bookmarks: one saved position (and note) per account and track, for resuming long tracks. Followed through track merges |
 | `queries/favourites.rs` | Favourite/star status by row id (syncs with Navidrome). Favourites, playlists, play history and shares carry a `user_id`: each account on a server has its own, as Navidrome keeps them. `LOCAL_USER` (0) is the caller with no account — the apps, the TUI, auth-disabled mode, the Subsonic shared secret — and resolves to the first admin once one exists, so a local library and a single-user server behave the same (`queries/auth.rs`) |
 | `queries/history.rs` | Play history — one row per play, written when a track starts |
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |

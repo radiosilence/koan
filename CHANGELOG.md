@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Bookmarks over the Subsonic API.** Clients that save a place in a long track (audiobooks, podcasts, mixes) and offer to resume from it can now do so against a kōan server: `createBookmark`, `getBookmarks` and `deleteBookmark` keep one position and note per account and track. kōan's own apps do not use them. The library database moves to schema 16 for the `bookmarks` table; a build older than this one refuses it.
+
 ## 0.52.6
 
 ### Added

@@ -2043,6 +2043,88 @@ async fn get_song(State(state): State<Arc<AppState>>, Query(params): Query<IdPar
     .await
 }
 
+/// `getBookmarks`: the caller's places in tracks, most recently changed first,
+/// each with the track as its `entry`.
+async fn get_bookmarks(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    offload_response(move || {
+        respond_db_caller(&state, &params, Role::Readonly, |db, caller, b| {
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let marks = queries::bookmarks(&db.conn, caller.user_id).map_err(internal)?;
+            let ids: Vec<i64> = marks.iter().map(|m| m.track_id).collect();
+            let tracks: HashMap<i64, queries::TrackRow> = queries::tracks_by_ids(&db.conn, &ids)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .into_iter()
+                .map(|t| (t.id, t))
+                .collect();
+            let extras = song_extras(db, caller.user_id, tracks.values())?;
+            Ok(b.child(XmlNode::new("bookmarks").list(
+                "bookmark",
+                marks.iter().filter_map(|m| {
+                    let track = tracks.get(&m.track_id)?;
+                    Some(
+                        XmlNode::new("bookmark")
+                            .attr_int("position", m.position_ms)
+                            .attr("username", &caller.username)
+                            .attr_opt("comment", m.comment.as_deref())
+                            .attr("created", &iso(m.created_at))
+                            .attr("changed", &iso(m.changed_at))
+                            .child(track_node(track, "entry", &extras)),
+                    )
+                }),
+            )))
+        })
+    })
+    .await
+}
+
+/// `createBookmark`: save where the caller is in the song `id` names, as
+/// `position` milliseconds and an optional `comment`. One per song; a second
+/// replaces the first.
+async fn create_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let track_id = require_id(db, params.get("id"), EntityKind::Song)?;
+            let position = params
+                .get("position")
+                .ok_or_else(|| SubsonicError::missing_param("position"))?
+                .parse::<i64>()
+                .ok()
+                .filter(|p| *p >= 0)
+                .ok_or_else(|| SubsonicError::bad_param("position"))?;
+            queries::get_track_row(&db.conn, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Song"))?;
+            queries::save_bookmark(&db.conn, user, track_id, position, params.get("comment"))
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
+/// `deleteBookmark`: forget the caller's place in the song `id` names.
+async fn delete_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let track_id = require_id(db, params.get("id"), EntityKind::Song)?;
+            if !queries::delete_bookmark(&db.conn, user, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+            {
+                return Err(SubsonicError::not_found("Bookmark"));
+            }
+            Ok(b)
+        })
+    })
+    .await
+}
+
 /// The lyrics koan has cached for a song, as one `structuredLyrics` entry, or
 /// none. Only the cache is read: fetching from LRCLIB is the player's job, and
 /// not something to do inside a client's request.
@@ -4091,6 +4173,27 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             "/rest/getStarred2.view",
             get(get_starred2).post(get_starred2),
         )
+        .route("/rest/getBookmarks", get(get_bookmarks).post(get_bookmarks))
+        .route(
+            "/rest/getBookmarks.view",
+            get(get_bookmarks).post(get_bookmarks),
+        )
+        .route(
+            "/rest/createBookmark",
+            get(create_bookmark).post(create_bookmark),
+        )
+        .route(
+            "/rest/createBookmark.view",
+            get(create_bookmark).post(create_bookmark),
+        )
+        .route(
+            "/rest/deleteBookmark",
+            get(delete_bookmark).post(delete_bookmark),
+        )
+        .route(
+            "/rest/deleteBookmark.view",
+            get(delete_bookmark).post(delete_bookmark),
+        )
         .route("/rest/scrobble", get(scrobble).post(scrobble))
         .route("/rest/scrobble.view", get(scrobble).post(scrobble))
         .route(
@@ -5262,6 +5365,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bookmarks_save_replace_list_and_delete() {
+        let (state, _dir) = test_state();
+        let [alpha, beta, _] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let call = |path: String| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("f=json")),
+                )
+                .await
+            }
+        };
+        let (alpha, beta) = (
+            uid_of(&state, queries::UidKind::Track, alpha),
+            uid_of(&state, queries::UidKind::Track, beta),
+        );
+
+        call(format!(
+            "createBookmark?id={alpha}&position=1000&comment=intro"
+        ))
+        .await;
+        call(format!("createBookmark?id={beta}&position=5000")).await;
+        call(format!("createBookmark?id={alpha}&position=2500")).await;
+        let v = call("getBookmarks?".into()).await;
+        let marks = v["bookmarks"]["bookmark"].as_array().unwrap();
+        assert_eq!(marks.len(), 2, "{v}");
+        let mark = marks.iter().find(|m| m["entry"]["id"] == alpha).unwrap();
+        assert_eq!(
+            mark["position"], 2500,
+            "a second bookmark replaces the first"
+        );
+        assert!(mark["comment"].is_null());
+        assert_eq!(mark["username"], "testuser");
+        assert!(mark["created"].is_string() && mark["changed"].is_string());
+
+        let v = call(format!("createBookmark?id={alpha}")).await;
+        assert_eq!(v["error"]["code"], 10, "position is required");
+
+        call(format!("deleteBookmark?id={alpha}")).await;
+        let v = call("getBookmarks?".into()).await;
+        assert_eq!(v["bookmarks"]["bookmark"].as_array().unwrap().len(), 1);
+        let v = call(format!("deleteBookmark?id={alpha}")).await;
+        assert_eq!(v["error"]["code"], 70, "nothing left to delete");
+    }
+
+    #[tokio::test]
     async fn random_songs_filter_in_sql() {
         let (state, _dir) = test_state();
         seed_shelves(&state);
@@ -5358,7 +5510,10 @@ mod tests {
         let app = build_test_router(state);
         let (_, body) = get_response(
             app,
-            &format!("/rest/getBookmarks.view?{}", auth_query("f=json")),
+            &format!(
+                "/rest/getInternetRadioStations.view?{}",
+                auth_query("f=json")
+            ),
         )
         .await;
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
