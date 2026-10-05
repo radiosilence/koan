@@ -19,6 +19,7 @@ mod favourite;
 mod history;
 mod oauth;
 mod pages;
+mod pair;
 mod scrobbling;
 mod session;
 #[cfg(test)]
@@ -169,6 +170,14 @@ pub fn router(
             get(oauth::authorize).post(oauth::approve),
         )
         .layer(from_fn_with_state(state.clone(), gate));
+    // Approving a device waiting to sign in: plain forms too, reached from a
+    // phone that may never have opened the UI. See `crate::pair`.
+    let pairing = axum::Router::new()
+        .route("/pair", get(pair::form))
+        .route("/pair/{pair}", get(pair::confirm))
+        .route("/pair/{pair}/approve", post(pair::approve))
+        .route("/pair/{pair}/decline", post(pair::decline))
+        .layer(from_fn_with_state(state.clone(), gate));
     // Checking a password is deliberately expensive, so the form shares the
     // JSON login's per-IP window.
     let sign_in = get(session::login_form).merge(
@@ -177,6 +186,7 @@ pub fn router(
     axum::Router::new()
         .merge(gated)
         .merge(consent)
+        .merge(pairing)
         .route(
             "/.well-known/oauth-protected-resource",
             get(oauth::protected_resource),

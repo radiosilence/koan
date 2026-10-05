@@ -50,6 +50,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::DEVICES, &[1]),
     (koan_core::remote::profile::INVITE, &[1]),
     (koan_core::remote::profile::SHARES, &[1]),
+    (koan_core::remote::profile::PAIR, &[1]),
     (koan_core::remote::profile::HISTORY, &[1]),
 ];
 
@@ -4179,6 +4180,69 @@ async fn koan_delete_user(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
     .await
 }
 
+// ---------------------------------------------------------------------------
+// Pairing (koan extension)
+// ---------------------------------------------------------------------------
+
+/// A pairing as an approver sees it: the device's name, the address it asked
+/// from, and whether that address is on a private network.
+fn pair_node(info: &crate::pair::PairInfo) -> XmlNode {
+    XmlNode::new("pair")
+        .attr("device", &info.device)
+        .attr("from", &info.from.to_string())
+        .attr_bool("local", info.local())
+}
+
+/// The device waiting on `pair`, an id or a code, and where it asked from: for
+/// an app to ask whether to sign it in.
+async fn koan_pair_info(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond(&state, &params.auth(), |_, b| {
+            let pair = params
+                .get("pair")
+                .ok_or_else(|| SubsonicError::missing_param("pair"))?;
+            let info = crate::pair::pairings()
+                .info(pair)
+                .ok_or_else(|| SubsonicError::not_found("Pairing"))?;
+            Ok(b.child(pair_node(&info)))
+        })
+    })
+    .await
+}
+
+/// Sign the device waiting on `pair` in as the caller, with an API key of its
+/// own, or with `decline=true` turn it away. Any role: a device is signed in
+/// to the caller's own account, with no more than the caller can do.
+async fn koan_pair_approve(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            let pair = params
+                .get("pair")
+                .ok_or_else(|| SubsonicError::missing_param("pair"))?;
+            let decline = params.get("decline") == Some("true");
+            if !decline && caller.user_id == queries::LOCAL_USER {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::Generic,
+                    "sign in with an account to sign a device in as it",
+                ));
+            }
+            let info = crate::pair::pairings()
+                .settle(&db.conn, pair, caller.user_id, &caller.username, decline)
+                .map_err(|e| match e {
+                    crate::pair::SettleError::NotFound => SubsonicError::not_found("Pairing"),
+                    crate::pair::SettleError::Internal(e) => SubsonicError::internal(e),
+                })?;
+            Ok(b.child(pair_node(&info)))
+        })
+    })
+    .await
+}
+
 /// OpenSubsonic `formPost`: the parameters of an
 /// `application/x-www-form-urlencoded` POST body are appended to the query
 /// string, so every handler reads one set of parameters however they were
@@ -4473,6 +4537,17 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         // koan's own: a koan client's standing connection, for the server to
         // command it. See `crate::clients`.
         .route("/rest/koanLink", get(koan_link))
+        // A device without a keyboard waiting to be signed in, and the
+        // endpoints that sign it in. See `crate::pair`.
+        .route("/rest/koanPair", get(crate::pair::route))
+        .route(
+            "/rest/koanPairInfo",
+            get(koan_pair_info).post(koan_pair_info),
+        )
+        .route(
+            "/rest/koanPairApprove",
+            get(koan_pair_approve).post(koan_pair_approve),
+        )
         .route("/rest/koanUsers", get(koan_users).post(koan_users))
         .route(
             "/rest/koanCreateUser",
@@ -5317,6 +5392,70 @@ mod tests {
         )
         .await;
         assert!(body.contains("adminRole=\"true\""), "{body}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pairing_is_refused_to_web_pages() {
+        let (state, _dir) = test_state();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        let url = format!("ws://{addr}/rest/koanPair?name=tv");
+        tokio::task::spawn_blocking(move || {
+            use tungstenite::client::IntoClientRequest as _;
+            let mut from_page = url.as_str().into_client_request().unwrap();
+            from_page
+                .headers_mut()
+                .insert(header::ORIGIN, "https://evil.example".parse().unwrap());
+            match tungstenite::connect(from_page) {
+                Err(tungstenite::Error::Http(r)) => assert_eq!(r.status(), StatusCode::FORBIDDEN),
+                other => panic!("a page was let in: {:?}", other.map(|_| ())),
+            }
+            // As the apps connect: tungstenite sends no Origin.
+            let (mut socket, _) = tungstenite::connect(url.as_str()).unwrap();
+            let first = socket.read().unwrap();
+            let message: koan_core::remote::pair::PairMessage =
+                serde_json::from_str(first.to_text().unwrap()).unwrap();
+            assert!(
+                matches!(
+                    message,
+                    koan_core::remote::pair::PairMessage::Pending { .. }
+                ),
+                "{message:?}"
+            );
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_waiting_device_is_paired_with_the_approvers_account() {
+        let (state, _dir) = test_state();
+        let call = |path: String| {
+            let state = state.clone();
+            async move { get_response(build_test_router(state), &path).await.1 }
+        };
+        let mate = "u=mate&p=hunter22&v=1.16.1&c=test&f=json";
+        let opened = crate::pair::pairings()
+            .open("Den TV", "198.51.100.7".parse().unwrap())
+            .unwrap();
+        let code = opened.code.replace('-', "").to_lowercase();
+
+        let body = call(format!("/rest/koanPairInfo?pair={code}")).await;
+        assert!(body.contains("code=\"10\""), "{body}");
+        let body = call(format!("/rest/koanPairInfo?pair={code}&{mate}")).await;
+        assert!(
+            body.contains("\"device\":\"Den TV\",\"from\":\"198.51.100.7\",\"local\":false"),
+            "{body}"
+        );
+
+        let body = call(format!("/rest/koanPairApprove?pair={}&{mate}", opened.id)).await;
+        assert!(body.contains("\"device\":\"Den TV\""), "{body}");
+        let body = call(format!("/rest/koanPairApprove?pair={}&{mate}", opened.id)).await;
+        assert!(body.contains("\"code\":70"), "{body}");
+        let body = call(format!("/rest/koanPairInfo?pair=ABCD-EFGH&{mate}")).await;
+        assert!(body.contains("\"code\":70"), "{body}");
+        drop(opened);
     }
 
     #[tokio::test]
