@@ -415,6 +415,7 @@ async fn every_class_on_every_page_has_a_rule() {
         "/search?q=nothing-here".to_owned(),
         "/queue".to_owned(),
         "/keys".to_owned(),
+        "/scrobbling".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
     ] {

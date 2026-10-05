@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Scrobbling to ListenBrainz.** Each account can connect ListenBrainz on the web UI's Scrobbling page by pasting its user token. The server then sends the account's existing history, and from then on every play kōan's apps and other Subsonic clients report, with now-playing notices; no client needs configuring. Plays wait in the database until ListenBrainz accepts them, so an outage or restart delays them rather than losing them. The library database moves to schema 16 for the new `scrobble_services` and `scrobble_outbox` tables; a build older than this one refuses it.
+
 ## 0.52.6
 
 ### Added

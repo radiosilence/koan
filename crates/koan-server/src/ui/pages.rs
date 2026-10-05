@@ -131,6 +131,7 @@ fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> Str
             "<form class=\"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted\" \
 method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 pb-0.5 text-ink\">{}</span>\
 {users}<a class=\"{ACCOUNT_LINK}\" href=\"/keys\" data-nav=keys>API keys</a>\
+<a class=\"{ACCOUNT_LINK}\" href=\"/scrobbling\" data-nav=scrobbling>Scrobbling</a>\
 <a class=\"{ACCOUNT_LINK}\" href=\"/connect\" data-nav=connect>Assistants</a>\
 <button class=\"quiet px-2 py-1 text-meta\">Sign out</button></form>",
             escape(&user.username)

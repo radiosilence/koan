@@ -9,6 +9,7 @@ pub mod lyrics;
 pub mod playback_state;
 pub mod playlists;
 mod scan_cache;
+pub mod scrobbling;
 mod search;
 pub mod shares;
 pub(crate) mod sources;

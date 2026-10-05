@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 15;
+pub const SCHEMA_VERSION: i64 = 16;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -369,6 +369,35 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
 
+        -- Listening services an account forwards its plays to, with the
+        -- credential each takes. `error` is set when the service refuses the
+        -- credential; nothing is sent for the account until it connects again.
+        CREATE TABLE IF NOT EXISTS scrobble_services (
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            service       TEXT NOT NULL,
+            token         TEXT NOT NULL,
+            account_name  TEXT NOT NULL,
+            connected_at  INTEGER NOT NULL,
+            error         TEXT,
+            PRIMARY KEY (user_id, service)
+        );
+
+        -- Plays waiting to reach a service. A row is deleted once the service
+        -- has accepted the play, so what is here survives a restart or an
+        -- outage and is sent when the service answers again.
+        CREATE TABLE IF NOT EXISTS scrobble_outbox (
+            id          INTEGER PRIMARY KEY,
+            user_id     INTEGER NOT NULL,
+            service     TEXT NOT NULL,
+            history_id  INTEGER NOT NULL REFERENCES play_history(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id, service)
+                REFERENCES scrobble_services(user_id, service) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_scrobble_outbox_service
+            ON scrobble_outbox(user_id, service);
+        CREATE INDEX IF NOT EXISTS idx_scrobble_outbox_history
+            ON scrobble_outbox(history_id);
+
         -- Share links this koan serves itself. The tracks are an explicit list,
         -- not a query: what a link names is all an anonymous visitor can play,
         -- so it must not grow when the library does.
@@ -398,6 +427,21 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     )?;
     conn.execute_batch(crate::db::queries::sources::SOURCE_TABLES)?;
     apply_migrations(conn, found)?;
+    // After the migrations: rebuilding `play_history` drops its triggers.
+    //
+    // A play a client reports is queued for every service its account
+    // forwards to, in the transaction that records it. koan's own playback
+    // records a play when the track starts, before it is known to have been
+    // heard, so only reported plays are forwarded as they happen.
+    conn.execute_batch(
+        "CREATE TRIGGER IF NOT EXISTS scrobble_reported_play AFTER INSERT ON play_history
+             WHEN new.source = 'subsonic'
+             BEGIN
+                 INSERT INTO scrobble_outbox (user_id, service, history_id)
+                 SELECT user_id, service, new.id FROM scrobble_services
+                  WHERE user_id = new.user_id;
+             END;",
+    )?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())

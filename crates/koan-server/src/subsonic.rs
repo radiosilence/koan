@@ -2758,6 +2758,12 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
 
             // `submission=false` is a now-playing notice, not a play.
             if params.get("submission") == Some("false") {
+                if let (Ok(user), Some(&track_id)) = (
+                    queries::auth::resolve_user(&db.conn, user),
+                    track_ids.first(),
+                ) {
+                    koan_core::scrobbling::now_playing(user, track_id);
+                }
                 return Ok(b);
             }
 
@@ -2783,7 +2789,10 @@ async fn scrobble(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -
             // The foreign key is the existence check: one id that names no
             // track fails the batch, and the transaction leaves none of it.
             match queries::record_plays_at(&db.conn, user, &plays, queries::SOURCE_SUBSONIC) {
-                Ok(()) => Ok(b),
+                Ok(()) => {
+                    koan_core::scrobbling::wake();
+                    Ok(b)
+                }
                 Err(koan_core::db::connection::DbError::Sqlite(
                     rusqlite::Error::SqliteFailure(e, _),
                 )) if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY => {
