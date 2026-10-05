@@ -249,9 +249,18 @@ pub(crate) fn follow_moves(
             .and_then(|old| {
                 let url = entry.starts_with("file://");
                 let relative = !url && !Path::new(&entry.replace('\\', "/")).is_absolute();
+                // A relative entry of a list that moved is re-expressed only
+                // where it named a file that is there: one that is not may be
+                // relative to where the list is now, as after a run that
+                // stopped before its lists were rewritten.
                 let target = match moved.get(&old) {
                     Some(target) => target.clone(),
-                    None if relative && old_dir != new_dir => old,
+                    None if relative
+                        && old_dir != new_dir
+                        && matches!(old.try_exists(), Ok(true)) =>
+                    {
+                        old
+                    }
                     None => return None,
                 };
                 if url {
