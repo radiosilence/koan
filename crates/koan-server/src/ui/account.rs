@@ -109,7 +109,8 @@ autocomplete=off aria-label=\"{label}\"><button class=\"primary\">{button}</butt
     )
 }
 
-/// The page's links elsewhere: assistants for everyone, accounts for an admin.
+/// The page's links elsewhere: assistants and scrobbling for everyone,
+/// accounts for an admin.
 fn more(user: &AuthUser) -> String {
     let users = if user.role == Role::Admin {
         "<li><a href=\"/users\" data-nav=users>Users</a>: make accounts and invite people.</li>"
@@ -119,6 +120,7 @@ fn more(user: &AuthUser) -> String {
     format!(
         "<h2>More</h2><ul class=\"my-2 flex flex-col gap-1.5\">{users}\
 <li><a href=\"/connect\" data-nav=connect>Assistants</a>: connect Claude or another assistant to your music.</li>\
+<li><a href=\"/scrobbling\" data-nav=scrobbling>Scrobbling</a>: send what you play to ListenBrainz.</li>\
 <li><a href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></li></ul>",
         v = env!("CARGO_PKG_VERSION")
     )

@@ -230,6 +230,9 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         login_limiter: Arc::new(RateLimiter::default()),
     };
 
+    // Plays accounts forward to ListenBrainz; it sleeps while none do.
+    koan_core::scrobbling::start(pool.path().to_path_buf());
+
     let shutdown = tokio_util::sync::CancellationToken::new();
     let mcp_routes = crate::mcp::router(
         state.clone(),

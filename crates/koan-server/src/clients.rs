@@ -703,6 +703,7 @@ impl Registry {
             command,
             LinkCommand::Devices { .. }
                 | LinkCommand::Forgotten { .. }
+                | LinkCommand::HistoryChanged
                 | LinkCommand::Levels { .. }
                 | LinkCommand::WatchLevels { .. }
                 | LinkCommand::Shares { .. }
@@ -1229,6 +1230,21 @@ fn deliver_push(
 type Woken = std::collections::HashMap<(String, String), (std::time::Instant, &'static str)>;
 
 static WOKEN: LazyLock<Mutex<Woken>> = LazyLock::new(Default::default);
+
+/// After `user` played or favourited something: re-evaluate their smart
+/// playlists that read it, and have every device pull any that moved, so a
+/// "most played" list on an idle device does not wait for its next read.
+pub fn smart_activity(
+    db: &koan_core::db::connection::Database,
+    user: i64,
+    fields: &[koan_core::smart::Field],
+) {
+    match koan_core::db::queries::smart::refresh_after_activity(&db.conn, user, fields) {
+        Ok(moved) if !moved.is_empty() => changed(),
+        Ok(_) => {}
+        Err(e) => log::warn!("smart playlists not refreshed after activity: {e}"),
+    }
+}
 
 /// Have every device pull what the server just changed (a playlist edited,
 /// albums added): at once where linked, on next link where not. Syncs waiting

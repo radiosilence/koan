@@ -419,6 +419,7 @@ async fn every_class_on_every_page_has_a_rule() {
         "/history".to_owned(),
         "/recent".to_owned(),
         "/account".to_owned(),
+        "/scrobbling".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
     ] {
@@ -758,6 +759,14 @@ async fn history_lists_the_callers_own_plays_by_day_and_forgets_only_those() {
     assert!(!left.contains(&mine), "alice's play is forgotten");
     assert!(left.contains(&theirs), "bob's is not");
     assert_eq!(left.len(), 2);
+    // Recorded, so the account's devices forget it too; bob's is not.
+    let forgotten: i64 = db
+        .conn
+        .query_row("SELECT COUNT(*) FROM play_history_forgotten", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(forgotten, 1);
 }
 
 #[tokio::test]

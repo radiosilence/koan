@@ -13,8 +13,10 @@ pub mod player;
 pub mod playlists;
 pub mod quiet;
 pub mod remote;
+pub mod scrobbling;
 pub mod shelves;
 pub mod signal;
+pub mod smart;
 pub mod upnp;
 
 pub use sift::format;
