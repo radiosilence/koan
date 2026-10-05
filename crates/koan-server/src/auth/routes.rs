@@ -91,15 +91,32 @@ impl RateLimiter {
 /// IPv4-mapped IPv6 addresses come back as IPv4, so one client is one address
 /// whichever way a dual-stack listener or a proxy spelled it.
 pub(crate) fn client_ip(request: &axum::extract::Request) -> IpAddr {
-    let Some(ConnectInfo(peer)) = request.extensions().get::<ConnectInfo<SocketAddr>>() else {
+    address(request.extensions(), request.headers())
+}
+
+/// [`client_ip`] as an extractor, for handlers that also read the body.
+pub(crate) struct ClientIp(pub IpAddr);
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for ClientIp {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self(address(&parts.extensions, &parts.headers)))
+    }
+}
+
+fn address(extensions: &axum::http::Extensions, headers: &axum::http::HeaderMap) -> IpAddr {
+    let Some(ConnectInfo(peer)) = extensions.get::<ConnectInfo<SocketAddr>>() else {
         return IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
     };
     let peer = peer.ip().to_canonical();
     if !is_internal(peer) {
         return peer;
     }
-    request
-        .headers()
+    headers
         .get_all("x-forwarded-for")
         .iter()
         .filter_map(|v| v.to_str().ok())
@@ -385,10 +402,11 @@ pub(crate) async fn authenticate(
     state: &AuthRouteState,
     username: &str,
     password: &str,
+    from: IpAddr,
 ) -> Result<(auth_queries::UserRow, String, String), Box<Response>> {
     let state = state.clone();
     let (username, password) = (username.to_owned(), password.to_owned());
-    tokio::task::spawn_blocking(move || authenticate_blocking(&state, &username, &password))
+    tokio::task::spawn_blocking(move || authenticate_blocking(&state, &username, &password, from))
         .await
         .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())))
 }
@@ -397,6 +415,7 @@ fn authenticate_blocking(
     state: &AuthRouteState,
     username: &str,
     password: &str,
+    from: IpAddr,
 ) -> Result<(auth_queries::UserRow, String, String), Box<Response>> {
     use super::password::Refused;
     let refused = |status, message: &str| {
@@ -410,16 +429,19 @@ fn authenticate_blocking(
                 .into_response(),
         )
     };
-    if state.users.failures.exhausted(&username.to_owned()) {
+    if state.users.spent(username, from) {
         return Err(refused(
             StatusCode::TOO_MANY_REQUESTS,
             "too many failed sign-ins for this account; try again in a minute",
         ));
     }
     let user = match state.users.verify(username, password) {
-        Ok(user) => user,
+        Ok(user) => {
+            state.users.signed_in(username, from);
+            user
+        }
         Err(Refused::Wrong) => {
-            state.users.failures.record(username.to_owned());
+            state.users.failed(username);
             return Err(refused(
                 StatusCode::UNAUTHORIZED,
                 "invalid username or password",
@@ -479,9 +501,13 @@ fn authenticate_blocking(
     Ok((user, access_token, refresh_token_id))
 }
 
-async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest>) -> Response {
+async fn login(
+    State(state): State<AuthRouteState>,
+    ClientIp(from): ClientIp,
+    Json(req): Json<LoginRequest>,
+) -> Response {
     let (user, access_token, refresh_token_id) =
-        match authenticate(&state, &req.username, &req.password).await {
+        match authenticate(&state, &req.username, &req.password, from).await {
             Ok(session) => session,
             Err(resp) => return *resp,
         };
@@ -510,11 +536,18 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
 const REPLAY_GRACE_SECS: i64 = 30;
 
 /// Spend a refresh token for a new access token and a new refresh token. The
-/// error is the response to send. Shared by the JSON refresh and the web UI's
-/// session resume.
+/// error is the response to send. Shared by the JSON refresh, the web UI's
+/// session resume and OAuth.
+///
+/// A refresh is the account signing in from `from` as surely as a password
+/// is, so it marks that network as the account's (see
+/// `PasswordVerifier::signed_in`): a browser that keeps its session is how an
+/// account's own network stays known. `None` for an OAuth client, whose
+/// address is a service's, not the account's.
 pub(crate) fn rotate(
     state: &AuthRouteState,
     supplied: &str,
+    from: Option<IpAddr>,
 ) -> Result<(String, String), Box<Response>> {
     let db = match state.open_db() {
         Ok(db) => db,
@@ -611,11 +644,15 @@ pub(crate) fn rotate(
         ));
     }
 
+    if let Some(from) = from {
+        state.users.signed_in(&user.username, from);
+    }
     Ok((access_token, new_refresh_id))
 }
 
 async fn refresh(
     State(state): State<AuthRouteState>,
+    ClientIp(from): ClientIp,
     headers: axum::http::HeaderMap,
     body: Option<Json<RefreshRequest>>,
 ) -> Response {
@@ -631,7 +668,7 @@ async fn refresh(
     };
 
     let rotating = state.clone();
-    let rotated = tokio::task::spawn_blocking(move || rotate(&rotating, &supplied))
+    let rotated = tokio::task::spawn_blocking(move || rotate(&rotating, &supplied, Some(from)))
         .await
         .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())));
     let (access_token, new_refresh_id) = match rotated {

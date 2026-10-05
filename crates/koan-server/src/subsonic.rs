@@ -454,13 +454,14 @@ async fn throttle_auth(
         return next.run(request).await;
     }
 
-    let ip = crate::auth::routes::network(crate::auth::routes::client_ip(&request));
+    let from = crate::auth::routes::client_ip(&request);
+    let ip = crate::auth::routes::network(from);
     let key = (ip, username);
     let refusal = if throttle.per_account.exhausted(&key) {
         Some("Too many failed sign-ins for this account from this address; try again in a minute")
     } else if throttle.per_address.exhausted(&ip) {
         Some("Too many failed sign-ins from this address; try again in a minute")
-    } else if throttle.users.failures.exhausted(&key.1) {
+    } else if throttle.users.spent(&key.1, from) {
         Some("Too many failed sign-ins for this account; try again in a minute")
     } else {
         None
@@ -474,11 +475,27 @@ async fn throttle_auth(
     }
     let response = next.run(request).await;
     if response.extensions().get::<AuthFailed>().is_some() {
-        throttle.users.failures.record(key.1.clone());
+        throttle.users.failed(&key.1);
         throttle.per_account.record(key);
         throttle.per_address.record(ip);
+    } else if throttle.users.took_pass(&credential_digest(&params.auth())) {
+        throttle.users.signed_in(&key.1, from);
     }
     response
+}
+
+/// The credential a request signs in with besides an API key, as
+/// `validate_auth` and `throttle_auth` both name it.
+fn credential_digest(auth: &SubsonicParams) -> [u8; 32] {
+    use sha2::Digest as _;
+    let mut digest = sha2::Sha256::new();
+    for part in [&auth.u, &auth.p, &auth.t, &auth.s] {
+        match part {
+            Some(v) => digest.update([&[1u8][..], v.as_bytes(), &[0]].concat()),
+            None => digest.update([0u8]),
+        }
+    }
+    digest.finalize().into()
 }
 
 // ---------------------------------------------------------------------------
@@ -776,7 +793,18 @@ impl Caller {
 ///   cannot work against the account's own password, which is only a hash, so
 ///   an account without app passwords is refused with 41, the code that tells
 ///   a client to fall back to a password or a key.
+///
+/// A password or app password that signs in is noted for `throttle_auth`,
+/// which marks the client's network as the account's.
 fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, SubsonicError> {
+    let caller = check_credential(params, state)?;
+    if params.api_key.is_none() && caller.user_id != queries::LOCAL_USER {
+        state.users.passed(credential_digest(params));
+    }
+    Ok(caller)
+}
+
+fn check_credential(params: &SubsonicParams, state: &AppState) -> Result<Caller, SubsonicError> {
     use crate::auth::password::Refused;
     use subtle::ConstantTimeEq;
 
@@ -5028,6 +5056,42 @@ mod tests {
         assert!(body(response).await.contains("code=\"40\""));
         let response = app.oneshot(from(999, "apiKey=k")).await.unwrap();
         assert!(body(response).await.contains("code=\"40\""));
+    }
+
+    #[tokio::test]
+    async fn a_spent_username_budget_spares_the_accounts_own_network() {
+        let (state, _dir) = test_state();
+        let users = state.users.clone();
+        let app = subsonic_app(state);
+        let from = |ip: [u8; 4]| {
+            let mut request = Request::builder()
+                .uri("/rest/ping?u=mate&p=hunter22&v=1.16.1&c=test")
+                .body(Body::empty())
+                .unwrap();
+            request.extensions_mut().insert(axum::extract::ConnectInfo(
+                std::net::SocketAddr::from((ip, 1234)),
+            ));
+            request
+        };
+        let body = |response: Response| async {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        let home = [198, 51, 100, 4];
+        let r = body(app.clone().oneshot(from(home)).await.unwrap()).await;
+        assert!(r.contains("status=\"ok\""), "{r}");
+        for _ in 0..crate::auth::password::FAILURES_PER_USERNAME_PER_MINUTE {
+            users.failed("mate");
+        }
+        let r = body(app.clone().oneshot(from([203, 0, 113, 9])).await.unwrap()).await;
+        assert!(
+            r.contains("Too many failed sign-ins for this account;"),
+            "{r}"
+        );
+        let r = body(app.oneshot(from(home)).await.unwrap()).await;
+        assert!(r.contains("status=\"ok\""), "{r}");
     }
 
     #[tokio::test]

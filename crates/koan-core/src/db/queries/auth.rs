@@ -361,17 +361,11 @@ pub fn consume_refresh_token(
 
 /// Revoke a single refresh token (logout).
 pub fn revoke_refresh_token(conn: &Connection, token_id: &str) -> Result<bool, rusqlite::Error> {
-    let user: Option<i64> = conn
-        .query_row(
-            "UPDATE refresh_tokens SET revoked = 1 WHERE id = ?1 RETURNING user_id",
-            params![auth::sha256_hex(token_id)],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if let Some(user) = user {
-        auth::account_changed(user);
-    }
-    Ok(user.is_some())
+    let count = conn.execute(
+        "UPDATE refresh_tokens SET revoked = 1 WHERE id = ?1",
+        params![auth::sha256_hex(token_id)],
+    )?;
+    Ok(count > 0)
 }
 
 /// Revoke all refresh tokens for a user (password change, account delete).
@@ -380,9 +374,6 @@ pub fn revoke_all_user_tokens(conn: &Connection, user_id: i64) -> Result<usize, 
         "UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?1 AND revoked = 0",
         params![user_id],
     )?;
-    if count > 0 {
-        auth::account_changed(user_id);
-    }
     Ok(count)
 }
 
@@ -399,45 +390,21 @@ pub fn revoke_replayed_grant(
     grace_secs: i64,
 ) -> Result<usize, rusqlite::Error> {
     let cutoff = auth::now_unix() as i64 - grace_secs;
-    revoking(
-        conn,
+    conn.execute(
         "UPDATE refresh_tokens SET revoked = 1
          WHERE revoked = 0 AND grant_id = (
            SELECT grant_id FROM refresh_tokens
-           WHERE id = ?1 AND revoked = 1 AND grant_id IS NOT NULL AND used_at < ?2)
-         RETURNING user_id",
+           WHERE id = ?1 AND revoked = 1 AND grant_id IS NOT NULL AND used_at < ?2)",
         params![auth::sha256_hex(token_id), cutoff],
     )
 }
 
 /// Revoke every refresh token of an OAuth grant.
 pub fn revoke_grant(conn: &Connection, grant_id: &str) -> Result<usize, rusqlite::Error> {
-    revoking(
-        conn,
-        "UPDATE refresh_tokens SET revoked = 1 WHERE grant_id = ?1 AND revoked = 0
-         RETURNING user_id",
+    conn.execute(
+        "UPDATE refresh_tokens SET revoked = 1 WHERE grant_id = ?1 AND revoked = 0",
         params![grant_id],
     )
-}
-
-/// Run `sql`, which revokes refresh tokens returning each one's `user_id`, and
-/// announce the change to each account. Returns how many were revoked.
-fn revoking(
-    conn: &Connection,
-    sql: &str,
-    params: impl rusqlite::Params,
-) -> Result<usize, rusqlite::Error> {
-    let users = conn
-        .prepare(sql)?
-        .query_map(params, |row| row.get::<_, i64>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut changed = users.clone();
-    changed.sort_unstable();
-    changed.dedup();
-    for user in changed {
-        auth::account_changed(user);
-    }
-    Ok(users.len())
 }
 
 /// Clean up expired/revoked refresh tokens (housekeeping). A spent token of an

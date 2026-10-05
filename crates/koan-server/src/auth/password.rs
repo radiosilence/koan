@@ -19,9 +19,15 @@
 //!
 //! One verifier serves every door a password comes through — Subsonic, the
 //! JSON login and the web UI's form — so the ceiling on argon2 and the
-//! per-username budget on failures (`failures`) hold across all of them.
+//! per-username budget on failures hold across all of them.
+//!
+//! The budget stops a guesser with many addresses, and on its own would let
+//! anyone with two keep an account locked out. So the networks an account has
+//! recently signed in from are remembered, and the budget does not apply to
+//! them: an outsider can spend it, but not for the account's own people.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -43,6 +49,11 @@ const WAIT_FOR_CHECK: Duration = Duration::from_secs(5);
 /// addresses; this does, at a rate no person typing would reach.
 pub(crate) const FAILURES_PER_USERNAME_PER_MINUTE: u32 = 60;
 pub(crate) const FAILURE_WINDOW: Duration = Duration::from_secs(60);
+
+/// How long a network an account signed in from is spared its spent budget.
+/// A browser that keeps its session refreshes it every few minutes, which
+/// renews this.
+const KNOWN_FOR: Duration = Duration::from_secs(7 * 24 * 3600);
 
 /// Failures by key, in fixed windows of `FAILURE_WINDOW`.
 pub(crate) struct FailureLimiter<K> {
@@ -109,7 +120,12 @@ pub struct PasswordVerifier {
     /// doors that take passwords. Only those: API keys and the Subsonic shared
     /// secret are random and not worth guessing, so a flood of wrong passwords
     /// for an account never locks out the apps signed in with either.
-    pub(crate) failures: FailureLimiter<String>,
+    failures: FailureLimiter<String>,
+    /// When each username last signed in from each network (`routes::network`).
+    known: Mutex<LruCache<(String, IpAddr), Instant>>,
+    /// Subsonic credentials that just signed in, for the throttle to read back
+    /// once the request is answered; see `passed`.
+    passes: Mutex<LruCache<[u8; 32], ()>>,
 }
 
 impl PasswordVerifier {
@@ -120,7 +136,46 @@ impl PasswordVerifier {
             checking: Mutex::new(HashMap::new()),
             max_checks: max_checks(),
             failures: FailureLimiter::new(FAILURES_PER_USERNAME_PER_MINUTE),
+            known: Mutex::new(LruCache::new(NonZeroUsize::new(4096).expect("non-zero"))),
+            passes: Mutex::new(LruCache::new(NonZeroUsize::new(256).expect("non-zero"))),
         }
+    }
+
+    /// Whether `username` has spent its failures for the minute, as far as a
+    /// sign-in from `from` is concerned: never from a network it recently
+    /// signed in from.
+    pub(crate) fn spent(&self, username: &str, from: IpAddr) -> bool {
+        self.failures.exhausted(&username.to_owned())
+            && !self
+                .known
+                .lock()
+                .get(&(username.to_owned(), super::routes::network(from)))
+                .is_some_and(|at| at.elapsed() < KNOWN_FOR)
+    }
+
+    /// Count a failed sign-in for `username`.
+    pub(crate) fn failed(&self, username: &str) {
+        self.failures.record(username.to_owned());
+    }
+
+    /// Remember that `username` signed in from `from`'s network.
+    pub(crate) fn signed_in(&self, username: &str, from: IpAddr) {
+        self.known.lock().put(
+            (username.to_owned(), super::routes::network(from)),
+            Instant::now(),
+        );
+    }
+
+    /// Note that the Subsonic credential `digest` signed in. The check runs
+    /// inside the handler, which knows nothing of the client's address; the
+    /// throttle around it does, and takes this back with `took_pass`.
+    pub(crate) fn passed(&self, digest: [u8; 32]) {
+        self.passes.lock().put(digest, ());
+    }
+
+    /// Whether `digest` signed in since it was last asked.
+    pub(crate) fn took_pass(&self, digest: &[u8; 32]) -> bool {
+        self.passes.lock().pop(digest).is_some()
     }
 
     /// The account, as it stands, when the password is its.

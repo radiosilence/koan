@@ -470,10 +470,14 @@ pub fn validate_scoped_token(
 ///
 /// A request is authenticated once, but a socket outlives it and asks the
 /// database nothing afterwards. So every change that can narrow what an
-/// account's sessions hold — a new role or password, a revoked key, app
-/// password or session, the account deleted — is announced here, and a socket
-/// closes when its account's is. The client reconnects and is authenticated as
-/// things now stand.
+/// account's sockets hold — a new role or password, a revoked key or app
+/// password, the account deleted — is announced here, and a socket closes when
+/// its account's is. The client reconnects and is authenticated as things now
+/// stand.
+///
+/// Revoking a refresh token is not such a change: no socket rests on one, and
+/// closing every socket on the account at each sign-out would only make them
+/// all reconnect.
 ///
 /// Announced by the queries that make the change, so no caller can forget to.
 /// Only within this process: a change made by another, such as the CLI's,

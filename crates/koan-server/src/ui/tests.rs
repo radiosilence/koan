@@ -1881,18 +1881,31 @@ async fn track_rows_carry_what_the_track_menu_needs() {
 }
 
 #[tokio::test]
-async fn a_spent_username_budget_refuses_even_the_right_password() {
+async fn a_spent_username_budget_refuses_strangers_but_not_the_accounts_network() {
     let f = setup(true);
+    let from = |ip: [u8; 4]| {
+        let mut req = form("/login", "username=alice&password=hunter2");
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                ip, 1234,
+            ))));
+        req
+    };
+    let home = [198, 51, 100, 4];
+    assert_eq!(send(&f.app, from(home)).await.status, StatusCode::SEE_OTHER);
+    // Spent by guesses from elsewhere.
     for _ in 0..crate::auth::password::FAILURES_PER_USERNAME_PER_MINUTE {
-        f.state.users.failures.record("alice".to_owned());
+        f.state.users.failed("alice");
     }
-    let r = send(&f.app, form("/login", "username=alice&password=hunter2")).await;
+    let r = send(&f.app, from([203, 0, 113, 9])).await;
     assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
     assert!(
         r.body
             .contains("Too many failed sign-ins for this account.")
     );
     assert!(r.cookies().is_empty());
+    // The network alice signed in from still signs in.
+    assert_eq!(send(&f.app, from(home)).await.status, StatusCode::SEE_OTHER);
 }
 
 #[tokio::test]
