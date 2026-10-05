@@ -320,7 +320,7 @@ Which track a source belongs to is decided only by `sources::link`, on one norma
 
 **Album and artist identity:** an artist is its folded name (`artists.name_key`). An album is its folded title (`albums.title_key`), its album artist and its MusicBrainz release when one is known, so two editions with their own release ids are two albums; a track naming no release joins the album of its names that has none either. A release id is filled once and never overwritten, so files of two editions cannot trade it. A track only the server has joins the album holding the server's id for its record, and an album's server id is the one most of its entries give. When an album of files takes a server id that a server-only album already holds, that album is folded into the one with files, which is how a record the server names one way and the files another becomes one album.
 
-**Favourites** name rows by id (`favourites.track_id`, `favourite_albums.album_id`, `favourite_artists.artist_id`) and follow them through merges, as ratings do (`track_ratings`, `album_ratings`, `artist_ratings`). `rebuild_index` forgets what the sources said and keeps the rows: the next scan and sync read every source again and each reclaims its row by path or server id, so favourites, history and playlists survive it.
+**Favourites** name rows by id (`favourites.track_id`, `favourite_albums.album_id`, `favourite_artists.artist_id`) and follow them through merges, as ratings (`track_ratings`, `album_ratings`, `artist_ratings`) and bookmarks do. `rebuild_index` forgets what the sources said and keeps the rows: the next scan and sync read every source again and each reclaims its row by path or server id, so favourites, history and playlists survive it.
 
 ### `index/`
 
