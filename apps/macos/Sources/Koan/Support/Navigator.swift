@@ -45,10 +45,11 @@ final class Navigator {
             case .artists: "Filter artists"
             case .favourites: "Filter favourites"
             case .recentlyPlayed: "Filter recently played"
-            case .onDevice: "Filter downloaded"
             case .playHistory: "Filter history"
             // Short, and ordered by what is happening rather than by name.
             case .downloads: nil
+            // A shelf: the first few of each kind, not a list to narrow.
+            case .onDevice: nil
             // A playlist is a sequence someone chose, and narrowing it hides
             // part of that sequence rather than telling you anything.
             case .queue, .searchResults, .playlist: nil

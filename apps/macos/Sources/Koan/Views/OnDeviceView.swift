@@ -10,15 +10,14 @@ struct OnDeviceView: View {
     var body: some View {
         ShelfView(
             title: "Downloaded",
-            artists: library.visibleOnDeviceArtists,
-            albums: library.visibleOnDeviceAlbums,
-            tracks: [],
+            artists: library.visibleOnDevice?.artists ?? [],
+            albums: library.visibleOnDevice?.albums ?? [],
+            tracks: library.visibleOnDevice?.tracks ?? [],
             empty: EmptyShelf(
                 icon: Icon.onDevice,
                 title: "Nothing downloaded yet",
                 detail: "Records you play or download from your server appear here, with how much of each is on this device."
-            ),
-            fractions: library.onDeviceFractions
+            )
         )
     }
 }

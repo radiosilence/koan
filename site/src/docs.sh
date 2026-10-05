@@ -18,6 +18,7 @@ pages=(
   "Library|docs/format-strings.md"
   "Library|docs/recipes/cache-management.md"
   "Playback|docs/guide/devices.md"
+  "Playback|docs/guide/sleep-timer.md"
   "Playback|docs/guide/dsp.md"
   "Automation|docs/guide/mcp-integration.md"
   "Automation|docs/guide/graphql-api.md"

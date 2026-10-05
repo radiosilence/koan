@@ -86,6 +86,9 @@ pub struct Album {
     /// When it entered the library. Sortable text — the server's ISO `created`
     /// for remote albums, SQLite's `datetime('now')` for locally scanned ones.
     pub added_at: Option<String>,
+    /// How much of it can play here, from 0 to 1: set where a listing is
+    /// narrowed to this device, the Downloaded shelf and offline.
+    pub downloaded: Option<f64>,
 }
 
 impl From<AlbumRow> for Album {
@@ -102,6 +105,10 @@ impl From<AlbumRow> for Album {
             total_discs: r.total_discs,
             total_tracks: r.total_tracks,
             added_at: r.added_at,
+            downloaded: r
+                .on_device
+                .filter(|d| d.total > 0)
+                .map(|d| f64::from(d.have) / f64::from(d.total)),
         }
     }
 }
@@ -137,29 +144,32 @@ pub struct Track {
     pub is_favourite: bool,
 }
 
-/// The records with tracks on this device, and their artists.
-#[derive(uniffi::Record, Debug, Clone)]
-pub struct OnDevice {
-    pub albums: Vec<Album>,
-    pub artists: Vec<Artist>,
-    /// How much of each record is here, in the order of `albums`.
-    pub fractions: Vec<AlbumOnDevice>,
-}
-
-/// How much of a record is on this device.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
-pub struct AlbumOnDevice {
-    pub album_id: i64,
-    pub have: u32,
-    pub total: u32,
-}
-
 /// What was played lately, each once and newest first by its latest play.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct RecentlyPlayed {
     pub albums: Vec<Album>,
     pub artists: Vec<Artist>,
     pub tracks: Vec<Track>,
+}
+
+/// Which shelf: see `koan_core::shelves::Shelf`.
+#[derive(uniffi::Enum, Debug, Clone)]
+pub enum ShelfKind {
+    Favourites,
+    Recent,
+    Search { query: String },
+    Downloaded,
+}
+
+/// The first few of each kind on a shelf, and how many there are in all.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct ShelfSummary {
+    pub artists: Vec<Artist>,
+    pub artist_total: u64,
+    pub albums: Vec<Album>,
+    pub album_total: u64,
+    pub tracks: Vec<Track>,
+    pub track_total: u64,
 }
 
 /// One play, with the track it played.
@@ -281,6 +291,50 @@ pub struct NowPlaying {
     /// random, and turning it off puts it back.
     pub shuffle: bool,
     pub repeat_mode: RepeatMode,
+    /// The sleep timer, while one is set.
+    pub sleep: Option<SleepState>,
+}
+
+/// A sleep timer to set: stop after a while, or at the end of the track or
+/// record playing.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepTimer {
+    After { minutes: u32 },
+    EndOfTrack,
+    EndOfRecord,
+}
+
+impl From<SleepTimer> for koan_core::player::state::SleepTimer {
+    fn from(t: SleepTimer) -> Self {
+        match t {
+            SleepTimer::After { minutes } => Self::After { minutes },
+            SleepTimer::EndOfTrack => Self::EndOfTrack,
+            SleepTimer::EndOfRecord => Self::EndOfRecord,
+        }
+    }
+}
+
+/// A sleep timer that is set. A time rather than what is left, so a client
+/// counts down for itself.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepState {
+    /// Milliseconds since the Unix epoch.
+    At {
+        unix_ms: u64,
+    },
+    EndOfTrack,
+    EndOfRecord,
+}
+
+impl From<koan_core::player::state::Sleep> for SleepState {
+    fn from(s: koan_core::player::state::Sleep) -> Self {
+        use koan_core::player::state::Sleep;
+        match s {
+            Sleep::At { unix_ms } => Self::At { unix_ms },
+            Sleep::EndOfTrack => Self::EndOfTrack,
+            Sleep::EndOfRecord => Self::EndOfRecord,
+        }
+    }
 }
 
 /// What follows a track at its end.

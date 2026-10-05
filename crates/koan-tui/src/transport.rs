@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
 use koan_core::audio::dsp::DspStatus;
-use koan_core::player::state::{PlaybackState, QueueEntry, TrackInfo};
+use koan_core::player::state::{PlaybackState, QueueEntry, Sleep, TrackInfo};
 
 use super::theme::Theme;
 
@@ -157,6 +157,23 @@ pub struct TransportBar<'a> {
     /// What the output device settled at. None until a track has started.
     output_rate: Option<u32>,
     dsp: Option<DspStatus>,
+    sleep: Option<Sleep>,
+}
+
+/// The sleep timer as the transport shows it: what is left, or what it
+/// waits for.
+fn sleep_label(sleep: Sleep) -> String {
+    match sleep {
+        Sleep::At { unix_ms } => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            format!("\u{263E} {}", format_time(unix_ms.saturating_sub(now)))
+        }
+        Sleep::EndOfTrack => "\u{263E} end of track".into(),
+        Sleep::EndOfRecord => "\u{263E} end of record".into(),
+    }
 }
 
 impl<'a> TransportBar<'a> {
@@ -177,6 +194,7 @@ impl<'a> TransportBar<'a> {
             seekable_ms: None,
             output_rate: None,
             dsp: None,
+            sleep: None,
         }
     }
 
@@ -197,6 +215,11 @@ impl<'a> TransportBar<'a> {
 
     pub fn with_dsp(mut self, dsp: Option<DspStatus>) -> Self {
         self.dsp = dsp;
+        self
+    }
+
+    pub fn with_sleep(mut self, sleep: Option<Sleep>) -> Self {
+        self.sleep = sleep;
         self
     }
 
@@ -394,6 +417,12 @@ impl Widget for TransportBar<'_> {
                     format_quality(info, self.output_rate, self.dsp.as_ref())
                 );
                 album_spans.push(Span::styled(format_info, self.theme.hint_desc));
+                if let Some(sleep) = self.sleep {
+                    album_spans.push(Span::styled(
+                        format!(" \u{00B7} {}", sleep_label(sleep)),
+                        self.theme.hint_desc,
+                    ));
+                }
 
                 let album_line = Line::from(album_spans);
                 buf.set_line(area.x, area.y + 2, &album_line, area.width);

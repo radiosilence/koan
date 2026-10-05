@@ -19,8 +19,6 @@ struct ShelfView: View {
     let tracks: [Track]
     /// What an empty page says.
     let empty: EmptyShelf
-    /// How much of each record is on this device, where the page shows it.
-    var fractions: [Int64: Double] = [:]
 
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
@@ -112,8 +110,7 @@ struct ShelfView: View {
                         },
                         toggleFavourite: { library.toggleFavourite(album: $0) }
                     ),
-                    menu: { _ in NSMenu() },
-                    fractions: fractions
+                    menu: { _ in NSMenu() }
                 ),
                 trackContext: TrackTableRow.Context(
                     showsAlbum: true,
@@ -222,7 +219,7 @@ struct ShelfView: View {
                     ForEach(row, id: \.id) { album in
                         AlbumGridCell(album: album)
                             .overlay(alignment: .top) {
-                                if let fraction = fractions[album.id] {
+                                if let fraction = album.downloaded {
                                     DownloadedBar(fraction: fraction)
                                 }
                             }

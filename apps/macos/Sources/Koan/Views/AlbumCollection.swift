@@ -367,9 +367,6 @@ final class AlbumTile: NSCollectionViewItem {
         let usesGlass: Bool
         let actions: Actions
         var menu: (Album) -> NSMenu
-        /// How much of each record is on this device, where the page shows
-        /// it: a bar along the foot of the sleeve.
-        var fractions: [Int64: Double] = [:]
     }
 
     private enum Part { case sleeve, title, artist, elsewhere }
@@ -558,7 +555,7 @@ final class AlbumTile: NSCollectionViewItem {
         CATransaction.setDisableActions(true)
         ring.isHidden = !(context.selecting && selected)
         ring.borderColor = context.tint.cgColor
-        downloaded = context.fractions[album.id]
+        downloaded = album.downloaded
         downloadTrack.isHidden = downloaded == nil
         downloadFill.backgroundColor = context.tint.cgColor
         placeDownloaded()
