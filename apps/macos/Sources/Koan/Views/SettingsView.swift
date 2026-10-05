@@ -318,7 +318,10 @@ private struct RemoteSettings: View {
                     }
                     .rowButtons()
                 }
+                // Accounts are managed from a device that can send an invite.
+                #if !os(tvOS)
                 PeopleSettings(signedInAs: model.settings.remoteUsername)
+                #endif
                 ServerOffers()
             } else {
                 Section {
@@ -575,7 +578,11 @@ private struct DspSettings: View {
                     #endif
                 }
             }
+            // Profiles come in as files, and a television has none: they are
+            // imported on another device, and the TV picks them by output.
+            #if !os(tvOS)
             Button("Import…") { importing = true }
+            #endif
             if let error = dsp.lastError {
                 Text(error)
                     .font(.caption)

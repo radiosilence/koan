@@ -18,6 +18,39 @@ struct AlbumGridCell: View {
     @State private var hovering = false
 
     var body: some View {
+        #if os(tvOS)
+        television
+        #else
+        tile
+        #endif
+    }
+
+    /// The tile as one card a remote focuses and clicks to open the record.
+    /// Playing it is a click away on the record's page, or in the menu a long
+    /// press brings up.
+    private var television: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Button { nav.open(album: album.id) } label: {
+                AlbumArtwork(source: .album(album.id), size: .tile, cornerRadius: 10)
+            }
+            .buttonStyle(.card)
+            .contextMenu { PlayableMenu(playable: .album(album)) }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(album.title)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                Text([showArtist ? album.artistName : nil, album.year.map { String($0) }]
+                    .compactMap { $0 }
+                    .joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private var tile: some View {
         VStack(alignment: .leading, spacing: 7) {
             PlayableArtwork(albumId: album.id)
                 .shadow(color: .black.opacity(0.28), radius: 7, y: 3)

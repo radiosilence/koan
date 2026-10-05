@@ -134,7 +134,7 @@ struct PlayableMenu: View {
                 Label(favouriteTitle, systemImage: isFavourite ? Icon.favourited : Icon.favourite)
             }
             Button { Share.link(for: playable, engine: library.engine, player: player) } label: {
-                Label("Copy Share Link", systemImage: Icon.share)
+                Label(Share.label, systemImage: Icon.share)
             }
             // Renames files on disk; a phone has no library folder, and no
             // Organize window to open.
@@ -264,6 +264,14 @@ struct QueueActions: View {
 /// Creating a share link, in one place: the menu item and the button on an
 /// album or artist page must not drift apart.
 enum Share {
+    /// What the share action says. A television has no pasteboard: there the
+    /// link is shown as a code to scan rather than copied.
+    #if os(tvOS)
+    static let label = "Share…"
+    #else
+    static let label = "Copy Share Link"
+    #endif
+
     /// Asks the remote server for a public link and copies it.
     ///
     /// Only tracks the server knows about can go in a link — it points at the
@@ -321,6 +329,14 @@ enum Share {
     private static func deliver(_ result: Result<KoanFFI.Share, Error>, to player: PlayerModel) {
         switch result {
         case .success(let share):
+            #if os(tvOS)
+            player.sharedLink = share.url
+            if share.skipped > 0 {
+                player.lastNotice =
+                    "\(share.shared) of \(share.shared + share.skipped) tracks are shared; "
+                    + "the rest aren't on your server."
+            }
+            #else
             Pasteboard.write(text: share.url)
             // Done, so a notice rather than an error: reported as one, iOS
             // would title the link "Something went wrong".
@@ -331,6 +347,7 @@ enum Share {
             } else {
                 player.lastNotice = "Share link copied: \(share.url)"
             }
+            #endif
         case .failure(let error):
             player.report("Couldn't create a share link — \(reason(for: error))")
         }
@@ -353,7 +370,7 @@ struct ShareButton: View {
         Button {
             Share.link(for: playable, engine: library.engine, player: player)
         } label: {
-            Label("Copy Share Link", systemImage: Icon.share)
+            Label(Share.label, systemImage: Icon.share)
         }
         .help("Create a public link on your server and copy it")
     }

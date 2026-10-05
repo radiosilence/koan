@@ -49,12 +49,20 @@ struct TabShell: View {
             Tab("Library", systemImage: "music.note.house", value: TabID.library) {
                 stack(.library) { LibraryTab() }
             }
+            #if !os(tvOS)
             Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
                 stack(.settings) { SettingsView() }
             }
+            #endif
             Tab(value: TabID.search, role: .search) {
                 stack(.search) { IOSSearchView() }
             }
+            // Last on a television, where it is visited least.
+            #if os(tvOS)
+            Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
+                stack(.settings) { SettingsView() }
+            }
+            #endif
         }
         #if os(tvOS)
         // Tabs across the top, as every television app has them; the sidebar
@@ -68,6 +76,7 @@ struct TabShell: View {
         #if os(tvOS)
         // The remote's Play/Pause, wherever focus is.
         .onPlayPauseCommand { player.togglePlayPause() }
+        .shareCodes(player)
         #endif
         .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the

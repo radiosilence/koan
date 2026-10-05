@@ -31,6 +31,9 @@ final class PlayerModel {
     /// Something the app declined to do, and why. Not a failure — the state it
     /// describes resolves on its own.
     var lastNotice: String?
+    /// A share link made on a device with no pasteboard, waiting to be shown
+    /// as a code a phone can scan.
+    var sharedLink: String?
 
     private(set) var devices: [Device] = []
     /// `nil` means system default. Read back from config, so it survives restarts.

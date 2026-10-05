@@ -19,6 +19,11 @@ struct WashLayer: View {
             Rectangle().fill(.background)
             ArtworkBleed(source: source, drifts: player.isPlaying)
                 .environment(art)
+            #if os(tvOS)
+            // A television is a large, bright surface in a dim room: the
+            // colour stays, at a depth text and focus still read against.
+            Rectangle().fill(.black.opacity(0.55))
+            #endif
         }
     }
 

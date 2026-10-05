@@ -184,8 +184,9 @@ targets:
         MARKETING_VERSION: ${KOAN_VERSION}
         CURRENT_PROJECT_VERSION: ${KOAN_BUILD}
         TARGETED_DEVICE_FAMILY: "3"
-        # No ASSETCATALOG_COMPILER_APPICON_NAME: tvOS wants a layered icon
-        # stack that does not exist yet.
+        # A layered icon and the Top Shelf banners, drawn by
+        # `apps/ios/tv-brand.swift`.
+        ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image
         LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/tv-link/$(PLATFORM_NAME)
         OTHER_LDFLAGS: -lkoan_ffi
     info:

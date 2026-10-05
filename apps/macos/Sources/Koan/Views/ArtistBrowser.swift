@@ -359,7 +359,14 @@ private struct ArtistBio: View {
                 .frame(maxWidth: 680, alignment: .leading)
             HStack(spacing: 12) {
                 if let url = source.flatMap(URL.init(string:)) {
+                    #if os(tvOS)
+                    // A television opens no web pages; the credit stands as text.
+                    Text("From Wikipedia")
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHint(url.absoluteString)
+                    #else
                     Link("From Wikipedia", destination: url)
+                    #endif
                 }
                 if let imageCredit {
                     Text("Photo: \(imageCredit)")

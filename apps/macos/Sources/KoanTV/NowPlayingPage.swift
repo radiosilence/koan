@@ -37,8 +37,12 @@ struct NowPlayingPage: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
-            ArtworkBleed(source: player.currentArtwork, drifts: player.isPlaying)
-                .ignoresSafeArea()
+            ZStack {
+                Rectangle().fill(.black)
+                ArtworkBleed(source: player.currentArtwork, drifts: player.isPlaying)
+                Rectangle().fill(.black.opacity(0.45))
+            }
+            .ignoresSafeArea()
         }
         .defaultFocus($focus, .playPause)
         .outputSheet(isPresented: $showingDevices)
@@ -143,6 +147,10 @@ struct NowPlayingPage: View {
             }
         }
         .font(.title3)
+        // White, as a television's controls are: focus lifts a button to
+        // white with dark ink, and a tinted glyph fights that.
+        .tint(.white)
+        .foregroundStyle(.white)
         .disabled(player.currentEntry == nil)
     }
 }

@@ -449,7 +449,11 @@ struct QueueView: View {
                 player: player
             )
         } label: {
+            #if os(tvOS)
+            Label("Share Album…", systemImage: Icon.share)
+            #else
             Label("Copy Album Share Link", systemImage: Icon.share)
+            #endif
         }
     }
 
@@ -510,7 +514,7 @@ struct QueueView: View {
                     player: player
                 )
             } label: {
-                Label("Copy Share Link", systemImage: Icon.share)
+                Label(Share.label, systemImage: Icon.share)
             }
         }
     }
