@@ -126,6 +126,7 @@ pub fn router(
         .route("/queue", get(pages::queue))
         .route("/library", get(pages::library))
         .route("/favourites", get(pages::favourites))
+        .route("/recent", get(pages::recent))
         .route("/history", get(history::page))
         .route("/history/forget", post(history::forget))
         .route("/connect", get(connect::page))
