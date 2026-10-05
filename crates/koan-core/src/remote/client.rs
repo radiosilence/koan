@@ -748,6 +748,25 @@ impl SubsonicClient {
         Ok(())
     }
 
+    /// The name of the device waiting on pairing `pair`, an id or a code
+    /// (`koanPairInfo`).
+    pub fn koan_pair_info(&self, pair: &str) -> Result<String, SubsonicError> {
+        self.get_with_params("koanPairInfo", &[("pair", pair)])?
+            .pair
+            .map(|p| p.device)
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Sign the device waiting on `pair` in as this account, or with
+    /// `decline`, turn it away (`koanPairApprove`). Answers with its name.
+    pub fn koan_pair_approve(&self, pair: &str, decline: bool) -> Result<String, SubsonicError> {
+        let decline = if decline { "true" } else { "false" };
+        self.get_with_params("koanPairApprove", &[("pair", pair), ("decline", decline)])?
+            .pair
+            .map(|p| p.device)
+            .ok_or(SubsonicError::BadResponse)
+    }
+
     pub fn koan_set_user_role(&self, username: &str, role: &str) -> Result<(), SubsonicError> {
         self.get_with_params("koanSetUserRole", &[("username", username), ("role", role)])?;
         Ok(())
@@ -810,6 +829,14 @@ struct SubsonicResponse {
     users: Option<KoanUsers>,
     invite: Option<KoanInvite>,
     join: Option<KoanJoined>,
+    pair: Option<KoanPair>,
+}
+
+/// A pairing a koan server holds, as `koanPairInfo` and `koanPairApprove`
+/// name it.
+#[derive(Debug, Deserialize)]
+struct KoanPair {
+    device: String,
 }
 
 #[derive(Debug, Deserialize)]

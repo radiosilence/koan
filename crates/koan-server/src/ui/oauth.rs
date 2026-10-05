@@ -306,7 +306,7 @@ fn request_error(base: &str, q: &AuthorizeParams) -> Option<(&'static str, &'sta
     None
 }
 
-fn page(title: &str, body: &str) -> String {
+pub(super) fn page(title: &str, body: &str) -> String {
     format!(
         "{head}</head><body class=\"{SIGNIN_BODY}\"><main class=\"{SIGNIN_MAIN}\">\
 <h1 class=\"{SIGNIN_TITLE}\">kōan</h1>{body}</main></body></html>",

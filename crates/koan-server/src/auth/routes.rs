@@ -59,7 +59,7 @@ impl RateLimiter {
     }
 
     /// Returns false when `ip` has spent its allowance for the current window.
-    fn allow(&self, ip: IpAddr) -> bool {
+    pub(crate) fn allow(&self, ip: IpAddr) -> bool {
         let now = auth::now_unix();
         let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
 
