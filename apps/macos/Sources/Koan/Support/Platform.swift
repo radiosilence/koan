@@ -356,9 +356,11 @@ extension View {
 struct SystemSwitch: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         #if os(tvOS)
-        // A television's toggle is a row that says On or Off; tinted, its
-        // label goes mint on the white a focused row turns.
+        // A television's toggle is a row that says On or Off. Its label takes
+        // the tint, which the room sets to the record's colour; the primary
+        // colour lets a focused row draw it dark on white as other rows do.
         Toggle(configuration)
+            .tint(.primary)
         #else
         Toggle(configuration)
             .toggleStyle(.switch)

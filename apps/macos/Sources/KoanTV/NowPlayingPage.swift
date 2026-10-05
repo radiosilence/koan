@@ -161,8 +161,11 @@ struct NowPlayingPage: View {
                         Label(presets.current ?? presets.none, systemImage: "slider.horizontal.3")
                     }
                 }
+                // A UIKit view, which asks for focus on its own account; the
+                // page's entry point is play/pause.
                 RoutePicker()
                     .frame(width: 66, height: 66)
+                    .prefersDefaultFocus(false, in: page)
             }
         }
         .focusSection()
