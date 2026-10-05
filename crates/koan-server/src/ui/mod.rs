@@ -119,6 +119,7 @@ pub fn router(
         .route("/artist/{id}/share", post(pages::share_artist))
         .route("/artists", get(pages::artists))
         .route("/artist/{id}", get(pages::artist))
+        .route("/tracks", get(pages::tracks))
         .route("/playlists", get(pages::playlists))
         .route("/playlist/{id}", get(pages::playlist))
         .route("/search", get(pages::search))
