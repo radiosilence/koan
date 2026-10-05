@@ -280,6 +280,10 @@ pub struct KoanEngine {
     /// Each playlist's earlier states, for undo. The queue's own history is
     /// the player's.
     playlist_history: koan_core::playlists::PlaylistHistory,
+    /// The pairing this device is waiting on, until `await_pairing` takes it.
+    pairing: parking_lot::Mutex<Option<koan_core::remote::pair::Pending>>,
+    /// What ends the wait, by the pairing's id.
+    pairing_cancel: parking_lot::Mutex<Option<(String, koan_core::remote::pair::Cancel)>>,
 }
 
 /// How far a client's own reckoning of the playhead may drift before it is
@@ -2384,6 +2388,89 @@ impl KoanEngine {
         koan_core::invite::Invite::parse(&link).map(Into::into)
     }
 
+    // -- Pairing: signing in a device without a keyboard (`koanPair`) --
+
+    /// Ask the server at `url` to sign this device in, once someone signed in
+    /// elsewhere approves it. The code and link come back to show;
+    /// `await_pairing` waits for the answer. A pairing already waiting is
+    /// given up.
+    pub async fn start_pairing(self: Arc<Self>, url: String) -> Result<PairingCode, KoanError> {
+        self.cancel_pairing();
+        offload::offload(move || {
+            let device = koan_core::remote::link::LinkIdentity::this_device(None).name;
+            let pending = koan_core::remote::pair::start(&url, &device).map_err(pair_error)?;
+            let code = PairingCode {
+                id: pending.id.clone(),
+                code: pending.code.clone(),
+                link: pending.link.clone(),
+            };
+            *self.pairing_cancel.lock() = pending.canceller().map(|c| (pending.id.clone(), c));
+            *self.pairing.lock() = Some(pending);
+            Ok(code)
+        })
+        .await
+    }
+
+    /// Wait for the pairing `start_pairing` opened to be approved, declined
+    /// or to lapse. Approved, the app is signed in.
+    pub async fn await_pairing(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let pending = self
+                .pairing
+                .lock()
+                .take()
+                .ok_or_else(|| KoanError::BadArgument {
+                    message: "no pairing is waiting".into(),
+                })?;
+            let id = pending.id.clone();
+            let outcome = pending.wait();
+            let mut cancel = self.pairing_cancel.lock();
+            if cancel.as_ref().is_some_and(|(held, _)| *held == id) {
+                *cancel = None;
+            }
+            outcome.map_err(pair_error)
+        })
+        .await
+    }
+
+    /// Give up the pairing this device is waiting on.
+    pub fn cancel_pairing(&self) {
+        if let Some((_, cancel)) = self.pairing_cancel.lock().take() {
+            cancel.cancel();
+        }
+        self.pairing.lock().take();
+    }
+
+    /// The name of the device waiting on `pair`, an id or the code it shows,
+    /// on the signed-in server.
+    pub async fn pairing_info(self: Arc<Self>, pair: String) -> Result<String, KoanError> {
+        offload::offload(move || koan_core::remote::pair::info(&pair).map_err(pair_error)).await
+    }
+
+    /// Sign the device waiting on `pair` in as this account. Answers with its
+    /// name.
+    pub async fn approve_pairing(self: Arc<Self>, pair: String) -> Result<String, KoanError> {
+        offload::offload(move || koan_core::remote::pair::approve(&pair).map_err(pair_error)).await
+    }
+
+    pub async fn decline_pairing(self: Arc<Self>, pair: String) -> Result<(), KoanError> {
+        offload::offload(move || {
+            koan_core::remote::pair::decline(&pair)
+                .map(drop)
+                .map_err(pair_error)
+        })
+        .await
+    }
+
+    /// Read a pairing link (`koan.rocks/pair/#s=…&p=…`). `None` for anything
+    /// else.
+    pub fn parse_pairing_link(&self, link: String) -> Option<PairingLink> {
+        koan_core::remote::pair::PairLink::parse(&link).map(|l| PairingLink {
+            server: l.server,
+            id: l.id,
+        })
+    }
+
     // -- Accounts on the signed-in server: koan servers, admins only --
 
     /// The server's accounts. Fails on a server that is not koan, or for an
@@ -3689,6 +3776,8 @@ impl KoanEngine {
             saved_content: std::sync::atomic::AtomicU64::new(u64::MAX),
             fuzzy: queries::CorpusCache::default(),
             playlist_history: Default::default(),
+            pairing: Default::default(),
+            pairing_cancel: Default::default(),
         });
         engine.spawn_watcher();
         engine.spawn_figures();
@@ -4572,6 +4661,7 @@ fn connection_info() -> ConnectionInfo {
             .map(|l| l.identity.name.clone())
             .unwrap_or_default(),
         sharing: p.as_ref().is_some_and(|p| p.offers(profile::SHARES)),
+        pairing: p.as_ref().is_some_and(|p| p.offers(profile::PAIR)),
         shared_with: devices::shares(),
         share_error: devices::share_error(),
         share_accounts: devices::accounts(),
@@ -4650,6 +4740,21 @@ fn account_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, Ko
             message: "no remote server configured".into(),
         }
     })
+}
+
+/// A pairing that was turned away or lapsed is an answer; a connection that
+/// failed is worth retrying.
+fn pair_error(e: koan_core::remote::pair::PairError) -> KoanError {
+    use koan_core::remote::pair::PairError;
+    match e {
+        PairError::Remote(e) => remote_error(e),
+        e @ (PairError::Connect(_) | PairError::Closed) => KoanError::Remote {
+            message: e.to_string(),
+        },
+        e => KoanError::BadArgument {
+            message: e.to_string(),
+        },
+    }
 }
 
 /// A server that answered and refused is a bad request; one that did not

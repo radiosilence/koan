@@ -1262,6 +1262,23 @@ pub struct Invite {
     pub mailto: String,
 }
 
+/// A pairing this device opened: the code to show, and the link that
+/// approves it.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct PairingCode {
+    pub id: String,
+    /// `XXXX-XXXX`.
+    pub code: String,
+    pub link: String,
+}
+
+/// A pairing link: which server another device is waiting on, and its id.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct PairingLink {
+    pub server: String,
+    pub id: String,
+}
+
 impl From<koan_core::invite::Invite> for Invite {
     fn from(i: koan_core::invite::Invite) -> Self {
         Self {
@@ -1505,6 +1522,9 @@ pub struct ConnectionInfo {
     pub share_error: Option<String>,
     /// The server's other accounts, to share with.
     pub share_accounts: Vec<String>,
+    /// The server can sign a device without a keyboard in, once someone here
+    /// approves it.
+    pub pairing: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
