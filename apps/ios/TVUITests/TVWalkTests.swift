@@ -37,6 +37,20 @@ final class TVWalkTests: XCTestCase {
         pause(Double(ProcessInfo.processInfo.environment["KOAN_WALK_SETTLE"] ?? "6") ?? 6)
         snap("01-now-playing")
 
+        // Something playing, for the pages about what is playing: the first
+        // record in the grid, from its Play button.
+        start(at: .library)
+        press(.down)
+        press(.select)
+        pause(4)
+        press(.down)
+        press(.select)
+        pause(4)
+        if focus(app.buttons["Play"]) {
+            press(.select)
+            pause(6)
+        }
+
         start(at: .queue)
         snap("02-queue")
         press(.down)
@@ -119,13 +133,13 @@ final class TVWalkTests: XCTestCase {
         pause(2)
     }
 
-    /// Move right along a row until `element` has focus, then left if it was
-    /// passed. Counting presses breaks whenever a control comes or goes.
+    /// Move until `element` has focus: along the row, then down and up the
+    /// page. Counting presses breaks whenever a control comes or goes.
     @discardableResult
     private func focus(_ element: XCUIElement) -> Bool {
         guard element.waitForExistence(timeout: 3) else { return false }
-        for direction in [XCUIRemote.Button.right, .left] {
-            for _ in 0..<12 {
+        for direction in [XCUIRemote.Button.right, .left, .up, .down] {
+            for _ in 0..<10 {
                 if element.hasFocus { return true }
                 press(direction)
             }
