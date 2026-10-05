@@ -147,28 +147,26 @@ pub fn target(conn: &Connection, user: i64, service: &str) -> rusqlite::Result<O
     .optional()
 }
 
-/// An account and service with plays waiting, whose credential has not been
-/// refused. Accounts are taken in turn: the one whose oldest waiting play is
-/// oldest goes first.
-pub fn next_target(conn: &Connection) -> rusqlite::Result<Option<ScrobbleTarget>> {
-    conn.query_row(
+/// Every account and service with plays waiting whose credential has not
+/// been refused, the one whose oldest waiting play is oldest first.
+pub fn targets(conn: &Connection) -> rusqlite::Result<Vec<ScrobbleTarget>> {
+    let mut stmt = conn.prepare_cached(
         "SELECT s.user_id, s.service, s.token
            FROM scrobble_services s
            JOIN (SELECT user_id, service, MIN(id) AS first FROM scrobble_outbox
                   GROUP BY user_id, service) o
              ON o.user_id = s.user_id AND o.service = s.service
           WHERE s.error IS NULL
-          ORDER BY o.first LIMIT 1",
-        [],
-        |r| {
-            Ok(ScrobbleTarget {
-                user_id: r.get(0)?,
-                service: r.get(1)?,
-                token: r.get(2)?,
-            })
-        },
-    )
-    .optional()
+          ORDER BY o.first",
+    )?;
+    stmt.query_map([], |r| {
+        Ok(ScrobbleTarget {
+            user_id: r.get(0)?,
+            service: r.get(1)?,
+            token: r.get(2)?,
+        })
+    })?
+    .collect()
 }
 
 /// Up to `limit` of the plays waiting for one account's service, oldest first.
@@ -271,7 +269,7 @@ mod tests {
         let queued_count = connect(&db.conn, user, LISTENBRAINZ, "tok", "mate").unwrap();
         assert_eq!(queued_count, 2);
 
-        let target = next_target(&db.conn).unwrap().unwrap();
+        let target = targets(&db.conn).unwrap().remove(0);
         assert_eq!(target.token, "tok");
         let listens = queued(&db.conn, &target, 10).unwrap();
         let times: Vec<i64> = listens.iter().map(|q| q.listen.played_at).collect();
@@ -285,17 +283,14 @@ mod tests {
     fn reported_plays_are_queued_as_they_are_recorded() {
         let (db, user, track) = setup();
         record_plays_at(&db.conn, user, &[(track, 100)], SOURCE_SUBSONIC).unwrap();
-        assert!(
-            next_target(&db.conn).unwrap().is_none(),
-            "nothing connected"
-        );
+        assert!(targets(&db.conn).unwrap().is_empty(), "nothing connected");
 
         connect(&db.conn, user, LISTENBRAINZ, "tok", "mate").unwrap();
         record_plays_at(&db.conn, user, &[(track, 500)], SOURCE_SUBSONIC).unwrap();
         // Written when a track starts, before it is known to be heard.
         record_play_at(&db.conn, user, track, 600, None, SOURCE_LOCAL).unwrap();
 
-        let target = next_target(&db.conn).unwrap().unwrap();
+        let target = targets(&db.conn).unwrap().remove(0);
         let listens = queued(&db.conn, &target, 10).unwrap();
         let times: Vec<i64> = listens.iter().map(|q| q.listen.played_at).collect();
         assert_eq!(times, vec![100, 500]);
@@ -317,7 +312,7 @@ mod tests {
         connect(&db.conn, user, LISTENBRAINZ, "tok", "mate").unwrap();
 
         refuse(&db.conn, user, LISTENBRAINZ, "Invalid token").unwrap();
-        assert!(next_target(&db.conn).unwrap().is_none());
+        assert!(targets(&db.conn).unwrap().is_empty());
         assert!(target(&db.conn, user, LISTENBRAINZ).unwrap().is_none());
         assert_eq!(services(&db.conn, user).unwrap()[0].pending, 2);
 
@@ -340,6 +335,6 @@ mod tests {
         connect(&db.conn, user, LISTENBRAINZ, "tok", "mate").unwrap();
         record_plays_at(&db.conn, user, &[(track, 100)], SOURCE_SUBSONIC).unwrap();
         db.conn.execute("DELETE FROM play_history", []).unwrap();
-        assert!(next_target(&db.conn).unwrap().is_none());
+        assert!(targets(&db.conn).unwrap().is_empty());
     }
 }

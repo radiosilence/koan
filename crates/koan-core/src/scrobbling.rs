@@ -119,7 +119,9 @@ fn run(pool: Pool) {
         if !drain {
             continue;
         }
-        match send_queued(&pool, &http) {
+        match send_queued(&pool, &mut |token, kind, listens| {
+            submit(&http, token, kind, listens)
+        }) {
             Ok(()) => {
                 retry = FIRST_RETRY;
                 not_before = None;
@@ -155,19 +157,42 @@ impl From<rusqlite::Error> for Unsent {
     }
 }
 
-/// Send everything queued, account by account.
-fn send_queued(pool: &Pool, http: &reqwest::blocking::Client) -> Result<(), Unsent> {
-    'targets: loop {
-        let (target, batch) = {
-            let db = pool.get()?;
-            let Some(target) = queries::next_target(&db.conn)? else {
-                return Ok(());
-            };
-            let batch = queries::queued(&db.conn, &target, BATCH)?;
-            (target, batch)
-        };
+/// Send everything queued, account by account. An account whose service
+/// cannot be reached is passed over for the rest of the pass, so it holds up
+/// no other; the pass then fails, and the sender tries again after a wait.
+fn send_queued(
+    pool: &Pool,
+    send: &mut impl FnMut(&str, ListenType, &[&Listen]) -> Sent,
+) -> Result<(), Unsent> {
+    let targets = queries::targets(&pool.get()?.conn)?;
+    let mut unreachable: Option<Unsent> = None;
+    for target in targets {
+        if let Err(wait) = drain(pool, &target, send)? {
+            let longest = unreachable.and_then(|u| u.wait).max(wait);
+            unreachable = Some(Unsent { wait: longest });
+        }
+    }
+    unreachable.map_or(Ok(()), Err)
+}
+
+type Sent = Result<(), Failure>;
+
+/// Send one account's queue until it is empty, the credential is refused, or
+/// the service cannot be reached, which is the inner `Err` with how long the
+/// service asked to be left.
+fn drain(
+    pool: &Pool,
+    target: &ScrobbleTarget,
+    send: &mut impl FnMut(&str, ListenType, &[&Listen]) -> Sent,
+) -> Result<Result<(), Option<Duration>>, Unsent> {
+    if target.service != LISTENBRAINZ {
+        refuse(pool, target, "kōan cannot send to this service.")?;
+        return Ok(Ok(()));
+    }
+    loop {
+        let batch = queries::queued(&pool.get()?.conn, target, BATCH)?;
         if batch.is_empty() {
-            return Ok(());
+            return Ok(Ok(()));
         }
         // A play of a track with no artist or title tells the service nothing.
         let (sendable, blank): (Vec<_>, Vec<_>) = batch
@@ -180,24 +205,23 @@ fn send_queued(pool: &Pool, http: &reqwest::blocking::Client) -> Result<(), Unse
         if sendable.is_empty() {
             continue;
         }
-        if target.service != LISTENBRAINZ {
-            refuse(pool, &target, "kōan cannot send to this service.")?;
-            continue;
-        }
         let listens: Vec<&Listen> = sendable.iter().map(|q| &q.listen).collect();
         let ids: Vec<i64> = sendable.iter().map(|q| q.outbox_id).collect();
-        match submit(http, &target.token, ListenType::of(listens.len()), &listens) {
+        match send(&target.token, ListenType::of(listens.len()), &listens) {
             Ok(()) => queries::dequeue(&pool.get()?.conn, &ids)?,
-            Err(Failure::Refused) => refuse(
-                pool,
-                &target,
-                "ListenBrainz refused the token. Connect again with a current one.",
-            )?,
+            Err(Failure::Refused) => {
+                refuse(
+                    pool,
+                    target,
+                    "ListenBrainz refused the token. Connect again with a current one.",
+                )?;
+                return Ok(Ok(()));
+            }
             // One listen it will not take fails the batch: send them singly
             // to find it, and drop only what it rejects.
             Err(Failure::Rejected(why)) => {
                 for (listen, id) in listens.iter().zip(&ids) {
-                    match submit(http, &target.token, ListenType::Single, &[listen]) {
+                    match send(&target.token, ListenType::Single, &[listen]) {
                         Ok(()) => {}
                         Err(Failure::Rejected(_)) => {
                             log::info!(
@@ -207,15 +231,15 @@ fn send_queued(pool: &Pool, http: &reqwest::blocking::Client) -> Result<(), Unse
                             );
                         }
                         Err(Failure::Refused) => {
-                            refuse(pool, &target, "ListenBrainz refused the token.")?;
-                            continue 'targets;
+                            refuse(pool, target, "ListenBrainz refused the token.")?;
+                            return Ok(Ok(()));
                         }
-                        Err(Failure::Unreachable(wait)) => return Err(Unsent { wait }),
+                        Err(Failure::Unreachable(wait)) => return Ok(Err(wait)),
                     }
                     queries::dequeue(&pool.get()?.conn, &[*id])?;
                 }
             }
-            Err(Failure::Unreachable(wait)) => return Err(Unsent { wait }),
+            Err(Failure::Unreachable(wait)) => return Ok(Err(wait)),
         }
     }
 }
@@ -309,11 +333,18 @@ fn submit(
         .get("X-RateLimit-Reset-In")
         .and_then(|v| v.to_str().ok()?.parse().ok())
         .map(Duration::from_secs);
+    outcome(status, wait, || resp.text().unwrap_or_default())
+}
+
+/// What a submission's status means. Any other client error is the request
+/// as it stands, which sending it again will not change; only rate limiting
+/// and the server's own errors are worth waiting out.
+fn outcome(status: u16, wait: Option<Duration>, body: impl FnOnce() -> String) -> Sent {
     match status {
         200..=299 => Ok(()),
         401 => Err(Failure::Refused),
-        400 => Err(Failure::Rejected(resp.text().unwrap_or_default())),
         429 => Err(Failure::Unreachable(wait)),
+        400..=499 => Err(Failure::Rejected(format!("{status}: {}", body()))),
         _ => Err(Failure::Unreachable(None)),
     }
 }
