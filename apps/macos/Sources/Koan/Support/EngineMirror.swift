@@ -54,6 +54,7 @@ final class EngineMirror: Observable {
     private var _transfers: [Transfer] = []
     private var _figures: [Int64: TransferFigure] = [:]
     private var _libraryVersion: UInt64 = 0
+    private var _historyVersion: UInt64 = 0
     private var _scanning = false
     private var _syncing = false
     private var _syncProgress: SyncProgress?
@@ -217,6 +218,13 @@ final class EngineMirror: Observable {
         return _libraryVersion
     }
 
+    /// Moves when a play is recorded or plays are forgotten: the pages
+    /// derived from history ask again.
+    var historyVersion: UInt64 {
+        access(\.historyVersion)
+        return _historyVersion
+    }
+
     // MARK: - Reading the fast slice
     //
     // Behind calls rather than a property, so a view has to mean it. Reading
@@ -309,6 +317,8 @@ final class EngineMirror: Observable {
             }
         case .library(let version):
             mutate(\.libraryVersion) { _libraryVersion = version }
+        case .history(let version):
+            mutate(\.historyVersion) { _historyVersion = version }
         case .tasks(let scanning, let syncing):
             if scanning != _scanning || syncing != _syncing {
                 mutate(\.tasks) {
