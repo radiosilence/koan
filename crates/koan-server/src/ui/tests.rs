@@ -660,6 +660,27 @@ fn row_ids(body: &str) -> Vec<String> {
 }
 
 #[tokio::test]
+async fn a_shelfs_headings_open_its_browsers_whether_or_not_it_overflows() {
+    let f = setup(true);
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        queries::add_favourite(&db.conn, 1, f.track_id).unwrap();
+    }
+    let body = send(&f.app, authed(&f.state, "/favourites").body(Body::empty()).unwrap())
+        .await
+        .body;
+    assert!(!body.contains("See all"), "one track is all of it");
+    let heading = body
+        .split("<h2>")
+        .find(|h| h.contains("Tracks<svg"))
+        .expect("a Tracks heading");
+    assert!(
+        heading.starts_with("<a ") && heading.contains("href=\"/tracks?sort=artist&amp;fav=1\""),
+        "{heading}"
+    );
+}
+
+#[tokio::test]
 async fn see_all_opens_the_browser_its_preview_is_the_head_of() {
     let f = setup(true);
     {

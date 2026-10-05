@@ -342,6 +342,10 @@
     width: calc(var(--spacing) * 12);
     height: calc(var(--spacing) * 12);
   }
+  .size-\[0\.8em\] {
+    width: 0.8em;
+    height: 0.8em;
+  }
   .size-\[15px\] {
     width: 15px;
     height: 15px;
@@ -573,6 +577,9 @@
   .stroke-2 {
     stroke-width: 2;
   }
+  .stroke-\[2\.5\] {
+    stroke-width: 2.5;
+  }
   .object-cover {
     object-fit: cover;
   }
@@ -710,6 +717,9 @@
   }
   .whitespace-nowrap {
     white-space: nowrap;
+  }
+  .text-\[inherit\] {
+    color: inherit;
   }
   .text-bad {
     color: var(--bad);

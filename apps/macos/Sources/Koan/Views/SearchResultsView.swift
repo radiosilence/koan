@@ -222,11 +222,21 @@ private struct SectionHeading: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Text(title)
-                .font(.title3.weight(.semibold))
-            Text("\(count)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+            // The heading opens the browser on the whole set, as See all does.
+            Button(action: seeAll) {
+                HStack(spacing: 7) {
+                    Text(title)
+                        .font(.title3.weight(.semibold))
+                    Text("\(count)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
             Spacer()
             if let total, total > UInt64(count) {
                 Button("See all (\(total))", action: seeAll)

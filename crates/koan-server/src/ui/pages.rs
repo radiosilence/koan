@@ -29,6 +29,8 @@ const ICON_PREV: &str =
     "<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M6 5h2v14H6zM20 5v14L9 12z\"/></svg>";
 const ICON_NEXT: &str =
     "<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M16 5h2v14h-2zM4 5v14l11-7z\"/></svg>";
+const ICON_CHEVRON: &str = "<svg class=\"size-[0.8em] fill-none stroke-current stroke-[2.5]\" \
+viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M9 5l7 7-7 7\"/></svg>";
 // `playing` is on the body while music plays.
 const ICON_PLAY: &str = "<svg class=\"in-[.playing]:hidden\" viewBox=\"0 0 24 24\" aria-hidden=true>\
      <path d=\"M7 4v16l13-8z\"/></svg>";
@@ -998,8 +1000,8 @@ fn shelf_versions(conn: &rusqlite::Connection, s: &Summary) -> Versions {
     versions
 }
 
-/// A section's heading, with "See all (n)" when the preview is not all of
-/// it. The link opens the browser with the shelf as its filter.
+/// A section's heading, which opens the browser with the shelf as its filter,
+/// and "See all (n)" beside it when the preview is not all of it.
 fn section_head(
     title: &str,
     total: u64,
@@ -1008,16 +1010,16 @@ fn section_head(
     kind: Kind,
     extra: &str,
 ) -> String {
+    let href = escape(&browse::see_all(shelf, kind));
     let all = if total as usize > shown {
-        format!(
-            "<a class=\"text-meta\" href=\"{}\">See all ({total})</a>",
-            escape(&browse::see_all(shelf, kind))
-        )
+        format!("<a class=\"text-meta\" href=\"{href}\">See all ({total})</a>")
     } else {
         String::new()
     };
     format!(
-        "<div class=\"{LIST_HEAD}\"><h2>{title}</h2><div class=\"{ACTIONS}\">{extra}{all}</div></div>"
+        "<div class=\"{LIST_HEAD}\"><h2><a class=\"inline-flex items-center gap-1 text-[inherit] \
+hover:text-brand hover:no-underline\" href=\"{href}\">{title}{ICON_CHEVRON}</a></h2>\
+<div class=\"{ACTIONS}\">{extra}{all}</div></div>"
     )
 }
 

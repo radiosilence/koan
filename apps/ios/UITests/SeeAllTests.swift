@@ -58,6 +58,40 @@ final class SeeAllTests: XCTestCase {
         if checked == 0 { throw XCTSkip("\(name) shows everything it has") }
     }
 
+    func testFavouritesHeadings() throws { try headings("Favourites") }
+
+    func testRecentlyPlayedHeadings() throws { try headings("Recently Played") }
+
+    /// Each section's heading opens the same browser as See all, whether or
+    /// not the section shows everything it has: the shelf's count for that
+    /// kind, in its header, is the browser's.
+    private func headings(_ name: String) throws {
+        var checked = 0
+        for list in ["tracks", "albums", "artists"] {
+            open(name)
+            let heading = app.buttons["heading-\(list)"]
+            guard reveal(heading) else { continue }
+            // The header's counts read "14 artists · 15 albums · 22 tracks".
+            let counts = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", " \(list)"))
+                .allElementsBoundByIndex.map(\.label).joined(separator: " · ")
+            let noun = String(list.dropLast())
+            let total = counts.components(separatedBy: " · ")
+                .first { $0.hasSuffix(" \(list)") || $0.hasSuffix(" \(noun)") }
+                .flatMap { Int($0.prefix { $0.isNumber }) }
+            let expected = try XCTUnwrap(total, "no \(list) count in “\(counts)”")
+            let overflows = app.buttons["see-all-\(list)"].exists
+            heading.tap()
+            let count = "\(expected) \(expected == 1 ? noun : list)"
+            XCTAssert(
+                app.staticTexts[count].waitForExistence(timeout: 10),
+                "\(name): the \(list) heading opened a browser without “\(count)”"
+            )
+            snap("\(name)-\(list)-heading\(overflows ? "" : "-whole")")
+            checked += 1
+        }
+        if checked == 0 { throw XCTSkip("\(name) is empty") }
+    }
+
     /// The shelf, from the Library tab's root.
     private func open(_ name: String) {
         let bar = app.tabBars.buttons["Library"]

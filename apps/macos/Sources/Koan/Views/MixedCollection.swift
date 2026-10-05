@@ -270,16 +270,20 @@ struct MixedCollection: NSViewRepresentable {
             case .albums: parent?.totals?.albums
             case .tracks: parent?.totals?.tracks
             }
-            if let total, total > UInt64(count(of: section)) {
-                header.all.title = "See all (\(total))"
-                header.all.isHidden = false
+            // The heading opens the browser wherever the page has one to
+            // open, and See all adds the count when the preview is short of it.
+            if let total {
                 let seeAll = parent?.seeAll
                 header.open = { seeAll?(section.list) }
+                header.all.title = "See all (\(total))"
+                header.all.isHidden = total <= UInt64(count(of: section))
             } else {
                 header.all.isHidden = true
                 header.open = nil
             }
+            header.chevron.isHidden = header.open == nil
             header.needsLayout = true
+            header.window?.invalidateCursorRects(for: header)
         }
 
         private func count(of section: Section) -> Int {
@@ -662,8 +666,10 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
     let title = NSTextField(labelWithString: "")
     let count = NSTextField(labelWithString: "")
     let all = NSButton(title: "", target: nil, action: nil)
+    let chevron = NSImageView()
     /// Which section it heads, for refreshing it in place.
     var section: Int?
+    /// Where the heading goes: the browser, filtered to the page's shelf.
     var open: (() -> Void)?
 
     override init(frame: NSRect) {
@@ -681,9 +687,30 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
         all.action = #selector(seeAll)
         all.isHidden = true
         addSubview(all)
+        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        chevron.contentTintColor = .secondaryLabelColor
+        chevron.isHidden = true
+        addSubview(chevron)
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(seeAll)))
     }
 
     @objc private func seeAll() { open?() }
+
+    /// The title and its chevron are the heading's link.
+    private var link: CGRect { title.frame.union(chevron.frame) }
+
+    override func resetCursorRects() {
+        if open != nil { addCursorRect(link, cursor: .pointingHand) }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Only the link and the button take clicks; the rest of the header
+        // is the gap between sections.
+        let local = convert(point, from: superview)
+        if !all.isHidden, all.frame.contains(local) { return all }
+        return open != nil && link.contains(local) ? self : nil
+    }
 
     required init?(coder: NSCoder) { fatalError("not decoded") }
 
@@ -695,7 +722,9 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
         let width = ceil(title.intrinsicContentSize.width)
         title.frame = CGRect(x: 0, y: bounds.height - height - 6, width: width, height: height)
         let countHeight = ceil(count.intrinsicContentSize.height)
-        count.frame = CGRect(x: width + 4, y: title.frame.maxY - countHeight - 1, width: 60, height: countHeight)
+        let countWidth = count.stringValue.isEmpty ? 0 : ceil(count.intrinsicContentSize.width) + 4
+        count.frame = CGRect(x: width + 4, y: title.frame.maxY - countHeight - 1, width: max(countWidth, 0), height: countHeight)
+        chevron.frame = CGRect(x: width + 4 + countWidth, y: title.frame.midY - 6, width: 10, height: 12)
         all.sizeToFit()
         let size = all.frame.size
         all.frame = CGRect(

@@ -202,10 +202,20 @@ struct ShelfView: View {
         nav.show(library.seeAll(list, of: shelf))
     }
 
-    /// A section's title, with See all when the preview is not all of it.
+    /// A section's title, which opens the browser filtered to the shelf, with
+    /// See all beside it when the preview is not all of it.
     private func sectionHead(_ title: String, total: UInt64, shown: Int, list: LibraryModel.ShelfList) -> some View {
         HStack {
-            Text(title)
+            Button { seeAll(list) } label: {
+                HStack(spacing: 4) {
+                    Text(title)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("heading-\(list)")
             Spacer()
             if total > UInt64(shown) {
                 Button("See all (\(total))") { seeAll(list) }
