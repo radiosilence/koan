@@ -209,6 +209,7 @@ struct ShelfView: View {
             Spacer()
             if total > UInt64(shown) {
                 Button("See all (\(total))") { seeAll(list) }
+                    .accessibilityIdentifier("see-all-\(list)")
                     .buttonStyle(.borderless)
                     .font(.subheadline)
                     .textCase(nil)
@@ -286,6 +287,7 @@ struct ShelfView: View {
                 )
                 .rowBehaviour(playable: .track(track))
                 .primaryTap { play([track.id]) }
+                .accessibilityIdentifier("track-\(track.id)")
             }
         } header: {
             sectionHead("Tracks", total: summary?.trackTotal ?? 0, shown: tracks.count, list: .tracks)

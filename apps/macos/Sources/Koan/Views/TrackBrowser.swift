@@ -133,6 +133,7 @@ struct TrackBrowser: View {
                 )
                 .rowBehaviour(playable: .track(track))
                 .primaryTap { play([track.id]) }
+                .accessibilityIdentifier("track-\(track.id)")
             }
         }
         .listStyle(.inset)
