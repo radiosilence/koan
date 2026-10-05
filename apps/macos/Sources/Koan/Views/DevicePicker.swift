@@ -674,7 +674,11 @@ extension PlayerModel {
         switch outputs.current {
         case .renderer(let udn): return outputs.renderers.first { $0.id == udn }?.name
         case .device(let name): return name
-        case .default: return outputs.owner == nil ? currentDevice : nil
+        // A phone's one device is its route, named even before the engine
+        // has reported a current device.
+        case .default:
+            guard outputs.owner == nil else { return nil }
+            return currentDevice ?? (outputs.devices.count == 1 ? outputs.devices.first?.name : nil)
         }
     }
 }
