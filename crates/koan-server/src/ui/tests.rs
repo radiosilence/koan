@@ -1245,6 +1245,80 @@ fn assert_closed(
     ));
 }
 
+#[tokio::test]
+async fn a_waiting_device_is_approved_from_the_pair_page() {
+    let f = setup(true);
+    let r = send(&f.app, get("/pair/ABCD-EFGH").body(Body::empty()).unwrap()).await;
+    assert_eq!(r.location(), "/auth/resume?next=%2Fpair%2FABCD-EFGH");
+
+    let opened = crate::pair::pairings()
+        .open("Living <room> TV", "10.0.0.8".parse().unwrap())
+        .unwrap();
+    let typed = opened.code.to_lowercase();
+    let r = send(
+        &f.app,
+        authed(&f.state, &format!("/pair?code={typed}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.location(), format!("/pair/{typed}"));
+    let r = send(
+        &f.app,
+        authed(&f.state, r.location()).body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Sign in Living &lt;room&gt; TV?"),
+        "{}",
+        r.body
+    );
+    assert!(r.body.contains("<strong>alice</strong>"));
+    assert!(r.body.contains("Requested from 10.0.0.8, on your network."));
+    let far = crate::pair::pairings()
+        .open("Far TV", "2001:db8::7".parse().unwrap())
+        .unwrap();
+    let r = send(
+        &f.app,
+        authed(&f.state, &format!("/pair/{}", far.code))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        r.body
+            .contains("Requested from 2001:db8::7, from the internet."),
+        "{}",
+        r.body
+    );
+    drop(far);
+
+    let post = |origin: &str| {
+        Request::post(format!("/pair/{typed}/approve"))
+            .header(header::HOST, HOST)
+            .header(header::ORIGIN, origin)
+            .header(
+                header::COOKIE,
+                format!("koan_access={}", access_token(&f.state)),
+            )
+            .body(Body::empty())
+            .unwrap()
+    };
+    let r = send(&f.app, post("https://evil.test")).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = send(&f.app, post(ORIGIN)).await;
+    assert!(r.body.contains("Signed in"), "{}", r.body);
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    let keys = queries::api_keys::list_api_keys(&db.conn, Some(1)).unwrap();
+    assert_eq!(keys[0].name, "Living <room> TV");
+
+    // Settled: the code no longer names anything.
+    let r = send(&f.app, post(ORIGIN)).await;
+    assert!(r.body.contains("Nothing to sign in"));
+    drop(opened);
+}
+
 mod oauth {
     use super::*;
     use base64::Engine as _;
