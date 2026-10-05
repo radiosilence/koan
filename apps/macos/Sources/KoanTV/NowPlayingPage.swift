@@ -50,7 +50,9 @@ struct NowPlayingPage: View {
             }
             .ignoresSafeArea()
         }
-        .defaultFocus($focus, .playPause)
+        // Whenever the remote brings focus into the page, not only when it
+        // first appears.
+        .defaultFocus($focus, .playPause, priority: .userInitiated)
         .focusScope(page)
         .outputSheet(isPresented: $showingDevices)
         .controlSheet(isPresented: $showingControl)

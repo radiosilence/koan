@@ -238,7 +238,7 @@ struct ArtistDetailView: View {
     private var albums: [Album] { record?.albums ?? [] }
     private var info: ArtistInfo? { record?.info }
 
-    private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
+    private let columns = GridItem.tiles(minimum: 150, maximum: 210, spacing: 18)
 
     var body: some View {
         if let record, record.albums.isEmpty, !record.appearances.isEmpty {

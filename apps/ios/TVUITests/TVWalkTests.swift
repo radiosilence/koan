@@ -111,6 +111,15 @@ final class TVWalkTests: XCTestCase {
 
         start(at: .search)
         snap("21-search")
+        press(.down)
+        let field = app.searchFields.firstMatch
+        if field.waitForExistence(timeout: 3) {
+            field.typeText(ProcessInfo.processInfo.environment["KOAN_WALK_SEARCH"] ?? "bliss")
+            pause(4)
+            snap("21b-search-results")
+            press(.down, times: 2)
+            snap("21c-search-focused")
+        }
 
         start(at: .settings)
         snap("22-settings")
