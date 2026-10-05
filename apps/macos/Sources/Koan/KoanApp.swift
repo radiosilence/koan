@@ -28,6 +28,7 @@ struct KoanApp: App {
                         .environment(state.meter)
                         .environment(state.mirror)
                         .modifier(InviteConfirmation(state: state))
+                        .modifier(PairingConfirmation(state: state))
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
                         .tint(.koanAccent)
