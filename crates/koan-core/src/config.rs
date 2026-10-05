@@ -752,6 +752,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "subsonic.enabled"
         | "subsonic.port"
         | "subsonic.username"
+        | "subsonic.transcode"
         | "subsonic.ffmpeg"
         // Whether this machine is open to its network, and where others are.
         | "devices.discoverable"
