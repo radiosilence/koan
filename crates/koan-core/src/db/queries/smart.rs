@@ -433,7 +433,7 @@ mod tests {
                 &conn,
                 r#"{"rules":[{"field":"artist","op":"is","value":"massive  ATTACK"}]}"#
             ),
-            vec![b, a],
+            vec![a, b],
             "album order: disc, number, then id; sample tracks share number 1"
         );
         assert_eq!(
