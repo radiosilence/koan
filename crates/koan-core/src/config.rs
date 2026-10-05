@@ -459,6 +459,12 @@ pub struct AuthConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DevicesConfig {
+    /// Take part in the local network at all: listen, announce, look for other
+    /// devices and dial them. Off, this device reaches others only through the
+    /// server. For a shared network, and for test runs that relaunch an app
+    /// over and over, which would otherwise announce it to every device in
+    /// the house each time.
+    pub nearby: bool,
     /// Listen on the local network and announce this device there, so any
     /// koan app on it can see what is playing and control it.
     pub discoverable: bool,
@@ -489,6 +495,7 @@ pub enum NearbyControl {
 impl Default for DevicesConfig {
     fn default() -> Self {
         Self {
+            nearby: true,
             discoverable: true,
             port: DEVICES_PORT,
             addresses: Vec::new(),
@@ -745,6 +752,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "subsonic.port"
         | "subsonic.username"
         // Whether this machine is open to its network, and where others are.
+        | "devices.nearby"
         | "devices.discoverable"
         | "devices.port"
         | "devices.addresses"

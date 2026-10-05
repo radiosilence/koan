@@ -809,6 +809,8 @@ tv-walk: (tv-ffi "appletvsimulator") ios-project
     [ -n "$sim" ] || { echo "No Apple TV simulator." >&2; exit 1; }
     xcrun simctl boot "$sim" 2>/dev/null || true
     xcrun simctl bootstatus "$sim" -b >/dev/null
+    # A booted simulator is a running copy of tvOS; leave none behind.
+    trap 'xcrun simctl shutdown "$sim"' EXIT
     for v in KOAN_REMOTE__ENABLED KOAN_REMOTE__URL KOAN_REMOTE__USERNAME KOAN_REMOTE__API_KEY KOAN_REMOTE__PASSWORD KOAN_WALK_SETTLE; do
         [ -n "${!v:-}" ] && export "TEST_RUNNER_$v=${!v}"
     done
@@ -834,6 +836,7 @@ tv-join link device="sim": ios-project
         just tv-ffi appletvsimulator
         dest=$(xcrun simctl list devices available -j \
             | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+        trap 'xcrun simctl shutdown "$dest"' EXIT
     fi
     auth=(-allowProvisioningUpdates)
     if [ -n "${APPLE_API_KEY_PATH:-}" ]; then

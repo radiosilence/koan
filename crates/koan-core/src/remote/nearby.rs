@@ -212,6 +212,11 @@ impl Stop {
 /// first at the addresses devices were last reached at, which answers before
 /// Bonjour has said anything, then wherever Bonjour finds them.
 pub fn start(local: Local) {
+    // Nothing runs, so `reconfigure`, `wake` and `suspend` find nothing to do.
+    if !Config::load().map(|c| c.devices.nearby).unwrap_or(true) {
+        log::info!("nearby: off (devices.nearby = false)");
+        return;
+    }
     *RUNNING.lock() = Some(Running {
         local,
         listener: None,
