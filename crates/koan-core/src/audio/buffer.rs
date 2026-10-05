@@ -976,6 +976,7 @@ fn decode_single(
             .unwrap_or(
                 seek_ms.saturating_sub(preroll) * sample_rate as u64 * channels as u64 / 1000,
             );
+        let landed_at_start = seek_samples == 0;
         if preroll > 0 {
             let wanted = seek_ms * sample_rate as u64 / 1000 * channels as u64;
             discard = wanted.saturating_sub(seek_samples) as usize;
@@ -985,7 +986,7 @@ fn decode_single(
             dec.reset();
         }
         if let Some(ref mut opus) = opus_bridge {
-            opus.reset(seeked.actual_ts == 0);
+            opus.reset(landed_at_start);
         }
     }
 
