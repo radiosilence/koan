@@ -86,8 +86,12 @@ is not.
 
 A device is not dropped the moment it goes quiet. For one heartbeat (45
 seconds) it reads as reconnecting, so one missed signal does not mark it
-asleep; then it is listed as asleep with when it was last seen. A device heard
-from again is back at once. While nothing can reach it, it can be chosen only
+asleep. After that it stays listed, as asleep with when it was last seen, only
+if this device has used it: controlled it, or sent it music with **Play on** or
+**Move here**. A device never used from here is dropped once the heartbeat has
+passed, so phones that have moved on, test installs and devices that were
+merely on the same network do not pile up. A device heard from again is back
+at once, used or not. While nothing can reach it, it can be chosen only
 if it can be woken.
 
 - **One a push can wake**, a phone on your account that iOS has suspended,
@@ -97,7 +101,7 @@ if it can be woken.
   network or a Mac that has gone to sleep, is shown asleep and cannot be
   chosen.
 
-An asleep device stays listed until you forget it: right-click it in the
+An asleep device you have used stays listed until you forget it: right-click it in the
 Control menu on the Mac, or press and hold it on iOS, and choose **Forget**.
 One this device only knows of, such as a stranger's on the network, is
 forgotten here. One of your account's is forgotten by the server too, with the
