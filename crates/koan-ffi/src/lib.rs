@@ -32,7 +32,7 @@ use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedP
 use koan_core::remote::client::SubsonicError;
 use uuid::Uuid;
 
-use koan_core::db::queries::{RECENT_DAYS, RECENT_LIMIT};
+use koan_core::db::queries::RECENT_LIMIT;
 
 mod offload;
 mod state;
@@ -1159,47 +1159,42 @@ impl KoanEngine {
     }
 
     /// What was played lately: the records, artists and tracks of the last
-    /// `RECENT_DAYS`, at most `RECENT_LIMIT` of each, each once and newest
-    /// first by its latest play, narrowed by `search`.
+    /// `shelves::RECENT_DAYS`, at most `RECENT_LIMIT` of each, each once and
+    /// newest first by its latest play, narrowed by `search`. The shelf, its
+    /// window and its order are `koan_core::shelves`'.
     pub async fn recently_played(
         self: Arc<Self>,
         search: Option<String>,
     ) -> Result<RecentlyPlayed, KoanError> {
+        use koan_core::shelves::{self, Shelf};
         offload::offload(move || {
             let db = self.db()?;
-            let since = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i64)
-                - RECENT_DAYS * 24 * 60 * 60;
-            let recent =
-                queries::recently_played(&db.conn, queries::LOCAL_USER, since, RECENT_LIMIT)
-                    .map_err(db_err)?;
+            let (user, now) = (queries::LOCAL_USER, shelves::now());
             let search = trimmed(&search);
-            // In the order played: the listings come back in their own.
-            fn in_order<T>(ids: &[i64], rows: Vec<T>, id: impl Fn(&T) -> i64) -> Vec<T> {
-                let mut by_id: HashMap<i64, T> = rows.into_iter().map(|r| (id(&r), r)).collect();
-                ids.iter().filter_map(|i| by_id.remove(i)).collect()
-            }
             let albums = queries::list_albums(
                 &db.conn,
                 &queries::AlbumQuery {
-                    ids: Some(&recent.albums),
                     search,
-                    ..Default::default()
+                    limit: Some(RECENT_LIMIT),
+                    ..Shelf::Recent.albums(user, now)
                 },
             )
             .map_err(db_err)?;
             let artists = queries::list_artists(
                 &db.conn,
                 &queries::ArtistQuery {
-                    ids: Some(&recent.artists),
                     search,
-                    ..Default::default()
+                    limit: Some(RECENT_LIMIT),
+                    ..Shelf::Recent.artists(user, now)
                 },
             )
             .map_err(db_err)?;
+            // Narrowed after the cap, as before: a substring over the title,
+            // artist and record, which the full-text index does not answer.
             let needle = search.map(str::to_lowercase);
-            let tracks: Vec<_> = queries::tracks_by_ids(&db.conn, &recent.tracks)
+            let tracks: Vec<_> = Shelf::Recent
+                .tracks(user, now)
+                .page(&db.conn, RECENT_LIMIT, 0)
                 .map_err(db_err)?
                 .into_iter()
                 .filter(|t| {
@@ -1210,17 +1205,39 @@ impl KoanEngine {
                     })
                 })
                 .collect();
-            let tracks = in_order(&recent.tracks, tracks, |t| t.id);
             Ok(RecentlyPlayed {
-                albums: in_order(&recent.albums, albums, |a| a.id)
-                    .into_iter()
-                    .map(Album::from)
-                    .collect(),
-                artists: in_order(&recent.artists, artists, |a| a.id)
-                    .into_iter()
-                    .map(Artist::from)
-                    .collect(),
+                albums: albums.into_iter().map(Album::from).collect(),
+                artists: artists.into_iter().map(Artist::from).collect(),
                 tracks: self.decorate(&db, tracks),
+            })
+        })
+        .await
+    }
+
+    /// A shelf page: the first few artists, records and tracks on `shelf`,
+    /// with how many there are of each. "See all" is the library's own
+    /// listing with the same shelf as its filter; see `koan_core::shelves`.
+    pub async fn shelf_summary(
+        self: Arc<Self>,
+        shelf: ShelfKind,
+    ) -> Result<ShelfSummary, KoanError> {
+        use koan_core::shelves::{self, Shelf};
+        offload::offload(move || {
+            let db = self.db()?;
+            let shelf = match &shelf {
+                ShelfKind::Favourites => Shelf::Favourites,
+                ShelfKind::Recent => Shelf::Recent,
+                ShelfKind::Search { query } => Shelf::Search(query),
+            };
+            let s = shelves::summary(&db.conn, shelf, queries::LOCAL_USER, shelves::now())
+                .map_err(db_err)?;
+            Ok(ShelfSummary {
+                artists: s.artists.preview.into_iter().map(Artist::from).collect(),
+                artist_total: s.artists.total,
+                albums: s.albums.preview.into_iter().map(Album::from).collect(),
+                album_total: s.albums.total,
+                tracks: self.decorate(&db, s.tracks.preview),
+                track_total: s.tracks.total,
             })
         })
         .await
@@ -1277,8 +1294,8 @@ impl KoanEngine {
                 &db.conn,
                 &queries::AlbumQuery {
                     search: trimmed(&search),
-                    favourites_of: Some(queries::LOCAL_USER),
-                    ..Default::default()
+                    ..koan_core::shelves::Shelf::Favourites
+                        .albums(queries::LOCAL_USER, koan_core::shelves::now())
                 },
             )
             .map_err(db_err)?;
@@ -1298,8 +1315,8 @@ impl KoanEngine {
                 &db.conn,
                 &queries::ArtistQuery {
                     search: trimmed(&search),
-                    favourites_of: Some(queries::LOCAL_USER),
-                    ..Default::default()
+                    ..koan_core::shelves::Shelf::Favourites
+                        .artists(queries::LOCAL_USER, koan_core::shelves::now())
                 },
             )
             .map_err(db_err)?;

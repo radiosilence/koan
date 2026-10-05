@@ -160,6 +160,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
 | `helpers.rs` | Shared by every front end: sign-in, favourite reconciliation, sharing, auto-sync and folder watching, forget-folder/forget-remote, cache and index maintenance |
 | `playlists.rs` | Playlists beyond the database: two-way Subsonic reconciliation, background pushes, M3U8 export |
+| `shelves.rs` | Favourites, Recently played and a search as filters on the album, artist and track listings (`AlbumQuery`, `ArtistQuery`, `TrackFilter`). A shelf page's previews are the head of those listings, with counts from the same query, so a preview and its "See all" agree. What each shelf holds, its window and its order live here; front ends ask by name |
 | `organize.rs` | File rename using format strings. Preview/execute/undo — one `PlanEntry` per file carrying its destination and outcome. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
 | `artist_info.rs` | Artist bio and photo: MusicBrainz id → Wikidata → Wikipedia/Commons. Resolved by id, never by name alone; cached per artist, misses included |
@@ -270,6 +271,7 @@ follows the top of the stack in front — see `TabShell`.
 | `mcp.rs` | MCP server (schema_sdl + graphql tools): stdio for `koan mcp`, `/mcp` on the main port behind koan's own tokens, admin capped at `user` |
 | `push.rs` | Apple push notifications to the iOS app: ES256 token auth, HTTP/2 to APNs. A background push wakes a suspended app to link; a play request becomes a notification to tap |
 | `pair.rs` | Pairings waiting to be approved, in memory: id, Crockford code, device name, ten-minute lapse, the socket route that holds the device, and `settle`, which mints the approver's key and sends it down. `/rest/koanPairInfo` and `/rest/koanPairApprove` in `subsonic.rs` and the web UI's `/pair` (`ui/pair.rs`) settle through it |
+| `transcode.rs` | Subsonic `stream` transcoding: whether a request gets the original or an `ffmpeg` Opus, MP3 or AAC encode, and running it |
 | `share.rs` | Public share pages and their audio, answering for a share's own tracks only |
 | `../styles/` | Tailwind sources for `assets/ui.css` and `assets/share.css`, on the theme koan.rocks uses (`site/src/theme.css`). The pages are styled with utilities in the templates; these hold element defaults and the rules for classes the scripts toggle or build (`playing`, `busy`, `missing`, the queue's rows). Quote every `class` attribute: Tailwind does not read an unquoted one. Run `just css` after changing either; the compiled files are committed because the crate embeds them |
 | `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use. `ui/oauth.rs` is the OAuth 2.1 authorization server for `/mcp`: discovery, stateless registration, consent, PKCE token exchange; `ui/connect.rs` the page explaining how to connect an assistant |

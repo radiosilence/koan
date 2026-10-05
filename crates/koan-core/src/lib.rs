@@ -13,6 +13,7 @@ pub mod player;
 pub mod playlists;
 pub mod quiet;
 pub mod remote;
+pub mod shelves;
 pub mod signal;
 pub mod upnp;
 
