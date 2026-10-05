@@ -25,6 +25,7 @@ final class Navigator {
         case searchResults
         case albums
         case artists
+        case tracks
         case favourites
         case recentlyPlayed
         case playHistory
@@ -35,6 +36,10 @@ final class Navigator {
 
         var id: Self { self }
 
+        /// The library's own listings, which the browse filters and a shelf's
+        /// See all narrow.
+        var isBrowser: Bool { self == .albums || self == .artists || self == .tracks }
+
         /// What the toolbar's filter field says — and, by its absence, which
         /// sections have no filter at all. The field and ⌘F both read it, so
         /// they cannot disagree about where narrowing is possible.
@@ -42,9 +47,11 @@ final class Navigator {
             switch self {
             case .albums: "Filter albums"
             case .artists: "Filter artists"
-            case .favourites: "Filter favourites"
-            case .recentlyPlayed: "Filter recently played"
+            case .tracks: "Filter tracks"
             case .playHistory: "Filter history"
+            // A shelf shows the first few of each kind, and narrowing is what
+            // its See all opens: the browser, filtered to the shelf.
+            case .favourites, .recentlyPlayed: nil
             // Short, and ordered by what is happening rather than by name.
             case .downloads: nil
             // A playlist is a sequence someone chose, and narrowing it hides

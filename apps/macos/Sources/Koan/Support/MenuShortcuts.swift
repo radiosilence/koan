@@ -56,6 +56,7 @@ struct NavigationCommand {
         .init(title: "Favourites", icon: Icon.favourite, key: "4", section: .favourites),
         .init(title: "History", icon: Icon.history, key: "5", section: .playHistory),
         .init(title: "Recently Played", icon: Icon.recentlyPlayed, key: "6", section: .recentlyPlayed),
+        .init(title: "Tracks", icon: Icon.track, key: "7", section: .tracks),
     ]
 
     var shortcut: MenuShortcut {
