@@ -424,6 +424,12 @@ pub struct SubsonicConfig {
     /// config.local.toml, which is gitignored and `0600`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub password: String,
+    /// Transcode `stream` for clients that ask for a lower bitrate or another
+    /// format. Off, every client gets the original file.
+    pub transcode: bool,
+    /// The `ffmpeg` transcoding runs, by name on `PATH` or by path. Without
+    /// one, originals are served.
+    pub ffmpeg: String,
 }
 
 impl Default for SubsonicConfig {
@@ -433,6 +439,8 @@ impl Default for SubsonicConfig {
             port: None,
             username: "koan".into(),
             password: String::new(),
+            transcode: true,
+            ffmpeg: "ffmpeg".into(),
         }
     }
 }
@@ -744,6 +752,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "subsonic.enabled"
         | "subsonic.port"
         | "subsonic.username"
+        | "subsonic.transcode"
+        | "subsonic.ffmpeg"
         // Whether this machine is open to its network, and where others are.
         | "devices.discoverable"
         | "devices.port"
