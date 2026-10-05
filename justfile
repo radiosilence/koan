@@ -820,6 +820,37 @@ tv-walk: (tv-ffi "appletvsimulator") ios-project
     xcrun xcresulttool export attachments --path "$out/walk.xcresult" --output-path "$out"
     echo "screenshots in $out"
 
+# Pair a signed-out television with a throwaway local server, end to end:
+# `TVPairTests` asks for a code on the simulator and approves it as a phone
+# would. Screenshots land in target/tv-pair.
+tv-pair: (tv-ffi "appletvsimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/tv-pair
+    rm -rf "$out" && mkdir -p "$out"
+    cargo build -q -p koan-cli
+    dir=$(mktemp -d)
+    password=tv-pair-$RANDOM$RANDOM
+    KOAN_CONFIG_DIR=$dir KOAN_USERNAME=owner KOAN_PASSWORD=$password target/debug/koan auth setup >/dev/null
+    KOAN_CONFIG_DIR=$dir KOAN_SUBSONIC__ENABLED=true KOAN_GRAPHQL__AUTH_ENABLED=true \
+        target/debug/koan --headless --port 4799 >"$out/server.log" 2>&1 &
+    server=$!
+    trap 'kill $server 2>/dev/null; rm -rf "$dir"' EXIT
+    sim=$(xcrun simctl list devices available -j \
+        | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    xcrun simctl boot "$sim" 2>/dev/null || true
+    xcrun simctl bootstatus "$sim" -b >/dev/null
+    # Signed out from the start: a fresh install holds no account.
+    xcrun simctl uninstall "$sim" {{bundle_id}} 2>/dev/null || true
+    TEST_RUNNER_KOAN_PAIR_SERVER=http://127.0.0.1:4799 TEST_RUNNER_KOAN_PAIR_USER=owner \
+    TEST_RUNNER_KOAN_PAIR_PASSWORD=$password xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
+        -destination "id=$sim" -derivedDataPath target/tv-build \
+        -only-testing:KoanTVUITests/TVPairTests \
+        -resultBundlePath "$out/pair.xcresult" || true
+    xcrun xcresulttool export attachments --path "$out/pair.xcresult" --output-path "$out"
+    echo "screenshots in $out"
+
 # Archive for a device, sign, and upload to TestFlight.
 #
 # Signing is cloud-managed: xcodebuild asks App Store Connect for the
