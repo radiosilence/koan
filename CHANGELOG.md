@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **App passwords for Subsonic apps that only sign in with a password token.** Many Subsonic clients sign in with `t = md5(password + salt)`, which needs the password on the server, and kōan only keeps a hash of yours, so they were refused with error 41. On the Account page you can now make an app password per app: generated, shown once, stored encrypted under a key derived from the server's signing key, and usable as a token or as a password. It is never your real password, it can be revoked on its own, and changing your password revokes them all. The error 41 message says so instead of describing a sign-in that no longer existed. The database moves to schema 16 for the new `app_passwords` table.
+
+### Fixed
+
+- **The web UI's account settings can be reached on a phone.** Users, API keys, Assistants and signing out sat under the page on a phone, behind the player and the tab bar, and at the foot of a sidebar that could not scroll in landscape. They are now one Account page, reached from an Account tab on a phone and from the foot of the sidebar, which scrolls when the window is shorter than it. `/keys` redirects there.
+
 ## 0.52.9
 
 ### Changed
