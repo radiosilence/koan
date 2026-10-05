@@ -256,6 +256,50 @@ pub struct NowPlaying {
     /// random, and turning it off puts it back.
     pub shuffle: bool,
     pub repeat_mode: RepeatMode,
+    /// The sleep timer, while one is set.
+    pub sleep: Option<SleepState>,
+}
+
+/// A sleep timer to set: stop after a while, or at the end of the track or
+/// record playing.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepTimer {
+    After { minutes: u32 },
+    EndOfTrack,
+    EndOfRecord,
+}
+
+impl From<SleepTimer> for koan_core::player::state::SleepTimer {
+    fn from(t: SleepTimer) -> Self {
+        match t {
+            SleepTimer::After { minutes } => Self::After { minutes },
+            SleepTimer::EndOfTrack => Self::EndOfTrack,
+            SleepTimer::EndOfRecord => Self::EndOfRecord,
+        }
+    }
+}
+
+/// A sleep timer that is set. A time rather than what is left, so a client
+/// counts down for itself.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepState {
+    /// Milliseconds since the Unix epoch.
+    At {
+        unix_ms: u64,
+    },
+    EndOfTrack,
+    EndOfRecord,
+}
+
+impl From<koan_core::player::state::Sleep> for SleepState {
+    fn from(s: koan_core::player::state::Sleep) -> Self {
+        use koan_core::player::state::Sleep;
+        match s {
+            Sleep::At { unix_ms } => Self::At { unix_ms },
+            Sleep::EndOfTrack => Self::EndOfTrack,
+            Sleep::EndOfRecord => Self::EndOfRecord,
+        }
+    }
 }
 
 /// What follows a track at its end.

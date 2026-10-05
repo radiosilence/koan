@@ -459,6 +459,17 @@ impl KoanEngine {
         offload::sequenced(move || self.send(PlayerCommand::SetRepeat(mode.into()))).await
     }
 
+    /// Stop playback after a while or at the end of the track or record,
+    /// fading out and pausing, here or on the device being controlled.
+    pub async fn set_sleep_timer(self: Arc<Self>, timer: SleepTimer) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send(PlayerCommand::SetSleepTimer(Some(timer.into()))))
+            .await
+    }
+
+    pub async fn cancel_sleep_timer(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send(PlayerCommand::SetSleepTimer(None))).await
+    }
+
     pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::Seek(position_ms))).await
     }
@@ -3369,6 +3380,7 @@ impl KoanEngine {
                 playlist_version: 0,
                 shuffle: st.shuffle,
                 repeat_mode: st.repeat.into(),
+                sleep: st.sleep.map(Into::into),
             },
         });
         out.publish(StateSlice::Playhead {
@@ -3731,6 +3743,7 @@ impl KoanEngine {
                     outputs: Some(koan_core::remote::outputs::local(&state)),
                     shuffle: state.play_mode().shuffle,
                     repeat: state.play_mode().repeat,
+                    sleep: state.sleep(),
                 }
             }),
         });
@@ -3765,6 +3778,7 @@ impl KoanEngine {
             playlist_version: self.state.playlist_version(),
             shuffle: self.state.play_mode().shuffle,
             repeat_mode: self.state.play_mode().repeat.into(),
+            sleep: self.state.sleep().map(Into::into),
         }
     }
 
@@ -3840,6 +3854,7 @@ impl KoanEngine {
             PlayerCommand::PrevTrack => LinkCommand::Previous,
             PlayerCommand::SetShuffle(on) => LinkCommand::Shuffle { on },
             PlayerCommand::SetRepeat(mode) => LinkCommand::Repeat { mode },
+            PlayerCommand::SetSleepTimer(timer) => LinkCommand::SleepTimer { timer },
             PlayerCommand::AddToPlaylist(items) => LinkCommand::Enqueue {
                 track_ids: tracks(&items)?,
             },
@@ -4255,6 +4270,9 @@ impl KoanEngine {
             LinkCommand::Previous => self.send_local(PlayerCommand::PrevTrack),
             LinkCommand::Shuffle { on } => self.send_local(PlayerCommand::SetShuffle(on)),
             LinkCommand::Repeat { mode } => self.send_local(PlayerCommand::SetRepeat(mode)),
+            LinkCommand::SleepTimer { timer } => {
+                self.send_local(PlayerCommand::SetSleepTimer(timer))
+            }
         };
         if let Err(e) = result {
             log::warn!("link: {e}");

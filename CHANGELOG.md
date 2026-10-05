@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Sleep timer** ([#795](https://github.com/radiosilence/koan/issues/795)). Stop playback after 15, 30, 45 or 60 minutes, fading out over a few seconds, or at the end of the track or record playing. It pauses rather than clearing the queue, so playing again carries on from there. The timer is the player's, so it holds while iOS suspends the app, and it is set on the device playing: a phone controlling a Mac sets the Mac's, over the link. From the moon in the Mac and iOS transport, `T` in the terminal UI, and `setSleepTimerOnClient` for assistants. See [Sleep timer](docs/guide/sleep-timer.md).
+
 ## 0.53.0
 
 ### Added
