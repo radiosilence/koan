@@ -43,7 +43,7 @@ aria-label=\"More\" title=\"More\">⋯</button>";
 
 /// The menu every track row opens, filled for the row by the UI's script.
 /// Beside the pointer on a wide screen, a sheet above the bar on a phone.
-const TRACK_MENU: &str = "<div id=track-menu popover role=menu class=\"fixed inset-auto m-0 hidden min-w-52 \
+const TRACK_MENU: &str = "<div id=track-menu popover=manual role=menu class=\"fixed inset-auto m-0 hidden min-w-52 \
 flex-col open:flex rounded-lg border border-rule bg-surface p-1.5 text-ink shadow-lg max-wide:inset-x-3 \
 max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]\" aria-label=Track></div>";
 

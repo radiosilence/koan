@@ -232,16 +232,29 @@
     );
     if (!menu.matches(":popover-open")) menu.showPopover();
     if (wide.matches) {
-      // Just under the pointer, so the button's release lands on the menu and
-      // does not dismiss it as a click outside.
       const r = menu.getBoundingClientRect();
-      menu.style.left = `${Math.max(8, Math.min(x - 4, innerWidth - r.width - 8))}px`;
-      menu.style.top = `${Math.max(8, Math.min(y - 4, innerHeight - r.height - 8))}px`;
+      menu.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+      menu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
     } else {
       menu.style.left = menu.style.top = "";
     }
     menu.querySelector("button").focus();
   }
+  // A manual popover: the press that opens it ends on the row (a touch stays
+  // captured by what it went down on), which a light-dismissing popover would
+  // take for a click outside. It closes on the next press outside it, Escape,
+  // or leaving the page; the press that closes it does nothing else, as with
+  // the apps' menus.
+  let dismissed = false;
+  const closeMenu = () => {
+    if (!menu || !menu.matches(":popover-open")) return false;
+    menu.hidePopover();
+    return true;
+  };
+  document.addEventListener("pointerdown", (e) => {
+    if (menu && !menu.contains(e.target) && closeMenu()) dismissed = true;
+  }, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
   const menuRow = (e) => e.target.closest && e.target.closest("li[data-id]");
   document.addEventListener("contextmenu", (e) => {
     const li = menuRow(e);
@@ -269,11 +282,11 @@
       clearTimeout(press);
       pressAt = null;
       // Not every browser sends that click, so the guard lapses on its own.
-      if (pressed) setTimeout(() => { pressed = false; }, 350);
+      if (pressed || dismissed) setTimeout(() => { pressed = dismissed = false; }, 350);
     }, { passive: true, capture: true });
   }
   document.addEventListener("click", (e) => {
-    if (pressed) { pressed = false; e.preventDefault(); e.stopPropagation(); }
+    if (pressed || dismissed) { pressed = dismissed = false; e.preventDefault(); e.stopPropagation(); }
   }, true);
 
   // --- Invites ---------------------------------------------------------------
@@ -367,6 +380,7 @@
     if (!r.ok) { location.href = url; return; }
     const html = await r.text();
     if (n !== navigating) return;
+    closeMenu();
     main.innerHTML = html;
     if (push) history.pushState(null, "", url);
     settle();
