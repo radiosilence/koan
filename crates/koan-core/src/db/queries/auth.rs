@@ -670,6 +670,7 @@ mod tests {
             queries::add_favourite(&db.conn, user, track).unwrap();
             queries::set_favourite_album(&db.conn, user, row.album_id.unwrap(), true).unwrap();
             queries::set_favourite_artist(&db.conn, user, row.artist_id.unwrap(), true).unwrap();
+            queries::save_bookmark(&db.conn, user, track, 1_000, None).unwrap();
             queries::record_play(&db.conn, user, track, None).unwrap();
             queries::create_playlist(&db.conn, user, "List", None).unwrap();
             queries::shares::create_share(
