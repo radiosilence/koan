@@ -17,6 +17,7 @@ struct LibraryTab: View {
             row("Artists", Icon.artist, .page(.section(.artists)))
             row("Favourites", Icon.favourite, .page(.section(.favourites)))
             row("Playlists", Icon.playlist, .playlists)
+            row("Recently Played", Icon.recentlyPlayed, .page(.section(.recentlyPlayed)))
             row("History", Icon.history, .page(.section(.playHistory)))
             row("Downloads", Icon.downloads, .page(.section(.downloads)))
         }
