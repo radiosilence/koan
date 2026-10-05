@@ -660,7 +660,7 @@ fn row_ids(body: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn see_all_opens_the_browser_its_preview_is_the_head_of() {
+async fn a_shelf_heading_opens_the_browser_its_preview_is_the_head_of() {
     let f = setup(true);
     {
         let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
@@ -677,12 +677,16 @@ async fn see_all_opens_the_browser_its_preview_is_the_head_of() {
     let shelf = send(&f.app, get("/favourites")).await.body;
     let preview = row_ids(&shelf);
     assert_eq!(preview.len(), 10, "ten in the preview");
-    let link = shelf
-        .split("See all (12)")
-        .next()
-        .unwrap()
-        .rsplit("href=\"")
-        .next()
+    // The Tracks heading: a link, with the shelf's whole count in it.
+    let heading = shelf
+        .split("<h2>")
+        .skip(1)
+        .find(|h| h.contains(">Tracks<"))
+        .expect("a Tracks heading");
+    assert!(heading.contains(">12</span>"), "{heading}");
+    let link = heading
+        .split("href=\"")
+        .nth(1)
         .unwrap()
         .split('"')
         .next()
@@ -691,7 +695,7 @@ async fn see_all_opens_the_browser_its_preview_is_the_head_of() {
     assert!(link.starts_with("/tracks?"), "{link}");
 
     let browser = send(&f.app, get(&link)).await.body;
-    assert!(browser.contains("12 tracks"), "the count See all promised");
+    assert!(browser.contains("12 tracks"), "the count the heading gave");
     assert_eq!(
         row_ids(&browser)[..10],
         preview[..],
