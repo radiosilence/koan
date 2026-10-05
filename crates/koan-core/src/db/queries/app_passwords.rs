@@ -115,8 +115,9 @@ pub fn authenticate_app_password(
     let mut any = false;
     let mut found = None;
     {
-        let mut stmt = conn
-            .prepare_cached("SELECT id, sealed, last_used_at FROM app_passwords WHERE user_id = ?1")?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, sealed, last_used_at FROM app_passwords WHERE user_id = ?1",
+        )?;
         let rows = stmt.query_map(params![user.id], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
@@ -189,7 +190,8 @@ mod tests {
         assert!(matches!(bob, AppPasswordAuth::NoneMade));
         // Another server's key does not open it.
         let other = auth::app_password_key(b"another key");
-        let elsewhere = authenticate_app_password(conn, &other, "alice", |p| p == password).unwrap();
+        let elsewhere =
+            authenticate_app_password(conn, &other, "alice", |p| p == password).unwrap();
         assert!(matches!(elsewhere, AppPasswordAuth::Wrong));
     }
 
@@ -210,7 +212,10 @@ mod tests {
     fn a_sealed_password_moved_to_another_account_does_not_open() {
         let key = auth::app_password_key(b"a signing key");
         let sealed = auth::seal_app_password(&key, 1, "secret").unwrap();
-        assert_eq!(auth::open_app_password(&key, 1, &sealed).as_deref(), Some("secret"));
+        assert_eq!(
+            auth::open_app_password(&key, 1, &sealed).as_deref(),
+            Some("secret")
+        );
         assert_eq!(auth::open_app_password(&key, 2, &sealed), None);
     }
 }

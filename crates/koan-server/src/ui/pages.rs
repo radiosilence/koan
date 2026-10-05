@@ -113,38 +113,24 @@ aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:flex max-wide:
 max-wide:justify-center max-wide:rounded-none max-wide:text-control max-wide:aria-[current=page]:bg-transparent \
 max-wide:aria-[current=page]:text-brand";
 
-/// The account's links sit in the sidebar on a wide screen and under the page
-/// on a phone, where they are plain links.
+/// The account's links in the sidebar.
 const ACCOUNT_LINK: &str = "rounded-md px-1.5 py-1 text-meta whitespace-nowrap text-muted hover:text-ink \
-hover:no-underline aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:text-brand \
-max-wide:hover:text-brand max-wide:hover:underline max-wide:aria-[current=page]:bg-transparent \
-max-wide:aria-[current=page]:text-brand";
+hover:no-underline aria-[current=page]:bg-rule aria-[current=page]:text-ink";
 
 fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> String {
-    let signout = if auth_enabled {
-        let users = if user.role == Role::Admin {
-            format!("<a class=\"{ACCOUNT_LINK}\" href=\"/users\" data-nav=users>Users</a>")
-        } else {
-            String::new()
-        };
+    // On a wide screen the sidebar ends with who is signed in; the account
+    // page has everything else. A phone has an Account tab instead.
+    let account = if auth_enabled {
         format!(
-            "<form class=\"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted\" \
-method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 pb-0.5 text-ink\">{}</span>\
-{users}<a class=\"{ACCOUNT_LINK}\" href=\"/keys\" data-nav=keys>API keys</a>\
-<a class=\"{ACCOUNT_LINK}\" href=\"/connect\" data-nav=connect>Assistants</a>\
+            "<form class=\"mt-auto flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted \
+max-wide:hidden\" method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 \
+pb-0.5 text-ink\">{}</span><a class=\"{ACCOUNT_LINK}\" href=\"/account\" data-nav=account>Account</a>\
 <button class=\"quiet px-2 py-1 text-meta\">Sign out</button></form>",
             escape(&user.username)
         )
     } else {
-        String::new()
-    };
-    // `place` hides the sidebar's copy on a phone.
-    let account = |place: &str| {
         format!(
-            "<div class=\"mt-auto flex min-w-0 flex-col gap-1 {place}\">{signout}\
-<a class=\"rounded-md px-1 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
-href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
-            v = env!("CARGO_PKG_VERSION")
+            "<a class=\"mt-auto {ACCOUNT_LINK} max-wide:hidden\" href=\"/account\" data-nav=account>Account</a>"
         )
     };
     format!(
@@ -162,12 +148,11 @@ max-wide:hidden\" href=\"/\">kōan</a>\
 <a class=\"{NAV_LINK}\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
 <a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
 <a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>\
-<button class=\"{NAV_LINK} border-0 bg-transparent wide:hidden\" popovertarget=account>More</button>{side_account}</nav>\
+<a class=\"{NAV_LINK} wide:hidden\" href=\"/account\" data-nav=account>Account</a>{account}</nav>\
 <main id=content class=\"ml-(--side-w) min-w-0 px-7 \
 pt-[max(24px,env(safe-area-inset-top))] pb-10 max-wide:ml-0 max-wide:p-4 \
 max-wide:pt-[max(16px,env(safe-area-inset-top))]\">{content}</main>\
-<div id=account popover class=\"inset-x-0 top-auto bottom-0 m-0 w-full max-w-none border-0 border-t border-rule \
-bg-surface px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] text-ink backdrop:bg-black/50 wide:hidden\">{foot_account}</div>\
+\
 <footer class=\"fixed inset-x-0 bottom-(--tabs-h) z-5 grid h-[calc(var(--bar-h)+env(safe-area-inset-bottom))] \
 grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-4 border-t border-rule bg-surface px-4 \
 pb-[env(safe-area-inset-bottom)] max-wide:bottom-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] \
@@ -187,8 +172,6 @@ max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule
         ui = super::ASSETS.ui_js,
         buttons = buttons(false),
         scrub = scrub("max-wide:hidden"),
-        side_account = account("max-wide:hidden"),
-        foot_account = account(""),
     )
 }
 

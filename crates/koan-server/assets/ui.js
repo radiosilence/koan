@@ -263,7 +263,7 @@
   }, true);
 
   // --- Navigation ------------------------------------------------------------
-  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|keys)?$/;
+  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|account)?$/;
   let navigating = 0;
 
   async function navigate(url, push) {
@@ -286,9 +286,6 @@
   }
 
   function settle() {
-    // A page chosen from the phone's account sheet replaces what it covered.
-    const sheet = document.getElementById("account");
-    if (sheet && sheet.matches(":popover-open")) sheet.hidePopover();
     const page = main.firstElementChild;
     const title = page && page.dataset.title;
     document.title = title ? `${title} · koan` : "koan";

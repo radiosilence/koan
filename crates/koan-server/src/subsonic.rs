@@ -16,11 +16,11 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use koan_core::auth::Role;
-use koan_core::db::queries::app_passwords::AppPasswordAuth;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries;
+use koan_core::db::queries::app_passwords::AppPasswordAuth;
 use koan_core::remote::client::SubsonicAuth;
 use serde::Deserialize;
 use tokio::io::AsyncReadExt as _;
@@ -4708,6 +4708,48 @@ mod tests {
             body.contains(&format!("helpUrl=\"{AUTH_HELP_URL}\"")),
             "{body}"
         );
+    }
+
+    #[tokio::test]
+    async fn an_app_password_signs_an_account_in_by_token_or_as_a_password() {
+        let (state, _dir) = test_state();
+        let ping = |q: String| {
+            let app = build_test_router(state.clone());
+            async move {
+                get_response(app, &format!("/rest/ping?{q}&v=1.16.1&c=test"))
+                    .await
+                    .1
+            }
+        };
+        let token =
+            |secret: &str, salt: &str| format!("{:x}", md5::compute(format!("{secret}{salt}")));
+
+        // No app password yet: 41, which tells the client to fall back.
+        let body = ping(format!("u=mate&t={}&s=abc", token("hunter22", "abc"))).await;
+        assert!(body.contains("code=\"41\""), "{body}");
+
+        let password = {
+            let db = state.open_db().unwrap();
+            let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+                .unwrap()
+                .unwrap();
+            queries::app_passwords::create_app_password(
+                &db.conn,
+                state.app_key.as_ref().unwrap(),
+                mate.id,
+                "arpeggi",
+            )
+            .unwrap()
+            .1
+        };
+        let body = ping(format!("u=mate&t={}&s=abc", token(&password, "abc"))).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = ping(format!("u=mate&p={password}")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        // The account's own password still does not work as a token, and a
+        // wrong token is a wrong credential now that app passwords exist.
+        let body = ping(format!("u=mate&t={}&s=abc", token("hunter22", "abc"))).await;
+        assert!(body.contains("code=\"40\""), "{body}");
     }
 
     #[tokio::test]
