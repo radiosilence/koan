@@ -397,6 +397,53 @@ impl MutationRoot {
         Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
     }
 
+    /// Stop the music on a linked koan app after `minutes`, or at the end of
+    /// the track or record it is playing (`endOf`): it fades out and pauses,
+    /// its queue left as it was. Replaces a timer already set.
+    async fn set_sleep_timer_on_client(
+        &self,
+        ctx: &Context<'_>,
+        minutes: Option<u32>,
+        end_of: Option<GqlSleepEnd>,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let timer = Some(sleep_timer(minutes, end_of)?);
+        let sent =
+            send_to_client(ctx, client.as_deref(), LinkCommand::SleepTimer { timer }).await?;
+        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
+    }
+
+    async fn cancel_sleep_timer_on_client(
+        &self,
+        ctx: &Context<'_>,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let cmd = LinkCommand::SleepTimer { timer: None };
+        let sent = send_to_client(ctx, client.as_deref(), cmd).await?;
+        Ok(GqlStatus::success(format!("sent to {}", reached(&sent))))
+    }
+
+    /// `setSleepTimerOnClient` for this process's own player.
+    async fn set_sleep_timer(
+        &self,
+        ctx: &Context<'_>,
+        minutes: Option<u32>,
+        end_of: Option<GqlSleepEnd>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let timer = sleep_timer(minutes, end_of)?;
+        send_cmd(ctx, PlayerCommand::SetSleepTimer(Some(timer)))?;
+        Ok(GqlStatus::success("sleep timer set"))
+    }
+
+    async fn cancel_sleep_timer(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        send_cmd(ctx, PlayerCommand::SetSleepTimer(None))?;
+        Ok(GqlStatus::success("sleep timer cancelled"))
+    }
+
     /// This process's own player. On a server nobody hears it: for the
     /// music the user is listening to, use `controlClient` and the other
     /// `...OnClient` mutations.

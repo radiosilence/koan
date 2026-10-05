@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crossbeam_channel::{Receiver, Sender, bounded};
 
-use super::state::{PlayMode, PlaylistItem, QueueItemId, Repeat};
+use super::state::{PlayMode, PlaylistItem, QueueItemId, Repeat, SleepTimer};
 
 /// Commands from the UI layer to the audio engine.
 #[derive(Debug)]
@@ -157,6 +157,8 @@ pub enum PlayerCommand {
     /// What follows a track at its end: the queue's next, the first again
     /// after the last, or the same item.
     SetRepeat(Repeat),
+    /// Set the sleep timer, or with `None` cancel it.
+    SetSleepTimer(Option<SleepTimer>),
     /// Take the mode a saved session had, its queue already restored in the
     /// order it was saved. Shuffle reorders nothing here.
     RestorePlayMode(PlayMode),
