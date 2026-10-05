@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- **A shelf's headings open its browsers, in place of See all.** On Favourites, Recently Played and search, in the apps and the web UI, each section's heading reads as a link: its name, how many there are in all, and a chevron. It opens the browser filtered to the shelf, whether or not the section shows all it has. The separate See all is gone.
+
 ### Changed
 
+- **The Control menu lists only devices you use.** A device out of reach was kept, asleep, until it was forgotten, so every phone, simulator and stranger ever seen stayed in the list. Now one is kept asleep only if this device has controlled it or sent it music; one never used goes once it has been gone for a heartbeat. On upgrade only the device being controlled is kept from the old list. Forget still removes one you have used.
 - **Now Playing on iOS has room for its controls.** The row under the transport held the lyrics, the sleep timer, the device, output and preset buttons, the format and AirPlay, and at a phone's width the output and preset were cut to a letter or two. It is now two rows: the lyrics, the sleep timer, the format and AirPlay; then the device being controlled, the output and the preset, each named in full where it fits, spread evenly, and shortened only when a name will not fit beside the others.
 
 ### Fixed
