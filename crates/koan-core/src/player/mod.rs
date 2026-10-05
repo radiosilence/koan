@@ -1027,8 +1027,12 @@ impl Player {
             self.timeline.clone(),
             Some(self.viz_buffer.clone()),
             processing,
-            move || {
-                finish_tx.send(PlayerCommand::DecodeFinished(session)).ok();
+            move |stop| {
+                commands::send_unless_stopped(
+                    &finish_tx,
+                    PlayerCommand::DecodeFinished(session),
+                    stop,
+                );
             },
         )?;
 

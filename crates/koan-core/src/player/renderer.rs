@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use super::commands::PlayerCommand;
+use super::commands::{self, PlayerCommand};
 use super::state::{ItemState, QueueItemId, RendererClock, TrackInfo};
 use super::{Output, Player, PlayerError, Run, Session, Source, Transport, media_extension};
 use crate::audio::buffer;
@@ -629,8 +629,12 @@ impl Player {
             self.timeline.clone(),
             None,
             processing,
-            move || {
-                finish_tx.send(PlayerCommand::DecodeFinished(session)).ok();
+            move |stop| {
+                commands::send_unless_stopped(
+                    &finish_tx,
+                    PlayerCommand::DecodeFinished(session),
+                    stop,
+                );
             },
         )?;
         let titles = self.shared_state.clone();
