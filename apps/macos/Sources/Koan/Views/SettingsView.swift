@@ -45,6 +45,7 @@ struct SettingsView: View {
             Label(title, systemImage: symbol)
             #endif
         }
+        .listLink()
     }
     #endif
 

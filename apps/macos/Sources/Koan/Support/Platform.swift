@@ -110,6 +110,19 @@ extension View {
 }
 
 extension View {
+    /// A `NavigationLink` in a list. On tvOS it is drawn as a full-width row:
+    /// the shell's button style would otherwise make it a capsule the size of
+    /// its label.
+    func listLink() -> some View {
+        #if os(tvOS)
+        buttonStyle(TelevisionRow(resting: 0.08))
+        #else
+        self
+        #endif
+    }
+}
+
+extension View {
     /// A row's primary action: open the record, play the track.
     ///
     /// macOS puts this on the `List` itself, through
@@ -551,24 +564,30 @@ struct TelevisionButton: ButtonStyle {
 /// screen, so secondary text stays readable on it. A plain button would tint
 /// every label with the accent instead.
 struct TelevisionRow: ButtonStyle {
+    /// The platter's opacity at rest: none for a row of content, a little for
+    /// a link, so a list of places reads as rows before one is focused.
+    var resting: Double = 0
+
     func makeBody(configuration: Configuration) -> some View {
-        Row(label: configuration.label, pressed: configuration.isPressed)
+        Row(label: configuration.label, pressed: configuration.isPressed, resting: resting)
     }
 
     private struct Row<Label: View>: View {
         let label: Label
         let pressed: Bool
+        let resting: Double
         @Environment(\.isFocused) private var focused
 
         var body: some View {
             label
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .foregroundStyle(.primary)
                 .environment(\.colorScheme, focused ? .light : .dark)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 14)
-                        .fill(.white.opacity(focused ? 1 : 0))
+                        .fill(.white.opacity(focused ? 1 : resting))
                         .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
                 )
                 .scaleEffect(pressed ? 0.98 : focused ? 1.02 : 1)

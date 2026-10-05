@@ -23,6 +23,7 @@ struct PlaylistsList: View {
                             covers: playlists.covers[playlist.id] ?? []
                         )
                     }
+                    .listLink()
                 }
             }
         }

@@ -53,5 +53,6 @@ struct LibraryTab: View {
         NavigationLink(value: route) {
             Label(title, systemImage: symbol)
         }
+        .listLink()
     }
 }
