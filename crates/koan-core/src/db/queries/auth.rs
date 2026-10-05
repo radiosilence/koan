@@ -102,6 +102,7 @@ pub fn adopt_local_rows(conn: &Connection) -> Result<(), rusqlite::Error> {
         "album_ratings",
         "artist_ratings",
         "play_history",
+        "play_history_forgotten",
         "playlists",
         "shares",
     ] {
@@ -681,6 +682,9 @@ mod tests {
                 queries::set_rating(&db.conn, user, kind, id, 4).unwrap();
             }
             queries::record_play(&db.conn, user, track, None).unwrap();
+            queries::record_play_at(&db.conn, user, track, 1, None, queries::SOURCE_SUBSONIC)
+                .unwrap();
+            queries::forget_shared_plays(&db.conn, user, &[(track, 1)]).unwrap();
             queries::create_playlist(&db.conn, user, "List", None).unwrap();
             queries::shares::create_share(
                 &db.conn,
@@ -704,6 +708,7 @@ mod tests {
             "album_ratings",
             "artist_ratings",
             "play_history",
+            "play_history_forgotten",
             "playlists",
             "shares",
         ] {

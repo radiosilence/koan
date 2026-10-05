@@ -215,6 +215,25 @@ impl SubsonicClient {
         resp.subsonic_response.ok()
     }
 
+    /// As `get_with_params`, for a parameter given more than once: Subsonic
+    /// batches by repeating `id` and `time`.
+    fn get_with_pairs(
+        &self,
+        endpoint: &str,
+        pairs: &[(&str, String)],
+    ) -> Result<SubsonicResponse, SubsonicError> {
+        let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
+        let params = self.auth_params()?;
+        let resp: SubsonicResponseWrapper = self
+            .http
+            .get(&url)
+            .query(&params)
+            .query(pairs)
+            .send()?
+            .json()?;
+        resp.subsonic_response.ok()
+    }
+
     /// Detect a Subsonic error returned from an endpoint that should have sent
     /// binary data.
     ///
@@ -463,6 +482,17 @@ impl SubsonicClient {
             "scrobble",
             &[("id", track_id), ("submission", "true"), ("time", &at)],
         )?;
+        Ok(())
+    }
+
+    /// Scrobble several plays in one request, `(track id, started at ms)`.
+    pub fn scrobble_many(&self, plays: &[(&str, i64)]) -> Result<(), SubsonicError> {
+        let mut pairs = vec![("submission", "true".to_owned())];
+        for (id, at) in plays {
+            pairs.push(("id", (*id).to_owned()));
+            pairs.push(("time", at.to_string()));
+        }
+        self.get_with_pairs("scrobble", &pairs)?;
         Ok(())
     }
 
@@ -765,6 +795,41 @@ impl SubsonicClient {
         Ok(())
     }
 
+    // -- Play history: koan servers offering `koanHistory` --
+
+    /// The account's plays and forgettings after `since`, at most `count` of
+    /// each.
+    pub fn koan_history(
+        &self,
+        since: crate::db::queries::HistoryCursor,
+        count: u32,
+    ) -> Result<KoanHistoryPage, SubsonicError> {
+        self.get_with_params(
+            "koanHistory",
+            &[("since", &since.to_string()), ("count", &count.to_string())],
+        )?
+        .koan_history
+        .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Forget these plays, `(track id, started at ms)`, for every device on
+    /// the account.
+    pub fn koan_forget_plays(&self, plays: &[(&str, i64)]) -> Result<(), SubsonicError> {
+        let mut pairs = Vec::new();
+        for (id, at) in plays {
+            pairs.push(("id", (*id).to_owned()));
+            pairs.push(("time", at.to_string()));
+        }
+        self.get_with_pairs("koanForgetPlays", &pairs)?;
+        Ok(())
+    }
+
+    /// Forget every play up to `at_ms`, for every device on the account.
+    pub fn koan_forget_plays_through(&self, at_ms: i64) -> Result<(), SubsonicError> {
+        self.get_with_params("koanForgetPlays", &[("through", &at_ms.to_string())])?;
+        Ok(())
+    }
+
     pub fn auth(&self) -> &SubsonicAuth {
         &self.auth
     }
@@ -810,6 +875,40 @@ struct SubsonicResponse {
     users: Option<KoanUsers>,
     invite: Option<KoanInvite>,
     join: Option<KoanJoined>,
+    koan_history: Option<KoanHistoryPage>,
+}
+
+/// A page of a koan server's play history (`koanHistory`).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct KoanHistoryPage {
+    /// Where the next page starts.
+    pub cursor: String,
+    #[serde(default)]
+    pub more: bool,
+    #[serde(default)]
+    pub play: Vec<KoanPlay>,
+    #[serde(default)]
+    pub forgotten: Vec<KoanForgotten>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KoanPlay {
+    /// The track's id.
+    pub id: String,
+    /// The play's place in the server's history.
+    #[serde(default)]
+    pub seq: Option<i64>,
+    /// When it started, in ms since the epoch.
+    pub played: i64,
+    pub listened_ms: Option<i64>,
+}
+
+/// A play forgotten, or with no `id` every play up to `played`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanForgotten {
+    pub id: Option<String>,
+    pub played: i64,
 }
 
 #[derive(Debug, Deserialize)]
