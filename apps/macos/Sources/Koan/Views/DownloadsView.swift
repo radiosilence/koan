@@ -50,6 +50,7 @@ struct DownloadsView: View {
                     Label("Clear Finished", systemImage: Icon.clear)
                 }
                 .help("Forget the transfers that have already settled")
+                .toolbarButton()
             }
         }
     }

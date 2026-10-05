@@ -156,6 +156,7 @@ private struct AlbumSortControls: ToolbarContent {
                 } label: {
                     Label("Shuffle", systemImage: Icon.reshuffle)
                 }
+                .toolbarButton()
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
