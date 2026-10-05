@@ -38,6 +38,11 @@ pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";
 pub(super) const EMPTY: &str = "text-muted";
 pub(super) const ERROR: &str = "text-bad";
 const ACTIONS: &str = "flex flex-wrap items-center gap-2";
+/// A heading with its buttons, above a track list. The row keeps the space a
+/// heading would, above and below, since buttons beside it are taller than it
+/// and would otherwise sit on the list.
+pub(super) const LIST_HEAD: &str =
+    "mt-6 mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 [&>h1]:my-0 [&>h2]:my-0";
 const HERO: &str =
     "mb-6 flex items-end gap-6 max-wide:flex-col max-wide:items-stretch max-wide:gap-4";
 const HERO_COVER: &str = "size-[220px] flex-none rounded-lg border border-rule bg-surface object-cover \
@@ -937,7 +942,7 @@ pub(super) fn shelf(
             .collect();
         let _ = write!(
             out,
-            "<div class=\"flex flex-wrap items-baseline justify-between gap-2\"><h2>Tracks</h2>\
+            "<div class=\"{LIST_HEAD}\"><h2>Tracks</h2>\
 <div class=\"{ACTIONS}\"><button class=\"primary\" data-act=play>Play</button>\
 <button data-act=shuffle>Shuffle</button><button data-act=queue>Add to queue</button></div></div>\
 <ol class=\"tracks\" data-context=album>{rows}</ol>"
@@ -1007,7 +1012,7 @@ data-np=cover alt=\"\" hidden><div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\
 <h1 class=\"mb-1\" data-np=title>Nothing playing</h1>\
 <p class=\"{SUB}\"><span data-np=artist></span> <a data-np=album href=\"/albums\"></a></p>\
 {buttons}{scrub}</div></header>\
-<div class=\"flex items-baseline justify-between\"><h2>Up next</h2>\
+<div class=\"{LIST_HEAD}\"><h2>Up next</h2>\
 <button class=\"quiet px-2 py-1\" data-act=clear>Clear</button></div>\
 <ol id=queue-list class=\"tracks\"></ol>",
         buttons = buttons(true),
