@@ -6022,10 +6022,9 @@ mod tests {
     #[tokio::test]
     async fn history_pages_plays_and_forgettings_after_a_cursor() {
         let (state, _dir) = test_state();
-        seed_data(&state);
+        let shelves = seed_shelves(&state);
         let db = Database::open(state.pool.path()).unwrap();
-        let tracks = queries::all_tracks(&db.conn).unwrap();
-        let (a, b) = (tracks[0].id, tracks[1].id);
+        let (a, b) = (shelves[0], shelves[1]);
         let (a_uid, b_uid) = (
             uid_of(&state, queries::UidKind::Track, a),
             uid_of(&state, queries::UidKind::Track, b),
