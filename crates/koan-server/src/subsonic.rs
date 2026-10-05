@@ -4966,6 +4966,40 @@ mod tests {
         assert!(body.contains("adminRole=\"true\""), "{body}");
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pairing_is_refused_to_web_pages() {
+        let (state, _dir) = test_state();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        let url = format!("ws://{addr}/rest/koanPair?name=tv");
+        tokio::task::spawn_blocking(move || {
+            use tungstenite::client::IntoClientRequest as _;
+            let mut from_page = url.as_str().into_client_request().unwrap();
+            from_page
+                .headers_mut()
+                .insert(header::ORIGIN, "https://evil.example".parse().unwrap());
+            match tungstenite::connect(from_page) {
+                Err(tungstenite::Error::Http(r)) => assert_eq!(r.status(), StatusCode::FORBIDDEN),
+                other => panic!("a page was let in: {:?}", other.map(|_| ())),
+            }
+            // As the apps connect: tungstenite sends no Origin.
+            let (mut socket, _) = tungstenite::connect(url.as_str()).unwrap();
+            let first = socket.read().unwrap();
+            let message: koan_core::remote::pair::PairMessage =
+                serde_json::from_str(first.to_text().unwrap()).unwrap();
+            assert!(
+                matches!(
+                    message,
+                    koan_core::remote::pair::PairMessage::Pending { .. }
+                ),
+                "{message:?}"
+            );
+        })
+        .await
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn a_waiting_device_is_paired_with_the_approvers_account() {
         let (state, _dir) = test_state();
