@@ -175,6 +175,10 @@
       case "shuffle": return player.play(shuffle(albumRows()), 0);
       case "queue": return player.append(albumRows());
       case "add": return player.append([trackOf(row)]);
+      case "menu": {
+        const r = el.getBoundingClientRect();
+        return openMenu(row, r.right, r.bottom);
+      }
       case "remove": return player.remove(Number(row.dataset.q));
       case "clear": return player.clear();
     }
@@ -189,6 +193,86 @@
     }
     player.playNow([trackOf(li)]);
   }
+
+  // --- Track menu ------------------------------------------------------------
+  // What the apps' context menu offers on a track, for any track row: opened by
+  // right-click, a long press, or the row's ⋯ on a phone. Favourite and share
+  // press the row's own buttons, so they behave as those do.
+  const menu = document.getElementById("track-menu");
+  function item(label, run) {
+    const b = document.createElement("button");
+    b.className = "quiet";
+    b.setAttribute("role", "menuitem");
+    b.textContent = label;
+    b.addEventListener("click", () => { menu.hidePopover(); run(); });
+    return b;
+  }
+  const group = (items) => (items.length ? [document.createElement("hr"), ...items] : []);
+  function openMenu(li, x, y) {
+    if (!menu) return;
+    const t = trackOf(li);
+    const d = li.dataset;
+    const heart = li.querySelector("[data-fav]");
+    const share = li.querySelector("[data-act-share]");
+    const mine = [];
+    if (heart) {
+      const on = heart.getAttribute("aria-pressed") === "true";
+      mine.push(item(on ? "Remove Favourite" : "Favourite Track", () => heart.click()));
+    }
+    if (share) mine.push(item("Share Track", () => share.click()));
+    const go = [];
+    if (Number(d.albumId)) go.push(item("Go to Album", () => navigate(`/album/${d.albumId}`, true)));
+    if (Number(d.artistId)) go.push(item("Go to Artist", () => navigate(`/artist/${d.artistId}`, true)));
+    menu.replaceChildren(
+      item("Play", () => pick(li)),
+      item("Play Next", () => player.playNext([t])),
+      item("Add to Queue", () => player.append([t])),
+      ...group(mine),
+      ...group(go),
+    );
+    if (!menu.matches(":popover-open")) menu.showPopover();
+    if (wide.matches) {
+      const r = menu.getBoundingClientRect();
+      menu.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
+      menu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
+    } else {
+      menu.style.left = menu.style.top = "";
+    }
+    menu.querySelector("button").focus();
+  }
+  const menuRow = (e) => e.target.closest && e.target.closest("li[data-id]");
+  document.addEventListener("contextmenu", (e) => {
+    const li = menuRow(e);
+    if (!li || e.target.closest("a, input")) return;
+    e.preventDefault();
+    // The keyboard's menu key has no pointer: open it at the row.
+    const r = li.getBoundingClientRect();
+    openMenu(li, e.clientX || r.left + 24, e.clientY || r.bottom);
+  });
+  // iOS fires no contextmenu on a long press, so a touch held still opens it,
+  // and the click that follows the lift is not a pick.
+  let press = 0, pressed = false, pressAt = null;
+  document.addEventListener("pointerdown", (e) => {
+    const li = e.pointerType === "touch" && menuRow(e);
+    if (!li || e.target.closest("a, button, input, label")) return;
+    pressAt = [e.clientX, e.clientY];
+    pressed = false;
+    press = setTimeout(() => { pressed = true; openMenu(li, e.clientX, e.clientY); }, 500);
+  });
+  document.addEventListener("pointermove", (e) => {
+    if (pressAt && Math.hypot(e.clientX - pressAt[0], e.clientY - pressAt[1]) > 10) clearTimeout(press);
+  });
+  for (const type of ["pointerup", "pointercancel", "scroll"]) {
+    document.addEventListener(type, () => {
+      clearTimeout(press);
+      pressAt = null;
+      // Not every browser sends that click, so the guard lapses on its own.
+      if (pressed) setTimeout(() => { pressed = false; }, 350);
+    }, { passive: true, capture: true });
+  }
+  document.addEventListener("click", (e) => {
+    if (pressed) { pressed = false; e.preventDefault(); e.stopPropagation(); }
+  }, true);
 
   // --- Invites ---------------------------------------------------------------
   // The email goes out as rich text where the clipboard takes it, so pasting

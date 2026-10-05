@@ -116,6 +116,15 @@
     @apply border-transparent bg-transparent text-muted hover:text-ink;
   }
 
+  /* The track menu; ui.js fills it. */
+  #track-menu button {
+    @apply rounded-md px-3 py-2 text-left;
+  }
+
+  #track-menu hr {
+    @apply my-1 border-rule;
+  }
+
   /* A button whose request is running; Datastar sets the class. */
   .busy::after {
     content: "";
@@ -133,7 +142,7 @@
   }
 
   .tracks li {
-    @apply flex min-w-0 cursor-pointer items-center gap-3 max-wide:gap-2 rounded-lg border border-rule bg-surface py-1.5 pr-1.5 pl-3 hover:border-hover focus-visible:border-hover focus-visible:outline-none;
+    @apply flex min-w-0 cursor-pointer items-center gap-3 max-wide:gap-2 max-wide:select-none [-webkit-touch-callout:none] rounded-lg border border-rule bg-surface py-1.5 pr-1.5 pl-3 hover:border-hover focus-visible:border-hover focus-visible:outline-none;
   }
 
   .tracks li.playing {
