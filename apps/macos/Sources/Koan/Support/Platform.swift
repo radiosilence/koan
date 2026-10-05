@@ -110,6 +110,17 @@ extension View {
 }
 
 extension View {
+    /// A button in a toolbar. On tvOS it takes the system's toolbar style back
+    /// from the shell's `TelevisionButton`, which would draw it as a capsule
+    /// with its symbol at text size.
+    func toolbarButton() -> some View {
+        #if os(tvOS)
+        buttonStyle(.automatic)
+        #else
+        self
+        #endif
+    }
+
     /// A `NavigationLink` in a list. On tvOS it is drawn as a full-width row:
     /// the shell's button style would otherwise make it a capsule the size of
     /// its label.
