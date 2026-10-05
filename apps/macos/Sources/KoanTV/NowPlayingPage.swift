@@ -154,6 +154,9 @@ struct NowPlayingPage: View {
                 OutputButton(open: $showingDevices, labelled: false)
                     .accessibilityIdentifier("output")
             }
+            // The phone's AirPlay picker is left out: a television's audio
+            // route is the system's, chosen in Control Center, and the picker,
+            // a UIKit view, took the page's first focus from play/pause.
             if !player.isControllingAnother {
                 if let route = app.dsp.route,
                    let presets = Presets(dsp: app.dsp, device: route, none: "Off") {
@@ -161,11 +164,6 @@ struct NowPlayingPage: View {
                         Label(presets.current ?? presets.none, systemImage: "slider.horizontal.3")
                     }
                 }
-                // A UIKit view, which asks for focus on its own account; the
-                // page's entry point is play/pause.
-                RoutePicker()
-                    .frame(width: 66, height: 66)
-                    .prefersDefaultFocus(false, in: page)
             }
         }
         .focusSection()
