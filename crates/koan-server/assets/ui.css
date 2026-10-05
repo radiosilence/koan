@@ -760,6 +760,11 @@
     .group-hover\:border-hover:is(:where(.group):hover *) {
       border-color: var(--hover);
     }
+  }
+  .open\:flex:is([open], :popover-open, :open) {
+    display: flex;
+  }
+  @media (hover: hover) {
     .hover\:border-hover:hover {
       border-color: var(--hover);
     }
