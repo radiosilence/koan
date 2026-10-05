@@ -749,6 +749,38 @@ impl App {
                     std::time::Instant::now(),
                 ));
             }
+            KeyCode::Char('T') => {
+                use koan_core::player::state::{Sleep, SleepTimer};
+                // Off, then each choice in turn, then off again.
+                let next = match self.state.sleep() {
+                    None => Some(SleepTimer::After { minutes: 15 }),
+                    Some(Sleep::At { unix_ms }) => {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        // The choice it was set from: what is left, rounded up.
+                        match unix_ms.saturating_sub(now).div_ceil(60_000) {
+                            0..=15 => Some(SleepTimer::After { minutes: 30 }),
+                            16..=30 => Some(SleepTimer::After { minutes: 45 }),
+                            31..=45 => Some(SleepTimer::After { minutes: 60 }),
+                            _ => Some(SleepTimer::EndOfTrack),
+                        }
+                    }
+                    Some(Sleep::EndOfTrack) => Some(SleepTimer::EndOfRecord),
+                    Some(Sleep::EndOfRecord) => None,
+                };
+                self.tx.send(PlayerCommand::SetSleepTimer(next)).ok();
+                self.status_message = Some((
+                    match next {
+                        None => "sleep timer off".into(),
+                        Some(SleepTimer::After { minutes }) => format!("sleep in {minutes} min"),
+                        Some(SleepTimer::EndOfTrack) => "sleep at the end of the track".into(),
+                        Some(SleepTimer::EndOfRecord) => "sleep at the end of the record".into(),
+                    },
+                    std::time::Instant::now(),
+                ));
+            }
             KeyCode::Char('R') => {
                 let repeat = self.state.play_mode().repeat.cycled();
                 self.tx.send(PlayerCommand::SetRepeat(repeat)).ok();
