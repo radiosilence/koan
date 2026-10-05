@@ -10,26 +10,26 @@ struct BrowseFilterButton: View {
 
     var body: some View {
         let count = library.browseFilter.activeCount
+        let symbol = count > 0
+            ? "line.3.horizontal.decrease.circle.fill"
+            : "line.3.horizontal.decrease.circle"
         Button { open = true } label: {
+            #if os(tvOS)
+            // A television's toolbar draws a custom label small and tinted; a
+            // `Label` it draws as an icon, like the sort menu beside it. The
+            // filled symbol says filters are on.
+            Label(count > 0 ? "Filters, \(count) on" : "Filters", systemImage: symbol)
+            #else
             HStack(spacing: 3) {
-                Image(systemName: count > 0
-                    ? "line.3.horizontal.decrease.circle.fill"
-                    : "line.3.horizontal.decrease.circle")
+                Image(systemName: symbol)
                 if count > 0 {
                     Text("\(count)").monospacedDigit()
                 }
             }
             .accessibilityLabel(count > 0 ? "Filters, \(count) on" : "Filters")
-            #if os(tvOS)
-            // A television's toolbar draws a custom label at body size, and
-            // tinted; the sort menu beside it draws its symbol as a toolbar icon.
-            .font(.title3)
             #endif
         }
         .help(count > 0 ? "Filters — \(count) on" : "Filters")
-        #if os(tvOS)
-        .tint(.primary)
-        #endif
         #if os(macOS)
         .tint(.primary)
         .popover(isPresented: $open, arrowEdge: .bottom) {
