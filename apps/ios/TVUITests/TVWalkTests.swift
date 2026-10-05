@@ -38,7 +38,8 @@ final class TVWalkTests: XCTestCase {
         snap("01-now-playing")
 
         // Something playing, for the pages about what is playing: the first
-        // record in the grid, from its Play button.
+        // record in the grid, from its first track, where opening it leaves
+        // focus.
         start(at: .library)
         press(.down)
         press(.select)
@@ -46,10 +47,8 @@ final class TVWalkTests: XCTestCase {
         press(.down)
         press(.select)
         pause(4)
-        if focus(app.buttons["Play"]) {
-            press(.select)
-            pause(6)
-        }
+        press(.select)
+        pause(8)
 
         start(at: .queue)
         snap("02-queue")
@@ -63,9 +62,9 @@ final class TVWalkTests: XCTestCase {
         start(at: .nowPlaying)
         press(.down)
         snap("05-now-playing-controls")
-        press(.up)
+        press(.down)
         snap("06-now-playing-seek")
-        press(.down, times: 2)
+        press(.down)
         snap("07-now-playing-up-next")
         start(at: .nowPlaying)
         press(.down)

@@ -111,11 +111,13 @@ struct NowPlayingPage: View {
                     .padding(.vertical, 5)
                     .background(.quaternary, in: Capsule())
             }
+            // The transport above the bar: down from the tabs reaches play/pause
+            // first, then the bar, then what comes next, in the order they sit.
+            controls
+                .padding(.top, 24)
             Scrubber(focused: focus == .seek)
                 .focusable()
                 .focused($focus, equals: .seek)
-                .padding(.top, 24)
-            controls
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentTransition(.opacity)
@@ -186,7 +188,8 @@ private struct Scrubber: View {
             .padding(.horizontal, 16)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(.white.opacity(focused ? 0.12 : 0))
+                    .fill(.white.opacity(focused ? 0.18 : 0))
+                    .stroke(.white.opacity(focused ? 0.6 : 0), lineWidth: 2)
             )
             .scaleEffect(focused ? 1.02 : 1)
             .animation(.easeOut(duration: 0.15), value: focused)

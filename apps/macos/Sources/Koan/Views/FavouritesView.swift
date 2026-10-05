@@ -169,8 +169,11 @@ struct FavouritesView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 1) {
+            // A television's navigation title already names the page, above.
+            #if !os(tvOS)
             Text("Favourites")
                 .font(.title2.weight(.semibold))
+            #endif
             Text(summary)
                 .font(.caption)
                 .foregroundStyle(.secondary)
