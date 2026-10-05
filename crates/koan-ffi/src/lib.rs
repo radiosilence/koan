@@ -3296,8 +3296,17 @@ impl KoanEngine {
                     if store_version != last_store {
                         last_store = store_version;
                         let transfers = store.all();
+                        let ids: Vec<i64> = transfers.iter().map(|d| d.track_id).collect();
+                        let albums = engine
+                            .db()
+                            .ok()
+                            .and_then(|db| queries::album_ids_for_tracks(&db.conn, &ids).ok())
+                            .unwrap_or_default();
                         out.publish(StateSlice::Transfers {
-                            transfers: transfers.iter().map(Transfer::of).collect(),
+                            transfers: transfers
+                                .iter()
+                                .map(|d| Transfer::of(d, albums.get(&d.track_id).copied()))
+                                .collect(),
                         });
                         let now_running: HashSet<_> = transfers
                             .iter()

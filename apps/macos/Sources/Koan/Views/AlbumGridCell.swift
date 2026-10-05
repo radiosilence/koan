@@ -43,11 +43,13 @@ struct AlbumGridCell: View {
                             .padding(6)
                     }
                 }
+                #if os(iOS)
                 .overlay {
-                    if let fraction = album.downloaded {
-                        DownloadedBar(fraction: fraction)
+                    if album.onDevice != nil {
+                        DownloadedBar(album: album)
                     }
                 }
+                #endif
                 .overlay(alignment: .bottomTrailing) {
                     AlbumTileHeart(albumId: album.id, hovering: hovering)
                 }
@@ -180,28 +182,5 @@ struct SelectableDrag: ViewModifier {
         #else
         content.draggablePlayable(playable)
         #endif
-    }
-}
-
-/// How much of a record is on this device, along the foot of its sleeve.
-private struct DownloadedBar: View {
-    let fraction: Double
-
-    var body: some View {
-        GeometryReader { geo in
-            let side = geo.size.width
-            Capsule()
-                .fill(.black.opacity(0.35))
-                .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(.tint)
-                        .frame(width: (side - 16 - 34) * min(max(fraction, 0), 1))
-                }
-                .frame(width: max(side - 16 - 34, 0), height: 3)
-                .offset(x: 8, y: side - 8 - 3)
-        }
-        .aspectRatio(1, contentMode: .fit)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 }

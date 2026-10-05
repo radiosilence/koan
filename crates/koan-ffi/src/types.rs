@@ -86,9 +86,16 @@ pub struct Album {
     /// When it entered the library. Sortable text — the server's ISO `created`
     /// for remote albums, SQLite's `datetime('now')` for locally scanned ones.
     pub added_at: Option<String>,
-    /// How much of it can play here, from 0 to 1: set where a listing is
-    /// narrowed to this device, the Downloaded shelf and offline.
-    pub downloaded: Option<f64>,
+    /// How much of it can play here: set where a listing is narrowed to this
+    /// device, the Downloaded shelf and offline.
+    pub on_device: Option<AlbumOnDevice>,
+}
+
+/// Of a record's tracks, how many can play here.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AlbumOnDevice {
+    pub have: u32,
+    pub total: u32,
 }
 
 impl From<AlbumRow> for Album {
@@ -105,10 +112,10 @@ impl From<AlbumRow> for Album {
             total_discs: r.total_discs,
             total_tracks: r.total_tracks,
             added_at: r.added_at,
-            downloaded: r
-                .on_device
-                .filter(|d| d.total > 0)
-                .map(|d| f64::from(d.have) / f64::from(d.total)),
+            on_device: r.on_device.map(|d| AlbumOnDevice {
+                have: d.have,
+                total: d.total,
+            }),
         }
     }
 }
@@ -412,6 +419,8 @@ pub struct QueueItem {
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct Transfer {
     pub track_id: i64,
+    /// The record it belongs to, so a record's tile can say it is downloading.
+    pub album_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub state: TransferState,
@@ -452,10 +461,11 @@ impl TransferState {
 }
 
 impl Transfer {
-    pub(crate) fn of(d: &koan_core::remote::downloads::Download) -> Self {
+    pub(crate) fn of(d: &koan_core::remote::downloads::Download, album_id: Option<i64>) -> Self {
         use koan_core::remote::downloads::DownloadState;
         Self {
             track_id: d.track_id,
+            album_id,
             title: d.title.clone(),
             artist: d.artist.clone(),
             state: match &d.state {

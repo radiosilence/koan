@@ -13,6 +13,13 @@ protocol TransferGauge: AnyObject {
     func take(_ figure: TransferFigure)
 }
 
+/// Something on screen drawing several transfers at once: a record's bar, as
+/// its tracks download.
+@MainActor
+protocol RecordGauge: AnyObject {
+    func take(_ figures: [TransferFigure])
+}
+
 /// Download progress at the display's rate, for whatever is drawing it.
 ///
 /// The mirror's `Figures` slice moves when the engine samples a transfer's
@@ -31,9 +38,9 @@ protocol TransferGauge: AnyObject {
 final class TransferMeter: Observable {
     private let engine: KoanEngine
 
-    /// Each gauge and the transfer it draws, by track. Weak keys, so a row
+    /// Each gauge and the transfers it draws, by track. Weak keys, so a row
     /// that scrolls away is forgotten without having to say goodbye.
-    private let gauges = NSMapTable<AnyObject, NSNumber>.weakToStrongObjects()
+    private let gauges = NSMapTable<AnyObject, NSArray>.weakToStrongObjects()
 
     /// The last figure handed out per transfer, so a frame in which nothing
     /// arrived touches no layer.
@@ -79,8 +86,21 @@ final class TransferMeter: Observable {
             relink()
             return
         }
-        gauges.setObject(NSNumber(value: transfer), forKey: gauge)
+        gauges.setObject([NSNumber(value: transfer)], forKey: gauge)
         if let figure = figure(for: transfer) { gauge.take(figure) }
+        relink()
+    }
+
+    /// Have `gauge` draw `transfers`, or nothing when there are none.
+    func follow(_ gauge: RecordGauge, transfers: [Int64]) {
+        guard !transfers.isEmpty else {
+            gauges.removeObject(forKey: gauge)
+            relink()
+            return
+        }
+        gauges.setObject(transfers.map { NSNumber(value: $0) } as NSArray, forKey: gauge)
+        if link == nil { read() }
+        gauge.take(transfers.compactMap { latest[$0] })
         relink()
     }
 
@@ -100,8 +120,8 @@ final class TransferMeter: Observable {
 
     /// The gauges still alive. A weak-keyed map table drops a dead key
     /// lazily, so its `count` can go on counting rows that are gone.
-    private var live: [TransferGauge] {
-        gauges.keyEnumerator().allObjects.compactMap { $0 as? TransferGauge }
+    private var live: [AnyObject] {
+        gauges.keyEnumerator().allObjects.map { $0 as AnyObject }
     }
 
     private func relink() {
@@ -138,10 +158,14 @@ final class TransferMeter: Observable {
         let before = latest
         read()
         for gauge in gauges {
-            guard let transfer = self.gauges.object(forKey: gauge)?.int64Value,
-                  let figure = latest[transfer], figure != before[transfer]
+            guard let ids = (self.gauges.object(forKey: gauge) as? [NSNumber])?.map(\.int64Value),
+                  ids.contains(where: { latest[$0] != before[$0] })
             else { continue }
-            gauge.take(figure)
+            if let gauge = gauge as? TransferGauge, let figure = latest[ids[0]] {
+                gauge.take(figure)
+            } else if let gauge = gauge as? RecordGauge {
+                gauge.take(ids.compactMap { latest[$0] })
+            }
         }
     }
 }

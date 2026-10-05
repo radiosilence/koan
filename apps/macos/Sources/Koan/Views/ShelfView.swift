@@ -89,6 +89,7 @@ struct ShelfView: View {
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds), AnyHashable(library.favouriteAlbumIds),
             AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
+            AnyHashable(mirror.arrivingByAlbum),
         ]
         let library = library
         let nav = nav
@@ -117,7 +118,9 @@ struct ShelfView: View {
                         },
                         toggleFavourite: { library.toggleFavourite(album: $0) }
                     ),
-                    menu: { _ in NSMenu() }
+                    menu: { _ in NSMenu() },
+                    arriving: mirror.arrivingByAlbum,
+                    meter: meter
                 ),
                 trackContext: TrackTableRow.Context(
                     showsAlbum: true,
