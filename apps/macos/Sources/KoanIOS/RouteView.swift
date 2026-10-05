@@ -70,6 +70,7 @@ private struct SectionPage: View {
         case .albums: AlbumBrowser()
         case .artists: ArtistBrowser()
         case .favourites: FavouritesView()
+        case .recentlyPlayed: RecentlyPlayedView()
         case .playHistory: HistoryView()
         case .downloads: DownloadsView()
         case .playlist(let id): PlaylistView(playlistId: id)
@@ -83,6 +84,7 @@ private struct SectionPage: View {
         case .albums: "Albums"
         case .artists: "Artists"
         case .favourites: "Favourites"
+        case .recentlyPlayed: "Recently Played"
         case .playHistory: "History"
         case .downloads: "Downloads"
         case .playlist: ""

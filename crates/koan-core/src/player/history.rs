@@ -23,6 +23,21 @@ use crate::db::queries;
 use crate::player::state::QueueItemId;
 use crate::remote::client::PlaybackReportState;
 
+/// Moves whenever the play history does: a play recorded, or plays deleted.
+/// Pages derived from history (Recently played, History) reload on it, rather
+/// than on a timer.
+static VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn version() -> u64 {
+    VERSION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// The history changed: say so to whatever is watching the engine.
+pub fn changed() {
+    VERSION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    crate::signal::engine_changed().bump();
+}
+
 /// Last.fm's floor: a track shorter than this is never scrobbled.
 const SCROBBLE_MIN_TRACK_MS: u64 = 30_000;
 
@@ -204,7 +219,10 @@ impl Writer {
                 position_ms,
             } => {
                 match queries::record_play(&self.db.conn, queries::LOCAL_USER, track_id, None) {
-                    Ok(id) => self.open = Some((id, track_id)),
+                    Ok(id) => {
+                        self.open = Some((id, track_id));
+                        changed();
+                    }
                     Err(e) => {
                         self.open = None;
                         log::warn!("failed to record play of track {track_id}: {e}");
