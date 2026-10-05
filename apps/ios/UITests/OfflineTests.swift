@@ -21,6 +21,22 @@ final class OfflineTests: XCTestCase {
         }
         app.launch()
         switch step {
+        case "signin":
+            let env = ProcessInfo.processInfo.environment
+            tab("Settings")
+            app.buttons["Server"].firstMatch.tap()
+            if !app.buttons["Sign Out"].waitForExistence(timeout: 2) {
+                fill(app.textFields, "Server URL", env["KOAN_SIGNIN_URL"] ?? "")
+                fill(app.textFields, "Username", env["KOAN_SIGNIN_USER"] ?? "")
+                fill(app.secureTextFields, "Password", env["KOAN_SIGNIN_PASSWORD"] ?? "")
+                // The keyboard covers the button on a phone.
+                if app.keyboards.buttons["return"].exists { app.keyboards.buttons["return"].tap() }
+                let signIn = app.buttons["Sign In"].firstMatch
+                if !signIn.isHittable { app.swipeUp() }
+                signIn.tap()
+            }
+            XCTAssert(app.buttons["Sign Out"].waitForExistence(timeout: 60), "not signed in")
+            snap("signed-in")
         case "downloaded":
             tab("Library")
             app.buttons["Downloaded"].firstMatch.tap()
@@ -85,6 +101,13 @@ final class OfflineTests: XCTestCase {
         }
         pause(1)
         back()
+    }
+
+    private func fill(_ query: XCUIElementQuery, _ placeholder: String, _ text: String) {
+        let field = query.matching(NSPredicate(format: "placeholderValue == %@", placeholder)).firstMatch
+        XCTAssert(field.waitForExistence(timeout: 5), "no field \(placeholder)")
+        field.tap()
+        field.typeText(text)
     }
 
     /// A phone's tabs are a tab bar; an iPad's are buttons in a bar across the top.
