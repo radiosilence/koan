@@ -249,6 +249,9 @@
   .mt-5 {
     margin-top: calc(var(--spacing) * 5);
   }
+  .mt-6 {
+    margin-top: calc(var(--spacing) * 6);
+  }
   .mt-auto {
     margin-top: auto;
   }
@@ -960,6 +963,12 @@
   }
   .\[\&\:\:-webkit-progress-value\]\:bg-brand::-webkit-progress-value {
     background-color: var(--brand);
+  }
+  .\[\&\>h1\]\:my-0 > h1 {
+    margin-block: 0px;
+  }
+  .\[\&\>h2\]\:my-0 > h2 {
+    margin-block: 0px;
   }
 }
 @font-face {
