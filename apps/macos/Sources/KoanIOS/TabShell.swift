@@ -20,6 +20,13 @@ struct TabShell: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(ActivityModel.self) private var activity
+    #if os(tvOS)
+    @Environment(AppState.self) private var app
+    @Environment(EngineMirror.self) private var mirror
+    /// Taken as signed in until the engine says otherwise, so a signed-in TV
+    /// never flashes the sign-in page on launch.
+    @State private var signedIn = true
+    #endif
     @State private var showingNowPlaying = false
     @State private var showingDevices = false
     /// Which tab is showing. Held rather than derived from the navigator: a
@@ -77,6 +84,13 @@ struct TabShell: View {
         // The remote's Play/Pause, wherever focus is.
         .onPlayPauseCommand { player.togglePlayPause() }
         .shareCodes(player)
+        // Signed out, the television has nothing to show but the way in.
+        .fullScreenCover(isPresented: Binding(get: { !signedIn }, set: { _ in })) {
+            SignInPage { joined() }
+        }
+        .task { await checkSignedIn() }
+        .onChange(of: selection) { Task { await checkSignedIn() } }
+        .onChange(of: mirror.connection?.linked) { Task { await checkSignedIn() } }
         #endif
         .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
@@ -232,6 +246,30 @@ struct TabShell: View {
         }
         paths[selection] = routes
     }
+
+    #if os(tvOS)
+    private func checkSignedIn() async {
+        signedIn = await app.engine.settings().remoteSignedIn
+    }
+
+    /// Signed in by pairing or the account form: load the library, as joining
+    /// with an invite does, and start where the music will be.
+    private func joined() {
+        signedIn = true
+        selection = .library
+        let engine = app.engine
+        Task {
+            let synced = await activity.run(
+                "Loading the library", uses: [.remoteTracks], followsSync: true
+            ) {
+                try await engine.syncRemote()
+            }
+            if case .failure(let error) = synced {
+                player.lastError = SettingsModel.describe(error)
+            }
+        }
+    }
+    #endif
 
     private var tab: Binding<TabID> {
         Binding(

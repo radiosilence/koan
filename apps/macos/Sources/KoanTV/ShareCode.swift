@@ -12,7 +12,7 @@ struct ShareCode: View {
 
     var body: some View {
         HStack(spacing: 80) {
-            if let code = Self.code(for: link) {
+            if let code = qrImage(link) {
                 Image(decorative: code, scale: 1)
                     .interpolation(.none)
                     .resizable()
@@ -37,13 +37,16 @@ struct ShareCode: View {
         .padding(80)
     }
 
-    private static func code(for text: String) -> CGImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(text.utf8)
-        filter.correctionLevel = "M"
-        guard let image = filter.outputImage else { return nil }
-        return CIContext().createCGImage(image, from: image.extent)
-    }
+}
+
+/// `text` as a QR code, one pixel to a module: drawn with interpolation off,
+/// it scales to any size without blurring.
+func qrImage(_ text: String) -> CGImage? {
+    let filter = CIFilter.qrCodeGenerator()
+    filter.message = Data(text.utf8)
+    filter.correctionLevel = "M"
+    guard let image = filter.outputImage else { return nil }
+    return CIContext().createCGImage(image, from: image.extent)
 }
 
 extension View {
