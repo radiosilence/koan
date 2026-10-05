@@ -1,0 +1,58 @@
+<!doctype html>
+<!--
+  The homepage's top image, public/screens/hero.webp: the web UI, the macOS app and the iPhone app together. This page
+  at 1600x1000, screenshotted by a headless Chrome from site/ with a transparent background, then saved as WebP. It
+  draws on public/screens, so make it again when those change:
+    chrome --headless --hide-scrollbars --force-device-scale-factor=2 --window-size=1600,1000 \
+      --default-background-color=00000000 --allow-file-access-from-files --screenshot=hero.png "file://$PWD/src/hero.html"
+-->
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body {
+      margin: 0;
+      width: 1600px;
+      height: 1000px;
+      overflow: hidden;
+      background: transparent;
+    }
+
+    img {
+      position: absolute;
+      display: block;
+    }
+
+    .web {
+      left: 20px;
+      top: 30px;
+      width: 860px;
+      border-radius: 12px;
+      box-shadow: 0 24px 60px rgb(0 0 0 / 0.5);
+      opacity: 0.92;
+    }
+
+    .mac {
+      left: 300px;
+      top: 150px;
+      width: 1080px;
+      border-radius: 16px;
+      box-shadow: 0 40px 100px rgb(0 0 0 / 0.6);
+    }
+
+    .phone {
+      left: 1250px;
+      top: 300px;
+      width: 310px;
+      border-radius: 50px;
+      border: 1px solid rgb(255 255 255 / 0.14);
+      box-shadow: 0 40px 90px rgb(0 0 0 / 0.65);
+    }
+  </style>
+</head>
+<body>
+  <img class="web" src="../public/screens/web-search.webp" alt="">
+  <img class="mac" src="../public/screens/mac-album.webp" alt="">
+  <img class="phone" src="../public/screens/ios-now-playing.webp" alt="">
+</body>
+</html>
