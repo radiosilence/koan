@@ -35,6 +35,18 @@ const ICON_PLAY: &str = "<svg class=\"in-[.playing]:hidden\" viewBox=\"0 0 24 24
 const ICON_PAUSE: &str = "<svg class=\"hidden in-[.playing]:inline\" viewBox=\"0 0 24 24\" aria-hidden=true>\
      <path d=\"M6 4h4v16H6zM14 4h4v16h-4z\"/></svg>";
 
+/// A track row's actions on a narrow screen: one button opening the row's
+/// menu, which right-click and long-press open on any screen. The row's own
+/// buttons stand beside it on a wide screen only.
+pub(super) const MORE: &str = "<button class=\"quiet wide:hidden\" data-act=menu aria-haspopup=menu \
+aria-label=\"More\" title=\"More\">⋯</button>";
+
+/// The menu every track row opens, filled for the row by the UI's script.
+/// Beside the pointer on a wide screen, a sheet above the bar on a phone.
+const TRACK_MENU: &str = "<div id=track-menu popover=manual role=menu class=\"fixed inset-auto m-0 hidden min-w-52 \
+flex-col open:flex rounded-lg border border-rule bg-surface p-1.5 text-ink shadow-lg max-wide:inset-x-3 max-wide:w-auto \
+max-wide:bottom-[calc(var(--bar-h)+var(--tabs-h)+env(safe-area-inset-bottom)+8px)]\" aria-label=Track></div>";
+
 pub(super) const KICKER: &str = "m-0 text-fine tracking-[.08em] text-muted uppercase";
 pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";
 pub(super) const EMPTY: &str = "text-muted";
@@ -186,7 +198,7 @@ max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule
 <img class=\"size-12 flex-none rounded-sm bg-rule object-cover max-wide:size-10\" data-np=cover alt=\"\" hidden>\
 <span class=\"flex min-w-0 flex-col\"><span class=\"truncate\" data-np=title>Nothing playing</span>\
 <span class=\"truncate text-meta text-muted\" data-np=artist></span></span></a>\
-<div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer></body></html>",
+<div class=\"flex min-w-0 flex-col items-center gap-1\">{buttons}{scrub}</div></footer>{TRACK_MENU}</body></html>",
         head = head(title),
         datastar = super::ASSETS.datastar_js,
         player = super::ASSETS.player_js,
@@ -339,7 +351,7 @@ const ICON_SHARE: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=true>\
 fn share_track_button(t: &TrackRow) -> String {
     match t.album_id {
         Some(album) => format!(
-            "<button class=\"quiet max-wide:hidden\" data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
+            "<button class=\"quiet\" data-act-share data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
 data-on:click=\"@post('/album/{album}/share?track={id}')\" aria-label=\"Share this track\" \
 title=\"Share this track\">{ICON_SHARE}</button>",
             id = t.id
@@ -373,15 +385,17 @@ fn track_row(
     };
     format!(
         "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
-data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><span class=\"n\">{n}</span>\
-<span class=\"t\">{title}{sub}</span><span class=\"d\">{dur}</span>{heart}{share}\
-<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></li>",
+data-album=\"{album_title}\" data-album-id={album_id} data-artist-id={artist_id} data-cover=\"{cover}\">\
+<span class=\"n\">{n}</span><span class=\"t\">{title}{sub}</span><span class=\"d\">{dur}</span>\
+<span class=\"contents max-wide:hidden\">{heart}{share}\
+<button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></span>{MORE}</li>",
         id = t.id,
         secs = t.duration_ms.unwrap_or(0) / 1000,
         title = escape(&t.title),
         artist = escape(&t.artist_name),
         album_title = escape(&t.album_title),
         album_id = t.album_id.unwrap_or(0),
+        artist_id = t.artist_id.unwrap_or(0),
         cover = t
             .album_id
             .map(|a| cover_url(a, crate::covers::LARGE, versions))
