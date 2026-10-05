@@ -113,9 +113,50 @@ proxy_auth_header = "Remote-User"
 proxy_auth_from = ["172.18.0.0/16"]   # where the proxy connects from
 ```
 
-The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it. Anything else that can reach the port sends the header for nothing and sees the usual sign-in page, so keep the range narrow. A proxy must replace the header rather than append to one a client sent; a request carrying it twice is not believed. The account must already exist in kōan: a name the server has no account for is refused, not created. The UI follows the proxy, so a browser whose proxy sign-in changes to another account is handed over to that account, and signing out is done at the proxy.
+The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it, and only when it carries a single value. The account must already exist in kōan: a name the server has no account for is refused, not created. The UI follows the proxy, so a browser whose proxy sign-in changes to another account is handed over to that account, and signing out is done at the proxy. Both settings must be set for any of this to apply.
 
-This covers the web UI and the MCP consent page only. Subsonic clients, kōan's apps and MCP clients cannot pass through an interactive proxy sign-in, so the proxy has to let `/rest`, `/graphql`, `/auth`, `/oauth`, `/mcp` and `/.well-known` through untouched, and they keep signing in with kōan's own credentials.
+kōan reads the header only on web UI pages and the MCP consent page (`/oauth/authorize`), which the proxy must cover. Subsonic clients, kōan's apps and MCP clients cannot pass through an interactive proxy sign-in, so the proxy must let these through without its sign-in, and no others:
+
+| Path | Used by |
+|------|---------|
+| `/rest` | Subsonic clients and kōan's apps, including the `koanLink` WebSocket |
+| `/graphql` | GraphQL clients |
+| `/mcp` | MCP clients |
+| `/auth/login`, `/auth/refresh`, `/auth/logout` | `koan auth login` and other token clients |
+| `/oauth/register`, `/oauth/token` | MCP clients signing in |
+| `/.well-known` | MCP clients discovering the OAuth server |
+| `/share` | Public share links, for people without an account |
+
+Exempt these exact paths, never whole `/auth` or `/oauth` prefixes. On a path the proxy does not cover it sets no header of its own, so whatever a client sent passes through from the proxy's address. Have the proxy remove the header from every incoming request before it authenticates, so a mistaken exemption carries no header at all. With Caddy:
+
+```
+music.example.com {
+    request_header -Remote-User
+
+    @public path /rest/* /graphql /graphql/* /mcp /mcp/* /auth/login /auth/refresh /auth/logout /oauth/register /oauth/token /.well-known/* /share/*
+    handle @public {
+        reverse_proxy koan:4000
+    }
+    handle {
+        forward_auth authelia:9091 {
+            uri /api/authz/forward-auth
+            copy_headers Remote-User
+        }
+        reverse_proxy koan:4000
+    }
+}
+```
+
+With Traefik, a headers middleware that clears the header, placed before the forward-auth middleware on every router to kōan:
+
+```yaml
+http:
+  middlewares:
+    strip-remote-user:
+      headers:
+        customRequestHeaders:
+          Remote-User: ""
+```
 
 ## Sharing
 

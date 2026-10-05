@@ -63,9 +63,9 @@ impl ProxyAuth {
     }
 
     /// The username the proxy vouches for: only on a connection from the
-    /// proxy itself, and only when it sent the header once. A proxy that
-    /// appended to a client's own header would otherwise let the client name
-    /// the account.
+    /// proxy itself, and only when it sent the header once with one value. A
+    /// proxy that appended to or merged with a client's own header would
+    /// otherwise let the client name the account.
     pub(super) fn user<'a>(&self, headers: &'a HeaderMap, ext: &Extensions) -> Option<&'a str> {
         let ConnectInfo(peer) = ext.get::<ConnectInfo<SocketAddr>>()?;
         let peer = peer.ip().to_canonical();
@@ -74,7 +74,7 @@ impl ProxyAuth {
         }
         let mut values = headers.get_all(&self.header).iter();
         let name = values.next()?.to_str().ok()?.trim();
-        (values.next().is_none() && !name.is_empty()).then_some(name)
+        (values.next().is_none() && !name.is_empty() && !name.contains(',')).then_some(name)
     }
 }
 
@@ -144,7 +144,7 @@ pub(super) async fn login_form(
         return see_other(next);
     }
     if vouched(&s, &headers, &ext).is_some() {
-        return see_other(&format!("/auth/resume?next={}", encode(next)));
+        return see_other(&format!("{PROXY_RESUME}?next={}", encode(next)));
     }
     html(StatusCode::OK, pages::login(next, None))
 }
@@ -177,10 +177,16 @@ pub(super) async fn login(
     }
 }
 
-/// Spend the refresh cookie for a new session. A page load lands here when its
-/// access cookie has lapsed, or names another account than the proxy does.
-/// Behind an authenticating proxy, the account it names is signed in instead.
-pub(super) async fn resume(
+/// Where a page load goes for a session when an authenticating proxy is
+/// trusted. A UI path, so the proxy covers it: the paths operators exempt
+/// from the proxy (`/auth/login`, `/oauth/token`…) never read the header, and
+/// a client's own header reaching them through an exemption signs in no one.
+pub(super) const PROXY_RESUME: &str = "/ui/resume";
+
+/// Sign in the account the proxy names, with a fresh session even over a
+/// refresh cookie, which may be another account's. Without the header, on to
+/// the refresh cookie as usual.
+pub(super) async fn proxy_resume(
     State(s): State<UiState>,
     Query(q): Query<NextParam>,
     headers: HeaderMap,
@@ -190,16 +196,35 @@ pub(super) async fn resume(
     if !s.auth_enabled {
         return see_other(&next);
     }
-    let session = match vouched(&s, &headers, &ext) {
-        // Never the refresh cookie here: it may be another account's, and the
-        // gate would send its session straight back.
-        Some(name) => match session_for(&s.auth, name).await {
-            Some(session) => Some(session),
-            None => return unknown_account(name),
-        },
-        None => rotate_from(&s, &headers).await,
+    let Some(name) = vouched(&s, &headers, &ext) else {
+        return see_other(&format!("/auth/resume?next={}", encode(&next)));
     };
-    match session {
+    match session_for(&s.auth, name).await {
+        Some((access, refresh)) => (
+            StatusCode::SEE_OTHER,
+            [
+                (header::LOCATION, next),
+                (header::CACHE_CONTROL, "no-store".to_owned()),
+            ],
+            s.auth.session_cookies(&access, &refresh),
+        )
+            .into_response(),
+        None => unknown_account(name),
+    }
+}
+
+/// Spend the refresh cookie for a new session. A page load lands here when its
+/// access cookie has lapsed.
+pub(super) async fn resume(
+    State(s): State<UiState>,
+    Query(q): Query<NextParam>,
+    headers: HeaderMap,
+) -> Response {
+    let next = local_path(&q.next).to_owned();
+    if !s.auth_enabled {
+        return see_other(&next);
+    }
+    match rotate_from(&s, &headers).await {
         Some((access, refresh)) => (
             StatusCode::SEE_OTHER,
             [

@@ -189,6 +189,7 @@ pub fn router(
         )
         .route("/login", sign_in)
         .route("/auth/resume", get(session::resume))
+        .route(session::PROXY_RESUME, get(session::proxy_resume))
         .route("/auth/renew", post(session::renew))
         .route("/auth/signout", post(session::signout))
         .route("/ui/assets/{name}", get(ui_asset))
@@ -275,7 +276,12 @@ async fn gate(State(s): State<UiState>, mut req: Request, next: Next) -> Respons
                 .path_and_query()
                 .map_or("/", |p| p.as_str())
                 .to_owned();
-            see_other(&format!("/auth/resume?next={}", encode(&here)))
+            let resume = if s.proxy_auth.is_some() {
+                session::PROXY_RESUME
+            } else {
+                "/auth/resume"
+            };
+            see_other(&format!("{resume}?next={}", encode(&here)))
         }
         None => (
             StatusCode::UNAUTHORIZED,

@@ -4,7 +4,7 @@
 
 ### Added
 
-- **The web UI can sign in through an authenticating reverse proxy.** With `graphql.proxy_auth_header` naming the header a proxy such as Authelia or Authentik sets (`Remote-User`), and `graphql.proxy_auth_from` the addresses that proxy connects from, the web UI signs in the account the header names without asking for a password. The header is ignored from any other address and when sent twice, and an account the server lacks is refused, not created. A browser whose proxy sign-in changes is handed to the new account. The Subsonic API, GraphQL, MCP and kōan's apps keep kōan's own sign-in. This is Navidrome's `ND_REVERSEPROXYUSERHEADER`.
+- **The web UI can sign in through an authenticating reverse proxy.** With `graphql.proxy_auth_header` naming the header a proxy such as Authelia or Authentik sets (`Remote-User`), and `graphql.proxy_auth_from` the addresses that proxy connects from, the web UI signs in the account the header names without asking for a password. The header is read only on web UI pages and the MCP consent page, ignored from any other address and when it carries more than one value, and an account the server lacks is refused, not created. The proxy must cover those pages and strip the header from incoming requests; [Behind an authenticating proxy](docs/guide/headless-server.md#behind-an-authenticating-proxy) lists the exact paths to exempt, with Caddy and Traefik examples. A browser whose proxy sign-in changes is handed to the new account. The Subsonic API, GraphQL, MCP and kōan's apps keep kōan's own sign-in. This is Navidrome's `ND_REVERSEPROXYUSERHEADER`.
 
 ## 0.52.6
 

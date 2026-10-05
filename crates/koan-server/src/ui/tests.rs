@@ -1342,11 +1342,11 @@ async fn the_proxy_signs_in_the_account_it_names() {
     )
     .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
-    assert_eq!(r.location(), "/auth/resume?next=%2Fartists");
+    assert_eq!(r.location(), "/ui/resume?next=%2Fartists");
 
     let r = send(
         &f.app,
-        from_peer(get("/auth/resume?next=/artists"), "10.0.0.1")
+        from_peer(get("/ui/resume?next=/artists"), "10.0.0.1")
             .header("remote-user", "alice")
             .body(Body::empty())
             .unwrap(),
@@ -1360,25 +1360,52 @@ async fn the_proxy_signs_in_the_account_it_names() {
 }
 
 #[tokio::test]
-async fn the_header_counts_only_from_the_proxy_and_only_once() {
+async fn page_loads_behind_the_proxy_resume_through_it() {
     let f = setup_behind_proxy();
-    let stranger = from_peer(get("/auth/resume"), "203.0.113.9")
+    let r = send(
+        &f.app,
+        get("/oauth/authorize?x=y").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.location(), "/ui/resume?next=%2Foauth%2Fauthorize%3Fx%3Dy");
+
+    // Without the header it falls back to the refresh cookie.
+    let r = send(
+        &f.app,
+        get("/ui/resume?next=/queue").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.location(), "/auth/resume?next=%2Fqueue");
+    assert!(r.cookies().is_empty());
+}
+
+#[tokio::test]
+async fn the_header_counts_only_from_the_proxy_with_one_value() {
+    let f = setup_behind_proxy();
+    let stranger = from_peer(get("/ui/resume"), "203.0.113.9")
         .header("remote-user", "alice")
         .body(Body::empty())
         .unwrap();
-    let doubled = from_peer(get("/auth/resume"), "10.0.0.1")
+    let doubled = from_peer(get("/ui/resume"), "10.0.0.1")
         .header("remote-user", "mallory")
         .header("remote-user", "alice")
         .body(Body::empty())
         .unwrap();
-    let unknown_peer = get("/auth/resume")
+    let merged = from_peer(get("/ui/resume"), "10.0.0.1")
+        .header("remote-user", "alice, mallory")
+        .body(Body::empty())
+        .unwrap();
+    let unknown_peer = get("/ui/resume")
         .header("remote-user", "alice")
         .body(Body::empty())
         .unwrap();
-    for req in [stranger, doubled, unknown_peer] {
+    for req in [stranger, doubled, merged, unknown_peer] {
         let r = send(&f.app, req).await;
         assert_eq!(r.status, StatusCode::SEE_OTHER);
-        assert_eq!(r.location(), "/login?next=%2F");
+        assert_eq!(r.location(), "/auth/resume?next=%2F");
+        assert!(r.cookies().is_empty());
     }
     let r = send(
         &f.app,
@@ -1391,12 +1418,73 @@ async fn the_header_counts_only_from_the_proxy_and_only_once() {
     assert_eq!(r.status, StatusCode::OK);
 }
 
+/// The paths the docs tell operators to exempt from the proxy, where a
+/// client's own header arrives from the proxy's address unchecked, sign in
+/// no one.
+#[tokio::test]
+async fn paths_exempt_from_the_proxy_ignore_the_header() {
+    let f = setup_behind_proxy();
+    let app = f
+        .app
+        .clone()
+        .merge(crate::auth::routes::auth_router(f.state.clone()));
+    let json = |uri: &str, body: &str| {
+        from_peer(Request::post(uri), "10.0.0.1")
+            .header(header::HOST, HOST)
+            .header(header::ORIGIN, ORIGIN)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("remote-user", "alice")
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    };
+    let form = |uri: &str, body: &str| {
+        from_peer(Request::post(uri), "10.0.0.1")
+            .header(header::HOST, HOST)
+            .header(header::ORIGIN, ORIGIN)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header("remote-user", "alice")
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    };
+    let page = |uri: &str| {
+        from_peer(get(uri), "10.0.0.1")
+            .header("remote-user", "alice")
+            .body(Body::empty())
+            .unwrap()
+    };
+    for req in [
+        json("/auth/login", r#"{"username":"alice","password":"wrong"}"#),
+        json("/auth/refresh", r#"{"refresh_token":"nope"}"#),
+        json("/auth/logout", r#"{"refresh_token":"nope"}"#),
+        form(
+            "/oauth/token",
+            "grant_type=refresh_token&refresh_token=nope",
+        ),
+        json(
+            "/oauth/register",
+            r#"{"redirect_uris":["https://claude.ai/api/mcp/auth_callback"]}"#,
+        ),
+        page("/auth/resume"),
+        form("/auth/renew", ""),
+        page("/.well-known/oauth-authorization-server"),
+    ] {
+        let uri = req.uri().to_string();
+        let r = send(&app, req).await;
+        let minted = r
+            .cookies()
+            .iter()
+            .any(|c| c.starts_with("koan_access=") && !c.starts_with("koan_access=;"));
+        assert!(!minted, "{uri} signed in: {:?}", r.cookies());
+        assert!(!r.body.contains("\"access_token\":\""), "{uri}: {}", r.body);
+    }
+}
+
 #[tokio::test]
 async fn an_account_the_server_lacks_is_refused() {
     let f = setup_behind_proxy();
     let r = send(
         &f.app,
-        from_peer(get("/auth/resume"), "10.0.0.1")
+        from_peer(get("/ui/resume"), "10.0.0.1")
             .header("remote-user", "bob")
             .body(Body::empty())
             .unwrap(),
@@ -1418,7 +1506,7 @@ async fn a_session_for_another_account_than_the_proxy_names_is_resumed() {
     )
     .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
-    assert_eq!(r.location(), "/auth/resume?next=%2Falbums");
+    assert_eq!(r.location(), "/ui/resume?next=%2Falbums");
 
     let r = send(
         &f.app,
@@ -1456,4 +1544,6 @@ fn proxy_auth_needs_a_header_and_a_proxy() {
         Some("alice")
     );
     assert_eq!(proxy.user(&headers, &at("172.19.0.5:1")), None);
+    headers.insert("remote-user", "alice,admin".parse().unwrap());
+    assert_eq!(proxy.user(&headers, &at("172.18.0.5:1")), None);
 }
