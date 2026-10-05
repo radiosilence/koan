@@ -29,10 +29,3 @@ reqwest = { version = "0.13", default-features = false, features = [
 ] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 walkdir = "2.5"
-
-# opus-decoder from radiosilence/Rusopus: upstream master, which replaces the
-# direct-DFT CELT transform 0.1.1 shipped (a third of a phone core per stream,
-# TadeuszWolfGang/Rusopus#2, unreleased), plus our fixes on top, each sent
-# upstream. Fix bugs there; drop this once a release carries them.
-[patch.crates-io]
-opus-decoder = { git = "https://github.com/radiosilence/Rusopus", rev = "b935bbe0d92085b801b4dc46406b92b8b45f9b76" }

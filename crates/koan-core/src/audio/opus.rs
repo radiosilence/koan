@@ -1,4 +1,4 @@
-//! Opus decoding bridge — wraps `opus-decoder` to decode packets from
+//! Opus decoding bridge — wraps `opus-rs` to decode packets from
 //! Symphonia's Ogg demuxer. Symphonia can identify Opus streams but has no
 //! codec implementation; this module fills that gap.
 //!
@@ -6,9 +6,12 @@
 //! Channel count and pre-skip come from the `OpusHead` identification header,
 //! which every demuxer we use hands over as `extra_data` rather than a packet.
 
-use opus_decoder::OpusDecoder;
+use opus_rs::OpusDecoder;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use symphonia::core::codecs::audio::AudioCodecParameters;
+
+/// The longest Opus frame, 120 ms at 48 kHz, in samples per channel.
+const MAX_FRAME: usize = 5760;
 
 /// Errors from the Opus decode bridge.
 #[derive(Debug, thiserror::Error)]
@@ -85,18 +88,16 @@ impl OpusBridge {
         };
 
         if channels == 0 || channels > 2 {
-            // opus-decoder only supports mono/stereo. Multistream would need
+            // opus-rs only supports mono/stereo. Multistream would need
             // OpusMultistreamDecoder, which is not handled.
             return Err(OpusError::Init(format!(
                 "unsupported channel count: {channels} (only mono/stereo supported)"
             )));
         }
 
-        let decoder =
-            OpusDecoder::new(48000, channels).map_err(|e| OpusError::Init(format!("{e:?}")))?;
+        let decoder = OpusDecoder::new(48000, channels).map_err(|e| OpusError::Init(e.into()))?;
 
-        // Max frame size: 120ms at 48kHz = 5760 samples/channel.
-        let max_samples = 5760 * channels;
+        let max_samples = MAX_FRAME * channels;
         let pcm_buf = vec![0.0f32; max_samples];
 
         Ok(Self {
@@ -123,17 +124,15 @@ impl OpusBridge {
             return Ok(&[]);
         }
 
-        // `opus-decoder` is a young port with no release past 0.1.1, built from
-        // our fork with the fixes it needed (a shift that panicked on CELT's
-        // collapse mask among them). Contain it all the same, rather than let
-        // one bad packet take the decode thread with it.
+        // A port of libopus rather than libopus itself: contain a panic, rather
+        // than let one bad packet take the decode thread with it.
         let decoder = &mut self.decoder;
         let pcm_buf = &mut self.pcm_buf;
         let frames_per_channel = match catch_unwind(AssertUnwindSafe(|| {
-            decoder.decode_float(data, pcm_buf, false)
+            decoder.decode(data, MAX_FRAME, pcm_buf)
         })) {
             Ok(Ok(frames)) => frames,
-            Ok(Err(e)) => return Err(OpusError::Decode(format!("{e:?}"))),
+            Ok(Err(e)) => return Err(OpusError::Decode(e.into())),
             Err(_) => return Err(OpusError::Panicked),
         };
 
@@ -154,7 +153,10 @@ impl OpusBridge {
 
     /// Reset the decoder state (e.g. after a seek).
     pub fn reset(&mut self) {
-        self.decoder.reset();
+        // opus-rs has no reset; a fresh decoder is the same state and cheap.
+        if let Ok(decoder) = OpusDecoder::new(48000, self.channels) {
+            self.decoder = decoder;
+        }
         self.skipped = self.pre_skip; // After seek, pre-skip already applied.
     }
 }
