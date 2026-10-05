@@ -238,6 +238,9 @@ struct TransportBar: View {
                     .help(Format.outputExplanation(format))
             }
 
+            SleepButton()
+                .font(.caption)
+
             if player.hasOtherDevices || player.isControllingAnother {
                 ControlButton(open: $showingControl, labelled: !compact, iconSize: 17)
                     .font(.caption)
@@ -563,6 +566,64 @@ struct RepeatButton: View {
         case .off: "Off"
         case .queue: "Queue"
         case .one: "One track"
+        }
+    }
+}
+
+/// The sleep timer: the fixed choices, and while one is set what is left
+/// beside the moon. The engine says when it goes off rather than what is
+/// left, so the countdown is the system's to draw and nothing here ticks.
+struct SleepButton: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        let sleep = player.sleep
+        Menu {
+            ForEach([15, 30, 45, 60], id: \.self) { minutes in
+                Button("\(minutes) Minutes") { player.setSleepTimer(.after(minutes: UInt32(minutes))) }
+            }
+            Divider()
+            Button("End of Track") { player.setSleepTimer(.endOfTrack) }
+            Button("End of Record") { player.setSleepTimer(.endOfRecord) }
+            if sleep != nil {
+                Divider()
+                Button("Cancel Sleep Timer", role: .destructive) { player.cancelSleepTimer() }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: sleep == nil ? "moon" : "moon.zzz.fill")
+                switch sleep {
+                case .at(let unixMs):
+                    let now = Date.now
+                    Text(timerInterval: now...max(now, Self.date(unixMs)), countsDown: true)
+                        .monospacedDigit()
+                case .endOfTrack: Text("Track")
+                case .endOfRecord: Text("Record")
+                case nil: EmptyView()
+                }
+            }
+            .foregroundStyle(sleep == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+        }
+        #if os(macOS)
+        .menuStyle(.borderlessButton)
+        #endif
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(sleep == nil ? "Sleep timer" : "Sleep timer: \(value(sleep))")
+        .accessibilityLabel("Sleep timer")
+        .accessibilityValue(value(sleep))
+    }
+
+    private static func date(_ unixMs: UInt64) -> Date {
+        Date(timeIntervalSince1970: Double(unixMs) / 1000)
+    }
+
+    private func value(_ sleep: SleepState?) -> String {
+        switch sleep {
+        case .at(let unixMs): "Stops at \(Self.date(unixMs).formatted(date: .omitted, time: .shortened))"
+        case .endOfTrack: "Stops at the end of the track"
+        case .endOfRecord: "Stops at the end of the record"
+        case nil: "Off"
         }
     }
 }

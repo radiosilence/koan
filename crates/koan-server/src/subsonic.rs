@@ -83,6 +83,8 @@ struct AppState {
     covers: Arc<crate::covers::Covers>,
     /// What `getIndexes`'s `lastModified` was last worked out from.
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
+    /// `ffmpeg`, where transcoding is on and it was found at startup.
+    transcoder: Option<crate::transcode::Transcoder>,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -1255,6 +1257,10 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             "played",
             extras.played.get(&track.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt_int(
+            "userRating",
+            extras.rating.get(&track.id).map(|&r| r.into()),
+        )
         .list("genres", track.genre.iter().map(|g| genre_node(g)))
         .list(
             "artists",
@@ -1335,6 +1341,10 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
             "played",
             extras.played.get(&album.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt_int(
+            "userRating",
+            extras.rating.get(&album.id).map(|&r| r.into()),
+        )
         .child(item_date("releaseDate", album.date.as_deref()))
         .list("genres", genres.iter().map(|g| genre_node(g)))
         .list(
@@ -1369,6 +1379,7 @@ fn artist_id3_node(id: i64, name: &str, extras: &ArtistExtras) -> XmlNode {
         .attr("coverArt", &uid)
         .attr("musicBrainzId", mbid.unwrap_or_default())
         .attr("sortName", sort_name.unwrap_or_default())
+        .attr_opt_int("userRating", extras.rating.get(&id).map(|&r| r.into()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1412,6 +1423,8 @@ struct SongExtras {
     mbid: HashMap<i64, String>,
     /// Last play, seconds since the epoch.
     played: HashMap<i64, i64>,
+    /// The caller's rating, 1 to 5.
+    rating: HashMap<i64, u8>,
 }
 
 /// The caller's own history: when someone else last played a track is theirs
@@ -1457,7 +1470,23 @@ fn song_extras<'a>(
         )?
         .into_iter()
         .collect(),
+        rating: rated(
+            db,
+            user,
+            queries::RatingKind::Track,
+            tracks.iter().map(|t| t.id),
+        )?,
     })
+}
+
+/// The caller's ratings of these rows.
+fn rated(
+    db: &Database,
+    user: i64,
+    kind: queries::RatingKind,
+    ids: impl IntoIterator<Item = i64>,
+) -> Result<HashMap<i64, u8>, SubsonicError> {
+    queries::ratings(&db.conn, user, kind, ids).map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
 /// What `AlbumID3` carries beyond `AlbumRow`.
@@ -1469,6 +1498,7 @@ struct AlbumExtras {
     genres: HashMap<i64, Vec<String>>,
     stats: HashMap<i64, queries::AlbumStats>,
     played: HashMap<i64, i64>,
+    rating: HashMap<i64, u8>,
 }
 
 /// `tracks`, when the caller already read every track of these albums, is
@@ -1534,6 +1564,12 @@ fn album_extras<'a>(
         )?
         .into_iter()
         .collect(),
+        rating: rated(
+            db,
+            user,
+            queries::RatingKind::Album,
+            album_ids.iter().copied(),
+        )?,
     })
 }
 
@@ -1565,15 +1601,18 @@ struct ArtistExtras {
     uids: Uids,
     /// MusicBrainz artist id and sort name.
     names: HashMap<i64, (Option<String>, Option<String>)>,
+    rating: HashMap<i64, u8>,
 }
 
 fn artist_extras(
     db: &Database,
+    user: i64,
     ids: impl IntoIterator<Item = i64>,
 ) -> Result<ArtistExtras, SubsonicError> {
     let ids: Vec<i64> = ids.into_iter().collect();
     Ok(ArtistExtras {
         uids: Uids::load(db, ids.iter().copied(), [], [])?,
+        rating: rated(db, user, queries::RatingKind::Artist, ids.iter().copied())?,
         names: by_id(
             db,
             "SELECT id, mbid, sort_name FROM artists WHERE id IN (SELECT value FROM json_each(?1))",
@@ -1767,9 +1806,9 @@ async fn get_artists(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
+        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
             let index_map = artist_index(db)?;
-            let extras = artist_extras(db, index_map.values().flatten().map(|a| a.id))?;
+            let extras = artist_extras(db, user, index_map.values().flatten().map(|a| a.id))?;
 
             let mut artists_node = XmlNode::new("artists")
                 .attr("ignoredArticles", IGNORED_ARTICLES)
@@ -1915,7 +1954,7 @@ async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdP
             let albums = queries::albums_for_artist(&db.conn, artist_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-            let artists = artist_extras(db, [artist.id])?;
+            let artists = artist_extras(db, user, [artist.id])?;
             let extras = album_extras(db, user, &albums, None)?;
             Ok(b.child(
                 artist_id3_node(artist.id, &artist.name, &artists)
@@ -1969,8 +2008,8 @@ fn album_list(
     let page = match params.list_type.as_deref().unwrap_or("alphabeticalByName") {
         "recent" => played(queries::PlayedOrder::Recent)?,
         "frequent" => played(queries::PlayedOrder::Frequent)?,
-        // koan keeps no ratings, so nothing is rated highest.
-        "highest" => Vec::new(),
+        "highest" => queries::highest_rated_albums(&db.conn, user, limit, offset)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?,
         list_type => {
             let q = queries::AlbumQuery {
                 limit: Some(limit),
@@ -2272,7 +2311,7 @@ async fn search3(
                 (artists, albums, songs)
             };
 
-            let artist_extras = artist_extras(db, artists.iter().map(|(id, _)| *id))?;
+            let artist_extras = artist_extras(db, user, artists.iter().map(|(id, _)| *id))?;
             let album_extras = album_extras(db, user, &albums, None)?;
             let song_extras = song_extras(db, user, &songs)?;
             let result_node = XmlNode::new("searchResult3")
@@ -2309,15 +2348,53 @@ struct StreamParams {
     /// deserialise with a plain-text HTTP 400 *before* the handler runs, which
     /// is neither a Subsonic envelope nor something a client can report.
     id: Option<String>,
+    /// Strings for the same reason as `id`. Read only by `stream`; `download`
+    /// is the original file by definition.
+    #[serde(rename = "maxBitRate")]
+    max_bit_rate: Option<String>,
+    format: Option<String>,
+    #[serde(rename = "timeOffset")]
+    time_offset: Option<String>,
+    #[serde(rename = "estimateContentLength")]
+    estimate_content_length: Option<String>,
+}
+
+/// What `stream_inner` may send in place of the file itself.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    /// The original, always: `download`.
+    Original,
+    /// A transcode where the request asks for one.
+    Transcode,
+    /// The headers a transcode would have, without running one: `stream`'s HEAD.
+    TranscodeHead,
 }
 
 async fn stream(
+    State(state): State<Arc<AppState>>,
+    method: axum::http::Method,
+    Query(params): Query<StreamParams>,
+    headers: HeaderMap,
+) -> Response {
+    let json = params.auth.wants_json();
+    let delivery = if method == axum::http::Method::HEAD {
+        Delivery::TranscodeHead
+    } else {
+        Delivery::Transcode
+    };
+    match stream_inner(state, params, &headers, delivery).await {
+        Ok(resp) => resp,
+        Err(e) => SubsonicResponse::error(json, &e),
+    }
+}
+
+async fn download(
     State(state): State<Arc<AppState>>,
     Query(params): Query<StreamParams>,
     headers: HeaderMap,
 ) -> Response {
     let json = params.auth.wants_json();
-    match stream_inner(state, params, &headers).await {
+    match stream_inner(state, params, &headers, Delivery::Original).await {
         Ok(resp) => resp,
         Err(e) => SubsonicResponse::error(json, &e),
     }
@@ -2327,14 +2404,25 @@ async fn stream_inner(
     state: Arc<AppState>,
     params: StreamParams,
     headers: &HeaderMap,
+    delivery: Delivery,
 ) -> Result<Response, SubsonicError> {
     let lookup = state.clone();
-    let track = offload(move || {
-        let db = authed_db(&lookup, &params.auth)?;
-        let track_id = require_id(&db, params.id.as_deref(), EntityKind::Song)?;
-        queries::get_track_row(&db.conn, track_id)
+    let StreamParams {
+        auth,
+        id,
+        max_bit_rate,
+        format,
+        time_offset,
+        estimate_content_length,
+    } = params;
+    let (username, track) = offload(move || {
+        let caller = validate_auth(&auth, &lookup)?;
+        let db = lookup.open_db()?;
+        let track_id = require_id(&db, id.as_deref(), EntityKind::Song)?;
+        let track = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Track"))
+            .ok_or_else(|| SubsonicError::not_found("Track"))?;
+        Ok((caller.username, track))
     })
     .await?;
 
@@ -2357,6 +2445,37 @@ async fn stream_inner(
     }
 
     let path = local_path.unwrap();
+    if delivery != Delivery::Original
+        && let Some(transcoder) = &state.transcoder
+    {
+        let request = crate::transcode::Request {
+            max_bit_rate: max_bit_rate.as_deref(),
+            format: format.as_deref(),
+            time_offset: time_offset.as_deref(),
+        };
+        let source_kbps = track.bitrate.and_then(|b| u32::try_from(b).ok());
+        let plan = crate::transcode::plan(&request, track.codec.as_deref(), source_kbps)
+            .filter(|plan| transcoder.encodes(plan.codec));
+        if let Some(plan) = plan {
+            let length = (estimate_content_length.as_deref() == Some("true"))
+                .then(|| crate::transcode::estimated_length(&plan, track.duration_ms))
+                .flatten();
+            if delivery == Delivery::TranscodeHead {
+                return crate::transcode::Transcoder::head(&plan, length)
+                    .map_err(|e| SubsonicError::internal(e.to_string()));
+            }
+            match transcoder.permits(&username) {
+                None => log::info!("transcode: at the limit, serving {username} the original"),
+                Some(permits) => match transcoder.stream(&path, &plan, length, permits).await {
+                    Ok(Some(resp)) => return Ok(resp),
+                    Ok(None) => {}
+                    Err(e) => {
+                        log::warn!("transcode: could not start ffmpeg, serving the original: {e}")
+                    }
+                },
+            }
+        }
+    }
     serve_local_file(&path, headers).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             SubsonicError::not_found("File not found on disk")
@@ -2719,6 +2838,52 @@ fn set_star(
     Ok(())
 }
 
+/// `setRating`: `rating` 1 to 5 rates the song, album or artist `id` names,
+/// by its uid or prefix; 0 clears it.
+async fn set_rating(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let raw = params
+                .get("id")
+                .ok_or_else(|| SubsonicError::missing_param("id"))?;
+            let rating = params
+                .get("rating")
+                .ok_or_else(|| SubsonicError::missing_param("rating"))?
+                .parse::<u8>()
+                .ok()
+                .filter(|r| *r <= 5)
+                .ok_or_else(|| SubsonicError::bad_param("rating"))?;
+            let (kind, id) = resolve_entity(db, raw)?;
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let kind = match kind.unwrap_or(EntityKind::Song) {
+                EntityKind::Song => {
+                    queries::get_track_row(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?
+                        .ok_or_else(|| SubsonicError::not_found("Track"))?;
+                    queries::RatingKind::Track
+                }
+                EntityKind::Album => {
+                    queries::get_album(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?
+                        .ok_or_else(|| SubsonicError::not_found("Album"))?;
+                    queries::RatingKind::Album
+                }
+                EntityKind::Artist => {
+                    queries::get_artist(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?
+                        .ok_or_else(|| SubsonicError::not_found("Artist"))?;
+                    queries::RatingKind::Artist
+                }
+            };
+            queries::set_rating(&db.conn, user, kind, id, rating).map_err(internal)?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
 async fn get_starred2(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
@@ -2749,7 +2914,7 @@ async fn get_starred2(
                 |r| Ok((r.get(0)?, r.get::<_, String>(1)?)),
             )?;
             let album_extras = album_extras(db, user, &albums, None)?;
-            let artist_extras = artist_extras(db, artists.iter().map(|(id, _)| *id))?;
+            let artist_extras = artist_extras(db, user, artists.iter().map(|(id, _)| *id))?;
 
             Ok(b.child(
                 XmlNode::new("starred2")
@@ -2925,11 +3090,20 @@ async fn get_user(
 
 /// Answered without authentication, as OpenSubsonic requires: a client asks
 /// before it knows which sign-in methods it may use.
-async fn get_open_subsonic_extensions(Query(params): Query<SubsonicParams>) -> Response {
+async fn get_open_subsonic_extensions(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    // `timeOffset` seeks a transcode, so it is offered only where one can run.
+    let transcode: &[(&str, &[i64])] = if state.transcoder.is_some() {
+        &[("transcodeOffset", &[1])]
+    } else {
+        &[]
+    };
     SubsonicResponse::ok(params.wants_json())
         .list(
             "openSubsonicExtensions",
-            EXTENSIONS.iter().map(|(name, versions)| {
+            EXTENSIONS.iter().chain(transcode).map(|(name, versions)| {
                 XmlNode::new("openSubsonicExtensions")
                     .attr("name", name)
                     .list(
@@ -4194,8 +4368,8 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/stream.view", get(stream).post(stream))
         // `download` is the untranscoded original, which is all `stream` ever
         // serves here. koan's own download queue fetches through it.
-        .route("/rest/download", get(stream).post(stream))
-        .route("/rest/download.view", get(stream).post(stream))
+        .route("/rest/download", get(download).post(download))
+        .route("/rest/download.view", get(download).post(download))
         .route("/rest/getCoverArt", get(get_cover_art).post(get_cover_art))
         .route(
             "/rest/getCoverArt.view",
@@ -4211,6 +4385,8 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             "/rest/getStarred2.view",
             get(get_starred2).post(get_starred2),
         )
+        .route("/rest/setRating", get(set_rating).post(set_rating))
+        .route("/rest/setRating.view", get(set_rating).post(set_rating))
         .route("/rest/scrobble", get(scrobble).post(scrobble))
         .route("/rest/scrobble.view", get(scrobble).post(scrobble))
         .route(
@@ -4322,6 +4498,21 @@ pub fn subsonic_router(
         log::info!("Subsonic: no shared secret, so only koan accounts sign in (with p=).");
     }
 
+    let transcoder = cfg
+        .subsonic
+        .transcode
+        .then(|| {
+            let found = crate::transcode::Transcoder::find(&cfg.subsonic.ffmpeg);
+            if found.is_none() {
+                log::info!(
+                    "Subsonic: {} did not run, so clients asking for a lower bitrate get the original.",
+                    cfg.subsonic.ffmpeg
+                );
+            }
+            found
+        })
+        .flatten();
+
     let state = Arc::new(AppState {
         users: crate::auth::password::PasswordVerifier::new(pool.clone()),
         pool,
@@ -4339,6 +4530,7 @@ pub fn subsonic_router(
             .unwrap_or_default(),
         covers,
         last_modified: Default::default(),
+        transcoder,
     });
 
     Some(subsonic_app(state))
@@ -4380,6 +4572,7 @@ mod tests {
             http: reqwest::Client::new(),
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
+            transcoder: None,
         });
         (state, dir)
     }
@@ -5489,6 +5682,70 @@ mod tests {
         )
         .await;
         assert_eq!(v["error"]["code"], 10, "an unknown type is refused");
+    }
+
+    #[tokio::test]
+    async fn ratings_set_clear_and_order_highest() {
+        let (state, _dir) = test_state();
+        let [alpha, _, gamma] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let album_of = |track| {
+            let db = Database::open(state.pool.path()).unwrap();
+            let album = queries::get_track_row(&db.conn, track)
+                .unwrap()
+                .unwrap()
+                .album_id
+                .unwrap();
+            uid_of(&state, queries::UidKind::Album, album)
+        };
+        let rate = |id: String, rating: &'static str| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!(
+                        "/rest/setRating?{}&id={id}&rating={rating}",
+                        auth_query("f=json")
+                    ),
+                )
+                .await
+            }
+        };
+
+        let (alpha_album, gamma_album) = (album_of(alpha), album_of(gamma));
+        rate(alpha_album.clone(), "3").await;
+        rate(gamma_album.clone(), "5").await;
+        assert_eq!(
+            album_list2(&state, "type=highest").await,
+            ["Gamma", "Alpha"]
+        );
+        let v = json_of(
+            build_test_router(state.clone()),
+            &format!("/rest/getAlbum?{}&id={alpha_album}", auth_query("f=json")),
+        )
+        .await;
+        assert_eq!(v["album"]["userRating"], 3, "{v}");
+
+        let song = uid_of(&state, queries::UidKind::Track, alpha);
+        rate(song.clone(), "4").await;
+        let song_rating = |state: Arc<AppState>, song: String| async move {
+            json_of(
+                build_test_router(state),
+                &format!("/rest/getSong?{}&id={song}", auth_query("f=json")),
+            )
+            .await["song"]["userRating"]
+                .clone()
+        };
+        assert_eq!(song_rating(state.clone(), song.clone()).await, 4);
+        rate(song.clone(), "0").await;
+        assert!(song_rating(state.clone(), song.clone()).await.is_null());
+
+        let v = rate(song, "6").await;
+        assert_eq!(v["error"]["code"], 10, "a rating above 5 is refused");
+
+        rate(gamma_album, "0").await;
+        assert_eq!(album_list2(&state, "type=highest").await, ["Alpha"]);
     }
 
     #[tokio::test]

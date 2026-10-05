@@ -23,6 +23,8 @@ pub struct GraphQLClient {
     /// `nowPlaying` is asked for without them. Shared by clones, like the
     /// session.
     play_modes: Arc<std::sync::atomic::AtomicBool>,
+    /// The same for the sleep timer.
+    sleep_timer: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// A sign-in to a server with auth enabled: the refresh token `koan auth login`
@@ -53,6 +55,7 @@ impl GraphQLClient {
                 .expect("failed to build HTTP client"),
             session: None,
             play_modes: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            sleep_timer: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         }
     }
 
@@ -210,33 +213,45 @@ impl GraphQLClient {
     // Typed helpers
     // -----------------------------------------------------------------------
 
-    /// What the server is playing. A server older than play modes rejects a
-    /// query naming them, so on that refusal the query is asked again without
-    /// them, and from then on, and the mode reads as off.
+    /// What the server is playing. A server older than play modes or the
+    /// sleep timer rejects a query naming them, so on that refusal the query
+    /// is asked again without them, and from then on, and they read as off.
     pub fn now_playing(&self) -> Result<NowPlaying, GraphQLError> {
         use std::sync::atomic::Ordering;
         const TRACK: &str = "track { trackId title artist album codec sampleRate bitDepth \
                              bitrateKbps channels durationMs }";
-        let ask = |modes: bool| {
+        let ask = |modes: bool, sleep: bool| {
             let modes = if modes { "shuffle repeat " } else { "" };
+            let sleep = if sleep {
+                "sleep { endsAtMs endOf } "
+            } else {
+                ""
+            };
             self.execute(
                 &format!(
-                    "{{ nowPlaying {{ state positionMs durationMs queueItemId {modes}{TRACK} }} }}"
+                    "{{ nowPlaying {{ state positionMs durationMs queueItemId {modes}{sleep}{TRACK} }} }}"
                 ),
                 None,
             )
         };
-        let data = if self.play_modes.load(Ordering::Relaxed) {
-            match ask(true) {
-                Err(GraphQLError::Query(e)) if e.contains("shuffle") || e.contains("repeat") => {
+        let data = loop {
+            let (modes, sleep) = (
+                self.play_modes.load(Ordering::Relaxed),
+                self.sleep_timer.load(Ordering::Relaxed),
+            );
+            match ask(modes, sleep) {
+                Err(GraphQLError::Query(e)) if sleep && e.contains("sleep") => {
+                    log::info!("server predates the sleep timer: {e}");
+                    self.sleep_timer.store(false, Ordering::Relaxed);
+                }
+                Err(GraphQLError::Query(e))
+                    if modes && (e.contains("shuffle") || e.contains("repeat")) =>
+                {
                     log::info!("server predates play modes: {e}");
                     self.play_modes.store(false, Ordering::Relaxed);
-                    ask(false)?
                 }
-                other => other?,
+                other => break other?,
             }
-        } else {
-            ask(false)?
         };
         let np = &data["nowPlaying"];
         Ok(NowPlaying {
@@ -250,6 +265,15 @@ impl GraphQLClient {
                     .as_str()
                     .and_then(|r| crate::player::state::Repeat::parse(&r.to_lowercase()))
                     .unwrap_or_default(),
+            },
+            sleep: match (
+                np["sleep"]["endsAtMs"].as_u64(),
+                np["sleep"]["endOf"].as_str(),
+            ) {
+                (Some(unix_ms), _) => Some(crate::player::state::Sleep::At { unix_ms }),
+                (None, Some("TRACK")) => Some(crate::player::state::Sleep::EndOfTrack),
+                (None, Some("RECORD")) => Some(crate::player::state::Sleep::EndOfRecord),
+                _ => None,
             },
             track: np.get("track").and_then(|t| {
                 if t.is_null() {
@@ -333,6 +357,29 @@ impl GraphQLClient {
         Ok(())
     }
 
+    /// Set the server's sleep timer, or with `None` cancel it.
+    pub fn set_sleep_timer(
+        &self,
+        timer: Option<crate::player::state::SleepTimer>,
+    ) -> Result<(), GraphQLError> {
+        use crate::player::state::SleepTimer;
+        let (query, vars) = match timer {
+            None => ("mutation { cancelSleepTimer { ok } }", None),
+            Some(SleepTimer::After { minutes }) => (
+                "mutation($m: Int!) { setSleepTimer(minutes: $m) { ok } }",
+                Some(serde_json::json!({ "m": minutes })),
+            ),
+            Some(SleepTimer::EndOfTrack) => {
+                ("mutation { setSleepTimer(endOf: TRACK) { ok } }", None)
+            }
+            Some(SleepTimer::EndOfRecord) => {
+                ("mutation { setSleepTimer(endOf: RECORD) { ok } }", None)
+            }
+        };
+        self.execute(query, vars)?;
+        Ok(())
+    }
+
     pub fn set_repeat(&self, repeat: crate::player::state::Repeat) -> Result<(), GraphQLError> {
         self.execute(
             "mutation($repeat: Repeat!) { setPlayMode(repeat: $repeat) { ok } }",
@@ -412,6 +459,7 @@ pub struct NowPlaying {
     pub duration_ms: Option<u64>,
     pub queue_item_id: Option<String>,
     pub mode: crate::player::state::PlayMode,
+    pub sleep: Option<crate::player::state::Sleep>,
     pub track: Option<NowPlayingTrack>,
 }
 
