@@ -74,7 +74,7 @@ pub(super) async fn confirm(
     if !s.auth_enabled {
         return without_accounts();
     }
-    let Some(device) = crate::pair::pairings().device(&pair) else {
+    let Some(info) = crate::pair::pairings().info(&pair) else {
         return code_page(
             &s,
             Some(
@@ -84,7 +84,7 @@ pub(super) async fn confirm(
     };
     let action = format!("/pair/{}", encode(&pair));
     let body = format!(
-        "<h2>Sign in {device}?</h2>\
+        "<h2>Sign in {device}?</h2>{origin}\
 <p>It will be signed in as <strong>{user}</strong>, and can do anything your account can until you \
 revoke its key.</p>\
 <p><small>Approve only a device you are setting up yourself, just now. Anyone can give a device \
@@ -95,11 +95,26 @@ any name.</small></p>\
 <button class=\"quiet\">Decline</button></form>\
 <form class=\"grid gap-3.5\" method=post action=\"/auth/signout\">\
 <input type=hidden name=next value=\"{action}\"><button class=\"quiet\">Not {user}? Sign out</button></form>",
-        device = escape(&device),
+        device = escape(&info.device),
+        origin = origin(&info),
         user = escape(&user.username),
         action = escape(&action),
     );
     html(StatusCode::OK, page("Sign in a device", &body))
+}
+
+/// Where the request came from, in plain words. One from outside a private
+/// network is marked: a device in the room is on the approver's network.
+fn origin(info: &crate::pair::PairInfo) -> String {
+    let from = escape(&info.from.to_string());
+    if info.local() {
+        format!("<p>Requested from {from}, on your network.</p>")
+    } else {
+        format!(
+            "<p class=\"{ERROR}\"><strong>Requested from {from}, from the internet.</strong> \
+A device in the room with you is usually on your network.</p>"
+        )
+    }
 }
 
 pub(super) async fn approve(
@@ -140,14 +155,14 @@ async fn settle(
     })
     .await;
     let body = match settled {
-        Some(Ok(device)) if decline => format!(
+        Some(Ok(info)) if decline => format!(
             "<h2>Declined</h2><p>{} was not signed in.</p>",
-            escape(&device)
+            escape(&info.device)
         ),
-        Some(Ok(device)) => format!(
+        Some(Ok(info)) => format!(
             "<h2>Signed in</h2><p>{} is signed in as <strong>{}</strong>. Its key is listed under \
 API keys, where it can be revoked.</p>",
-            escape(&device),
+            escape(&info.device),
             escape(&username)
         ),
         Some(Err(crate::pair::SettleError::NotFound)) => {

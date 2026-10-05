@@ -748,12 +748,11 @@ impl SubsonicClient {
         Ok(())
     }
 
-    /// The name of the device waiting on pairing `pair`, an id or a code
-    /// (`koanPairInfo`).
-    pub fn koan_pair_info(&self, pair: &str) -> Result<String, SubsonicError> {
+    /// The device waiting on pairing `pair`, an id or a code, and where it
+    /// asked from (`koanPairInfo`).
+    pub fn koan_pair_info(&self, pair: &str) -> Result<KoanPair, SubsonicError> {
         self.get_with_params("koanPairInfo", &[("pair", pair)])?
             .pair
-            .map(|p| p.device)
             .ok_or(SubsonicError::BadResponse)
     }
 
@@ -833,10 +832,15 @@ struct SubsonicResponse {
 }
 
 /// A pairing a koan server holds, as `koanPairInfo` and `koanPairApprove`
-/// name it.
-#[derive(Debug, Deserialize)]
-struct KoanPair {
-    device: String,
+/// describe it: the device, the address it asked from, and whether that
+/// address is on a private network.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanPair {
+    pub device: String,
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub local: bool,
 }
 
 #[derive(Debug, Deserialize)]

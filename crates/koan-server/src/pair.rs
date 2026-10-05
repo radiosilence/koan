@@ -9,6 +9,7 @@
 //! again. See `koan_core::remote::pair` for the device's side.
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
@@ -37,6 +38,8 @@ struct Entry {
     /// Without its dash.
     code: String,
     device: String,
+    /// Where the request came from, as the rate limits see it.
+    from: IpAddr,
     created: Instant,
     outcome: oneshot::Sender<PairMessage>,
 }
@@ -73,6 +76,33 @@ impl Drop for Opened<'_> {
     }
 }
 
+/// What an approver is shown of a pairing before saying yes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairInfo {
+    pub device: String,
+    pub from: IpAddr,
+}
+
+impl PairInfo {
+    /// Whether the request came from a private network: the approver's own,
+    /// most likely, rather than the internet.
+    pub fn local(&self) -> bool {
+        is_local(self.from)
+    }
+}
+
+/// RFC 1918, link-local, unique local and loopback addresses.
+fn is_local(ip: IpAddr) -> bool {
+    match ip.to_canonical() {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local() || v4.is_loopback(),
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
 /// A pairing taken out to be settled.
 pub struct Taken {
     id: String,
@@ -82,6 +112,13 @@ pub struct Taken {
 impl Taken {
     pub fn device(&self) -> &str {
         &self.entry.device
+    }
+
+    pub fn info(&self) -> PairInfo {
+        PairInfo {
+            device: self.entry.device.clone(),
+            from: self.entry.from,
+        }
     }
 
     /// Send the device its outcome. Gives it back when the device has gone.
@@ -104,8 +141,8 @@ impl Pairings {
         }
     }
 
-    /// Open a pairing for the device called `device`.
-    pub fn open(&self, device: &str) -> Result<Opened<'_>, OpenError> {
+    /// Open a pairing for the device called `device`, asked for from `from`.
+    pub fn open(&self, device: &str, from: IpAddr) -> Result<Opened<'_>, OpenError> {
         let id = koan_core::auth::random_api_key().map_err(|_| OpenError::Entropy)?;
         let (tx, rx) = oneshot::channel();
         let mut entries = self.entries.lock();
@@ -124,6 +161,7 @@ impl Pairings {
             Entry {
                 code: code.clone(),
                 device: koan_core::invite::device_name(device),
+                from: from.to_canonical(),
                 created: Instant::now(),
                 outcome: tx,
             },
@@ -136,12 +174,15 @@ impl Pairings {
         })
     }
 
-    /// The name of the device waiting on `pair`, an id or a code.
-    pub fn device(&self, pair: &str) -> Option<String> {
+    /// The device waiting on `pair`, an id or a code, and where it asked from.
+    pub fn info(&self, pair: &str) -> Option<PairInfo> {
         let mut entries = self.entries.lock();
         self.sweep(&mut entries);
         let id = find(&entries, pair)?;
-        entries.get(&id).map(|e| e.device.clone())
+        entries.get(&id).map(|e| PairInfo {
+            device: e.device.clone(),
+            from: e.from,
+        })
     }
 
     /// Take the pairing `pair` out, to settle it. No one else can settle it
@@ -162,8 +203,8 @@ impl Pairings {
     }
 
     /// Approve the pairing `pair` as the account `user_id` (`username`), with an
-    /// API key named after the device, or decline it. Answers with the device's
-    /// name.
+    /// API key named after the device, or decline it. Answers with what it
+    /// settled.
     pub fn settle(
         &self,
         conn: &rusqlite::Connection,
@@ -171,14 +212,15 @@ impl Pairings {
         user_id: i64,
         username: &str,
         decline: bool,
-    ) -> Result<String, SettleError> {
+    ) -> Result<PairInfo, SettleError> {
         use koan_core::db::queries::api_keys;
         let taken = self.take(pair).ok_or(SettleError::NotFound)?;
-        let device = taken.device().to_owned();
+        let info = taken.info();
+        let device = info.device.clone();
         if decline {
             let _ = taken.settle(PairMessage::Declined);
             log::info!("pair: {device} declined by {username}");
-            return Ok(device);
+            return Ok(info);
         }
         let api_key = match api_keys::create_api_key(conn, user_id, &device) {
             Ok((_, key)) => key,
@@ -197,7 +239,7 @@ impl Pairings {
             return Err(SettleError::NotFound);
         }
         log::info!("pair: {device} signed in as {username}");
-        Ok(device)
+        Ok(info)
     }
 
     /// Tell every lapsed pairing so, and drop it.
@@ -266,14 +308,15 @@ pub(crate) async fn route(
     ws: WebSocketUpgrade,
     request: axum::extract::Request,
 ) -> Response {
-    if !OPENS.allow(crate::auth::routes::client_ip(&request)) {
+    let from = crate::auth::routes::client_ip(&request);
+    if !OPENS.allow(from) {
         return (StatusCode::TOO_MANY_REQUESTS, "too many pairings").into_response();
     }
     let name = form_urlencoded::parse(raw.unwrap_or_default().as_bytes())
         .find(|(k, _)| k == "name")
         .map(|(_, v)| v.into_owned())
         .unwrap_or_default();
-    match pairings().open(&name) {
+    match pairings().open(&name, from) {
         Ok(opened) => ws.on_upgrade(move |socket| session(socket, opened)),
         Err(OpenError::Full) => {
             (StatusCode::SERVICE_UNAVAILABLE, "too many pairings waiting").into_response()
@@ -334,6 +377,8 @@ async fn send(socket: &mut WebSocket, message: &PairMessage) -> Result<(), axum:
 mod tests {
     use super::*;
 
+    const LAN: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 20));
+
     fn leaked(ttl: Duration) -> &'static Pairings {
         Box::leak(Box::new(Pairings::new(ttl)))
     }
@@ -342,7 +387,7 @@ mod tests {
     fn codes_are_crockford_and_dashed() {
         let p = leaked(TTL);
         for _ in 0..50 {
-            let o = p.open("tv").unwrap();
+            let o = p.open("tv", LAN).unwrap();
             let (a, b) = o.code.split_once('-').unwrap();
             assert_eq!((a.len(), b.len()), (4, 4));
             assert!(
@@ -356,7 +401,7 @@ mod tests {
     #[test]
     fn ids_are_unguessable_and_distinct() {
         let p = leaked(TTL);
-        let opened: Vec<_> = (0..100).map(|_| p.open("tv").unwrap()).collect();
+        let opened: Vec<_> = (0..100).map(|_| p.open("tv", LAN).unwrap()).collect();
         let ids: std::collections::HashSet<_> = opened.iter().map(|o| o.id.clone()).collect();
         assert_eq!(ids.len(), 100);
         assert!(opened.iter().all(|o| o.id.len() == 43));
@@ -367,8 +412,11 @@ mod tests {
     #[test]
     fn a_code_is_found_however_it_is_typed() {
         let p = leaked(TTL);
-        let o = p.open("Living room\u{7} TV").unwrap();
-        assert_eq!(p.device(&o.id).as_deref(), Some("Living room TV"));
+        let o = p.open("Living room\u{7} TV", LAN).unwrap();
+        assert_eq!(
+            p.info(&o.id).map(|i| i.device).as_deref(),
+            Some("Living room TV")
+        );
         let bare = o.code.replace('-', "");
         for typed in [
             o.code.clone(),
@@ -377,7 +425,7 @@ mod tests {
             format!(" {} {} ", &bare[..4], &bare[4..]),
         ] {
             assert_eq!(
-                p.device(&typed).as_deref(),
+                p.info(&typed).map(|i| i.device).as_deref(),
                 Some("Living room TV"),
                 "{typed}"
             );
@@ -390,7 +438,7 @@ mod tests {
     #[tokio::test]
     async fn approving_delivers_the_key_to_the_waiting_device() {
         let p = leaked(TTL);
-        let mut o = p.open("tv").unwrap();
+        let mut o = p.open("tv", LAN).unwrap();
         let taken = p.take(&o.code).unwrap();
         assert_eq!(taken.device(), "tv");
         // Taken: no one else can settle it.
@@ -427,9 +475,15 @@ mod tests {
     async fn approving_mints_a_key_for_the_approver() {
         let (_dir, db, alice) = database();
         let p = leaked(TTL);
-        let mut o = p.open("Living room TV").unwrap();
-        let device = p.settle(&db.conn, &o.code, alice, "alice", false).unwrap();
-        assert_eq!(device, "Living room TV");
+        let mut o = p.open("Living room TV", LAN).unwrap();
+        let settled = p.settle(&db.conn, &o.code, alice, "alice", false).unwrap();
+        assert_eq!(
+            settled,
+            PairInfo {
+                device: "Living room TV".into(),
+                from: LAN,
+            }
+        );
         let PairMessage::Approved { username, api_key } = (&mut o.outcome).await.unwrap() else {
             panic!("not approved");
         };
@@ -451,7 +505,7 @@ mod tests {
     async fn declining_mints_nothing() {
         let (_dir, db, alice) = database();
         let p = leaked(TTL);
-        let mut o = p.open("tv").unwrap();
+        let mut o = p.open("tv", LAN).unwrap();
         p.settle(&db.conn, &o.id, alice, "alice", true).unwrap();
         assert_eq!((&mut o.outcome).await.unwrap(), PairMessage::Declined);
         let keys = koan_core::db::queries::api_keys::list_api_keys(&db.conn, Some(alice)).unwrap();
@@ -462,7 +516,7 @@ mod tests {
     fn a_key_for_a_gone_device_is_revoked() {
         let (_dir, db, alice) = database();
         let p = leaked(TTL);
-        let o = p.open("tv").unwrap();
+        let o = p.open("tv", LAN).unwrap();
         let id = o.id.clone();
         // The socket closes while an approval holds the pairing.
         let taken = p.take(&id).unwrap();
@@ -489,7 +543,7 @@ mod tests {
     #[test]
     fn a_gone_device_gives_the_outcome_back() {
         let p = leaked(TTL);
-        let o = p.open("tv").unwrap();
+        let o = p.open("tv", LAN).unwrap();
         let taken = p.take(&o.id).unwrap();
         drop(o);
         assert!(taken.settle(PairMessage::Declined).is_err());
@@ -498,41 +552,81 @@ mod tests {
     #[tokio::test]
     async fn a_lapsed_pairing_is_expired_and_unknown() {
         let p = leaked(Duration::ZERO);
-        let mut o = p.open("tv").unwrap();
-        assert!(p.device(&o.id).is_none());
+        let mut o = p.open("tv", LAN).unwrap();
+        assert!(p.info(&o.id).is_none());
         assert!(p.take(&o.code).is_none());
         assert_eq!((&mut o.outcome).await.unwrap(), PairMessage::Expired);
     }
 
     #[test]
+    fn the_requesting_address_is_kept() {
+        let p = leaked(TTL);
+        let mapped: IpAddr = "::ffff:203.0.113.9".parse().unwrap();
+        let o = p.open("tv", mapped).unwrap();
+        let info = p.info(&o.code).unwrap();
+        assert_eq!(info.from.to_string(), "203.0.113.9");
+        assert!(!info.local());
+        assert_eq!(p.take(&o.id).unwrap().info(), info);
+    }
+
+    #[test]
+    fn private_addresses_are_local() {
+        for local in [
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.20",
+            "169.254.10.1",
+            "127.0.0.1",
+            "::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "::ffff:192.168.0.5",
+        ] {
+            assert!(is_local(local.parse().unwrap()), "{local}");
+        }
+        for public in [
+            "203.0.113.9",
+            "8.8.8.8",
+            "172.32.0.1",
+            "2001:db8::1",
+            "2a00:1450::1",
+            "::ffff:8.8.8.8",
+        ] {
+            assert!(!is_local(public.parse().unwrap()), "{public}");
+        }
+    }
+
+    #[test]
     fn unknown_pairings_are_not_found() {
         let p = leaked(TTL);
-        let o = p.open("tv").unwrap();
+        let o = p.open("tv", LAN).unwrap();
         let other = if o.code == "0000-0000" {
             "1111-1111"
         } else {
             "0000-0000"
         };
-        assert!(p.device(other).is_none());
+        assert!(p.info(other).is_none());
         assert!(p.take("not-a-pairing").is_none());
-        assert!(p.device("").is_none());
+        assert!(p.info("").is_none());
     }
 
     #[test]
     fn a_closed_socket_removes_its_pairing() {
         let p = leaked(TTL);
-        let o = p.open("tv").unwrap();
+        let o = p.open("tv", LAN).unwrap();
         let id = o.id.clone();
         drop(o);
-        assert!(p.device(&id).is_none());
+        assert!(p.info(&id).is_none());
     }
 
     #[test]
     fn pairings_are_capped() {
         let p = leaked(TTL);
-        let held: Vec<_> = (0..MAX_PENDING).map(|_| p.open("tv").unwrap()).collect();
-        assert_eq!(p.open("tv").err(), Some(OpenError::Full));
+        let held: Vec<_> = (0..MAX_PENDING)
+            .map(|_| p.open("tv", LAN).unwrap())
+            .collect();
+        assert_eq!(p.open("tv", LAN).err(), Some(OpenError::Full));
         drop(held);
-        assert!(p.open("tv").is_ok());
+        assert!(p.open("tv", LAN).is_ok());
     }
 }

@@ -973,7 +973,9 @@ async fn a_waiting_device_is_approved_from_the_pair_page() {
     let r = send(&f.app, get("/pair/ABCD-EFGH").body(Body::empty()).unwrap()).await;
     assert_eq!(r.location(), "/auth/resume?next=%2Fpair%2FABCD-EFGH");
 
-    let opened = crate::pair::pairings().open("Living <room> TV").unwrap();
+    let opened = crate::pair::pairings()
+        .open("Living <room> TV", "10.0.0.8".parse().unwrap())
+        .unwrap();
     let typed = opened.code.to_lowercase();
     let r = send(
         &f.app,
@@ -995,6 +997,24 @@ async fn a_waiting_device_is_approved_from_the_pair_page() {
         r.body
     );
     assert!(r.body.contains("<strong>alice</strong>"));
+    assert!(r.body.contains("Requested from 10.0.0.8, on your network."));
+    let far = crate::pair::pairings()
+        .open("Far TV", "2001:db8::7".parse().unwrap())
+        .unwrap();
+    let r = send(
+        &f.app,
+        authed(&f.state, &format!("/pair/{}", far.code))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        r.body
+            .contains("Requested from 2001:db8::7, from the internet."),
+        "{}",
+        r.body
+    );
+    drop(far);
 
     let post = |origin: &str| {
         Request::post(format!("/pair/{typed}/approve"))

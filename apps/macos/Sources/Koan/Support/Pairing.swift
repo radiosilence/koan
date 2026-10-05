@@ -12,8 +12,22 @@ struct PairingRequest: Equatable {
     /// The pairing's id or code, as the server knows it.
     let pair: String
     let device: String
+    /// The address the request came from, and whether it is on a private
+    /// network, as the server classifies it.
+    let from: String
+    let local: Bool
     let username: String
     let host: String
+}
+
+extension PairingRequest {
+    /// Where the request came from, in plain words. One from the internet is
+    /// worth a second look: a device in the room is on this network.
+    var origin: String {
+        local
+            ? "Requested from \(from), on your network."
+            : "Requested from \(from), from the internet. A device in the room with you is usually on your network."
+    }
 }
 
 extension AppState {
@@ -36,9 +50,10 @@ extension AppState {
         let current = await engine.settings()
         let host = URL(string: current.remoteUrl)?.host() ?? current.remoteUrl
         do {
-            let device = try await engine.pairingInfo(pair: pair)
+            let info = try await engine.pairingInfo(pair: pair)
             ui.pendingPairing = PairingRequest(
-                pair: pair, device: device, username: current.remoteUsername, host: host
+                pair: pair, device: info.device, from: info.from, local: info.local,
+                username: current.remoteUsername, host: host
             )
         } catch {
             player.report("No device is waiting with that code: \(SettingsModel.describe(error))")
@@ -83,7 +98,7 @@ struct PairingConfirmation: ViewModifier {
             Button("Decline", role: .cancel) { state.settle(request, approve: false) }
         } message: { request in
             Text(
-                "It will be signed in as \(request.username) on \(request.host). Allow only a device you are setting up yourself: anyone can give a device any name."
+                "\(request.origin)\n\nIt will be signed in as \(request.username) on \(request.host). Allow only a device you are setting up yourself: anyone can give a device any name."
             )
         }
     }

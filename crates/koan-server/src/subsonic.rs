@@ -3679,12 +3679,17 @@ async fn koan_delete_user(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
 // Pairing (koan extension)
 // ---------------------------------------------------------------------------
 
-fn pair_node(device: &str) -> XmlNode {
-    XmlNode::new("pair").attr("device", device)
+/// A pairing as an approver sees it: the device's name, the address it asked
+/// from, and whether that address is on a private network.
+fn pair_node(info: &crate::pair::PairInfo) -> XmlNode {
+    XmlNode::new("pair")
+        .attr("device", &info.device)
+        .attr("from", &info.from.to_string())
+        .attr_bool("local", info.local())
 }
 
-/// The name of the device waiting on `pair`, an id or a code: for an app to
-/// ask whether to sign it in.
+/// The device waiting on `pair`, an id or a code, and where it asked from: for
+/// an app to ask whether to sign it in.
 async fn koan_pair_info(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
@@ -3692,10 +3697,10 @@ async fn koan_pair_info(State(state): State<Arc<AppState>>, RawQuery(raw): RawQu
             let pair = params
                 .get("pair")
                 .ok_or_else(|| SubsonicError::missing_param("pair"))?;
-            let device = crate::pair::pairings()
-                .device(pair)
+            let info = crate::pair::pairings()
+                .info(pair)
                 .ok_or_else(|| SubsonicError::not_found("Pairing"))?;
-            Ok(b.child(pair_node(&device)))
+            Ok(b.child(pair_node(&info)))
         })
     })
     .await
@@ -3721,13 +3726,13 @@ async fn koan_pair_approve(
                     "sign in with an account to sign a device in as it",
                 ));
             }
-            let device = crate::pair::pairings()
+            let info = crate::pair::pairings()
                 .settle(&db.conn, pair, caller.user_id, &caller.username, decline)
                 .map_err(|e| match e {
                     crate::pair::SettleError::NotFound => SubsonicError::not_found("Pairing"),
                     crate::pair::SettleError::Internal(e) => SubsonicError::internal(e),
                 })?;
-            Ok(b.child(pair_node(&device)))
+            Ok(b.child(pair_node(&info)))
         })
     })
     .await
@@ -4793,13 +4798,18 @@ mod tests {
             async move { get_response(build_test_router(state), &path).await.1 }
         };
         let mate = "u=mate&p=hunter22&v=1.16.1&c=test&f=json";
-        let opened = crate::pair::pairings().open("Den TV").unwrap();
+        let opened = crate::pair::pairings()
+            .open("Den TV", "198.51.100.7".parse().unwrap())
+            .unwrap();
         let code = opened.code.replace('-', "").to_lowercase();
 
         let body = call(format!("/rest/koanPairInfo?pair={code}")).await;
         assert!(body.contains("code=\"10\""), "{body}");
         let body = call(format!("/rest/koanPairInfo?pair={code}&{mate}")).await;
-        assert!(body.contains("\"device\":\"Den TV\""), "{body}");
+        assert!(
+            body.contains("\"device\":\"Den TV\",\"from\":\"198.51.100.7\",\"local\":false"),
+            "{body}"
+        );
 
         let body = call(format!("/rest/koanPairApprove?pair={}&{mate}", opened.id)).await;
         assert!(body.contains("\"device\":\"Den TV\""), "{body}");

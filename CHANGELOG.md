@@ -4,7 +4,7 @@
 
 ### Added
 
-- **Sign in a device by approving it.** A device with no keyboard, such as a television, can open a pairing on the server and show a code and a link instead of asking for a password. Opening the link in kōan on a phone or Mac, typing the code in Settings → Server → Pair a device, or typing it on the server's `/pair` page asks whether to sign the device in; approving signs it in as you, with an API key of its own named after it, revocable like any other. The device hears the answer the moment it is given, over the socket it opened. A pairing lasts ten minutes and is kept only in memory. Servers list the `koanPair` extension.
+- **Sign in a device by approving it.** A device with no keyboard, such as a television, can open a pairing on the server and show a code and a link instead of asking for a password. Opening the link in kōan on a phone or Mac, typing the code in Settings → Server → Pair a device, or typing it on the server's `/pair` page asks whether to sign the device in; approving signs it in as you, with an API key of its own named after it, revocable like any other. The device hears the answer the moment it is given, over the socket it opened. Each approval screen says where the request came from, and whether that is your network or the internet, since anyone can send a link to approve. A pairing lasts ten minutes and is kept only in memory. Servers list the `koanPair` extension.
 
 ## 0.52.6
 

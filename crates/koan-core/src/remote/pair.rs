@@ -221,9 +221,9 @@ fn client() -> Result<std::sync::Arc<crate::remote::client::SubsonicClient>, Pai
         .ok_or(PairError::NotSignedIn)
 }
 
-/// The name of the device waiting on `pair` (an id or a code), as the signed-in
-/// server has it.
-pub fn info(pair: &str) -> Result<String, PairError> {
+/// The device waiting on `pair` (an id or a code) on the signed-in server,
+/// and where it asked from.
+pub fn info(pair: &str) -> Result<crate::remote::client::KoanPair, PairError> {
     Ok(client()?.koan_pair_info(pair)?)
 }
 
@@ -279,6 +279,14 @@ mod tests {
         let url = pair_url("http://10.0.0.2:4533", "tv").unwrap();
         assert_eq!(url.scheme(), "ws");
         assert!(pair_url("ftp://x", "tv").is_err());
+    }
+
+    #[test]
+    fn info_carries_where_the_request_came_from() {
+        let info: crate::remote::client::KoanPair =
+            serde_json::from_str(r#"{"device":"Den TV","from":"192.168.1.20","local":true}"#)
+                .unwrap();
+        assert_eq!((info.from.as_str(), info.local), ("192.168.1.20", true));
     }
 
     #[test]

@@ -2441,10 +2441,19 @@ impl KoanEngine {
         self.pairing.lock().take();
     }
 
-    /// The name of the device waiting on `pair`, an id or the code it shows,
-    /// on the signed-in server.
-    pub async fn pairing_info(self: Arc<Self>, pair: String) -> Result<String, KoanError> {
-        offload::offload(move || koan_core::remote::pair::info(&pair).map_err(pair_error)).await
+    /// The device waiting on `pair`, an id or the code it shows, on the
+    /// signed-in server, and where it asked from.
+    pub async fn pairing_info(self: Arc<Self>, pair: String) -> Result<PairingInfo, KoanError> {
+        offload::offload(move || {
+            koan_core::remote::pair::info(&pair)
+                .map(|p| PairingInfo {
+                    device: p.device,
+                    from: p.from,
+                    local: p.local,
+                })
+                .map_err(pair_error)
+        })
+        .await
     }
 
     /// Sign the device waiting on `pair` in as this account. Answers with its

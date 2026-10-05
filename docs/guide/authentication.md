@@ -108,7 +108,11 @@ server sends it down the waiting socket. The device is told the moment it is
 approved or declined; nothing polls. A pairing lasts ten minutes and lives only
 in the server's memory. Approving signs the device in as you, so approve only a
 device you are setting up yourself: the name it shows is whatever it chose to
-call itself.
+call itself. Every approval screen also says where the request came from: the
+address the server saw (behind a trusted proxy, the client's, as the rate limits
+use it), and whether that is on a private network or the internet. A television
+in the same room asks from your own network; a request from the internet is
+worth declining unless you expected it.
 
 The server sends no mail. Creating an account or inviting one produces the email
 (plain text, rich text with a button, and a `mailto:`) for the admin to send

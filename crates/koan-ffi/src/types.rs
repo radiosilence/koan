@@ -1272,6 +1272,18 @@ pub struct PairingCode {
     pub link: String,
 }
 
+/// A device waiting to be signed in, as the server describes it to an
+/// approver.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct PairingInfo {
+    pub device: String,
+    /// The address the request came from, as the server sees it.
+    pub from: String,
+    /// The address is on a private network (RFC 1918, link-local, unique
+    /// local, loopback) rather than the internet.
+    pub local: bool,
+}
+
 /// A pairing link: which server another device is waiting on, and its id.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct PairingLink {
