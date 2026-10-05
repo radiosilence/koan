@@ -17,13 +17,23 @@ final class NowPlayingTests: XCTestCase {
 
     func testRows() {
         pause(Double(env["KOAN_WALK_SETTLE"] ?? "3") ?? 3)
-        let play = app.buttons["play.fill"].firstMatch
-        if play.waitForExistence(timeout: 3) { play.tap() }
-        pause(4)
+        // A record's first track, from the albums.
+        let library = app.tabBars.buttons["Library"]
+        if library.waitForExistence(timeout: 3) { library.tap() }
+        pause(1)
+        if open(app.buttons["Albums"].firstMatch) {
+            pause(3)
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.27, dy: 0.3)).tap()
+            pause(3)
+            let first = app.cells.element(boundBy: 0)
+            if first.waitForExistence(timeout: 5) { first.tap() }
+            _ = app.buttons["Pause"].firstMatch.waitForExistence(timeout: 30)
+            pause(3)
+        }
         openNowPlaying()
         snap("01-now-playing")
 
-        if open(app.buttons["Sleep timer"].firstMatch), open(app.buttons["30 Minutes"]) {
+        if open(labelled(beginningWith: "Sleep timer")), open(app.buttons["30 Minutes"]) {
             pause(2)
             snap("02-sleep-timer")
         }
@@ -55,7 +65,7 @@ final class NowPlayingTests: XCTestCase {
                 dismissSheet()
                 pause(2)
                 snap("06-controlling")
-                if open(app.buttons["Sleep timer"].firstMatch), open(app.buttons["End of Record"]) {
+                if open(labelled(beginningWith: "Sleep timer")), open(app.buttons["End of Record"]) {
                     pause(2)
                     snap("07-controlling-sleep")
                 }
@@ -78,12 +88,19 @@ final class NowPlayingTests: XCTestCase {
         pause(2)
     }
 
+    /// The one on screen: the mini player's buttons share their labels with
+    /// Now Playing's, and stay in the tree behind its sheet.
     private func labelled(beginningWith prefix: String) -> XCUIElement {
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        onScreen(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)))
     }
 
     private func labelled(containing text: String) -> XCUIElement {
-        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
+        onScreen(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", text)))
+    }
+
+    private func onScreen(_ query: XCUIElementQuery) -> XCUIElement {
+        _ = query.firstMatch.waitForExistence(timeout: 3)
+        return query.allElementsBoundByIndex.last { $0.isHittable } ?? query.firstMatch
     }
 
     private func open(_ element: XCUIElement) -> Bool {
