@@ -287,6 +287,10 @@ impl AudioEngineHandle for CpalEngineHandle {
         self.fade.fade_out();
     }
 
+    fn fade_out_slowly(&self) {
+        self.fade.fade_out_slowly();
+    }
+
     fn fade_in(&self) -> Result<(), BackendError> {
         if self.is_running() {
             self.fade.fade_in(false);

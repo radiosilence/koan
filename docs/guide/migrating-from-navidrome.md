@@ -16,7 +16,6 @@ You do not have to switch to use kōan's apps. The macOS and iOS apps and the te
 These Navidrome features have no kōan equivalent today:
 
 - **Scrobbling to Last.fm or ListenBrainz.** kōan records plays in its own history, per account, and does not forward them.
-- **Ratings.** Stars (favourites) are supported; one-to-five ratings are not.
 - **Smart playlists** (`.nsp`) and **importing `.m3u` files** from the music folder.
 - **Serving under a sub-path** (`ND_BASEURL`). kōan expects its own hostname.
 - **Reverse-proxy authentication** (`ND_REVERSEPROXYUSERHEADER`). Accounts are kōan's own.
