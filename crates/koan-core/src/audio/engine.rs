@@ -98,6 +98,10 @@ impl super::backend::AudioEngineHandle for AudioEngine {
         self.fade().fade_out();
     }
 
+    fn fade_out_slowly(&self) {
+        self.fade().fade_out_slowly();
+    }
+
     fn fade_in(&self) -> std::result::Result<(), super::backend::BackendError> {
         // A resume comes long after any rate switch the lead-in was covering.
         self.lead_in.store(0, Ordering::Relaxed);
