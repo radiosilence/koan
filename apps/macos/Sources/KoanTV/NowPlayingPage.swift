@@ -170,10 +170,6 @@ struct NowPlayingPage: View {
         }
         .focusSection()
         .font(.title3)
-        // White, as a television's controls are: focus lifts a button to
-        // white with dark ink, and a tinted glyph fights that.
-        .tint(.white)
-        .foregroundStyle(.white)
         .disabled(player.currentEntry == nil)
     }
 }

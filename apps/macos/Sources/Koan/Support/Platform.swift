@@ -499,6 +499,39 @@ enum ShortcutRole {
 }
 
 #if os(tvOS)
+/// A button as a television draws one: a white label on a soft pill at rest,
+/// and focused, a white platter with the label drawn as on a light screen.
+/// The system's own style takes the label's colour from the tint, which the
+/// app sets to its accent and the room to the record's colour, so a label
+/// could be mint on grey at rest and vanish into a tinted platter on focus.
+struct TelevisionButton: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Pill(label: configuration.label, pressed: configuration.isPressed)
+    }
+
+    private struct Pill<Label: View>: View {
+        let label: Label
+        let pressed: Bool
+        @Environment(\.isFocused) private var focused
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            label
+                .foregroundStyle(.primary)
+                .environment(\.colorScheme, focused ? .light : .dark)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 14)
+                .background(
+                    Capsule().fill(.white.opacity(focused ? 1 : 0.14))
+                        .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
+                )
+                .opacity(enabled ? 1 : 0.45)
+                .scaleEffect(pressed ? 0.97 : focused ? 1.06 : 1)
+                .animation(.easeOut(duration: 0.15), value: focused)
+        }
+    }
+}
+
 /// A list row as a television draws one: the row's own colours at rest, and
 /// focused, a white platter with the row drawn as it would be on a light
 /// screen, so secondary text stays readable on it. A plain button would tint

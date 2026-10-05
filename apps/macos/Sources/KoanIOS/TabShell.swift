@@ -142,6 +142,12 @@ struct TabShell: View {
             },
             message: { Text(player.lastError ?? "") }
         )
+        #if os(tvOS)
+        // Every button that does not choose its own style, sheets and covers
+        // included, which take their environment from where they hang; see
+        // `TelevisionButton`.
+        .buttonStyle(TelevisionButton())
+        #endif
     }
 
     /// A tab's navigation stack. Pages are drawn from their routes — see
