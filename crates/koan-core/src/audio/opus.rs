@@ -1,4 +1,4 @@
-//! Opus decoding bridge — wraps `opus-decoder` to decode packets from
+//! Opus decoding bridge — wraps `opus-rs` to decode packets from
 //! Symphonia's Ogg demuxer. Symphonia can identify Opus streams but has no
 //! codec implementation; this module fills that gap.
 //!
@@ -6,9 +6,12 @@
 //! Channel count and pre-skip come from the `OpusHead` identification header,
 //! which every demuxer we use hands over as `extra_data` rather than a packet.
 
-use opus_decoder::OpusDecoder;
+use opus_rs::OpusDecoder;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use symphonia::core::codecs::audio::AudioCodecParameters;
+
+/// The longest Opus frame, 120 ms at 48 kHz, in samples per channel.
+const MAX_FRAME: usize = 5760;
 
 /// Errors from the Opus decode bridge.
 #[derive(Debug, thiserror::Error)]
@@ -85,18 +88,16 @@ impl OpusBridge {
         };
 
         if channels == 0 || channels > 2 {
-            // opus-decoder only supports mono/stereo. Multistream would need
+            // opus-rs only supports mono/stereo. Multistream would need
             // OpusMultistreamDecoder, which is not handled.
             return Err(OpusError::Init(format!(
                 "unsupported channel count: {channels} (only mono/stereo supported)"
             )));
         }
 
-        let decoder =
-            OpusDecoder::new(48000, channels).map_err(|e| OpusError::Init(format!("{e:?}")))?;
+        let decoder = OpusDecoder::new(48000, channels).map_err(|e| OpusError::Init(e.into()))?;
 
-        // Max frame size: 120ms at 48kHz = 5760 samples/channel.
-        let max_samples = 5760 * channels;
+        let max_samples = MAX_FRAME * channels;
         let pcm_buf = vec![0.0f32; max_samples];
 
         Ok(Self {
@@ -123,18 +124,15 @@ impl OpusBridge {
             return Ok(&[]);
         }
 
-        // `opus-decoder` 0.1.1 overflows a shift in CELT's collapse mask on
-        // the first packet of some stereo streams — a panic in debug, a wrong
-        // mask in release. It is the only Opus decoder on crates.io that isn't
-        // libopus over FFI, and it is unmaintained at 0.1.1, so contain it
-        // rather than let one bad packet take the decode thread with it.
+        // A port of libopus rather than libopus itself: contain a panic, rather
+        // than let one bad packet take the decode thread with it.
         let decoder = &mut self.decoder;
         let pcm_buf = &mut self.pcm_buf;
         let frames_per_channel = match catch_unwind(AssertUnwindSafe(|| {
-            decoder.decode_float(data, pcm_buf, false)
+            decoder.decode(data, MAX_FRAME, pcm_buf)
         })) {
             Ok(Ok(frames)) => frames,
-            Ok(Err(e)) => return Err(OpusError::Decode(format!("{e:?}"))),
+            Ok(Err(e)) => return Err(OpusError::Decode(e.into())),
             Err(_) => return Err(OpusError::Panicked),
         };
 
@@ -153,10 +151,14 @@ impl OpusBridge {
         Ok(&self.pcm_buf[start..total_samples])
     }
 
-    /// Reset the decoder state (e.g. after a seek).
-    pub fn reset(&mut self) {
-        self.decoder.reset();
-        self.skipped = self.pre_skip; // After seek, pre-skip already applied.
+    /// Start decoding afresh after a seek. Landing `at_start`, the stream's
+    /// pre-skip is still ahead and is dropped again; anywhere else it is not.
+    pub fn reset(&mut self, at_start: bool) {
+        // opus-rs has no reset; a fresh decoder is the same state and cheap.
+        if let Ok(decoder) = OpusDecoder::new(48000, self.channels) {
+            self.decoder = decoder;
+        }
+        self.skipped = if at_start { 0 } else { self.pre_skip };
     }
 }
 
@@ -221,6 +223,35 @@ mod tests {
 
         let bridge = OpusBridge::new(&params).unwrap();
         assert_eq!(bridge.channels(), 2);
+    }
+
+    #[test]
+    fn pre_skip_is_dropped_at_the_start_and_only_there() {
+        let mut header = vec![0u8; 19];
+        header[..8].copy_from_slice(b"OpusHead");
+        header[8] = 1;
+        header[9] = 2;
+        header[10..12].copy_from_slice(&312u16.to_le_bytes());
+        let mut params = AudioCodecParameters::new();
+        params.with_extra_data(header.into_boxed_slice());
+        let mut bridge = OpusBridge::new(&params).unwrap();
+
+        // One 20 ms stereo frame of a tone.
+        let pcm: Vec<f32> = (0..960 * 2)
+            .map(|i| ((i / 2) as f32 * 0.05).sin() * 0.5)
+            .collect();
+        let mut encoder = opus_rs::OpusEncoder::new(48000, 2, opus_rs::Application::Audio).unwrap();
+        let mut packet = vec![0u8; 1500];
+        let len = encoder.encode(&pcm, 960, &mut packet).unwrap();
+        let packet = &packet[..len];
+
+        let frames = |bridge: &mut OpusBridge| bridge.decode_packet(packet).unwrap().len() / 2;
+        assert_eq!(frames(&mut bridge), 960 - 312);
+        assert_eq!(frames(&mut bridge), 960);
+        bridge.reset(false);
+        assert_eq!(frames(&mut bridge), 960);
+        bridge.reset(true);
+        assert_eq!(frames(&mut bridge), 960 - 312);
     }
 
     #[test]

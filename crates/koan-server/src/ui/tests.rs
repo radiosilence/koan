@@ -414,7 +414,11 @@ async fn every_class_on_every_page_has_a_rule() {
         "/search?q=Wet".to_owned(),
         "/search?q=nothing-here".to_owned(),
         "/queue".to_owned(),
-        "/keys".to_owned(),
+        "/library".to_owned(),
+        "/favourites".to_owned(),
+        "/history".to_owned(),
+        "/recent".to_owned(),
+        "/account".to_owned(),
         "/users".to_owned(),
         "/connect".to_owned(),
     ] {
@@ -423,7 +427,8 @@ async fn every_class_on_every_page_has_a_rule() {
         rendered.push((uri, r.body));
     }
     for (uri, body) in [
-        ("/keys", r#"{"keyname":"phone"}"#),
+        ("/account/keys", r#"{"keyname":"phone"}"#),
+        ("/account/app-passwords", r#"{"appname":"Arpeggi"}"#),
         ("/users/1/password/form", "{}"),
     ] {
         let r = send(&f.app, post(uri, body)).await;
@@ -643,6 +648,153 @@ async fn sorting_and_filtering_live_in_the_query_string() {
 }
 
 #[tokio::test]
+async fn favourites_are_the_callers_own_as_a_shelf() {
+    let f = setup(true);
+    let artist = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        queries::add_favourite(&db.conn, bob, f.track_id).unwrap();
+        queries::set_favourite_album(&db.conn, bob, f.album_id, true).unwrap();
+        queries::tracks_by_ids(&db.conn, &[f.track_id]).unwrap()[0]
+            .artist_id
+            .unwrap()
+    };
+    let page = || authed(&f.state, "/favourites").body(Body::empty()).unwrap();
+
+    let r = send(&f.app, page()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Nothing favourited yet") && !r.body.contains("data-id="),
+        "another account's favourites are not alice's"
+    );
+
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        queries::add_favourite(&db.conn, 1, f.track_id).unwrap();
+        queries::set_favourite_album(&db.conn, 1, f.album_id, true).unwrap();
+        queries::set_favourite_artist(&db.conn, 1, artist, true).unwrap();
+    }
+    let r = send(&f.app, page()).await;
+    assert!(
+        r.body.contains(&format!("href=\"/artist/{artist}\"")),
+        "the artist, as a pill"
+    );
+    assert!(
+        r.body.contains(&format!("href=\"/album/{}\"", f.album_id)),
+        "the record, as a tile"
+    );
+    assert!(
+        r.body.contains(&format!("data-id={}", f.track_id))
+            && r.body.contains("data-context=album")
+            && r.body.contains("Wet &lt;Moss&gt; &amp; Stone"),
+        "the track, in a list that plays on"
+    );
+
+    let r = send(
+        &f.app,
+        authed(&f.state, "/library").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains("href=\"/favourites\"") && r.body.contains("href=\"/playlists\""));
+}
+
+#[tokio::test]
+async fn history_lists_the_callers_own_plays_by_day_and_forgets_only_those() {
+    let f = setup(true);
+    let now = chrono::Utc::now().timestamp();
+    let (mine, theirs) = {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        let mine = queries::record_play_at(&db.conn, 1, f.track_id, now, None, "local").unwrap();
+        queries::record_play_at(&db.conn, 1, f.track_id, now - 3 * 86_400, None, "local").unwrap();
+        let theirs =
+            queries::record_play_at(&db.conn, bob, f.track_id, now, None, "local").unwrap();
+        (mine, theirs)
+    };
+    let page = || {
+        authed(&f.state, "/history")
+            .header(header::COOKIE, "koan_tz=0")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let r = send(&f.app, page()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains(">Today</li>"), "grouped by day");
+    assert_eq!(
+        r.body.matches("type=checkbox").count(),
+        2,
+        "alice's two plays, not bob's"
+    );
+    assert!(
+        r.body.contains(&format!("value={mine}")) && !r.body.contains(&format!("value={theirs}"))
+    );
+
+    let forget = |ids: &str| {
+        Request::post("/history/forget")
+            .header(header::HOST, HOST)
+            .header(
+                header::COOKIE,
+                format!("koan_access={}", access_token(&f.state)),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("datastar-request", "true")
+            .body(Body::from(format!("{{\"forget\":{ids}}}")))
+            .unwrap()
+    };
+    // Another account's play, named by id, is left alone.
+    let r = send(&f.app, forget(&format!("[\"{theirs}\"]"))).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = send(&f.app, forget(&format!("[\"{mine}\"]"))).await;
+    assert!(r.body.contains("datastar-patch-elements") && r.body.contains("\"forget\":[]"));
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    let left: Vec<i64> = db
+        .conn
+        .prepare("SELECT id FROM play_history ORDER BY id")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .flatten()
+        .collect();
+    assert!(!left.contains(&mine), "alice's play is forgotten");
+    assert!(left.contains(&theirs), "bob's is not");
+    assert_eq!(left.len(), 2);
+}
+
+#[tokio::test]
+async fn recently_played_is_the_callers_own_each_once() {
+    let f = setup(true);
+    let now = chrono::Utc::now().timestamp();
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        let bob = queries::auth::create_user(&db.conn, "bob", "hunter3", Role::User).unwrap();
+        queries::record_play_at(&db.conn, bob, f.track_id, now, None, "local").unwrap();
+    }
+    let page = || authed(&f.state, "/recent").body(Body::empty()).unwrap();
+    let r = send(&f.app, page()).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Nothing played in the last 30 days"),
+        "bob's play is not alice's"
+    );
+
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        for ago in [0, 60, 120] {
+            queries::record_play_at(&db.conn, 1, f.track_id, now - ago, None, "local").unwrap();
+        }
+        // Older than the month, and not counted.
+        queries::record_play_at(&db.conn, 1, f.track_id, now - 40 * 86_400, None, "local").unwrap();
+    }
+    let r = send(&f.app, page()).await;
+    assert_eq!(
+        r.body.matches(&format!("data-id={}", f.track_id)).count(),
+        1,
+        "three plays, one track"
+    );
+    assert!(r.body.contains(&format!("href=\"/album/{}\"", f.album_id)));
+}
+
+#[tokio::test]
 async fn playlists_list_the_callers_own_and_play_like_albums() {
     let f = setup(true);
     let (mine, theirs) = {
@@ -714,19 +866,27 @@ async fn api_keys_are_shown_once_listed_and_revoked() {
 
     let r = send(
         &f.app,
-        authed(&f.state, "/keys").body(Body::empty()).unwrap(),
+        authed(&f.state, "/account").body(Body::empty()).unwrap(),
     )
     .await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(r.body.contains("No keys yet."), "{}", r.body);
 
-    let r = send(&f.app, post("/keys", r#"{"keyname":"phone"}"#, false)).await;
+    let r = send(
+        &f.app,
+        post("/account/keys", r#"{"keyname":"phone"}"#, false),
+    )
+    .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
-    let r = send(&f.app, post("/keys", r#"{"keyname":"phone"}"#, true)).await;
+    let r = send(
+        &f.app,
+        post("/account/keys", r#"{"keyname":"phone"}"#, true),
+    )
+    .await;
     let key = r
         .body
-        .split("id=new-key readonly value=\"")
+        .split("id=key-result-value readonly value=\"")
         .nth(1)
         .and_then(|rest| rest.split('"').next())
         .unwrap_or_else(|| panic!("no key in {}", r.body))
@@ -739,7 +899,7 @@ async fn api_keys_are_shown_once_listed_and_revoked() {
 
     let r = send(
         &f.app,
-        authed(&f.state, "/keys").body(Body::empty()).unwrap(),
+        authed(&f.state, "/account").body(Body::empty()).unwrap(),
     )
     .await;
     assert!(
@@ -750,13 +910,122 @@ async fn api_keys_are_shown_once_listed_and_revoked() {
     assert!(!r.body.contains(&key));
 
     let id = queries::api_keys::list_api_keys(&db.conn, Some(user.id)).unwrap()[0].id;
-    let r = send(&f.app, post(&format!("/keys/{id}/revoke"), "{}", true)).await;
+    let r = send(
+        &f.app,
+        post(&format!("/account/keys/{id}/revoke"), "{}", true),
+    )
+    .await;
     assert!(r.body.contains("No keys yet."), "{}", r.body);
     assert!(
         queries::api_keys::authenticate_api_key(&db.conn, &key)
             .unwrap()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn app_passwords_are_shown_once_sealed_and_revoked() {
+    let f = setup(true);
+    let post = |uri: &str, body: &str| {
+        Request::post(uri)
+            .header(header::HOST, HOST)
+            .header(
+                header::COOKIE,
+                format!("koan_access={}", access_token(&f.state)),
+            )
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("datastar-request", "true")
+            .body(Body::from(body.to_owned()))
+            .unwrap()
+    };
+    let r = send(
+        &f.app,
+        authed(&f.state, "/account").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains("No app passwords yet."), "{}", r.body);
+
+    let r = send(
+        &f.app,
+        post("/account/app-passwords", r#"{"appname":"Arpeggi"}"#),
+    )
+    .await;
+    let password = r
+        .body
+        .split("id=app-password-result-value readonly value=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("no app password in {}", r.body))
+        .to_owned();
+
+    // Sealed in the database, never kept or listed as itself.
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let stored: Vec<u8> = db
+        .conn
+        .query_row("SELECT sealed FROM app_passwords", [], |row| row.get(0))
+        .unwrap();
+    assert!(
+        !stored
+            .windows(password.len())
+            .any(|w| w == password.as_bytes())
+    );
+    let r = send(
+        &f.app,
+        authed(&f.state, "/account").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(r.body.contains("Arpeggi") && !r.body.contains(&password));
+
+    let key = koan_core::auth::app_password_key(&f.state.private_pem);
+    let signed_in = |db: &Database| {
+        matches!(
+            queries::app_passwords::authenticate_app_password(&db.conn, &key, "alice", |p| {
+                p == password
+            })
+            .unwrap(),
+            queries::app_passwords::AppPasswordAuth::Matched(_)
+        )
+    };
+    assert!(signed_in(&db));
+
+    let user = queries::auth::get_user_by_username(&db.conn, "alice")
+        .unwrap()
+        .unwrap();
+    let id = queries::app_passwords::list_app_passwords(&db.conn, user.id).unwrap()[0].id;
+    let r = send(
+        &f.app,
+        post(&format!("/account/app-passwords/{id}/revoke"), "{}"),
+    )
+    .await;
+    assert!(r.body.contains("No app passwords yet."), "{}", r.body);
+    assert!(!signed_in(&db));
+}
+
+#[tokio::test]
+async fn an_app_password_does_not_sign_in_to_the_web_ui() {
+    let f = setup(true);
+    let password = {
+        let db = Database::open(f.state.pool.path()).unwrap();
+        let user = queries::auth::get_user_by_username(&db.conn, "alice")
+            .unwrap()
+            .unwrap();
+        let key = koan_core::auth::app_password_key(&f.state.private_pem);
+        queries::app_passwords::create_app_password(&db.conn, &key, user.id, "arpeggi")
+            .unwrap()
+            .1
+    };
+    // Apps only: the web sign-in, and with it GraphQL, MCP and OAuth, takes
+    // the account's own password.
+    let r = send(
+        &f.app,
+        form(
+            "/login",
+            &format!("username=alice&password={password}&next=%2F"),
+        ),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert!(r.cookies().is_empty());
 }
 
 #[tokio::test]

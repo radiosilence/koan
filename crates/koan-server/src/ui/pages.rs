@@ -38,6 +38,11 @@ pub(super) const SUB: &str = "mt-0 mb-3.5 text-muted wrap-anywhere";
 pub(super) const EMPTY: &str = "text-muted";
 pub(super) const ERROR: &str = "text-bad";
 const ACTIONS: &str = "flex flex-wrap items-center gap-2";
+/// A heading with its buttons, above a track list. The row keeps the space a
+/// heading would, above and below, since buttons beside it are taller than it
+/// and would otherwise sit on the list.
+pub(super) const LIST_HEAD: &str =
+    "mt-6 mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 [&>h1]:my-0 [&>h2]:my-0";
 const HERO: &str =
     "mb-6 flex items-end gap-6 max-wide:flex-col max-wide:items-stretch max-wide:gap-4";
 const HERO_COVER: &str = "size-[220px] flex-none rounded-lg border border-rule bg-surface object-cover \
@@ -107,51 +112,46 @@ pub(super) fn head(title: &str) -> String {
     )
 }
 
-/// The sidebar's links, which become the tab bar on a phone.
+/// The sidebar's links, which become the tab bar on a phone: six tabs, each as
+/// wide as its label, which fit a 360 px screen at the meta size. A phone has
+/// no room for a seventh, so there Playlists becomes Library, a page of the
+/// library's own lists; the sidebar lists them directly.
 const NAV_LINK: &str = "rounded-md px-2.5 py-2 text-muted hover:text-ink hover:no-underline \
-aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:flex max-wide:flex-1 max-wide:items-center \
-max-wide:justify-center max-wide:rounded-none max-wide:text-control max-wide:aria-[current=page]:bg-transparent \
-max-wide:aria-[current=page]:text-brand";
+aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:flex max-wide:flex-auto max-wide:items-center \
+max-wide:justify-center max-wide:rounded-none max-wide:px-0 max-wide:text-meta \
+max-wide:aria-[current=page]:bg-transparent max-wide:aria-[current=page]:text-brand";
 
-/// The account's links sit in the sidebar on a wide screen and under the page
-/// on a phone, where they are plain links.
+/// The account's links in the sidebar.
 const ACCOUNT_LINK: &str = "rounded-md px-1.5 py-1 text-meta whitespace-nowrap text-muted hover:text-ink \
-hover:no-underline aria-[current=page]:bg-rule aria-[current=page]:text-ink max-wide:text-brand \
-max-wide:hover:text-brand max-wide:hover:underline max-wide:aria-[current=page]:bg-transparent \
-max-wide:aria-[current=page]:text-brand";
+hover:no-underline aria-[current=page]:bg-rule aria-[current=page]:text-ink";
 
 fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> String {
-    let signout = if auth_enabled {
-        let users = if user.role == Role::Admin {
-            format!("<a class=\"{ACCOUNT_LINK}\" href=\"/users\" data-nav=users>Users</a>")
-        } else {
-            String::new()
-        };
+    // On a wide screen the sidebar ends with who is signed in and the version;
+    // the account page has everything else. A phone has an Account tab instead.
+    let signed_in = if auth_enabled {
         format!(
             "<form class=\"flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1 text-meta text-muted\" \
 method=post action=\"/auth/signout\"><span class=\"min-w-0 flex-[1_0_100%] truncate px-1.5 pb-0.5 text-ink\">{}</span>\
-{users}<a class=\"{ACCOUNT_LINK}\" href=\"/keys\" data-nav=keys>API keys</a>\
-<a class=\"{ACCOUNT_LINK}\" href=\"/connect\" data-nav=connect>Assistants</a>\
+<a class=\"{ACCOUNT_LINK}\" href=\"/account\" data-nav=account>Account</a>\
 <button class=\"quiet px-2 py-1 text-meta\">Sign out</button></form>",
             escape(&user.username)
         )
     } else {
-        String::new()
-    };
-    // `place` hides the sidebar's copy on a phone.
-    let account = |place: &str| {
         format!(
-            "<div class=\"mt-auto flex min-w-0 flex-col gap-1 {place}\">{signout}\
-<a class=\"rounded-md px-1 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
-href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
-            v = env!("CARGO_PKG_VERSION")
+            "<a class=\"{ACCOUNT_LINK} self-start\" href=\"/account\" data-nav=account>Account</a>"
         )
     };
+    let account = format!(
+        "<div class=\"mt-auto flex min-w-0 flex-col gap-1 max-wide:hidden\">{signed_in}\
+<a class=\"rounded-md px-1 py-0.5 text-fine text-muted tabular-nums hover:text-ink hover:no-underline\" \
+href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
+        v = env!("CARGO_PKG_VERSION")
+    );
     format!(
         "{head}<script type=module src=\"{datastar}\"></script>\
 <script src=\"{player}\" defer></script><script src=\"{ui}\" defer></script>\
 </head><body><nav class=\"fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r \
-border-rule bg-surface px-2.5 py-4 pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
+border-rule bg-surface px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
 max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto \
 max-wide:flex-row max-wide:gap-0 max-wide:border-t max-wide:border-r-0 max-wide:p-0 \
 max-wide:pb-[env(safe-area-inset-bottom)]\" aria-label=Library>\
@@ -159,13 +159,18 @@ max-wide:pb-[env(safe-area-inset-bottom)]\" aria-label=Library>\
 max-wide:hidden\" href=\"/\">kōan</a>\
 <a class=\"{NAV_LINK}\" href=\"/albums\" data-nav=albums>Albums</a>\
 <a class=\"{NAV_LINK}\" href=\"/artists\" data-nav=artists>Artists</a>\
-<a class=\"{NAV_LINK}\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
+<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/playlists\" data-nav=playlists>Playlists</a>\
+<a class=\"{NAV_LINK} wide:hidden\" href=\"/library\" data-nav=\"library playlists recent favourites history\">Library</a>\
 <a class=\"{NAV_LINK}\" href=\"/search\" data-nav=search>Search</a>\
-<a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>{side_account}</nav>\
+<a class=\"{NAV_LINK}\" href=\"/queue\" data-nav=queue>Queue</a>\
+<a class=\"{NAV_LINK} mt-3 max-wide:hidden\" href=\"/recent\" data-nav=recent>Recently played</a>\
+<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/favourites\" data-nav=favourites>Favourites</a>\
+<a class=\"{NAV_LINK} max-wide:hidden\" href=\"/history\" data-nav=history>History</a>\
+<a class=\"{NAV_LINK} wide:hidden\" href=\"/account\" data-nav=account>Account</a>{account}</nav>\
 <main id=content class=\"ml-(--side-w) min-w-0 px-7 \
 pt-[max(24px,env(safe-area-inset-top))] pb-10 max-wide:ml-0 max-wide:p-4 \
 max-wide:pt-[max(16px,env(safe-area-inset-top))]\">{content}</main>\
-<div class=\"hidden px-4 pt-2 pb-6 max-wide:block\">{foot_account}</div>\
+\
 <footer class=\"fixed inset-x-0 bottom-(--tabs-h) z-5 grid h-[calc(var(--bar-h)+env(safe-area-inset-bottom))] \
 grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)] items-center gap-4 border-t border-rule bg-surface px-4 \
 pb-[env(safe-area-inset-bottom)] max-wide:bottom-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] \
@@ -185,8 +190,6 @@ max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule
         ui = super::ASSETS.ui_js,
         buttons = buttons(false),
         scrub = scrub("max-wide:hidden"),
-        side_account = account("max-wide:hidden"),
-        foot_account = account(""),
     )
 }
 
@@ -209,7 +212,7 @@ pub(super) fn respond(
     }
 }
 
-fn unavailable() -> Response {
+pub(super) fn unavailable() -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
         "the library is unavailable",
@@ -242,7 +245,7 @@ fn year(date: Option<&str>) -> &str {
 /// Each album's cover version: when its files last changed. A cover URL
 /// carries it, so the URL changes whenever the art might have and the browser
 /// can keep each one for good. One query for a page of albums.
-type Versions = HashMap<i64, i64>;
+pub(super) type Versions = HashMap<i64, i64>;
 
 fn cover_versions(conn: &rusqlite::Connection, album_ids: &[i64]) -> Versions {
     if album_ids.is_empty() {
@@ -262,7 +265,7 @@ fn cover_versions(conn: &rusqlite::Connection, album_ids: &[i64]) -> Versions {
     .unwrap_or_default()
 }
 
-fn cover_url(album_id: i64, size: u32, versions: &Versions) -> String {
+pub(super) fn cover_url(album_id: i64, size: u32, versions: &Versions) -> String {
     format!(
         "/ui/cover/{album_id}?size={size}&v={}",
         versions.get(&album_id).copied().unwrap_or(0)
@@ -273,7 +276,7 @@ fn album_versions(conn: &rusqlite::Connection, albums: &[AlbumRow]) -> Versions 
     cover_versions(conn, &albums.iter().map(|a| a.id).collect::<Vec<_>>())
 }
 
-fn track_versions(conn: &rusqlite::Connection, tracks: &[TrackRow]) -> Versions {
+pub(super) fn track_versions(conn: &rusqlite::Connection, tracks: &[TrackRow]) -> Versions {
     let mut ids: Vec<i64> = tracks.iter().filter_map(|t| t.album_id).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -859,6 +862,212 @@ pub(super) async fn search_results(
     events(vec![patch(&html, None)])
 }
 
+/// The library's own lists, which the sidebar shows as links and a phone, with
+/// one tab for them all, as this page.
+pub(super) async fn library(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+) -> Response {
+    let rows = [
+        ("/playlists", "Playlists"),
+        ("/recent", "Recently played"),
+        ("/favourites", "Favourites"),
+        ("/history", "History"),
+    ]
+        .iter()
+        .fold(String::new(), |mut out, (href, name)| {
+            let _ = write!(
+                out,
+                "<li><a class=\"{LIST_ROW}\" href=\"{href}\"><span class=\"{LIST_NAME}\">{name}</span></a></li>"
+            );
+            out
+        });
+    let inner = format!("<h1>Library</h1><ul>{rows}</ul>");
+    respond(&s, &headers, &user, "Library", &inner)
+}
+
+/// An artist as a pill, on a shelf.
+fn pills(artists: &[queries::ArtistRow]) -> String {
+    artists.iter().fold(String::new(), |mut out, a| {
+        let _ = write!(
+            out,
+            "<a class=\"inline-flex max-w-full rounded-full border border-rule bg-surface px-3.5 py-1.5 text-ink \
+hover:border-hover hover:no-underline\" href=\"/artist/{}\"><span class=\"truncate\">{}</span></a>",
+            a.id,
+            escape(&a.name)
+        );
+        out
+    })
+}
+
+/// What a shelf page says with nothing on it.
+pub(super) struct EmptyShelf {
+    pub title: &'static str,
+    pub detail: &'static str,
+}
+
+/// A page of artists, records and tracks that answer one question, as the
+/// apps' shelf lays them out: artists as pills, records as tiles, and the
+/// tracks as a list that plays from the row picked to its end.
+pub(super) fn shelf(
+    title: &str,
+    artists: &[queries::ArtistRow],
+    albums: &[AlbumRow],
+    tracks: &[TrackRow],
+    versions: &Versions,
+    empty: &EmptyShelf,
+) -> String {
+    if artists.is_empty() && albums.is_empty() && tracks.is_empty() {
+        return format!(
+            "<h1>{}</h1><p class=\"{EMPTY}\">{}</p><p class=\"{EMPTY}\">{}</p>",
+            escape(title),
+            empty.title,
+            empty.detail
+        );
+    }
+    let mut out = format!("<h1>{}</h1>", escape(title));
+    if !artists.is_empty() {
+        let _ = write!(
+            out,
+            "<h2>Artists</h2><div class=\"mb-6 flex flex-wrap gap-2\">{}</div>",
+            pills(artists)
+        );
+    }
+    if !albums.is_empty() {
+        let _ = write!(
+            out,
+            "<h2>Albums</h2><div class=\"mb-6 {GRID}\">{}</div>",
+            cells(albums, versions)
+        );
+    }
+    if !tracks.is_empty() {
+        let rows: String = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| track_row(t, i + 1, true, true, versions, false))
+            .collect();
+        let _ = write!(
+            out,
+            "<div class=\"{LIST_HEAD}\"><h2>Tracks</h2>\
+<div class=\"{ACTIONS}\"><button class=\"primary\" data-act=play>Play</button>\
+<button data-act=shuffle>Shuffle</button><button data-act=queue>Add to queue</button></div></div>\
+<ol class=\"tracks\" data-context=album>{rows}</ol>"
+        );
+    }
+    out
+}
+
+/// The signed-in account's favourite artists, records and tracks.
+pub(super) async fn favourites(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+) -> Response {
+    let st = s.clone();
+    let found = blocking(move || {
+        let db = open(&st.pool)?;
+        let artists = queries::list_artists(
+            &db.conn,
+            &ArtistQuery {
+                favourites_of: Some(user.user_id),
+                ..Default::default()
+            },
+        )
+        .ok()?;
+        let albums = queries::list_albums(
+            &db.conn,
+            &AlbumQuery {
+                favourites_of: Some(user.user_id),
+                ..Default::default()
+            },
+        )
+        .ok()?;
+        let tracks = queries::favourite_tracks(&db.conn, user.user_id, None).ok()?;
+        let mut versions = album_versions(&db.conn, &albums);
+        versions.extend(track_versions(&db.conn, &tracks));
+        Some((artists, albums, tracks, versions))
+    })
+    .await;
+    let Some((artists, albums, tracks, versions)) = found else {
+        return unavailable();
+    };
+    let inner = shelf(
+        "Favourites",
+        &artists,
+        &albums,
+        &tracks,
+        &versions,
+        &EmptyShelf {
+            title: "Nothing favourited yet.",
+            detail: "Artists, records and tracks favourited in the kōan apps, or in any Subsonic app \
+signed in as you, are listed here.",
+        },
+    );
+    respond(&s, &headers, &user, "Favourites", &inner)
+}
+
+/// The artists, records and tracks the signed-in account played lately, each
+/// once and newest first by its latest play: the apps' Recently played.
+pub(super) async fn recent(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+) -> Response {
+    let st = s.clone();
+    let found = blocking(move || {
+        let db = open(&st.pool)?;
+        let since = chrono::Utc::now().timestamp() - queries::RECENT_DAYS * 24 * 60 * 60;
+        let recent =
+            queries::recently_played(&db.conn, user.user_id, since, queries::RECENT_LIMIT).ok()?;
+        // In the order played: the listings come back in their own.
+        fn in_order<T>(ids: &[i64], rows: Vec<T>, id: impl Fn(&T) -> i64) -> Vec<T> {
+            let mut by_id: HashMap<i64, T> = rows.into_iter().map(|r| (id(&r), r)).collect();
+            ids.iter().filter_map(|i| by_id.remove(i)).collect()
+        }
+        let artists = queries::list_artists(
+            &db.conn,
+            &ArtistQuery {
+                ids: Some(&recent.artists),
+                ..Default::default()
+            },
+        )
+        .ok()?;
+        let albums = queries::list_albums(
+            &db.conn,
+            &AlbumQuery {
+                ids: Some(&recent.albums),
+                ..Default::default()
+            },
+        )
+        .ok()?;
+        let tracks = queries::tracks_by_ids(&db.conn, &recent.tracks).ok()?;
+        let artists = in_order(&recent.artists, artists, |a| a.id);
+        let albums = in_order(&recent.albums, albums, |a| a.id);
+        let tracks = in_order(&recent.tracks, tracks, |t| t.id);
+        let mut versions = album_versions(&db.conn, &albums);
+        versions.extend(track_versions(&db.conn, &tracks));
+        Some((artists, albums, tracks, versions))
+    })
+    .await;
+    let Some((artists, albums, tracks, versions)) = found else {
+        return unavailable();
+    };
+    let inner = shelf(
+        "Recently played",
+        &artists,
+        &albums,
+        &tracks,
+        &versions,
+        &EmptyShelf {
+            title: "Nothing played in the last 30 days.",
+            detail: "What you play here, in the kōan apps or in a Subsonic app signed in as you, \
+is gathered here for a month, each artist, record and track once.",
+        },
+    );
+    respond(&s, &headers, &user, "Recently played", &inner)
+}
+
 /// The queue lives in the browser, so the page is a frame the script fills.
 pub(super) async fn queue(
     State(s): State<UiState>,
@@ -871,7 +1080,7 @@ data-np=cover alt=\"\" hidden><div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\
 <h1 class=\"mb-1\" data-np=title>Nothing playing</h1>\
 <p class=\"{SUB}\"><span data-np=artist></span> <a data-np=album href=\"/albums\"></a></p>\
 {buttons}{scrub}</div></header>\
-<div class=\"flex items-baseline justify-between\"><h2>Up next</h2>\
+<div class=\"{LIST_HEAD}\"><h2>Up next</h2>\
 <button class=\"quiet px-2 py-1\" data-act=clear>Clear</button></div>\
 <ol id=queue-list class=\"tracks\"></ol>",
         buttons = buttons(true),

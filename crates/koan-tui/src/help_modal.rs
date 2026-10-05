@@ -19,6 +19,7 @@ const SECTIONS: &[Section] = &[
             ("< >", "Previous / Next track"),
             ("s", "Shuffle on / off"),
             ("R", "Repeat: off / queue / one"),
+            ("T", "Sleep: 15 / 30 / 45 / 60 min / track / record / off"),
             (", .", "Seek backward / forward"),
             ("+ -", "Volume up / down"),
         ],

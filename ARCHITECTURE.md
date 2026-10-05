@@ -300,6 +300,7 @@ A transfer nothing wants any more stops, mid-transfer included; it asks every 25
 | `queries/scan_cache.rs` | Mtime+size change detection to skip unchanged files |
 | `queries/stats.rs` | Library statistics |
 | `queries/lyrics.rs` | Lyrics caching (synced + plain, per-track) |
+| `queries/ratings.rs` | One-to-five ratings of tracks, albums and artists, per account, by row id. Subsonic's `setRating`, `userRating` and the `highest` album list. No rating is no row |
 | `queries/favourites.rs` | Favourite/star status by row id (syncs with Navidrome). Favourites, playlists, play history and shares carry a `user_id`: each account on a server has its own, as Navidrome keeps them. `LOCAL_USER` (0) is the caller with no account — the apps, the TUI, auth-disabled mode, the Subsonic shared secret — and resolves to the first admin once one exists, so a local library and a single-user server behave the same (`queries/auth.rs`) |
 | `queries/history.rs` | Play history — one row per play, written when a track starts |
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |
@@ -318,7 +319,7 @@ Which track a source belongs to is decided only by `sources::link`, on one norma
 
 **Album and artist identity:** an artist is its folded name (`artists.name_key`). An album is its folded title (`albums.title_key`), its album artist and its MusicBrainz release when one is known, so two editions with their own release ids are two albums; a track naming no release joins the album of its names that has none either. A release id is filled once and never overwritten, so files of two editions cannot trade it. A track only the server has joins the album holding the server's id for its record, and an album's server id is the one most of its entries give. When an album of files takes a server id that a server-only album already holds, that album is folded into the one with files, which is how a record the server names one way and the files another becomes one album.
 
-**Favourites** name rows by id (`favourites.track_id`, `favourite_albums.album_id`, `favourite_artists.artist_id`) and follow them through merges. `rebuild_index` forgets what the sources said and keeps the rows: the next scan and sync read every source again and each reclaims its row by path or server id, so favourites, history and playlists survive it.
+**Favourites** name rows by id (`favourites.track_id`, `favourite_albums.album_id`, `favourite_artists.artist_id`) and follow them through merges, as ratings do (`track_ratings`, `album_ratings`, `artist_ratings`). `rebuild_index` forgets what the sources said and keeps the rows: the next scan and sync read every source again and each reclaims its row by path or server id, so favourites, history and playlists survive it.
 
 ### `index/`
 

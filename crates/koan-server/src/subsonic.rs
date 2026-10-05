@@ -20,6 +20,7 @@ use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries;
+use koan_core::db::queries::app_passwords::AppPasswordAuth;
 use koan_core::remote::client::SubsonicAuth;
 use serde::Deserialize;
 use tokio::io::AsyncReadExt as _;
@@ -66,6 +67,9 @@ struct AppState {
     /// The `[subsonic]` shared secret; without one, only accounts sign in.
     password: Option<String>,
     users: crate::auth::password::PasswordVerifier,
+    /// What app passwords are sealed under; `None` until the server has a
+    /// signing key, and with it no app passwords.
+    app_key: Option<[u8; 32]>,
     /// Upstream Navidrome/Subsonic, used to build signed stream URLs for tracks
     /// with no local file. Resolved once at startup rather than per request,
     /// which would re-read two TOML files. Credentials rather than a
@@ -202,7 +206,7 @@ impl SubsonicError {
     fn token_auth_unsupported() -> Self {
         Self::auth(
             SubsonicErrorCode::TokenAuthUnsupported,
-            "Token authentication needs this account to have signed in by password once (the web UI, or p=); until then use a password or an API key",
+            "Token authentication needs an app password for this account: make one on the API keys page of kōan's web UI, or sign in with your password or an API key",
         )
     }
 
@@ -780,10 +784,13 @@ impl Caller {
 ///   against its argon2 hash. The protocol sends it with every request, so it
 ///   is only as private as the transport. The web login form sends it too.
 /// - `t=md5(secret + s)` with the `[subsonic]` shared secret, for clients that
-///   only speak token auth. Token auth cannot work against a hash, so for any
-///   other username it is refused with 41, the code that tells a client to
-///   fall back to a password or a key. The secret acts as `User`, and is also
-///   accepted as `p=`.
+///   only speak token auth. The secret acts as `User`, and is also accepted as
+///   `p=`.
+/// - `t=md5(app password + s)`, or `p=` with an app password: generated per
+///   client for an account, kept sealed (`queries::app_passwords`). Token auth
+///   cannot work against the account's own password, which is only a hash, so
+///   an account without app passwords is refused with 41, the code that tells
+///   a client to fall back to a password or a key.
 fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, SubsonicError> {
     use crate::auth::password::Refused;
     use subtle::ConstantTimeEq;
@@ -835,9 +842,21 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
                 Err(SubsonicError::wrong_auth())
             };
         }
-        // An account: token auth needs the plaintext password, which koan
-        // does not keep. 41 tells the client to send the password or a key.
-        return Err(SubsonicError::token_auth_unsupported());
+        // An account: its own password is only a hash, so a token is checked
+        // against its app passwords, and without any, 41 tells the client to
+        // send the password or a key instead.
+        return match app_password(state, username, |password| {
+            let expected = format!("{:x}", md5::compute(format!("{password}{salt}")));
+            bool::from(token.as_bytes().ct_eq(expected.as_bytes()))
+        })? {
+            AppPasswordAuth::Matched(user) => Ok(Caller {
+                username: user.username,
+                role: user.role,
+                user_id: user.id,
+            }),
+            AppPasswordAuth::Wrong => Err(SubsonicError::wrong_auth()),
+            AppPasswordAuth::NoneMade => Err(SubsonicError::token_auth_unsupported()),
+        };
     }
 
     let Some(p) = params.p.as_deref() else {
@@ -850,11 +869,37 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
     if shared(&password) {
         return caller((queries::LOCAL_USER, Role::User));
     }
+    // An app password costs a decryption to check, the account's own an
+    // argon2 hash, so the cheaper goes first.
+    let given = password.as_bytes();
+    if let AppPasswordAuth::Matched(user) =
+        app_password(state, username, |p| bool::from(p.as_bytes().ct_eq(given)))?
+    {
+        return Ok(Caller {
+            username: user.username,
+            role: user.role,
+            user_id: user.id,
+        });
+    }
     match state.users.verify(username, &password) {
         Ok(account) => caller(account),
         Err(Refused::Busy) => Err(SubsonicError::busy()),
         Err(Refused::Wrong) => Err(SubsonicError::wrong_auth()),
     }
+}
+
+/// `username`'s app passwords, checked with `matches`.
+fn app_password(
+    state: &AppState,
+    username: &str,
+    matches: impl Fn(&str) -> bool,
+) -> Result<AppPasswordAuth, SubsonicError> {
+    let Some(key) = state.app_key.as_ref() else {
+        return Ok(AppPasswordAuth::NoneMade);
+    };
+    let db = state.open_db()?;
+    queries::app_passwords::authenticate_app_password(&db.conn, key, username, matches)
+        .map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
 fn decode_hex(hex: &str) -> Option<String> {
@@ -1210,6 +1255,10 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             "played",
             extras.played.get(&track.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt_int(
+            "userRating",
+            extras.rating.get(&track.id).map(|&r| r.into()),
+        )
         .list("genres", track.genre.iter().map(|g| genre_node(g)))
         .list(
             "artists",
@@ -1290,6 +1339,10 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
             "played",
             extras.played.get(&album.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt_int(
+            "userRating",
+            extras.rating.get(&album.id).map(|&r| r.into()),
+        )
         .child(item_date("releaseDate", album.date.as_deref()))
         .list("genres", genres.iter().map(|g| genre_node(g)))
         .list(
@@ -1324,6 +1377,7 @@ fn artist_id3_node(id: i64, name: &str, extras: &ArtistExtras) -> XmlNode {
         .attr("coverArt", &uid)
         .attr("musicBrainzId", mbid.unwrap_or_default())
         .attr("sortName", sort_name.unwrap_or_default())
+        .attr_opt_int("userRating", extras.rating.get(&id).map(|&r| r.into()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1367,6 +1421,8 @@ struct SongExtras {
     mbid: HashMap<i64, String>,
     /// Last play, seconds since the epoch.
     played: HashMap<i64, i64>,
+    /// The caller's rating, 1 to 5.
+    rating: HashMap<i64, u8>,
 }
 
 /// The caller's own history: when someone else last played a track is theirs
@@ -1412,7 +1468,23 @@ fn song_extras<'a>(
         )?
         .into_iter()
         .collect(),
+        rating: rated(
+            db,
+            user,
+            queries::RatingKind::Track,
+            tracks.iter().map(|t| t.id),
+        )?,
     })
+}
+
+/// The caller's ratings of these rows.
+fn rated(
+    db: &Database,
+    user: i64,
+    kind: queries::RatingKind,
+    ids: impl IntoIterator<Item = i64>,
+) -> Result<HashMap<i64, u8>, SubsonicError> {
+    queries::ratings(&db.conn, user, kind, ids).map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
 /// What `AlbumID3` carries beyond `AlbumRow`.
@@ -1424,6 +1496,7 @@ struct AlbumExtras {
     genres: HashMap<i64, Vec<String>>,
     stats: HashMap<i64, queries::AlbumStats>,
     played: HashMap<i64, i64>,
+    rating: HashMap<i64, u8>,
 }
 
 /// `tracks`, when the caller already read every track of these albums, is
@@ -1489,6 +1562,12 @@ fn album_extras<'a>(
         )?
         .into_iter()
         .collect(),
+        rating: rated(
+            db,
+            user,
+            queries::RatingKind::Album,
+            album_ids.iter().copied(),
+        )?,
     })
 }
 
@@ -1520,15 +1599,18 @@ struct ArtistExtras {
     uids: Uids,
     /// MusicBrainz artist id and sort name.
     names: HashMap<i64, (Option<String>, Option<String>)>,
+    rating: HashMap<i64, u8>,
 }
 
 fn artist_extras(
     db: &Database,
+    user: i64,
     ids: impl IntoIterator<Item = i64>,
 ) -> Result<ArtistExtras, SubsonicError> {
     let ids: Vec<i64> = ids.into_iter().collect();
     Ok(ArtistExtras {
         uids: Uids::load(db, ids.iter().copied(), [], [])?,
+        rating: rated(db, user, queries::RatingKind::Artist, ids.iter().copied())?,
         names: by_id(
             db,
             "SELECT id, mbid, sort_name FROM artists WHERE id IN (SELECT value FROM json_each(?1))",
@@ -1722,9 +1804,9 @@ async fn get_artists(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
+        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
             let index_map = artist_index(db)?;
-            let extras = artist_extras(db, index_map.values().flatten().map(|a| a.id))?;
+            let extras = artist_extras(db, user, index_map.values().flatten().map(|a| a.id))?;
 
             let mut artists_node = XmlNode::new("artists")
                 .attr("ignoredArticles", IGNORED_ARTICLES)
@@ -1870,7 +1952,7 @@ async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdP
             let albums = queries::albums_for_artist(&db.conn, artist_id)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-            let artists = artist_extras(db, [artist.id])?;
+            let artists = artist_extras(db, user, [artist.id])?;
             let extras = album_extras(db, user, &albums, None)?;
             Ok(b.child(
                 artist_id3_node(artist.id, &artist.name, &artists)
@@ -1924,8 +2006,8 @@ fn album_list(
     let page = match params.list_type.as_deref().unwrap_or("alphabeticalByName") {
         "recent" => played(queries::PlayedOrder::Recent)?,
         "frequent" => played(queries::PlayedOrder::Frequent)?,
-        // koan keeps no ratings, so nothing is rated highest.
-        "highest" => Vec::new(),
+        "highest" => queries::highest_rated_albums(&db.conn, user, limit, offset)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?,
         list_type => {
             let q = queries::AlbumQuery {
                 limit: Some(limit),
@@ -2227,7 +2309,7 @@ async fn search3(
                 (artists, albums, songs)
             };
 
-            let artist_extras = artist_extras(db, artists.iter().map(|(id, _)| *id))?;
+            let artist_extras = artist_extras(db, user, artists.iter().map(|(id, _)| *id))?;
             let album_extras = album_extras(db, user, &albums, None)?;
             let song_extras = song_extras(db, user, &songs)?;
             let result_node = XmlNode::new("searchResult3")
@@ -2674,6 +2756,52 @@ fn set_star(
     Ok(())
 }
 
+/// `setRating`: `rating` 1 to 5 rates the song, album or artist `id` names,
+/// by its uid or prefix; 0 clears it.
+async fn set_rating(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_user(&state, &auth, Role::User, |db, user, b| {
+            let raw = params
+                .get("id")
+                .ok_or_else(|| SubsonicError::missing_param("id"))?;
+            let rating = params
+                .get("rating")
+                .ok_or_else(|| SubsonicError::missing_param("rating"))?
+                .parse::<u8>()
+                .ok()
+                .filter(|r| *r <= 5)
+                .ok_or_else(|| SubsonicError::bad_param("rating"))?;
+            let (kind, id) = resolve_entity(db, raw)?;
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let kind = match kind.unwrap_or(EntityKind::Song) {
+                EntityKind::Song => {
+                    queries::get_track_row(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?
+                        .ok_or_else(|| SubsonicError::not_found("Track"))?;
+                    queries::RatingKind::Track
+                }
+                EntityKind::Album => {
+                    queries::get_album(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?
+                        .ok_or_else(|| SubsonicError::not_found("Album"))?;
+                    queries::RatingKind::Album
+                }
+                EntityKind::Artist => {
+                    queries::get_artist(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?
+                        .ok_or_else(|| SubsonicError::not_found("Artist"))?;
+                    queries::RatingKind::Artist
+                }
+            };
+            queries::set_rating(&db.conn, user, kind, id, rating).map_err(internal)?;
+            Ok(b)
+        })
+    })
+    .await
+}
+
 async fn get_starred2(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
@@ -2704,7 +2832,7 @@ async fn get_starred2(
                 |r| Ok((r.get(0)?, r.get::<_, String>(1)?)),
             )?;
             let album_extras = album_extras(db, user, &albums, None)?;
-            let artist_extras = artist_extras(db, artists.iter().map(|(id, _)| *id))?;
+            let artist_extras = artist_extras(db, user, artists.iter().map(|(id, _)| *id))?;
 
             Ok(b.child(
                 XmlNode::new("starred2")
@@ -4166,6 +4294,8 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             "/rest/getStarred2.view",
             get(get_starred2).post(get_starred2),
         )
+        .route("/rest/setRating", get(set_rating).post(set_rating))
+        .route("/rest/setRating.view", get(set_rating).post(set_rating))
         .route("/rest/scrobble", get(scrobble).post(scrobble))
         .route("/rest/scrobble.view", get(scrobble).post(scrobble))
         .route(
@@ -4282,6 +4412,9 @@ pub fn subsonic_router(
         pool,
         username: cfg.subsonic.username.clone(),
         password,
+        app_key: koan_core::auth::load_keypair()
+            .ok()
+            .map(|(private, _)| koan_core::auth::app_password_key(&private)),
         upstream: koan_core::helpers::subsonic_auth(&cfg),
         http: reqwest::Client::builder()
             // A whole-request deadline would cut off long proxied streams.
@@ -4327,6 +4460,7 @@ mod tests {
             pool,
             username: "testuser".into(),
             password: Some("testpass".into()),
+            app_key: Some(koan_core::auth::app_password_key(b"test signing key")),
             upstream: None,
             http: reqwest::Client::new(),
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
@@ -4734,6 +4868,48 @@ mod tests {
             body.contains(&format!("helpUrl=\"{AUTH_HELP_URL}\"")),
             "{body}"
         );
+    }
+
+    #[tokio::test]
+    async fn an_app_password_signs_an_account_in_by_token_or_as_a_password() {
+        let (state, _dir) = test_state();
+        let ping = |q: String| {
+            let app = build_test_router(state.clone());
+            async move {
+                get_response(app, &format!("/rest/ping?{q}&v=1.16.1&c=test"))
+                    .await
+                    .1
+            }
+        };
+        let token =
+            |secret: &str, salt: &str| format!("{:x}", md5::compute(format!("{secret}{salt}")));
+
+        // No app password yet: 41, which tells the client to fall back.
+        let body = ping(format!("u=mate&t={}&s=abc", token("hunter22", "abc"))).await;
+        assert!(body.contains("code=\"41\""), "{body}");
+
+        let password = {
+            let db = state.open_db().unwrap();
+            let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+                .unwrap()
+                .unwrap();
+            queries::app_passwords::create_app_password(
+                &db.conn,
+                state.app_key.as_ref().unwrap(),
+                mate.id,
+                "arpeggi",
+            )
+            .unwrap()
+            .1
+        };
+        let body = ping(format!("u=mate&t={}&s=abc", token(&password, "abc"))).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = ping(format!("u=mate&p={password}")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        // The account's own password still does not work as a token, and a
+        // wrong token is a wrong credential now that app passwords exist.
+        let body = ping(format!("u=mate&t={}&s=abc", token("hunter22", "abc"))).await;
+        assert!(body.contains("code=\"40\""), "{body}");
     }
 
     #[tokio::test]
@@ -5364,6 +5540,70 @@ mod tests {
         )
         .await;
         assert_eq!(v["error"]["code"], 10, "an unknown type is refused");
+    }
+
+    #[tokio::test]
+    async fn ratings_set_clear_and_order_highest() {
+        let (state, _dir) = test_state();
+        let [alpha, _, gamma] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let album_of = |track| {
+            let db = Database::open(state.pool.path()).unwrap();
+            let album = queries::get_track_row(&db.conn, track)
+                .unwrap()
+                .unwrap()
+                .album_id
+                .unwrap();
+            uid_of(&state, queries::UidKind::Album, album)
+        };
+        let rate = |id: String, rating: &'static str| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!(
+                        "/rest/setRating?{}&id={id}&rating={rating}",
+                        auth_query("f=json")
+                    ),
+                )
+                .await
+            }
+        };
+
+        let (alpha_album, gamma_album) = (album_of(alpha), album_of(gamma));
+        rate(alpha_album.clone(), "3").await;
+        rate(gamma_album.clone(), "5").await;
+        assert_eq!(
+            album_list2(&state, "type=highest").await,
+            ["Gamma", "Alpha"]
+        );
+        let v = json_of(
+            build_test_router(state.clone()),
+            &format!("/rest/getAlbum?{}&id={alpha_album}", auth_query("f=json")),
+        )
+        .await;
+        assert_eq!(v["album"]["userRating"], 3, "{v}");
+
+        let song = uid_of(&state, queries::UidKind::Track, alpha);
+        rate(song.clone(), "4").await;
+        let song_rating = |state: Arc<AppState>, song: String| async move {
+            json_of(
+                build_test_router(state),
+                &format!("/rest/getSong?{}&id={song}", auth_query("f=json")),
+            )
+            .await["song"]["userRating"]
+                .clone()
+        };
+        assert_eq!(song_rating(state.clone(), song.clone()).await, 4);
+        rate(song.clone(), "0").await;
+        assert!(song_rating(state.clone(), song.clone()).await.is_null());
+
+        let v = rate(song, "6").await;
+        assert_eq!(v["error"]["code"], 10, "a rating above 5 is refused");
+
+        rate(gamma_album, "0").await;
+        assert_eq!(album_list2(&state, "type=highest").await, ["Alpha"]);
     }
 
     #[tokio::test]

@@ -2169,6 +2169,9 @@ mod tests {
         for cmd in [
             LinkCommand::Pause,
             LinkCommand::SetRendererVolume { volume: 40 },
+            LinkCommand::SleepTimer {
+                timer: Some(koan_core::player::state::SleepTimer::After { minutes: 30 }),
+            },
             LinkCommand::HandOff { to: "dev-k".into() },
         ] {
             reg.relay("k", "dev-phone", cmd.clone()).unwrap();

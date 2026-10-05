@@ -12,9 +12,10 @@
 //! `/auth/resume`, which spends the refresh cookie (scoped to `/auth`, so only
 //! that route sees it) for fresh cookies, or on to the sign-in form.
 
+mod account;
 mod browse;
 mod connect;
-mod keys;
+mod history;
 mod oauth;
 mod pages;
 mod pair;
@@ -124,9 +125,22 @@ pub fn router(
         .route("/search", get(pages::search))
         .route("/search/results", get(pages::search_results))
         .route("/queue", get(pages::queue))
+        .route("/library", get(pages::library))
+        .route("/favourites", get(pages::favourites))
+        .route("/recent", get(pages::recent))
+        .route("/history", get(history::page))
+        .route("/history/forget", post(history::forget))
         .route("/connect", get(connect::page))
-        .route("/keys", get(keys::page).post(keys::create))
-        .route("/keys/{id}/revoke", post(keys::revoke))
+        .route("/account", get(account::page))
+        .route("/account/keys", post(account::create_key))
+        .route("/account/keys/{id}/revoke", post(account::revoke_key))
+        .route("/account/app-passwords", post(account::create_app_password))
+        .route(
+            "/account/app-passwords/{id}/revoke",
+            post(account::revoke_app_password),
+        )
+        // Where the keys page was.
+        .route("/keys", get(|| async { see_other("/account") }))
         .route("/users", get(users::page).post(users::create))
         .route("/users/{id}/invite", post(users::invite))
         .route("/users/{id}/password", post(users::set_password))

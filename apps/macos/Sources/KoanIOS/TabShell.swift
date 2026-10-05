@@ -18,6 +18,7 @@ struct TabShell: View {
     @Environment(PlayerModel.self) private var player
     @Environment(CoverArtCache.self) private var art
     @Environment(LibraryModel.self) private var library
+    @Environment(EngineMirror.self) private var mirror
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(ActivityModel.self) private var activity
     #if os(tvOS)
@@ -132,6 +133,9 @@ struct TabShell: View {
             library.libraryChanged()
             playlists.load()
         }
+        // A play recorded, or plays forgotten: the pages derived from
+        // history ask again.
+        .onChange(of: mirror.historyVersion) { _, _ in library.historyChanged() }
         .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
             Task { await player.saveSession() }
         }

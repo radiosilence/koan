@@ -32,6 +32,8 @@ use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedP
 use koan_core::remote::client::SubsonicError;
 use uuid::Uuid;
 
+use koan_core::db::queries::{RECENT_DAYS, RECENT_LIMIT};
+
 mod offload;
 mod state;
 mod types;
@@ -464,6 +466,17 @@ impl KoanEngine {
     /// controlled.
     pub async fn set_repeat(self: Arc<Self>, mode: RepeatMode) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::SetRepeat(mode.into()))).await
+    }
+
+    /// Stop playback after a while or at the end of the track or record,
+    /// fading out and pausing, here or on the device being controlled.
+    pub async fn set_sleep_timer(self: Arc<Self>, timer: SleepTimer) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send(PlayerCommand::SetSleepTimer(Some(timer.into()))))
+            .await
+    }
+
+    pub async fn cancel_sleep_timer(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send(PlayerCommand::SetSleepTimer(None))).await
     }
 
     pub async fn seek(self: Arc<Self>, position_ms: u64) -> Result<(), KoanError> {
@@ -1145,12 +1158,81 @@ impl KoanEngine {
         .await
     }
 
+    /// What was played lately: the records, artists and tracks of the last
+    /// `RECENT_DAYS`, at most `RECENT_LIMIT` of each, each once and newest
+    /// first by its latest play, narrowed by `search`.
+    pub async fn recently_played(
+        self: Arc<Self>,
+        search: Option<String>,
+    ) -> Result<RecentlyPlayed, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let since = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64)
+                - RECENT_DAYS * 24 * 60 * 60;
+            let recent =
+                queries::recently_played(&db.conn, queries::LOCAL_USER, since, RECENT_LIMIT)
+                    .map_err(db_err)?;
+            let search = trimmed(&search);
+            // In the order played: the listings come back in their own.
+            fn in_order<T>(ids: &[i64], rows: Vec<T>, id: impl Fn(&T) -> i64) -> Vec<T> {
+                let mut by_id: HashMap<i64, T> = rows.into_iter().map(|r| (id(&r), r)).collect();
+                ids.iter().filter_map(|i| by_id.remove(i)).collect()
+            }
+            let albums = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    ids: Some(&recent.albums),
+                    search,
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            let artists = queries::list_artists(
+                &db.conn,
+                &queries::ArtistQuery {
+                    ids: Some(&recent.artists),
+                    search,
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            let needle = search.map(str::to_lowercase);
+            let tracks: Vec<_> = queries::tracks_by_ids(&db.conn, &recent.tracks)
+                .map_err(db_err)?
+                .into_iter()
+                .filter(|t| {
+                    needle.as_ref().is_none_or(|n| {
+                        [&t.title, &t.artist_name, &t.album_title]
+                            .iter()
+                            .any(|s| s.to_lowercase().contains(n.as_str()))
+                    })
+                })
+                .collect();
+            let tracks = in_order(&recent.tracks, tracks, |t| t.id);
+            Ok(RecentlyPlayed {
+                albums: in_order(&recent.albums, albums, |a| a.id)
+                    .into_iter()
+                    .map(Album::from)
+                    .collect(),
+                artists: in_order(&recent.artists, artists, |a| a.id)
+                    .into_iter()
+                    .map(Artist::from)
+                    .collect(),
+                tracks: self.decorate(&db, tracks),
+            })
+        })
+        .await
+    }
+
     /// Forget specific plays. Returns how many entries were removed.
     pub async fn delete_plays(self: Arc<Self>, ids: Vec<i64>) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
             let removed =
                 queries::delete_plays(&db.conn, queries::LOCAL_USER, &ids).map_err(db_err)?;
+            koan_core::player::history::changed();
             Ok(removed as u32)
         })
         .await
@@ -1162,6 +1244,7 @@ impl KoanEngine {
             let db = self.db()?;
             let removed =
                 queries::clear_play_history(&db.conn, queries::LOCAL_USER).map_err(db_err)?;
+            koan_core::player::history::changed();
             Ok(removed as u32)
         })
         .await
@@ -3274,6 +3357,9 @@ impl KoanEngine {
                         .library_version
                         .load(std::sync::atomic::Ordering::Relaxed);
                     out.publish(StateSlice::Library { version: library });
+                    out.publish(StateSlice::History {
+                        version: koan_core::player::history::version(),
+                    });
 
                     out.publish(StateSlice::Tasks {
                         scanning: engine
@@ -3486,6 +3572,7 @@ impl KoanEngine {
                 playlist_version: 0,
                 shuffle: st.shuffle,
                 repeat_mode: st.repeat.into(),
+                sleep: st.sleep.map(Into::into),
             },
         });
         out.publish(StateSlice::Playhead {
@@ -3851,6 +3938,7 @@ impl KoanEngine {
                     outputs: Some(koan_core::remote::outputs::local(&state)),
                     shuffle: state.play_mode().shuffle,
                     repeat: state.play_mode().repeat,
+                    sleep: state.sleep(),
                 }
             }),
         });
@@ -3885,6 +3973,7 @@ impl KoanEngine {
             playlist_version: self.state.playlist_version(),
             shuffle: self.state.play_mode().shuffle,
             repeat_mode: self.state.play_mode().repeat.into(),
+            sleep: self.state.sleep().map(Into::into),
         }
     }
 
@@ -3960,6 +4049,7 @@ impl KoanEngine {
             PlayerCommand::PrevTrack => LinkCommand::Previous,
             PlayerCommand::SetShuffle(on) => LinkCommand::Shuffle { on },
             PlayerCommand::SetRepeat(mode) => LinkCommand::Repeat { mode },
+            PlayerCommand::SetSleepTimer(timer) => LinkCommand::SleepTimer { timer },
             PlayerCommand::AddToPlaylist(items) => LinkCommand::Enqueue {
                 track_ids: tracks(&items)?,
             },
@@ -4375,6 +4465,9 @@ impl KoanEngine {
             LinkCommand::Previous => self.send_local(PlayerCommand::PrevTrack),
             LinkCommand::Shuffle { on } => self.send_local(PlayerCommand::SetShuffle(on)),
             LinkCommand::Repeat { mode } => self.send_local(PlayerCommand::SetRepeat(mode)),
+            LinkCommand::SleepTimer { timer } => {
+                self.send_local(PlayerCommand::SetSleepTimer(timer))
+            }
         };
         if let Err(e) = result {
             log::warn!("link: {e}");

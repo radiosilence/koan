@@ -191,7 +191,9 @@ targets:
         OTHER_LDFLAGS: -lkoan_ffi
     # A background push is how the server reaches a TV tvOS has suspended,
     # to link and take what Play on sent it. tvOS shows no notifications, so
-    # there is nothing more to ask for.
+    # there is nothing more to ask for. `development` is the sandbox gateway a
+    # development build's token belongs to; an App Store export, as
+    # `ios-testflight` makes for the phone, rewrites it to `production`.
     entitlements:
       path: ../../target/ios-project/koan-tv.entitlements
       properties:

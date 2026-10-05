@@ -98,6 +98,9 @@ pub fn adopt_local_rows(conn: &Connection) -> Result<(), rusqlite::Error> {
         "favourites",
         "favourite_albums",
         "favourite_artists",
+        "track_ratings",
+        "album_ratings",
+        "artist_ratings",
         "play_history",
         "playlists",
         "shares",
@@ -233,6 +236,7 @@ pub fn update_password(
         if let Some(user) = get_user_by_username(conn, username)? {
             revoke_all_user_tokens(conn, user.id)?;
             super::api_keys::revoke_user_api_keys(conn, user.id)?;
+            super::app_passwords::revoke_user_app_passwords(conn, user.id)?;
         }
     }
     Ok(updated > 0)
@@ -669,6 +673,13 @@ mod tests {
             queries::add_favourite(&db.conn, user, track).unwrap();
             queries::set_favourite_album(&db.conn, user, row.album_id.unwrap(), true).unwrap();
             queries::set_favourite_artist(&db.conn, user, row.artist_id.unwrap(), true).unwrap();
+            for (kind, id) in [
+                (queries::RatingKind::Track, track),
+                (queries::RatingKind::Album, row.album_id.unwrap()),
+                (queries::RatingKind::Artist, row.artist_id.unwrap()),
+            ] {
+                queries::set_rating(&db.conn, user, kind, id, 4).unwrap();
+            }
             queries::record_play(&db.conn, user, track, None).unwrap();
             queries::create_playlist(&db.conn, user, "List", None).unwrap();
             queries::shares::create_share(
@@ -689,6 +700,9 @@ mod tests {
             "favourites",
             "favourite_albums",
             "favourite_artists",
+            "track_ratings",
+            "album_ratings",
+            "artist_ratings",
             "play_history",
             "playlists",
             "shares",
