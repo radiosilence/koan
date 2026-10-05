@@ -961,9 +961,6 @@
       width: calc(var(--spacing) * 6);
       height: calc(var(--spacing) * 6);
     }
-    .max-wide\:not-aria-pressed\:hidden:not([aria-pressed="true"]) {
-      display: none;
-    }
     :where(:is(.js)) .max-wide\:in-\[\.js\]\:inline-block {
       display: inline-block;
     }
