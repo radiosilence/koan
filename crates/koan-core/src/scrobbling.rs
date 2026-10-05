@@ -456,6 +456,91 @@ mod tests {
     }
 
     #[test]
+    fn client_errors_reject_the_batch_and_server_errors_wait() {
+        let body = String::new;
+        assert!(matches!(
+            outcome(403, None, body),
+            Err(Failure::Rejected(_))
+        ));
+        assert!(matches!(
+            outcome(413, None, body),
+            Err(Failure::Rejected(_))
+        ));
+        assert!(matches!(
+            outcome(400, None, body),
+            Err(Failure::Rejected(_))
+        ));
+        assert!(matches!(outcome(401, None, body), Err(Failure::Refused)));
+        let wait = Some(Duration::from_secs(9));
+        assert!(matches!(outcome(429, wait, body), Err(Failure::Unreachable(w)) if w == wait));
+        assert!(matches!(
+            outcome(503, None, body),
+            Err(Failure::Unreachable(None))
+        ));
+        assert!(outcome(200, None, body).is_ok());
+    }
+
+    /// Two accounts with a play waiting each, the first queued first.
+    fn two_accounts() -> (tempfile::TempDir, Pool) {
+        use crate::db::queries::{SOURCE_SUBSONIC, record_plays_at, sample_meta, upsert_track};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        let db = crate::db::connection::Database::open(&path).unwrap();
+        db.conn
+            .execute_batch(
+                "INSERT INTO users (id, username, password_hash, role) VALUES
+                     (1, 'stuck', 'x', 'user'), (2, 'fine', 'x', 'user');",
+            )
+            .unwrap();
+        upsert_track(&db.conn, &sample_meta("Archangel", "Burial", "Untrue")).unwrap();
+        let track: i64 = db
+            .conn
+            .query_row("SELECT id FROM tracks", [], |r| r.get(0))
+            .unwrap();
+        for (user, token) in [(1, "stuck"), (2, "fine")] {
+            queries::connect(&db.conn, user, LISTENBRAINZ, token, token).unwrap();
+            record_plays_at(&db.conn, user, &[(track, 100 + user)], SOURCE_SUBSONIC).unwrap();
+        }
+        (dir, Pool::new(path))
+    }
+
+    fn pending(pool: &Pool, user: i64) -> i64 {
+        queries::services(&pool.get().unwrap().conn, user).unwrap()[0].pending
+    }
+
+    #[test]
+    fn an_unreachable_account_holds_up_no_other() {
+        let (_dir, pool) = two_accounts();
+        let mut sent = Vec::new();
+        let result = send_queued(&pool, &mut |token, _, listens| {
+            if token == "stuck" {
+                return Err(Failure::Unreachable(Some(Duration::from_secs(5))));
+            }
+            sent.push((token.to_owned(), listens.len()));
+            Ok(())
+        });
+        let Err(Unsent { wait }) = result else {
+            panic!("the pass should fail for the stuck account")
+        };
+        assert_eq!(wait, Some(Duration::from_secs(5)));
+        assert_eq!(sent, vec![("fine".to_owned(), 1)]);
+        assert_eq!((pending(&pool, 1), pending(&pool, 2)), (1, 0));
+    }
+
+    #[test]
+    fn a_rejected_listen_is_dropped_and_the_queue_moves_on() {
+        let (_dir, pool) = two_accounts();
+        let result = send_queued(&pool, &mut |token, _, _| {
+            if token == "stuck" {
+                return Err(Failure::Rejected("403: forbidden".into()));
+            }
+            Ok(())
+        });
+        assert!(result.is_ok());
+        assert_eq!((pending(&pool, 1), pending(&pool, 2)), (0, 0));
+    }
+
+    #[test]
     fn several_listens_are_an_import() {
         assert_eq!(ListenType::of(1), ListenType::Single);
         assert_eq!(ListenType::of(2).name(), "import");
