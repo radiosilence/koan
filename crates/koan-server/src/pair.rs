@@ -56,8 +56,18 @@ pub struct Pairings {
 /// One set per process: the socket route, the Subsonic endpoints and the web
 /// UI all reach the same pairings.
 pub fn pairings() -> &'static Pairings {
-    static PAIRINGS: LazyLock<Pairings> = LazyLock::new(|| Pairings::new(TTL));
+    static PAIRINGS: LazyLock<Pairings> = LazyLock::new(|| Pairings::new(ttl_from_env()));
     &PAIRINGS
+}
+
+/// `KOAN_PAIR_TTL_SECS`, or `TTL`. For trying expiry without waiting ten
+/// minutes; read once, when the first pairing is asked for.
+fn ttl_from_env() -> Duration {
+    std::env::var("KOAN_PAIR_TTL_SECS")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .filter(|&secs| secs > 0)
+        .map_or(TTL, Duration::from_secs)
 }
 
 /// Pairings opened per address in a minute. Each one is a held socket, and a
@@ -371,13 +381,13 @@ async fn session(mut socket: WebSocket, mut opened: Opened<'static>) {
     let pending = PairMessage::Pending {
         id: opened.id.clone(),
         code: opened.code.clone(),
-        expires_in: TTL.as_secs(),
+        expires_in: opened.pairings.ttl.as_secs(),
     };
     if send(&mut socket, &pending).await.is_err() {
         return;
     }
     log::info!("pair: {} waiting", opened.code);
-    let lapse = tokio::time::sleep(TTL);
+    let lapse = tokio::time::sleep(opened.pairings.ttl);
     tokio::pin!(lapse);
     let mut keepalive =
         tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE, KEEPALIVE);
