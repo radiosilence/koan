@@ -222,21 +222,19 @@ fn send(client: &SubsonicClient, kind: OutboxKind, run: &[&OutboxEntry]) -> Opti
         OutboxKind::Scrobble => match client.scrobble_many(&pairs) {
             Ok(()) => Some(pairs.len()),
             // One track the server no longer has fails the whole batch on
-            // koan: each is sent alone to keep the rest.
-            Err(SubsonicError::Api { .. }) if pairs.len() > 1 => {
+            // koan: each is sent alone to keep the rest. Any stopped partway
+            // is sent again whole, which the server takes once.
+            Err(SubsonicError::Api { code, .. }) if code == NOT_FOUND && pairs.len() > 1 => {
                 let mut taken = 0;
                 for pair in &pairs {
                     match client.scrobble_many(std::slice::from_ref(pair)) {
                         Ok(()) => taken += 1,
-                        Err(SubsonicError::Api { code, message }) => {
-                            log::info!("history: server refused a scrobble ({code}: {message})");
-                        }
-                        Err(_) => return None,
+                        Err(e) => refused_for_good(e)?,
                     }
                 }
                 Some(taken)
             }
-            Err(e) => answered(e).map(|()| 0),
+            Err(e) => refused_for_good(e).map(|()| 0),
         },
         OutboxKind::Forget | OutboxKind::Clear => {
             // A server that keeps no shared history has nothing to forget.
@@ -251,21 +249,29 @@ fn send(client: &SubsonicClient, kind: OutboxKind, run: &[&OutboxEntry]) -> Opti
             };
             match result {
                 Ok(()) => Some(run.len()),
-                Err(e) => answered(e).map(|()| 0),
+                Err(e) => refused_for_good(e).map(|()| 0),
             }
         }
     }
 }
 
-/// `Some` when the server answered the request, even with a refusal.
-fn answered(e: SubsonicError) -> Option<()> {
+/// Subsonic's "not found" and "missing parameter": refusals the same request
+/// would meet again.
+const NOT_FOUND: i32 = 70;
+const MISSING_PARAMETER: i32 = 10;
+
+/// `Some` when the server refused the request in a way it always will, so
+/// the entries are dropped. Anything else keeps them for the next attempt: an
+/// unreachable server, and refusals that pass, such as credentials changed
+/// on another device (40–44) or a server briefly unable to answer.
+fn refused_for_good(e: SubsonicError) -> Option<()> {
     match e {
-        SubsonicError::Api { code, message } => {
-            log::info!("history: server refused ({code}: {message})");
+        SubsonicError::Api { code, message } if matches!(code, NOT_FOUND | MISSING_PARAMETER) => {
+            log::info!("history: server refused for good ({code}: {message})");
             Some(())
         }
         e => {
-            log::info!("history: server not reached: {e}");
+            log::info!("history: not sent, kept for later: {e}");
             None
         }
     }
@@ -274,7 +280,8 @@ fn answered(e: SubsonicError) -> Option<()> {
 /// Read the server's history after this device's cursor. With `strict`, a
 /// page naming a track this library lacks is left unread and
 /// `library_synced` set, for the caller to sync the library and read again;
-/// without, such plays are passed over.
+/// without, the rest is adopted and the cursor kept before the first such
+/// play.
 fn pull(
     db: &Database,
     client: &SubsonicClient,
@@ -287,15 +294,27 @@ fn pull(
         return Ok(());
     }
     let mut cursor = queries::history_cursor(&db.conn, url).map_err(db_failed)?;
+    // Where the cursor stays: just before the first play whose track is not
+    // here yet, so it is read again once it is. The pages after it are read
+    // all the same, and adopting their plays again later finds them here.
+    let mut held: Option<HistoryCursor> = None;
     loop {
         let page = client.koan_history(cursor, PAGE)?;
         let next = HistoryCursor::parse(&page.cursor).ok_or(SubsonicError::BadResponse)?;
 
         let played: Vec<String> = page.play.iter().map(|p| p.id.clone()).collect();
         let tracks = queries::track_ids_for_remote_ids(&db.conn, &played).map_err(db_failed)?;
-        if strict && tracks.iter().any(Option::is_none) {
-            out.library_synced = true;
-            return Ok(());
+        if let Some(i) = tracks.iter().position(Option::is_none) {
+            if strict {
+                out.library_synced = true;
+                return Ok(());
+            }
+            held.get_or_insert(HistoryCursor {
+                // Forgettings are applied whole; a page read again applies
+                // them again, to nothing.
+                forgotten: cursor.forgotten,
+                play: page.play[i].seq.map_or(cursor.play, |seq| seq - 1),
+            });
         }
 
         // Forgettings first: a play this device made and another forgot is
@@ -327,9 +346,13 @@ fn pull(
             .collect();
         out.adopted +=
             queries::adopt_plays(&db.conn, queries::LOCAL_USER, &plays).map_err(db_failed)?;
-        queries::set_history_cursor(&db.conn, url, username, next).map_err(db_failed)?;
+        queries::set_history_cursor(&db.conn, url, username, held.unwrap_or(next))
+            .map_err(db_failed)?;
         cursor = next;
         if !page.more {
+            if held.is_some() {
+                log::info!("history: holding the cursor before a track not synced yet");
+            }
             return Ok(());
         }
     }
@@ -343,4 +366,28 @@ fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn api(code: i32) -> SubsonicError {
+        SubsonicError::Api {
+            code,
+            message: String::new(),
+        }
+    }
+
+    /// Only a refusal the same request would meet again drops what waits: a
+    /// password changed on another device must not cost the offline plays.
+    #[test]
+    fn only_lasting_refusals_drop_the_outbox() {
+        assert_eq!(refused_for_good(api(NOT_FOUND)), Some(()));
+        assert_eq!(refused_for_good(api(MISSING_PARAMETER)), Some(()));
+        for code in [0, 40, 41, 42, 43, 44, 50] {
+            assert_eq!(refused_for_good(api(code)), None, "code {code}");
+        }
+        assert_eq!(refused_for_good(SubsonicError::BadResponse), None);
+    }
 }

@@ -2839,6 +2839,7 @@ async fn koan_history(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
                         page.plays.iter().map(|p| {
                             XmlNode::new("play")
                                 .attr("id", &p.track_uid)
+                                .attr_int("seq", p.seq)
                                 .attr_int("played", p.played_at * 1000)
                                 .attr_opt_int("listenedMs", p.listened_ms)
                         }),
@@ -5989,6 +5990,28 @@ mod tests {
         assert_eq!(
             queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, track_id).unwrap(),
             0
+        );
+    }
+
+    /// A client that lost the answer to a batch sends it again; each play is
+    /// recorded once.
+    #[tokio::test]
+    async fn a_scrobble_batch_sent_twice_records_each_play_once() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let db = Database::open(state.pool.path()).unwrap();
+        let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
+        let path = format!(
+            "/rest/scrobble?{}&id={track_id}&time=1000000&id={track_id}&time=2000000",
+            auth_query("f=json")
+        );
+        for _ in 0..2 {
+            let v = json_of(build_test_router(state.clone()), &path).await;
+            assert_eq!(v["status"], "ok", "{v}");
+        }
+        assert_eq!(
+            queries::play_count(&db.conn, koan_core::db::queries::LOCAL_USER, track_id).unwrap(),
+            2
         );
     }
 

@@ -896,6 +896,9 @@ pub struct KoanHistoryPage {
 pub struct KoanPlay {
     /// The track's id.
     pub id: String,
+    /// The play's place in the server's history.
+    #[serde(default)]
+    pub seq: Option<i64>,
     /// When it started, in ms since the epoch.
     pub played: i64,
     pub listened_ms: Option<i64>,

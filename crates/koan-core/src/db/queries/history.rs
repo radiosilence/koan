@@ -49,7 +49,8 @@ pub fn record_play_at(
 }
 
 /// Record several plays, `(track_id, played_at)`, as one transaction: all of
-/// them or, if any names a track that does not exist, none.
+/// them or, if any names a track that does not exist, none. A play already
+/// recorded for the track at the same second is not recorded again.
 pub fn record_plays_at(
     conn: &Connection,
     user: i64,
@@ -58,9 +59,15 @@ pub fn record_plays_at(
 ) -> Result<(), DbError> {
     let user = resolve_user(conn, user)?;
     super::atomically(conn, || {
+        // A client that lost the answer sends the batch again: a play already
+        // recorded at that second is that play.
         let mut insert = conn.prepare_cached(
             "INSERT INTO play_history (user_id, track_id, played_at, source)
-             VALUES (?1, ?2, ?3, ?4)",
+             SELECT ?1, ?2, ?3, ?4
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM play_history
+                 WHERE user_id = ?1 AND track_id = ?2 AND played_at = ?3
+             )",
         )?;
         for &(track_id, played_at) in plays {
             insert.execute(params![user, track_id, played_at, source])?;
@@ -291,6 +298,9 @@ pub struct HistoryPage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SharedPlay {
+    /// Its id in the server's history: what a device that cannot place the
+    /// track yet holds its cursor before.
+    pub seq: i64,
     pub track_uid: String,
     /// Seconds since the epoch.
     pub played_at: i64,
@@ -353,6 +363,7 @@ pub fn history_since(
         page.cursor.play = row.get(0)?;
         if let Some(track_uid) = row.get::<_, Option<String>>(1)? {
             page.plays.push(SharedPlay {
+                seq: page.cursor.play,
                 track_uid,
                 played_at: row.get(2)?,
                 listened_ms: row.get(3)?,
@@ -1054,6 +1065,18 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap()
+    }
+
+    #[test]
+    fn a_batch_sent_again_records_each_play_once() {
+        let db = test_db();
+        let a = seed_track(&db, "A");
+        let batch = [(a, 100), (a, 200)];
+        record_plays_at(&db.conn, USER, &batch, SOURCE_SUBSONIC).unwrap();
+        record_plays_at(&db.conn, USER, &batch, SOURCE_SUBSONIC).unwrap();
+        assert_eq!(play_count(&db.conn, USER, a).unwrap(), 2);
+        record_plays_at(&db.conn, USER, &[(a, 300)], SOURCE_SUBSONIC).unwrap();
+        assert_eq!(play_count(&db.conn, USER, a).unwrap(), 3);
     }
 
     #[test]
