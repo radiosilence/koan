@@ -2104,6 +2104,7 @@ mod tests {
         create_tables(&conn).unwrap();
         conn.execute_batch(
             "DROP TRIGGER users_personal_data;
+             DROP TRIGGER scrobble_reported_play;
              DROP INDEX idx_play_history_user;
              DROP INDEX idx_playlists_user;
              ALTER TABLE play_history DROP COLUMN user_id;
