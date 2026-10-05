@@ -10,9 +10,14 @@ struct BrowseFilterButton: View {
 
     var body: some View {
         let count = library.browseFilter.activeCount
+        #if os(tvOS)
+        // The button is already round; a circled symbol inside it reads small.
+        let symbol = count > 0 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease"
+        #else
         let symbol = count > 0
             ? "line.3.horizontal.decrease.circle.fill"
             : "line.3.horizontal.decrease.circle"
+        #endif
         Button { open = true } label: {
             #if os(tvOS)
             // A television's toolbar draws a custom label small and tinted; a
