@@ -35,6 +35,7 @@ enum Icon {
     static let jumpToPlaying = "scope"
     static let history = "clock.arrow.circlepath"
     static let recentlyPlayed = "clock"
+    static let onDevice = "arrow.down.circle"
     static let downloads = "arrow.down.circle"
     static let playlist = "music.note.list"
     static let search = "magnifyingglass"

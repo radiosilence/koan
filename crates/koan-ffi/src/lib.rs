@@ -827,7 +827,12 @@ impl KoanEngine {
     ) -> Result<Vec<Track>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = queries::search_tracks_paged(&db.conn, &query, limit, 0).map_err(db_err)?;
+            let mut rows =
+                queries::search_tracks_paged(&db.conn, &query, limit, 0).map_err(db_err)?;
+            // Offline, only what can play here.
+            if koan_core::remote::offline::active() {
+                rows.retain(|t| t.cached_path.is_some() || t.path.is_some());
+            }
             Ok(self.decorate(&db, rows))
         })
         .await
@@ -876,6 +881,7 @@ impl KoanEngine {
                 &db.conn,
                 &queries::AlbumQuery {
                     ids: Some(&ids),
+                    filter: offline_filter(),
                     ..Default::default()
                 },
             )
@@ -901,6 +907,7 @@ impl KoanEngine {
                 &db.conn,
                 &queries::ArtistQuery {
                     ids: Some(&ids),
+                    filter: offline_filter(),
                     ..Default::default()
                 },
             )
@@ -1208,6 +1215,67 @@ impl KoanEngine {
             })
         })
         .await
+    }
+
+    /// The records with any of their tracks on this device, fully there
+    /// first, with how much of each is, and the artists of those records,
+    /// narrowed by `search`.
+    pub async fn on_device(self: Arc<Self>, search: Option<String>) -> Result<OnDevice, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let counts = queries::on_device(&db.conn).map_err(db_err)?;
+            let ids: Vec<i64> = counts.iter().map(|c| c.album_id).collect();
+            let search = trimmed(&search);
+            let albums = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    ids: Some(&ids),
+                    search,
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            let mut by_id: HashMap<i64, _> = albums.into_iter().map(|a| (a.id, a)).collect();
+            let (albums, fractions) = counts
+                .iter()
+                .filter_map(|c| {
+                    let album = by_id.remove(&c.album_id)?;
+                    Some((
+                        Album::from(album),
+                        AlbumOnDevice {
+                            album_id: c.album_id,
+                            have: c.have,
+                            total: c.total,
+                        },
+                    ))
+                })
+                .unzip();
+            let artists = queries::list_artists(
+                &db.conn,
+                &queries::ArtistQuery {
+                    search,
+                    filter: queries::AlbumFilter {
+                        on_device: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            Ok(OnDevice {
+                albums,
+                artists: artists.into_iter().map(Artist::from).collect(),
+                fractions,
+            })
+        })
+        .await
+    }
+
+    /// Turn offline mode on or off by hand: the library narrows to what can
+    /// play here, as it does on its own when the server cannot be reached.
+    pub fn set_offline(&self, on: bool) {
+        koan_core::remote::offline::set_manual(on);
+        self.bump_library();
     }
 
     /// Forget specific plays. Returns how many entries were removed.
@@ -4520,6 +4588,14 @@ fn trimmed(search: &Option<String>) -> Option<&str> {
 /// How many genres the browsers' genre filter offers, most common first.
 const GENRES_OFFERED: u32 = 80;
 
+/// Nothing narrowed but, offline, to what can play here.
+fn offline_filter() -> queries::AlbumFilter<'static> {
+    queries::AlbumFilter {
+        on_device: koan_core::remote::offline::active(),
+        ..Default::default()
+    }
+}
+
 fn album_filter(f: &BrowseFilter) -> queries::AlbumFilter<'_> {
     queries::AlbumFilter {
         lossless: f.lossless,
@@ -4527,6 +4603,8 @@ fn album_filter(f: &BrowseFilter) -> queries::AlbumFilter<'_> {
         year_from: f.year_from,
         year_to: f.year_to,
         genre: trimmed(&f.genre),
+        // Offline, the library is what can play here.
+        on_device: koan_core::remote::offline::active(),
     }
 }
 
@@ -4652,6 +4730,8 @@ fn connection_info() -> ConnectionInfo {
         shared_with: devices::shares(),
         share_error: devices::share_error(),
         share_accounts: devices::accounts(),
+        offline: koan_core::remote::offline::active(),
+        offline_manual: koan_core::remote::offline::manual(),
     }
 }
 

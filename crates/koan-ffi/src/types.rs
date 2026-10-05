@@ -137,6 +137,23 @@ pub struct Track {
     pub is_favourite: bool,
 }
 
+/// The records with tracks on this device, and their artists.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct OnDevice {
+    pub albums: Vec<Album>,
+    pub artists: Vec<Artist>,
+    /// How much of each record is here, in the order of `albums`.
+    pub fractions: Vec<AlbumOnDevice>,
+}
+
+/// How much of a record is on this device.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct AlbumOnDevice {
+    pub album_id: i64,
+    pub have: u32,
+    pub total: u32,
+}
+
 /// What was played lately, each once and newest first by its latest play.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct RecentlyPlayed {
@@ -1513,6 +1530,11 @@ pub struct ConnectionInfo {
     pub share_error: Option<String>,
     /// The server's other accounts, to share with.
     pub share_accounts: Vec<String>,
+    /// The library is narrowed to what can play here: turned on by hand, or
+    /// the server out of reach.
+    pub offline: bool,
+    /// Turned on by hand, rather than by the server being out of reach.
+    pub offline_manual: bool,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

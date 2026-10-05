@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Downloaded, and offline mode on iOS.** A Downloaded page on the Mac and iOS lists the records with files on this device, fully there first, each with a bar showing how much of it is. On iOS, when the server has been out of reach for a few seconds with the app open, the library narrows to what is on the phone: browse and search show only that, and the queue greys out what cannot play. It lifts by itself when the server answers, and Settings → Offline mode turns it on by hand.
 - **Recently played.** A page in the Mac and iOS apps, laid out like Favourites, for "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first, at most 50 of each. It is worked out from play history, so it follows each play as it is recorded, and History now does too. On the Mac, ⌘6.
 
 ## 0.53.0

@@ -27,6 +27,7 @@ final class Navigator {
         case artists
         case favourites
         case recentlyPlayed
+        case onDevice
         case playHistory
         case downloads
         /// One playlist. A sidebar row like any other — which is what makes
@@ -44,6 +45,7 @@ final class Navigator {
             case .artists: "Filter artists"
             case .favourites: "Filter favourites"
             case .recentlyPlayed: "Filter recently played"
+            case .onDevice: "Filter downloaded"
             case .playHistory: "Filter history"
             // Short, and ordered by what is happening rather than by name.
             case .downloads: nil

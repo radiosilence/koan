@@ -172,6 +172,10 @@ final class LibraryModel {
     private(set) var visibleRecentAlbums: [Album] = []
     private(set) var visibleRecentArtists: [Artist] = []
     private(set) var visibleRecentTracks: [Track] = []
+    private(set) var visibleOnDeviceAlbums: [Album] = []
+    private(set) var visibleOnDeviceArtists: [Artist] = []
+    /// How much of each record on the Downloaded page is here.
+    private(set) var onDeviceFractions: [Int64: Double] = [:]
 
     // Favourite state is read from here rather than from the copy baked into
     // each Track when it was fetched. A track appears in the album view, the
@@ -269,6 +273,14 @@ final class LibraryModel {
             if artists != visibleFavouriteArtists { visibleFavouriteArtists = artists }
         case .history(let rows):
             if rows != visiblePlayHistory { visiblePlayHistory = rows }
+        case .onDevice(let shelf):
+            if shelf.albums != visibleOnDeviceAlbums { visibleOnDeviceAlbums = shelf.albums }
+            if shelf.artists != visibleOnDeviceArtists { visibleOnDeviceArtists = shelf.artists }
+            let fractions = Dictionary(
+                shelf.fractions.map { ($0.albumId, $0.total > 0 ? Double($0.have) / Double($0.total) : 0) },
+                uniquingKeysWith: { first, _ in first }
+            )
+            if fractions != onDeviceFractions { onDeviceFractions = fractions }
         case .recent(let recent):
             if recent.albums != visibleRecentAlbums { visibleRecentAlbums = recent.albums }
             if recent.artists != visibleRecentArtists { visibleRecentArtists = recent.artists }
@@ -682,6 +694,8 @@ private struct Request: Sendable {
             return .history((try? await engine.playHistory(search: search)) ?? [])
         case .recentlyPlayed:
             return (try? await engine.recentlyPlayed(search: search)).map { .recent($0) } ?? .none
+        case .onDevice:
+            return (try? await engine.onDevice(search: search)).map { .onDevice($0) } ?? .none
         }
     }
 }
@@ -693,4 +707,5 @@ private enum Rows: Sendable {
     case favourites(tracks: [Track], albums: [Album], artists: [Artist])
     case history([PlayHistoryEntry])
     case recent(RecentlyPlayed)
+    case onDevice(OnDevice)
 }

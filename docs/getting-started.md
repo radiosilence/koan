@@ -24,6 +24,12 @@ The iOS app plays from a server; a phone has no music folder to scan. Sign in un
 
 Both apps keep what you play. **History** lists every play by day, and is where a play is forgotten. **Recently Played**, beside it in the Mac's sidebar and the iOS Library tab, answers "what was that record I had on yesterday": the records, artists and tracks of the last 30 days, each once however often it played, newest first, at most 50 of each. Both follow each play as it is recorded.
 
+## Downloaded and offline
+
+**Downloaded**, in the Mac's sidebar and the iOS Library tab, lists the records with files on this device, fully there first, each with a bar along the foot of its sleeve showing how much of it is. On the Mac every record in the library folder is whole.
+
+On iOS, when the server cannot be reached for a few seconds while the app is open, kōan goes offline: Albums, Artists and search show only what is on the phone, the queue greys out tracks that are not, and the Library tab says so. It goes back online by itself when the server answers again. **Settings → Offline mode** turns it on by hand, for a train with a signal that comes and goes. A server without kōan's link (Navidrome) gives no signal for this, so there only the switch applies.
+
 ## The terminal UI
 
 ```bash
