@@ -91,6 +91,7 @@ struct QueueRow: View {
     var artwork = false
 
     @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
     /// Whether the List has this row selected. The List says so through the
     /// environment, which is what lets the list above never read its own
     /// selection: passed down as a value, every click would re-run the whole list.
@@ -209,6 +210,14 @@ struct QueueRow: View {
         // clicks landing there select nothing.
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        // Offline, a track with no file here cannot play: it steps back and
+        // says so, rather than failing when tapped.
+        .opacity(unplayable ? 0.4 : 1)
+        .accessibilityHint(unplayable ? "Not on this device; plays when back online" : "")
+    }
+
+    private var unplayable: Bool {
+        mirror.connection?.offline == true && !item.onDisk
     }
 
     /// A played row steps back rather than disappears — and it does it in
@@ -234,6 +243,19 @@ struct QueueRow: View {
 
     @ViewBuilder
     private var statusIcon: some View {
+        // Offline is not a failure: whatever happened to the download, the
+        // reason this track cannot play now is that it is not here.
+        if unplayable, item.status != .playing {
+            Image(systemName: "icloud.slash")
+                .foregroundStyle(.tertiary)
+                .help("Not on this device")
+        } else {
+            statusSymbol
+        }
+    }
+
+    @ViewBuilder
+    private var statusSymbol: some View {
         switch item.status {
         case nil:
             // The queue has never heard of this track. Its column stays, so

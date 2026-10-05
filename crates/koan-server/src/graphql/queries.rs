@@ -336,7 +336,7 @@ impl QueryRoot {
             min_duration_ms,
             max_duration_ms,
             favourites_of: favourites_only.then(|| super::user_id(ctx)),
-            played: None,
+            ..Default::default()
         };
 
         let offset = page_offset(after.as_deref());

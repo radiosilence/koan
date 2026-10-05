@@ -56,10 +56,14 @@ struct ShelfView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // On iOS the navigation bar already says what the page is; the
+            // counts go under its title.
+            #if os(macOS)
             header
                 .padding(.horizontal, 24)
                 .padding(.top, 18)
                 .padding(.bottom, 16)
+            #endif
 
             if artists.isEmpty && albums.isEmpty && tracks.isEmpty {
                 EmptyState(icon: empty.icon, title: empty.title, detail: empty.detail)
@@ -72,6 +76,9 @@ struct ShelfView: View {
                 #endif
             }
         }
+        #if os(iOS)
+        .navigationSubtitle(counts)
+        #endif
     }
 
     #if os(macOS)
@@ -86,6 +93,7 @@ struct ShelfView: View {
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds), AnyHashable(library.favouriteAlbumIds),
             AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
+            AnyHashable(mirror.arrivingByAlbum),
         ]
         let library = library
         let nav = nav
@@ -114,7 +122,9 @@ struct ShelfView: View {
                         },
                         toggleFavourite: { library.toggleFavourite(album: $0) }
                     ),
-                    menu: { _ in NSMenu() }
+                    menu: { _ in NSMenu() },
+                    arriving: mirror.arrivingByAlbum,
+                    meter: meter
                 ),
                 trackContext: TrackTableRow.Context(
                     showsAlbum: true,

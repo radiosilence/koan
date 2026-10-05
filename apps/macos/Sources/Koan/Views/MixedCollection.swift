@@ -435,6 +435,8 @@ private final class MixedLayout: NSCollectionViewLayout {
     private var attributes: [IndexPath: NSCollectionViewLayoutAttributes] = [:]
     private var headers: [Int: NSCollectionViewLayoutAttributes] = [:]
     private var height: CGFloat = 0
+    /// The width the page was last laid out for.
+    private var laidOut: CGFloat = 0
 
     override func prepare() {
         super.prepare()
@@ -442,7 +444,8 @@ private final class MixedLayout: NSCollectionViewLayout {
         headers = [:]
         guard let collection = collectionView, let source else { return }
         let left = margin + leading
-        let width = max(collection.bounds.width - left - margin, 0)
+        laidOut = visibleWidth
+        let width = max(laidOut - left - margin, 0)
         let tileSpacing: CGFloat = 16
         let columns = max(1, ((width + tileSpacing) / (140 + tileSpacing)).rounded(.down))
         let tile = min(190, ((width - tileSpacing * (columns - 1)) / columns).rounded(.down))
@@ -490,7 +493,7 @@ private final class MixedLayout: NSCollectionViewLayout {
     }
 
     override var collectionViewContentSize: NSSize {
-        NSSize(width: collectionView?.bounds.width ?? 0, height: height)
+        NSSize(width: laidOut, height: height)
     }
 
     override func layoutAttributesForElements(in rect: NSRect) -> [NSCollectionViewLayoutAttributes] {
@@ -508,7 +511,7 @@ private final class MixedLayout: NSCollectionViewLayout {
     }
 
     override func shouldInvalidateLayout(forBoundsChange newBounds: NSRect) -> Bool {
-        newBounds.width != collectionView?.bounds.width
+        newBounds.width != laidOut
     }
 }
 

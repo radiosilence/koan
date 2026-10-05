@@ -275,6 +275,7 @@ private struct RemoteSettings: View {
     @Bindable var model: SettingsModel
     @Environment(ActivityModel.self) private var activity
     @Environment(AppState.self) private var state
+    @Environment(EngineMirror.self) private var mirror
     @State private var url = ""
     @State private var username = ""
     @State private var confirmingSignOut = false
@@ -354,6 +355,24 @@ private struct RemoteSettings: View {
                     if state.engine.parseInvite(link: typed) != nil { join(typed) }
                 }
             }
+
+            #if os(iOS)
+            // Offline is from a server: nothing to be offline from before
+            // signing in, and the switch would sit between the form and its
+            // button.
+            if model.settings.remoteSignedIn {
+            Section {
+                Toggle("Offline mode", isOn: Binding(
+                    get: { mirror.connection?.offlineManual ?? false },
+                    set: { state.library.engine.setOffline(on: $0) }
+                ))
+            } footer: {
+                Text("Shows only what is on this iPhone. It turns on by itself when your server cannot be reached, and off again when it can.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            }
+            #endif
 
             Section {
                 Toggle("Keep the library in sync", isOn: model.binding(\.autoSync))

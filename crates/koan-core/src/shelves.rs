@@ -1,4 +1,5 @@
-//! The library's shelves: favourites, recently played and a search. Each is
+//! The library's shelves: favourites, recently played, what is downloaded and
+//! a search. Each is
 //! one narrowing, applied alike to the album, artist and track listings, so a
 //! shelf is not a list of its own but the library's own listings with a filter
 //! on. A shelf page shows the first few of each (`summary`), and its "See all"
@@ -8,14 +9,14 @@
 //! What each shelf holds, how far back it reaches and how it is ordered is
 //! decided here and nowhere else. Every front end asks for a shelf by name.
 //!
-//! Adding a shelf (Downloaded is next) means a variant of [`Shelf`] and its
+//! Adding a shelf means a variant of [`Shelf`] and its
 //! narrowing in each of [`Shelf::albums`], [`Shelf::artists`] and
 //! [`Shelf::tracks`]; the summary and every listing follow from those.
 
 use crate::db::connection::DbError;
 use crate::db::queries::{
-    self, AlbumOrder, AlbumQuery, AlbumRow, ArtistOrder, ArtistQuery, ArtistRow, PlayedSince,
-    TrackFilter, TrackOrder, TrackRow,
+    self, AlbumFilter, AlbumOrder, AlbumQuery, AlbumRow, ArtistOrder, ArtistQuery, ArtistRow,
+    PlayedSince, TrackFilter, TrackOrder, TrackRow,
 };
 
 /// How far back Recently played reaches.
@@ -44,6 +45,10 @@ pub enum Shelf<'a> {
     /// What matches `q`: names for records and artists, the full-text index
     /// for tracks.
     Search(&'a str),
+    /// What can play on this device, downloaded or in the library. Records
+    /// count with any track here, fully there first, and each carries how
+    /// much of it is.
+    Downloaded,
 }
 
 impl<'a> Shelf<'a> {
@@ -66,6 +71,14 @@ impl<'a> Shelf<'a> {
                 order: AlbumOrder::RecentlyAdded,
                 ..Default::default()
             },
+            Shelf::Downloaded => AlbumQuery {
+                filter: AlbumFilter {
+                    on_device: true,
+                    ..Default::default()
+                },
+                order: AlbumOrder::Downloaded,
+                ..Default::default()
+            },
         }
     }
 
@@ -84,6 +97,14 @@ impl<'a> Shelf<'a> {
             },
             Shelf::Search(q) => ArtistQuery {
                 search: Some(q),
+                order: ArtistOrder::Name,
+                ..Default::default()
+            },
+            Shelf::Downloaded => ArtistQuery {
+                filter: AlbumFilter {
+                    on_device: true,
+                    ..Default::default()
+                },
                 order: ArtistOrder::Name,
                 ..Default::default()
             },
@@ -113,6 +134,14 @@ impl<'a> Shelf<'a> {
             Shelf::Search(q) => Tracks {
                 filter: TrackFilter {
                     search: Some(q.to_owned()),
+                    ..Default::default()
+                },
+                order: TrackOrder::ArtistAlbumDiscTrack,
+                descending: false,
+            },
+            Shelf::Downloaded => Tracks {
+                filter: TrackFilter {
+                    on_device: true,
                     ..Default::default()
                 },
                 order: TrackOrder::ArtistAlbumDiscTrack,
@@ -180,16 +209,21 @@ impl Summary {
     }
 }
 
-/// What a shelf page shows: the head of each of the shelf's listings.
+/// What a shelf page shows: the head of each of the shelf's listings, narrowed
+/// to what can play here when `on_device` (offline).
 pub fn summary(
     conn: &rusqlite::Connection,
     shelf: Shelf,
     user: i64,
     now: i64,
+    on_device: bool,
 ) -> Result<Summary, DbError> {
-    let artists = shelf.artists(user, now);
-    let albums = shelf.albums(user, now);
-    let tracks = shelf.tracks(user, now);
+    let mut artists = shelf.artists(user, now);
+    let mut albums = shelf.albums(user, now);
+    let mut tracks = shelf.tracks(user, now);
+    artists.filter.on_device |= on_device;
+    albums.filter.on_device |= on_device;
+    tracks.filter.on_device |= on_device;
     Ok(Summary {
         artists: Section {
             preview: queries::list_artists(
@@ -284,7 +318,7 @@ mod tests {
         play("Moss One", 60);
         play("Ember One", 40 * DAY);
 
-        let s = summary(&db.conn, Shelf::Recent, user, NOW).unwrap();
+        let s = summary(&db.conn, Shelf::Recent, user, NOW, false).unwrap();
         let titles: Vec<_> = s.tracks.preview.iter().map(|t| t.title.as_str()).collect();
         assert_eq!(
             titles,
@@ -313,7 +347,7 @@ mod tests {
         set_favourite_album(&db.conn, user, moss.album_id.unwrap(), true).unwrap();
         set_favourite_artist(&db.conn, user, moss.artist_id.unwrap(), true).unwrap();
 
-        let s = summary(&db.conn, Shelf::Favourites, user, NOW).unwrap();
+        let s = summary(&db.conn, Shelf::Favourites, user, NOW, false).unwrap();
         let titles: Vec<_> = s.tracks.preview.iter().map(|t| t.title.as_str()).collect();
         assert_eq!(titles, ["Moss One", "Tide Two"], "by artist, then record");
         assert_eq!(s.albums.preview.len(), 1);
@@ -325,10 +359,44 @@ mod tests {
     fn a_search_shelf_narrows_each_listing_by_the_query() {
         let db = db();
         library(&db);
-        let s = summary(&db.conn, Shelf::Search("tide"), queries::LOCAL_USER, NOW).unwrap();
+        let s = summary(
+            &db.conn,
+            Shelf::Search("tide"),
+            queries::LOCAL_USER,
+            NOW,
+            false,
+        )
+        .unwrap();
         assert_eq!(s.albums.preview[0].title, "Tide");
         assert_eq!(s.tracks.total, 2);
         assert!(s.artists.preview.is_empty(), "no artist is called tide");
+    }
+
+    #[test]
+    fn downloaded_is_what_can_play_here_fully_there_first() {
+        let db = db();
+        library(&db);
+        db.conn
+            .execute("UPDATE tracks SET path = NULL", [])
+            .unwrap();
+        db.conn
+            .execute(
+                "UPDATE tracks SET cached_path = '/cache/' || title
+                  WHERE title IN ('Moss One', 'Tide One', 'Tide Two')",
+                [],
+            )
+            .unwrap();
+        let s = summary(&db.conn, Shelf::Downloaded, queries::LOCAL_USER, NOW, false).unwrap();
+        let albums: Vec<_> = s
+            .albums
+            .preview
+            .iter()
+            .map(|a| (a.title.as_str(), a.on_device.map(|d| (d.have, d.total))))
+            .collect();
+        assert_eq!(albums, [("Tide", Some((2, 2))), ("Moss", Some((1, 2)))]);
+        let artists: Vec<_> = s.artists.preview.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(artists, ["Ayla", "Bryn"]);
+        assert_eq!(s.tracks.total, 3);
     }
 
     #[test]
@@ -340,10 +408,10 @@ mod tests {
             add_favourite(&db.conn, user, t.id).unwrap();
             record_play_at(&db.conn, user, t.id, NOW - i as i64 * 60, None, "t").unwrap();
         }
-        for shelf in [Shelf::Favourites, Shelf::Recent] {
+        for shelf in [Shelf::Favourites, Shelf::Recent, Shelf::Downloaded] {
             let t = shelf.tracks(user, NOW);
             let all = t.page(&db.conn, 1000, 0).unwrap();
-            let s = summary(&db.conn, shelf, user, NOW).unwrap();
+            let s = summary(&db.conn, shelf, user, NOW, false).unwrap();
             assert_eq!(s.tracks.total, all.len() as u64, "{shelf:?}");
             assert_eq!(
                 s.tracks.preview.iter().map(|t| t.id).collect::<Vec<_>>(),

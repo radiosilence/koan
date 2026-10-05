@@ -86,6 +86,16 @@ pub struct Album {
     /// When it entered the library. Sortable text — the server's ISO `created`
     /// for remote albums, SQLite's `datetime('now')` for locally scanned ones.
     pub added_at: Option<String>,
+    /// How much of it can play here: set where a listing is narrowed to this
+    /// device, the Downloaded shelf and offline.
+    pub on_device: Option<AlbumOnDevice>,
+}
+
+/// Of a record's tracks, how many can play here.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AlbumOnDevice {
+    pub have: u32,
+    pub total: u32,
 }
 
 impl From<AlbumRow> for Album {
@@ -102,6 +112,10 @@ impl From<AlbumRow> for Album {
             total_discs: r.total_discs,
             total_tracks: r.total_tracks,
             added_at: r.added_at,
+            on_device: r.on_device.map(|d| AlbumOnDevice {
+                have: d.have,
+                total: d.total,
+            }),
         }
     }
 }
@@ -151,6 +165,7 @@ pub enum ShelfKind {
     Favourites,
     Recent,
     Search { query: String },
+    Downloaded,
 }
 
 /// The first few of each kind on a shelf, and how many there are in all.
@@ -404,6 +419,8 @@ pub struct QueueItem {
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct Transfer {
     pub track_id: i64,
+    /// The record it belongs to, so a record's tile can say it is downloading.
+    pub album_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub state: TransferState,
@@ -444,10 +461,11 @@ impl TransferState {
 }
 
 impl Transfer {
-    pub(crate) fn of(d: &koan_core::remote::downloads::Download) -> Self {
+    pub(crate) fn of(d: &koan_core::remote::downloads::Download, album_id: Option<i64>) -> Self {
         use koan_core::remote::downloads::DownloadState;
         Self {
             track_id: d.track_id,
+            album_id,
             title: d.title.clone(),
             artist: d.artist.clone(),
             state: match &d.state {
@@ -975,6 +993,9 @@ pub enum AlbumSort {
     /// Most recently played first. Only with [`BrowseFilter::recent`], which
     /// is what knows when; without it, `RecentlyAdded`.
     LastPlayed,
+    /// Fully on this device first, then by how much is: the Downloaded
+    /// shelf's order.
+    Downloaded,
 }
 
 /// Narrowing the album and artist browsers by what the records are. The web
@@ -986,6 +1007,8 @@ pub struct BrowseFilter {
     /// Only what was played in the last `koan_core::shelves::RECENT_DAYS`:
     /// the Recently Played shelf as a filter.
     pub recent: bool,
+    /// Only what can play on this device: the Downloaded shelf as a filter.
+    pub downloaded: bool,
     /// Only records in a lossless codec.
     pub lossless: bool,
     /// Only records in this codec, as `BrowseChoices::codecs` names it.
@@ -1643,6 +1666,11 @@ pub struct ConnectionInfo {
     pub share_error: Option<String>,
     /// The server's other accounts, to share with.
     pub share_accounts: Vec<String>,
+    /// The library is narrowed to what can play here: turned on by hand, or
+    /// the server out of reach.
+    pub offline: bool,
+    /// Turned on by hand, rather than by the server being out of reach.
+    pub offline_manual: bool,
     /// The server can sign a device without a keyboard in, once someone here
     /// approves it.
     pub pairing: bool,
