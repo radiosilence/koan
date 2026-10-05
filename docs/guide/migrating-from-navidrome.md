@@ -15,11 +15,11 @@ You do not have to switch to use kōan's apps. The macOS and iOS apps and the te
 
 These Navidrome features have no kōan equivalent today:
 
-- **Scrobbling to Last.fm.** kōan forwards plays to ListenBrainz (see [Scrobbling](headless-server.md#scrobbling)), not to Last.fm.
-- **Serving under a sub-path** (`ND_BASEURL`). kōan expects its own hostname.
-- **Reverse-proxy authentication** (`ND_REVERSEPROXYUSERHEADER`). Accounts are kōan's own.
-- **Per-library permissions.** Every account sees the whole library.
-- **Internet radio and server-side play queues** (`getPlayQueue`, `savePlayQueue`). Clients that use these lose the feature against kōan; the rest of the client works.
+- **Scrobbling to Last.fm** ([#773](https://github.com/radiosilence/koan/issues/773)). kōan forwards plays to ListenBrainz (see [Scrobbling](headless-server.md#scrobbling)), not to Last.fm.
+- **Serving under a sub-path** (`ND_BASEURL`, [#760](https://github.com/radiosilence/koan/issues/760)). kōan expects its own hostname.
+- **Reverse-proxy authentication** (`ND_REVERSEPROXYUSERHEADER`, [#769](https://github.com/radiosilence/koan/issues/769)). Accounts are kōan's own.
+- **Per-library permissions** ([#762](https://github.com/radiosilence/koan/issues/762)). Every account sees the whole library.
+- **Server-side play queues** (`getPlayQueue`, `savePlayQueue`, [#764](https://github.com/radiosilence/koan/issues/764)) **and internet radio**, which is not planned. Clients that use these lose the feature against kōan; the rest of the client works.
 
 ## Translating a Navidrome setup
 
@@ -109,7 +109,9 @@ Make API keys and app passwords on the web UI's Account page, one per client. A 
 
 ### Favourites, play counts and playlists
 
-There is no importer yet; [#651](https://github.com/radiosilence/koan/issues/651) tracks one. Until then, favourites, play counts and playlists stay in Navidrome and start empty in kōan.
+There is no importer for Navidrome's database yet; [#651](https://github.com/radiosilence/koan/issues/651) tracks one. Until then, favourites, ratings, play counts and the playlists made in Navidrome stay there and start empty in kōan.
+
+Playlists kept as files in the music folder carry over: kōan reads Navidrome's smart playlists (`.nsp`) and `.m3u`/`.m3u8` files when it scans. See [Smart playlists](smart-playlists.md#from-navidrome).
 
 ## Running both
 
