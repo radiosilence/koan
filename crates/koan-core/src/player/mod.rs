@@ -1821,7 +1821,23 @@ impl Player {
     /// anything on this thread asking, so the play is banked, the session's
     /// track moved on and the cursor brought along from here. A play is its
     /// boundary: an item repeated runs into itself, and that is a new play.
+    ///
+    /// A sleep timer for the end of the track or record stops playback the
+    /// moment the next play is heard to start, gaplessly, so with no fade
+    /// over a track only just begun.
     fn follow_playhead(&mut self) {
+        let before = self.in_flight.as_ref().map(|f| (f.item, f.boundary));
+        self.move_with_playhead();
+        let after = self.in_flight.as_ref().map(|f| (f.item, f.boundary));
+        if let (Some((ended, _)), Some((next, _))) = (before, after)
+            && before != after
+            && self.sleeps_between(Some(ended), Some(next))
+        {
+            self.pause_with(Fade::Cut);
+        }
+    }
+
+    fn move_with_playhead(&mut self) {
         if self.session().is_none() {
             return;
         }
@@ -1846,7 +1862,6 @@ impl Player {
             return;
         };
         log::info!("timeline: now playing {:?}", id);
-        let ended = session.track.id;
         session.track = TrackInfo {
             id,
             path,
@@ -1858,11 +1873,6 @@ impl Player {
             duration_ms: info.duration_ms,
         };
         self.shared_state.set_cursor(Some(id));
-        // Already playing, gaplessly: stopped the moment it is heard to
-        // start, with no fade over the track it has only just begun.
-        if self.sleeps_between(Some(ended), Some(id)) {
-            self.pause_with(Fade::Cut);
-        }
     }
 
     /// Whether a sleep timer set for the end of the track or record ends
@@ -3598,6 +3608,25 @@ mod tests {
         );
         assert_eq!(player.shared_state.sleep(), None);
         assert_eq!(playlist_ids(&player), ids);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    /// A track repeating runs into itself, and that is the end of the track
+    /// too.
+    #[test]
+    fn a_sleep_timer_for_the_end_of_the_track_stops_a_track_repeating() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, ids) = wavs_in(dir.path(), &["a", "b"], 1.0, Repeat::One);
+        assert_eq!(queued_at_least(&player, 1)[0], ids[0]);
+        player.process_command(PlayerCommand::SetSleepTimer(Some(SleepTimer::EndOfTrack)));
+        player
+            .timeline
+            .samples_played
+            .store(8_400, Ordering::Relaxed);
+        player.update_playback_state();
+        assert_eq!(player.shared_state.cursor(), Some(ids[0]));
+        assert_eq!(session_run(&player), Some(Run::Paused));
+        assert_eq!(player.shared_state.sleep(), None);
         player.process_command(PlayerCommand::Stop);
     }
 
