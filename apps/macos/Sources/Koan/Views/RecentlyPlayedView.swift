@@ -11,9 +11,8 @@ struct RecentlyPlayedView: View {
     var body: some View {
         ShelfView(
             title: "Recently Played",
-            artists: library.visibleRecentArtists,
-            albums: library.visibleRecentAlbums,
-            tracks: library.visibleRecentTracks,
+            shelf: .recent,
+            summary: library.visibleShelf,
             empty: EmptyShelf(
                 icon: Icon.recentlyPlayed,
                 title: "Nothing played lately",

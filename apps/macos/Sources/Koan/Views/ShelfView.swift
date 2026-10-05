@@ -5,6 +5,11 @@ import SwiftUI
 /// favourited, what you played lately. Artists as pills, records as tiles,
 /// tracks as a working list below them.
 ///
+/// The first few of each, as `koan_core::shelves` cuts them, with how many
+/// there are. A section with more than it shows offers See all, which opens
+/// that kind's browser filtered to the shelf: the listing the preview is the
+/// head of, with the count the shelf gave.
+///
 /// Sections rather than a type picker, for the same reason search results are
 /// sections: they are all answers to one question, and a mode you have to
 /// remember you are in is a worse way to find a record.
@@ -14,11 +19,14 @@ import SwiftUI
 /// artists and records ride above them as rows that cannot be selected.
 struct ShelfView: View {
     let title: String
-    let artists: [Artist]
-    let albums: [Album]
-    let tracks: [Track]
+    let shelf: ShelfKind
+    let summary: ShelfSummary?
     /// What an empty page says.
     let empty: EmptyShelf
+
+    private var artists: [Artist] { summary?.artists ?? [] }
+    private var albums: [Album] { summary?.albums ?? [] }
+    private var tracks: [Track] { summary?.tracks ?? [] }
 
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
@@ -54,11 +62,7 @@ struct ShelfView: View {
                 .padding(.bottom, 16)
 
             if artists.isEmpty && albums.isEmpty && tracks.isEmpty {
-                EmptyState(
-                    icon: empty.icon,
-                    title: library.filter.isEmpty ? empty.title : "No matches",
-                    detail: library.filter.isEmpty ? empty.detail : nil
-                )
+                EmptyState(icon: empty.icon, title: empty.title, detail: empty.detail)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 #if os(macOS)
@@ -140,6 +144,8 @@ struct ShelfView: View {
                 trackMenu: { ids, environment in hostedMenu(menu(for: ids), environment: environment) },
                 openArtist: { nav.open(artist: $0) },
                 primaryAction: play,
+                totals: summary.map { MixedCollection.Totals($0) },
+                seeAll: seeAll,
                 selectAllToken: ui.selectAllToken,
                 insets: insets
             )
@@ -173,7 +179,7 @@ struct ShelfView: View {
         VStack(alignment: .leading, spacing: 1) {
             Text(title)
                 .font(.title2.weight(.semibold))
-            Text(summary)
+            Text(counts)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -181,19 +187,39 @@ struct ShelfView: View {
     }
 
     /// Only the kinds you have, so a tracks-only library reads as a count of
-    /// tracks.
-    private var summary: String {
+    /// tracks. The whole shelf's counts, not the preview's.
+    private var counts: String {
+        guard let summary else { return "" }
         var parts: [String] = []
-        if !artists.isEmpty { parts.append(Format.count(Int64(artists.count), "artist")) }
-        if !albums.isEmpty { parts.append(Format.count(Int64(albums.count), "album")) }
-        if !tracks.isEmpty { parts.append(Format.count(Int64(tracks.count), "track")) }
+        if summary.artistTotal > 0 { parts.append(Format.count(Int64(summary.artistTotal), "artist")) }
+        if summary.albumTotal > 0 { parts.append(Format.count(Int64(summary.albumTotal), "album")) }
+        if summary.trackTotal > 0 { parts.append(Format.count(Int64(summary.trackTotal), "track")) }
         return parts.joined(separator: " · ")
+    }
+
+    /// Open the browser for `list`, filtered to this shelf.
+    private func seeAll(_ list: LibraryModel.ShelfList) {
+        nav.show(library.seeAll(list, of: shelf))
+    }
+
+    /// A section's title, with See all when the preview is not all of it.
+    private func sectionHead(_ title: String, total: UInt64, shown: Int, list: LibraryModel.ShelfList) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            if total > UInt64(shown) {
+                Button("See all (\(total))") { seeAll(list) }
+                    .buttonStyle(.borderless)
+                    .font(.subheadline)
+                    .textCase(nil)
+            }
+        }
     }
 
     // MARK: - Sections
 
     private var artistSection: some View {
-        Section("Artists") {
+        Section {
             FlowLayout(spacing: 8) {
                 ForEach(artists, id: \.id) { artist in
                     ArtistPill(name: artist.name, artistId: artist.id)
@@ -201,6 +227,8 @@ struct ShelfView: View {
             }
             .padding(.vertical, 4)
             .selectionDisabled()
+        } header: {
+            sectionHead("Artists", total: summary?.artistTotal ?? 0, shown: artists.count, list: .artists)
         }
     }
 
@@ -213,7 +241,7 @@ struct ShelfView: View {
     /// nothing would ever scroll off. Rows of the List are what the List recycles, so the
     /// grid is cut into them.
     private var albumSection: some View {
-        Section("Albums") {
+        Section {
             ForEach(albumRows, id: \.first!.id) { row in
                 HStack(alignment: .top, spacing: Self.tileSpacing) {
                     ForEach(row, id: \.id) { album in
@@ -225,6 +253,8 @@ struct ShelfView: View {
                 .padding(.vertical, 6)
                 .selectionDisabled()
             }
+        } header: {
+            sectionHead("Albums", total: summary?.albumTotal ?? 0, shown: albums.count, list: .albums)
         }
     }
 
@@ -242,7 +272,7 @@ struct ShelfView: View {
     }
 
     private var trackSection: some View {
-        Section("Tracks") {
+        Section {
             // Once per pass, not once per row — see `TrackListView`.
             let allTrackIds = tracks.map(\.id)
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
@@ -257,6 +287,8 @@ struct ShelfView: View {
                 .rowBehaviour(playable: .track(track))
                 .primaryTap { play([track.id]) }
             }
+        } header: {
+            sectionHead("Tracks", total: summary?.trackTotal ?? 0, shown: tracks.count, list: .tracks)
         }
     }
 
