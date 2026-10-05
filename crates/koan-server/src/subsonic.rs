@@ -1038,7 +1038,7 @@ const ALBUM_PREFIX: &str = "al-";
 const SONG_PREFIX: &str = "mf-";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EntityKind {
+pub(crate) enum EntityKind {
     Artist,
     Album,
     Song,
@@ -2889,6 +2889,25 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
         })
     })
     .await
+}
+
+/// Favourite one artist, record or track for `user`, or stop, as `star` and
+/// `unstar` do, and tell the account's apps to pick it up. What the web UI's
+/// hearts call, so a heart there is the same favourite an app makes.
+pub(crate) fn favourite(
+    db: &Database,
+    user: i64,
+    username: &str,
+    kind: EntityKind,
+    id: i64,
+    star: bool,
+) -> Result<(), String> {
+    set_star(db, user, kind, id, star).map_err(|e| e.message)?;
+    crate::clients::registry().broadcast(
+        Some(username),
+        koan_core::remote::link::LinkCommand::Sync { full: false },
+    );
+    Ok(())
 }
 
 fn set_star(

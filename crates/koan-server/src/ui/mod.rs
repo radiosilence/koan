@@ -15,6 +15,7 @@
 mod account;
 mod browse;
 mod connect;
+mod favourite;
 mod history;
 mod oauth;
 mod pages;
@@ -131,6 +132,7 @@ pub fn router(
         .route("/favourites", get(pages::favourites))
         .route("/recent", get(pages::recent))
         .route("/history", get(history::page))
+        .route("/favourite/{kind}/{id}", post(favourite::toggle))
         .route("/history/forget", post(history::forget))
         .route("/connect", get(connect::page))
         .route("/account", get(account::page))

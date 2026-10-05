@@ -17,6 +17,7 @@ use koan_core::db::queries::{self, AlbumRow, TrackRow};
 use koan_core::helpers::ShareTarget;
 
 use super::browse::{self, Browse, Kind};
+use super::favourite::Hearts;
 use super::{PARTIAL, UiState, events, html, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
@@ -285,16 +286,19 @@ pub(super) fn track_versions(conn: &rusqlite::Connection, tracks: &[TrackRow]) -
     cover_versions(conn, &ids)
 }
 
-fn cells(albums: &[AlbumRow], versions: &Versions) -> String {
+/// Record tiles, each with its heart over the corner where the account may
+/// favourite.
+fn cells(albums: &[AlbumRow], versions: &Versions, hearts: Option<&Hearts>) -> String {
     albums.iter().fold(String::new(), |mut out, a| {
         let _ = write!(
             out,
-            "<a class=\"group flex min-w-0 flex-col gap-0.5 text-ink hover:no-underline\" href=\"/album/{id}\">\
+            "<div class=\"relative min-w-0\"><a class=\"group flex min-w-0 flex-col gap-0.5 text-ink hover:no-underline\" href=\"/album/{id}\">\
 <img class=\"mb-1.5 aspect-square h-auto w-full rounded-md border border-rule bg-surface object-cover \
 group-hover:border-hover [&.missing]:visible [&.missing]:text-transparent\" loading=lazy decoding=async \
 width={size} height={size} src=\"{src}\" alt=\"\">\
-<span class=\"truncate\">{title}</span><span class=\"truncate text-meta text-muted\">{artist}</span></a>",
+<span class=\"truncate\">{title}</span><span class=\"truncate text-meta text-muted\">{artist}</span></a>{heart}</div>",
             id = a.id,
+            heart = hearts.map(|h| h.tile(a.id)).unwrap_or_default(),
             size = crate::covers::GRID,
             src = cover_url(a.id, crate::covers::GRID, versions),
             title = escape(&a.title),
@@ -335,7 +339,7 @@ const ICON_SHARE: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=true>\
 fn share_track_button(t: &TrackRow) -> String {
     match t.album_id {
         Some(album) => format!(
-            "<button class=\"quiet\" data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
+            "<button class=\"quiet max-wide:hidden\" data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
 data-on:click=\"@post('/album/{album}/share?track={id}')\" aria-label=\"Share this track\" \
 title=\"Share this track\">{ICON_SHARE}</button>",
             id = t.id
@@ -353,6 +357,7 @@ fn track_row(
     album: bool,
     versions: &Versions,
     share: bool,
+    hearts: Option<&Hearts>,
 ) -> String {
     let mut sub = Vec::new();
     if show_artist {
@@ -369,7 +374,7 @@ fn track_row(
     format!(
         "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
 data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><span class=\"n\">{n}</span>\
-<span class=\"t\">{title}{sub}</span><span class=\"d\">{dur}</span>{share}\
+<span class=\"t\">{title}{sub}</span><span class=\"d\">{dur}</span>{heart}{share}\
 <button class=\"quiet\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></li>",
         id = t.id,
         secs = t.duration_ms.unwrap_or(0) / 1000,
@@ -382,6 +387,7 @@ data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><sp
             .map(|a| cover_url(a, crate::covers::LARGE, versions))
             .unwrap_or_default(),
         dur = duration(t.duration_ms),
+        heart = hearts.map(|h| h.track(t.id)).unwrap_or_default(),
         share = if share {
             share_track_button(t)
         } else {
@@ -392,11 +398,15 @@ data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><sp
 
 /// Every album `b` lets through, in its order. Whole, as the apps list them:
 /// the covers load lazily, so the page costs markup and not images.
-fn album_list(s: &UiState, user: i64, b: &Browse) -> Option<(Vec<AlbumRow>, Versions)> {
+fn album_list(
+    s: &UiState,
+    user: &AuthUser,
+    b: &Browse,
+) -> Option<(Vec<AlbumRow>, Versions, Option<Hearts>)> {
     let db = open(&s.pool)?;
-    let albums = queries::list_albums(&db.conn, &b.albums(user, shelves::now())).ok()?;
+    let albums = queries::list_albums(&db.conn, &b.albums(user.user_id, shelves::now())).ok()?;
     let versions = album_versions(&db.conn, &albums);
-    Some((albums, versions))
+    Some((albums, versions, Hearts::load(&db.conn, user)))
 }
 
 /// "12 albums", once a filter is on: what a shelf's "See all" promised.
@@ -418,9 +428,9 @@ pub(super) async fn albums(
     headers: HeaderMap,
 ) -> Response {
     let b = b.seeded();
-    let (st, bb, id) = (s.clone(), b.clone(), user.user_id);
-    let found = blocking(move || Some((album_list(&st, id, &bb)?, filter_options(&st)?))).await;
-    let Some(((albums, versions), options)) = found else {
+    let (st, bb, who) = (s.clone(), b.clone(), user.clone());
+    let found = blocking(move || Some((album_list(&st, &who, &bb)?, filter_options(&st)?))).await;
+    let Some(((albums, versions, hearts), options)) = found else {
         return unavailable();
     };
     let grid = if albums.is_empty() {
@@ -428,7 +438,7 @@ pub(super) async fn albums(
     } else {
         format!(
             "<div class=\"{GRID}\" id=albums>{}</div>",
-            cells(&albums, &versions)
+            cells(&albums, &versions, hearts.as_ref())
         )
     };
     let inner = format!(
@@ -445,16 +455,16 @@ pub(super) async fn album(
     Path(id): Path<i64>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
+    let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
         let album = queries::get_album(&db.conn, id).ok()??;
         let tracks = queries::tracks_for_album(&db.conn, id).ok()?;
         let versions = cover_versions(&db.conn, &[id]);
-        Some((album, tracks, versions))
+        Some((album, tracks, versions, Hearts::load(&db.conn, &who)))
     })
     .await;
-    let Some((album, tracks, versions)) = found else {
+    let Some((album, tracks, versions, hearts)) = found else {
         return not_found();
     };
     let can_share = user.role.has_permission(Role::User);
@@ -477,6 +487,7 @@ pub(super) async fn album(
             false,
             &versions,
             can_share,
+            hearts.as_ref(),
         ));
     }
     let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
@@ -512,8 +523,12 @@ data-on:click=\"@post('/album/{}/share')\">Share</button>",
 <div class=\"min-w-0 flex-1\"><p class=\"{KICKER}\">Album</p><h1 class=\"mb-1\">{title}</h1><p class=\"{SUB}\">{sub}</p>\
 <div class=\"{ACTIONS}\">\
 <button class=\"primary\" data-act=play>Play</button><button data-act=shuffle>Shuffle</button>\
-<button data-act=queue>Add to queue</button>{share}</div><div id=share-result></div></div></header>\
+<button data-act=queue>Add to queue</button>{share}{heart}</div><div id=share-result></div></div></header>\
 <ol class=\"tracks\" data-context=album>{rows}</ol>",
+        heart = hearts
+            .as_ref()
+            .map(|h| h.album(album.id))
+            .unwrap_or_default(),
         cover = cover_url(album.id, crate::covers::LARGE, &versions),
         large = crate::covers::LARGE,
         title = escape(&album.title),
@@ -638,20 +653,21 @@ pub(super) async fn tracks(
     headers: HeaderMap,
 ) -> Response {
     let page = b.page;
-    let (st, bb, id) = (s.clone(), b.clone(), user.user_id);
+    let (st, bb, who) = (s.clone(), b.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let listing = bb.tracks(id, shelves::now());
+        let listing = bb.tracks(who.user_id, shelves::now());
         let total = listing.count(&db.conn).ok()?;
         let rows = listing
             .page(&db.conn, TRACKS_PAGE, page * TRACKS_PAGE)
             .ok()?;
         let versions = track_versions(&db.conn, &rows);
+        let hearts = Hearts::load(&db.conn, &who);
         drop(db);
-        Some((rows, total, versions, filter_options(&st)?))
+        Some((rows, total, versions, hearts, filter_options(&st)?))
     })
     .await;
-    let Some((rows, total, versions, options)) = found else {
+    let Some((rows, total, versions, hearts, options)) = found else {
         return unavailable();
     };
     let first = (page * TRACKS_PAGE) as usize;
@@ -661,7 +677,17 @@ pub(super) async fn tracks(
         let items: String = rows
             .iter()
             .enumerate()
-            .map(|(i, t)| track_row(t, first + i + 1, true, true, &versions, false))
+            .map(|(i, t)| {
+                track_row(
+                    t,
+                    first + i + 1,
+                    true,
+                    true,
+                    &versions,
+                    false,
+                    hearts.as_ref(),
+                )
+            })
             .collect();
         format!("<ol class=\"tracks\" data-context=album>{items}</ol>")
     };
@@ -696,27 +722,28 @@ pub(super) async fn artist(
     Path(id): Path<i64>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
+    let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
         let artist = queries::get_artist(&db.conn, id).ok()??;
         let albums = queries::albums_for_artist(&db.conn, id).ok()?;
         let versions = album_versions(&db.conn, &albums);
-        Some((artist, albums, versions))
+        Some((artist, albums, versions, Hearts::load(&db.conn, &who)))
     })
     .await;
-    let Some((artist, albums, versions)) = found else {
+    let Some((artist, albums, versions, hearts)) = found else {
         return not_found();
     };
-    let share = if user.role.has_permission(Role::User) {
-        format!(
+    // Sharing and favouriting are the same accounts' to do.
+    let share = match &hearts {
+        Some(h) => format!(
             "<div class=\"mb-5 {ACTIONS}\"><button data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
-data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{}/share')\">Share</button></div>\
+data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{id}/share')\">Share</button>{heart}</div>\
 <div id=share-result></div>",
-            artist.id
-        )
-    } else {
-        String::new()
+            id = artist.id,
+            heart = h.artist(artist.id),
+        ),
+        None => String::new(),
     };
     let inner = format!(
         "<p class=\"{KICKER}\">Artist</p><h1>{}</h1><p class=\"{SUB}\">{} album{} · {} tracks</p>{share}\
@@ -725,7 +752,7 @@ data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{}/share')\">Share<
         artist.album_count,
         if artist.album_count == 1 { "" } else { "s" },
         artist.track_count,
-        cells(&albums, &versions)
+        cells(&albums, &versions, hearts.as_ref())
     );
     respond(&s, &headers, &user, &artist.name, &inner)
 }
@@ -774,25 +801,25 @@ pub(super) async fn playlist(
     Path(id): Path<i64>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
+    let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let me = queries::auth::resolve_user(&db.conn, user.user_id).ok()?;
+        let me = queries::auth::resolve_user(&db.conn, who.user_id).ok()?;
         let list = queries::get_playlist(&db.conn, id)
             .ok()?
             .filter(|p| p.readable_by(me))?;
         let tracks = queries::playlist_tracks(&db.conn, id).ok()?;
         let versions = track_versions(&db.conn, &tracks);
-        Some((list, tracks, versions))
+        Some((list, tracks, versions, Hearts::load(&db.conn, &who)))
     })
     .await;
-    let Some((list, tracks, versions)) = found else {
+    let Some((list, tracks, versions, hearts)) = found else {
         return not_found();
     };
     let rows: String = tracks
         .iter()
         .enumerate()
-        .map(|(i, t)| track_row(t, i + 1, true, true, &versions, false))
+        .map(|(i, t)| track_row(t, i + 1, true, true, &versions, false, hearts.as_ref()))
         .collect();
     let cover = tracks
         .iter()
@@ -833,18 +860,18 @@ pub(super) async fn playlist(
     respond(&s, &headers, &user, &list.name, &inner)
 }
 
-fn results(s: &UiState, user: i64, q: &str) -> String {
+fn results(s: &UiState, user: &AuthUser, q: &str) -> String {
     let q = q.trim();
     if q.is_empty() {
         return "<div id=results></div>".into();
     }
     let shelf = Shelf::Search(q);
     let found = open(&s.pool).and_then(|db| {
-        let summary = shelves::summary(&db.conn, shelf, user, shelves::now()).ok()?;
+        let summary = shelves::summary(&db.conn, shelf, user.user_id, shelves::now()).ok()?;
         let versions = shelf_versions(&db.conn, &summary);
-        Some((summary, versions))
+        Some((summary, versions, Hearts::load(&db.conn, user)))
     });
-    let Some((summary, versions)) = found else {
+    let Some((summary, versions, hearts)) = found else {
         return format!(
             "<div id=results><p class=\"{ERROR}\">The library is unavailable.</p></div>"
         );
@@ -857,7 +884,7 @@ fn results(s: &UiState, user: i64, q: &str) -> String {
     }
     format!(
         "<div id=results>{}</div>",
-        shelf_sections(&summary, shelf, &versions)
+        shelf_sections(&summary, shelf, &versions, hearts.as_ref())
     )
 }
 
@@ -868,9 +895,9 @@ pub(super) async fn search(
     headers: HeaderMap,
 ) -> Response {
     let q = params.get("q").cloned().unwrap_or_default();
-    let (st, id) = (s.clone(), user.user_id);
+    let (st, who) = (s.clone(), user.clone());
     let query = q.clone();
-    let found = blocking(move || Some(results(&st, id, &query)))
+    let found = blocking(move || Some(results(&st, &who, &query)))
         .await
         .unwrap_or_default();
     // Without script the form is an ordinary GET; with it, results follow typing.
@@ -898,7 +925,7 @@ pub(super) async fn search_results(
         .and_then(|v| v.get("q")?.as_str().map(str::to_owned))
         .or_else(|| params.get("q").cloned())
         .unwrap_or_default();
-    let html = blocking(move || Some(results(&s, user.user_id, &q)))
+    let html = blocking(move || Some(results(&s, &user, &q)))
         .await
         .unwrap_or_default();
     events(vec![patch(&html, None)])
@@ -983,7 +1010,12 @@ fn section_head(
 /// The previews of a shelf, as the apps' shelf lays them out: artists as
 /// pills, records as tiles, and the tracks as a list that plays on from the
 /// row picked.
-fn shelf_sections(s: &Summary, shelf: Shelf, versions: &Versions) -> String {
+fn shelf_sections(
+    s: &Summary,
+    shelf: Shelf,
+    versions: &Versions,
+    hearts: Option<&Hearts>,
+) -> String {
     let mut out = String::new();
     if !s.artists.preview.is_empty() {
         let _ = write!(
@@ -1012,7 +1044,7 @@ fn shelf_sections(s: &Summary, shelf: Shelf, versions: &Versions) -> String {
                 Kind::Albums,
                 ""
             ),
-            cells(&s.albums.preview, versions)
+            cells(&s.albums.preview, versions, hearts)
         );
     }
     if !s.tracks.preview.is_empty() {
@@ -1021,7 +1053,7 @@ fn shelf_sections(s: &Summary, shelf: Shelf, versions: &Versions) -> String {
             .preview
             .iter()
             .enumerate()
-            .map(|(i, t)| track_row(t, i + 1, true, true, versions, false))
+            .map(|(i, t)| track_row(t, i + 1, true, true, versions, false, hearts))
             .collect();
         let _ = write!(
             out,
@@ -1049,15 +1081,15 @@ async fn shelf_page(
     title: &'static str,
     empty: EmptyShelf,
 ) -> Response {
-    let (st, id) = (s.clone(), user.user_id);
+    let (st, who) = (s.clone(), user.clone());
     let found = blocking(move || {
         let db = open(&st.pool)?;
-        let summary = shelves::summary(&db.conn, shelf, id, shelves::now()).ok()?;
+        let summary = shelves::summary(&db.conn, shelf, who.user_id, shelves::now()).ok()?;
         let versions = shelf_versions(&db.conn, &summary);
-        Some((summary, versions))
+        Some((summary, versions, Hearts::load(&db.conn, &who)))
     })
     .await;
-    let Some((summary, versions)) = found else {
+    let Some((summary, versions, hearts)) = found else {
         return unavailable();
     };
     let inner = if summary.is_empty() {
@@ -1068,7 +1100,7 @@ async fn shelf_page(
     } else {
         format!(
             "<h1>{title}</h1>{}",
-            shelf_sections(&summary, shelf, &versions)
+            shelf_sections(&summary, shelf, &versions, hearts.as_ref())
         )
     };
     respond(&s, &headers, &user, title, &inner)
