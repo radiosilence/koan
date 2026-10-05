@@ -94,6 +94,22 @@ shown in the invite) or set one on the Users page or with `setUserPassword`.
 Either signs every device out, invited ones included, since a password change
 revokes the account's sessions and API keys.
 
+### Pairing a device
+
+A device without a keyboard, such as a television, cannot reasonably take a
+password or a pasted invite, so it signs in by being approved from somewhere
+that is already signed in. It opens a WebSocket at `/rest/koanPair` (listed as
+the `koanPair` extension) with no credentials and is given a code, shown as
+`XXXX-XXXX`, and a link, `https://koan.rocks/pair/#s=…&p=…`. Opening the link in
+koan on a phone or Mac, typing the code under Settings → Server → Pair a device,
+or typing it on the server's `/pair` page asks "Sign in this device?"; approving
+makes an API key on the approver's account, named after the device, and the
+server sends it down the waiting socket. The device is told the moment it is
+approved or declined; nothing polls. A pairing lasts ten minutes and lives only
+in the server's memory. Approving signs the device in as you, so approve only a
+device you are setting up yourself: the name it shows is whatever it chose to
+call itself.
+
 The server sends no mail. Creating an account or inviting one produces the email
 (plain text, rich text with a button, and a `mailto:`) for the admin to send
 themselves.
