@@ -331,8 +331,7 @@ private struct RemoteSettings: View {
                     }
                     .rowButtons()
                 }
-                // Accounts are managed, and other devices approved, from a
-                // device that can send an invite or type a code.
+                // Accounts and pairings are managed from a device with a keyboard.
                 #if !os(tvOS)
                 PeopleSettings(signedInAs: model.settings.remoteUsername)
                 PairDevice()
