@@ -153,6 +153,9 @@ struct NowPlayingSheet: View {
             }
             .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")
 
+            SleepButton()
+                .font(.subheadline)
+
             Spacer()
 
             if player.hasOtherDevices || player.isControllingAnother {

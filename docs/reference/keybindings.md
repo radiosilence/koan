@@ -13,6 +13,7 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | `>` | Next track |
 | `s` | Shuffle on / off (reorders the rest of the queue; off puts it back) |
 | `R` | Repeat: off, the queue, one track |
+| `T` | [Sleep timer](../guide/sleep-timer.md): 15, 30, 45, 60 minutes, end of track, end of record, off |
 | `,` or `<-` | Seek -10 seconds |
 | `.` or `->` | Seek +10 seconds |
 | `Shift+D` | Device selector (switch audio output) |
