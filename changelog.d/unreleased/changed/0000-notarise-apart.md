@@ -1,0 +1,1 @@
+- **A release no longer waits on Apple's notary.** 0.59.0 never published because notarisation sat "In Progress" past the release's timeout. Releases now publish once everything is built and signed; a separate job notarises the macOS binaries and the app, staples the DMG into the release, and moves the Homebrew cask to it, re-runnable on its own without releasing again.
