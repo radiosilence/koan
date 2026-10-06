@@ -1,0 +1,1 @@
+- **Scan progress bar** — `koan scan` now shows a clean inline progress indicator with track count and rate (e.g. `• 1234 scanned (567/s)`) instead of per-track log spam

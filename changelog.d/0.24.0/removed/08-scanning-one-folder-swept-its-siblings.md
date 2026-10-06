@@ -1,0 +1,1 @@
+- **Scanning one folder swept its siblings** — the stale-removal prefix had no trailing separator, so scanning `/Volumes/Music` also matched `/Volumes/Music Backup`. Unplugging the backup drive and rescanning the main one deleted the backup's rows.

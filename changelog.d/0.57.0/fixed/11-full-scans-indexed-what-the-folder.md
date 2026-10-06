@@ -1,0 +1,1 @@
+- **Full scans indexed what the folder watcher ignores.** Syncthing's `.stversions` copies, macOS's `._` AppleDouble files and the like were indexed by a full scan and by a rescan of a directory, though the watcher skips them. Both now skip the same names. Tracks already indexed from such paths stay until their files go.

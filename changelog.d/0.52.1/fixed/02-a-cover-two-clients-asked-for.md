@@ -1,0 +1,1 @@
+- **A cover two clients asked for at once is cached whole.** Both wrote the same temporary file, so the cache could keep a truncated cover, shown as missing or broken until the file changed. Each write now has a file of its own.

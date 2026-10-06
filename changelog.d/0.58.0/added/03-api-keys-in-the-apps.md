@@ -1,0 +1,1 @@
+- **API keys in the apps.** Settings → Server lists the account's API keys, makes one for another Subsonic app (shown once, to copy), and revokes one, which is how a lost device is signed out. The server offers this as `koanApiKeys`.

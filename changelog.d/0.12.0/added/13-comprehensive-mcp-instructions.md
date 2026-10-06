@@ -1,0 +1,1 @@
+- **Comprehensive MCP instructions** — rewritten server instructions guide Claude through discovery, the graphql power tool, all filter params, snapshots, radio, favourites, and device control

@@ -1,0 +1,1 @@
+- **`clear_device` MCP tool** — reset audio output to system default (was GQL-only)

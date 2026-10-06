@@ -1,0 +1,1 @@
+- **fzf dependency** — replaced with built-in nucleo fuzzy picker

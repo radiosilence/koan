@@ -1,0 +1,1 @@
+- **Add & Play in the picker waits for the queue** rather than a guessed 120ms.

@@ -1,0 +1,1 @@
+- **The iOS Live Activity no longer busies the app for a record without art.** Controlling another device playing a record with no cover, or whose cover could not be fetched, asked for the cover again continuously.

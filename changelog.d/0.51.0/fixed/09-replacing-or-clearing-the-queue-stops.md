@@ -1,0 +1,1 @@
+- **Replacing or clearing the queue stops downloads nothing wants.** Entries from an old queue stayed queued, each holding a download worker for five seconds, and a transfer ran to the end once started. A transfer the playlist no longer wants now stops within a quarter of a second, and one the new queue still wants carries on.

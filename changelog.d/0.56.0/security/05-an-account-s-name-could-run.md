@@ -1,0 +1,1 @@
+- **An account's name could run script on an admin's Users page.** The Delete button's confirmation put the escaped name inside a Datastar expression, which the browser decodes before evaluating. The name is now passed as data.

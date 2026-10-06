@@ -1,0 +1,1 @@
+- **API concurrency limit** — GraphQL server now applies a tower `ConcurrencyLimitLayer` (max 10 concurrent requests) to prevent mutation spam / DoS ([#99](https://github.com/radiosilence/koan/issues/99))

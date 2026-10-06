@@ -1,0 +1,2 @@
+- **The app never reconciled favourites with the server.** That only happened in `koan remote sync` on the command line, so a star made on another machine never arrived and one made in the app only left if you happened to run the CLI. It is part of a sync now, both directions, for all three kinds — union rather than mirror, since neither side records an unstar and treating one as authoritative would quietly delete favourites made on the other.
+

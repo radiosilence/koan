@@ -1,0 +1,1 @@
+- **Share links report why they failed.** Every surface collapsed all failures into "local-only tracks can't be shared", including a server that returned no URL for a share it had created. Resolution now lives in koan-core, with distinct errors, one query for the remote ids, and a partial share that says how much it left out.

@@ -1,0 +1,1 @@
+- **WebP cover art support** — cover art in WebP format (embedded or external) is now decoded and displayed

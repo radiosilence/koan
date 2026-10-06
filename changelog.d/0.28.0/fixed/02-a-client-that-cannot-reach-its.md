@@ -1,0 +1,2 @@
+- **A client that cannot reach its server says so.** `remote_unavailable()` has produced the right sentence since v0.27 and was called in exactly one place — a `warn:` in the download queue that only a log reader would ever see. `KoanEngine::remote_problem()` asks the question directly, the macOS app asks at startup and reports through the error toast it already had, and `cover_art` returns an error when the server is configured but unusable instead of answering "no art" for every record in the library.
+

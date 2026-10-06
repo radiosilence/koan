@@ -1,0 +1,1 @@
+- **GraphQL request bodies are limited to 2 MiB.** async-graphql reads the whole body before parsing it, with no limit of its own.

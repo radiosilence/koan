@@ -1,0 +1,1 @@
+- **Downloads survive an iOS update.** The paths stored for downloaded tracks named the old location, so every download looked missing: tracks were fetched again beside the copies already on the phone, and the old copies could no longer be evicted. On launch, paths under a moved cache are pointed at where the files now are.

@@ -1,0 +1,1 @@
+- **Linux audio support** — `AudioBackend` trait abstraction with `CpalBackend` (ALSA/PipeWire/PulseAudio via cpal) for Linux and `CoreAudioBackend` wrapper for macOS. Bit-perfect gapless playback on both platforms. The decode pipeline and ring buffer are untouched — backends are dumb consumers

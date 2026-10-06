@@ -1,0 +1,1 @@
+- **The iOS app builds for release again.** The Live Activity code handed an `Activity` across actors, which Swift 6 rejects, and 0.44.0's TestFlight archive failed on it. `just ios-typecheck` checked types only, and a data race is found after that, so it had passed; it now runs the same checks the archive does.

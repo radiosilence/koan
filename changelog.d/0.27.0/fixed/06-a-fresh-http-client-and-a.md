@@ -1,0 +1,2 @@
+- **A fresh HTTP client, and a fresh TLS handshake, for every remote request.** `subsonic_client()` built a new `SubsonicClient` on each call, and each of those builds two blocking `reqwest` clients — two runtimes on two threads with two cold connection pools. Browsing a synced library paid that per album cover. The download queue had already worked this out and kept a client of its own for the app's lifetime; the client is now shared process-wide and keyed on the credentials, so every caller gets connection reuse and logging in as someone else still replaces it.
+

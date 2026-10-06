@@ -1,0 +1,1 @@
+- **Album header drag** — clicking and dragging an album header reorders the entire album group as a unit

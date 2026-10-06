@@ -1,0 +1,6 @@
+- **Crate restructure** — split monolithic `koan-music` into four crates with compiler-enforced dependency boundaries. ([#157](https://github.com/radiosilence/koan/issues/157))
+  - **koan-core** — audio engine, player, DB, Subsonic client, format strings, config. Platform-agnostic library. Now includes shared helpers (subsonic client builder, cache paths, track resolution, download).
+  - **koan-tui** — Ratatui TUI, visualizers, media keys, transport, download queue. Library crate exporting `run_tui()`.
+  - **koan-server** — GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Library crate.
+  - **koan-cli** — thin entry point with clap CLI, logger, signal handling. Produces the `koan` binary.
+  - Dependency rules enforced by Cargo: koan-tui and koan-server cannot import each other. Future iOS app imports only koan-core.

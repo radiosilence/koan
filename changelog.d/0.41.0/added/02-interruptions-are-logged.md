@@ -1,0 +1,1 @@
+- **Interruptions are logged.** Each audio interruption on iOS, and each move between foreground and background, goes to koan's log, to find why playback sometimes does not resume after one.

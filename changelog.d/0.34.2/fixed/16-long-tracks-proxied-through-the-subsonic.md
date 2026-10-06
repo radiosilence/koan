@@ -1,0 +1,1 @@
+- **Long tracks proxied through the Subsonic API no longer cut off at thirty seconds.** The upstream client's timeout covered the whole body, so any stream that took longer to drain than that was ended mid-track. It bounds connecting and stalls instead.

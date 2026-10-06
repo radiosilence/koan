@@ -1,0 +1,2 @@
+- **The `LIBRARY` collation folds each name once per thread rather than once per comparison.** Building a sort key means an NFD pass and a `Vec` of fresh `String`s, and a collation is asked about the same name once per level of the sort — around two dozen times in a five-thousand-row list. Sorting an album list built roughly 140,000 keys where 5,500 would do. Every client's lists load faster for it.
+

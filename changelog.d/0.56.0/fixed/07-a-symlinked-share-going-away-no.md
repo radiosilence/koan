@@ -1,0 +1,1 @@
+- **A symlinked share going away no longer deletes its tracks.** With part of the library linked in from a network share, the share being unmounted made every file under the link read as deleted, and a rescan removed those tracks with their play history, whatever the size of the removal. A file is now taken as deleted only when the folder that should hold it is there.

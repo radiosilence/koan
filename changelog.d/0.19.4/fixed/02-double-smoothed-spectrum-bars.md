@@ -1,0 +1,1 @@
+- **Double-smoothed spectrum bars** — the TUI applied its own decay smoothing on top of the analyzer's, making transients mushier than intended. Spectrum, peaks, and VU levels now pass through directly from the analyzer thread (single layer of smoothing). Beat energy retains local decay for the hue-shift effect.

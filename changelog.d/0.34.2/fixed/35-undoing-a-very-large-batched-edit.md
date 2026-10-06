@@ -1,0 +1,1 @@
+- **Undoing a very large batched edit undoes all of it**, not the first 500 steps.

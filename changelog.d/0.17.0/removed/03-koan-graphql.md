@@ -1,0 +1,1 @@
+- **`koan graphql`** — dead alias, removed

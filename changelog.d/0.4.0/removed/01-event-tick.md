@@ -1,0 +1,1 @@
+- **Event::Tick** — tick variant removed from event enum. Ticking is now unconditional every frame

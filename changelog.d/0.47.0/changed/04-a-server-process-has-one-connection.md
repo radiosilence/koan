@@ -1,0 +1,1 @@
+- **A server process has one connection pool.** GraphQL and MCP kept their own pools beside the one Subsonic and the web UI use, each connection with its own page cache. GraphQL still holds at most one connection per core at a time.

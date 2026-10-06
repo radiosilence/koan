@@ -1,0 +1,1 @@
+- **MCP `graphql` tool** — single tool on the MCP server that executes GraphQL queries in-process (no HTTP). Claude Desktop can now fetch artists, albums, and tracks with nested queries in one round-trip instead of fanning out across individual tools

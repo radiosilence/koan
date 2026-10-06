@@ -1,0 +1,1 @@
+- **mise binary name** — release tarballs now contain `koan` instead of `koan-macos-arm64`, fixing mise installs

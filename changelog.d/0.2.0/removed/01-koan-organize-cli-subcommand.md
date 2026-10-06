@@ -1,0 +1,1 @@
+- **`koan organize` CLI subcommand** — file organization is now TUI-only (context menu → organize modal)

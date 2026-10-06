@@ -1,0 +1,1 @@
+- **Queue metadata for local tracks** — was blank, now populated correctly

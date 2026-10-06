@@ -1,0 +1,1 @@
+- **Devices on the same network, and by address.** Each app listens on port 5626 and announces itself as `_koan._tcp`; `[devices]` turns that off, or lists addresses to dial where Bonjour does not reach, such as a tailnet. A device on the network may control playback and the queue, never the library or the files on disk.

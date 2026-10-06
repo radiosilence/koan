@@ -1,0 +1,1 @@
+- **TestFlight builds say what changed.** Each upload's "What to Test" is that version's changelog section ([#581](https://github.com/radiosilence/koan/pull/581)).

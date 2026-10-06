@@ -1,0 +1,1 @@
+- **A front end could miss a pause, a track change or a radio toggle.** The change was announced a moment before it was written, so a client woken by it could read the old value and go back to sleep.

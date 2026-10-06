@@ -1,0 +1,1 @@
+- **Unicode torture tests** — comprehensive coverage for fullwidth Japanese, CJK, emoji (ZWJ, flags, skin tones), Arabic bismillah, Zalgo/combining diacritics, and extreme combining mark sequences

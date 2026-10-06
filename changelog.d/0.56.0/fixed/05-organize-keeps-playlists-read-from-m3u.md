@@ -1,0 +1,1 @@
+- **Organize keeps playlists read from M3U files.** Moving an album moved its `.m3u` with it, and the next scan read the list as deleted, made a new playlist under a new id, and dropped every entry whose file had been renamed. Organize now rewrites the M3U files in the library to name the files where they went, and moves the playlist with its file; undo puts both back.

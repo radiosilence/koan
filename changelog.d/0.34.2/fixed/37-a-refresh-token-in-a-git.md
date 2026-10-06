@@ -1,0 +1,1 @@
+- **A refresh token in a git-tracked config refuses to start**, the same as a password does.

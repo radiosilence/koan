@@ -1,0 +1,2 @@
+- **Long tracks streamed from a server no longer break when the download lands.** Playback of a track that started mid-download held on to the name of the temporary file it started from. Finishing a download renames that file, so from then on the track named nothing: the next seek failed to open it and stopped playback outright. A nine-hour recording made it easy to hit, because there was a lot of track left to seek in.
+

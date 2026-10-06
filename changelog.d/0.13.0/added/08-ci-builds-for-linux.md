@@ -1,0 +1,1 @@
+- **CI builds for Linux** — clippy, test, build on both macOS and Ubuntu. Release binaries for macOS arm64/x86_64 + Linux x86_64/arm64

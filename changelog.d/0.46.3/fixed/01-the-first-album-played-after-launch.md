@@ -1,0 +1,1 @@
+- **The first album played after launch downloads and plays.** The download queue is created by the first download, and its watcher, which sends the track under the cursor to the priority lane, started listening after the cursor had already moved: the first play's track never got there. Queuing downloads now promotes the cursor's track as well as moving the cursor does.

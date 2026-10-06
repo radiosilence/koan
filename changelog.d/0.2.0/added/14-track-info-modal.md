@@ -1,0 +1,1 @@
+- **Track info modal** — `i` shows full metadata + audio format details + embedded album art

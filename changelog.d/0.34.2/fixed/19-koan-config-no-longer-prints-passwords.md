@@ -1,0 +1,1 @@
+- **`koan config` no longer prints passwords and tokens.**

@@ -1,0 +1,1 @@
+- **1Password CLI integration** — on user creation, offers to generate a secure 32-char password and save to 1Password as `koan@<hostname>`. Updates existing items if found.

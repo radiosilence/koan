@@ -1,0 +1,1 @@
+- **`scrobble` accepts several plays at once.** A repeated `id` (with its `time`) was rejected with a bare HTTP 400, so a client flushing an offline session lost every play.

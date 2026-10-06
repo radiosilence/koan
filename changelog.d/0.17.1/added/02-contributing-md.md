@@ -1,0 +1,1 @@
+- **CONTRIBUTING.md** — contribution guidelines ([#82](https://github.com/radiosilence/koan/issues/82))

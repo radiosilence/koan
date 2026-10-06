@@ -1,0 +1,1 @@
+- `Player` holds `Box<dyn AudioBackend>` instead of direct CoreAudio FFI

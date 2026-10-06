@@ -1,0 +1,1 @@
+- **Visualizer query** — `vizFrame` query returns current spectrum, peaks, VU levels, beat energy, and optional waveform. Returns null when no analyzer is running.

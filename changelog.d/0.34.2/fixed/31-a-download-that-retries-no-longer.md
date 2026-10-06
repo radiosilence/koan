@@ -1,0 +1,1 @@
+- **A download that retries no longer kills the stream playing from it.** Each attempt deleted the `.part` file and created a new one; a stream reading it held the deleted one and waited on bytes that would never land there. A retry now rewrites the same file. A server answering 5xx with a JSON body is also retried now — it was taken for a Subsonic error document and given up on.

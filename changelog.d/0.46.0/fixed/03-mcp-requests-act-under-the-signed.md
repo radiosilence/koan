@@ -1,0 +1,1 @@
+- **MCP requests act under the signed-in account's name.** Every request ran as "anonymous", so a non-admin account saw none of its own devices, and an account named "anonymous" would have been visible to all of them. The name is now reserved.

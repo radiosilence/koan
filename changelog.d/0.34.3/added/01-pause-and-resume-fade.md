@@ -1,0 +1,1 @@
+- **Pause and resume fade.** The volume ramps over 150ms instead of cutting, and the play head stops on the last sample heard. `playback.fade_on_pause`, on by default; Settings → Playback. Outside the ramp samples pass through untouched, so playback stays bit-perfect.

@@ -1,0 +1,1 @@
+- **Modal mode restoration** — context menu and organize modal now use a mode stack (push/pop) instead of hardcoding return to edit mode; closing a modal returns to whatever mode was active before opening it

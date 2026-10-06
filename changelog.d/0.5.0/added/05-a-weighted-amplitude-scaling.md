@@ -1,0 +1,1 @@
+- **A-weighted amplitude scaling** — bars reflect perceived loudness using IEC 61672 A-weighting, matching human hearing sensitivity (Fletcher-Munson curves). Configurable via `amplitude_scale`: `aweight` (default), `perceptual` (A-weight + gamma), `sqrt`, `linear`

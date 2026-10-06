@@ -1,0 +1,1 @@
+- **Streaming playback for remote tracks** — playback starts after 256 KB is buffered instead of waiting for the full download. A `StreamingSource` backed by a shared in-memory buffer feeds Symphonia while the download continues in the background. When the download finishes, full lofty metadata and cover art are re-read and media key info (souvlaki) is updated progressively

@@ -1,0 +1,2 @@
+- **The spectrum analyser ran with nothing reading it.** `Player::spawn` starts it unconditionally, so a client with no visualiser on screen still paid for a 2048-point FFT and a fresh waveform allocation sixty times a second and dropped every frame on the floor. It now stands down a second after the last reader of its snapshot goes away, and picks back up within 250 ms of one returning — which is what the playing indicators already ask for and release as they come and go.
+

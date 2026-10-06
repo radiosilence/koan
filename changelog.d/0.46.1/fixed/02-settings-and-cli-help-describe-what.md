@@ -1,0 +1,1 @@
+- **Settings and CLI help describe what koan does.** The sample-rate note says the device is asked to match the source and that nothing is resampled unless it refuses; sync, devices and invite descriptions match their behaviour; `--headless` and `--subsonic` help match how the server mounts its APIs.

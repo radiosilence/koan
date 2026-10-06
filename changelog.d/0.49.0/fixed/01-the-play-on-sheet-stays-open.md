@@ -1,0 +1,1 @@
+- **The Play on sheet stays open on iPad.** It belonged to the device button in the mini player, which iPad rebuilds while a sheet is up, and the sheet closed with it as soon as it opened. It is now held by the screen around the button.

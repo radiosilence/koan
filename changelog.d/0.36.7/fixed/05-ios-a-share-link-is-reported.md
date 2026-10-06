@@ -1,0 +1,1 @@
+- **iOS: a share link is reported as done, not as an error.** "Share link copied" appeared under "Something went wrong"; it is now a notice, as on the Mac.

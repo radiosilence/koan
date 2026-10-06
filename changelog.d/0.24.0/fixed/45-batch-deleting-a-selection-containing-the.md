@@ -1,0 +1,1 @@
+- **Batch-deleting a selection containing the playing track restarted the audio engine once per deleted track** — each restart re-probes the file, re-enumerates devices and can change the DAC's sample rate, so Ctrl+A Delete on a long queue froze the player and clicked the output. The resume point is now resolved once for the whole selection.

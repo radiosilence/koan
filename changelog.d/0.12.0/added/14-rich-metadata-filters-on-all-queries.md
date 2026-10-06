@@ -1,0 +1,1 @@
+- **Rich metadata filters on all queries** — albums: `title`, `yearStart`/`yearEnd`, `codec`, `label`, `genre`. Tracks: `title`, `artistName`, `albumTitle`, `genre`, `codec`, `yearStart`/`yearEnd`, `minSampleRate`, `minBitDepth`, `channels`, `minDurationMs`/`maxDurationMs`. Artists: `genre`. All string filters case-insensitive substring

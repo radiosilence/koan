@@ -1,0 +1,1 @@
+- **The Live Activity's timer no longer jumps back** when the device list is published again for another device's change. Each device's playhead is given as of publishing, not as of its last report.

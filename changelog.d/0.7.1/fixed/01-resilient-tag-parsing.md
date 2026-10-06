@@ -1,0 +1,1 @@
+- **Resilient tag parsing** — files with corrupted tags (e.g. malformed UTF-16 ID3 frames) no longer fail the entire scan. When lofty errors, falls back to Symphonia for duration/codec/properties and indexes the file with whatever metadata is available

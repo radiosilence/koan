@@ -1,0 +1,1 @@
+- **Buffer bounds validation** — `ptr::copy_nonoverlapping` in `engine.rs` and `cpal_backend.rs` now clamps to available space and fills remainder with silence ([#76](https://github.com/radiosilence/koan/pull/76))

@@ -1,0 +1,1 @@
+- **Album and artist counts on artist rows**, and `added_at` on albums for a recently-added ordering.

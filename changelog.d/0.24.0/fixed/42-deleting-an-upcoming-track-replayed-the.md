@@ -1,0 +1,1 @@
+- **Deleting an upcoming track replayed the whole queue** — the decode thread's gapless lookahead runs up to ~4 seconds ahead of what is audible, and its reference item vanishing was read as "start of queue". Track 6 would run gaplessly into track 1. A missing reference now ends the lookahead so the audible track's own successor is used.

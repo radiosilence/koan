@@ -1,0 +1,1 @@
+- **Pleasures layout** — artist/album text properly spaced with blank lines above and below. Waveform box no longer clips peaks at the top (height scale capped per ridgeline). Raised cosine window tapers ridgelines to flat baselines at the edges.

@@ -1,0 +1,1 @@
+- **`schema_sdl` MCP tool** — dumps the full GraphQL schema in SDL format so Claude can introspect all available queries, mutations, types, and filter params on first connect

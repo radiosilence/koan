@@ -1,0 +1,2 @@
+- **The seek bar shows how far a track can actually be reached, and stops there.** The limit was derived from the download's own byte count and quietly did nothing when a server sent no `Content-Length`, or when under five seconds had arrived — so a scrub could land somewhere the track had not got to. koan works it out once now, from bytes where a length is known and from the measured bitrate where it is not, and the bar draws the same figure the engine enforces.
+

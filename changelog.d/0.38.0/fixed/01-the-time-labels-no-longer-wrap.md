@@ -1,0 +1,1 @@
+- **The time labels no longer wrap** for tracks of an hour or more ("9:02:03").

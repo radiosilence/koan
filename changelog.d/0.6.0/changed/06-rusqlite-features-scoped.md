@@ -1,0 +1,1 @@
+- **rusqlite features scoped** — `bundled-full` → `bundled`, removing unused extensions (load_extension, backup, blob, hooks, session)

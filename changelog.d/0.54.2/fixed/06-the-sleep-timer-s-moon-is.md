@@ -1,0 +1,1 @@
+- **The sleep timer's moon is lit only while a timer is set.** On the Mac it showed in the accent colour with no timer set.

@@ -1,0 +1,1 @@
+- **Matrix rain character flicker** — characters no longer flash/disappear globally. Each position flickers independently at ~2hz with staggered phase offsets.

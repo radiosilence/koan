@@ -1,0 +1,1 @@
+- **Ctrl+C on GQL server** — graceful shutdown via `tokio::signal::ctrl_c`

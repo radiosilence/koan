@@ -1,0 +1,1 @@
+- **AutoEQ search from the command line.** `koan dsp autoeq search` finds a headphone in AutoEQ's index by name, and `koan dsp autoeq install` saves its parametric EQ as a profile, optionally for an output device. The index is kept beside the config and refreshed at most daily.

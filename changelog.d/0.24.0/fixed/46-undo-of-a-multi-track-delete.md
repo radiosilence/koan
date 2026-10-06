@@ -1,0 +1,1 @@
+- **Undo of a multi-track delete restored tracks in the wrong order.** The selection arrives from a `HashSet` in arbitrary order, and re-inserting a track whose recorded predecessor had not been restored yet appended it to the end. Positions are now snapshotted in playlist order.

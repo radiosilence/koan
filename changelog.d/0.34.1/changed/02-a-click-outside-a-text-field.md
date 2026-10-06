@@ -1,0 +1,2 @@
+- **A click outside a text field ends the editing.** Filter the albums, click a cover to play it, and every key after that went into the filter — a cover is a SwiftUI gesture and takes no focus, so the field kept it. It used to be let go by accident, when the toolbar rebuilt itself on the next track change. The hotkey monitor now ends editing on any click that is not inside the field being edited.
+

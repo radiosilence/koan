@@ -1,0 +1,1 @@
+- **Scans no longer run over each other.** A full scan and the folder watcher's rescans now take turns, instead of reading the same files twice and pruning what another was about to index. An import of dropped files does not wait for them: it only adds, and it is for playing now.

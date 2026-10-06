@@ -1,0 +1,1 @@
+- **An unsatisfiable `Range` served the whole file with a 200** instead of a 416 with `Content-Range: bytes */<total>`. A `Range` header that does not parse is still ignored, per RFC 9110.

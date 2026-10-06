@@ -1,0 +1,1 @@
+- `[subsonic] enabled`, `username`, `password`.

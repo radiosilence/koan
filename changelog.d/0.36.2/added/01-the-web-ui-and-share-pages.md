@@ -1,0 +1,1 @@
+- The web UI and share pages have a favicon and home-screen icon: the app icon, as on koan.rocks.

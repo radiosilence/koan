@@ -1,0 +1,1 @@
+- **`/auth/login`, `/auth/refresh` and `/auth/logout` shed load and time out after 10 seconds.** Each allowed two requests at a time and queued the rest with no deadline, so two connections that never finished sending a body blocked every sign-in or refresh from the CLI and TUI.

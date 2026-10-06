@@ -1,0 +1,1 @@
+- **The album page gives titles room, and the heart bounces.** A title beside the play button was held to one line although two were allowed, and the page's track titles truncated to their date. The header wraps to two lines, track titles do too on iOS, and a leading date is left off both. Favouriting bounces the heart, and on a phone taps the hand.

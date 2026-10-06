@@ -1,0 +1,1 @@
+- **`--mcp-bind` (`KOAN_MCP_BIND`), `KOAN_MCP_REQUIRE_LOGIN` and the gateway credential headers.** MCP is served at `/mcp` on the main port. The Pulumi component's `mcp` and `networkPolicy.mcp` options are gone with them, and are now rejected; drop them from the stack's config.

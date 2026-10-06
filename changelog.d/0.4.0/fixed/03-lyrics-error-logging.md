@@ -1,0 +1,1 @@
+- **Lyrics error logging** — fetch errors are now logged to stderr instead of being silently swallowed

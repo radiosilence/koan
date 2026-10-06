@@ -1,0 +1,1 @@
+- **A spent OAuth refresh token or code presented again revokes its connection**, since it means a copy is in someone else's hands.

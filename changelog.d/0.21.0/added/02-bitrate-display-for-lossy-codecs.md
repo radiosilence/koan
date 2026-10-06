@@ -1,0 +1,1 @@
+- **Bitrate display for lossy codecs** — transport bar shows bitrate (e.g. `Opus 48kHz/128kbps stereo`) instead of a fake bit depth. Estimated from file size / duration for Opus. ([#155](https://github.com/radiosilence/koan/pull/155))

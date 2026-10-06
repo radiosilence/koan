@@ -1,0 +1,1 @@
+- **Large form POSTs to the Subsonic API no longer fail.** A form body past about 64 KB was refused with an empty 400, because it was rewritten into the request's URL, which is capped there; `createPlaylist` or `updatePlaylist` with more than about 1,600 songs failed. Forms are now read beside the URL up to 1 MiB, and one past that is refused with a Subsonic error.

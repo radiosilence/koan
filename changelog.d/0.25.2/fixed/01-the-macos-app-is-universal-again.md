@@ -1,0 +1,1 @@
+- **The macOS app is universal again.** `swift build --arch arm64 --arch x86_64` puts its lipo'd product under `.build/apple/Products` and leaves `.build/release` pointing at one slice, so the bundle shipped the arm64 slice out of a build that had just compiled x86_64 as well — v0.25.1 does not run on Intel.

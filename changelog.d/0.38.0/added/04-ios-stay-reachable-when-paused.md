@@ -1,0 +1,1 @@
+- **iOS: stay reachable when paused.** A backgrounded app that is not playing is suspended by iOS, which cuts its link. With this on (the default), it keeps running after a pause by playing silence: indefinitely on the charger, and for a chosen time on battery. Opening the app relinks at once rather than at the next retry.

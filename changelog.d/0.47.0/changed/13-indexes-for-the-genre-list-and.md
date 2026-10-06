@@ -1,0 +1,1 @@
+- **Indexes for the genre list and filter, and for deleting or merging artists and tracks** (similar artists, organize history, shares, favourites by path, a track's last play).

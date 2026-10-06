@@ -1,0 +1,1 @@
+- **Sharing a whole album from a koan server shares that album.** koan numbers albums and songs separately and publishes album ids bare, and its `createShare` reads a bare id as a song, so album 46215 was shared as whichever song had that number. A client talking to a koan server now names the album `al-46215`. Other servers are sent their ids unchanged.

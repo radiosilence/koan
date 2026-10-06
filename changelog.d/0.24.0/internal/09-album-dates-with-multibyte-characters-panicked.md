@@ -1,0 +1,1 @@
+- **Album dates with multibyte characters panicked** — the library browser and album picker took `&date[..4]` to get the year. `len()` is bytes, and date tags are free-form text, so a Japanese or Chinese pressing (or fullwidth digits) split a character mid-sequence. Now counts characters.

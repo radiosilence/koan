@@ -1,0 +1,1 @@
+- Hardcoded admin/admin Subsonic fallback removed.

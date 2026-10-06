@@ -1,0 +1,1 @@
+- **32 MCP server tests** — coverage for all playback commands, queue management (add/remove/clear/replace/reorder), library discovery (search, list_artists, list_albums, list_tracks, get_track, library_stats), state queries (now_playing, list_devices, set_device), UUID parsing, track resolution, and error paths

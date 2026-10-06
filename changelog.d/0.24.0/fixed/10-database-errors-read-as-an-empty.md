@@ -1,0 +1,1 @@
+- **Database errors read as an empty library.** `getAlbum`, `getGenres`, `getPlaylists` and the artist album counts swallowed failures and answered `status="ok"` with zero rows, which tells a client to drop its cached library.
