@@ -10,7 +10,7 @@ const FADE_SECONDS: f64 = 0.15;
 /// How long a quick fade takes: the dip a DSP change makes, out of the old
 /// processing and into the new. Long enough that neither edge is a step,
 /// short enough to pass for the change itself.
-const QUICK_FADE_SECONDS: f64 = 0.015;
+pub const QUICK_FADE: std::time::Duration = std::time::Duration::from_millis(15);
 
 /// How long the callback takes to glide to a new sleep gain: the player sets
 /// one about this often while a sleep timer fades, so the level moves on
@@ -36,7 +36,7 @@ pub struct FadeControl {
     sleep_snap: AtomicBool,
     /// `playback.muted`: every sample zeroed after the ramps.
     muted: AtomicBool,
-    /// Ramp over `QUICK_FADE_SECONDS` rather than `FADE_SECONDS`. Set by the
+    /// Ramp over `QUICK_FADE` rather than `FADE_SECONDS`. Set by the
     /// quick fades, cleared by the others.
     quick: AtomicBool,
 }
@@ -65,7 +65,7 @@ impl FadeControl {
         self.audible.store(false, Ordering::Release);
     }
 
-    /// `fade_out` over `QUICK_FADE_SECONDS`.
+    /// `fade_out` over `QUICK_FADE`.
     pub fn fade_out_quickly(&self) {
         self.quick.store(true, Ordering::Release);
         self.audible.store(false, Ordering::Release);
@@ -78,7 +78,7 @@ impl FadeControl {
         self.rise(from_silence);
     }
 
-    /// `fade_in` over `QUICK_FADE_SECONDS`.
+    /// `fade_in` over `QUICK_FADE`.
     pub fn fade_in_quickly(&self, from_silence: bool) {
         self.quick.store(true, Ordering::Release);
         self.rise(from_silence);
@@ -131,7 +131,7 @@ pub struct Fader {
 impl Fader {
     pub fn new(control: Arc<FadeControl>, sample_rate: f64) -> Self {
         let len = ((sample_rate * FADE_SECONDS) as usize).max(1);
-        let quick = ((sample_rate * QUICK_FADE_SECONDS) as usize).max(1);
+        let quick = ((sample_rate * QUICK_FADE.as_secs_f64()) as usize).max(1);
         Self {
             control,
             pos: len,
@@ -372,7 +372,7 @@ mod tests {
     /// silence, and a new session fades in from silence. Stitched together,
     /// at a rate where the fades are real lengths, no sample jumps from the
     /// one before by more than a full-scale 1 kHz sine moves on its own, and
-    /// the whole dip lasts twice `QUICK_FADE_SECONDS`.
+    /// the whole dip lasts twice `QUICK_FADE`.
     #[test]
     fn a_quick_fade_out_and_in_has_no_step() {
         let rate = 48000.0;
@@ -407,7 +407,7 @@ mod tests {
             }
         }
         assert!(old.is_silent());
-        let quick = (rate * QUICK_FADE_SECONDS) as usize;
+        let quick = (rate * QUICK_FADE.as_secs_f64()) as usize;
         assert!(tail.len() <= quick + 1, "faded in {} frames", tail.len());
         heard.extend(tail);
 

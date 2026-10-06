@@ -41,9 +41,6 @@ const BOUNDARY_SLACK: std::time::Duration = std::time::Duration::from_millis(5);
 /// How often to look at a fading pause, for the few checks it takes to reach
 /// silence.
 const FADE_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
-/// How often to look for a DSP change's quick fade having reached silence:
-/// the restart waits on it, and the dip should last no longer than the fade.
-const QUICK_FADE_CHECK: std::time::Duration = std::time::Duration::from_millis(5);
 /// How long a DSP change waits for its fade before restarting regardless: an
 /// output that has stopped calling back never reports silence.
 const QUICK_FADE_LIMIT: std::time::Duration = std::time::Duration::from_millis(100);
@@ -2656,8 +2653,16 @@ impl Player {
                 (a, b) => a.or(b),
             };
         };
-        if self.dsp_restart.is_some() {
-            return Some(now + QUICK_FADE_CHECK);
+        // A DSP change's fade ends a known time after it began: wake then,
+        // and once more at the limit should the output have stopped calling
+        // back.
+        if let Some(since) = self.dsp_restart {
+            let faded = since + crate::audio::fade::QUICK_FADE + BOUNDARY_SLACK;
+            return Some(if now < faded {
+                faded
+            } else {
+                since + QUICK_FADE_LIMIT
+            });
         }
         match session.run {
             Run::Playing => {
@@ -4555,8 +4560,12 @@ mod tests {
         player.restart_for_dsp();
         assert_eq!(quick_outs.load(Ordering::Relaxed), 1);
         assert_eq!(outs.load(Ordering::Relaxed), 0, "not the pause's fade");
-        let woken = player.next_event().expect("a wake to look for silence");
-        assert!(woken <= std::time::Instant::now() + QUICK_FADE_CHECK);
+        let since = player.dsp_restart.expect("waiting on the fade");
+        let woken = player.next_event().expect("a wake when the fade ends");
+        assert_eq!(
+            woken,
+            since + crate::audio::fade::QUICK_FADE + BOUNDARY_SLACK
+        );
 
         // Another change mid-fade: the same dip.
         player.restart_for_dsp();
