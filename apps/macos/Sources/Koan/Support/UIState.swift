@@ -99,8 +99,12 @@ final class UIState {
     /// the split view, the transport and the pane on one clock and the page
     /// on another, and the window tore until it settled. In one step the
     /// column and every page are laid out together.
+    /// The transaction disables animation outright: without it the
+    /// inspector's split view runs its own slide.
     func toggleLyrics() {
-        showLyrics.toggle()
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { showLyrics.toggle() }
     }
 }
 
