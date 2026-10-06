@@ -26,6 +26,7 @@ pub mod impulse;
 mod null;
 pub mod profiles;
 pub mod raw;
+pub mod squig;
 mod steps;
 pub mod targets;
 

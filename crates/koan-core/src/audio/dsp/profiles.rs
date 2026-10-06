@@ -1286,6 +1286,16 @@ pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Resul
     Ok(name.to_owned())
 }
 
+/// Say where `name` came from, as an import says its files: a measurement
+/// found on squig.link credits the site it was measured for.
+pub fn credit(name: &str, source: &str) -> Result<(), String> {
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.source = vec![source.to_owned()];
+        }
+    })
+}
+
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
 /// Refused where it could not play: a layer missing, a layer of itself, one
 /// with impulse responses, one kept on this device under a stack kept

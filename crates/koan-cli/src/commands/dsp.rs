@@ -254,6 +254,61 @@ pub fn cmd_dsp_measure(path: &std::path::Path, name: &str, in_ear: bool, target:
     );
 }
 
+/// squig.link sites' measurements matching `query`, numbered; or the one
+/// numbered `pick`, made into a correction.
+pub fn cmd_dsp_squig(
+    query: &str,
+    limit: usize,
+    pick: Option<usize>,
+    name: Option<&str>,
+    in_ear: Option<bool>,
+    target: Option<&str>,
+) {
+    use koan_core::audio::dsp::squig;
+    use koan_core::config::DspEar;
+    let hits = squig::search(query, limit.max(pick.unwrap_or(0))).unwrap_or_else(|e| fail(e));
+    let Some(pick) = pick else {
+        for (i, h) in hits.iter().enumerate() {
+            let rig = h
+                .site
+                .rig
+                .map(|r| format!(" · {r} rig"))
+                .unwrap_or_default();
+            println!(
+                "{}  {}  {}",
+                format!("{:>3}", i + 1).dimmed(),
+                h.name().bold(),
+                format!("{}{rig}", h.site.label()).dimmed()
+            );
+        }
+        return;
+    };
+    let hit = hits
+        .get(pick.wrapping_sub(1))
+        .unwrap_or_else(|| fail(format!("no result numbered {pick}")));
+    let target = target.unwrap_or_else(|| fail("--target is needed to make a correction"));
+    let in_ear = in_ear
+        .or(hit
+            .site
+            .ear
+            .map(|e| e == koan_core::audio::dsp::targets::Ear::In))
+        .unwrap_or_else(|| fail("--ear is needed: the site does not say"));
+    let text = squig::fetch(hit).unwrap_or_else(|e| fail(e));
+    let name = name
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("{} {}", hit.brand, hit.model));
+    let ear = if in_ear { DspEar::In } else { DspEar::Over };
+    let saved = profiles::save_measured(&name, &text, ear, target).unwrap_or_else(|e| fail(e));
+    profiles::credit(&saved, &hit.source()).unwrap_or_else(|e| fail(e));
+    println!(
+        "{} '{}' from {}, corrected to {}",
+        "measured".green(),
+        saved.bold(),
+        hit.source(),
+        profiles::target_name(target)
+    );
+}
+
 /// Say what `name` is for: `correction`, `tuning` or `baked`.
 pub fn cmd_dsp_role(name: &str, role: &str) {
     use koan_core::config::DspRole;
