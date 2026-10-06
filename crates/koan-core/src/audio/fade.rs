@@ -39,6 +39,9 @@ pub struct FadeControl {
     /// Ramp over `QUICK_FADE` rather than `FADE_SECONDS`. Set by the
     /// quick fades, cleared by the others.
     quick: AtomicBool,
+    /// How long one render callback asks for, in microseconds: how late after
+    /// a fade begins the callback may first see it.
+    period_us: AtomicU32,
 }
 
 impl FadeControl {
@@ -96,6 +99,12 @@ impl FadeControl {
         self.silent.load(Ordering::Acquire)
     }
 
+    /// One render callback's length, as the callback last asked for it.
+    /// Zero until the first callback.
+    pub fn period(&self) -> std::time::Duration {
+        std::time::Duration::from_micros(self.period_us.load(Ordering::Relaxed) as u64)
+    }
+
     /// The sleep timer's gain, glided to over `SLEEP_GLIDE_SECONDS`, or with
     /// `snap` taken at once.
     pub fn set_sleep_gain(&self, gain: f32, snap: bool) {
@@ -120,6 +129,7 @@ pub struct Fader {
     len: usize,
     /// How far a quick fade moves `pos` each frame.
     quick_step: usize,
+    sample_rate: f64,
     /// The sleep gain where the callback has it, the target it was last
     /// given, and how far it moves each frame on the way there.
     sleep: f32,
@@ -137,6 +147,7 @@ impl Fader {
             pos: len,
             len,
             quick_step: len.div_ceil(quick),
+            sample_rate,
             sleep: 1.0,
             sleep_target: 1.0f32.to_bits(),
             sleep_step: 0.0,
@@ -150,6 +161,11 @@ impl Fader {
     /// head rests on the last sample heard rather than on whatever was
     /// consumed and thrown away.
     pub fn readable(&mut self, wanted: usize, channels: usize) -> usize {
+        let frames = wanted / channels.max(1);
+        if frames > 0 {
+            let us = (frames as f64 * 1e6 / self.sample_rate) as u32;
+            self.control.period_us.store(us, Ordering::Relaxed);
+        }
         if self.control.from_silence.swap(false, Ordering::AcqRel) {
             self.pos = 0;
         }
@@ -433,5 +449,22 @@ mod tests {
         new.fade_out();
         let pause = callback(&mut fader, &playing, &mut 0, 48000);
         assert_eq!(pause.len(), (rate * FADE_SECONDS) as usize);
+    }
+
+    /// The callback's length, which the player waits on beyond a quick fade,
+    /// as the buffers a Mac and PipeWire use by default ask for it.
+    #[test]
+    fn the_callback_reports_its_period() {
+        for (frames, rate) in [(512usize, 44100.0), (1024, 48000.0)] {
+            let control = FadeControl::new();
+            let mut fader = Fader::new(control.clone(), rate);
+            assert_eq!(control.period(), std::time::Duration::ZERO);
+            fader.readable(frames * 2, 2);
+            let want = frames as f64 / rate;
+            assert!(
+                (control.period().as_secs_f64() - want).abs() < 2e-6,
+                "{frames} frames"
+            );
+        }
     }
 }

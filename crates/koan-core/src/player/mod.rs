@@ -45,6 +45,23 @@ const FADE_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
 /// output that has stopped calling back never reports silence.
 const QUICK_FADE_LIMIT: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// When to look next for a DSP change's fade, begun at `since`, to have
+/// reached silence, for callbacks `period` long. The fade ends a known time
+/// after it began: once the callback next runs, up to a period later, and for
+/// the fade's length. Woken then, again a period on for a callback that ran
+/// late, then at the limit should the output have stopped calling back.
+fn dsp_wake(
+    since: std::time::Instant,
+    period: std::time::Duration,
+    now: std::time::Instant,
+) -> std::time::Instant {
+    let faded = since + crate::audio::fade::QUICK_FADE + period + BOUNDARY_SLACK;
+    [faded, faded + period, since + QUICK_FADE_LIMIT]
+        .into_iter()
+        .find(|&t| t > now)
+        .unwrap_or(now)
+}
+
 #[derive(Debug, Error)]
 pub enum PlayerError {
     #[error("backend error: {0}")]
@@ -2653,16 +2670,8 @@ impl Player {
                 (a, b) => a.or(b),
             };
         };
-        // A DSP change's fade ends a known time after it began: wake then,
-        // and once more at the limit should the output have stopped calling
-        // back.
         if let Some(since) = self.dsp_restart {
-            let faded = since + crate::audio::fade::QUICK_FADE + BOUNDARY_SLACK;
-            return Some(if now < faded {
-                faded
-            } else {
-                since + QUICK_FADE_LIMIT
-            });
+            return Some(dsp_wake(since, local.engine.period(), now));
         }
         match session.run {
             Run::Playing => {
@@ -4508,45 +4517,53 @@ mod tests {
         }
     }
 
-    /// A DSP change while playing fades the output out quickly and restarts
-    /// only once that is silent; changes made meanwhile join it, so a run of
-    /// them is one dip and one restart.
-    #[test]
-    fn a_dsp_change_restarts_after_a_quick_fade_and_coalesces() {
-        use std::sync::atomic::{AtomicBool, AtomicUsize};
-
-        struct QuickEngine {
-            silent: Arc<AtomicBool>,
-            quick_outs: Arc<AtomicUsize>,
-            outs: Arc<AtomicUsize>,
+    struct QuickEngine {
+        silent: Arc<std::sync::atomic::AtomicBool>,
+        quick_outs: Arc<std::sync::atomic::AtomicUsize>,
+        outs: Arc<std::sync::atomic::AtomicUsize>,
+        period: std::time::Duration,
+    }
+    impl AudioEngineHandle for QuickEngine {
+        fn start(&self) -> Result<(), BackendError> {
+            Ok(())
         }
-        impl AudioEngineHandle for QuickEngine {
-            fn start(&self) -> Result<(), BackendError> {
-                Ok(())
-            }
-            fn stop(&self) -> Result<(), BackendError> {
-                Ok(())
-            }
-            fn is_running(&self) -> bool {
-                true
-            }
-            fn fade_out(&self) {
-                self.outs.fetch_add(1, Ordering::Relaxed);
-            }
-            fn fade_out_quickly(&self) {
-                self.quick_outs.fetch_add(1, Ordering::Relaxed);
-            }
-            fn fade_in(&self) -> Result<(), BackendError> {
-                Ok(())
-            }
-            fn is_silent(&self) -> bool {
-                self.silent.load(Ordering::Relaxed)
-            }
+        fn stop(&self) -> Result<(), BackendError> {
+            Ok(())
         }
+        fn is_running(&self) -> bool {
+            true
+        }
+        fn fade_out(&self) {
+            self.outs.fetch_add(1, Ordering::Relaxed);
+        }
+        fn fade_out_quickly(&self) {
+            self.quick_outs.fetch_add(1, Ordering::Relaxed);
+        }
+        fn fade_in(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn is_silent(&self) -> bool {
+            self.silent.load(Ordering::Relaxed)
+        }
+        fn period(&self) -> std::time::Duration {
+            self.period
+        }
+    }
 
-        let silent = Arc::new(AtomicBool::new(false));
-        let quick_outs = Arc::new(AtomicUsize::new(0));
-        let outs = Arc::new(AtomicUsize::new(0));
+    /// A player playing through a `QuickEngine` with callbacks of `frames` at
+    /// `rate`, and the engine's silence and fade counts.
+    fn quick_player(
+        frames: u32,
+        rate: u32,
+    ) -> (
+        Player,
+        Arc<std::sync::atomic::AtomicBool>,
+        Arc<std::sync::atomic::AtomicUsize>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let quick_outs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let outs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let mut player = Player::new();
         player.transport = Transport::Loaded(test_session(
             QueueItemId::new(),
@@ -4554,18 +4571,22 @@ mod tests {
                 silent: silent.clone(),
                 quick_outs: quick_outs.clone(),
                 outs: outs.clone(),
+                period: std::time::Duration::from_secs_f64(frames as f64 / rate as f64),
             }),
         ));
+        (player, silent, quick_outs, outs)
+    }
+
+    /// A DSP change while playing fades the output out quickly and restarts
+    /// only once that is silent; changes made meanwhile join it, so a run of
+    /// them is one dip and one restart.
+    #[test]
+    fn a_dsp_change_restarts_after_a_quick_fade_and_coalesces() {
+        let (mut player, silent, quick_outs, outs) = quick_player(512, 44100);
 
         player.restart_for_dsp();
         assert_eq!(quick_outs.load(Ordering::Relaxed), 1);
         assert_eq!(outs.load(Ordering::Relaxed), 0, "not the pause's fade");
-        let since = player.dsp_restart.expect("waiting on the fade");
-        let woken = player.next_event().expect("a wake when the fade ends");
-        assert_eq!(
-            woken,
-            since + crate::audio::fade::QUICK_FADE + BOUNDARY_SLACK
-        );
 
         // Another change mid-fade: the same dip.
         player.restart_for_dsp();
@@ -4580,6 +4601,44 @@ mod tests {
             !player.quick_start,
             "the quick start is the restart's alone"
         );
+    }
+
+    /// The fade can begin up to one callback after it is asked for, so the
+    /// first wake allows a period for that; a callback later still is waited
+    /// for one period more, well inside the limit, for the buffers a Mac and
+    /// PipeWire use by default.
+    #[test]
+    fn a_dsp_change_wakes_a_buffer_period_after_its_fade() {
+        use crate::audio::fade::QUICK_FADE;
+        for (frames, rate) in [(512, 44100), (1024, 48000)] {
+            let period = std::time::Duration::from_secs_f64(frames as f64 / rate as f64);
+            let (mut player, silent, _, _) = quick_player(frames, rate);
+            player.restart_for_dsp();
+            let since = player.dsp_restart.expect("waiting on the fade");
+
+            let first = player.next_event().expect("a wake when the fade ends");
+            assert_eq!(first, since + QUICK_FADE + period + BOUNDARY_SLACK);
+            assert_eq!(dsp_wake(since, period, since), first);
+
+            // Woken then, still sounding: once more, a period on, inside the
+            // limit; past that, the limit.
+            player.update_playback_state();
+            assert!(player.dsp_restart.is_some());
+            let second = dsp_wake(since, period, first);
+            assert_eq!(second, first + period);
+            assert!(
+                second < since + QUICK_FADE_LIMIT,
+                "{frames} frames: inside the limit"
+            );
+            assert_eq!(dsp_wake(since, period, second), since + QUICK_FADE_LIMIT);
+
+            silent.store(true, Ordering::Relaxed);
+            player.update_playback_state();
+            assert!(
+                player.dsp_restart.is_none(),
+                "{frames} frames: restarted at silence"
+            );
+        }
     }
 
     #[test]

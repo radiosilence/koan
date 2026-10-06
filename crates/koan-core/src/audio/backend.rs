@@ -132,6 +132,11 @@ pub trait AudioEngineHandle: Send {
     fn fade_in_quickly(&self) -> Result<(), BackendError> {
         self.fade_in()
     }
+    /// How long one render callback lasts: how late a fade can begin after
+    /// it is asked for. Zero where the output does not say.
+    fn period(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
     fn is_silent(&self) -> bool;
     /// Play `frames` of silence before anything from the ring, without
     /// counting them as played. A device that has just changed rate is

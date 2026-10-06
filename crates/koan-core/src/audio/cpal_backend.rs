@@ -291,6 +291,10 @@ impl AudioEngineHandle for CpalEngineHandle {
         self.fade.fade_out_quickly();
     }
 
+    fn period(&self) -> std::time::Duration {
+        self.fade.period()
+    }
+
     fn fade_in_quickly(&self) -> Result<(), BackendError> {
         if self.is_running() {
             self.fade.fade_in_quickly(false);
