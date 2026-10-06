@@ -237,7 +237,12 @@ private struct SectionHeading: View {
             }
             .contentShape(Rectangle())
         }
+        // As the shelf's headings: `TelevisionRow` on a television.
+        #if os(tvOS)
+        .buttonStyle(TelevisionRow())
+        #else
         .buttonStyle(.plain)
+        #endif
     }
 }
 
