@@ -250,6 +250,17 @@ extension NSColor {
 }
 #else
 extension UIColor {
+    /// A token, following the appearance it is drawn in.
+    static func koan(dark: UInt32, light: UInt32) -> UIColor {
+        UIColor { $0.userInterfaceStyle == .dark ? .rgb(dark) : .rgb(light) }
+    }
+
+    /// The tokens layer-drawn views read, as on the Mac.
+    static let koanInk = koan(dark: 0xCCCCCC, light: 0x333333)
+    static let koanRule = koan(dark: 0x383838, light: 0xE0E0E0)
+    static let koanMuted = koan(dark: 0x919191, light: 0x666666)
+    @MainActor static var koanQuaternaryLabel: UIColor { KoanTheme.isOn ? koanRule : .quaternaryLabel }
+
     fileprivate static func rgb(_ hex: UInt32) -> UIColor {
         UIColor(
             red: CGFloat((hex >> 16) & 0xFF) / 255,

@@ -349,7 +349,7 @@ struct SeekBar: View {
         .disabled(player.durationMs == 0)
     }
 
-    private static let thickness = 4.0
+    private static var thickness: Double { KoanTheme.isOn ? 3 : 4 }
     /// How tall a target the bar is. A pointer finds four points; a thumb
     /// wants a good deal more, and the layers centre themselves either way.
     #if os(macOS)
@@ -492,19 +492,20 @@ final class FetchedMarkView: LayerView, TransferGauge {
     }
 
     override func layoutLayers() {
-        let thickness = 4.0
+        // The theme's track is a rule under a thicker played extent.
+        let thickness = KoanTheme.isOn ? 1.0 : 4.0
         let y = (bounds.height - thickness) / 2
         let reach = bounds.width * (fraction ?? 1).clamped()
         whole.frame = CGRect(x: 0, y: y, width: bounds.width, height: thickness)
         // Shorter than its own thickness it would draw as a squashed dot.
         arrived.frame = CGRect(x: 0, y: y, width: reach >= thickness ? reach : 0, height: thickness)
-        whole.cornerRadius = thickness / 2
-        arrived.cornerRadius = thickness / 2
+        whole.cornerRadius = KoanTheme.radius(thickness / 2)
+        arrived.cornerRadius = KoanTheme.radius(thickness / 2)
     }
 
     override func appearanceChanged() {
-        whole.backgroundColor = resolved(.quaternaryLabel)
-        arrived.backgroundColor = resolved(.quaternaryLabel)
+        whole.backgroundColor = resolved(.koanQuaternaryLabel)
+        arrived.backgroundColor = resolved(.koanQuaternaryLabel)
     }
 }
 
