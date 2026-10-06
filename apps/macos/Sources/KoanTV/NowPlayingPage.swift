@@ -63,7 +63,7 @@ struct NowPlayingPage: View {
             Label("Nothing playing", systemImage: "music.note")
         } description: {
             if library.stats?.totalTracks == 0 {
-                Text("Sign in to your music server in Settings → Server.")
+                Text(library.emptyLibraryDetail)
             } else {
                 Text("Choose this Apple TV under Play on, on a phone or Mac, or pick a record from the library.")
             }

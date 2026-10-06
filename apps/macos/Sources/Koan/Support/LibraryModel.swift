@@ -261,7 +261,18 @@ final class LibraryModel {
     func isFavourite(artist id: Int64) -> Bool { favouriteArtistIds.contains(id) }
 
     private(set) var stats: Stats?
+    /// Whether a server and its credential are set, loaded with `stats`: an
+    /// empty library means something different signed in and signed out.
+    private(set) var signedIn: Bool?
     private(set) var isLoading = false
+
+    /// What an empty page says on a phone or a television, whose library is a
+    /// server's.
+    var emptyLibraryDetail: String {
+        signedIn == true
+            ? "Nothing from your server yet. It appears here once kōan has synced; Settings → Server shows how that is going."
+            : "Sign in to your music server in Settings → Server."
+    }
 
     /// Where long tasks register, so one place can say what is happening and
     /// refuse a second task that would collide with a running one. Set by
@@ -395,6 +406,7 @@ final class LibraryModel {
         let engine = self.engine
         Task {
             stats = try? await engine.libraryStats()
+            signedIn = await engine.settings().remoteSignedIn
         }
     }
 

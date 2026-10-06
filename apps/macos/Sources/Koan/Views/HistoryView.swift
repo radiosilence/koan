@@ -280,7 +280,12 @@ private struct HistoryRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: HistoryColumns.duration, alignment: .trailing)
         }
+        #if os(tvOS)
+        // Television type is taller than the sleeve; the row grows to it.
         .frame(minHeight: RowMetrics.art)
+        #else
+        .frame(height: RowMetrics.art)
+        #endif
         .contentShape(Rectangle())
         .pointerHover { hovering = $0 }
     }

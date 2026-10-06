@@ -19,7 +19,7 @@ struct QueueView: View {
     private var emptyDetail: String {
         #if os(iOS) || os(tvOS)
         if library.stats?.totalTracks == 0 {
-            return "Sign in to your music server in Settings → Server."
+            return library.emptyLibraryDetail
         }
         #endif
         return Self.emptyDetail
