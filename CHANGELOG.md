@@ -2,8 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+- **The sleep timer eases you to sleep.** A timer set for a time now fades over a tenth of its length, between one and five minutes (90 seconds for 15 minutes, 5 minutes for an hour), reaching silence at the deadline; the end of a track or record fades over the track's last minute. The level falls evenly in decibels rather than over six seconds, and the timer shows *Fading* meanwhile. Playback is not bit-perfect during the fade, since it is a gain on the samples; a UPnP renderer's own volume is stepped down instead and put back after. Cancelling or changing the timer mid-fade brings the level back over a second, and pausing by hand cancels it. See [Sleep timer](docs/guide/sleep-timer.md#the-fade).
+
 ### Fixed
 
+- **Seeking or skipping at the end of the queue could freeze playback.** When the player was busy, the decoder reporting the end of the queue and the player stopping that decoder could wait on each other indefinitely.
+- **A rare crash when the Mac or iOS app changes track or output.** When CoreAudio could not confirm the output had fully stopped, its playback data was freed while the audio thread might still read it. It is now kept instead.
+- **One failed command no longer stops the Mac and iOS apps' controls.** An error such as importing a malformed EQ or convolution file stopped every later play, queue and transport command until the app was relaunched; the failing command now reports an error and the rest carry on.
+- **The iOS Live Activity no longer busies the app for a record without art.** Controlling another device playing a record with no cover, or whose cover could not be fetched, asked for the cover again continuously.
+- **The sleep timer's moon is lit only while a timer is set.** On the Mac it showed in the accent colour with no timer set.
 - **Playlist sync no longer removes songs from the server's copy.** A server playlist naming a song the library had not synced yet was stored without it, and the next edit pushed that shorter list back, deleting the song on the server. Songs the library does not have now stay on the server: every push puts them back where they were. A database error while reading a playlist is reported rather than read as an empty list, and a playlist whose entries are all local files no longer empties its server copy; only one emptied by hand does.
 - **A server that lists no playlists no longer deletes yours.** A playlist the server stops listing is now deleted locally only once the server, asked for it, says it does not have it; a listing that comes back short or empty deletes nothing. A failed lookup no longer creates a duplicate of a playlist, and a playlist's name, owner, contents and sync state are stored together or not at all.
 - **Organize keeps playlists read from M3U files.** Moving an album moved its `.m3u` with it, and the next scan read the list as deleted, made a new playlist under a new id, and dropped every entry whose file had been renamed. Organize now rewrites the M3U files in the library to name the files where they went, and moves the playlist with its file; undo puts both back.

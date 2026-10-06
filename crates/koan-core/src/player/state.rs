@@ -479,6 +479,8 @@ pub struct SharedPlayerState {
 
     /// The sleep timer, while one is set. Written by the player's `publish`.
     sleep: parking_lot::RwLock<Option<Sleep>>,
+    /// The sleep timer is fading playback out.
+    sleep_fading: AtomicBool,
 }
 
 /// A renderer's playhead: `position_ms`, plus the time since `running` if it
@@ -515,6 +517,7 @@ impl SharedPlayerState {
             renderer: parking_lot::RwLock::new(None),
             play_mode: AtomicU8::new(0),
             sleep: parking_lot::RwLock::new(None),
+            sleep_fading: AtomicBool::new(false),
         })
     }
 
@@ -863,6 +866,16 @@ impl SharedPlayerState {
         if *held != sleep {
             *held = sleep;
             drop(held);
+            self.changed();
+        }
+    }
+
+    pub fn sleep_fading(&self) -> bool {
+        self.sleep_fading.load(Ordering::Acquire)
+    }
+
+    pub fn set_sleep_fading(&self, fading: bool) {
+        if self.sleep_fading.swap(fading, Ordering::AcqRel) != fading {
             self.changed();
         }
     }

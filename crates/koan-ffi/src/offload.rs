@@ -61,6 +61,10 @@ where
 /// whichever order finished first: dropping in an album and then pressing undo
 /// could undo the drop before it landed. A pool cannot promise that ordering,
 /// so this is one thread and a queue.
+///
+/// A panic in `f` is caught on the lane and re-raised here, as [`offload`]
+/// does: the call that panicked fails, and the lane goes on running every
+/// command after it.
 pub async fn sequenced<T, F>(f: F) -> T
 where
     F: FnOnce() -> T + Send + 'static,
@@ -70,12 +74,13 @@ where
     LANE.send(Box::new(move || {
         // The receiver is gone when the caller's Task was cancelled. The work
         // is done either way; only the answer had nowhere to go.
-        let _ = tx.send(f());
+        let _ = tx.send(std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
     }))
     .expect("the command lane outlives the engine");
 
     match rx.await {
-        Ok(value) => value,
+        Ok(Ok(value)) => value,
+        Ok(Err(payload)) => std::panic::resume_unwind(payload),
         Err(_) => panic!("the command lane stopped running"),
     }
 }
@@ -154,5 +159,14 @@ mod tests {
             escaped.is_err(),
             "a panic must not be swallowed into a hang"
         );
+    }
+
+    #[tokio::test]
+    async fn the_lane_outlives_a_panicking_command() {
+        let escaped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            futures_lite::future::block_on(sequenced(|| panic!("boom")))
+        }));
+        assert!(escaped.is_err(), "the panicking call fails to its caller");
+        assert_eq!(7, sequenced(|| 7).await, "and the next command still runs");
     }
 }

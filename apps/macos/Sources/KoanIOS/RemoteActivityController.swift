@@ -71,6 +71,8 @@ final class RemoteActivityController {
 
     /// The record's sleeve at a size the activity can carry, once it has been
     /// fetched. The fetch itself runs off to one side and refreshes when done.
+    /// Each record is fetched once: one without art, or whose fetch failed,
+    /// stays without a sleeve rather than being asked for again.
     private func thumbnail(for album: Int64?) -> Data? {
         guard let album else { return nil }
         if let sleeve, sleeve.album == album { return sleeve.data }
@@ -79,8 +81,12 @@ final class RemoteActivityController {
             sleeve = (album, data)
             return data
         }
+        sleeve = (album, nil)
         Task {
-            _ = await art.image(for: .album(album), size: .thumb)
+            guard let image = await art.image(for: .album(album), size: .thumb),
+                  sleeve?.album == album
+            else { return }
+            sleeve = (album, Self.jpeg(image))
             refresh()
         }
         return nil
