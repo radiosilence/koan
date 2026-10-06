@@ -18,6 +18,14 @@ import SwiftUI
 @MainActor
 @Observable
 final class Residency {
+    /// A run with no one at the screen: the evidence renderer
+    /// (`KOAN_RENDER_EVIDENCE`), or a throwaway device signed in for it to see
+    /// (`KOAN_WINDOWLESS`). The engine runs; no window opens.
+    nonisolated static var windowless: Bool {
+        let env = ProcessInfo.processInfo.environment
+        return env["KOAN_RENDER_EVIDENCE"] != nil || env["KOAN_WINDOWLESS"] != nil
+    }
+
     /// `devices.keep_running`, as last read or set. Written through the
     /// settings window's model, which holds the rest of the settings and would
     /// otherwise write its own copy of this back over it.
@@ -166,7 +174,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Restored with the window closed. Opened at login, a resident kōan
         // belongs in the menu bar only; opened by someone, they want it.
-        guard let residency = state?.residency, residency.keepRunning, !Residency.mainWindowShown
+        guard !Residency.windowless,
+              let residency = state?.residency, residency.keepRunning, !Residency.mainWindowShown
         else { return }
         if launchedAtLogin {
             NSApp.setActivationPolicy(.accessory)

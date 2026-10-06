@@ -48,6 +48,9 @@ struct KoanApp: App {
             }
         }
         .windowToolbarStyle(.unified(showsTitle: false))
+        // A run with no one at the screen — the evidence renderer, or a
+        // throwaway device for it to see — opens no window there.
+        .defaultLaunchBehavior(Residency.windowless ? .suppressed : .automatic)
         // Menu commands must not *read* anything that changes often. `.commands`
         // is part of the Scene body, so reading an observable that ticks —
         // `isPlaying`, the queue — makes SwiftUI rebuild every menu ten times

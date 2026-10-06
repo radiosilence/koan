@@ -38,6 +38,13 @@ enum EvidenceRenderer {
         }
         // The transport's popovers, as their content: a popover is not drawn in
         // a window that is never shown.
+        // A signed-in run lists the account's other devices once the link has
+        // them: up to fifteen seconds, then whatever there is.
+        if await state.engine.settings().remoteSignedIn {
+            for _ in 0..<30 where !state.player.hasOtherDevices {
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
         // In the room's accent, as they open over the transport.
         var sleeve: Color?
         if let source = state.player.currentArtwork { sleeve = await state.art.dominantColour(for: source) }
