@@ -655,6 +655,98 @@ pub mod dsp_bounds {
     pub const GRAPHIC_POINTS: usize = 2_048;
     pub const LAYERS: usize = 32;
     pub const NAME: usize = 128;
+
+    // What a whole chain, layers and target step included, may add up to:
+    // each value within bounds can still sum past what a device can hold
+    // or keep up with.
+
+    /// Delay on any one channel, every delay summed, in ms. A delay in
+    /// samples counts at 44.1 kHz, the lowest rate it could mean the most
+    /// time at.
+    pub const CHAIN_DELAY_MS: f64 = 2_000.0;
+    /// Graphic curves on any one channel: each is a minimum-phase FIR of up
+    /// to a second of taps at the output rate.
+    pub const CHAIN_GRAPHICS: usize = 4;
+    /// Mixes in a chain.
+    pub const CHAIN_MIXES: usize = 8;
+    /// Taps of an impulse response, per route: 2^19, eleven seconds at
+    /// 48 kHz, longer than any room's decay.
+    pub const IMPULSE_TAPS: usize = 1 << 19;
+}
+
+/// Bring a whole chain within the `dsp_bounds` budgets, saying what was
+/// changed: delays past the total on a channel shortened or dropped,
+/// graphic curves and mixes past their counts dropped.
+pub fn budget(filters: &mut Vec<DspFilter>) -> Vec<String> {
+    use dsp_bounds as b;
+    let mut notes = Vec::new();
+    let mut note = |n: String| {
+        if !notes.contains(&n) {
+            notes.push(n);
+        }
+    };
+    let channels = b::CHANNELS as usize;
+    let mut delay = vec![0.0f64; channels];
+    let mut graphics = vec![0usize; channels];
+    let mut mixes = 0;
+    let on = |cs: &[u16], c: usize| cs.is_empty() || cs.contains(&(c as u16));
+    filters.retain_mut(|f| match f {
+        DspFilter::Delay(d) => {
+            let ms = d.ms + d.samples / 44.1;
+            let room = (0..channels)
+                .filter(|c| on(&d.channels, *c))
+                .map(|c| b::CHAIN_DELAY_MS - delay[c])
+                .fold(b::CHAIN_DELAY_MS, f64::min)
+                .max(0.0);
+            if ms > room {
+                note(format!(
+                    "delays shortened to {} ms in all",
+                    b::CHAIN_DELAY_MS
+                ));
+                if room <= 0.0 {
+                    return false;
+                }
+                // Shortened in proportion, keeping how it was given.
+                let scale = room / ms;
+                d.ms *= scale;
+                d.samples = (d.samples * scale).floor();
+            }
+            let ms = d.ms + d.samples / 44.1;
+            for (c, total) in delay.iter_mut().enumerate() {
+                if on(&d.channels, c) {
+                    *total += ms;
+                }
+            }
+            true
+        }
+        DspFilter::Graphic(g) => {
+            let full =
+                (0..channels).any(|c| on(&g.channels, c) && graphics[c] == b::CHAIN_GRAPHICS);
+            if full {
+                note(format!(
+                    "graphic EQs past {} a channel dropped",
+                    b::CHAIN_GRAPHICS
+                ));
+                return false;
+            }
+            for (c, n) in graphics.iter_mut().enumerate() {
+                if on(&g.channels, c) {
+                    *n += 1;
+                }
+            }
+            true
+        }
+        DspFilter::Mix(_) => {
+            mixes += 1;
+            if mixes > b::CHAIN_MIXES {
+                note(format!("mixes past {} dropped", b::CHAIN_MIXES));
+                return false;
+            }
+            true
+        }
+        DspFilter::Band(_) => true,
+    });
+    notes
 }
 
 impl DspProfile {
@@ -799,6 +891,9 @@ impl DspProfile {
             }
         }
         self.filters = kept;
+        for n in budget(&mut self.filters) {
+            dropped.push(n);
+        }
         if self.layers.len() > b::LAYERS {
             self.layers.truncate(b::LAYERS);
             dropped.push(format!("layers past {} dropped", b::LAYERS));

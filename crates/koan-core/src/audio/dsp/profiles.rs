@@ -229,19 +229,23 @@ pub fn detail(name: &str) -> Option<Detail> {
         .find(|&r| r == 48000)
         .or(impulses.first().map(|i| i.rate))
         .unwrap_or(48000);
-    if let Err(e) = super::chain(profile, &cfg.dsp.profiles, &mut Vec::new()) {
-        problem = Some(e.to_string());
-    }
     // What it plays is adjusted to stay within bounds: say how.
-    let adjusted = profile.clone().sanitize();
+    let mut adjusted = profile.clone().sanitize();
+    match super::chain_noted(profile, &cfg.dsp.profiles, &mut Vec::new()) {
+        Ok((_, notes)) => adjusted.extend(notes.into_iter().filter(|n| !adjusted.contains(n))),
+        Err(e) => problem = Some(e.to_string()),
+    }
+    let setup = Setup::load(profile, &cfg.dsp.profiles, &base)
+        .ok()
+        .flatten();
+    if let Some(cut) = setup.as_ref().and_then(|s| s.headroom_cut(preamp_rate, 2)) {
+        adjusted.push(format!("preamp −{cut:.1} dB for headroom"));
+    }
     if !adjusted.is_empty() {
         let note = format!("Adjusted: {}", adjusted.join("; "));
         problem = Some(problem.map_or(note.clone(), |p| format!("{p}. {note}")));
     }
-    let preamp_db = Setup::load(profile, &cfg.dsp.profiles, &base)
-        .ok()
-        .flatten()
-        .map_or(0.0, |s| s.preamp_db(preamp_rate, 2));
+    let preamp_db = setup.map_or(0.0, |s| s.preamp_db(preamp_rate, 2));
     Some(Detail {
         name: profile.name.clone(),
         devices: profile.devices.clone(),
