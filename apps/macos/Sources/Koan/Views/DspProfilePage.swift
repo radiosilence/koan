@@ -158,7 +158,7 @@ private struct TargetSection: View {
 
     var body: some View {
         Section {
-            Picker("Target", selection: Binding(
+            Picker("Correct to", selection: Binding(
                 get: { current },
                 set: { id in dsp.chooseTarget(profile, id == targets.madeFor.id ? nil : id) }
             )) {
