@@ -861,7 +861,7 @@ tv-walk library="": (tv-ffi "appletvsimulator") ios-project
     # A booted simulator is a running copy of tvOS; leave none behind.
     cleanup+=("xcrun simctl shutdown '$sim'")
     xcrun simctl uninstall "$sim" {{bundle_id}} 2>/dev/null || true
-    for v in KOAN_REMOTE__ENABLED KOAN_REMOTE__URL KOAN_REMOTE__USERNAME KOAN_REMOTE__API_KEY KOAN_REMOTE__PASSWORD KOAN_WALK_SETTLE KOAN_WALK_SEARCH; do
+    for v in KOAN_REMOTE__ENABLED KOAN_REMOTE__URL KOAN_REMOTE__USERNAME KOAN_REMOTE__API_KEY KOAN_REMOTE__PASSWORD KOAN_WALK_SETTLE KOAN_WALK_SEARCH KOAN_WALK_PLAYLIST; do
         [ -n "${!v:-}" ] && export "TEST_RUNNER_$v=${!v}"
     done
     xcodebuild test -quiet \
