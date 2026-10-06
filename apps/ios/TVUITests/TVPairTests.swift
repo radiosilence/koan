@@ -3,18 +3,18 @@ import XCTest
 /// Signs the television in by pairing, end to end, against a real server.
 ///
 /// The app starts signed out with only the server's address, asks for a code,
-/// and this test approves it the way a phone would — `koanPairApprove` with an
-/// account's credentials — then waits for the sign-in page to give way to the
-/// app. `just tv-pair` runs it against a local `koan` it starts for the
-/// purpose. Screenshots of each step are kept.
+/// and waits for the sign-in page to give way to the app. Given an account,
+/// this test approves the code the way a phone would — `koanPairApprove` with
+/// its credentials — which is `just tv-pair`; without one something else
+/// approves it, which is `just tv-pair-qr`, where a phone scans the code off
+/// the screen. Both run against a local `koan` started for the purpose.
+/// Screenshots of each step are kept.
 @MainActor
 final class TVPairTests: XCTestCase {
     func testPairing() throws {
         let env = ProcessInfo.processInfo.environment
-        guard let server = env["KOAN_PAIR_SERVER"],
-              let user = env["KOAN_PAIR_USER"],
-              let password = env["KOAN_PAIR_PASSWORD"]
-        else { throw XCTSkip("KOAN_PAIR_SERVER, _USER and _PASSWORD name the server and approver") }
+        guard let server = env["KOAN_PAIR_SERVER"]
+        else { throw XCTSkip("KOAN_PAIR_SERVER names the server") }
 
         let app = XCUIApplication()
         app.launchEnvironment["KOAN_REMOTE__URL"] = server
@@ -37,10 +37,12 @@ final class TVPairTests: XCTestCase {
         XCTAssertTrue(code.waitForExistence(timeout: 15), "a code is shown")
         snap("02-code")
 
-        try approve(code.label, on: server, as: user, password: password)
+        if let user = env["KOAN_PAIR_USER"], let password = env["KOAN_PAIR_PASSWORD"] {
+            try approve(code.label, on: server, as: user, password: password)
+        }
 
         XCTAssertTrue(
-            app.buttons["Library"].waitForExistence(timeout: 20),
+            app.buttons["Library"].waitForExistence(timeout: 240),
             "the app is shown once the pairing is approved"
         )
         sleep(3)
