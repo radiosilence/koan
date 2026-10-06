@@ -305,6 +305,9 @@ extension UIColor {
     static let koanRule = koan(dark: 0x383838, light: 0xE0E0E0)
     static let koanMuted = koan(dark: 0x919191, light: 0x666666)
     @MainActor static var koanQuaternaryLabel: UIColor { KoanTheme.isOn ? koanRule : .quaternaryLabel }
+    /// The label colours, as the Mac's: the theme's tokens, or the system's.
+    @MainActor static var koanLabel: UIColor { KoanTheme.isOn ? koanInk : .label }
+    @MainActor static var koanSecondaryLabel: UIColor { KoanTheme.isOn ? koanMuted : .secondaryLabel }
 
     fileprivate static func rgb(_ hex: UInt32) -> UIColor {
         UIColor(
@@ -598,6 +601,18 @@ extension KoanTheme {
         isOn ? style(tone) : AnyShapeStyle(system)
     }
 
+    /// A measure that differs between the looks: a thickness, a size, a
+    /// margin. The theme's in the theme, the platform's otherwise.
+    nonisolated static func metric<T>(_ theme: T, system: T) -> T {
+        isOn ? theme : system
+    }
+
+    /// The bare ground of a page or a sheet: `bg` in the theme, `system`
+    /// otherwise.
+    nonisolated static func ground(_ system: some ShapeStyle) -> AnyShapeStyle {
+        isOn ? AnyShapeStyle(Color.koanBg) : AnyShapeStyle(system)
+    }
+
     nonisolated static func style(_ tone: KoanTone) -> AnyShapeStyle {
         switch (isOn, tone) {
         case (true, .ink): AnyShapeStyle(Color.koanInk)
@@ -779,12 +794,6 @@ extension View {
         modifier(KoanFieldRole())
     }
 
-    /// A form section with no card behind its rows. Forms on the Mac draw a
-    /// card per section, which `.koanForm()` cannot reach from outside it.
-    func koanSection() -> some View {
-        modifier(KoanSectionRole())
-    }
-
     /// A pop-up picker, menu or stepper: the system control, in `ink` and the
     /// theme's type rather than the accent. Unchanged in the platform's look.
     func koanControl() -> some View {
@@ -813,6 +822,12 @@ extension View {
     /// everything that does not set its own.
     func koanSheet() -> some View {
         modifier(KoanSheetRole())
+    }
+
+    /// A drop shadow in the platform's look. The theme has none: depth is
+    /// rules and surfaces.
+    func koanShadow(_ opacity: Double, radius: CGFloat, y: CGFloat = 0) -> some View {
+        shadow(color: .black.opacity(KoanTheme.isOn ? 0 : opacity), radius: radius, y: y)
     }
 }
 
@@ -1397,22 +1412,6 @@ private struct KoanFieldRole: ViewModifier {
                 .focused($focused)
                 .koanFocusRing(focused)
                 #endif
-        } else {
-            content
-        }
-    }
-}
-
-private struct KoanSectionRole: ViewModifier {
-    func body(content: Content) -> some View {
-        if KoanTheme.isOn {
-            #if os(tvOS)
-            content
-            #else
-            content
-                .listRowBackground(Color.clear)
-                .listRowSeparatorTint(Color.koanRule)
-            #endif
         } else {
             content
         }

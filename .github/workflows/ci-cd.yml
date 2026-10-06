@@ -10,6 +10,18 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# The macOS runners are few, so a run nobody will look at gives way to the
+# next. A pull request's newer push cancels its older run; on main, a newer
+# push cancels an older one that releases nothing. A release run is in a group
+# of its own and is never cancelled, notarisation included, and nor is a
+# manual run, which is how a failed release is retried. The group is chosen
+# before any job runs, so a release is told by the squash commit's title
+# (`release: vX.Y.Z (#n)`, as the release skill names its pull request), not
+# by `check-version`.
+concurrency:
+  group: "ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || startsWith(github.event.head_commit.message, 'release: ') && format('release-{0}', github.sha) || 'main' }}"
+  cancel-in-progress: "${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.event.head_commit.message, 'release: ')) }}"
+
 jobs:
   changes:
     name: Changes
@@ -257,8 +269,11 @@ jobs:
   macos-app:
     name: macOS App
     runs-on: macos-latest
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    needs: [changes, check-version]
+    # On main, only for a release: the pull request built it already, and a
+    # release needs it (`create-macos-app` packages this build). Kept to
+    # pull requests otherwise, and to manual runs.
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' && (github.event_name != 'push' || needs.check-version.outputs.should_release == 'true') }}
     timeout-minutes: 45
     concurrency:
       group: macos-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
@@ -303,8 +318,9 @@ jobs:
   tvos-app:
     name: tvOS App
     runs-on: macos-latest
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
+    needs: [changes, check-version]
+    # On main, only for a release: the pull request built it already.
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'true' && (github.event_name != 'push' || needs.check-version.outputs.should_release == 'true') }}
     timeout-minutes: 45
     concurrency:
       group: tvos-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}

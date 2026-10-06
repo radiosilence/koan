@@ -2578,6 +2578,83 @@ mod tests {
         assert_eq!(target(), None);
     }
 
+    /// Where the target difference is what tips the chain past the filters
+    /// it may hold, it is the step that goes: the tuning plays without it,
+    /// and says so.
+    #[test]
+    fn the_target_difference_goes_before_the_tuning() {
+        use crate::config::{DspFilter, DspLayer, DspTarget};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let spread = |n: usize, from: f64| -> Vec<DspFilter> {
+            (0..n)
+                .map(|i| {
+                    DspFilter::Band(crate::config::EqFilter {
+                        kind: crate::config::EqFilterKind::Peaking,
+                        freq: from + i as f64,
+                        gain_db: 1.0,
+                        q: 1.0,
+                        channels: vec![(i % 4) as u16],
+                    })
+                })
+                .collect()
+        };
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Base".into(),
+                filters: spread(100, 1000.0),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 600".into(),
+                filters: vec![band(100.0)],
+                layers: vec![DspLayer {
+                    profile: "Base".into(),
+                    on: true,
+                }],
+                target: Some(DspTarget {
+                    made_for: "harman-over-ear-2018".into(),
+                    chosen: None,
+                }),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Many".into(),
+                filters: spread(156, 100.0),
+                tuned_for: Some("diffuse-field-gras-kemar".into()),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let dac = "Desk DAC";
+        assign(Some("HD 600"), dac).unwrap();
+        set_tuning(dac, Some("Many")).unwrap();
+        let cfg = Config::cached();
+        let chain = super::super::output_chain(&cfg.dsp, dac).unwrap();
+        assert!(chain.tuning_plays);
+        let played = super::super::chain(&chain.profile, &chain.all, &mut Vec::new()).unwrap();
+        assert_eq!(
+            played.len(),
+            100 + 156 + 1,
+            "Base, the tuning, the correction's own"
+        );
+        assert!(
+            !played.iter().any(|f| matches!(f, DspFilter::Graphic(_))),
+            "no target difference"
+        );
+        assert!(
+            chain
+                .left_out
+                .as_deref()
+                .is_some_and(|l| l.starts_with("Many plays without the target difference")),
+            "{:?}",
+            chain.left_out
+        );
+    }
+
     /// A baked EQ, a correction and a bass band in one, splits back into the
     /// two: the correction from the measurement, the band as the tuning,
     /// made against the target, and the output that played it plays them.

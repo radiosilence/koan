@@ -77,11 +77,7 @@ struct EqGraph: View {
                         series: .value("Band", area.series)
                     )
                     // Each band neutral, so the accent is the curve that plays.
-                    .foregroundStyle(
-                        KoanTheme.isOn
-                            ? AnyShapeStyle(Color.koanMuted.opacity(0.15))
-                            : AnyShapeStyle(.tint.opacity(0.13))
-                    )
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tint).opacity(0.15))
                 }
                 // A chain with a correction and tuning: each in its role's
                 // colour, under the two together.
@@ -229,9 +225,7 @@ struct EqGraph: View {
                 }
                 key("No change", KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)), thin: true)
                 if !response.bands.isEmpty {
-                    key("Each band", KoanTheme.isOn
-                        ? AnyShapeStyle(Color.koanMuted.opacity(0.3))
-                        : AnyShapeStyle(.tint.opacity(0.3)))
+                    key("Each band", AnyShapeStyle(KoanTheme.style(.muted, system: .tint).opacity(0.3)))
                 }
             } else {
                 key("Measured", KoanTheme.style(.muted))
