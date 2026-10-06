@@ -18,6 +18,8 @@
 
 ### Fixed
 
+- **Subsonic clients showed no hearts outside the starred list.** Songs, albums and artists never carried `starred`, so a client that reads it on album pages, search results and album lists showed nothing as favourited. They now carry the time the account favourited them, as `getStarred2` always implied.
+- **Folder-browse Subsonic clients get hearts and ratings too.** `getIndexes`' artists and the albums `getMusicDirectory` lists under an artist carried no `starred`, `userRating` or `played`, so a client browsing by folder (DSub and similar) showed none of the account's favourites or ratings there. They now carry the caller's own, read for the whole listing at once ([#864](https://github.com/radiosilence/koan/issues/864)).
 - **Cancelling a library scan stops the folder watcher's too.** The watcher's scans had no way to be stopped, so the apps' Cancel did nothing to the scan the activity row was showing. Forgetting a library folder now also stops a scan of it, rather than leaving it to index again what was just forgotten.
 - **Scans no longer run over each other.** A full scan and the folder watcher's rescans now take turns, instead of reading the same files twice and pruning what another was about to index. An import of dropped files does not wait for them: it only adds, and it is for playing now.
 - **Moving the music to another device says when it has not arrived.** A hand-off paused the music here and counted it as delivered once the command was queued, which it was even on a link that had died unnoticed or for a device asleep. The Mac and iOS apps now wait for the other device to report the track, and otherwise say it has not picked the music up yet; the music stays paused where it was.
