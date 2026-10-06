@@ -73,10 +73,6 @@ struct RootView: View {
         .inspector(isPresented: $ui.showLyrics) {
             LyricsPanel()
                 .inspectorColumnWidth(min: 260, ideal: 280, max: 460)
-                // The column animates on its own; its contents do not come
-                // with it. Without this the stage slides over and the pane
-                // then appears whole in one frame, a fifth of a second later.
-                .transition(.move(edge: .trailing))
                 // The toggle belongs to the inspector rather than the window, so
                 // it sits at the pane's leading edge and moves with it. In the
                 // window's trailing group the pane would open out from
@@ -352,9 +348,9 @@ struct RecordRoom: ViewModifier {
 
 /// The transport, padded clear of the columns.
 ///
-/// Its own view because the widths it reads move while the sidebar is being
-/// dragged and on every frame the lyrics panel slides — read in the root, each
-/// of those frames would re-run the window.
+/// Its own view because the widths it reads move on every frame the sidebar
+/// is being dragged — read in the root, each of those frames would re-run
+/// the window.
 private struct TransportOverlay: View {
     let columns: NavigationSplitViewVisibility
 
