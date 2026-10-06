@@ -68,8 +68,11 @@ password once. The server lists the `koanSignIn` extension; seeing it, the
 client sends the password as `p=enc:` to `/rest/koanSignIn`, over plain HTTP
 too, and gets back an API key of the device's own, named after it. It keeps the
 key in `config.local.toml` and not the password, which is never sent again.
-Only the account's own password is accepted there: not an API key, an app
-password or the shared secret. Against any other Subsonic server the password
+Signing in again from the same device replaces that device's key, so a
+reinstall leaves no unused key behind. Only the account's own password is
+traded for a key: an app password or the shared secret is refused there (error
+50), and the client then keeps it as typed and signs with it as a salted token,
+as before. Against any other Subsonic server the password
 is kept as before, and sent as a salted token over plain HTTP. A server that
 refuses token sign-in (error 41) is reported as needing an app password or API
 key.

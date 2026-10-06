@@ -4135,7 +4135,8 @@ async fn koan_revoke_key(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
 /// it keeps a key of the device's own and never sends the password again.
 /// Answers as `koanJoin` does. Only the account's own password will do: a key
 /// or app password is already a credential of its own, and the shared secret
-/// is no account's.
+/// is no account's. The key replaces any of the account's with the same name,
+/// so a device that signs in again holds the one key.
 async fn koan_sign_in(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     offload_response(move || {
         let params = RawParams::parse(raw.as_deref());
@@ -4148,7 +4149,7 @@ async fn koan_sign_in(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
                 ));
             }
             let name = koan_core::invite::device_name(params.get("name").unwrap_or_default());
-            let (_, api_key) = queries::api_keys::create_api_key(&db.conn, caller.user_id, &name)
+            let (_, api_key) = queries::api_keys::replace_api_key(&db.conn, caller.user_id, &name)
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b.child(
                 XmlNode::new("join")
@@ -5546,10 +5547,43 @@ mod tests {
             "the account's own key, named for the device"
         );
 
-        // Only the account's own password: not a key it already holds, not
-        // the shared secret, which is no account's, and not a wrong password.
+        // Signing in again from the same device replaces its key.
+        let body = call(format!(
+            "/rest/koanSignIn?u=mate&p=enc:{}&name=Mate%27s%20iPhone&v=1.16.1&c=test&f=json",
+            enc("hunter22")
+        ))
+        .await;
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let again = v["subsonic-response"]["join"]["apiKey"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(again, key);
+        let body = call(format!("/rest/ping?apiKey={key}&v=1.16.1&c=test")).await;
+        assert!(body.contains("code=\"44\""), "the old key is gone: {body}");
+        let keys = queries::api_keys::list_api_keys(&db.conn, Some(mate.id)).unwrap();
+        assert_eq!(keys.len(), 1, "one key per device name");
+        let key = again;
+
+        // Only the account's own password: not a key it already holds, not an
+        // app password, not the shared secret, which is no account's, and not
+        // a wrong password.
         let body = call(format!(
             "/rest/koanSignIn?apiKey={key}&name=more&v=1.16.1&c=test"
+        ))
+        .await;
+        assert!(body.contains("code=\"50\""), "{body}");
+        let app_password = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            mate.id,
+            "arpeggi",
+        )
+        .unwrap()
+        .1;
+        let body = call(format!(
+            "/rest/koanSignIn?u=mate&p=enc:{}&name=more&v=1.16.1&c=test",
+            enc(&app_password)
         ))
         .await;
         assert!(body.contains("code=\"50\""), "{body}");
