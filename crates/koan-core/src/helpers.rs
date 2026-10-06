@@ -27,6 +27,37 @@ pub fn remote_credential(cfg: &Config) -> Option<Credential> {
     (!cfg.remote.password.is_empty()).then(|| Credential::Password(cfg.remote.password.clone()))
 }
 
+/// The right to scan and watch the library at `db_path`, held by one process
+/// at a time: an exclusive `flock` on `watch.lock` beside the database. Two
+/// servers share a database while one replaces the other, and two scanners
+/// would only contend for its write lock. `None` while another process holds
+/// it. The kernel drops the lock when the process ends, however it ends, so a
+/// killed server cannot keep it.
+pub fn try_watch_lock(db_path: &Path) -> std::io::Result<Option<std::fs::File>> {
+    let file = watch_lock_file(db_path)?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    }
+}
+
+/// [`try_watch_lock`], waiting as long as another process holds it. The
+/// kernel wakes the waiter when the holder lets go; nothing polls.
+pub fn watch_lock(db_path: &Path) -> std::io::Result<std::fs::File> {
+    let file = watch_lock_file(db_path)?;
+    file.lock()?;
+    Ok(file)
+}
+
+fn watch_lock_file(db_path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(db_path.with_file_name("watch.lock"))
+}
+
 /// Index files that appear in the library folders while koan is running.
 ///
 /// One incremental scan shortly after startup — the walk is a fraction of a
@@ -77,6 +108,29 @@ pub fn spawn_library_watch(
     std::thread::Builder::new()
         .name("koan-library-watch".into())
         .spawn(move || {
+            // Another process watching this library, as an outgoing server
+            // does while its replacement starts, keeps the watch until it
+            // exits; this thread sleeps in the kernel until then. Serving
+            // does not wait for it. A directory that cannot hold the lock
+            // file is one koan is not sharing, so it watches as before.
+            let _lock = match try_watch_lock(&db_path) {
+                Ok(Some(lock)) => Some(lock),
+                Ok(None) => {
+                    log::info!(
+                        "another koan is watching this library; serving, and waiting to take over"
+                    );
+                    let lock = watch_lock(&db_path);
+                    if lock.is_ok() {
+                        log::info!("library watch: taken over");
+                    }
+                    lock.inspect_err(|e| log::warn!("library watch: lock: {e}"))
+                        .ok()
+                }
+                Err(e) => {
+                    log::warn!("library watch: no lock beside the database: {e}");
+                    None
+                }
+            };
             let scan = |reason: &str, folders: &[PathBuf], dirs: Option<&[PathBuf]>| {
                 if folders.is_empty() {
                     return;
@@ -506,6 +560,10 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
     // Rows are keyed by the disk's spelling; a folder named the other way would forget nothing.
     let folder = &crate::index::spelling::on_disk(folder);
     let (lower, upper) = queries::folder_prefix_range(folder);
+    // A scan of it underway would index again what this forgets: stop it, and
+    // let it finish committing before anything goes.
+    crate::index::lane::cancel_under(folder);
+    let _lane = crate::index::lane::wait();
 
     let tx = crate::db::queries::write_transaction(&db.conn)?;
     let paths: Vec<String> = {
@@ -2755,5 +2813,54 @@ mod refusal_tests {
         assert_eq!(remote_problem(&cfg), None, "a new credential starts clean");
         sync();
         assert_eq!(remote_problem(&Config::load().unwrap()), None);
+    }
+}
+
+#[cfg(test)]
+mod watch_lock_tests {
+    use super::*;
+
+    /// Two processes on one database: whoever holds the lock watches, the
+    /// other waits, and takes over once the first lets go. `flock` locks
+    /// belong to the open file, so two opens in one process stand in for two
+    /// processes.
+    #[test]
+    fn one_watcher_per_database_and_the_next_takes_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("koan.db");
+        let first = try_watch_lock(&db).unwrap().expect("the first takes it");
+        assert!(try_watch_lock(&db).unwrap().is_none(), "the second waits");
+        assert!(dir.path().join("watch.lock").exists());
+        drop(first);
+        assert!(try_watch_lock(&db).unwrap().is_some(), "and then takes it");
+    }
+
+    /// The waiting side blocks in the kernel and wakes when the holder lets
+    /// go, with no retry interval to sit out.
+    #[test]
+    fn a_waiting_watcher_wakes_when_the_lock_is_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("koan.db");
+        let first = try_watch_lock(&db).unwrap().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiting = db.clone();
+        std::thread::spawn(move || {
+            let lock = watch_lock(&waiting);
+            let _ = tx.send(lock.is_ok());
+        });
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(200))
+                .is_err(),
+            "it waits while the lock is held"
+        );
+        drop(first);
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(true));
+    }
+
+    #[test]
+    fn databases_in_different_directories_do_not_share_a_lock() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let _a = try_watch_lock(&a.path().join("koan.db")).unwrap().unwrap();
+        assert!(try_watch_lock(&b.path().join("koan.db")).unwrap().is_some());
     }
 }

@@ -26,8 +26,14 @@ pub fn cmd_serve(
 ) {
     use koan_core::player::Player;
 
-    // Validate DB is accessible before starting the server.
-    let _db = koan_core::db::connection::Database::open_default().expect("failed to open database");
+    // Open, and migrate, before binding: a database this build cannot read,
+    // such as one a newer koan has migrated, stops it here with the reason
+    // rather than serving errors.
+    if let Err(e) = koan_core::db::connection::Database::open_default() {
+        log::error!("cannot open the database: {e}");
+        eprintln!("koan: cannot open the database: {e}");
+        std::process::exit(1);
+    }
     let db_path = koan_core::config::db_path();
     let pool = Arc::new(Pool::new(db_path.clone()));
 
@@ -266,6 +272,11 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         log::info!("CORS: no origins configured — browsers get no cross-origin access");
     }
 
+    let proxy_auth = crate::ui::ProxyAuth::from_config(
+        &cfg.graphql.proxy_auth_header,
+        &cfg.graphql.proxy_auth_from,
+    )?;
+
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
         // GraphQL routes — protected by auth middleware.
@@ -300,6 +311,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             covers.clone(),
             cfg.sharing.public_url.clone(),
             cfg.mcp.redirect_hosts.clone(),
+            proxy_auth,
         );
 
         // Auth routes — always accessible (no auth middleware).
