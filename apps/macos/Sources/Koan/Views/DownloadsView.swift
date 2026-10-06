@@ -39,7 +39,7 @@ struct DownloadsView: View {
                             .washedRow()
                     }
                 }
-                .listStyle(.inset)
+                .insetList()
                 #endif
             }
         }
@@ -50,6 +50,7 @@ struct DownloadsView: View {
                     Label("Clear Finished", systemImage: Icon.clear)
                 }
                 .help("Forget the transfers that have already settled")
+                .toolbarButton()
             }
         }
     }
@@ -164,7 +165,7 @@ private struct DownloadRow: View {
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
         .contextMenu { DownloadMenu(transfer: transfer) }
     }
 

@@ -106,12 +106,18 @@ private struct SectionFilter: ViewModifier {
     @Environment(LibraryModel.self) private var library
 
     func body(content: Content) -> some View {
+        #if os(tvOS)
+        // A search field on tvOS is a keyboard across the top of the page,
+        // over its title and buttons. The Search tab finds things there.
+        content
+        #else
         if let placeholder {
             @Bindable var library = library
             content.searchable(text: $library.filter, prompt: placeholder)
         } else {
             content
         }
+        #endif
     }
 }
 
@@ -131,8 +137,14 @@ private struct TrackSortControls: ToolbarContent {
                     }
                 }
             } label: {
+                #if os(tvOS)
+                // See `BrowseFilterButton`: the symbol alone.
+                Image(systemName: "arrow.up.arrow.down").accessibilityLabel("Sort")
+                #else
                 Label("Sort", systemImage: "arrow.up.arrow.down")
+                #endif
             }
+            .toolbarButton()
         }
     }
 }
@@ -150,6 +162,7 @@ private struct AlbumSortControls: ToolbarContent {
                 } label: {
                     Label("Shuffle", systemImage: Icon.reshuffle)
                 }
+                .toolbarButton()
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
@@ -165,8 +178,14 @@ private struct AlbumSortControls: ToolbarContent {
                     }
                 }
             } label: {
+                #if os(tvOS)
+                // See `BrowseFilterButton`: the symbol alone.
+                Image(systemName: "arrow.up.arrow.down").accessibilityLabel("Sort")
+                #else
                 Label("Sort", systemImage: "arrow.up.arrow.down")
+                #endif
             }
+            .toolbarButton()
         }
     }
 }

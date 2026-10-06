@@ -67,7 +67,7 @@ enum Playable {
         case .artist(let id, _):
             return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
         case .playlist(let id, _):
-            return (try? await engine.playlistTracks(playlistId: id))?.map(\.id) ?? []
+            return (try? await engine.playlistTracks(playlistId: id))?.map(\.track.id) ?? []
         }
     }
 }
@@ -100,10 +100,12 @@ struct PlayableMenu: View {
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(OrganizeModel.self) private var organize
+    #if os(macOS)
     @Environment(\.openWindow) private var openWindow
+    #endif
 
     var body: some View {
-        Button { act { player.playNow(trackIds: $0) } } label: {
+        Button { playNow(shuffled: false) } label: {
             Label("Play", systemImage: Icon.play)
         }
         Button { act { player.playNext(trackIds: $0) } } label: {
@@ -113,7 +115,7 @@ struct PlayableMenu: View {
             Label("Add to Queue", systemImage: Icon.queue)
         }
         if playable.hasChildren {
-            Button { act { player.playNow(trackIds: $0.shuffled()) } } label: {
+            Button { playNow(shuffled: true) } label: {
                 Label("Shuffle", systemImage: Icon.shuffle)
             }
         }
@@ -132,7 +134,7 @@ struct PlayableMenu: View {
                 Label(favouriteTitle, systemImage: isFavourite ? Icon.favourited : Icon.favourite)
             }
             Button { Share.link(for: playable, engine: library.engine, player: player) } label: {
-                Label("Copy Share Link", systemImage: Icon.share)
+                Label(Share.label, systemImage: Icon.share)
             }
             // Renames files on disk; a phone has no library folder, and no
             // Organize window to open.
@@ -146,7 +148,11 @@ struct PlayableMenu: View {
                 Label("Organize Files…", systemImage: Icon.organize)
             }
             #endif
+            // The cache looks after itself on a television, which has nowhere
+            // to keep a library for later.
+            #if !os(tvOS)
             cacheActions
+            #endif
         }
 
         if case .track(let track) = playable, let albumId = track.albumId {
@@ -214,6 +220,17 @@ struct PlayableMenu: View {
         }
     }
 
+    /// Replace the queue with this, in turn with every other request: see
+    /// `PlayerModel.playNow(resolving:_:)`.
+    private func playNow(shuffled: Bool) {
+        let engine = library.engine
+        let playable = self.playable
+        player.playNow(resolving: playable.name) {
+            let ids = await playable.trackIds(using: engine)
+            return shuffled ? ids.shuffled() : ids
+        }
+    }
+
     /// Resolve off the main actor, then act. An artist can be thousands of
     /// tracks and the resolution is a database query.
     private func act(_ body: @escaping @MainActor ([Int64]) -> Void) {
@@ -262,6 +279,14 @@ struct QueueActions: View {
 /// Creating a share link, in one place: the menu item and the button on an
 /// album or artist page must not drift apart.
 enum Share {
+    /// What the share action says. A television has no pasteboard: there the
+    /// link is shown as a code to scan rather than copied.
+    #if os(tvOS)
+    static let label = "Share…"
+    #else
+    static let label = "Copy Share Link"
+    #endif
+
     /// Asks the remote server for a public link and copies it.
     ///
     /// Only tracks the server knows about can go in a link — it points at the
@@ -319,6 +344,14 @@ enum Share {
     private static func deliver(_ result: Result<KoanFFI.Share, Error>, to player: PlayerModel) {
         switch result {
         case .success(let share):
+            #if os(tvOS)
+            player.sharedLink = share.url
+            if share.skipped > 0 {
+                player.lastNotice =
+                    "\(share.shared) of \(share.shared + share.skipped) tracks are shared; "
+                    + "the rest aren't on your server."
+            }
+            #else
             Pasteboard.write(text: share.url)
             // Done, so a notice rather than an error: reported as one, iOS
             // would title the link "Something went wrong".
@@ -329,6 +362,7 @@ enum Share {
             } else {
                 player.lastNotice = "Share link copied: \(share.url)"
             }
+            #endif
         case .failure(let error):
             player.report("Couldn't create a share link — \(reason(for: error))")
         }
@@ -351,7 +385,7 @@ struct ShareButton: View {
         Button {
             Share.link(for: playable, engine: library.engine, player: player)
         } label: {
-            Label("Copy Share Link", systemImage: Icon.share)
+            Label(Share.label, systemImage: Icon.share)
         }
         .help("Create a public link on your server and copy it")
     }
@@ -387,21 +421,30 @@ struct PlayableHeaderButton: View {
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
-    @State private var loading = false
+
+    /// This play is still finding its tracks.
+    private var loading: Bool { player.resolving == playable.name }
 
     var body: some View {
         Button {
             guard !loading else { return }
-            loading = true
             let engine = library.engine
             let playable = self.playable
-            Task {
-                let ids = await playable.trackIds(using: engine)
-                loading = false
-                player.playNow(trackIds: ids)
-                if case .artist = playable { nav.showQueueWhenReady(watching: player) }
+            let done = player.playNow(resolving: playable.name) {
+                await playable.trackIds(using: engine)
+            }
+            if case .artist = playable {
+                Task {
+                    await done.value
+                    nav.showQueueWhenReady(watching: player)
+                }
             }
         } label: {
+            #if os(tvOS)
+            // A television's play is a labelled button leading the row of
+            // actions, the first thing focus lands on in a record's header.
+            Label(loading ? "Loading" : "Play", systemImage: Icon.play)
+            #else
             ZStack {
                 Circle()
                     .fill(.tint)
@@ -415,8 +458,11 @@ struct PlayableHeaderButton: View {
                         .offset(x: 1)  // optical centring for a triangle
                 }
             }
+            #endif
         }
+        #if !os(tvOS)
         .buttonStyle(.plain)
+        #endif
         .help("Play \(playable.name)")
     }
 }
@@ -482,6 +528,8 @@ struct AddToPlaylistMenu: View {
     @Environment(PlaylistsModel.self) private var playlists
 
     var body: some View {
+        // A television plays playlists; they are made and filled elsewhere.
+        #if !os(tvOS)
         Menu("Add to Playlist") {
             Button("New Playlist…") { resolve { playlists.naming = $0 } }
             let fillable = playlists.playlists.filter { !$0.readonly }
@@ -494,5 +542,6 @@ struct AddToPlaylistMenu: View {
                 }
             }
         }
+        #endif
     }
 }

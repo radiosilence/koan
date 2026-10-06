@@ -578,6 +578,8 @@ impl LinkIdentity {
     pub fn this_device(name: Option<String>) -> Self {
         let (platform, label) = if cfg!(target_os = "ios") {
             ("ios", "iPhone")
+        } else if cfg!(target_os = "tvos") {
+            ("tvos", "Apple TV")
         } else if cfg!(target_os = "macos") {
             ("macos", "Mac")
         } else {
@@ -959,7 +961,7 @@ pub fn sync(db: &crate::db::connection::Database, walk: crate::helpers::Walk) {
 /// well: deleting an app empties its container but not its Keychain items, so
 /// a reinstalled app keeps its id rather than appearing as a second device.
 fn device_id(dir: &Path) -> String {
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "tvos"))]
     {
         use security_framework::passwords::{get_generic_password, set_generic_password};
         const SERVICE: &str = "cc.blit.koan.link";
@@ -974,7 +976,7 @@ fn device_id(dir: &Path) -> String {
         let _ = set_generic_password(SERVICE, "device-id", id.as_bytes());
         id
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
     file_device_id(dir)
 }
 

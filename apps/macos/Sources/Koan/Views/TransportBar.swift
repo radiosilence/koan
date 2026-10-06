@@ -128,7 +128,16 @@ struct TransportBar: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                if let entry = player.currentEntry {
+                // A play still finding its tracks, named from the tap rather
+                // than leaving the track it replaces on show.
+                if let name = player.resolving {
+                    Text(name)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    Text("Loading…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let entry = player.currentEntry {
                     Text(entry.title)
                         .font(.callout.weight(.medium))
                         .lineLimit(1)
@@ -320,7 +329,9 @@ struct SeekBar: View {
                 // thumb does not follow the pointer then — a head that moves
                 // and springs back is a worse answer than one that stays put —
                 // but the attempt is still worth answering, so releasing says
-                // why nothing happened.
+                // why nothing happened. tvOS has no drag; the remote seeks
+                // through the system's Now Playing.
+                #if !os(tvOS)
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
@@ -332,6 +343,7 @@ struct SeekBar: View {
                             player.seek(fraction: (value.location.x / geo.size.width).clamped())
                         }
                 )
+                #endif
             }
             .frame(height: Self.reach)
 

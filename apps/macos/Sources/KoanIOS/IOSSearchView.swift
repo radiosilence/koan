@@ -17,9 +17,15 @@ struct IOSSearchView: View {
             // purpose is the field, that reads as there being none.
             .searchable(
                 text: $search.query,
-                placement: .navigationBarDrawer(displayMode: .always),
+                placement: Self.placement,
                 prompt: "Artists, albums, tracks"
             )
             .onSubmit(of: .search) { search.submit() }
     }
+
+    #if os(tvOS)
+    private static let placement = SearchFieldPlacement.automatic
+    #else
+    private static let placement = SearchFieldPlacement.navigationBarDrawer(displayMode: .always)
+    #endif
 }

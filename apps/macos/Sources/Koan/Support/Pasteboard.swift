@@ -12,6 +12,8 @@ import UniformTypeIdentifiers
 /// same copy is useful in a message or a text file. Anything that isn't koan
 /// falls back to reading the text, which we can't turn back into tracks — hence
 /// carrying both rather than only the pretty one.
+///
+/// tvOS has no pasteboard; there each of these does nothing.
 enum Pasteboard {
     static let trackType = "cc.blit.koan.track-ids"
 
@@ -22,6 +24,8 @@ enum Pasteboard {
         board.clearContents()
         board.setString(text, forType: .string)
         if let ids { board.setData(ids, forType: .init(trackType)) }
+        #elseif os(tvOS)
+        _ = (ids, text)
         #else
         // One item carrying both representations. Setting them separately
         // clears what went before.
@@ -37,6 +41,8 @@ enum Pasteboard {
         let board = NSPasteboard.general
         board.clearContents()
         board.setString(text, forType: .string)
+        #elseif os(tvOS)
+        _ = text
         #else
         UIPasteboard.general.string = text
         #endif
@@ -50,6 +56,8 @@ enum Pasteboard {
         board.clearContents()
         board.setString(html, forType: .html)
         board.setString(text, forType: .string)
+        #elseif os(tvOS)
+        _ = (html, text)
         #else
         UIPasteboard.general.setItems([[
             UTType.html.identifier: html,
@@ -68,6 +76,8 @@ enum Pasteboard {
     private static func trackData() -> Data? {
         #if canImport(AppKit)
         NSPasteboard.general.data(forType: .init(trackType))
+        #elseif os(tvOS)
+        nil
         #else
         UIPasteboard.general.data(forPasteboardType: trackType)
         #endif

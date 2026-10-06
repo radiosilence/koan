@@ -93,6 +93,15 @@ just ios-signin DEV URL USER PASS # sign a simulator in through Settings, as App
 just ios-use DEV      # use the app like a listener and check each step; run before submitting
 just ios-store-shots SRC OUT [captions-ipad] # frame a walk's screenshots for the App Store
 just ios-store [iphone=DIR ipad=DIR] # push apps/ios/store/listing.toml (+ screenshots) to App Store Connect
+just tv-run         # build and launch on an Apple TV simulator
+just tv-device      # install on the Apple TV paired with Xcode
+just tv-walk [LIBRARY] # walk every page with the remote, into target/tv-walk; a folder is served from a throwaway koan
+just tv-join LINK [tv] # sign the simulator, or the paired Apple TV, in through an invite
+just tv-kept        # clear Caches/koan-config as tvOS does, check the TV is still signed in
+just tv-pair [OUTCOME] # pair a signed-out TV simulator, approved (or declined, or left to expire) over the API
+just tv-signin [ROUTES] # each other way onto the TV and its failures, from fresh installs, against KOAN_SIGNIN_*
+just tv-pair-qr     # the same, approved by an iPhone simulator that reads the QR code off the TV
+just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (needs the ASC key)
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
@@ -113,7 +122,8 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 |--------|------|
 | `audio/backend.rs` | `AudioBackend` + `AudioEngineHandle` traits — platform-agnostic audio output |
 | `audio/coreaudio_backend.rs` | macOS `CoreAudioBackend` impl (wraps engine.rs + device.rs) |
-| `audio/ios_backend.rs` | iOS `IosAudioBackend` impl — the route is the only device; the session belongs to the app |
+| `audio/ios_backend.rs` | iOS and tvOS `IosAudioBackend` impl — the route is the only device; the session belongs to the app |
+| `audio/toolbox.rs` | The AudioToolbox names the engine uses, declared by hand for tvOS: `coreaudio-sys`'s build script knows only macOS and iOS |
 | `audio/cpal_backend.rs` | Linux `CpalBackend` impl (ALSA/PipeWire/PulseAudio via cpal) |
 | `audio/engine.rs` | CoreAudio output setup, render callback. AUHAL on macOS, RemoteIO on iOS — two properties apart |
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
@@ -197,8 +207,12 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 
 ### apps/macos (`apps/macos/Sources/`)
 
-`Koan/` is the app: models, pages and rows, shared by both platforms. `KoanIOS/`
-is the iOS scene root and audio session — the phone's shell over the same state.
+`Koan/` is the app: models, pages and rows, shared by every platform. `KoanIOS/`
+is the iOS scene root and audio session — the phone's shell over the same state,
+which tvOS uses too. `KoanTV/` holds what only a television has: Now Playing as
+a page, share links as codes to scan. What tvOS lacks — hover, drag, the
+pasteboard, sliders, keyboard shortcuts, selection menus — goes through small
+shims in `Support/Platform.swift` that leave a view as it is there.
 The directory is still called `macos` because the macOS app is what it builds
 with SwiftPM. iOS device builds and the UI walk go through an Xcode project that
 XcodeGen generates from `apps/ios/project.yml` (`just ios-project`); it is not

@@ -16,7 +16,8 @@ struct RowPlayButton: View {
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
-    @State private var loading = false
+    /// This play is still finding its tracks.
+    private var loading: Bool { player.resolving == playable.name }
 
     var body: some View {
         Button {
@@ -40,13 +41,10 @@ struct RowPlayButton: View {
             player.playNow(trackIds: context.trackIds, startingAt: context.startAt)
             return
         }
-        loading = true
         let engine = library.engine
         let playable = self.playable
-        Task {
-            let ids = await playable.trackIds(using: engine)
-            loading = false
-            player.playNow(trackIds: ids)
+        player.playNow(resolving: playable.name) {
+            await playable.trackIds(using: engine)
         }
     }
 }

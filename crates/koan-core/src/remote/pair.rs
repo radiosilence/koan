@@ -56,6 +56,12 @@ pub enum PairError {
     BadUrl(String),
     #[error("could not reach the server: {0}")]
     Connect(String),
+    /// The server answered, and has no pairing to offer: not koan, or a koan
+    /// from before pairing.
+    #[error("this server does not pair devices")]
+    Unsupported,
+    #[error("too many devices are waiting to pair from this network; try again in a few minutes")]
+    TooMany,
     #[error("the server answered with something unexpected")]
     BadResponse,
     #[error("the sign-in was declined")]
@@ -99,8 +105,16 @@ impl Cancel {
 pub fn start(url: &str, device: &str) -> Result<Pending, PairError> {
     let server = url.trim().trim_end_matches('/').to_owned();
     let socket_url = pair_url(&server, device)?;
-    let (mut socket, _) =
-        tungstenite::connect(socket_url.as_str()).map_err(|e| PairError::Connect(e.to_string()))?;
+    let (mut socket, _) = tungstenite::connect(socket_url.as_str()).map_err(|e| match e {
+        // Any answer but an upgrade is a server without pairing, except a
+        // koan turning away a busy address and a proxy whose server is down.
+        tungstenite::Error::Http(ref response) => match response.status().as_u16() {
+            429 => PairError::TooMany,
+            502..=504 => PairError::Connect(e.to_string()),
+            _ => PairError::Unsupported,
+        },
+        e => PairError::Connect(e.to_string()),
+    })?;
     if let Some(tcp) = tcp(&socket) {
         let _ = tcp.set_read_timeout(Some(SILENCE));
     }
@@ -193,14 +207,17 @@ pub struct PairLink {
 impl PairLink {
     pub fn parse(link: &str) -> Option<Self> {
         let url = Url::parse(link.trim()).ok()?;
-        if url.scheme() != "https"
-            || url.host_str() != Some("koan.rocks")
-            || url.path().trim_end_matches('/') != "/pair"
-        {
-            return None;
-        }
+        let params = match (url.scheme(), url.host_str()) {
+            ("https", Some("koan.rocks")) if url.path().trim_end_matches('/') == "/pair" => {
+                url.fragment()?
+            }
+            // The same link through the app's own scheme, where the universal
+            // link cannot reach the app: a simulator, an unsigned build.
+            ("koan", Some("pair")) => url.fragment().or(url.query())?,
+            _ => return None,
+        };
         let (mut server, mut id) = (None, None);
-        for (k, v) in form_urlencoded::parse(url.fragment()?.as_bytes()) {
+        for (k, v) in form_urlencoded::parse(params.as_bytes()) {
             let v = Some(v.trim().to_owned()).filter(|v| !v.is_empty());
             match &*k {
                 "s" => server = v,
@@ -254,6 +271,26 @@ mod tests {
             })
         );
         assert!(PairLink::parse("https://koan.rocks/pair#s=https%3A%2F%2Fa.example&p=x").is_some());
+    }
+
+    #[test]
+    fn the_apps_own_scheme_carries_the_same_link() {
+        let expected = Some(PairLink {
+            server: "https://a.example".into(),
+            id: "x".into(),
+        });
+        assert_eq!(
+            PairLink::parse("koan://pair#s=https%3A%2F%2Fa.example&p=x"),
+            expected
+        );
+        assert_eq!(
+            PairLink::parse("koan://pair?s=https%3A%2F%2Fa.example&p=x"),
+            expected
+        );
+        assert_eq!(
+            PairLink::parse("koan://join?s=https%3A%2F%2Fa.example&p=x"),
+            None
+        );
     }
 
     #[test]

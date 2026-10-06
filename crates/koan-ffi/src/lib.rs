@@ -1068,23 +1068,16 @@ impl KoanEngine {
         .await
     }
 
-    /// Why the configured server cannot be used, if it cannot.
+    /// Why the configured server cannot be used, if it cannot: no credential,
+    /// or one the server has refused since.
     ///
     /// `None` means there is nothing to say: either no server is configured, or
     /// the one that is works. A client should not have to watch playback fail
     /// and artwork come back empty to work out that it is signed out — the
-    /// engine already knows, and every front end asks the same question.
+    /// engine already knows, and every front end asks the same question. A
+    /// refusal heard later reaches the app as `ConnectionInfo::sign_in_refused`.
     pub async fn remote_problem(self: Arc<Self>) -> Option<String> {
-        offload::offload(move || {
-            let cfg = Config::cached();
-            if !cfg.remote.enabled || cfg.remote.url.is_empty() {
-                return None;
-            }
-            koan_core::helpers::subsonic_auth(&cfg)
-                .is_none()
-                .then(|| koan_core::helpers::remote_unavailable(&cfg))
-        })
-        .await
+        offload::offload(move || koan_core::helpers::remote_problem(&Config::cached())).await
     }
 
     /// Cached lyrics only — this never hits the network, so it is safe to call
@@ -1580,7 +1573,7 @@ impl KoanEngine {
             Ok(ids
                 .into_iter()
                 .zip(tracks)
-                .map(|(id, track)| PlaylistEntry { id, track })
+                .map(|(entry_id, track)| PlaylistEntry { entry_id, track })
                 .collect())
         })
         .await
@@ -2439,7 +2432,7 @@ impl KoanEngine {
     /// The name of the port iOS routes audio to, on each route change: what
     /// profiles are chosen by on a phone. Does nothing elsewhere.
     pub async fn set_audio_route(self: Arc<Self>, name: String) -> Result<(), KoanError> {
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "tvos"))]
         {
             offload::sequenced(move || {
                 koan_core::audio::ios_backend::set_route(name);
@@ -2447,7 +2440,7 @@ impl KoanEngine {
             })
             .await
         }
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
         {
             let _ = name;
             Ok(())
@@ -2588,6 +2581,23 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             koan_core::helpers::set_remote_credentials(&url, &username, &password).map_err(|e| {
+                KoanError::BadArgument {
+                    message: e.to_string(),
+                }
+            })
+        })
+        .await
+    }
+
+    /// Sign in to a koan server with an API key the account already holds.
+    pub async fn sign_in_remote_with_key(
+        self: Arc<Self>,
+        url: String,
+        username: String,
+        api_key: String,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            koan_core::helpers::set_remote_api_key(&url, &username, &api_key).map_err(|e| {
                 KoanError::BadArgument {
                     message: e.to_string(),
                 }
@@ -5015,6 +5025,7 @@ fn connection_info() -> ConnectionInfo {
         share_accounts: devices::accounts(),
         offline: koan_core::remote::offline::active(),
         offline_manual: koan_core::remote::offline::manual(),
+        sign_in_refused: koan_core::helpers::sign_in_refused(&Config::cached()),
     }
 }
 
@@ -5098,6 +5109,9 @@ fn pair_error(e: koan_core::remote::pair::PairError) -> KoanError {
     use koan_core::remote::pair::PairError;
     match e {
         PairError::Remote(e) => remote_error(e),
+        e @ PairError::Unsupported => KoanError::NotFound {
+            message: e.to_string(),
+        },
         e @ (PairError::Connect(_) | PairError::Closed) => KoanError::Remote {
             message: e.to_string(),
         },
