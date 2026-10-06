@@ -33,6 +33,7 @@ struct BrowseFilterButton: View {
         .popover(isPresented: $open, arrowEdge: .bottom) {
             BrowseFilterForm()
                 .frame(width: 300)
+                .koanPopover()
         }
         #else
         .sheet(isPresented: $open) {

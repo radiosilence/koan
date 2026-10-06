@@ -70,6 +70,11 @@ final class QueueTableRow: NSTableCellView, TableRow {
     private static let codecFont = NSFont.role(.fine, system: NSFont.monospacedSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
     ))
+    /// Wide enough for an hour or more ("1:02:34") in whichever face the rows
+    /// are drawn in; never narrower than the column was.
+    private static let durationWidth = max(
+        44, ceil(("0:00:00" as NSString).size(withAttributes: [.font: numberFont]).width) + 2
+    )
     private static let headingFont = NSFont.role(.body, system: NSFont.systemFont(ofSize: 14, weight: .semibold))
     private static let detailFont = NSFont.role(.fine, system: NSFont.monospacedDigitSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
@@ -349,7 +354,7 @@ final class QueueTableRow: NSTableCellView, TableRow {
         }
 
         var right = bounds.width
-        let durationWidth: CGFloat = 44
+        let durationWidth = Self.durationWidth
         let numberHeight = lineHeight(Self.numberFont)
         duration.frame = CGRect(x: right - durationWidth, y: (height - numberHeight) / 2, width: durationWidth, height: numberHeight)
         right -= durationWidth + 10
