@@ -196,11 +196,11 @@ pub fn fetch(hit: &Hit) -> Result<String, String> {
     };
     let (left, right) = (channel("L"), channel("R"));
     let curve = match (left, right) {
-        (Ok(l), Ok(r)) => l
-            .iter()
-            .map(|&(hz, db)| (hz, (db + super::targets::at(&r, hz)) / 2.0))
-            .collect(),
-        (Ok(one), Err(_)) | (Err(_), Ok(one)) => one,
+        (Ok(l), Ok(r)) => average(&l, &r),
+        (Ok(one), Err(e)) | (Err(e), Ok(one)) => {
+            log::info!("squig: {} on one side only: {e}", hit.name());
+            one
+        }
         (Err(e), Err(_)) => return Err(e),
     };
     let mut text = String::from("frequency,raw\n");
@@ -210,8 +210,29 @@ pub fn fetch(hit: &Hit) -> Result<String, String> {
     Ok(text)
 }
 
-/// `name` in `site`'s data folder, as a URL.
+/// Two channels' levels as one, as squig.link's graphs average them: the
+/// mean of their amplitudes, in dB again.
+fn average(left: &[(f64, f64)], right: &[(f64, f64)]) -> super::targets::Curve {
+    let amplitude = |db: f64| 10f64.powf(db / 20.0);
+    left.iter()
+        .map(|&(hz, db)| {
+            let r = super::targets::at(right, hz);
+            (hz, 20.0 * ((amplitude(db) + amplitude(r)) / 2.0).log10())
+        })
+        .collect()
+}
+
+/// A file name that stays in a site's data folder.
+fn stays_in(name: &str) -> bool {
+    !name.is_empty() && !name.contains(['/', '\\']) && !name.starts_with('.')
+}
+
+/// `name` in `site`'s data folder, as a URL. Refused for a name that would
+/// leave it.
 fn data_url(site: &Site, name: &str) -> Result<url::Url, String> {
+    if !stays_in(name) {
+        return Err(format!("{name} is not a file in a squig.link site's data"));
+    }
     let mut url = url::Url::parse(&format!("{}/data/", site.base)).map_err(|e| e.to_string())?;
     url.path_segments_mut()
         .map_err(|()| format!("{} is not a site", site.base))?
@@ -220,17 +241,42 @@ fn data_url(site: &Site, name: &str) -> Result<url::Url, String> {
     Ok(url)
 }
 
+/// A site being read, so a second search waits for the first rather than
+/// asking the site again.
+static READING: Mutex<Option<HashMap<&'static str, Arc<Mutex<()>>>>> = Mutex::new(None);
+/// When a site last failed to answer, with no copy kept to fall back on.
+static FAILED: Mutex<Option<HashMap<&'static str, SystemTime>>> = Mutex::new(None);
+/// How long a site that did not answer is left alone.
+const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
+
+/// `site`'s catalogue as read this last day, if it was.
+fn read_lately(site: &Site) -> Option<Arc<Vec<Entry>>> {
+    let read = READ.lock();
+    let (at, entries) = read.as_ref()?.get(site.base)?;
+    SystemTime::now()
+        .duration_since(*at)
+        .is_ok_and(|age| age < FRESH_FOR)
+        .then(|| entries.clone())
+}
+
 /// `site`'s catalogue: the copy read this last day, the one kept beside the
 /// config while it is a day old, or fetched. A copy kept, however old, is
-/// used when the site does not answer.
+/// used when the site does not answer; one that did not answer, with none
+/// kept, is not asked again for a few minutes. One read of a site at a time.
 fn book(site: &'static Site) -> Result<Arc<Vec<Entry>>, String> {
-    if let Some((at, entries)) = READ.lock().as_ref().and_then(|m| m.get(site.base)) {
-        if SystemTime::now()
-            .duration_since(*at)
-            .is_ok_and(|age| age < FRESH_FOR)
-        {
-            return Ok(entries.clone());
-        }
+    if let Some(entries) = read_lately(site) {
+        return Ok(entries);
+    }
+    let one = READING
+        .lock()
+        .get_or_insert_with(HashMap::new)
+        .entry(site.base)
+        .or_default()
+        .clone();
+    let _one = one.lock();
+    // Read while this waited.
+    if let Some(entries) = read_lately(site) {
+        return Ok(entries);
     }
     let file = cache_dir().join(format!("{}.json", slug(site.base)));
     let kept = std::fs::read_to_string(&file).ok();
@@ -239,7 +285,17 @@ fn book(site: &'static Site) -> Result<Arc<Vec<Entry>>, String> {
         .ok()
         .and_then(|t| SystemTime::now().duration_since(t).ok())
         .is_some_and(|age| age < FRESH_FOR);
-    let entries = match kept.as_deref().map(parse_book) {
+    let kept_entries = kept.as_deref().map(parse_book);
+    let failed_lately = FAILED
+        .lock()
+        .as_ref()
+        .and_then(|f| f.get(site.base))
+        .and_then(|at| SystemTime::now().duration_since(*at).ok())
+        .is_some_and(|ago| ago < RETRY_AFTER);
+    if failed_lately && !matches!(kept_entries, Some(Ok(_))) {
+        return Err(format!("{} did not answer a few minutes ago", site.label()));
+    }
+    let entries = match kept_entries {
         Some(Ok(entries)) if fresh => entries,
         kept_entries => match fetch_book(site) {
             Ok((text, entries)) => {
@@ -263,6 +319,10 @@ fn book(site: &'static Site) -> Result<Arc<Vec<Entry>>, String> {
                 }
                 _ => {
                     log::info!("squig: {} left out: {e}", site.label());
+                    FAILED
+                        .lock()
+                        .get_or_insert_with(HashMap::new)
+                        .insert(site.base, SystemTime::now());
                     return Err(e);
                 }
             },
@@ -333,8 +393,7 @@ fn parse_book(text: &str) -> Result<Vec<Entry>, String> {
                 _ => continue,
             };
             for (i, file) in files.iter().enumerate() {
-                // A file name that would leave the data folder is skipped.
-                if file.contains(['/', '\\']) || file.starts_with('.') {
+                if !stays_in(file) {
                     continue;
                 }
                 let variant = suffixes
@@ -389,8 +448,23 @@ fn cache_dir() -> PathBuf {
     config::config_dir().join("squig")
 }
 
+/// HTTPS, following a redirect only within the host first asked: a site in
+/// the list never sends koan elsewhere, let alone to the local network.
 fn http() -> Result<reqwest::blocking::Client, String> {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        let same = attempt
+            .previous()
+            .first()
+            .is_some_and(|first| first.host_str() == attempt.url().host_str());
+        if same && attempt.previous().len() < 5 {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    });
     reqwest::blocking::Client::builder()
+        .https_only(true)
+        .redirect(policy)
         .timeout(Duration::from_secs(10))
         .user_agent(concat!("koan/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -404,6 +478,10 @@ fn body(resp: reqwest::blocking::Response, cap: u64) -> Result<String, String> {
     resp.take(cap + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
+    within(bytes, cap)
+}
+
+fn within(bytes: Vec<u8>, cap: u64) -> Result<String, String> {
     if bytes.len() as u64 > cap {
         return Err(format!("the response is larger than {} KB", cap >> 10));
     }
@@ -458,6 +536,67 @@ mod tests {
             url.as_str(),
             "https://graph.hangout.audio/iem/711/data/Aful%20Performer%208S%20(deep)%20L.txt"
         );
+    }
+
+    /// Two sides averaged as squig.link's graphs average them: by
+    /// amplitude, so 0 dB and 6 dB make 3.5, not 3.
+    #[test]
+    fn sides_average_by_amplitude() {
+        let left = [(100.0, 0.0), (1000.0, 0.0)];
+        let right = [(100.0, 6.0), (1000.0, 0.0)];
+        let both = average(&left, &right);
+        let expected = 20.0 * ((1.0 + 10f64.powf(6.0 / 20.0)) / 2.0).log10();
+        assert!((both[0].1 - expected).abs() < 1e-9);
+        assert!((both[0].1 - 3.51).abs() < 0.01, "{}", both[0].1);
+        assert_eq!(both[1].1, 0.0);
+    }
+
+    /// A response past its cap is refused, not cut short.
+    #[test]
+    fn a_body_past_its_cap_is_refused() {
+        assert_eq!(within(b"[]".to_vec(), 2).as_deref(), Ok("[]"));
+        assert!(within(b"[1]".to_vec(), 2).is_err());
+        assert!(within(vec![0xff, 0xfe], 8).is_err(), "not text");
+    }
+
+    /// A site that does not answer: its copy kept, however old, is used; with
+    /// none kept, it is left out and not asked again for a few minutes.
+    #[test]
+    fn a_site_that_does_not_answer() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        // Nothing listens on the discard port.
+        let kept: &'static Site = Box::leak(Box::new(at("https://127.0.0.1:9/kept", None, None)));
+        let none: &'static Site = Box::leak(Box::new(at("https://127.0.0.1:9/none", None, None)));
+        std::fs::create_dir_all(cache_dir()).unwrap();
+        let file = cache_dir().join(format!("{}.json", slug(kept.base)));
+        std::fs::write(&file, r#"[{"name": "Aful", "phones": ["Cantor"]}]"#).unwrap();
+        let old = SystemTime::now() - Duration::from_secs(3 * 24 * 60 * 60);
+        std::fs::File::options()
+            .append(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert_eq!(book(kept).unwrap()[0].1, "Cantor", "the copy kept");
+
+        assert!(book(none).is_err());
+        let again = book(none).unwrap_err();
+        assert!(
+            again.contains("did not answer a few minutes ago"),
+            "{again}"
+        );
+    }
+
+    /// A name from outside a catalogue cannot leave the data folder.
+    #[test]
+    fn a_name_cannot_leave_the_data_folder() {
+        for name in ["../config.toml", "a/b L.txt", ".hidden", ""] {
+            assert!(data_url(&SITES[0], name).is_err(), "{name}");
+        }
     }
 
     #[test]

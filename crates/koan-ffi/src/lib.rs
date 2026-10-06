@@ -3044,12 +3044,14 @@ impl KoanEngine {
         offload::sequenced(move || {
             use koan_core::config::DspEar;
             let ear = if in_ear { DspEar::In } else { DspEar::Over };
-            let name = koan_core::audio::dsp::profiles::save_measured(&name, &text, ear, &target)
-                .map_err(|message| KoanError::BadArgument { message })?;
-            if let Some(source) = &source {
-                koan_core::audio::dsp::profiles::credit(&name, source)
-                    .map_err(|message| KoanError::BadArgument { message })?;
-            }
+            let name = koan_core::audio::dsp::profiles::save_measured_from(
+                &name,
+                &text,
+                ear,
+                &target,
+                source.as_deref(),
+            )
+            .map_err(|message| KoanError::BadArgument { message })?;
             self.send_local(PlayerCommand::ReloadDsp)?;
             Ok(name)
         })

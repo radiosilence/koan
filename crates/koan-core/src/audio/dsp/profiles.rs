@@ -1250,6 +1250,19 @@ pub fn preview_measurement(text: &str, target: &str, rate: u32) -> Result<Respon
 /// measured as `text`, corrected to `target`. A correction, kept everywhere
 /// like any headphone's.
 pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Result<String, String> {
+    save_measured_from(name, text, ear, target, None)
+}
+
+/// [`save_measured`], saying where the measurement came from, as an import
+/// says its files: one found on squig.link credits the site it was
+/// measured for.
+pub fn save_measured_from(
+    name: &str,
+    text: &str,
+    ear: DspEar,
+    target: &str,
+    source: Option<&str>,
+) -> Result<String, String> {
     use super::targets;
     let name = name.trim();
     if name.is_empty() {
@@ -1280,20 +1293,11 @@ pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Resul
                 ear,
                 target: target.to_owned(),
             }),
+            source: source.into_iter().map(str::to_owned).collect(),
             ..Default::default()
         })
     })?;
     Ok(name.to_owned())
-}
-
-/// Say where `name` came from, as an import says its files: a measurement
-/// found on squig.link credits the site it was measured for.
-pub fn credit(name: &str, source: &str) -> Result<(), String> {
-    persist(|cfg| {
-        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
-            p.source = vec![source.to_owned()];
-        }
-    })
 }
 
 /// Make `name` a stack of `layers`, in order, creating it if there is none.

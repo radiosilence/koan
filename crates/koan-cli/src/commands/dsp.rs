@@ -298,8 +298,8 @@ pub fn cmd_dsp_squig(
         .map(str::to_owned)
         .unwrap_or_else(|| format!("{} {}", hit.brand, hit.model));
     let ear = if in_ear { DspEar::In } else { DspEar::Over };
-    let saved = profiles::save_measured(&name, &text, ear, target).unwrap_or_else(|e| fail(e));
-    profiles::credit(&saved, &hit.source()).unwrap_or_else(|e| fail(e));
+    let saved = profiles::save_measured_from(&name, &text, ear, target, Some(&hit.source()))
+        .unwrap_or_else(|e| fail(e));
     println!(
         "{} '{}' from {}, corrected to {}",
         "measured".green(),

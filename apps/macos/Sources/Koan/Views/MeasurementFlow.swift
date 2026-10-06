@@ -27,6 +27,11 @@ struct MeasurementFlow: View {
     /// Searching squig.link's sites, from the name the flow was opened with.
     @State private var squigQuery: String
     @State private var hits: [SquigHit] = []
+    @State private var searching = false
+    /// Why a search shows nothing: no match, or no site reached.
+    @State private var searchNote: String?
+    /// The result being fetched.
+    @State private var picking: SquigHit?
     /// Where the measurement came from, credited on the profile.
     @State private var source: String?
 
@@ -135,22 +140,32 @@ struct MeasurementFlow: View {
         Group {
             Section {
                 TextField("Headphones", text: $squigQuery)
-                    .task(id: squigQuery) {
-                        // Debounced: a search runs once typing pauses.
-                        try? await Task.sleep(for: .milliseconds(300))
-                        guard !Task.isCancelled else { return }
-                        hits = (try? await dsp.squigSearch(squigQuery)) ?? []
+                    .task(id: squigQuery) { await search() }
+                if searching, hits.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Searching squig.link…").koanText(.meta, .muted)
                     }
+                } else if let searchNote {
+                    Text(searchNote).koanText(.meta, .muted)
+                }
                 ForEach(hits.prefix(20), id: \.self) { hit in
                     Button { pick(hit) } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(hit.name)
-                            Text([hit.siteLabel, hit.rig.map { "\($0) rig" }].compactMap { $0 }.joined(separator: " · "))
-                                .koanText(.fine, .muted)
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(hit.name)
+                                Text([hit.siteLabel, hit.rig.map { "\($0) rig" }].compactMap { $0 }.joined(separator: " · "))
+                                    .koanText(.fine, .muted)
+                            }
+                            Spacer()
+                            if picking == hit {
+                                ProgressView().controlSize(.small)
+                            }
                         }
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .disabled(picking != nil)
                 }
             } header: {
                 Text("Find it on squig.link")
@@ -272,10 +287,37 @@ struct MeasurementFlow: View {
         step = Step(rawValue: step.rawValue + 1) ?? .review
     }
 
+    /// Search squig.link's sites once typing pauses. A search overtaken by
+    /// newer typing leaves what it found unshown.
+    private func search() async {
+        try? await Task.sleep(for: .milliseconds(300))
+        guard !Task.isCancelled else { return }
+        let query = squigQuery.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else {
+            hits = []
+            searchNote = nil
+            return
+        }
+        searching = true
+        do {
+            let found = try await dsp.squigSearch(query)
+            guard !Task.isCancelled else { return }
+            hits = found
+            searchNote = found.isEmpty ? "Nothing on squig.link matches “\(query)”." : nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            hits = []
+            searchNote = SettingsModel.describe(error)
+        }
+        searching = false
+    }
+
     /// Fetch `hit`'s measurement as the file: its name, its site credited,
     /// and in-ear or over-ear where the site keeps one kind.
     private func pick(_ hit: SquigHit) {
+        picking = hit
         Task {
+            defer { picking = nil }
             do {
                 text = try await dsp.squigFetch(hit)
                 file = "\(hit.name), \(hit.siteLabel)"
