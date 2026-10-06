@@ -978,19 +978,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let music = dir.path().join("music");
         let album = music.join("Artist/Album");
-        for sub in [".stversions", ".hidden"] {
-            std::fs::create_dir_all(album.join(sub)).unwrap();
+        let dotted = music.join("Britney Spears/...Baby One More Time");
+        for sub in [
+            album.join(".stversions"),
+            album.join("Disc 2.part"),
+            dotted.clone(),
+        ] {
+            std::fs::create_dir_all(sub).unwrap();
         }
         let wav = |p: PathBuf| test_utils::generate_wav(&p, 8000, 1, 0.1, 16);
         wav(album.join("01.wav"));
+        wav(dotted.join("01.wav"));
         wav(album.join(".stversions/01~20261006-120000.wav"));
-        wav(album.join(".hidden/02.wav"));
-        wav(album.join("03.wav.part"));
-        wav(album.join("~syncthing~04.wav.tmp"));
+        wav(album.join("._01.wav"));
+        wav(album.join("Disc 2.part/02.wav"));
+        wav(album.join("~syncthing~03.wav"));
         let db = test_db(dir.path());
 
         let full = scan_folder(&db, &music, ScanOptions::default(), None);
-        assert_eq!(full.added, 1, "{:?}", full.errors);
+        assert_eq!(full.added, 2, "{:?}", full.errors);
         let dirs = scan_dirs(
             &db,
             std::slice::from_ref(&music),
@@ -999,7 +1005,10 @@ mod tests {
             None,
         );
         assert_eq!(dirs.added, 0, "{:?}", dirs.errors);
-        assert_eq!(track_paths(&db), [album.join("01.wav").to_string_lossy()]);
+        assert_eq!(
+            track_paths(&db),
+            [album.join("01.wav"), dotted.join("01.wav")].map(|p| p.to_string_lossy().into_owned())
+        );
     }
 
     #[test]

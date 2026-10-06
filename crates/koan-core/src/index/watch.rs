@@ -106,14 +106,33 @@ fn is_file_event(kind: &EventKind) -> bool {
     )
 }
 
-/// Names the scanner never indexes under: hidden files and directories, which
-/// covers Syncthing's `.stfolder`, `.stversions` and `.syncthing.*.tmp`,
-/// Syncthing's `~syncthing~*.tmp` from Windows peers, and downloads still in
-/// progress.
+/// Names the scanner never indexes under: what Syncthing keeps beside the
+/// music (`.stfolder`, `.stversions`, `.stignore`, `.syncthing.*.tmp`, and
+/// `~syncthing~*.tmp` from Windows peers), what macOS and version control leave
+/// in folders, and downloads still in progress.
+///
+/// Not every name with a leading dot: artists and records have them, as
+/// "...And You Will Know Us by the Trail of Dead" and ".5: The Gray Chapter"
+/// do, and organize keeps them.
 pub(crate) fn is_ignored(name: &std::ffi::OsStr) -> bool {
     let name = name.to_string_lossy();
-    name.starts_with('.')
+    matches!(
+        name.as_ref(),
+        ".stfolder"
+            | ".stversions"
+            | ".stignore"
+            | ".DS_Store"
+            | ".AppleDouble"
+            | ".Spotlight-V100"
+            | ".fseventsd"
+            | ".TemporaryItems"
+            | ".DocumentRevisions-V100"
+            | ".git"
+    ) || name.starts_with(".syncthing.")
         || name.starts_with("~syncthing~")
+        // AppleDouble: a file's resource fork, beside it on a non-Mac volume.
+        || name.starts_with("._")
+        || name.starts_with(".Trash")
         || name.ends_with(".part")
         || name.ends_with(".tmp")
 }
@@ -183,7 +202,8 @@ mod tests {
             "Artist/Album/~syncthing~01.flac.tmp",
             "Artist/Album/01.flac.part",
             "Artist/.DS_Store",
-            ".hidden/Album/01.flac",
+            "Artist/Album/._01.flac",
+            ".Trashes/501/01.flac",
         ] {
             assert_eq!(
                 scan_target(&create, &tmp.path().join(rel), &roots),
@@ -191,6 +211,18 @@ mod tests {
                 "{rel}"
             );
         }
+    }
+
+    #[test]
+    fn a_name_starting_with_a_dot_can_be_music() {
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = root(tmp.path());
+        let album = tmp.path().join("Britney Spears/...Baby One More Time");
+        let create = EventKind::Create(CreateKind::File);
+        assert_eq!(
+            scan_target(&create, &album.join("01.flac"), &roots),
+            Some(album)
+        );
     }
 
     #[test]
