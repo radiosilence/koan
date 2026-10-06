@@ -744,7 +744,7 @@ fn pull(
             }
             let reused: HashMap<String, PathBuf> =
                 local.map(|l| l.paths.clone()).unwrap_or_default();
-            for (renamed, old, new) in adopt(&row.uid, &doc, fetched, &reused)? {
+            for (renamed, old, new) in adopt(&row.uid, &doc, fetched, &reused, &synced)? {
                 let why = format!(
                     "Renamed from “{old}”: it met a different profile of that name from another device, so each is named for where it came from"
                 );
@@ -800,6 +800,18 @@ fn push(
 ) -> Result<bool, Failed> {
     let synced = rows::synced(&db.conn, url)?;
     let edits = rows::local_edits(&db.conn)?;
+    // Gone from here, or kept here alone now: gone everywhere else too.
+    // Deletions go first, so a profile deleted and made again under its
+    // name reaches other devices after the one it replaces has left.
+    for uid in synced.keys().filter(|u| !locals.contains_key(*u)) {
+        let refused = edits.get(uid).is_some_and(|e| e.refused.is_some());
+        if refused {
+            continue;
+        }
+        remote.delete(uid, now_ms())?;
+        rows::forget_synced(&db.conn, url, uid)?;
+        out.sent += 1;
+    }
     let mut kept_later = false;
     let mut uids: Vec<&String> = locals.keys().collect();
     uids.sort();
@@ -837,16 +849,6 @@ fn push(
         rows::set_refused(&db.conn, uid, None)?;
         out.sent += 1;
     }
-    // Gone from here, or kept here alone now: gone everywhere else too.
-    for uid in synced.keys().filter(|u| !locals.contains_key(*u)) {
-        let refused = edits.get(uid).is_some_and(|e| e.refused.is_some());
-        if refused {
-            continue;
-        }
-        remote.delete(uid, now_ms())?;
-        rows::forget_synced(&db.conn, url, uid)?;
-        out.sent += 1;
-    }
     let cfg = Config::cached();
     for output in cfg
         .dsp
@@ -877,6 +879,7 @@ fn adopt(
     doc: &SyncDoc,
     fetched: Vec<(String, Vec<u8>)>,
     reused: &HashMap<String, PathBuf>,
+    synced: &HashMap<String, (i64, String)>,
 ) -> Result<Renamed, Failed> {
     use crate::audio::dsp::profiles;
     let cfg = Config::cached();
@@ -897,9 +900,22 @@ fn adopt(
         .profiles
         .iter()
         .find(|p| profiles::dir(&p.name) == folder && p.uid.as_deref() != Some(uid))
+        && holder.uid.as_ref().is_some_and(|u| synced.contains_key(u))
     {
-        // Two different profiles of one name: each is named for the device
-        // it came from, so neither looks like the other.
+        // Already synced: a later row on this page renames or deletes it, as
+        // with a rename chain or a profile deleted and made again. Until then
+        // it steps aside.
+        let free = free_name(&cfg.dsp.profiles, &holder.name);
+        profiles::rename(&holder.name, &free).map_err(io_failed)?;
+    } else if let Some(holder) = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| profiles::dir(&p.name) == folder && p.uid.as_deref() != Some(uid))
+    {
+        // Two different profiles of one name, made apart before either
+        // synced: each is named for the device it came from, so neither
+        // looks like the other.
         let here = this_device();
         let mine = by_device(&cfg.dsp.profiles, &holder.name, &here);
         profiles::rename(&holder.name, &mine).map_err(io_failed)?;
@@ -1403,6 +1419,101 @@ mod tests {
         b.on();
         let note = note(&b.db, "Lush (iPhone)").unwrap();
         assert!(note.starts_with("Renamed from “Lush”"), "{note}");
+    }
+
+    /// A profile deleted and made again under its name before the next sync,
+    /// as reinstalling an AutoEQ headphone does, keeps the name everywhere.
+    #[test]
+    fn a_profile_made_again_keeps_its_name() {
+        use crate::audio::dsp::profiles;
+        let _guard = lock();
+        let server = Server::new();
+        let (a, b) = (Device::named("Mac Studio"), Device::named("iPhone"));
+        a.on();
+        Config::persist(|c| {
+            c.dsp.profiles.push(headphone());
+            c.dsp.profiles.push(DspProfile {
+                name: "Lush".into(),
+                filters: vec![band(1.0)],
+                scope: Some(DspScope::Everywhere),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        a.sync(&server);
+        b.sync(&server);
+        a.on();
+        profiles::remove("Lush").unwrap();
+        profiles::remove("HD 650 (AutoEQ, oratory1990)").unwrap();
+        let mut hp = headphone();
+        hp.filters = vec![band(4.0)];
+        Config::persist(|c| {
+            c.dsp.profiles.push(hp);
+            c.dsp.profiles.push(DspProfile {
+                name: "Lush".into(),
+                filters: vec![band(2.0)],
+                scope: Some(DspScope::Everywhere),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        a.sync(&server);
+        b.sync(&server);
+        a.sync(&server);
+        for d in [&a, &b] {
+            let mut names: Vec<String> = d.profiles().into_iter().map(|p| p.name).collect();
+            names.sort();
+            assert_eq!(
+                names,
+                ["HD 650 (AutoEQ, oratory1990)", "Lush"],
+                "{}",
+                d.name
+            );
+            assert_eq!(d.profile("Lush").unwrap().filters, vec![band(2.0)]);
+            assert_eq!(
+                d.profile("HD 650 (AutoEQ, oratory1990)").unwrap().filters,
+                vec![band(4.0)]
+            );
+            d.on();
+            assert_eq!(note(&d.db, "Lush"), None, "{}", d.name);
+        }
+    }
+
+    /// Renames made in a chain, B to C and then A to B, arrive as made: the
+    /// profile still called B here steps aside until its own rename lands.
+    #[test]
+    fn a_rename_chain_arrives_as_made() {
+        use crate::audio::dsp::profiles;
+        let _guard = lock();
+        let server = Server::new();
+        let (a, b) = (Device::named("Mac Studio"), Device::named("iPhone"));
+        a.on();
+        Config::persist(|c| {
+            for (name, gain) in [("A", 1.0), ("B", 2.0)] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(gain)],
+                    scope: Some(DspScope::Everywhere),
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        a.sync(&server);
+        b.sync(&server);
+        a.on();
+        profiles::rename("B", "C").unwrap();
+        profiles::rename("A", "B").unwrap();
+        a.sync(&server);
+        b.sync(&server);
+        a.sync(&server);
+        for d in [&a, &b] {
+            let mut names: Vec<String> = d.profiles().into_iter().map(|p| p.name).collect();
+            names.sort();
+            assert_eq!(names, ["B", "C"], "{}", d.name);
+            assert_eq!(d.profile("B").unwrap().filters, vec![band(1.0)]);
+            assert_eq!(d.profile("C").unwrap().filters, vec![band(2.0)]);
+        }
     }
 
     fn doc(filters: Vec<DspFilter>, files: Vec<SyncFile>) -> SyncDoc {
