@@ -92,6 +92,22 @@ enum KoanTheme {
     /// A shadow's opacity as whichever look is on: none in the theme.
     nonisolated static func shadow(_ system: Float) -> Float { isOn ? 0 : system }
 
+    /// Motion: fast and direct. A quick-out curve — a snappy start and a
+    /// decisive stop, no tail, no overshoot, no delay. States (pressed, hover,
+    /// selection, toggles) take `fast`; a marker moving between places, a
+    /// tab's underline, takes `normal`; the accent arriving with a record takes
+    /// `settle`, and never draws the eye. With Reduce Motion, all of it is
+    /// instant: views take these through `.koanAnimation`, which knows.
+    enum Motion {
+        private static func quickOut(_ seconds: Double) -> Animation {
+            .timingCurve(0.2, 0.9, 0.3, 1, duration: seconds)
+        }
+
+        static let fast = quickOut(0.08)
+        static let normal = quickOut(0.12)
+        static let settle = quickOut(0.25)
+    }
+
     /// One rule's width: a point, not a pixel, which at `rule`'s contrast is too
     /// faint on a 2× display.
     static let hairline: CGFloat = 1
@@ -258,6 +274,14 @@ extension NSColor {
     @MainActor static var koanSecondaryLabel: NSColor { KoanTheme.isOn ? koanMuted : .secondaryLabelColor }
     @MainActor static var koanTertiaryLabel: NSColor { KoanTheme.isOn ? koanMuted : .tertiaryLabelColor }
     @MainActor static var koanQuaternaryLabel: NSColor { KoanTheme.isOn ? koanRule : .quaternaryLabelColor }
+    static let koanBadToken = koan(dark: 0xEF6B73, light: 0xC43F3F)
+    /// Errors, warnings and hearts: `bad` in the theme, the given system
+    /// colour otherwise.
+    @MainActor static func koanBad(_ system: NSColor) -> NSColor { KoanTheme.isOn ? koanBadToken : system }
+    /// Hairlines between rows: `rule` in the theme.
+    @MainActor static var koanSeparator: NSColor { KoanTheme.isOn ? koanRule : .separatorColor }
+    /// A selected item's ground: `surface` in the theme.
+    @MainActor static func koanSelection(_ system: NSColor) -> NSColor { KoanTheme.isOn ? koanSurface : system }
 
     fileprivate static func rgb(_ hex: UInt32) -> NSColor {
         NSColor(
@@ -570,11 +594,11 @@ extension KoanTheme {
     /// nearest semantic style otherwise. Text takes `.koanText`, which also
     /// keeps a record's accent off text that it cannot reach 4.5:1 as.
     /// A tone in the theme, and exactly the given style in the platform's look.
-    static func style(_ tone: KoanTone, system: some ShapeStyle) -> AnyShapeStyle {
+    nonisolated static func style(_ tone: KoanTone, system: some ShapeStyle) -> AnyShapeStyle {
         isOn ? style(tone) : AnyShapeStyle(system)
     }
 
-    static func style(_ tone: KoanTone) -> AnyShapeStyle {
+    nonisolated static func style(_ tone: KoanTone) -> AnyShapeStyle {
         switch (isOn, tone) {
         case (true, .ink): AnyShapeStyle(Color.koanInk)
         case (true, .strong): AnyShapeStyle(Color.koanStrong)
@@ -671,10 +695,15 @@ extension View {
         modifier(KoanRuleRole(edge: edge, inset: inset))
     }
 
-    /// One of the theme's buttons. In the platform's look, the nearest system
-    /// style.
+    /// One of the theme's buttons. In the platform's look, the button as it
+    /// was: whatever style it already had, or inherits.
     func koanButton(_ kind: KoanButtonKind) -> some View {
-        modifier(KoanButtonRole(kind: kind))
+        modifier(KoanButtonRole(kind: kind, system: Optional<DefaultButtonStyle>.none))
+    }
+
+    /// One of the theme's buttons, and exactly `system` in the platform's look.
+    func koanButton<S: PrimitiveButtonStyle>(_ kind: KoanButtonKind, system: S) -> some View {
+        modifier(KoanButtonRole(kind: kind, system: system))
     }
 
     /// The theme's buttons of one kind for everything inside, leaving the
@@ -894,19 +923,17 @@ private struct KoanRuleRole: ViewModifier {
     }
 }
 
-private struct KoanButtonRole: ViewModifier {
+private struct KoanButtonRole<S: PrimitiveButtonStyle>: ViewModifier {
     let kind: KoanButtonKind
+    let system: S?
 
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             content.buttonStyle(KoanButtonStyle(kind: kind))
+        } else if let system {
+            content.buttonStyle(system)
         } else {
-            switch kind {
-            case .primary: content.buttonStyle(.borderedProminent)
-            case .secondary: content.buttonStyle(.bordered)
-            case .text: content.buttonStyle(.borderless)
-            case .icon, .iconOutlined, .card: content.buttonStyle(.plain)
-            }
+            content
         }
     }
 }
@@ -939,6 +966,7 @@ private struct KoanButtonBody: View {
             .padding(padding)
             .frame(minWidth: hit, minHeight: hit)
             .background(configuration.isPressed ? Color.koanHover : .clear)
+            .koanAnimation(KoanTheme.Motion.fast, value: configuration.isPressed)
             .overlay {
                 if let outline {
                     Rectangle().strokeBorder(outline, lineWidth: KoanTheme.hairline)
@@ -1084,6 +1112,7 @@ struct KoanToggleStyle: ToggleStyle {
         }
         .buttonStyle(.plain)
         .opacity(enabled ? 1 : 0.4)
+        .koanAnimation(KoanTheme.Motion.fast, value: configuration.isOn)
         .accessibilityValue(configuration.isOn ? "On" : "Off")
         .accessibilityAddTraits(.isToggle)
     }
@@ -1123,6 +1152,7 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(title)
+            .koanAnimation(KoanTheme.Motion.fast, value: selection)
         } else {
             Picker(title, selection: $selection) {
                 ForEach(options, id: \.value) { Text($0.label).tag($0.value) }
@@ -1146,6 +1176,7 @@ private struct KoanRowRole: ViewModifier {
                 .koanRule(.bottom)
                 #if os(macOS)
                 .onHover { hovering = $0 }
+                .koanAnimation(KoanTheme.Motion.fast, value: hovering)
                 #endif
                 #if !os(tvOS)
                 .listRowSeparator(.hidden)
@@ -1194,6 +1225,7 @@ private struct KoanNavRowRole: ViewModifier {
                         if selected { Rectangle().fill(.tint).frame(width: 2) }
                     }
                 )
+                .accessibilityAddTraits(selected ? .isSelected : [])
         } else {
             content
         }
@@ -1436,6 +1468,16 @@ extension KoanTheme {
     static func pane(_ system: Visibility) -> Visibility { isOn ? .hidden : system }
 }
 
+private struct KoanAnimationRole<Value: Equatable>: ViewModifier {
+    let animation: Animation
+    let value: Value
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.animation(reduceMotion ? nil : animation, value: value)
+    }
+}
+
 private struct KoanSheetRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
@@ -1463,6 +1505,8 @@ struct KoanTabItem: View {
     let title: String
     let icon: String
     let selected: Bool
+    /// Shared by a bar's items, so the underline slides from tab to tab.
+    var underline: Namespace.ID?
     @Environment(\.koanIcons) private var icons
 
     var body: some View {
@@ -1475,7 +1519,14 @@ struct KoanTabItem: View {
                 .textCase(.lowercase)
                 .padding(.bottom, 3)
                 .overlay(alignment: .bottom) {
-                    if selected { Rectangle().fill(.tint).frame(height: KoanTheme.hairline) }
+                    if selected {
+                        let line = Rectangle().fill(.tint).frame(height: KoanTheme.hairline)
+                        if let underline {
+                            line.matchedGeometryEffect(id: "underline", in: underline)
+                        } else {
+                            line
+                        }
+                    }
                 }
         }
         .foregroundStyle(KoanTheme.style(selected ? .accent : .muted))
@@ -1604,6 +1655,11 @@ struct KoanSectionHeader: View {
 }
 
 extension View {
+    /// A motion token on a change of `value`; none at all with Reduce Motion.
+    func koanAnimation(_ animation: Animation, value: some Equatable) -> some View {
+        modifier(KoanAnimationRole(animation: animation, value: value))
+    }
+
     /// Lowercase on screen in the theme, as the app's own titles are; the
     /// string, and what VoiceOver and the UI tests read, keep their case.
     func koanCase() -> some View {

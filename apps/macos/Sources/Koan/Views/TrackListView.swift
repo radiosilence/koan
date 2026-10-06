@@ -447,7 +447,7 @@ private struct TrackAvailability: View {
                 .help("Queued for download")
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                 .help(item.failureReason ?? "Couldn't be fetched")
         default:
             EmptyView()

@@ -65,7 +65,7 @@ final class AvailabilityMark: CALayer {
         case .pending:
             badgeImage = Symbol.image("arrow.down.circle", size: 11, colours: [selected ? .white : tint], appearance: appearance)
         case .failed:
-            badgeImage = Symbol.image("exclamationmark.triangle.fill", size: 11, colours: [.systemOrange], appearance: appearance)
+            badgeImage = Symbol.image("exclamationmark.triangle.fill", size: 11, colours: [NSColor.koanBad(.systemOrange)], appearance: appearance)
         case .notHere:
             badgeImage = Symbol.image("icloud.slash", size: 10, colours: [quiet], appearance: appearance)
         case .transferring(let fraction):

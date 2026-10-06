@@ -26,6 +26,10 @@ filter's rate and the stream never ends between tracks. Seeking opens a new
 stream at the new position. A renderer that cannot take FLAC is sent WAV;
 one that takes neither is handed the original file.
 
+New to headphone EQ? [Headphone EQ, explained](headphone-eq.md) covers
+measurements, targets and corrections, and which way to go for your
+headphones.
+
 ## Importing
 
 In the apps, **Settings → Playback → EQ and convolution → Import…** takes files,
@@ -33,6 +37,22 @@ a folder or a zip. On iOS, files can also come from anywhere else: open one in
 kōan from Files or Mail, or choose kōan in the share sheet — a zip sent in a
 chat, or EQ text pasted into a message. A share is saved for the app and
 imported when kōan next comes to the front.
+
+Several whole presets chosen together, such as Equalizer APO, AutoEQ or
+Qudelix files or CamillaDSP YAML, become a **group**: a
+profile from each, named after its file, and a group holding them, named for
+what their names share. A group plays one member at a time. Pick which on its
+page ("Group: pick one"), on the EQ page, or in an output's preset menu. Any
+stack of two or more layers can be made a group, and a group a stack again.
+A group can be a stack's layer, such as a group of corrections with a tuning
+on top.
+
+Files that are parts of one profile, such as an impulse response or a Convolver
+`.cfg` a file per channel or rate, a folder, a zip, or REW's file for each
+side, still combine into one. Before importing several files the app says which will happen and
+lets you name the result. A name already taken gets a number, AutoEQ's
+`FixedBandEQ` file is left out beside its `ParametricEQ` twin, and a file that
+cannot be read is named with why, without stopping the rest.
 
 From the command line:
 
@@ -95,10 +115,11 @@ offers others for the same kind of headphone:
 
 | Target | Character |
 |---|---|
-| Harman over-ear 2018 | What most listeners in Harman's research preferred: a warm bass shelf, a forward upper midrange, a soft top end |
+| Neutral (diffuse field), over-ear | Even sound from every direction: no bass or treble preference, brighter than Harman |
+| Harman over-ear 2018 | Neutral plus what most listeners in Harman's research preferred: a warm bass shelf, a forward upper midrange, a soft top end |
 | Harman over-ear 2018, no bass shelf | The same with a flat low end |
 | oratory1990 over-ear | oratory1990's target, close to Harman's |
-| Diffuse field | Even sound from every direction: no bass shelf, brighter than Harman |
+| Neutral (diffuse field), in-ear | The eardrum's response to even sound from every direction (ISO 11904-1): no bass or treble preference |
 | Harman in-ear 2019 | Harman's in-ear target: a bigger bass shelf and more treble than over-ear |
 | Harman in-ear 2019, no bass shelf | The same with a flat low end |
 | AutoEQ in-ear | AutoEQ's own in-ear target |
@@ -210,8 +231,8 @@ Headphone view shows the effect of each edit on it.
 ## On every device
 
 Signed in to a kōan server, a profile can be kept on every device of the
-account. Each profile is kept either **On every device** or **On this device**,
-chosen on its page. One kept on every device is synced through the server:
+account. Each profile's **Sync** is either **Everywhere** or **This device**,
+chosen on its page. One synced everywhere goes through the server:
 filters, preamp, target, layers and the files in its folder (impulse responses,
 a routing `.cfg`, AutoEQ's measurement). Which output plays it is not synced,
 since the headphones on a Mac's DAC are not the AirPods on a phone; each device

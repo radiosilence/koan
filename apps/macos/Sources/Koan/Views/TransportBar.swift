@@ -215,7 +215,7 @@ struct TransportBar: View {
 
             RepeatButton()
         }
-        .koanButton(.icon)
+        .koanButton(.icon, system: .plain)
         .foregroundStyle(KoanTheme.style(.ink))
         .font(.system(size: 13))
     }
@@ -240,15 +240,15 @@ struct TransportBar: View {
             }
 
             SleepButton()
-                .font(.role(.fine))
+                .font(.role(.fine, system: .caption))
 
             if player.hasOtherDevices || player.isControllingAnother {
                 ControlButton(open: $showingControl, labelled: !compact, iconSize: 17)
-                    .font(.role(.fine))
+                    .font(.role(.fine, system: .caption))
             }
             if player.canChooseOutput {
                 OutputButton(open: $showingDevices, labelled: !compact, iconSize: 17)
-                    .font(.role(.fine))
+                    .font(.role(.fine, system: .caption))
             }
 
             // AirPlay is the system's to choose, so it is the system's button:

@@ -1,0 +1,1 @@
+- **Colours from the record, optional.** Settings → Appearance turns off the wash and the record's accent together, leaving koan's mint in either theme; the playing bars and the graphics level are untouched (`appearance.record_colours`).

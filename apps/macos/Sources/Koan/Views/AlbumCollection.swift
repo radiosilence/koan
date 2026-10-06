@@ -906,7 +906,7 @@ private final class HeartButton: NSButton {
             let name = isOn ? "heart.fill" : "heart"
             glyph.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
-            glyph.contentTintColor = isOn ? .systemRed : .koanTertiaryLabel
+            glyph.contentTintColor = isOn ? NSColor.koanBad(.systemRed) : .koanTertiaryLabel
             setAccessibilityLabel(isOn ? "Remove favourite" : "Favourite")
             toolTip = isOn ? "Remove favourite" : "Favourite"
             if oldValue != isOn, window != nil {

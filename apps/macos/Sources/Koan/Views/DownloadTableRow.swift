@@ -151,7 +151,7 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
         let onAccent: NSColor = .alternateSelectedControlTextColor
         title.textColor = selected ? onAccent : .koanLabel
         figure.textColor = selected ? onAccent : .koanSecondaryLabel
-        subtitle.textColor = selected ? onAccent : (transfer.state == .failed ? .systemOrange : .koanSecondaryLabel)
+        subtitle.textColor = selected ? onAccent : (transfer.state == .failed ? NSColor.koanBad(.systemOrange) : .koanSecondaryLabel)
         link.isHidden = !hovered
         var attributes: [NSAttributedString.Key: Any] = [
             .font: Self.captionFont, .foregroundColor: selected ? onAccent : NSColor.linkColor,
@@ -163,7 +163,7 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
             CATransaction.setDisableActions(true)
             // The quiet end is what has not arrived, the same way round as the
             // seek bar, so a finished transfer reads as full.
-            track.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+            track.backgroundColor = NSColor.koanQuaternaryLabel.cgColor
             filled.backgroundColor = (selected ? NSColor.white : NSColor.koanLabel).cgColor
             CATransaction.commit()
         }

@@ -7,6 +7,11 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 /// that it still reads as the key having been pressed.
 const FADE_SECONDS: f64 = 0.15;
 
+/// How long a quick fade takes: the dip a DSP change makes, out of the old
+/// processing and into the new. Long enough that neither edge is a step,
+/// short enough to pass for the change itself.
+pub const QUICK_FADE: std::time::Duration = std::time::Duration::from_millis(15);
+
 /// How long the callback takes to glide to a new sleep gain: the player sets
 /// one about this often while a sleep timer fades, so the level moves on
 /// without a step.
@@ -31,6 +36,12 @@ pub struct FadeControl {
     sleep_snap: AtomicBool,
     /// `playback.muted`: every sample zeroed after the ramps.
     muted: AtomicBool,
+    /// Ramp over `QUICK_FADE` rather than `FADE_SECONDS`. Set by the
+    /// quick fades, cleared by the others.
+    quick: AtomicBool,
+    /// How long one render callback asks for, in microseconds: how late after
+    /// a fade begins the callback may first see it.
+    period_us: AtomicU32,
 }
 
 impl FadeControl {
@@ -53,12 +64,30 @@ impl FadeControl {
     }
 
     pub fn fade_out(&self) {
+        self.quick.store(false, Ordering::Release);
+        self.audible.store(false, Ordering::Release);
+    }
+
+    /// `fade_out` over `QUICK_FADE`.
+    pub fn fade_out_quickly(&self) {
+        self.quick.store(true, Ordering::Release);
         self.audible.store(false, Ordering::Release);
     }
 
     /// Ramp back up. `from_silence` when the unit is about to be started from
     /// stopped, where the callback has not been running to bring the gain down.
     pub fn fade_in(&self, from_silence: bool) {
+        self.quick.store(false, Ordering::Release);
+        self.rise(from_silence);
+    }
+
+    /// `fade_in` over `QUICK_FADE`.
+    pub fn fade_in_quickly(&self, from_silence: bool) {
+        self.quick.store(true, Ordering::Release);
+        self.rise(from_silence);
+    }
+
+    fn rise(&self, from_silence: bool) {
         self.silent.store(false, Ordering::Release);
         if from_silence {
             self.from_silence.store(true, Ordering::Release);
@@ -68,6 +97,12 @@ impl FadeControl {
 
     pub fn is_silent(&self) -> bool {
         self.silent.load(Ordering::Acquire)
+    }
+
+    /// One render callback's length, as the callback last asked for it.
+    /// Zero until the first callback.
+    pub fn period(&self) -> std::time::Duration {
+        std::time::Duration::from_micros(self.period_us.load(Ordering::Relaxed) as u64)
     }
 
     /// The sleep timer's gain, glided to over `SLEEP_GLIDE_SECONDS`, or with
@@ -92,6 +127,9 @@ pub struct Fader {
     /// frames so a fade out ends on an exact frame.
     pos: usize,
     len: usize,
+    /// How far a quick fade moves `pos` each frame.
+    quick_step: usize,
+    sample_rate: f64,
     /// The sleep gain where the callback has it, the target it was last
     /// given, and how far it moves each frame on the way there.
     sleep: f32,
@@ -103,10 +141,13 @@ pub struct Fader {
 impl Fader {
     pub fn new(control: Arc<FadeControl>, sample_rate: f64) -> Self {
         let len = ((sample_rate * FADE_SECONDS) as usize).max(1);
+        let quick = ((sample_rate * QUICK_FADE.as_secs_f64()) as usize).max(1);
         Self {
             control,
             pos: len,
             len,
+            quick_step: len.div_ceil(quick),
+            sample_rate,
             sleep: 1.0,
             sleep_target: 1.0f32.to_bits(),
             sleep_step: 0.0,
@@ -120,6 +161,11 @@ impl Fader {
     /// head rests on the last sample heard rather than on whatever was
     /// consumed and thrown away.
     pub fn readable(&mut self, wanted: usize, channels: usize) -> usize {
+        let frames = wanted / channels.max(1);
+        if frames > 0 {
+            let us = (frames as f64 * 1e6 / self.sample_rate) as u32;
+            self.control.period_us.store(us, Ordering::Relaxed);
+        }
         if self.control.from_silence.swap(false, Ordering::AcqRel) {
             self.pos = 0;
         }
@@ -129,7 +175,16 @@ impl Fader {
         if self.pos == 0 {
             self.control.silent.store(true, Ordering::Release);
         }
-        wanted.min(self.pos * channels.max(1))
+        wanted.min(self.pos.div_ceil(self.step()) * channels.max(1))
+    }
+
+    /// How far `pos` moves each frame of a ramp.
+    fn step(&self) -> usize {
+        if self.control.quick.load(Ordering::Relaxed) {
+            self.quick_step
+        } else {
+            1
+        }
     }
 
     /// A callback that plays silence in place of the ring. A fade out has
@@ -176,12 +231,13 @@ impl Fader {
             return;
         }
         let target = f32::from_bits(self.sleep_target);
+        let step = self.step();
         for frame in samples.chunks_mut(channels.max(1)) {
             if pausing {
                 self.pos = if rising {
-                    (self.pos + 1).min(self.len)
+                    (self.pos + step).min(self.len)
                 } else {
-                    self.pos.saturating_sub(1)
+                    self.pos.saturating_sub(step)
                 };
             }
             if self.sleep_step != 0.0 {
@@ -326,5 +382,89 @@ mod tests {
         let up = render(&mut fader, 10);
         assert!(up[0] > *down.last().unwrap(), "rises from where it was");
         assert!(!control.is_silent());
+    }
+
+    /// A DSP change: the old processing fades out quickly, stops reading at
+    /// silence, and a new session fades in from silence. Stitched together,
+    /// at a rate where the fades are real lengths, no sample jumps from the
+    /// one before by more than a full-scale 1 kHz sine moves on its own, and
+    /// the whole dip lasts twice `QUICK_FADE`.
+    #[test]
+    fn a_quick_fade_out_and_in_has_no_step() {
+        let rate = 48000.0;
+        let sine = |phase: f64, n: usize| {
+            (0..n)
+                .map(|i| (phase + std::f64::consts::TAU * 1000.0 * i as f64 / rate).sin() as f32)
+                .collect::<Vec<f32>>()
+        };
+        // One render callback: as much of `source` from `at` as the fader
+        // reads, ramped.
+        let callback = |fader: &mut Fader, source: &[f32], at: &mut usize, frames: usize| {
+            let take = fader.readable(frames, 1);
+            let mut out = source[*at..*at + take].to_vec();
+            *at += take;
+            fader.apply(&mut out, 1);
+            out
+        };
+
+        let old = FadeControl::new();
+        let mut fader = Fader::new(old.clone(), rate);
+        let playing = sine(0.0, 48000);
+        let mut at = 0;
+        // 492 frames: a quarter cycle past a whole one, so the fade starts at
+        // the peak, where a cut would be a step of 1.
+        let mut heard = callback(&mut fader, &playing, &mut at, 492);
+        old.fade_out_quickly();
+        let mut tail = Vec::new();
+        for _ in 0..20 {
+            tail.extend(callback(&mut fader, &playing, &mut at, 512));
+            if old.is_silent() {
+                break;
+            }
+        }
+        assert!(old.is_silent());
+        let quick = (rate * QUICK_FADE.as_secs_f64()) as usize;
+        assert!(tail.len() <= quick + 1, "faded in {} frames", tail.len());
+        heard.extend(tail);
+
+        let new = FadeControl::new();
+        let mut fader = Fader::new(new.clone(), rate);
+        new.fade_in_quickly(true);
+        let next = sine(2.9, 2048);
+        heard.extend(callback(&mut fader, &next, &mut 0, 2048));
+
+        // The ramp's own slope adds a little where the sine is near its peak.
+        let natural = (std::f64::consts::TAU * 1000.0 / rate) as f32 * 1.05;
+        let worst = heard
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f32::max);
+        assert!(
+            worst <= natural,
+            "a step of {worst}, more than the sine's own {natural}"
+        );
+
+        // Quick fades are for DSP changes only: a pause after one takes the
+        // ordinary length.
+        new.fade_out();
+        let pause = callback(&mut fader, &playing, &mut 0, 48000);
+        assert_eq!(pause.len(), (rate * FADE_SECONDS) as usize);
+    }
+
+    /// The callback's length, which the player waits on beyond a quick fade,
+    /// as the buffers a Mac and PipeWire use by default ask for it.
+    #[test]
+    fn the_callback_reports_its_period() {
+        for (frames, rate) in [(512usize, 44100.0), (1024, 48000.0)] {
+            let control = FadeControl::new();
+            let mut fader = Fader::new(control.clone(), rate);
+            assert_eq!(control.period(), std::time::Duration::ZERO);
+            fader.readable(frames * 2, 2);
+            let want = frames as f64 / rate;
+            assert!(
+                (control.period().as_secs_f64() - want).abs() < 2e-6,
+                "{frames} frames"
+            );
+        }
     }
 }

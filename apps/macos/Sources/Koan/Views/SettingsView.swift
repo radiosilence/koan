@@ -266,7 +266,7 @@ private struct LibrarySettings: View {
                         } label: {
                             Image(systemName: "minus.circle")
                         }
-                        .koanButton(.icon)
+                        .koanButton(.icon, system: .borderless)
                         .help("Stop scanning this folder")
                     }
                 }
@@ -582,7 +582,7 @@ private struct RemoteSettings: View {
                     HStack {
                         Text(Format.bytes(Int64(model.settings.cacheBytes)))
                         Button("Clear") { model.clearCache() }
-                            .koanButton(.text)
+                            .koanButton(.text, system: .borderless)
                             .disabled(activity.conflicts(with: [.downloads]))
                     }
                 }
@@ -846,11 +846,31 @@ struct EqSettings: View {
     @Environment(AppState.self) private var app
     @State private var response: DspResponse?
     @State private var detail: DspProfileDetail?
+    // What the page presents is held here and presented from the form: a
+    // modifier on a section of a list is applied to each of its rows, and
+    // the presentation ends when that row is made again.
+    @State private var importing = false
+    @State private var finding: AutoEqFind?
+    @State private var measuring = false
+    @State private var showing: String?
 
     private var active: String? { app.dsp.overview?.active }
 
     var body: some View {
         KoanForm {
+            if let active, let detail, detail.group {
+                Section {
+                    Picker("Playing", selection: Binding(
+                        get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
+                        set: { app.dsp.select(active, $0) }
+                    )) {
+                        ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
+                    }
+                    .koanControl()
+                } header: {
+                    KoanSectionHeader("Group: pick one")
+                }
+            }
             if let active, let response, let detail {
                 Section {
                     EqGraph(response: response, handles: BandTable.handles(detail.bands)) { index, hz, db in
@@ -862,28 +882,82 @@ struct EqSettings: View {
                 }
                 BandTable(dsp: app.dsp, profile: active, bands: detail.bands)
             }
-            DspSettings()
+            DspSettings(importing: $importing, finding: $finding, measuring: $measuring, showing: $showing)
         }
         .koanSheet()
         .task(id: "\(active ?? "")\u{0}\(app.dsp.stamp)") {
             response = if let active { await app.dsp.response(active) } else { nil }
             detail = if let active { await app.dsp.detail(active) } else { nil }
         }
+        .task(id: app.dsp.stamp) { app.dsp.reload() }
+        .filePicker(
+            isPresented: $importing,
+            allowedContentTypes: [.item, .folder],
+            allowsMultipleSelection: true
+        ) { result in
+            if case let .success(urls) = result, !urls.isEmpty {
+                app.dsp.importFiles(urls)
+            }
+        }
+        #if !os(tvOS)
+        .sheet(item: $finding) { find in
+            AutoEqSearch(dsp: app.dsp, query: find.query).koanSheet()
+        }
+        .sheet(isPresented: $measuring) {
+            MeasurementFlow(dsp: app.dsp).koanSheet()
+        }
+        // A profile imported from a file: a neutral correction, one with a
+        // tuning already in it, or taste to add on top? kōan cannot tell,
+        // and a chain corrects once.
+        .confirmationDialog(
+            app.dsp.askRole?.count ?? 0 > 1 ? "What are these EQs?" : "What is this EQ?",
+            isPresented: Binding(get: { app.dsp.askRole != nil }, set: { if !$0 { app.dsp.askRole = nil } }),
+            titleVisibility: .visible,
+            presenting: app.dsp.askRole
+        ) { names in
+            Button("A neutral correction for these headphones") { app.dsp.setRole(names, .correction) }
+            Button("A correction with a sound already in it") { app.dsp.setRole(names, .baked) }
+            Button("A tuning to add on top") { app.dsp.setRole(names, .tuning) }
+        } message: { _ in
+            Text("A correction makes your headphones neutral; a stack holds one. Most presets named for a sound, like “Lush”, are a correction with a tuning baked in. A tuning is taste, like more bass, and plays on top of a correction.")
+        }
+        #endif
+        #if os(macOS)
+        .sheet(item: Binding(
+            get: { showing.map(ShownProfile.init) },
+            set: { showing = $0?.name }
+        )) { shown in
+            NavigationStack {
+                DspProfilePage(dsp: app.dsp, name: shown.name)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showing = nil }
+                        }
+                    }
+            }
+            .frame(minWidth: 480, minHeight: 440)
+        }
+        #endif
     }
+}
+
+/// Find in AutoEQ, open: empty from its button, a model from an offer for
+/// the output in use.
+private struct AutoEqFind: Identifiable {
+    let id = UUID()
+    let query: String
 }
 
 /// Correction for the output in use: a profile of bands, impulse responses or
 /// both, imported from what other tools write.
 struct DspSettings: View {
     @Environment(AppState.self) private var app
-    @State private var importing = false
-    @State private var findingAutoEq = false
-    /// What Find in AutoEQ opens searching for: empty from its button, a
-    /// model from an offer for the output in use.
-    @State private var findQuery = ""
+    @Binding var importing: Bool
+    @Binding fileprivate var finding: AutoEqFind?
+    @Binding var measuring: Bool
     /// The profile whose page is open, on the Mac, where settings has no
     /// navigation stack to push it onto.
-    @State private var showing: String?
+    @Binding var showing: String?
 
     var body: some View {
         let dsp = app.dsp
@@ -908,8 +982,7 @@ struct DspSettings: View {
                 #if !os(tvOS)
                 if let offer = dsp.suggestion, o.device != nil {
                     AutoEqSuggestion(offer: offer, dsp: dsp) { query in
-                        findQuery = query
-                        findingAutoEq = true
+                        finding = AutoEqFind(query: query)
                     }
                 }
                 #endif
@@ -941,12 +1014,16 @@ struct DspSettings: View {
             #if !os(tvOS)
             Button("Import…") { importing = true }
                 .koanButton(.secondary)
-            Button("Find in AutoEQ…") {
-                findQuery = ""
-                findingAutoEq = true
-            }
-            .koanButton(.secondary)
+            Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
+                .koanButton(.secondary)
+            Button("Use a Measurement…") { measuring = true }
+                .koanButton(.secondary)
             #endif
+            if let summary = dsp.importSummary {
+                Text(summary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+            }
             if let error = dsp.lastError {
                 Text(error)
                     .koanText(.fine, .bad)
@@ -957,37 +1034,6 @@ struct DspSettings: View {
             Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs, or a headphone found in AutoEQ by name. Importing into a profile of the same name adds to it. An output without a profile plays untouched.")
                 .koanText(.fine, .muted)
         }
-        .filePicker(
-            isPresented: $importing,
-            allowedContentTypes: [.item, .folder],
-            allowsMultipleSelection: true
-        ) { result in
-            if case let .success(urls) = result, !urls.isEmpty {
-                dsp.importFiles(urls)
-            }
-        }
-        .task(id: dsp.stamp) { dsp.reload() }
-        #if !os(tvOS)
-        .sheet(isPresented: $findingAutoEq) {
-            AutoEqSearch(dsp: dsp, query: findQuery)
-        }
-        #endif
-        #if os(macOS)
-        .sheet(item: Binding(
-            get: { showing.map(ShownProfile.init) },
-            set: { showing = $0?.name }
-        )) { shown in
-            NavigationStack {
-                DspProfilePage(dsp: dsp, name: shown.name)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { showing = nil }
-                        }
-                    }
-            }
-            .frame(minWidth: 480, minHeight: 440)
-        }
-        #endif
     }
 }
 
@@ -1021,7 +1067,7 @@ private struct AutoEqSuggestion: View {
                 }
             }
         }
-        .koanButton(.text)
+        .koanButton(.text, system: .borderless)
         .koanText(.meta)
     }
 
@@ -1037,6 +1083,7 @@ private struct AutoEqSearch: View {
     let dsp: DspModel
     @Environment(\.dismiss) private var dismiss
     @State private var query: String
+    @State private var measuring = false
 
     init(dsp: DspModel, query: String = "") {
         self.dsp = dsp
@@ -1065,13 +1112,22 @@ private struct AutoEqSearch: View {
                     }
                     .overlay {
                         if dsp.autoEqResults.isEmpty {
-                            ContentUnavailableView.search(text: query)
+                            ContentUnavailableView {
+                                Label("Not in AutoEQ", systemImage: "magnifyingglass")
+                            } description: {
+                                Text("AutoEQ has nothing for “\(query)”. A measurement of your headphones works too: kōan builds the correction from it.")
+                            } actions: {
+                                Button("Use a measurement instead") { measuring = true }
+                            }
                         }
                     }
                 }
             }
             .searchable(text: $query, prompt: "Headphone")
             .navigationTitle(KoanTheme.label("AutoEQ"))
+            .sheet(isPresented: $measuring) {
+                MeasurementFlow(dsp: dsp, name: query) { _ in dismiss() }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -1146,7 +1202,10 @@ private struct ProfileRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(profile.name)
+                HStack(spacing: 6) {
+                    Text(profile.name)
+                    RoleTag(role: ProfileRole(profile.role))
+                }
                 if let problem = profile.problem {
                     Text(problem)
                         .koanText(.fine, .bad)
@@ -1202,10 +1261,15 @@ struct DspImportPrompts: ViewModifier {
                 }
                 Button("Done", role: .cancel) {}
             } message: { _ in
-                if let device = dsp.overview?.device, dsp.overview?.active == nil {
+                if let summary = dsp.importSummary {
+                    Text(summary)
+                } else if let device = dsp.overview?.device, dsp.overview?.active == nil {
                     Text("\(device) plays untouched until it has a profile.")
                 }
             }
+            #if !os(tvOS)
+            .dspImportConfirmation(dsp)
+            #endif
     }
 }
 
@@ -1479,7 +1543,7 @@ private struct DevicesSettings: View {
                         Button("Remove", role: .destructive) {
                             model.edit { $0.devicesAddresses.removeAll { $0 == addr } }
                         }
-                        .koanButton(.text)
+                        .koanButton(.text, system: .borderless)
                     }
                 }
                 HStack {
@@ -1505,7 +1569,7 @@ private struct DevicesSettings: View {
                             Text(account)
                             Spacer()
                             Button("Stop sharing", role: .destructive) { share(account, allow: false) }
-                                .koanButton(.text)
+                                .koanButton(.text, system: .borderless)
                         }
                     }
                     HStack {

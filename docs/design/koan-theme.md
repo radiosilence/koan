@@ -58,7 +58,7 @@ One face, Geist Mono (variable, weights 100–900), bundled with the app. Sizes 
 - **Rules** are 1 px (one device pixel on a 2× display is too faint at `rule`'s contrast; use 1 point). A selected navigation row is marked by a 2-point `accent` rule on its leading edge.
 - **Corners** are square: controls, covers, sheets and the transport. The window's own corners are the system's.
 - **No materials.** No blur, glass, vibrancy or shadows. A region is told apart by a rule, or rarely by `surface`. The [wash](#wash) is the one thing under the ground that is not flat.
-- **Motion.** None of its own: selection, hover and pressed states change at once. System transitions (navigation pushes, sheets) stay as the platform draws them.
+- **Motion.** Fast and direct: a quick-out curve, a snappy start and a decisive stop, with no tail, delay, stagger or overshoot, and no springs, scale pops or glass morphs. States (pressed, hover, selection, toggles) take 80 ms (`Motion.fast`); a marker moving between places, a tab's underline, goes straight to its target in 120 ms (`Motion.normal`); the accent arriving with a record eases over 250 ms (`Motion.settle`) and never draws the eye. A tab switch swaps the page at once. With Reduce Motion all of it is instant. Components take these tokens through `.koanAnimation`, never their own `.animation`. System transitions (navigation pushes, sheets) stay as the platform draws them.
 
 ### Accent
 
@@ -115,7 +115,7 @@ The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-ali
 
 ### Navigation row (sidebar)
 
-The label in `body`, `muted`, lowercase; with icons, the glyph before it in the same colour. Selected: `accent`, with the 2-point leading rule. Section headings in `fine`, `ink`, with 16 points above.
+The label in `body`, `muted`, lowercase; with icons, the glyph before it in the same colour. Selected: `accent`, with the 2-point leading rule. On the Mac the list keeps AppKit's own selection beneath it, which is what VoiceOver announces and the arrow keys move. Section headings in `fine`, `ink`, with 16 points above.
 
 ### Tab bar (phone)
 
@@ -134,13 +134,15 @@ The Apple apps keep the SF Symbols they name today (`Icon.*`). On Android, Mater
 ## On the platforms
 
 - **macOS, iOS and tvOS:** `Support/KoanTheme.swift`. Views name roles and never a colour, font, corner or material:
-  - text: `.koanText(role, tone)`, or `Font.role(_:system:)` and `KoanTheme.style(_:system:)` where a view takes a font or style;
+  - text: `.koanText(role, tone)`, or `Font.role(_:system:)` and `KoanTheme.style(_:system:)` where a view takes a font or style; `.koanCase()` lowercases a title on screen, and `KoanTheme.label(_:)` the bare strings (navigation titles, AppKit labels) that cannot be;
+  - motion: `KoanTheme.Motion` through `.koanAnimation(_:value:)`;
+  - spacing: `KoanTheme.Space` and `KoanTheme.hairline`;
   - ground: `.koanSurface()`, `.koanRule()`, `.koanBar(radius:inset:)` for the transport, `.koanToolbar(glass:)`, `.koanSidebar()`, `.koanSheet()`;
-  - controls: `.koanButton(kind)` (or `.koanButtons(kind)` for a group), `.koanToggle()`, `KoanSegmentedPicker`, `.koanControl()` for pop-up pickers, menus and steppers, `.koanChip()`, `.koanBadge()`;
-  - lists: `.koanList()` (every list in the wash takes it through `washedGround()`), `.koanRow(selected:)`, `.koanNavRow(selected:)`, `.koanForm()`, `KoanSectionHeader`, `KoanDivider`;
+  - controls: `.koanButton(kind)`, or `.koanButton(kind, system:)` where the platform's look had a style of its own, and `.koanButtons(kind)` for a group, in the theme only; `.koanToggle()`, `KoanSegmentedPicker`, `.koanControl()` for pop-up pickers, menus and steppers, `.koanField()`, `.koanChip()`, `.koanBadge()`; toolbar items leave their glass panes through `KoanTheme.pane(_:)`;
+  - lists and forms: `.koanList()` (every list in the wash takes it through `washedGround()`), `.koanNavRow(selected:)`, `KoanForm` (a form; on the Mac in the theme, sections stacked without AppKit's cards), `KoanSectionHeader`, `KoanDivider`; `.koanRow(selected:)` for a row drawn in SwiftUI, which the Mac's AppKit tables are not;
   - pieces: `KoanLabel(title, icon:)` for every label with an icon, `KoanTabItem` for the phone's tab bar, `KoanUnavailable` for an empty page;
   - shape: `KoanTheme.radius(_:)` and `KoanTheme.shadow(_:)`, which give square corners and no shadow in the theme;
   - focus on tvOS: `.koanFocus()`.
 
-  Each draws the platform's look exactly as before when the theme is off, so the "system" theme is the same roles with different answers. The accent is the environment's tint (`roomTint` for layer-drawn views), with `koanAccent` beside it saying whether it reads as text; whether icons are drawn is `koanIcons`, set at each scene's root by `.koanTheme(_:)`. AppKit-drawn views read `NSColor.koan*` and `NSFont.role`. The platform's glass becomes `surface` in the theme in one place, `.glass(_:fallback:in:)`. The setting is `appearance.theme`, `"koan"` (the default) or `"system"`, read at launch; the Theme picker in Settings → Appearance writes it, and "Show icons" appears there only with the kōan theme. `just theme-leaks` finds styling that bypasses the roles.
+  Each draws the platform's look exactly as before when the theme is off, so the "system" theme is the same roles with different answers. The accent is the environment's tint (`roomTint` for layer-drawn views), with `koanAccent` beside it saying whether it reads as text; whether icons are drawn is `koanIcons`, set at each scene's root by `.koanTheme(_:)`. AppKit-drawn views read `NSColor.koan*` (`koanBad`, `koanSeparator` and `koanSelection` among them) and `NSFont.role`. The platform's glass becomes `surface` in the theme through `.glass(_:fallback:in:)`; a few materials remain (the iOS activity card, the tile heart's AppKit glass, Settings' bar on tvOS), tracked in #923. The Mac's tables keep AppKit's selection fill. The setting is `appearance.theme`, `"koan"` (the default) or `"system"`, read at launch; the Theme picker in Settings → Appearance writes it, and "Show icons" appears there only with the kōan theme. `just theme-leaks` finds styling that bypasses the roles.
 - **Android:** the colour tokens map to a Material 3 `ColorScheme` (`bg` → `background`, `surface` → `surface`, `accent` → `primary`, `ink` → `onBackground`, `muted` → `onSurfaceVariant`, `rule` → `outlineVariant`, `bad` → `error`), the type roles to `Typography`, and `Shapes` are all zero-radius. The components above replace Material's own where they differ: outlined rather than filled buttons, the underlined segmented control, and the flat tab bar.

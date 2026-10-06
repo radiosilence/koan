@@ -280,7 +280,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         heart.isHidden = !context.columns.contains(.heart) || !(favourite || hovered != nil)
         heartImage = Symbol.image(
             favourite ? "heart.fill" : "heart", size: 12,
-            colours: [favourite ? .systemRed : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
+            colours: [favourite ? NSColor.koanBad(.systemRed) : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
         )
         CATransaction.commit()
         needsLayout = true

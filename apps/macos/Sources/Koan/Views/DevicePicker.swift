@@ -577,7 +577,7 @@ private struct LocalNetworkBlocked: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: KoanTheme.radius(10)))
+        .background(KoanTheme.style(.bad, system: .orange).opacity(0.12), in: RoundedRectangle(cornerRadius: KoanTheme.radius(10)))
     }
 }
 

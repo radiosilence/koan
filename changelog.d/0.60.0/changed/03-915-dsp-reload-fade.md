@@ -1,0 +1,1 @@
+- **A DSP change while playing no longer clicks.** Editing a band or switching a profile used to cut the output mid-waveform and restart it. The old processing now fades out over 15 ms and the new one fades in over the same, a short dip in place of a step. Pausing keeps its own, longer fade.

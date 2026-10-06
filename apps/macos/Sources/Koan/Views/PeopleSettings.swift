@@ -119,7 +119,7 @@ struct PeopleSettings: View {
                     KoanSectionHeader("People")
                 } footer: {
                     Text(model.error ?? "Adding someone makes their invite: one link that sets kōan up with the account.")
-                        .koanText(.fine, model.error == nil ? .muted : .ink)
+                        .koanText(.fine, model.error == nil ? .muted : (KoanTheme.isOn ? .bad : .ink))
                 }
                 .sheet(item: Binding(
                     get: { model.invite.map(InviteItem.init) },

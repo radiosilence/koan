@@ -124,7 +124,7 @@ final class ArtistTableRow: NSTableCellView, TableRow {
         heart.isHidden = !(favourite || hovered != nil)
         heartImage = Symbol.image(
             favourite ? "heart.fill" : "heart", size: 10,
-            colours: [favourite ? .systemRed : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
+            colours: [favourite ? NSColor.koanBad(.systemRed) : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
         )
         CATransaction.commit()
 

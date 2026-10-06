@@ -40,6 +40,7 @@ AutoEQ is distributed under the MIT License:
 | `oratory1990-in-ear.csv` | `oratory1990 in-ear.csv` | oratory1990's in-ear target |
 | `autoeq-in-ear.csv` | `AutoEq in-ear.csv` | AutoEQ's own in-ear target |
 | `diffuse-field-gras-kemar.csv` | `Diffuse field GRAS KEMAR.csv` | A diffuse-field target for GRAS/KEMAR ear simulators, as AutoEQ publishes it |
+| `diffuse-field-iso-11904-1.csv` | `Diffuse field ISO 11904-1.csv` | The diffuse-field response at the eardrum from ISO 11904-1, as AutoEQ publishes it: the neutral reference for in-ears measured on an IEC 60318-4 (711) coupler, which approximates the eardrum |
 
 Targets a person adds themselves (a CSV, or a squig.link export) are kept
 beside their config under `dsp/targets/`, not here, and are theirs to license.

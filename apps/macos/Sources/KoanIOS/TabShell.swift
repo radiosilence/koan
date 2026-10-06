@@ -332,6 +332,7 @@ private struct Transport: ViewModifier {
     @Environment(\.horizontalSizeClass) private var width
     /// The bar's height as laid out, which Dynamic Type moves.
     @State private var barHeight: CGFloat = 0
+    @Namespace private var underline
 
     func body(content: Content) -> some View {
         #if os(tvOS)
@@ -375,7 +376,7 @@ private struct Transport: ViewModifier {
                 Button {
                     if selection == item.id { reselect(item.id) } else { selection = item.id }
                 } label: {
-                    KoanTabItem(title: item.title, icon: item.icon, selected: selection == item.id)
+                    KoanTabItem(title: item.title, icon: item.icon, selected: selection == item.id, underline: underline)
                 }
                 .buttonStyle(.plain)
             }
@@ -383,11 +384,11 @@ private struct Transport: ViewModifier {
         .padding(.top, 10)
         .padding(.bottom, 4)
         .frame(minHeight: 64, alignment: .top)
-        // A tab bar to VoiceOver, which then says "tab, 2 of 4"; and capped,
-        // as the platform's is, with the large content viewer past the cap.
-        .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(.isTabBar)
+        // Capped, as the platform's bar is, with the large content viewer
+        // past the cap.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        // The underline slides to the tab chosen; the page itself swaps at once.
+        .koanAnimation(KoanTheme.Motion.normal, value: selection)
     }
 
     private static let items: [(id: TabShell.TabID, title: String, icon: String)] = [
