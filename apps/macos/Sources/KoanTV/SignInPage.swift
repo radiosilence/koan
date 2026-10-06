@@ -32,8 +32,8 @@ struct SignInPage: View {
                 Text("Sign in to kōan")
                     .font(.system(size: 64, weight: .bold))
                 Text(pairing == nil
-                     ? "Open kōan on a phone or Mac that is signed in to your server and on this network. Its server will appear here."
-                     : "Scan with a phone signed in to \(host), or approve it in kōan on a Mac.")
+                     ? "Open kōan on a device that is signed in to your server and on this network. Its server will appear here."
+                     : "Scan with a phone signed in to \(host), or approve it on a device running kōan.")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
