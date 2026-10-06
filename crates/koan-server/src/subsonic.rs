@@ -6635,7 +6635,11 @@ mod tests {
         assert_eq!(v["status"], "ok", "{v}");
         let v = call(owner, "getPlayQueueByIndex?".into()).await;
         let q = &v["playQueueByIndex"];
-        assert_eq!(ids(&q["entry"]), [&a, &b, &a], "{v}");
+        assert_eq!(
+            ids(&q["entry"]),
+            [a.as_str(), b.as_str(), a.as_str()],
+            "{v}"
+        );
         assert_eq!(q["currentIndex"], 2, "{v}");
         assert_eq!(q["position"], 1500);
         assert_eq!(q["username"], "owner");
@@ -6655,7 +6659,11 @@ mod tests {
         .await;
         assert_eq!(v["status"], "ok", "{v}");
         let v = call(owner, "getPlayQueueByIndex?".into()).await;
-        assert_eq!(ids(&v["playQueueByIndex"]["entry"]), [&a, &c], "{v}");
+        assert_eq!(
+            ids(&v["playQueueByIndex"]["entry"]),
+            [a.as_str(), c.as_str()],
+            "{v}"
+        );
         assert_eq!(v["playQueueByIndex"]["currentIndex"], 1, "{v}");
 
         // A song gone from the library since is dropped on reading.
@@ -6666,7 +6674,7 @@ mod tests {
                 .unwrap();
         }
         let v = call(owner, "getPlayQueue?".into()).await;
-        assert_eq!(ids(&v["playQueue"]["entry"]), [&a], "{v}");
+        assert_eq!(ids(&v["playQueue"]["entry"]), [a.as_str()], "{v}");
         assert!(v["playQueue"]["current"].is_null(), "{v}");
 
         // Another account has none; the shared secret is refused.
