@@ -189,6 +189,8 @@ pub struct Detail {
     pub problem: Option<String>,
     /// Profiles it plays first, for a stack.
     pub layers: Vec<crate::config::DspLayer>,
+    /// A group: one of `layers` plays, the one switched on.
+    pub group: bool,
 }
 
 /// Everything in the profile `name`.
@@ -242,6 +244,7 @@ pub fn detail(name: &str) -> Option<Detail> {
         preamp_rate,
         preamp_set: profile.preamp_db.is_some(),
         layers: profile.layers.clone(),
+        group: profile.group,
         problem,
     })
 }
@@ -639,6 +642,78 @@ fn stacks_of(cfg: &Config, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// Play `member` of the group `group`, and none of the others.
+pub fn select(group: &str, member: &str) -> Result<(), String> {
+    let cfg = Config::cached();
+    let g = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == group)
+        .ok_or_else(|| format!("No profile called {group}"))?;
+    if !g.group {
+        return Err(format!("{group} is not a group"));
+    }
+    if !g.layers.iter().any(|l| l.profile == member) {
+        return Err(format!("{member} is not in {group}"));
+    }
+    persist(|cfg| {
+        if let Some(g) = cfg.dsp.profiles.iter_mut().find(|p| p.name == group) {
+            for l in &mut g.layers {
+                l.on = l.profile == member;
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// Make `name` a group, where one of its layers plays, or a stack, where
+/// each is switched on or off. Made a group, the first layer switched on
+/// is the one that plays.
+pub fn set_group(name: &str, group: bool) -> Result<(), String> {
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.group = group;
+            if group {
+                let first = p.layers.iter().position(|l| l.on).unwrap_or(0);
+                for (i, l) in p.layers.iter_mut().enumerate() {
+                    l.on = i == first;
+                }
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// Make `name` a group of `members`, in order, the first playing. Refused
+/// over a profile of that name.
+pub fn make_group(name: &str, members: &[String]) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A group needs a name".into());
+    }
+    if Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Err(format!("There is already a profile called {name}"));
+    }
+    let layers = members
+        .iter()
+        .enumerate()
+        .map(|(i, m)| crate::config::DspLayer {
+            profile: m.clone(),
+            on: i == 0,
+        })
+        .collect();
+    persist(|cfg| {
+        cfg.dsp.profiles.push(DspProfile {
+            name: name.to_owned(),
+            layers,
+            group: true,
+            ..Default::default()
+        })
+    })
+    .map_err(|e| e.to_string())
+}
+
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
 /// Refused where it could not play: a layer missing, a layer of itself, one
 /// with impulse responses.
@@ -665,8 +740,18 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
         l.on = true;
     }
     super::chain(&check, &all, &mut Vec::new()).map_err(|e| e.to_string())?;
-    persist(|cfg| profile_mut(&mut cfg.dsp.profiles, name).layers = layers)
-        .map_err(|e| e.to_string())
+    persist(|cfg| {
+        let p = profile_mut(&mut cfg.dsp.profiles, name);
+        p.layers = layers;
+        // A group plays one: the first switched on, or the first of all.
+        if p.group {
+            let first = p.layers.iter().position(|l| l.on).unwrap_or(0);
+            for (i, l) in p.layers.iter_mut().enumerate() {
+                l.on = i == first;
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Delete a profile, and the responses koan keeps for it. Refused while a
@@ -1102,5 +1187,105 @@ mod tests {
         assert_eq!(filters().len(), 1);
         assert!(remove_filter("Mine", 3).is_err());
         assert!(add_band("Nobody").is_err());
+    }
+
+    /// A group plays one member, chosen like a radio button; a stack plays
+    /// each layer switched on. A group can itself be a stack's layer.
+    #[test]
+    fn a_group_plays_one_member() {
+        use crate::config::{DspFilter, DspLayer};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            for (name, hz) in [
+                ("Warm", 100.0),
+                ("Bright", 8000.0),
+                ("Flat", 1000.0),
+                ("Bass", 60.0),
+            ] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(hz)],
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        let names = ["Warm", "Bright", "Flat"].map(String::from);
+        make_group("Presets", &names).unwrap();
+        assert!(make_group("Presets", &names).is_err());
+        let freqs = |name: &str| -> Vec<f64> {
+            let cfg = Config::cached();
+            let p = cfg
+                .dsp
+                .profiles
+                .iter()
+                .find(|p| p.name == name)
+                .unwrap()
+                .clone();
+            super::super::chain(&p, &cfg.dsp.profiles, &mut Vec::new())
+                .unwrap()
+                .into_iter()
+                .map(|f| match f {
+                    DspFilter::Band(b) => b.freq,
+                    other => panic!("{other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(freqs("Presets"), [100.0], "the first plays");
+        select("Presets", "Bright").unwrap();
+        assert_eq!(freqs("Presets"), [8000.0]);
+        assert!(select("Presets", "Bass").is_err(), "not a member");
+
+        // Switching two on in a group leaves the first of them on.
+        let layer = |p: &str, on: bool| DspLayer {
+            profile: p.into(),
+            on,
+        };
+        set_layers(
+            "Presets",
+            vec![
+                layer("Warm", false),
+                layer("Bright", true),
+                layer("Flat", true),
+            ],
+        )
+        .unwrap();
+        assert_eq!(freqs("Presets"), [8000.0]);
+        assert_eq!(
+            detail("Presets")
+                .unwrap()
+                .layers
+                .iter()
+                .filter(|l| l.on)
+                .count(),
+            1
+        );
+
+        // A group as a stack's layer: its chosen member, then the tuning.
+        set_layers("Desk", vec![layer("Presets", true), layer("Bass", true)]).unwrap();
+        assert_eq!(freqs("Desk"), [8000.0, 60.0]);
+
+        // A stack again: each layer switched on plays.
+        set_group("Presets", false).unwrap();
+        set_layers(
+            "Presets",
+            vec![
+                layer("Warm", true),
+                layer("Bright", true),
+                layer("Flat", false),
+            ],
+        )
+        .unwrap();
+        assert_eq!(freqs("Presets"), [100.0, 8000.0]);
+        set_group("Presets", true).unwrap();
+        assert_eq!(
+            freqs("Presets"),
+            [100.0],
+            "the first switched on keeps playing"
+        );
     }
 }

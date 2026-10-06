@@ -1122,6 +1122,20 @@ pub struct DspImportSummary {
     /// Files imported under another name than their own, and files left
     /// out, each with what happened.
     pub notes: Vec<String>,
+    /// The group the presets became, where they became one.
+    pub group: Option<String>,
+}
+
+/// What importing a selection will do, shown before it is done.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspImportPlan {
+    /// A group of presets, one playing at a time, rather than one profile
+    /// combined from them all.
+    pub group: bool,
+    pub files: Vec<String>,
+    /// A name to suggest: the group's, from what the files' names share, or
+    /// the one profile's.
+    pub name: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
@@ -1283,6 +1297,8 @@ pub struct DspProfileDetail {
     pub problem: Option<String>,
     /// Profiles it plays first, in order.
     pub layers: Vec<DspLayerInfo>,
+    /// A group: one of `layers` plays, the one switched on.
+    pub group: bool,
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1425,6 +1441,7 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
                     on: l.on,
                 })
                 .collect(),
+            group: d.group,
         }
     }
 }

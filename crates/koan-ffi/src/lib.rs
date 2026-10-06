@@ -2620,17 +2620,36 @@ impl KoanEngine {
         .await
     }
 
-    /// Import a selection of files: one profile from each where every file
-    /// is a whole configuration by itself, one from them all otherwise. A
-    /// file refused does not stop the others; each refusal is reported, and
-    /// logged.
+    /// What importing `paths` will do: a group of presets, or one profile
+    /// combined from them all, with a name to suggest.
+    pub async fn dsp_import_plan(self: Arc<Self>, paths: Vec<String>) -> DspImportPlan {
+        offload::offload(move || {
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            let plan = koan_core::audio::dsp::import::plan(&paths);
+            DspImportPlan {
+                group: plan.group,
+                files: plan.files,
+                name: plan.name,
+            }
+        })
+        .await
+    }
+
+    /// Import a selection of files. Whole presets become a profile each and
+    /// a group of them called `name`, the first playing; parts of one
+    /// profile combine into one called `name`. A file refused does not stop
+    /// the others; each refusal is reported, and logged.
     pub async fn dsp_import_files(
         self: Arc<Self>,
         paths: Vec<String>,
+        name: Option<String>,
         rate: Option<u32>,
     ) -> Result<DspImportSummary, KoanError> {
         offload::sequenced(move || {
-            use koan_core::audio::dsp::import::{self, Batch, Outcome};
+            use koan_core::audio::dsp::{
+                import::{self, Batch, Outcome},
+                profiles,
+            };
             let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
             let taken: Vec<String> = koan_core::config::Config::cached()
                 .dsp
@@ -2646,10 +2665,11 @@ impl KoanEngine {
                 imported: Vec::new(),
                 refused: Vec::new(),
                 notes: Vec::new(),
+                group: None,
             };
             match batch {
-                Batch::One(imported) => summary.imported.push(self.save_dsp(imported, None)?),
-                Batch::Each(each) => {
+                Batch::One(imported) => summary.imported.push(self.save_dsp(imported, name)?),
+                Batch::Group(each) => {
                     for item in each {
                         let file = item.file;
                         let saved = match item.outcome {
@@ -2671,9 +2691,56 @@ impl KoanEngine {
                             }
                         }
                     }
+                    if summary.imported.len() > 1 {
+                        let wanted = name
+                            .filter(|n| !n.trim().is_empty())
+                            .unwrap_or_else(|| import::group_name(&summary.imported));
+                        let all = koan_core::config::Config::cached();
+                        let group = std::iter::once(wanted.clone())
+                            .chain((2..).map(|n| format!("{wanted} {n}")))
+                            .find(|n| all.dsp.profiles.iter().all(|p| &p.name != n))
+                            .expect("some number is free");
+                        if group != wanted {
+                            summary
+                                .notes
+                                .push(format!("{wanted} is taken; the group is {group}"));
+                        }
+                        profiles::make_group(&group, &summary.imported)
+                            .map_err(|message| KoanError::BadArgument { message })?;
+                        self.send_local(PlayerCommand::ReloadDsp)?;
+                        summary.group = Some(group);
+                    }
                 }
             }
             Ok(summary)
+        })
+        .await
+    }
+
+    /// Play `member` of the group `group`, and none of the others.
+    pub async fn dsp_select(
+        self: Arc<Self>,
+        group: String,
+        member: String,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::select(&group, &member)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Make `name` a group, one layer playing, or a stack of layers.
+    pub async fn dsp_set_group(
+        self: Arc<Self>,
+        name: String,
+        group: bool,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_group(&name, group)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
         })
         .await
     }

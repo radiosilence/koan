@@ -132,7 +132,13 @@ fn resolve(
             stack[0]
         ))
     };
-    for layer in profile.layers.iter().filter(|l| l.on) {
+    // A group plays one member: the first switched on.
+    let playing = profile
+        .layers
+        .iter()
+        .filter(|l| l.on)
+        .take(if profile.group { 1 } else { usize::MAX });
+    for layer in playing {
         let p = all
             .iter()
             .find(|p| p.name == layer.profile)

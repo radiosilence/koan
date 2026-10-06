@@ -64,14 +64,14 @@ pub fn import(paths: &[PathBuf], rate: Option<u32>) -> Result<Imported, ImportEr
     Ok(imported)
 }
 
-/// What a selection of files imports as: one profile from them all, or one
-/// profile from each.
+/// What a selection of files imports as: one profile from them all, or a
+/// group, a profile from each of which one plays at a time.
 pub enum Batch {
     One(Imported),
-    Each(Vec<BatchItem>),
+    Group(Vec<BatchItem>),
 }
 
-/// One file of a selection imported a profile each.
+/// One file of a selection imported as a group.
 pub struct BatchItem {
     /// The file, by name.
     pub file: String,
@@ -88,7 +88,7 @@ pub enum Outcome {
     Skipped(String),
 }
 
-/// Whether a selection imports a profile from each file: when there are
+/// Whether a selection imports as a group, a profile from each file: when there are
 /// several, and each is a whole EQ or filter configuration by itself
 /// (Equalizer APO, AutoEQ or Qudelix text, CamillaDSP YAML, a Convolver
 /// `.cfg`), and they are not REW's files for each side of one setup.
@@ -110,12 +110,13 @@ pub fn separately(paths: &[PathBuf]) -> bool {
     paths.len() > 1 && !sides && paths.iter().all(whole)
 }
 
-/// Import a selection: a profile from each file where [`separately`] says
-/// so, one from them all otherwise, as [`import`] does, for what are parts
+/// Import a selection: a group, a profile from each file, where
+/// [`separately`] says so, one from them all otherwise, as [`import`] does,
+/// for what are parts
 /// of one: responses a file per channel or rate, a folder, a zip, or REW's
 /// file for each side.
 ///
-/// Imported a profile each, no file takes a name in `taken` (the profiles
+/// Imported as a group, no file takes a name in `taken` (the profiles
 /// there already) or one an earlier file took: it is named for its whole
 /// file name instead, or numbered. AutoEQ's `FixedBandEQ` file is left out
 /// beside its `ParametricEQ` one from the same folder, which is the same
@@ -168,7 +169,53 @@ pub fn import_batch(
         };
         out.push(BatchItem { file, outcome });
     }
-    Ok(Batch::Each(out))
+    Ok(Batch::Group(out))
+}
+
+/// What importing `paths` will do, before it is done: whether they become a
+/// group, the files by name, and a name to suggest for the group or the one
+/// profile they combine into.
+pub struct Plan {
+    pub group: bool,
+    pub files: Vec<String>,
+    pub name: String,
+}
+
+pub fn plan(paths: &[PathBuf]) -> Plan {
+    let group = separately(paths);
+    let names: Vec<String> = paths.iter().map(|p| profile_name(p)).collect();
+    Plan {
+        group,
+        files: paths.iter().map(|p| file_name(p)).collect(),
+        name: if group {
+            group_name(&names)
+        } else {
+            names.first().cloned().unwrap_or_else(|| "Imported".into())
+        },
+    }
+}
+
+/// A name for the group of `members`: the words they begin with alike
+/// ("AFUL Performer 8S" for "AFUL Performer 8S Warm" and "AFUL Performer 8S
+/// Bright"), or the first's when they have none in common.
+pub fn group_name(members: &[String]) -> String {
+    let words: Vec<Vec<&str>> = members
+        .iter()
+        .map(|m| m.split_whitespace().collect())
+        .collect();
+    let Some(first) = words.first() else {
+        return "Imported".into();
+    };
+    let common = (0..first.len())
+        .take_while(|&i| words.iter().all(|w| w.get(i) == first.get(i)))
+        .count();
+    let name = first[..common].join(" ");
+    let name = name.trim_end_matches(['-', '_', ',', '(']).trim();
+    if name.is_empty() {
+        members[0].clone()
+    } else {
+        name.to_owned()
+    }
 }
 
 /// Import text with no file behind it: Equalizer APO or AutoEQ lines,
@@ -530,7 +577,7 @@ mod tests {
     use std::io::Write as _;
 
     fn imported(batch: Batch) -> Vec<(String, Result<String, String>)> {
-        let Batch::Each(each) = batch else {
+        let Batch::Group(each) = batch else {
             panic!("one profile from them all");
         };
         each.into_iter()
@@ -576,6 +623,35 @@ mod tests {
         assert_eq!(each.iter().filter(|(_, r)| r.is_ok()).count(), 3);
         assert_eq!(each[2].0, "Flat.txt");
         assert!(each[2].1.is_err());
+    }
+
+    /// A group is named by what its members' names share; parts of one
+    /// profile by the first file.
+    #[test]
+    fn a_plan_says_what_will_happen() {
+        assert_eq!(
+            group_name(&[
+                "AFUL Performer 8S Warm".into(),
+                "AFUL Performer 8S Bright".into()
+            ]),
+            "AFUL Performer 8S"
+        );
+        assert_eq!(group_name(&["Warm".into(), "Bright".into()]), "Warm");
+        let dir = tempfile::tempdir().unwrap();
+        let mut presets = Vec::new();
+        for name in ["AFUL Performer 8S Warm", "AFUL Performer 8S Bright"] {
+            let path = dir.path().join(format!("{name}.txt"));
+            std::fs::write(&path, "Filter 1: ON PK Fc 100 Hz Gain -3 dB Q 1\n").unwrap();
+            presets.push(path);
+        }
+        let p = plan(&presets);
+        assert!(p.group);
+        assert_eq!(p.name, "AFUL Performer 8S");
+        let wav = dir.path().join("room.wav");
+        crate::audio::dsp::raw::write_wav(&wav, 48000, &[vec![1.0, 0.0]]).unwrap();
+        let p = plan(&[presets[0].clone(), wav]);
+        assert!(!p.group, "a response is part of one profile");
+        assert_eq!(p.name, "AFUL Performer 8S Warm");
     }
 
     /// The parts of one profile chosen together are still one: a Convolver
