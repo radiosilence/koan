@@ -1,0 +1,1 @@
+- **A phone controlled from another device shows its real output.** The output menu named the phone's route "System Output" with no preset, because the phone listed its outputs once, before it knew the route. It now publishes the route by its port name ("Qudelix-5K", "AirPods Pro") with the preset that route plays through, and again whenever the route changes.
