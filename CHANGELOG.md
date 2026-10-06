@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Tapping the server's address in Settings → Server copies it,** in the Mac and iOS apps, for signing another app or device in to the same server. The row reads *Copied* for a moment.
+
 ### Fixed
 
 - **The Apple TV's filter and sort did nothing.** In the navigation bar they took focus, but tvOS never showed the sheet or menu they open. They are now a row of buttons above the album, artist and track listings, named in full.
