@@ -284,14 +284,18 @@ fn is_navigation(req: &Request) -> bool {
 /// Let a signed-in user through; send a page load to resume its session, and
 /// refuse anything else. Behind an authenticating proxy a session is good only
 /// for the account the proxy names, so a browser whose proxy sign-in changed
-/// hands over to the new account.
+/// hands over to the new account, and a header from the proxy that names no
+/// one account lets no session through.
 async fn gate(State(s): State<UiState>, mut req: Request, next: Next) -> Response {
     let user = if s.auth_enabled {
-        let vouched = session::vouched(&s, req.headers(), req.extensions()).map(str::to_owned);
-        match cookie(req.headers(), "koan_access")
-            .and_then(|t| auth::validate_access_token(&s.auth.public_pem, t).ok())
-        {
-            Some(claims) if vouched.as_ref().is_none_or(|v| *v == claims.username) => {
+        let vouched = session::vouched(&s, req.headers(), req.extensions());
+        let claims = cookie(req.headers(), "koan_access")
+            .and_then(|t| auth::validate_access_token(&s.auth.public_pem, t).ok());
+        match (claims, vouched) {
+            (Some(claims), session::Vouch::Absent) => {
+                crate::auth::current_user(&s.pool, claims).await
+            }
+            (Some(claims), session::Vouch::Named(name)) if name == claims.username => {
                 crate::auth::current_user(&s.pool, claims).await
             }
             _ => None,

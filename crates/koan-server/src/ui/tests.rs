@@ -1754,11 +1754,11 @@ async fn the_proxy_signs_in_the_account_it_names() {
     )
     .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
-    assert_eq!(r.location(), "/ui/resume?next=%2Fartists");
+    assert_eq!(r.location(), "/auth/proxy?next=%2Fartists");
 
     let r = send(
         &f.app,
-        from_peer(get("/ui/resume?next=/artists"), "10.0.0.1")
+        from_peer(get("/auth/proxy?next=/artists"), "10.0.0.1")
             .header("remote-user", "alice")
             .body(Body::empty())
             .unwrap(),
@@ -1780,12 +1780,15 @@ async fn page_loads_behind_the_proxy_resume_through_it() {
     )
     .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
-    assert_eq!(r.location(), "/ui/resume?next=%2Foauth%2Fauthorize%3Fx%3Dy");
+    assert_eq!(
+        r.location(),
+        "/auth/proxy?next=%2Foauth%2Fauthorize%3Fx%3Dy"
+    );
 
     // Without the header it falls back to the refresh cookie.
     let r = send(
         &f.app,
-        get("/ui/resume?next=/queue").body(Body::empty()).unwrap(),
+        get("/auth/proxy?next=/queue").body(Body::empty()).unwrap(),
     )
     .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
@@ -1796,28 +1799,26 @@ async fn page_loads_behind_the_proxy_resume_through_it() {
 #[tokio::test]
 async fn the_header_counts_only_from_the_proxy_with_one_value() {
     let f = setup_behind_proxy();
-    let stranger = from_peer(get("/ui/resume"), "203.0.113.9")
+    let stranger = from_peer(get("/auth/proxy"), "203.0.113.9")
         .header("remote-user", "alice")
         .body(Body::empty())
         .unwrap();
-    let doubled = from_peer(get("/ui/resume"), "10.0.0.1")
-        .header("remote-user", "mallory")
+    let unknown_peer = get("/auth/proxy")
         .header("remote-user", "alice")
         .body(Body::empty())
         .unwrap();
-    let merged = from_peer(get("/ui/resume"), "10.0.0.1")
-        .header("remote-user", "alice, mallory")
-        .body(Body::empty())
-        .unwrap();
-    let unknown_peer = get("/ui/resume")
-        .header("remote-user", "alice")
-        .body(Body::empty())
-        .unwrap();
-    for req in [stranger, doubled, merged, unknown_peer] {
+    for req in [stranger, unknown_peer] {
         let r = send(&f.app, req).await;
         assert_eq!(r.status, StatusCode::SEE_OTHER);
         assert_eq!(r.location(), "/auth/resume?next=%2F");
         assert!(r.cookies().is_empty());
+    }
+    // From the proxy, a header naming no one account signs in no one, and
+    // ends the browser's own session rather than falling back to it.
+    for req in unusable_headers() {
+        let r = send(&f.app, req.uri("/auth/proxy").body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+        assert_signed_out(&r);
     }
     let r = send(
         &f.app,
@@ -1833,6 +1834,10 @@ async fn the_header_counts_only_from_the_proxy_with_one_value() {
 /// The paths the docs tell operators to exempt from the proxy, where a
 /// client's own header arrives from the proxy's address unchecked, sign in
 /// no one.
+///
+/// Only the web UI and the auth routes are mounted here. `/rest`, `/graphql`,
+/// `/mcp`, `/share` and `/push` are other routers, none of which reads the
+/// header at all.
 #[tokio::test]
 async fn paths_exempt_from_the_proxy_ignore_the_header() {
     let f = setup_behind_proxy();
@@ -1891,19 +1896,127 @@ async fn paths_exempt_from_the_proxy_ignore_the_header() {
     }
 }
 
+/// Requests from the proxy whose `Remote-User` names no one account: sent
+/// twice, merged, or not text.
+fn unusable_headers() -> Vec<axum::http::request::Builder> {
+    let from_proxy = || from_peer(get("/"), "10.0.0.1");
+    vec![
+        from_proxy()
+            .header("remote-user", "mallory")
+            .header("remote-user", "alice"),
+        from_proxy().header("remote-user", "alice, mallory"),
+        from_proxy().header(
+            "remote-user",
+            axum::http::HeaderValue::from_bytes(b"al\xffice").unwrap(),
+        ),
+    ]
+}
+
+/// The reply cleared both session cookies and set no new ones.
+fn assert_signed_out(r: &Reply) {
+    for name in ["koan_access", "koan_refresh"] {
+        assert!(
+            r.cookies()
+                .iter()
+                .any(|c| c.starts_with(&format!("{name}=;")) && c.contains("Max-Age=0")),
+            "{name} not cleared: {:?}",
+            r.cookies()
+        );
+        assert!(
+            !r.cookies()
+                .iter()
+                .any(|c| c.starts_with(&format!("{name}=")) && !c.starts_with(&format!("{name}=;"))),
+            "{name} set: {:?}",
+            r.cookies()
+        );
+    }
+}
+
 #[tokio::test]
 async fn an_account_the_server_lacks_is_refused() {
     let f = setup_behind_proxy();
     let r = send(
         &f.app,
-        from_peer(get("/ui/resume"), "10.0.0.1")
+        from_peer(get("/auth/proxy"), "10.0.0.1")
             .header("remote-user", "bob")
             .body(Body::empty())
             .unwrap(),
     )
     .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
-    assert!(r.cookies().is_empty());
+    assert_signed_out(&r);
+}
+
+#[tokio::test]
+async fn an_account_named_in_utf8_signs_in() {
+    let f = setup_behind_proxy();
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        queries::auth::create_user(&db.conn, "josé", "pw", Role::User).unwrap();
+    }
+    let r = send(
+        &f.app,
+        from_peer(get("/auth/proxy"), "10.0.0.1")
+            .header(
+                "remote-user",
+                axum::http::HeaderValue::from_bytes("josé".as_bytes()).unwrap(),
+            )
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let claims =
+        auth::validate_access_token(&f.state.public_pem, &r.cookie("koan_access")).unwrap();
+    assert_eq!(claims.username, "josé");
+}
+
+#[tokio::test]
+async fn a_header_from_the_proxy_naming_no_one_lets_no_session_through() {
+    let f = setup_behind_proxy();
+    for req in unusable_headers() {
+        let r = send(
+            &f.app,
+            req.uri("/albums")
+                .header(
+                    header::COOKIE,
+                    format!("koan_access={}", access_token(&f.state)),
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_ne!(r.status, StatusCode::OK, "{:?}", r.headers);
+        assert_eq!(r.location(), "/auth/proxy?next=%2Falbums");
+    }
+}
+
+/// The comparison with the proxy's account holds for script requests too, not
+/// only page loads.
+#[tokio::test]
+async fn a_script_request_for_another_account_than_the_proxy_names_is_refused() {
+    let f = setup_behind_proxy();
+    let post = |user: &str| {
+        from_peer(Request::post("/history/forget"), "10.0.0.1")
+            .header(header::HOST, HOST)
+            .header(header::ORIGIN, ORIGIN)
+            .header("datastar-request", "true")
+            .header(
+                header::COOKIE,
+                format!("koan_access={}", access_token(&f.state)),
+            )
+            .header("remote-user", user)
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        send(&f.app, post("bob")).await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_ne!(
+        send(&f.app, post("alice")).await.status,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]
@@ -1918,7 +2031,7 @@ async fn a_session_for_another_account_than_the_proxy_names_is_resumed() {
     )
     .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
-    assert_eq!(r.location(), "/ui/resume?next=%2Falbums");
+    assert_eq!(r.location(), "/auth/proxy?next=%2Falbums");
 
     let r = send(
         &f.app,
@@ -1931,37 +2044,84 @@ async fn a_session_for_another_account_than_the_proxy_names_is_resumed() {
     assert_eq!(r.status, StatusCode::OK);
 }
 
+/// A browser sends `koan_refresh` only under its path, as these requests do.
+/// The hand-over must see it there to revoke it.
+#[test]
+fn the_proxy_resume_receives_the_refresh_cookie() {
+    let path = crate::auth::routes::REFRESH_COOKIE_PATH;
+    assert!(
+        super::session::PROXY_RESUME.starts_with(&format!("{path}/")),
+        "{} is outside {path}",
+        super::session::PROXY_RESUME
+    );
+}
+
 /// `/auth/refresh` and `/auth/resume` sit outside the proxy, so a session the
-/// proxy replaced must not be refreshable there.
+/// proxy replaced, by another account or by no one, must not be refreshable
+/// there.
 #[tokio::test]
 async fn a_session_the_proxy_replaces_cannot_be_refreshed() {
     let f = setup_behind_proxy();
-    let signed_in = send(&f.app, form("/login", "username=alice&password=hunter2")).await;
-    let refresh = signed_in.cookie("koan_refresh");
-    let with_refresh =
-        |uri: &str| get(uri).header(header::COOKIE, format!("koan_refresh={refresh}"));
+    {
+        let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+        queries::auth::create_user(&db.conn, "carol", "pw", Role::User).unwrap();
+    }
+    let app = f
+        .app
+        .clone()
+        .merge(crate::auth::routes::auth_router(f.state.clone()));
+    // As a browser's jar sends it: the refresh cookie under its path only.
+    let browser = |uri: &str, refresh: &str| {
+        let req = from_peer(get(uri), "10.0.0.1");
+        if uri.starts_with(crate::auth::routes::REFRESH_COOKIE_PATH) {
+            req.header(header::COOKIE, format!("koan_refresh={refresh}"))
+        } else {
+            req
+        }
+    };
+    let refreshes = |refresh: String| {
+        let app = app.clone();
+        async move {
+            let r = send(
+                &app,
+                Request::post("/auth/refresh")
+                    .header(header::HOST, HOST)
+                    .header(header::ORIGIN, ORIGIN)
+                    .header(header::COOKIE, format!("koan_refresh={refresh}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await;
+            r.status == StatusCode::OK
+        }
+    };
 
-    send(
-        &f.app,
-        from_peer(with_refresh("/ui/resume?next=%2Falbums"), "10.0.0.1")
-            .header("remote-user", "bob")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
+    for (next_user, status) in [
+        ("carol", StatusCode::SEE_OTHER),
+        ("mallory", StatusCode::FORBIDDEN),
+    ] {
+        let signed_in = send(&app, form("/login", "username=alice&password=hunter2")).await;
+        let refresh = signed_in.cookie("koan_refresh");
+        assert!(refreshes(refresh.clone()).await, "a live session refreshes");
+        let refresh = {
+            let again = send(&app, form("/login", "username=alice&password=hunter2")).await;
+            again.cookie("koan_refresh")
+        };
 
-    let r = send(
-        &f.app,
-        with_refresh("/auth/resume?next=%2Falbums")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(
-        r.location(),
-        "/login?next=%2Falbums",
-        "alice's refresh is spent"
-    );
+        let r = send(
+            &app,
+            browser("/auth/proxy?next=%2Falbums", &refresh)
+                .header("remote-user", next_user)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(r.status, status, "{next_user}");
+        assert!(
+            !refreshes(refresh).await,
+            "alice's session outlived {next_user}"
+        );
+    }
 }
 
 #[test]
@@ -2007,6 +2167,25 @@ fn a_bad_proxy_setting_is_refused_not_dropped() {
     );
 }
 
+/// An entry written as an IPv4-mapped IPv6 address matches the IPv4 peer it
+/// maps, as the peer is compared in that form.
+#[test]
+fn a_mapped_proxy_entry_is_its_ipv4_address() {
+    let proxy = super::ProxyAuth::from_config("Remote-User", &["::ffff:172.18.0.5".into()])
+        .unwrap()
+        .unwrap();
+    let mut headers = HeaderMap::new();
+    headers.insert("remote-user", "alice".parse().unwrap());
+    let mut ext = axum::http::Extensions::new();
+    ext.insert(axum::extract::ConnectInfo(
+        "172.18.0.5:1".parse::<std::net::SocketAddr>().unwrap(),
+    ));
+    assert_eq!(
+        proxy.user(&headers, &ext),
+        super::session::Vouch::Named("alice")
+    );
+}
+
 #[test]
 fn proxy_auth_believes_one_header_from_the_proxy() {
     use super::ProxyAuth;
@@ -2022,14 +2201,19 @@ fn proxy_auth_believes_one_header_from_the_proxy() {
         ));
         ext
     };
-    assert_eq!(proxy.user(&headers, &at("172.18.0.5:1")), Some("alice"));
+    use super::session::Vouch;
+    assert_eq!(
+        proxy.user(&headers, &at("172.18.0.5:1")),
+        Vouch::Named("alice")
+    );
     assert_eq!(
         proxy.user(&headers, &at("[::ffff:172.18.0.5]:1")),
-        Some("alice")
+        Vouch::Named("alice")
     );
-    assert_eq!(proxy.user(&headers, &at("172.19.0.5:1")), None);
+    assert_eq!(proxy.user(&headers, &at("172.19.0.5:1")), Vouch::Absent);
     headers.insert("remote-user", "alice,admin".parse().unwrap());
-    assert_eq!(proxy.user(&headers, &at("172.18.0.5:1")), None);
+    assert_eq!(proxy.user(&headers, &at("172.18.0.5:1")), Vouch::Unusable);
+    assert_eq!(proxy.user(&headers, &at("172.19.0.5:1")), Vouch::Absent);
 }
 
 #[tokio::test]

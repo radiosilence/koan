@@ -62,6 +62,7 @@ impl ProxyAuth {
                     .map_err(|_| {
                         format!("graphql.proxy_auth_from: {entry:?} is not an address or range")
                     })?;
+                let net = canonical(net);
                 if net.prefix_len() == 0 {
                     return Err(format!(
                         "graphql.proxy_auth_from: {entry:?} covers every address, so any client \
@@ -82,29 +83,64 @@ impl ProxyAuth {
         }))
     }
 
-    /// The username the proxy vouches for: only on a connection from the
-    /// proxy itself, and only when it sent the header once with one value. A
-    /// proxy that appended to or merged with a client's own header would
-    /// otherwise let the client name the account.
-    pub(super) fn user<'a>(&self, headers: &'a HeaderMap, ext: &Extensions) -> Option<&'a str> {
-        let ConnectInfo(peer) = ext.get::<ConnectInfo<SocketAddr>>()?;
+    /// What the proxy says about who is signed in. Only a connection from
+    /// the proxy itself is heard; a header from anywhere else is absent. From
+    /// the proxy, one value naming one account is believed, and anything else
+    /// it sent is unusable: a proxy that appended to or merged with a client's
+    /// own header would otherwise let the client name the account.
+    pub(super) fn user<'a>(&self, headers: &'a HeaderMap, ext: &Extensions) -> Vouch<'a> {
+        let Some(ConnectInfo(peer)) = ext.get::<ConnectInfo<SocketAddr>>() else {
+            return Vouch::Absent;
+        };
         let peer = peer.ip().to_canonical();
         if !self.from.iter().any(|net| net.contains(&peer)) {
-            return None;
+            return Vouch::Absent;
         }
         let mut values = headers.get_all(&self.header).iter();
-        let name = values.next()?.to_str().ok()?.trim();
-        (values.next().is_none() && !name.is_empty() && !name.contains(',')).then_some(name)
+        let Some(first) = values.next() else {
+            return Vouch::Absent;
+        };
+        match std::str::from_utf8(first.as_bytes()).map(str::trim) {
+            Ok(name) if values.next().is_none() && !name.is_empty() && !name.contains(',') => {
+                Vouch::Named(name)
+            }
+            _ => Vouch::Unusable,
+        }
     }
 }
 
-/// The username a request's proxy vouches for, when proxy sign-in is on.
-pub(super) fn vouched<'a>(
-    s: &UiState,
-    headers: &'a HeaderMap,
-    ext: &Extensions,
-) -> Option<&'a str> {
-    s.proxy_auth.as_ref()?.user(headers, ext)
+/// An IPv4-mapped IPv6 range as the IPv4 range it maps, since a peer's
+/// address is compared in that form.
+fn canonical(net: IpNet) -> IpNet {
+    match net {
+        IpNet::V6(v6) if v6.prefix_len() >= 96 => match v6.addr().to_ipv4_mapped() {
+            Some(v4) => ipnet::Ipv4Net::new(v4, v6.prefix_len() - 96)
+                .map_or(net, IpNet::V4)
+                .trunc(),
+            None => net,
+        },
+        _ => net,
+    }
+}
+
+/// What a request's proxy says about who is signed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Vouch<'a> {
+    /// Proxy sign-in is off, the request did not come from the proxy, or the
+    /// proxy sent no header.
+    Absent,
+    /// The proxy sent the header, but not as one account's name. Never read
+    /// as absent: the browser's own session would then stand in for whoever
+    /// the proxy signed in.
+    Unusable,
+    Named(&'a str),
+}
+
+/// What a request's proxy says about who is signed in.
+pub(super) fn vouched<'a>(s: &UiState, headers: &'a HeaderMap, ext: &Extensions) -> Vouch<'a> {
+    s.proxy_auth
+        .as_ref()
+        .map_or(Vouch::Absent, |proxy| proxy.user(headers, ext))
 }
 
 #[derive(Deserialize, Default)]
@@ -163,7 +199,7 @@ pub(super) async fn login_form(
     if !s.auth_enabled {
         return see_other(next);
     }
-    if vouched(&s, &headers, &ext).is_some() {
+    if vouched(&s, &headers, &ext) != Vouch::Absent {
         return see_other(&format!("{PROXY_RESUME}?next={}", encode(next)));
     }
     html(StatusCode::OK, pages::login(next, None))
@@ -201,10 +237,11 @@ pub(super) async fn login(
 }
 
 /// Where a page load goes for a session when an authenticating proxy is
-/// trusted. A UI path, so the proxy covers it: the paths operators exempt
-/// from the proxy (`/auth/login`, `/oauth/token`…) never read the header, and
-/// a client's own header reaching them through an exemption signs in no one.
-pub(super) const PROXY_RESUME: &str = "/ui/resume";
+/// trusted. Under the refresh cookie's path, so the browser sends the cookie
+/// it is replacing, and not one of the exact paths operators exempt from the
+/// proxy (`/auth/login`, `/auth/refresh`, `/auth/logout`), so the proxy covers
+/// it.
+pub(super) const PROXY_RESUME: &str = "/auth/proxy";
 
 /// Sign in the account the proxy names, with a fresh session even over a
 /// refresh cookie, which may be another account's. Without the header, on to
@@ -219,13 +256,22 @@ pub(super) async fn proxy_resume(
     if !s.auth_enabled {
         return see_other(&next);
     }
-    let Some(name) = vouched(&s, &headers, &ext) else {
+    let vouch = vouched(&s, &headers, &ext);
+    if vouch == Vouch::Absent {
         return see_other(&format!("/auth/resume?next={}", encode(&next)));
-    };
+    }
     // Whatever session the browser held is replaced by the one the proxy
-    // names. Its refresh token is revoked rather than only overwritten, since
-    // `/auth/refresh` sits outside the proxy and would otherwise keep it alive.
+    // names, or by none. Its refresh token is revoked rather than only
+    // overwritten, since `/auth/refresh` sits outside the proxy and would
+    // otherwise keep it alive.
     revoke_refresh(&s, &headers).await;
+    let Vouch::Named(name) = vouch else {
+        log::warn!("web UI: the sign-in proxy sent a header that names no one account");
+        return refused_by_proxy(
+            &s,
+            "Your sign-in proxy did not name one account. Ask an admin to check its configuration.",
+        );
+    };
     match session_for(&s.auth, name).await {
         Some((access, refresh)) => (
             StatusCode::SEE_OTHER,
@@ -236,7 +282,13 @@ pub(super) async fn proxy_resume(
             s.auth.session_cookies(&access, &refresh),
         )
             .into_response(),
-        None => unknown_account(name),
+        None => {
+            log::info!("web UI: the sign-in proxy named {name:?}, who has no account");
+            refused_by_proxy(
+                &s,
+                "Your sign-in proxy names an account this server does not have. Ask an admin to create it.",
+            )
+        }
     }
 }
 
@@ -290,14 +342,15 @@ pub(super) async fn renew(
     }
 }
 
-/// The proxy signed in someone this server has no account for. Accounts are
-/// made by an admin; a proxy cannot create one.
-fn unknown_account(name: &str) -> Response {
-    log::info!("web UI: the sign-in proxy named {name:?}, who has no account");
+/// The proxy signed in no one this server has an account for: a name it does
+/// not know (accounts are made by an admin; a proxy cannot create one), or a
+/// header that names no one. The browser's own session goes too.
+fn refused_by_proxy(s: &UiState, message: &'static str) -> Response {
     (
         StatusCode::FORBIDDEN,
         [(header::CACHE_CONTROL, "no-store")],
-        "Your sign-in proxy names an account this server does not have. Ask an admin to create it.",
+        s.auth.cleared_cookies(),
+        message,
     )
         .into_response()
 }

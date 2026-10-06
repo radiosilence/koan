@@ -20,7 +20,7 @@ use koan_core::db::queries::auth as auth_queries;
 /// reaches refresh and logout but is never attached to an API call, and
 /// `HttpOnly` so script cannot read it.
 pub(crate) const REFRESH_COOKIE: &str = "koan_refresh";
-const REFRESH_COOKIE_PATH: &str = "/auth";
+pub(crate) const REFRESH_COOKIE_PATH: &str = "/auth";
 /// A cookie left at this narrower path is sent ahead of the one at
 /// `REFRESH_COOKIE_PATH` and shadows it, so every response that sets or clears
 /// the refresh cookie clears this one too.

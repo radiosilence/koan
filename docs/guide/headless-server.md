@@ -113,7 +113,7 @@ proxy_auth_header = "Remote-User"
 proxy_auth_from = ["172.18.0.5"]     # the proxy's own address
 ```
 
-The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it, and only when it carries a single value. The account must already exist in kōan: a name the server has no account for is refused, not created. The UI follows the proxy, so a browser whose proxy sign-in changes to another account is handed over to that account, and signing out is done at the proxy. Handing over revokes the previous account's refresh token, so `/auth/refresh` cannot extend it; its access token, which carries no session to revoke, stays good on the paths the proxy does not cover (`/graphql`) until it expires, at most `access_token_ttl`. Signing out at the proxy alone leaves the kōan session as it is until the browser next loads a page through the proxy, or it expires.
+The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it, and only when it carries a single value. The account must already exist in kōan with exactly that name, byte for byte and case included: a name the server has no account for is refused, not created. A header from the proxy that names no one account (sent twice, merged, or not UTF-8) is refused too, and signs the browser out rather than leaving it on the session it had. The UI follows the proxy, so a browser whose proxy sign-in changes to another account is handed over to that account, and signing out is done at the proxy. Handing over revokes the previous account's refresh token, so `/auth/refresh` cannot extend it; its access token, which carries no session to revoke, stays good on the paths the proxy does not cover (`/graphql`) until it expires, at most `access_token_ttl`. Signing out at the proxy alone leaves the kōan session as it is until the browser next loads a page through the proxy, or it expires. Removing someone at the identity provider does not end their kōan session either: it refreshes through `/auth/refresh` until the account is deleted in kōan or `refresh_token_ttl` passes.
 
 Proxy sign-in is on only when both settings are set. The server refuses to start, naming the problem, when one is set without the other, when the header is not a header name or an entry is neither an address nor a range, and when an entry covers every address (`0.0.0.0/0`, `::/0`). When it is on, the server logs the header and the addresses it believes it from.
 
@@ -130,6 +130,7 @@ kōan reads the header only on web UI pages and the MCP consent page (`/oauth/au
 | `/oauth/register`, `/oauth/token` | MCP clients signing in |
 | `/.well-known` | MCP clients discovering the OAuth server |
 | `/share` | Public share links, for people without an account |
+| `/push/cover` | Album art in iOS notifications, fetched by the app's notification extension through a signed link |
 
 Exempt these exact paths, never whole `/auth` or `/oauth` prefixes. On a path the proxy does not cover it sets no header of its own, so whatever a client sent passes through from the proxy's address. Have the proxy remove the header from every incoming request before it authenticates, so a mistaken exemption carries no header at all. With Caddy:
 
@@ -137,7 +138,7 @@ Exempt these exact paths, never whole `/auth` or `/oauth` prefixes. On a path th
 music.example.com {
     request_header -Remote-User
 
-    @public path /rest/* /graphql /graphql/* /mcp /mcp/* /auth/login /auth/refresh /auth/logout /oauth/register /oauth/token /.well-known/* /share/*
+    @public path /rest/* /graphql /graphql/* /mcp /mcp/* /auth/login /auth/refresh /auth/logout /oauth/register /oauth/token /.well-known/* /share/* /push/cover/*
     handle @public {
         reverse_proxy koan:4000
     }
