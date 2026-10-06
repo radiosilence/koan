@@ -39,8 +39,8 @@ final class SignInTests: XCTestCase {
 
     /// A phone's tabs are a tab bar; an iPad's are buttons in a bar across the top.
     private func tab(_ app: XCUIApplication, _ name: String) {
-        let bar = app.tabBars.buttons[name]
-        if bar.waitForExistence(timeout: 10) { bar.tap() } else { app.buttons[name].firstMatch.tap() }
+        let bar = app.tabBars.buttons[any: name]
+        if bar.waitForExistence(timeout: 10) { bar.tap() } else { app.buttons[any: name].firstMatch.tap() }
     }
 
     private func field(_ query: XCUIElementQuery, _ placeholder: String) -> XCUIElement {

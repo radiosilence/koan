@@ -102,8 +102,8 @@ final class WalkTests: XCTestCase {
     }
 
     private func tab(_ name: String) {
-        let button = app.tabBars.buttons[name]
-        if button.waitForExistence(timeout: 3) { button.tap() } else { app.buttons[name].firstMatch.tap() }
+        let button = app.tabBars.buttons[any: name]
+        if button.waitForExistence(timeout: 3) { button.tap() } else { app.buttons[any: name].firstMatch.tap() }
         pause(1)
     }
 

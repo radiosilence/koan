@@ -1483,6 +1483,10 @@ struct KoanTabItem: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
+        .accessibilityShowsLargeContentViewer {
+            KoanIcon(icon)
+            Text(title)
+        }
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 }
@@ -1490,11 +1494,7 @@ struct KoanTabItem: View {
 extension View {
     /// Hides the platform's tab bar where the theme draws its own (iOS).
     func koanHidesSystemTabBar() -> some View {
-        #if os(iOS)
-        toolbar(KoanTheme.isOn ? .hidden : .automatic, for: .tabBar)
-        #else
-        self
-        #endif
+        modifier(KoanHidesSystemTabBar())
     }
 }
 
@@ -1565,6 +1565,20 @@ struct KoanUnavailable: View {
         } else {
             ContentUnavailableView(title, systemImage: icon, description: Text(detail))
         }
+    }
+}
+
+/// On a phone, in the theme, the platform's tab bar gives way to the theme's
+/// own. An iPad keeps its sidebar layout, the platform's.
+private struct KoanHidesSystemTabBar: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var width
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.toolbar(KoanTheme.isOn && width == .compact ? .hidden : .automatic, for: .tabBar)
+        #else
+        content
+        #endif
     }
 }
 

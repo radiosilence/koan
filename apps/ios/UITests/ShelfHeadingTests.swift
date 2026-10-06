@@ -45,7 +45,7 @@ final class ShelfHeadingTests: XCTestCase {
             let noun = String(list.dropLast())
             let count = "\(total) \(total == 1 ? noun : list)"
             XCTAssert(
-                app.staticTexts[count].waitForExistence(timeout: 10),
+                app.staticTexts[any: count].waitForExistence(timeout: 10),
                 "\(name): the \(list) heading said \(total) and opened a browser without “\(count)”"
             )
             if list == "tracks" {
@@ -65,12 +65,14 @@ final class ShelfHeadingTests: XCTestCase {
 
     /// The shelf, from the Library tab's root.
     private func open(_ name: String) {
-        let bar = app.tabBars.buttons[any: "Library"]
-        if bar.waitForExistence(timeout: 10) { bar.tap() } else { app.buttons[any: "Library"].firstMatch.tap() }
+        // The platform's tab bar, or the theme's, which is its own buttons.
+        let system = app.tabBars.buttons[any: "Library"]
+        let tab = system.waitForExistence(timeout: 3) ? system : app.buttons[any: "Library"]
+        tab.tap()
         // Tapping the selected tab again goes back to its root.
-        if !app.buttons[name].waitForExistence(timeout: 2) { bar.tap() }
-        app.buttons[name].firstMatch.tap()
-        _ = app.staticTexts[name].waitForExistence(timeout: 10)
+        if !app.buttons[any: name].waitForExistence(timeout: 2) { tab.tap() }
+        app.buttons[any: name].tap()
+        _ = app.staticTexts[any: name].waitForExistence(timeout: 10)
     }
 
     /// Scroll until `element` is on screen; false when it never appears.
