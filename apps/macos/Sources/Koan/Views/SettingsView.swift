@@ -165,9 +165,9 @@ private struct StatusLine: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 8)
         #if os(tvOS)
-        .background(.regularMaterial)
+        .koanMaterial(.regularMaterial)
         #else
-        .background(.bar)
+        .koanMaterial(.bar)
         #endif
     }
 }

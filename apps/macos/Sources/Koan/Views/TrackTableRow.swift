@@ -89,6 +89,15 @@ final class TrackTableRow: NSTableCellView, TableRow {
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
     ))
     private static let spacing: CGFloat = 12
+    /// Wide enough for an hour or more ("1:02:34") and for the widest format
+    /// ("FLAC 24/176.4") in whichever face the rows are drawn in; never
+    /// narrower than the columns were.
+    private static let durationWidth = max(48, measure("0:00:00", numberFont))
+    private static let qualityWidth = max(92, measure("FLAC 24/176.4", qualityFont))
+
+    private static func measure(_ text: String, _ font: NSFont) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2
+    }
 
     private enum Part { case lead, artist, album, heart, elsewhere }
 
@@ -397,14 +406,17 @@ final class TrackTableRow: NSTableCellView, TableRow {
         }
 
         var right = bounds.width
-        let durationWidth: CGFloat = 48
+        let durationWidth = Self.durationWidth
         let durationHeight = lineHeight(Self.numberFont)
         duration.frame = CGRect(x: right - durationWidth, y: (height - durationHeight) / 2, width: durationWidth, height: durationHeight)
         right -= durationWidth + Self.spacing
         if !quality.stringValue.isEmpty {
             let qualityHeight = lineHeight(Self.qualityFont)
-            quality.frame = CGRect(x: right - 92, y: (height - qualityHeight) / 2, width: 92, height: qualityHeight)
-            right -= 92 + Self.spacing
+            quality.frame = CGRect(
+                x: right - Self.qualityWidth, y: (height - qualityHeight) / 2,
+                width: Self.qualityWidth, height: qualityHeight
+            )
+            right -= Self.qualityWidth + Self.spacing
         }
         if context.columns.contains(.heart) {
             heart.frame = Symbol.frame(of: heartImage, centredIn: CGRect(x: right - 16, y: 0, width: 16, height: height))

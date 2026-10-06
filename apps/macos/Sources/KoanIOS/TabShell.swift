@@ -127,7 +127,7 @@ struct TabShell: View {
                 ActivityList()
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.regularMaterial, in: .rect(cornerRadius: KoanTheme.radius(16)))
+                    .koanMaterial(.regularMaterial, in: .rect(cornerRadius: KoanTheme.radius(16)))
                     .padding(.horizontal, 12)
                     // Clear of the mini player and the tab bar under it.
                     .padding(.bottom, 150)
@@ -372,11 +372,14 @@ private struct Transport: ViewModifier {
     #if !os(tvOS)
     private var tabs: some View {
         HStack(spacing: 0) {
-            ForEach(Self.items, id: \.id) { item in
+            ForEach(Array(Self.items.enumerated()), id: \.element.id) { index, item in
                 Button {
                     if selection == item.id { reselect(item.id) } else { selection = item.id }
                 } label: {
-                    KoanTabItem(title: item.title, icon: item.icon, selected: selection == item.id, underline: underline)
+                    KoanTabItem(
+                        title: item.title, icon: item.icon, selected: selection == item.id,
+                        underline: underline, position: (index, Self.items.count)
+                    )
                 }
                 .buttonStyle(.plain)
             }

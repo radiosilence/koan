@@ -43,11 +43,11 @@ enum EvidenceRenderer {
         if let source = state.player.currentArtwork { sleeve = await state.art.dominantColour(for: source) }
         let room = KoanAccent.of(sleeve)
         pages.append(("popover-output", CGSize(width: 340, height: 420), AnyView(
-            OutputPicker().koanSurface().appEnvironment(state)
+            OutputPicker().koanPopover().appEnvironment(state)
                 .tint(room.color).environment(\.koanAccent, room).environment(\.roomTint, room.color)
         )))
         pages.append(("popover-control", CGSize(width: 340, height: 320), AnyView(
-            ControlPicker().koanSurface().appEnvironment(state)
+            ControlPicker().koanPopover().appEnvironment(state)
                 .tint(room.color).environment(\.koanAccent, room).environment(\.roomTint, room.color)
         )))
         if KoanTheme.isOn {
