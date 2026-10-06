@@ -258,7 +258,8 @@ extension UIColor {
 /// the record playing, or mint — and falls back to `ink` for text where the
 /// record's colour cannot reach 4.5:1 (see `KoanAccent`).
 enum KoanTone {
-    case ink, strong, muted, accent, bad
+    /// `rule` is for strokes and fills — chart grids, dividers — never text.
+    case ink, strong, muted, accent, bad, rule
 }
 
 // MARK: - Accent
@@ -500,6 +501,8 @@ extension KoanTheme {
         case (true, .strong): AnyShapeStyle(Color.koanStrong)
         case (true, .muted): AnyShapeStyle(Color.koanMuted)
         case (true, .bad): AnyShapeStyle(Color.koanBad)
+        case (true, .rule): AnyShapeStyle(Color.koanRule)
+        case (false, .rule): AnyShapeStyle(.quaternary)
         case (_, .accent): AnyShapeStyle(.tint)
         case (false, .ink), (false, .strong): AnyShapeStyle(.primary)
         case (false, .muted): AnyShapeStyle(.secondary)
@@ -603,6 +606,18 @@ extension View {
         modifier(KoanBarRole(radius: radius, inset: inset))
     }
 
+    /// A form as the theme lays one out: no cards, rows on the ground with
+    /// rules between them. The platform's grouped form otherwise.
+    func koanForm() -> some View {
+        modifier(KoanFormRole())
+    }
+
+    /// A pop-up picker, menu or stepper: the system control, in `ink` and the
+    /// theme's type rather than the accent. Unchanged in the platform's look.
+    func koanControl() -> some View {
+        modifier(KoanControlRole())
+    }
+
     /// A sheet's chrome: `bg` beneath, no material, the theme's type for
     /// everything that does not set its own.
     func koanSheet() -> some View {
@@ -645,6 +660,7 @@ private struct KoanTextRole: ViewModifier {
         case .strong: AnyShapeStyle(Color.koanStrong)
         case .muted: AnyShapeStyle(Color.koanMuted)
         case .bad: AnyShapeStyle(Color.koanBad)
+        case .rule: AnyShapeStyle(Color.koanRule)
         case .accent: accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
         }
     }
@@ -655,6 +671,7 @@ private struct KoanTextRole: ViewModifier {
         case .muted: AnyShapeStyle(.secondary)
         case .accent: accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary)
         case .bad: AnyShapeStyle(.red)
+        case .rule: AnyShapeStyle(.quaternary)
         }
     }
 }
@@ -733,6 +750,7 @@ struct KoanButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.koan(.control))
+            .textCase(.lowercase)
             .foregroundStyle(foreground(configuration))
             .padding(padding)
             .frame(minWidth: hit, minHeight: hit)
@@ -1005,6 +1023,48 @@ private struct KoanBarRole: ViewModifier {
                 .glass(.regular, fallback: .regularMaterial, in: .rect(cornerRadius: radius))
                 .padding(.horizontal, inset)
                 .padding(.bottom, 14)
+        }
+    }
+}
+
+private struct KoanFormRole: ViewModifier {
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            #if os(macOS)
+            content
+                .formStyle(.columns)
+                .scrollContentBackground(.hidden)
+            #else
+            content
+                .scrollContentBackground(.hidden)
+                .listRowBackground(Color.clear)
+                .listRowSeparatorTint(Color.koanRule)
+            #endif
+        } else {
+            content.formStyle(.grouped)
+        }
+    }
+}
+
+private struct KoanControlRole: ViewModifier {
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content
+                .font(.koan(.control))
+                .tint(Color.koanInk)
+        } else {
+            content
+        }
+    }
+}
+
+/// A rule between groups: 1 point of `rule`. The platform's divider otherwise.
+struct KoanDivider: View {
+    var body: some View {
+        if KoanTheme.isOn {
+            Rectangle().fill(Color.koanRule).frame(height: KoanTheme.hairline)
+        } else {
+            Divider()
         }
     }
 }
