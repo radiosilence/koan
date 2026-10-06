@@ -690,8 +690,9 @@ struct Serving<'a> {
     /// Set while the device at the other end has bars on screen for this
     /// one. Dropped with the connection, which stops the frames.
     levels: Option<crate::remote::levels::Watch>,
-    /// What the dialler is asked to sign over.
-    nonce: String,
+    /// What the dialler is asked to sign over: `None` asks for no proof, as
+    /// when the system has no random bytes to give.
+    nonce: Option<String>,
     /// Its `NearbyAuth` has been answered; a second is ignored.
     answered: bool,
     /// The dialler, once proven, and the session its commands are signed for.
@@ -707,16 +708,19 @@ impl Serving<'_> {
                 if std::mem::replace(&mut self.answered, true) {
                     return;
                 }
+                let Some(listen_nonce) = self.nonce.clone() else {
+                    return;
+                };
                 let me = &self.local.identity.device_id;
-                let proven = proof::verify_dial(me, &id, &self.nonce, &nonce, &sig);
+                let proven = proof::verify_dial(me, &id, &listen_nonce, &nonce, &sig);
                 let verified = proven.is_some();
                 match &proven {
                     Some(p) => log::info!("nearby: {id} proved itself: {:?}", p.peer),
                     None => log::info!("nearby: {id} proved nothing; trusted as the network is"),
                 }
                 self.proven =
-                    proven.map(|p| (p, proof::Session::new(me, &id, &self.nonce, &nonce)));
-                let sig = proof::sign_listen(&id, me, &nonce, &self.nonce, verified);
+                    proven.map(|p| (p, proof::Session::new(me, &id, &listen_nonce, &nonce)));
+                let sig = proof::sign_listen(&id, me, &nonce, &listen_nonce, verified);
                 self.pending
                     .extend(frame(&ProofFrame::Proof { verified, sig }));
             }
@@ -768,7 +772,7 @@ impl wire::Session for Serving<'_> {
                 name: id.name.clone(),
                 platform: id.platform.clone(),
                 library: crate::remote::link::library_fingerprint(&cfg),
-                nonce: Some(self.nonce.clone()),
+                nonce: self.nonce.clone(),
             }));
             self.greeted = true;
         }
@@ -1035,7 +1039,9 @@ impl Controlling<'_> {
     /// Answer a listener that asked for proof, if this device has one to give.
     fn prove(&mut self, listener: &str, listen_nonce: String) {
         let Some(me) = devices::this_id() else { return };
-        let dial_nonce = proof::nonce();
+        let Some(dial_nonce) = proof::nonce() else {
+            return;
+        };
         let Some(sig) = proof::sign_dial(listener, &me, &listen_nonce, &dial_nonce) else {
             return;
         };
@@ -1889,9 +1895,10 @@ mod tests {
 
     /// The dialler `dialer`'s half of the handshake, from this process's key.
     fn auth(s: &mut Serving, dialer: &str) -> (String, proof::Session) {
-        let dial_nonce = proof::nonce();
-        let sig = proof::sign_dial("mac", dialer, &s.nonce, &dial_nonce).unwrap();
-        let session = proof::Session::new("mac", dialer, &s.nonce, &dial_nonce);
+        let dial_nonce = proof::nonce().unwrap();
+        let listen_nonce = s.nonce.clone().unwrap();
+        let sig = proof::sign_dial("mac", dialer, &listen_nonce, &dial_nonce).unwrap();
+        let session = proof::Session::new("mac", dialer, &listen_nonce, &dial_nonce);
         s.incoming(&json(&ProofFrame::Auth {
             id: dialer.into(),
             nonce: dial_nonce.clone(),
@@ -1924,14 +1931,24 @@ mod tests {
         let r = rig(&[("phone", None), ("mac", None)]);
         let mut s = serving(&r);
         let hello = wire::Session::outgoing(&mut s);
-        assert!(hello[0].contains(&s.nonce), "the Hello carries the nonce");
+        let listen_nonce = s.nonce.clone().unwrap();
+        assert!(
+            hello[0].contains(&listen_nonce),
+            "the Hello carries the nonce"
+        );
 
         let (dial_nonce, mut session) = auth(&mut s, "phone");
         let (verified, sig) = answer(&mut s);
         assert!(verified);
         // The listener proves itself back.
-        let proven =
-            proof::verify_listen("phone", "mac", &dial_nonce, &s.nonce, true, &sig.unwrap());
+        let proven = proof::verify_listen(
+            "phone",
+            "mac",
+            &dial_nonce,
+            &listen_nonce,
+            true,
+            &sig.unwrap(),
+        );
         assert_eq!(proven.map(|p| p.peer), Some(proof::Peer::Own));
 
         let sync = LinkCommand::Sync { full: true };
@@ -1956,6 +1973,28 @@ mod tests {
                 (LinkCommand::Next, CommandSource::Account),
             ]
         );
+    }
+
+    /// A connection is proven once. A second `nearbyAuth`, from a device
+    /// that holds a key the first did not, changes nothing.
+    #[test]
+    fn a_second_proof_on_one_connection_is_ignored() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let r = rig(&[("phone", Some("kim"))]);
+        let mut s = serving(&r);
+        let (_, _) = auth(&mut s, "stranger");
+        assert!(!answer(&mut s).0);
+        let (_, mut session) = auth(&mut s, "phone");
+        assert!(
+            wire::Session::outgoing(&mut s)
+                .iter()
+                .all(|t| !t.contains("nearbyProof")),
+            "no second answer"
+        );
+        s.incoming(&signed(&mut session, &LinkCommand::Pause));
+        assert!(r.ran.lock().is_empty(), "still unproven");
     }
 
     #[test]

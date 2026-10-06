@@ -78,11 +78,14 @@ pub fn public_key() -> Option<String> {
     keypair().map(|pair| B64.encode(pair.public_key().as_ref()))
 }
 
-/// A fresh nonce, base64 of 32 random bytes.
-pub fn nonce() -> String {
+/// A fresh nonce, base64 of 32 random bytes. `None` if the system cannot
+/// give random bytes: a nonce that is not fresh would let a recorded
+/// handshake, and the commands signed after it, be replayed, so without one
+/// nothing is proven.
+pub fn nonce() -> Option<String> {
     let mut bytes = [0u8; 32];
-    let _ = ring::rand::SystemRandom::new().fill(&mut bytes);
-    B64.encode(bytes)
+    ring::rand::SystemRandom::new().fill(&mut bytes).ok()?;
+    Some(B64.encode(bytes))
 }
 
 /// `label` and each field, each preceded by its length, so no two lists of
@@ -306,15 +309,23 @@ impl Session {
 
 // --- The kept key list ------------------------------------------------------
 
-/// The account's device keys as the server last sent them, for the server it
-/// sent them from, and when.
+/// The account's device keys as the server last sent them, for the account
+/// they were sent to, and when.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Kept {
-    /// `library_fingerprint` of the server: keys from one server prove
-    /// nothing for another.
-    server: Option<String>,
+    /// The server and account they are for (`account_of`): keys from one
+    /// prove nothing for another, a second account signed in to the same
+    /// server on this device included.
+    account: Option<String>,
     at: i64,
     keys: Vec<LinkDeviceKey>,
+}
+
+/// Which account on which server this device is signed in to, as kept keys
+/// are tagged with: the server's `library_fingerprint` and the username.
+fn account_of(cfg: &Config) -> Option<String> {
+    let server = crate::remote::link::library_fingerprint(cfg)?;
+    Some(format!("{server}/{}", cfg.remote.username.to_lowercase()))
 }
 
 static KEPT: Mutex<Option<Kept>> = Mutex::new(None);
@@ -334,7 +345,7 @@ fn now() -> i64 {
 /// revoked is a key no longer listed.
 pub fn keep(keys: Vec<LinkDeviceKey>) {
     let kept = Kept {
-        server: crate::remote::link::library_fingerprint(&Config::cached()),
+        account: account_of(&Config::cached()),
         at: now(),
         keys,
     };
@@ -356,15 +367,22 @@ fn kept() -> Vec<LinkDeviceKey> {
     let Some(kept) = held.as_ref() else {
         return Vec::new();
     };
-    let server = crate::remote::link::library_fingerprint(&Config::cached());
-    trusted(kept, server.as_deref(), now())
+    let account = account_of(&Config::cached());
+    trusted(kept, account.as_deref(), now())
 }
 
-fn trusted(kept: &Kept, server: Option<&str>, now: i64) -> Vec<LinkDeviceKey> {
-    if server.is_none() || kept.server.as_deref() != server || now - kept.at > KEYS_TRUSTED_FOR {
+fn trusted(kept: &Kept, account: Option<&str>, now: i64) -> Vec<LinkDeviceKey> {
+    if account.is_none() || kept.account.as_deref() != account || now - kept.at > KEYS_TRUSTED_FOR {
         return Vec::new();
     }
     kept.keys.clone()
+}
+
+/// Forget the kept keys: at sign-in and sign-out, so another account signed
+/// in here never checks peers against the last one's devices.
+pub fn forget() {
+    *KEPT.lock() = Some(Kept::default());
+    let _ = std::fs::remove_file(kept_path());
 }
 
 #[cfg(test)]
@@ -492,20 +510,40 @@ mod tests {
     }
 
     #[test]
-    fn kept_keys_hold_for_their_server_and_a_month() {
+    fn kept_keys_hold_for_their_account_and_a_month() {
+        let cfg = |url: &str, user: &str| {
+            let mut c = Config::default();
+            c.remote.enabled = true;
+            c.remote.url = url.into();
+            c.remote.username = user.into();
+            c.remote.api_key = "k".into();
+            account_of(&c)
+        };
+        let jo = cfg("http://koan.test", "jo");
         let kept = Kept {
-            server: Some("server-a".into()),
+            account: jo.clone(),
             at: 1_000_000,
             keys: vec![key("phone", "K", None)],
         };
-        assert_eq!(trusted(&kept, Some("server-a"), 1_000_000 + 60).len(), 1);
+        assert_eq!(trusted(&kept, jo.as_deref(), 1_000_000 + 60).len(), 1);
+        assert_eq!(
+            trusted(&kept, cfg("http://koan.test/", "JO").as_deref(), 1_000_000).len(),
+            1,
+            "the same account, spelt differently"
+        );
+        let kim = cfg("http://koan.test", "kim");
         assert!(
-            trusted(&kept, Some("server-b"), 1_000_000).is_empty(),
+            trusted(&kept, kim.as_deref(), 1_000_000).is_empty(),
+            "another account"
+        );
+        let elsewhere = cfg("http://other.test", "jo");
+        assert!(
+            trusted(&kept, elsewhere.as_deref(), 1_000_000).is_empty(),
             "another server"
         );
         assert!(trusted(&kept, None, 1_000_000).is_empty(), "signed out");
         assert!(
-            trusted(&kept, Some("server-a"), 1_000_000 + KEYS_TRUSTED_FOR + 1).is_empty(),
+            trusted(&kept, jo.as_deref(), 1_000_000 + KEYS_TRUSTED_FOR + 1).is_empty(),
             "too old"
         );
     }

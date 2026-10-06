@@ -2892,6 +2892,7 @@ impl KoanEngine {
             .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })?;
+            koan_core::remote::proof::forget();
             koan_core::remote::nearby::readvertise();
             Ok(())
         })
