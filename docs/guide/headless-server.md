@@ -113,7 +113,7 @@ proxy_auth_header = "Remote-User"
 proxy_auth_from = ["172.18.0.5"]     # the proxy's own address
 ```
 
-The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it, and only when it carries a single value. The account must already exist in kōan: a name the server has no account for is refused, not created. The UI follows the proxy, so a browser whose proxy sign-in changes to another account is handed over to that account, and signing out is done at the proxy.
+The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it, and only when it carries a single value. The account must already exist in kōan: a name the server has no account for is refused, not created. The UI follows the proxy, so a browser whose proxy sign-in changes to another account is handed over to that account, and signing out is done at the proxy. Handing over revokes the previous account's refresh token, so `/auth/refresh` cannot extend it; its access token, which carries no session to revoke, stays good on the paths the proxy does not cover (`/graphql`) until it expires, at most `access_token_ttl`. Signing out at the proxy alone leaves the kōan session as it is until the browser next loads a page through the proxy, or it expires.
 
 Proxy sign-in is on only when both settings are set. The server refuses to start, naming the problem, when one is set without the other, when the header is not a header name or an entry is neither an address nor a range, and when an entry covers every address (`0.0.0.0/0`, `::/0`). When it is on, the server logs the header and the addresses it believes it from.
 
