@@ -741,11 +741,18 @@ mod tests {
         set_layers("B", vec![layer("D", true)]).unwrap();
         set_layers("C", vec![layer("D", true)]).unwrap();
         set_layers("A", vec![layer("B", true), layer("C", true)]).unwrap();
-        assert_eq!(
-            response("A", 48000).map(|r| r.layers.len()),
-            Some(2),
-            "a diamond resolves"
-        );
+        {
+            let cfg = Config::cached();
+            let a = cfg.dsp.profiles.iter().find(|p| p.name == "A").unwrap();
+            let played = Setup::load(a, &cfg.dsp.profiles, dir.path())
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                played.filters,
+                vec![band(100.0), band(100.0)],
+                "a diamond resolves"
+            );
+        }
         assert!(
             set_layers("X", vec![layer("D", true), layer("D", true)]).is_err(),
             "twice"
