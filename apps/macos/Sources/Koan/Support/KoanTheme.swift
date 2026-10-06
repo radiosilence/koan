@@ -817,9 +817,15 @@ extension View {
         #endif
     }
 
-    /// A material behind a region: `surface` in the theme, which has no
-    /// materials, square; the material in the given shape otherwise.
-    func koanMaterial(_ material: some ShapeStyle, in shape: some Shape = Rectangle()) -> some View {
+    /// A material behind a region, out to the edges past the safe area as
+    /// `.background(_:)` draws it: `surface` in the theme, which has no
+    /// materials; the material otherwise.
+    func koanMaterial(_ material: some ShapeStyle) -> some View {
+        modifier(KoanMaterialRole(material: AnyShapeStyle(material), shape: nil))
+    }
+
+    /// A material in a shape: `surface`, square, in the theme.
+    func koanMaterial(_ material: some ShapeStyle, in shape: some Shape) -> some View {
         modifier(KoanMaterialRole(material: AnyShapeStyle(material), shape: AnyShape(shape)))
     }
 
@@ -1500,13 +1506,14 @@ private struct KoanAnimationRole<Value: Equatable>: ViewModifier {
 
 private struct KoanMaterialRole: ViewModifier {
     let material: AnyShapeStyle
-    let shape: AnyShape
+    let shape: AnyShape?
 
     func body(content: Content) -> some View {
-        if KoanTheme.isOn {
-            content.background(Color.koanSurface, in: Rectangle())
-        } else {
-            content.background(material, in: shape)
+        switch (KoanTheme.isOn, shape) {
+        case (true, nil): content.background(Color.koanSurface)
+        case (true, .some): content.background(Color.koanSurface, in: Rectangle())
+        case (false, nil): content.background(material)
+        case (false, .some(let shape)): content.background(material, in: shape)
         }
     }
 }

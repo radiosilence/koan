@@ -90,10 +90,10 @@ final class TrackTableRow: NSTableCellView, TableRow {
     ))
     private static let spacing: CGFloat = 12
     /// Wide enough for an hour or more ("1:02:34") and for the widest format
-    /// ("FLAC 24/176.4") in whichever face the rows are drawn in; never
-    /// narrower than the columns were.
+    /// ("VORBIS 44.1 kHz", the lossy form) in whichever face the rows are drawn
+    /// in; never narrower than the columns were.
     private static let durationWidth = max(48, measure("0:00:00", numberFont))
-    private static let qualityWidth = max(92, measure("FLAC 24/176.4", qualityFont))
+    private static let qualityWidth = max(92, measure("VORBIS 44.1 kHz", qualityFont))
 
     private static func measure(_ text: String, _ font: NSFont) -> CGFloat {
         ceil((text as NSString).size(withAttributes: [.font: font]).width) + 2

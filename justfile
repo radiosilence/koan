@@ -419,7 +419,7 @@ theme-leaks:
         'cornerRadius: [0-9]'
         'AnyShapeStyle\(\.(primary|secondary|tertiary)\)'
         'Color\.accentColor|Color\.koanAccent|\.controlAccentColor'
-        'background\(\.(regular|thin|ultraThin|thick|ultraThick)Material|background\(\.bar\)'
+        '(background|fill|presentationBackground)\(\.(regular|thin|ultraThin|thick|ultraThick)Material|background\(\.bar\)'
         'foregroundStyle\(\.(orange|red)\)|[^.]\.system(Red|Orange)\b|separatorColor|selectedContentBackgroundColor|[^.]\.quaternaryLabelColor'
         'ContentUnavailableView\('
         'font: \.(caption|callout|body|subheadline|footnote|headline)\b'
