@@ -380,8 +380,8 @@ extension View {
     /// colour wherever there is a list. Row backgrounds are set per row and a
     /// `List` does not pass one down, so this goes on a list's content (a
     /// `Group`, `Section` or `ForEach` reaches every row inside it), not on the
-    /// list. In the theme the rule under each row starts at the row's leading
-    /// edge, so a list's rules line up whatever its rows begin with.
+    /// list. In the theme rows have no rules: rhythm and alignment tell them
+    /// apart.
     @ViewBuilder
     func washedRow() -> some View {
         #if os(macOS)
@@ -392,8 +392,7 @@ extension View {
         #else
         if KoanTheme.isOn {
             listRowBackground(Color.clear)
-                .listRowSeparatorTint(Color.koanRowRule)
-                .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+                .listRowSeparator(.hidden)
         } else {
             listRowBackground(Color.clear)
         }

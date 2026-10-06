@@ -750,6 +750,7 @@ private final class TrackItem: NSCollectionViewItem {
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
             separator.backgroundColor = NSColor.koanSeparator.cgColor
         }
+        separator.isHidden = KoanTheme.isOn
         CATransaction.commit()
         row.frame = view.bounds.insetBy(dx: 8, dy: 0)
     }

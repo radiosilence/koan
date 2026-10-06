@@ -113,8 +113,9 @@ struct KoanTable<Row: TableRow, ID: Hashable>: NSViewRepresentable {
         table.rowHeight = rowHeight
         table.usesAutomaticRowHeights = false
         table.backgroundColor = .clear
-        // The separators a SwiftUI list draws between its rows.
-        table.gridStyleMask = .solidHorizontalGridLineMask
+        // The separators a SwiftUI list draws between its rows; none in the
+        // theme, whose rows are told apart by rhythm and alignment.
+        table.gridStyleMask = KoanTheme.isOn ? [] : .solidHorizontalGridLineMask
         table.gridColor = .koanSeparator
         table.allowsMultipleSelection = true
         table.allowsTypeSelect = true
