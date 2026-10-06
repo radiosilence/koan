@@ -314,19 +314,25 @@ struct HandedOff {
     track: Option<String>,
     /// What `to` last reported before the music was sent.
     before: Option<koan_core::remote::link::LinkState>,
+    /// For music moved here: the queue entry under this device's cursor
+    /// before it was sent.
+    cursor_before: Option<QueueItemId>,
 }
 
 impl HandedOff {
     /// Wait for the destination to say it has the music. Sent is not taken:
     /// until it does, the source stays paused with its queue, and the caller
     /// is told the music has not started rather than that it has.
-    /// `here` is the server's id for the track under this device's cursor,
-    /// for music moved to this device.
-    fn result(&self, here: impl Fn() -> Option<String>) -> MoveResult {
+    /// `here` is the entry under this device's cursor and the server's id for
+    /// its track, for music moved to this device.
+    fn result(&self, here: impl Fn() -> Option<(QueueItemId, Option<String>)>) -> MoveResult {
         use koan_core::remote::devices;
         let started = self.track.as_deref().is_some_and(|track| match &self.to {
             Some(to) => devices::await_current(to, track, self.before.as_ref(), HAND_OFF_TAKEN),
-            None => devices::await_until(|| here().as_deref() == Some(track), HAND_OFF_TAKEN),
+            None => devices::await_until(
+                || arrived_here(self.cursor_before, here(), track),
+                HAND_OFF_TAKEN,
+            ),
         });
         if !started {
             log::warn!(
@@ -339,6 +345,18 @@ impl HandedOff {
             started,
         }
     }
+}
+
+/// Whether music moved here has arrived: the cursor is on `track` in an entry
+/// that was not under it before. The queue it arrives in is new, so its
+/// entries are; a cursor already on that track, in the queue this device kept
+/// when it last handed the music on, is not it arriving.
+fn arrived_here(
+    before: Option<QueueItemId>,
+    now: Option<(QueueItemId, Option<String>)>,
+    track: &str,
+) -> bool {
+    now.is_some_and(|(entry, remote)| Some(entry) != before && remote.as_deref() == Some(track))
 }
 
 /// How long moving the music waits for the destination to say it has it.
@@ -2206,6 +2224,7 @@ impl KoanEngine {
                         })?,
                     };
                     let before = to.as_deref().and_then(devices::last_report);
+                    let cursor_before = engine.state.cursor();
                     devices::send(from, LinkCommand::HandOff { to: to_id })
                         .map_err(|message| KoanError::Remote { message })?;
                     Some(HandedOff {
@@ -2213,6 +2232,7 @@ impl KoanEngine {
                         to: to.clone(),
                         track,
                         before,
+                        cursor_before,
                     })
                 }
                 (None, None) => None,
@@ -2227,7 +2247,7 @@ impl KoanEngine {
                 started: true,
             });
         };
-        Ok(offload::offload(move || sent.result(|| self.current_remote_id())).await)
+        Ok(offload::offload(move || sent.result(|| self.under_cursor())).await)
     }
 
     /// Send a link command, as JSON, to the device `id`. For a Live
@@ -4820,17 +4840,20 @@ impl KoanEngine {
             to: Some(to.to_owned()),
             track: Some(first),
             before,
+            cursor_before: None,
         })
     }
 
-    /// The server's id for the track under this device's cursor.
-    fn current_remote_id(&self) -> Option<String> {
-        let id = self
+    /// The queue entry under this device's cursor, and the server's id for
+    /// its track.
+    fn under_cursor(&self) -> Option<(QueueItemId, Option<String>)> {
+        let cursor = self.state.cursor()?;
+        let remote = self
             .state
-            .cursor()
-            .and_then(|c| self.state.get_item(c))?
-            .db_id?;
-        self.remote_ids(&[id]).remove(&id)
+            .get_item(cursor)
+            .and_then(|item| item.db_id)
+            .and_then(|id| self.remote_ids(&[id]).remove(&id));
+        Some((cursor, remote))
     }
 
     /// Rows arrived by some route the UI did not start; have its pages read
@@ -5247,6 +5270,30 @@ fn remote_error(e: SubsonicError) -> KoanError {
         e => KoanError::Remote {
             message: e.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod hand_off_tests {
+    use super::*;
+
+    /// "Move here" after this device handed the music on: its own queue is
+    /// still there, cursor on the track it would be sent back. That is not
+    /// the music arriving; a new entry for the track is.
+    #[test]
+    fn music_moved_here_arrives_only_in_a_new_entry() {
+        let kept = QueueItemId(uuid::Uuid::now_v7());
+        let arrived = QueueItemId(uuid::Uuid::now_v7());
+        let t = Some("t".to_string());
+        assert!(!arrived_here(Some(kept), Some((kept, t.clone())), "t"));
+        assert!(!arrived_here(Some(kept), None, "t"));
+        assert!(!arrived_here(
+            Some(kept),
+            Some((arrived, Some("u".into()))),
+            "t"
+        ));
+        assert!(arrived_here(Some(kept), Some((arrived, t.clone())), "t"));
+        assert!(arrived_here(None, Some((arrived, t)), "t"));
     }
 }
 

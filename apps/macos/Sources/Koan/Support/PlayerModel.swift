@@ -571,8 +571,9 @@ final class PlayerModel {
             let moved = try await self.engine.moveMusic(to: id)
             let left = moved.leftOut
             if !moved.started {
-                // Sent, not known to have arrived: the music is still where it was, paused.
-                self.lastNotice = "\(name) has not picked up the music yet. It is paused where it was."
+                // Sent, not known to have arrived. The controls follow it there, since a
+                // device asleep takes it on waking; meanwhile it is paused where it was.
+                self.lastNotice = "Sent to \(name), which has not started it yet. It may when it wakes; until then the music is paused where it was."
             } else if left > 0 {
                 self.lastNotice = left == 1
                     ? "1 track only on this device stayed behind"

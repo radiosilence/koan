@@ -1128,31 +1128,40 @@ pub fn last_report(id: &str) -> Option<LinkState> {
     with(|s| reported(s, id).map(|(state, _)| state.clone()))
 }
 
-/// Wait up to `within` for `id` to report `track_id` as its current track,
-/// in a report other than `before` (`last_report` from just before asking).
-/// Sending a command only queues it: on a socket that may have died
-/// unnoticed, in the server's store for a device asleep, or in a push nobody
-/// has tapped. A hand-off learns the music arrived from this. The report
-/// itself, not when it was heard, is what counts: the server's list stamps
-/// every device each time any of them changes.
+/// Wait up to `within` for `id` to report `track_id` as its current track
+/// in a queue it did not have before: `before` is `last_report` from just
+/// before asking. Sending a command only queues it: on a socket that may
+/// have died unnoticed, in the server's store for a device asleep, or in a
+/// push nobody has tapped. A hand-off learns the music arrived from this.
 pub fn await_current(
     id: &str,
     track_id: &str,
     before: Option<&LinkState>,
     within: Duration,
 ) -> bool {
-    let took = || {
-        with(|s| {
-            reported(s, id).is_some_and(|(state, _)| {
-                Some(state) != before
-                    && state
-                        .queue
-                        .iter()
-                        .any(|e| e.current && e.track_id.as_deref() == Some(track_id))
-            })
-        })
-    };
+    let took = || with(|s| reported(s, id).is_some_and(|(now, _)| took(before, now, track_id)));
     await_until(took, within)
+}
+
+/// Whether `now` shows `track_id` arrived since `before`. A hand-off replaces
+/// the queue, so its entries are new: the current one has an id `before`'s
+/// did not. Being on the same track already, or any other report since (a
+/// seek, the outputs, the sleep timer), is not an answer. A device that
+/// names no entries has only its whole report to go on.
+fn took(before: Option<&LinkState>, now: &LinkState, track_id: &str) -> bool {
+    let current = |state: &LinkState| state.queue.iter().find(|e| e.current).cloned();
+    let Some(entry) = current(now) else {
+        return false;
+    };
+    if entry.track_id.as_deref() != Some(track_id) {
+        return false;
+    }
+    let was = before.and_then(current);
+    match (&entry.id, was.as_ref().and_then(|e| e.id.as_ref())) {
+        (Some(id), Some(was)) => id != was,
+        (Some(_), None) => true,
+        (None, _) => before != Some(now),
+    }
 }
 
 /// Wait up to `within` for `done` to hold, looking again at each change to
@@ -1332,9 +1341,11 @@ mod tests {
         );
     }
 
-    fn playing(track: &str) -> LinkState {
+    /// A device on `track`, as the entry `entry` of its queue.
+    fn playing(track: &str, entry: &str) -> LinkState {
         LinkState {
             queue: vec![crate::remote::link::LinkQueueEntry {
+                id: Some(entry.into()),
                 track_id: Some(track.into()),
                 current: true,
                 ..Default::default()
@@ -1381,22 +1392,26 @@ mod tests {
         crate::config::isolate_config_for_tests();
         with(|s| *s = Store::default());
         nearby_hello(hello("phone"), "10.0.0.5:5626");
-        nearby_state("phone", playing("before"));
+        nearby_state("phone", playing("before", "e1"));
         let short = Duration::from_millis(50);
 
         // Sent, and nothing heard back: queued is not taken.
         let before = last_report("phone");
         assert!(!await_current("phone", "handed", before.as_ref(), short));
 
-        // The same track it already had is no answer either.
-        nearby_state("phone", playing("handed"));
+        // Already on the handed track, and then any other report from that
+        // same queue entry (a seek, say), is no answer.
+        nearby_state("phone", playing("handed", "e2"));
         let before = last_report("phone");
+        let mut seeked = playing("handed", "e2");
+        seeked.position_ms = 5000;
+        nearby_state("phone", seeked);
         assert!(!await_current("phone", "handed", before.as_ref(), short));
 
-        // Another track is not this one.
+        // A new queue on another track is not this one.
         let reporter = std::thread::spawn(|| {
             std::thread::sleep(Duration::from_millis(20));
-            nearby_state("phone", playing("other"));
+            nearby_state("phone", playing("other", "e3"));
         });
         assert!(!await_current(
             "phone",
@@ -1406,11 +1421,11 @@ mod tests {
         ));
         reporter.join().unwrap();
 
-        // The device saying it has the track, while the hand-off waits.
+        // The device saying it has the track in the queue it was sent.
         let before = last_report("phone");
         let reporter = std::thread::spawn(|| {
             std::thread::sleep(Duration::from_millis(20));
-            nearby_state("phone", playing("handed"));
+            nearby_state("phone", playing("handed", "e4"));
         });
         assert!(await_current(
             "phone",
@@ -1419,6 +1434,23 @@ mod tests {
             Duration::from_secs(5)
         ));
         reporter.join().unwrap();
+    }
+
+    #[test]
+    fn a_device_naming_no_entries_is_judged_on_its_whole_report() {
+        let unnamed = |track: &str, position_ms| LinkState {
+            position_ms,
+            queue: vec![crate::remote::link::LinkQueueEntry {
+                track_id: Some(track.into()),
+                current: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let before = unnamed("handed", 0);
+        assert!(!took(Some(&before), &before, "handed"));
+        assert!(took(Some(&before), &unnamed("handed", 10), "handed"));
+        assert!(took(None, &unnamed("handed", 0), "handed"));
     }
 
     #[test]
