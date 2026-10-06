@@ -13,6 +13,7 @@ struct NowPlayingPage: View {
     @Environment(UIState.self) private var ui
     @Environment(AppState.self) private var app
     @Environment(LibraryModel.self) private var library
+    @Environment(EngineMirror.self) private var mirror
     @State private var showingDevices = false
     @State private var showingControl = false
     @FocusState private var focus: Focus?
@@ -62,7 +63,9 @@ struct NowPlayingPage: View {
         ContentUnavailableView {
             Label("Nothing playing", systemImage: "music.note")
         } description: {
-            if library.stats?.totalTracks == 0 {
+            if mirror.signInRefused {
+                Text(EngineMirror.signInRefusedDetail)
+            } else if library.stats?.totalTracks == 0 {
                 Text(library.emptyLibraryDetail)
             } else {
                 Text("Choose this Apple TV under Play on, on a phone or Mac, or pick a record from the library.")

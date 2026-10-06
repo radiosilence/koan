@@ -128,7 +128,16 @@ struct TransportBar: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                if let entry = player.currentEntry {
+                // A play still finding its tracks, named from the tap rather
+                // than leaving the track it replaces on show.
+                if let name = player.resolving {
+                    Text(name)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    Text("Loading…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let entry = player.currentEntry {
                     Text(entry.title)
                         .font(.callout.weight(.medium))
                         .lineLimit(1)

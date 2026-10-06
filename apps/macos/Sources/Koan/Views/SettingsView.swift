@@ -321,6 +321,10 @@ private struct RemoteSettings: View {
                         "Tracks",
                         value: Format.count(Int64(model.settings.remoteTracks), "track")
                     )
+                    if mirror.signInRefused {
+                        Label(EngineMirror.signInRefusedDetail, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
                     HStack {
                         // Only the syncs wait on the database writer. Signing
                         // out is a config write, and greying it out while a

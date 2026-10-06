@@ -141,12 +141,12 @@ struct PlaylistView: View {
                     sleeveSize: 44
                 )))
             case .entry(let entry, let position):
-                let isCurrent = current == entry.id
+                let isCurrent = current == entry.entryId
                 return QueueLine(id: row.id, kind: .track(
                     QueueRowContent(
                         entry: entry,
                         position: position + 1,
-                        queued: mirror.queuedByPlaylistEntry[entry.id],
+                        queued: mirror.queuedByPlaylistEntry[entry.entryId],
                         isCurrent: isCurrent
                     ),
                     isCurrent: isCurrent,
@@ -435,7 +435,7 @@ struct PlaylistView: View {
         guard let first = positions(in: rowIds).min(), let entry = entries[safe: first] else {
             return
         }
-        start(at: entry.id)
+        start(at: entry.entryId)
     }
 
     /// Expand a set of row ids to the playlist positions they stand for. An
@@ -445,7 +445,7 @@ struct PlaylistView: View {
     }
 
     private func entryIds(in rowIds: Set<String>) -> [Int64] {
-        positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.id }
+        positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.entryId }
     }
 
     private func trackIds(in rowIds: Set<String>) -> [Int64] {
@@ -518,11 +518,11 @@ struct PlaylistView: View {
             let moving = Set(mine.map(\.position))
             // The row dropped onto, by identity: its index shifts once the
             // moved rows are lifted out of the list.
-            let anchor = entries[safe: position]?.id
+            let anchor = entries[safe: position]?.entryId
             var order = entries.enumerated()
                 .filter { !moving.contains($0.offset) }
-                .map(\.element.id)
-            let lifted = moving.sorted().compactMap { entries[safe: $0]?.id }
+                .map(\.element.entryId)
+            let lifted = moving.sorted().compactMap { entries[safe: $0]?.entryId }
             let at = anchor.flatMap { order.firstIndex(of: $0) } ?? order.count
             order.insert(contentsOf: lifted, at: at)
             playlists.reorder(entryIds: order, in: playlistId)
@@ -553,7 +553,7 @@ extension PlaylistView {
         var id: String {
             switch self {
             case .album(let id, _): id
-            case .entry(let entry, _): "entry:\(entry.id)"
+            case .entry(let entry, _): "entry:\(entry.entryId)"
             }
         }
 
@@ -585,7 +585,7 @@ extension PlaylistView {
                 }
                 let run = entries[index...].prefix { sameRecord($0.track, first.track) }
                 rows.append(.album(
-                    id: "album:\(first.id)",
+                    id: "album:\(first.entryId)",
                     group: PlaylistGroup(
                         album: first.track.albumTitle,
                         artist: first.track.albumArtistName,
@@ -630,14 +630,14 @@ private struct PlaylistEntryRow: View {
     @Environment(EngineMirror.self) private var mirror
 
     var body: some View {
-        let isCurrent = player.currentPlaylistEntryId == entry.id
+        let isCurrent = player.currentPlaylistEntryId == entry.entryId
         QueueRow(
             item: QueueRowContent(
                 entry: entry,
                 position: position + 1,
                 // Found by entry, not by track: two copies of one song are
                 // two rows, and each wears its own queue item's state.
-                queued: mirror.queuedByPlaylistEntry[entry.id],
+                queued: mirror.queuedByPlaylistEntry[entry.entryId],
                 isCurrent: isCurrent
             ),
             isCurrent: isCurrent,

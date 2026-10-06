@@ -77,10 +77,13 @@ struct NowPlayingSheet: View {
     private var titles: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(player.currentEntry?.title ?? "Nothing playing")
+                Text(player.resolving ?? player.currentEntry?.title ?? "Nothing playing")
                     .font(.title3.weight(.semibold))
                     .lineLimit(1)
-                if let entry = player.currentEntry {
+                if player.resolving != nil {
+                    Text("Loading…")
+                        .foregroundStyle(.secondary)
+                } else if let entry = player.currentEntry {
                     LinkText(
                         text: entry.artist,
                         target: player.currentArtistId.map { .artist($0) },
