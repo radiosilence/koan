@@ -45,6 +45,8 @@ struct DspProfilePage: View {
                     }
                 }
 
+                LayersSection(dsp: dsp, detail: d)
+
                 if let t = targets {
                     TargetSection(dsp: dsp, profile: d.name, targets: t, adding: $addingTarget)
                 }
@@ -143,6 +145,93 @@ struct DspProfilePage: View {
                 editingName = name
             }
         }
+    }
+}
+
+/// The profiles a stack plays first, in order, each switched on or off: a
+/// headphone's correction, then taste on top of it. Any profile can become a
+/// stack; one with impulse responses cannot be a layer.
+private struct LayersSection: View {
+    let dsp: DspModel
+    let detail: DspProfileDetail
+
+    private var layers: [DspLayerInfo] { detail.layers }
+
+    /// Profiles that could be added: not this one, not already in, and EQ
+    /// alone.
+    private var addable: [DspProfileSummary] {
+        (dsp.overview?.profiles ?? []).filter { p in
+            p.name != detail.name
+                && p.rates.isEmpty
+                && !layers.contains { $0.profile == p.name }
+        }
+    }
+
+    var body: some View {
+        Section {
+            ForEach(Array(layers.enumerated()), id: \.element.profile) { index, layer in
+                Toggle(isOn: Binding(
+                    get: { layer.on },
+                    set: { on in
+                        var changed = layers
+                        changed[index].on = on
+                        dsp.setLayers(detail.name, changed)
+                    }
+                )) {
+                    Text(layer.profile)
+                }
+                #if !os(tvOS)
+                .contextMenu {
+                    Button("Move Up") { move(index, by: -1) }
+                        .disabled(index == 0)
+                    Button("Move Down") { move(index, by: 1) }
+                        .disabled(index == layers.count - 1)
+                    Button("Remove from Stack", role: .destructive) { remove(index) }
+                }
+                #endif
+            }
+            #if os(iOS)
+            .onMove { from, to in
+                var changed = layers
+                changed.move(fromOffsets: from, toOffset: to)
+                dsp.setLayers(detail.name, changed)
+            }
+            .onDelete { offsets in
+                var changed = layers
+                changed.remove(atOffsets: offsets)
+                dsp.setLayers(detail.name, changed)
+            }
+            #endif
+            if !addable.isEmpty {
+                Menu("Add a Layer") {
+                    ForEach(addable, id: \.name) { p in
+                        Button(p.name) {
+                            dsp.setLayers(detail.name, layers + [DspLayerInfo(profile: p.name, on: true)])
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Layers")
+        } footer: {
+            Text(layers.isEmpty
+                 ? "Play other profiles first, in order, each switched on or off: a headphone's correction, then a bass shelf or a tilt on top."
+                 : "Played in order, before this profile's own filters. A layer switched off plays nothing.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func move(_ index: Int, by step: Int) {
+        var changed = layers
+        changed.swapAt(index, index + step)
+        dsp.setLayers(detail.name, changed)
+    }
+
+    private func remove(_ index: Int) {
+        var changed = layers
+        changed.remove(at: index)
+        dsp.setLayers(detail.name, changed)
     }
 }
 

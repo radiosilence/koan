@@ -192,6 +192,32 @@ pub fn cmd_dsp_target(name: &str, target: Option<&str>, reset: bool) {
     }
 }
 
+/// Make `name` a stack of `layers`, all on.
+pub fn cmd_dsp_stack(name: &str, layers: &[String]) {
+    let layers = layers
+        .iter()
+        .map(|l| koan_core::config::DspLayer {
+            profile: l.clone(),
+            on: true,
+        })
+        .collect();
+    profiles::set_layers(name, layers).unwrap_or_else(|e| fail(e));
+    println!("{} '{}'", "stacked".green(), name.bold());
+}
+
+/// Switch `layer` of `stack` on or off.
+pub fn cmd_dsp_layer(stack: &str, layer: &str, on: bool) {
+    let mut layers = profiles::detail(stack)
+        .unwrap_or_else(|| fail(format!("no profile called {stack}")))
+        .layers;
+    let Some(l) = layers.iter_mut().find(|l| l.profile == layer) else {
+        fail(format!("{layer} is not a layer of {stack}"));
+    };
+    l.on = on;
+    profiles::set_layers(stack, layers).unwrap_or_else(|e| fail(e));
+    println!("{layer} {} in {stack}", if on { "on" } else { "off" });
+}
+
 /// Add a target to choose from.
 pub fn cmd_dsp_add_target(path: &std::path::Path) {
     let added = koan_core::audio::dsp::targets::add(path).unwrap_or_else(|e| fail(e));

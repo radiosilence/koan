@@ -494,7 +494,7 @@ mod tests {
                 .find(|p| p.name == name)
                 .unwrap()
                 .clone();
-            super::super::Setup::load(&p, dir.path())
+            super::super::Setup::load(&p, &cfg.dsp.profiles, dir.path())
                 .unwrap()
                 .unwrap()
                 .filters

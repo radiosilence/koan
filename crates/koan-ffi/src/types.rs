@@ -1169,10 +1169,19 @@ pub struct DspProfileSummary {
     pub name: String,
     pub devices: Vec<String>,
     pub bands: u32,
+    /// Profiles it plays first, for a stack.
+    pub layers: u32,
     /// Rates there are impulse responses for.
     pub rates: Vec<u32>,
     /// Why it would not load, if it would not.
     pub problem: Option<String>,
+}
+
+/// A profile played as part of a stack.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspLayerInfo {
+    pub profile: String,
+    pub on: bool,
 }
 
 /// Everything in one profile, for its page in Settings.
@@ -1189,6 +1198,8 @@ pub struct DspProfileDetail {
     pub preamp_rate: u32,
     pub preamp_set: bool,
     pub problem: Option<String>,
+    /// Profiles it plays first, in order.
+    pub layers: Vec<DspLayerInfo>,
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1323,6 +1334,14 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
             preamp_rate: d.preamp_rate,
             preamp_set: d.preamp_set,
             problem: d.problem,
+            layers: d
+                .layers
+                .into_iter()
+                .map(|l| DspLayerInfo {
+                    profile: l.profile,
+                    on: l.on,
+                })
+                .collect(),
         }
     }
 }
@@ -1341,6 +1360,7 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     name: p.name,
                     devices: p.devices,
                     bands: p.bands as u32,
+                    layers: p.layers as u32,
                     rates: p.rates,
                     problem: p.problem,
                 })

@@ -49,6 +49,62 @@ pub enum DspError {
     /// A target the profile was made for or moved to that cannot be read.
     #[error("no target called {0}")]
     Target(String),
+    /// A layer that cannot be played: missing, a layer of itself, or one
+    /// with impulse responses.
+    #[error("{0}")]
+    Layer(String),
+}
+
+/// The filters `profile` plays: each layer that is on, in order, as that
+/// layer plays it, then its own, then the step moving it to another target.
+/// `stack` holds the profiles being resolved, which a cycle would come back
+/// to. A layer is EQ alone: impulse responses belong to the profile that
+/// plays them, and two stacks of responses would make one profile's rates
+/// another's.
+pub fn chain(
+    profile: &DspProfile,
+    all: &[DspProfile],
+    stack: &mut Vec<String>,
+) -> Result<Vec<DspFilter>, DspError> {
+    if stack.contains(&profile.name) {
+        return Err(DspError::Layer(format!(
+            "{} is a layer of itself, through {}",
+            profile.name,
+            stack.join(" → ")
+        )));
+    }
+    stack.push(profile.name.clone());
+    let mut out = Vec::new();
+    for layer in profile.layers.iter().filter(|l| l.on) {
+        let p = all
+            .iter()
+            .find(|p| p.name == layer.profile)
+            .ok_or_else(|| {
+                DspError::Layer(format!(
+                    "{} has no profile {} to layer",
+                    profile.name, layer.profile
+                ))
+            })?;
+        if !p.impulses.is_empty() {
+            return Err(DspError::Layer(format!(
+                "{} has impulse responses, and only EQ can be a layer",
+                p.name
+            )));
+        }
+        out.extend(chain(p, all, stack)?);
+    }
+    out.extend(profile.filters.iter().cloned());
+    // Another target than the one the correction was made for: their
+    // difference, after the correction.
+    if let Some(t) = &profile.target
+        && let Some(chosen) = t.chosen.as_ref().filter(|c| **c != t.made_for)
+    {
+        let curve = |id: &str| targets::choice_curve(id).ok_or(DspError::Target(id.into()));
+        let (from, to) = (curve(&t.made_for)?, curve(chosen)?);
+        out.push(DspFilter::Graphic(targets::difference(&from, &to)));
+    }
+    stack.pop();
+    Ok(out)
 }
 
 /// What is being done to the audio, for the format badge.
@@ -77,23 +133,19 @@ pub struct Setup {
 
 impl Setup {
     /// `None` for a profile that would leave the audio as it is.
-    pub fn load(profile: &DspProfile, base: &Path) -> Result<Option<Self>, DspError> {
+    /// `all` is every profile, which a stack's layers are found among.
+    pub fn load(
+        profile: &DspProfile,
+        all: &[DspProfile],
+        base: &Path,
+    ) -> Result<Option<Self>, DspError> {
         let mut impulses: BTreeMap<u32, Vec<Impulse>> = BTreeMap::new();
         for path in &profile.impulses {
             for impulse in load_impulses(path, base)? {
                 impulses.entry(impulse.rate).or_default().push(impulse);
             }
         }
-        let mut filters = profile.filters.clone();
-        // Another target than the one the correction was made for: their
-        // difference, after the correction.
-        if let Some(t) = &profile.target
-            && let Some(chosen) = t.chosen.as_ref().filter(|c| **c != t.made_for)
-        {
-            let curve = |id: &str| targets::choice_curve(id).ok_or(DspError::Target(id.into()));
-            let (from, to) = (curve(&t.made_for)?, curve(chosen)?);
-            filters.push(DspFilter::Graphic(targets::difference(&from, &to)));
-        }
+        let filters = chain(profile, all, &mut Vec::new())?;
         if filters.is_empty() && impulses.is_empty() && profile.preamp_db.unwrap_or(0.0) == 0.0 {
             return Ok(None);
         }
@@ -628,7 +680,11 @@ mod tests {
             name: "flat".into(),
             ..Default::default()
         };
-        assert!(Setup::load(&profile, Path::new("/")).unwrap().is_none());
+        assert!(
+            Setup::load(&profile, &[], Path::new("/"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -827,7 +883,7 @@ mod tests {
             impulses: vec!["ir.wav".into()],
             ..Default::default()
         };
-        let setup = Setup::load(&profile, &dir).unwrap().unwrap();
+        let setup = Setup::load(&profile, &[], &dir).unwrap().unwrap();
         let impulse = &setup.impulses[&96000][0];
         assert_eq!(impulse.channels, Some(2));
         assert_eq!(impulse.routes[0].ir, vec![0.0, 0.5, 0.0, 0.0]);
@@ -837,6 +893,6 @@ mod tests {
             impulses: vec!["nope.wav".into()],
             ..profile
         };
-        assert!(Setup::load(&missing, &dir).is_err());
+        assert!(Setup::load(&missing, &[], &dir).is_err());
     }
 }

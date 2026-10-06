@@ -16,6 +16,8 @@ pub struct Summary {
     pub name: String,
     pub devices: Vec<String>,
     pub bands: usize,
+    /// Profiles it plays first, for a stack.
+    pub layers: usize,
     /// Rates there are responses for.
     pub rates: Vec<u32>,
     /// Why the profile would not load, if it would not.
@@ -66,7 +68,7 @@ pub fn overview_for(device: Option<String>) -> Overview {
             .profiles
             .iter()
             .map(|p| {
-                let (rates, problem) = match Setup::load(p, &base) {
+                let (rates, problem) = match Setup::load(p, &cfg.dsp.profiles, &base) {
                     Ok(setup) => (setup.map(|s| s.rates()).unwrap_or_default(), None),
                     Err(e) => (Vec::new(), Some(e.to_string())),
                 };
@@ -74,6 +76,7 @@ pub fn overview_for(device: Option<String>) -> Overview {
                     name: p.name.clone(),
                     devices: p.devices.clone(),
                     bands: p.filters.len(),
+                    layers: p.layers.len(),
                     rates,
                     problem,
                 }
@@ -184,6 +187,8 @@ pub struct Detail {
     /// Set by hand rather than derived.
     pub preamp_set: bool,
     pub problem: Option<String>,
+    /// Profiles it plays first, for a stack.
+    pub layers: Vec<crate::config::DspLayer>,
 }
 
 /// Everything in the profile `name`.
@@ -220,7 +225,10 @@ pub fn detail(name: &str) -> Option<Detail> {
         .find(|&r| r == 48000)
         .or(impulses.first().map(|i| i.rate))
         .unwrap_or(48000);
-    let preamp_db = Setup::load(profile, &base)
+    if let Err(e) = super::chain(profile, &cfg.dsp.profiles, &mut Vec::new()) {
+        problem = Some(e.to_string());
+    }
+    let preamp_db = Setup::load(profile, &cfg.dsp.profiles, &base)
         .ok()
         .flatten()
         .map_or(0.0, |s| s.preamp_db(preamp_rate, 2));
@@ -233,6 +241,7 @@ pub fn detail(name: &str) -> Option<Detail> {
         preamp_db,
         preamp_rate,
         preamp_set: profile.preamp_db.is_some(),
+        layers: profile.layers.clone(),
         problem,
     })
 }
@@ -266,6 +275,17 @@ pub fn rename(old: &str, new: &str) -> Result<(), String> {
         std::fs::rename(base.join(&from), base.join(&to)).map_err(|e| e.to_string())?;
     }
     persist(|cfg| {
+        // The stacks that play it follow the new name.
+        for l in cfg
+            .dsp
+            .profiles
+            .iter_mut()
+            .flat_map(|p| p.layers.iter_mut())
+        {
+            if l.profile == old {
+                l.profile = new.to_string();
+            }
+        }
         if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == old) {
             p.name = new.to_string();
             if moved {
@@ -403,8 +423,48 @@ pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-/// Delete a profile, and the responses koan keeps for it.
+/// The stacks `name` is a layer of.
+fn stacks_of(cfg: &Config, name: &str) -> Vec<String> {
+    cfg.dsp
+        .profiles
+        .iter()
+        .filter(|p| p.layers.iter().any(|l| l.profile == name))
+        .map(|p| p.name.clone())
+        .collect()
+}
+
+/// Make `name` a stack of `layers`, in order, creating it if there is none.
+/// Refused where it could not play: a layer missing, a layer of itself, one
+/// with impulse responses.
+pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A profile needs a name".into());
+    }
+    let cfg = Config::cached();
+    let mut all = cfg.dsp.profiles.clone();
+    let probe = profile_mut(&mut all, name);
+    probe.layers = layers.clone();
+    // Every layer, on or off: one switched off now is one switched on later.
+    let mut check = probe.clone();
+    for l in &mut check.layers {
+        l.on = true;
+    }
+    super::chain(&check, &all, &mut Vec::new()).map_err(|e| e.to_string())?;
+    persist(|cfg| profile_mut(&mut cfg.dsp.profiles, name).layers = layers)
+        .map_err(|e| e.to_string())
+}
+
+/// Delete a profile, and the responses koan keeps for it. Refused while a
+/// stack plays it.
 pub fn remove(name: &str) -> Result<(), String> {
+    let stacks = stacks_of(&Config::cached(), name);
+    if !stacks.is_empty() {
+        return Err(format!(
+            "{name} is a layer of {}; take it out first",
+            stacks.join(", ")
+        ));
+    }
     persist(|cfg| cfg.dsp.profiles.retain(|p| p.name != name)).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_dir_all(config::config_dir().join("dsp").join(slug(name)));
     Ok(())
@@ -521,5 +581,132 @@ mod tests {
         remove("Desk").unwrap();
         assert!(!dir.path().join("dsp/desk").exists());
         assert!(overview().profiles.is_empty());
+    }
+
+    fn band(freq: f64) -> crate::config::DspFilter {
+        crate::config::DspFilter::Band(crate::config::EqFilter {
+            kind: crate::config::EqFilterKind::Peaking,
+            freq,
+            gain_db: 3.0,
+            q: 1.0,
+            channels: vec![],
+        })
+    }
+
+    fn layer(profile: &str, on: bool) -> crate::config::DspLayer {
+        crate::config::DspLayer {
+            profile: profile.into(),
+            on,
+        }
+    }
+
+    /// A stack plays its layers that are on, in order, then its own filters;
+    /// it follows a layer's rename, and keeps a layer it plays from being
+    /// deleted.
+    #[test]
+    fn a_stack_plays_its_layers_in_order() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            for (name, f) in [
+                ("HD 650", 100.0),
+                ("Bass +3", 60.0),
+                ("Treble tilt", 8000.0),
+            ] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(f)],
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        set_layers(
+            "Desk",
+            vec![
+                layer("HD 650", true),
+                layer("Bass +3", true),
+                layer("Treble tilt", false),
+            ],
+        )
+        .unwrap();
+        let played = || {
+            let cfg = Config::cached();
+            let p = cfg.dsp.profiles.iter().find(|p| p.name == "Desk").unwrap();
+            Setup::load(p, &cfg.dsp.profiles, dir.path())
+                .unwrap()
+                .unwrap()
+                .filters
+        };
+        assert_eq!(played(), vec![band(100.0), band(60.0)]);
+        set_layers(
+            "Desk",
+            vec![
+                layer("Bass +3", true),
+                layer("HD 650", true),
+                layer("Treble tilt", true),
+            ],
+        )
+        .unwrap();
+        assert_eq!(played(), vec![band(60.0), band(100.0), band(8000.0)]);
+        let summary = overview_for(None);
+        assert_eq!(
+            summary
+                .profiles
+                .iter()
+                .find(|p| p.name == "Desk")
+                .unwrap()
+                .layers,
+            3
+        );
+
+        rename("Bass +3", "Bass").unwrap();
+        assert_eq!(detail("Desk").unwrap().layers[0].profile, "Bass");
+        assert_eq!(played(), vec![band(60.0), band(100.0), band(8000.0)]);
+        let refused = remove("Bass").unwrap_err();
+        assert!(refused.contains("Desk"), "{refused}");
+    }
+
+    #[test]
+    fn a_stack_that_could_not_play_is_refused() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Room".into(),
+                impulses: vec!["dsp/room/48000.wav".into()],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "EQ".into(),
+                filters: vec![band(100.0)],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        assert!(
+            set_layers("Desk", vec![layer("Nothing", true)]).is_err(),
+            "missing"
+        );
+        assert!(
+            set_layers("Desk", vec![layer("Room", true)]).is_err(),
+            "impulses"
+        );
+        assert!(
+            set_layers("Desk", vec![layer("Desk", true)]).is_err(),
+            "itself"
+        );
+        set_layers("Desk", vec![layer("EQ", true)]).unwrap();
+        // A cycle through another, even with the way back switched off.
+        assert!(
+            set_layers("EQ", vec![layer("Desk", false)]).is_err(),
+            "cycle"
+        );
     }
 }

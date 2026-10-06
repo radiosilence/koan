@@ -2545,6 +2545,28 @@ impl KoanEngine {
         .await
     }
 
+    /// Make `name` a stack of `layers`, in order, creating it if there is
+    /// none. Refused where it could not play.
+    pub async fn dsp_set_layers(
+        self: Arc<Self>,
+        name: String,
+        layers: Vec<DspLayerInfo>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            let layers = layers
+                .into_iter()
+                .map(|l| koan_core::config::DspLayer {
+                    profile: l.profile,
+                    on: l.on,
+                })
+                .collect();
+            koan_core::audio::dsp::profiles::set_layers(&name, layers)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
     pub async fn dsp_detail(self: Arc<Self>, name: String) -> Option<DspProfileDetail> {
         offload::offload(move || koan_core::audio::dsp::profiles::detail(&name).map(Into::into))
             .await

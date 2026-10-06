@@ -237,6 +237,11 @@ final class DspModel {
         }
     }
 
+    /// Make `name` a stack of `layers`, in order; creates it if there is none.
+    func setLayers(_ name: String, _ layers: [DspLayerInfo]) {
+        act { try await $0.dspSetLayers(name: name, layers: layers) }
+    }
+
     func detail(_ name: String) async -> DspProfileDetail? {
         await engine.dspDetail(name: name)
     }
@@ -259,6 +264,7 @@ final class DspModel {
 
     static func describe(_ p: DspProfileSummary) -> String {
         var parts: [String] = []
+        if p.layers > 0 { parts.append("\(p.layers) \(p.layers == 1 ? "layer" : "layers")") }
         if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "filter" : "filters")") }
         if !p.rates.isEmpty {
             parts.append(p.rates.map(khz).joined(separator: ", ") + " kHz")

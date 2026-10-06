@@ -586,6 +586,23 @@ pub struct DspProfile {
     /// and another to move it to. See `audio::dsp::targets`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<DspTarget>,
+    /// Other profiles played first, in order: a headphone's correction and
+    /// then taste on top of it, each switched on or off. A profile with
+    /// layers is a stack. See `audio::dsp::Setup::load`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<DspLayer>,
+}
+
+/// One profile played as part of another.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DspLayer {
+    pub profile: String,
+    #[serde(default = "layer_on")]
+    pub on: bool,
+}
+
+fn layer_on() -> bool {
+    true
 }
 
 /// The target a correction was made for, and the one chosen in its place.
@@ -2152,6 +2169,7 @@ fps = 30
             impulses: vec![],
             source: vec![],
             target: None,
+            layers: vec![],
         };
         Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
 
