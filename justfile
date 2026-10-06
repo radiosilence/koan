@@ -427,9 +427,14 @@ site-screens: macos-bundle
         > "$work/config/config.local.toml"
     KOAN_CONFIG_DIR="$work/config" target/release/koan scan >/dev/null
     python3 scripts/site-screens/seed.py "$work/config"
+    # Three stand-in devices on a throwaway server, for the control menu; the
+    # instance drawing the screenshots signs in to the same account.
+    trap 'scripts/site-screens/devices.sh stop "$work/devices"' EXIT
+    scripts/site-screens/devices.sh start "$work/library" "$work/devices" "$work/config"
     open -n -g -W --env KOAN_CONFIG_DIR="$work/config" --env KOAN_RENDER_EVIDENCE="$work/renders" \
         --env KOAN_RENDER_PAGES=site-mac,popover --env KOAN_RENDER_SCHEMES=dark \
         --env KOAN_RENDER_FRAMED=1200x750 "{{app_dir}}/.build/pkg/kōan.app" --args -ApplePersistenceIgnoreState YES
+    scripts/site-screens/devices.sh stop "$work/devices"
     python3 scripts/site-screens/compose.py "$work/renders" site/public/screens
     scripts/site-screens/web.sh "$work/config" site/public/screens
 

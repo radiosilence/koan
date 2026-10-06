@@ -1,7 +1,10 @@
 """Leave a scanned demo library as the website's screenshots want it: a record
 cued part-way into a track, lyrics for that track, and some favourites.
 
-    python3 seed.py <config dir>
+    python3 seed.py <config dir> [album] [track] [playing]
+
+With an album and track, that is what is cued; `playing` (1) has it resume
+playing at launch, which is how a stand-in device shows something playing.
 """
 import glob
 import json
@@ -11,6 +14,9 @@ import sys
 import time
 
 cfg = sys.argv[1]
+cue_album = sys.argv[2] if len(sys.argv) > 2 else "Low Tide Arcade"
+cue_track = sys.argv[3] if len(sys.argv) > 3 else "Neon Breakwater"
+playing_now = len(sys.argv) > 4 and sys.argv[4] == "1"
 db = sqlite3.connect(glob.glob(os.path.join(cfg, "*.db"))[0])
 
 
@@ -23,18 +29,18 @@ def album(title):
     ).fetchall()
 
 
-playing = album("Low Tide Arcade")
+playing = album(cue_album)
 items = [
-    dict(path=p, title=t, artist=a, album_artist=a, album=al, year="2021", codec="flac",
+    dict(path=p, title=t, artist=a, album_artist=a, album=al, year=None, codec="flac",
          track_number=n, disc=1, duration_ms=d, db_id=i)
     for i, p, t, a, n, d, al, _, _ in playing
 ]
-cue = next(i for i in items if i["title"] == "Neon Breakwater")
+cue = next(i for i in items if i["title"] == cue_track)
 db.execute("INSERT OR REPLACE INTO playback_state (id, queue_json, updated_at) VALUES (1, ?, datetime('now'))",
            (json.dumps(items),))
 db.execute("""INSERT OR REPLACE INTO playback_position
               (id, cursor_id, position_ms, was_playing, shuffle, repeat, updated_at)
-              VALUES (1, ?, 83000, 0, 0, 'off', datetime('now'))""", (cue["path"],))
+              VALUES (1, ?, 83000, ?, 0, 'off', datetime('now'))""", (cue["path"], int(playing_now)))
 
 lines = [
     (0, "Coins in the slot and the tide coming in"), (14, "Lights on the pier like a high score"),
