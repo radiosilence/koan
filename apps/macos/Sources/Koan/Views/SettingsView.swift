@@ -170,13 +170,16 @@ struct SettingsView: View {
             }
         }
         // Asked again for each account signed in as; an account that is not
-        // an admin's gets no list, and so no People section.
+        // an admin's gets no list, and so no People section. A television
+        // manages no accounts, and asks for none.
+        #if !os(tvOS)
         .task(id: model.map { "\($0.settings.remoteSignedIn) \($0.settings.remoteUrl) \($0.settings.remoteUsername)" }) {
             guard let model, model.settings.remoteSignedIn else { return }
             let people = people ?? PeopleModel(engine: library.engine)
             self.people = people
             await people.load()
         }
+        #endif
         // The CLI and TUI write the same file; coming back to this window is
         // the moment to notice they did.
         #if os(macOS)
@@ -704,10 +707,10 @@ private struct IntegrationSections: View {
     }
 
     var body: some View {
-        ScrobblingSettings()
         if mirror.offers(AssistantsSettings.extensionName) {
             AssistantsSettings()
         }
+        ScrobblingSettings()
     }
 }
 
@@ -1439,8 +1442,8 @@ private struct DevicesSettings: View {
             // Pairing is approved from a device with a keyboard; a television
             // keeps its play queue setting with the server's.
             #if !os(tvOS)
-            PairDevice()
             if model.settings.remoteSignedIn {
+                PairDevice()
                 ServerQueueSection(model: model)
             }
             #endif
