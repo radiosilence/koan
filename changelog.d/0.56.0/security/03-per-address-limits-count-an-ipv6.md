@@ -1,0 +1,1 @@
+- **Per-address limits count an IPv6 client by its /64.** One subscriber is usually given a whole /64, so keying on the full address gave a client a fresh allowance per address. IPv4-mapped IPv6 addresses now count as the IPv4 address they carry.

@@ -1,0 +1,1 @@
+- **`restoreSnapshot` downloads** — snapshot restore now runs the download pipeline like `addToQueue`

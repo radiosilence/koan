@@ -1,0 +1,1 @@
+- **`koan serve`** — unified server command. GraphQL API (always on) + optional Subsonic REST (`--subsonic <port>`). Replaces `koan graphql`. One process, one player, two interfaces ([#55](https://github.com/radiosilence/koan/pull/55))

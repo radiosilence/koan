@@ -1,0 +1,1 @@
+- **The macOS app's output device menu works on macOS 27.** Its button in the transport bar was not drawn in dark mode, and the menu showed no checkmark against the output in use. The button is now drawn by SwiftUI and the menu is a picker.

@@ -1,0 +1,1 @@
+- **Suppressed library log spam** — noisy warn-level messages from lofty/symphonia internals are filtered from stderr (still written to log file). Fallback warnings from koan include the file path for diagnostics

@@ -1,0 +1,1 @@
+- Web UI: the signed-in username gets a line of its own above API keys and Sign out, instead of being truncated beside them.

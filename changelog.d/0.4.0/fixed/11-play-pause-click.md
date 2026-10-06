@@ -1,0 +1,1 @@
+- **Play/pause click** — clicking the status icon (play/pause indicator) next to the seek bar now toggles playback

@@ -1,0 +1,1 @@
+- **`koan play --server`** — TUI client mode. Connects to a remote `koan serve` via GQL. Client streams audio locally from the server

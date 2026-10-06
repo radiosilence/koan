@@ -1,0 +1,1 @@
+- **The macOS app is notarised.** From 0.40.0 releases are signed with a Developer ID and notarised, so `Koan.dmg` opens like any other download; the README, the site and the Homebrew cask no longer carry the quarantine workaround.

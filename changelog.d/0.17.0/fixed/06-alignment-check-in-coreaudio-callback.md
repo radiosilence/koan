@@ -1,0 +1,1 @@
+- **Alignment check in CoreAudio callback** — replaced `debug_assert!` with a runtime check that fills silence on misalignment instead of UB ([#76](https://github.com/radiosilence/koan/pull/76))

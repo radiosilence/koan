@@ -1,0 +1,1 @@
+- **Framed App Store screenshots.** `just ios-store-shots` puts each screen of a walk on a blur of its own colours with a caption from `apps/ios/store/captions.toml` (or `captions-ipad.toml`), at the size App Store Connect asks for. `just ios-store` retries App Store Connect's occasional server errors.

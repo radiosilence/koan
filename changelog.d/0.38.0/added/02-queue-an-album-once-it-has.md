@@ -1,0 +1,1 @@
+- **Queue an album once it has downloaded.** `queueOnClientWhenAdded(artist, album)` waits for an album to reach the library (after slsk's `grab`, say) and then queues it on the device, so "play them, and add their latest album when it lands" needs no one to come back and check.

@@ -1,0 +1,1 @@
+- **The Mac app's queue and playlists are AppKit tables too.** They were the last lists on SwiftUI's `List`, which sets up every row before drawing: a long queue or playlist stalled the page on arrival. Grouping, statuses, the playing bars, reordering by drag, drops from elsewhere, jumping to what is playing and the menus behave as before.

@@ -1,0 +1,1 @@
+- **GraphQL `lyrics`, `coverArt` and `similarTracks` hold no connection during network, file or ranking work**, so a slow LRCLIB answer cannot keep connections from other requests. `artists(ids:)` and `albums(ids:)` read only those rows.

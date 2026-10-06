@@ -1,0 +1,2 @@
+- **The wash re-blurred the cover on every frame it drifted.** `.blur` and `.saturation` sat above the drift in the modifier chain, so SwiftUI recomputed a blurred, saturated copy of the sleeve sixty-odd times a second for as long as anything was playing. The transforms were never the expensive part — re-deriving what they moved was. The blurred wash is rasterised once now and the drift magnifies that; switching the motion off entirely reached 17% of a core, keeping it and rasterising once reaches 13%, from 21–25% before. Nothing about how the wash looks or moves changes.
+

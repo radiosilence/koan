@@ -1,0 +1,1 @@
+- **Named queue snapshots** — save/restore/list/delete named queue states via GQL mutations (`saveSnapshot`, `restoreSnapshot`, `deleteSnapshot`) and MCP tools (`save_snapshot`, `restore_snapshot`, `list_snapshots`, `delete_snapshot`). Bank the techno, switch to hardcore, jump back. Stored in the DB (`queue_snapshots` table) with queue JSON, cursor path, and playback position

@@ -1,0 +1,1 @@
+- **Scan FK constraint error** — `koan scan` failed with `FOREIGN KEY constraint failed` when removing stale tracks that had rows in `lyrics_cache`, `play_history`, or `track_vectors`. Now cleans all FK references before deleting. ([#152](https://github.com/radiosilence/koan/pull/152))

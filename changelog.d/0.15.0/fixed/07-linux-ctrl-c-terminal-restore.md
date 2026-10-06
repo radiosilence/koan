@@ -1,0 +1,1 @@
+- **Linux: Ctrl+C terminal restore** — second Ctrl+C force-restores raw mode and exits immediately

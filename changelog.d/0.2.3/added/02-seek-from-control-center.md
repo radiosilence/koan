@@ -1,0 +1,1 @@
+- **Seek from Control Center** — absolute position, relative with duration, and direction-only (10s steps)

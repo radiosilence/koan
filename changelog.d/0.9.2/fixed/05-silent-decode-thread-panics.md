@@ -1,0 +1,1 @@
+- **Silent decode thread panics** — `DecodeHandle::stop()` now logs the panic message instead of silently swallowing `handle.join()` errors

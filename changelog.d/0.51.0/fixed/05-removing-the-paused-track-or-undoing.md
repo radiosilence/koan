@@ -1,0 +1,1 @@
+- **Removing the paused track, or undoing past it, leaves the player paused** on the track that follows instead of starting it. With nothing loaded, removing the track under the cursor moves the cursor and starts nothing.

@@ -1,0 +1,1 @@
+- **Subsonic REST API** — 22 endpoints for third-party clients (play:Sub, Amperfy). Browsing, search, streaming with Range + proxy, cover art, star/unstar, scrobble, playlists (mapped to snapshots), genres. XML + JSON, MD5+salt auth ([#55](https://github.com/radiosilence/koan/pull/55))

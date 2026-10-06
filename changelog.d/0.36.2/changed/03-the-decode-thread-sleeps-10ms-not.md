@@ -1,0 +1,1 @@
+- **The decode thread sleeps 10ms, not half a millisecond, while the ring buffer is full.** A full ring is where playback spends nearly all its time, so the old wait was two thousand wakes a second for the length of every track, on every platform. The ring holds a second or more of audio at any rate koan plays.

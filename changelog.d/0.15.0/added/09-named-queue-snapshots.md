@@ -1,0 +1,1 @@
+- **Named queue snapshots** — save/restore/list/delete via GQL + MCP. Bank curated mixes and switch between them

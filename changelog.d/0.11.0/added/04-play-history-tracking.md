@@ -1,0 +1,1 @@
+- **Play history tracking** — koan now records track completions in a `play_history` table, used for recency scoring in radio mode and future scrobbling

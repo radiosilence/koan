@@ -1,0 +1,1 @@
+- **Removed `Config::save()` footgun** — method could leak secrets from merged config into `config.toml`. Replaced with `Config::patch_local(section, values)` for targeted local config updates ([#120](https://github.com/radiosilence/koan/pull/120))

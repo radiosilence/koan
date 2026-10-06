@@ -1,0 +1,4 @@
+- **Filtering the album and artist lists is a query, not a pass over everything the client is holding.** The macOS app narrowed its own copy of the library with `localizedCaseInsensitiveContains`: on a 5,500-album, 7,000-artist library that is 26ms of main thread per keystroke — and it ran for every section, not the one on screen. `find_albums` joins `find_artists` in koan-core so every front end narrows the same way, the FFI's `albums()` takes a `search`, and the GraphQL resolver stops filtering a fully-loaded list in Rust. The app debounces and cancels, so holding a key down is one round trip.
+
+  Matching is ASCII case-insensitive now, as `find_artists` already was — SQLite's `NOCASE` does not fold accented letters, so `MÖTLEY` no longer finds `Mötley`. A folded search column is the fix and is not here yet.
+

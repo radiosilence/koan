@@ -1,0 +1,1 @@
+- **The parallel-downloads setting takes effect when changed.** It was read once at launch.

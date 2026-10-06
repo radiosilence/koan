@@ -1,0 +1,1 @@
+- **GraphQL connections** — disabled `nodes` shortcut field on Relay connections, edges-only for consistency. ([#166](https://github.com/radiosilence/koan/pull/166))

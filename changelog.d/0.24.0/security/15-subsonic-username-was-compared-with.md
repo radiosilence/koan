@@ -1,0 +1,1 @@
+- **Subsonic username was compared with `!=`** while both password paths correctly used `subtle`. Now constant-time.

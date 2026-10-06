@@ -1,0 +1,1 @@
+- Auth keypair directory gets automatic `.gitignore`.

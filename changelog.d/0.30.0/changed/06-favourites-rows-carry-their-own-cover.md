@@ -1,0 +1,1 @@
+- **Favourites rows carry their own cover.** A record's tracklist has one sleeve above it and numbers down the side; favourites is a list gathered from the whole library, where the cover and the album name are what tell one row from the next. The shared track list learned the mode history rows already used, so both now look the same and there is one row to change.

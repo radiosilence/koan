@@ -1,0 +1,1 @@
+- **Priority play** — double-click a downloading track to play it as soon as it finishes

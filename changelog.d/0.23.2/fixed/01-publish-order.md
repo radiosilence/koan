@@ -1,0 +1,1 @@
+- **Publish order** — `koan-server` now publishes before `koan-tui` so the crates.io index sees the dependency before downstream crates try to resolve it.

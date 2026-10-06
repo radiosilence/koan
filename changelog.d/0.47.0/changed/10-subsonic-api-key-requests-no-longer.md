@@ -1,0 +1,1 @@
+- **Subsonic API-key requests no longer wait for the write lock.** Each one recorded the key's last use with an `UPDATE`, which waited behind any scan or sync; the stamp is now written only when it is stale, and skipped when the lock is held. Share pages count visits the same way.

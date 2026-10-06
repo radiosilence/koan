@@ -1,0 +1,1 @@
+- **An artist with tracks but no albums has a page.** A guest or compilation credit opened a blank "Artist · 0 albums"; it now lists the tracks they appear on, each with its album.

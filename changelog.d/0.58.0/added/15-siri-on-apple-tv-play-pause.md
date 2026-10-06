@@ -1,0 +1,1 @@
+- **Siri on Apple TV: play, pause and play a record.** "Play a record in kōan" asks which, and finds it in the library as the search page does. "Play kōan" and "Pause kōan" act on the queue. They start audio with the app in the background, and wait for the engine if Siri launched the app.

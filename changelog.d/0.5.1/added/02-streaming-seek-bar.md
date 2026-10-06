@@ -1,0 +1,1 @@
+- **Streaming seek bar** — during streaming playback the seek bar dims the not-yet-downloaded portion. Downloaded section renders as a solid line that grows as the download progresses. Seeking past the downloaded point is prevented (click, keyboard, and core seek all clamped)

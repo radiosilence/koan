@@ -1,0 +1,1 @@
+- **GraphQL injection** — query building converted from `format!()` to proper variables ([#63](https://github.com/radiosilence/koan/pull/63))

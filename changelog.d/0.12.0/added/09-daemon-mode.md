@@ -1,0 +1,1 @@
+- **Daemon mode** — `koan graphql -d` forks the server into background, writes PID to `~/.config/koan/graphql.pid`. Claude Code can start it and query via HTTP

@@ -1,0 +1,1 @@
+- **`triggerRemoteSync` mutation** — trigger Subsonic/Navidrome library sync from the API

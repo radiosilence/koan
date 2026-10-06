@@ -1,0 +1,1 @@
+- **Tab completions** — zsh/bash/fish completions now correctly suggest subcommands instead of filesystem paths ([#116](https://github.com/radiosilence/koan/issues/116))

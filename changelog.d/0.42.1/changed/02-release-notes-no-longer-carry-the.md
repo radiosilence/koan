@@ -1,0 +1,1 @@
+- **Release notes no longer carry the quarantine workaround.** Every release since 0.40.0 is notarised, so the `xattr` instructions only applied to builds nobody downloads.

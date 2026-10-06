@@ -1,0 +1,1 @@
+- **`koan pick`** — standalone picker removed, TUI has built-in pickers (`p`/`a`/`r`)

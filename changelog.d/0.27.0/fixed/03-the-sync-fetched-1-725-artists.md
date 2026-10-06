@@ -1,0 +1,2 @@
+- **The sync fetched 1,725 artists and threw the list away.** `get_artists` was called, counted, logged as "syncing 1725 artists" and then dropped — artists only ever came into being as a side effect of a track upsert, which saw nothing but a name and an id. That is why not one artist in a synced library had a MusicBrainz id or a sort name, and why the reported artist count was theatre. The list is applied now, and the count is what was actually written.
+

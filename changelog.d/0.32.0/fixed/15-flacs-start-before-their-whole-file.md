@@ -1,0 +1,2 @@
+- **FLACs start before their whole file has arrived.** A FLAC keeps a padding block after its tags — space reserved so tags can be edited without rewriting the file, and often several hundred kilobytes of it — which puts the first audio frame further in than the point streaming begins looking. koan gave up rather than reading on, so a FLAC played only once fully downloaded while an MP3 started at once.
+

@@ -1,0 +1,1 @@
+- **`getGenres` returned blank genre names to XML clients** — the name was written as a `value` attribute, which is the JSON spelling; the XSD carries it as element text. It also loaded the entire tracks table to count genres, now one `GROUP BY`.

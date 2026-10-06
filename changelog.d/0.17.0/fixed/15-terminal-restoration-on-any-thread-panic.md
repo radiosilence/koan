@@ -1,0 +1,1 @@
+- **Terminal restoration on any thread panic** — removed main-thread-only guard from panic hook. Terminal is restored (raw mode, alternate screen, mouse capture, bracketed paste, cursor) regardless of which thread panics ([#77](https://github.com/radiosilence/koan/pull/77))

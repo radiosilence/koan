@@ -1,0 +1,1 @@
+- **Docs: added missing CLI commands** — `koan analyze`, `koan completions`, `scan --force`

@@ -1,0 +1,1 @@
+- **A track queued twice no longer plays a deleted file when its download fails.** The second entry was told the track was ready, pointing at the removed `.part` file, and stayed waiting forever if the first entry had been removed. Every entry waiting on a download now gets its result, and the second entry streams and shows progress from the one transfer.

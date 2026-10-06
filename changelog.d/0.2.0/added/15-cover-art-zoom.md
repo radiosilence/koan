@@ -1,0 +1,1 @@
+- **Cover art zoom** — `z` for full-screen album art (halfblock rendering)

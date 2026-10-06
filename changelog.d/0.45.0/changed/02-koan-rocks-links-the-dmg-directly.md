@@ -1,0 +1,1 @@
+- **koan.rocks links the DMG directly.** "Download for Mac" points at the latest release's `Koan.dmg`, which GitHub redirects to whichever release is newest, so the site never needs updating for a release.

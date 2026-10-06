@@ -1,0 +1,1 @@
+- **Timeline lock ordering** — `PlaybackTimeline::current_playback()` now acquires the boundaries read lock first, then reads `samples_played` inside that scope. Dead standalone `channels`/`sample_rate` atomics removed ([#76](https://github.com/radiosilence/koan/pull/76))

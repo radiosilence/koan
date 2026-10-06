@@ -1,0 +1,1 @@
+- **`coverArt(trackId)` query** — extract embedded cover art as base64 with MIME type. Supports JPEG and PNG

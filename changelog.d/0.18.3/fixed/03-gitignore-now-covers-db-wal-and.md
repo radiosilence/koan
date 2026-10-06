@@ -1,0 +1,1 @@
+- **`.gitignore` now covers `*.db-wal` and `*.db-shm`** — SQLite WAL files were previously not gitignored ([#120](https://github.com/radiosilence/koan/pull/120))

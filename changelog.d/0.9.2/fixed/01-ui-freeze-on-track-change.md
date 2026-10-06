@@ -1,0 +1,1 @@
+- **UI freeze on track change** — `stop_engine()` no longer blocks the player command loop waiting for the decode thread to join. Engine teardown (thread join + AudioUnit dispose) is moved to a background cleanup thread, so the player stays responsive even when CoreAudio or I/O is slow to shut down

@@ -1,0 +1,1 @@
+- **Presets in the Play on menu.** On the Mac each output's row says which preset it plays through, and a menu beside it changes that output's preset without switching to it. While what is heard is processed, the speaker button carries a dot.

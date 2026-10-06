@@ -1,0 +1,1 @@
+- **A file dropped into the TUI with an accent in its path opens.** Percent-escapes were decoded as Latin-1.

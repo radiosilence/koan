@@ -1,0 +1,1 @@
+- **Fuzzy search reads the library once per change, not once per keystroke.** The command palette, the GraphQL `fuzzySearch` and the TUI pickers read every track, sorted on a collation implemented in Rust, on each search; the sort was discarded by the matcher. The match text is now read unsorted and kept until the library changes. The TUI picker loads off the render thread.

@@ -1,0 +1,2 @@
+- **`[radio] use_subsonic` and `[discovery] acoustic_weight` never did anything.** Both were documented as tuning knobs and neither was read: the acoustic signal's weight was a constant in the scoring function, and nothing consulted `use_subsonic` before deciding whether to ask a server — see below for what radio actually does. Removed rather than wired up — the defaults are the behaviour everyone has been getting.
+

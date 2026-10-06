@@ -1,0 +1,1 @@
+- **Favourites filter + remote sync** — `favouritesOnly` on all queries, `isFavourite` on tracks. Star/unstar auto-syncs to Subsonic/Navidrome

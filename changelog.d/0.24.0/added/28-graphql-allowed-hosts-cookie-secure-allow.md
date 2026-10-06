@@ -1,0 +1,1 @@
+- `[graphql] allowed_hosts`, `cookie_secure`, `allow_organize`.

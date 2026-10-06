@@ -1,0 +1,1 @@
+- **Acoustic similarity** — `koan analyze` generates 23-dim bliss-audio fingerprints. Radio mode gains `SimilarityAxis::Acoustic`. `similarTracks(trackId, limit)` GQL query ([#68](https://github.com/radiosilence/koan/pull/68))

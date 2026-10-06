@@ -1,0 +1,1 @@
+- **Library shows album artists only** — no spurious entries from featured artists on compilations

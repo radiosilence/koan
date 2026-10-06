@@ -1,0 +1,1 @@
+- **`insert_in_queue`** — was silently appending, now uses `InsertInPlaylist`

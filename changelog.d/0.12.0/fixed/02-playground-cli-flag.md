@@ -1,0 +1,1 @@
+- **`--playground` CLI flag** — was `Option<bool>` requiring `--playground true`. Now a proper flag

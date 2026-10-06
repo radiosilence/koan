@@ -1,0 +1,1 @@
+- **Favourites belong to the track, album or artist, not to a path or a name.** They follow a track through a merge, a moved file and a file that goes while the server still streams it. A favourite of something no longer in the library is dropped on upgrade.

@@ -1,0 +1,1 @@
+- **GraphiQL v2** — replaced deprecated GraphQL Playground with the official GraphQL Foundation IDE. Actively maintained, subscription-ready, better UX. `koan serve --playground` now serves GraphiQL ([#71](https://github.com/radiosilence/koan/issues/71))

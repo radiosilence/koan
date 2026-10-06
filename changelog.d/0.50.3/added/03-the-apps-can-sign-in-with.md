@@ -1,0 +1,1 @@
+- **The apps can sign in with an API key** (`remote.api_key` in `config.local.toml`), which is what an invite stores.
