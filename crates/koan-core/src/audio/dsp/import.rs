@@ -90,16 +90,20 @@ pub enum Outcome {
 
 /// Whether a selection imports as a group, a profile from each file: when there are
 /// several, and each is a whole EQ or filter configuration by itself
-/// (Equalizer APO, AutoEQ or Qudelix text, CamillaDSP YAML, a Convolver
-/// `.cfg`), and they are not REW's files for each side of one setup.
+/// (Equalizer APO, AutoEQ or Qudelix text, CamillaDSP YAML), and they are not
+/// REW's files for each side of one setup. Convolver `.cfg` files are one
+/// correction's rates, a file for each, so they combine.
 pub fn separately(paths: &[PathBuf]) -> bool {
     let whole = |path: &PathBuf| {
         if !path.is_file() {
             return false;
         }
         match extension(path).as_deref() {
-            Some("cfg" | "yml" | "yaml") => true,
-            Some(e) if AUDIO.contains(&e) || matches!(e, "zip" | "pcm" | "dbl" | "raw" | "bin") => {
+            Some("yml" | "yaml") => true,
+            Some(e)
+                if AUDIO.contains(&e)
+                    || matches!(e, "cfg" | "zip" | "pcm" | "dbl" | "raw" | "bin") =>
+            {
                 false
             }
             _ => std::fs::read_to_string(path)
@@ -679,6 +683,27 @@ mod tests {
         let left = file("room_L.txt", "Filter 1: ON PK Fc 100 Hz Gain -3 dB Q 1\n");
         let right = file("room_R.txt", "Filter 1: ON PK Fc 120 Hz Gain -2 dB Q 1\n");
         assert!(!separately(&[left, right]));
+
+        // A .cfg for each rate, chosen without the responses beside them:
+        // one correction, a response for each rate.
+        let mut cfgs = Vec::new();
+        for rate in [44100, 48000] {
+            let wav = dir.path().join(format!("{rate}.wav"));
+            crate::audio::dsp::raw::write_wav(&wav, rate, &[vec![1.0, 0.0]]).unwrap();
+            cfgs.push(file(
+                &format!("{rate}.cfg"),
+                &format!(
+                    "{rate} 2 2 0\n0 0\n0 0\n{rate}.wav\n0\n0.0\n0.0\n{rate}.wav\n0\n1.0\n1.0\n"
+                ),
+            ));
+        }
+        assert!(!separately(&cfgs));
+        let Batch::One(one) = import_batch(&cfgs, None, &[]).unwrap() else {
+            panic!("a group of rates")
+        };
+        let mut rates: Vec<u32> = one.impulses.iter().map(|i| i.rate).collect();
+        rates.sort();
+        assert_eq!(rates, [44100, 48000]);
     }
 
     /// A file whose name is taken, by a profile there already or one earlier

@@ -35,7 +35,7 @@ chat, or EQ text pasted into a message. A share is saved for the app and
 imported when kōan next comes to the front.
 
 Several whole presets chosen together, such as Equalizer APO, AutoEQ or
-Qudelix files, CamillaDSP YAML or Convolver `.cfg` files, become a **group**: a
+Qudelix files or CamillaDSP YAML, become a **group**: a
 profile from each, named after its file, and a group holding them, named for
 what their names share. A group plays one member at a time. Pick which on its
 page ("Group: pick one"), on the EQ page, or in an output's preset menu. Any
@@ -43,9 +43,9 @@ stack of two or more layers can be made a group, and a group a stack again.
 A group can be a stack's layer, such as a group of corrections with a tuning
 on top.
 
-Files that are parts of one profile, such as an impulse response a file per
-channel or rate, a folder, a zip, or REW's file for each side, still combine
-into one. Before importing several files the app says which will happen and
+Files that are parts of one profile, such as an impulse response or a Convolver
+`.cfg` a file per channel or rate, a folder, a zip, or REW's file for each
+side, still combine into one. Before importing several files the app says which will happen and
 lets you name the result. A name already taken gets a number, AutoEQ's
 `FixedBandEQ` file is left out beside its `ParametricEQ` twin, and a file that
 cannot be read is named with why, without stopping the rest.
