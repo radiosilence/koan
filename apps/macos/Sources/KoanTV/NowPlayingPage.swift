@@ -12,6 +12,7 @@ struct NowPlayingPage: View {
     @Environment(PlayerModel.self) private var player
     @Environment(UIState.self) private var ui
     @Environment(AppState.self) private var app
+    @Environment(LibraryModel.self) private var library
     @State private var showingDevices = false
     @State private var showingControl = false
     @FocusState private var focus: Focus?
