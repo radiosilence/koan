@@ -38,7 +38,6 @@ pub(crate) struct Joins {
 #[derive(Default)]
 pub(crate) struct QueueSender {
     base: Option<Base>,
-    joins: Joins,
 }
 
 struct Base {
@@ -46,6 +45,31 @@ struct Base {
     content: u64,
     ids: Vec<QueueItemId>,
     items: Vec<QueueItem>,
+    /// The library's reading of each row, in queue order, as of the last time
+    /// it moved. Kept aligned with the rows so a pass over them hashes nothing.
+    library: Vec<Library>,
+}
+
+/// What the library says about one row.
+#[derive(Clone, Copy, PartialEq)]
+struct Library {
+    album_id: Option<i64>,
+    on_server: bool,
+    on_disk: bool,
+}
+
+impl Library {
+    fn of(track: Option<i64>, joins: &Joins) -> Self {
+        let (on_server, on_disk) = track
+            .and_then(|id| joins.sources.get(&id))
+            .copied()
+            .unwrap_or((false, false));
+        Self {
+            album_id: track.and_then(|id| joins.album_ids.get(&id).copied()),
+            on_server,
+            on_disk,
+        }
+    }
 }
 
 impl QueueSender {
@@ -70,7 +94,7 @@ impl QueueSender {
         // Read before the rows: an edit landing in between moves it again,
         // and the next update sends the queue whole once more.
         let content = state.content_version();
-        let Some(base) = self.base.as_ref().filter(|b| b.content == content) else {
+        let Some(base) = self.base.as_mut().filter(|b| b.content == content) else {
             return self.rebuild(state, version, content, joins);
         };
 
@@ -82,26 +106,40 @@ impl QueueSender {
         }
         if library_moved {
             let track_ids: Vec<i64> = readings.iter().filter_map(|r| r.db_id).collect();
-            self.joins = joins(&track_ids);
+            let joins = joins(&track_ids);
+            base.library = readings
+                .iter()
+                .map(|r| Library::of(r.db_id, &joins))
+                .collect();
         }
 
         let mut items = Vec::new();
-        for (reading, sent) in readings.iter().zip(&base.items) {
-            if let Some(row) = moved(sent, reading, &self.joins) {
+        for ((reading, sent), library) in readings.iter().zip(&base.items).zip(&base.library) {
+            if let Some(row) = moved(sent, reading, *library) {
                 items.push(row);
                 if items.len() > PATCH_MAX {
                     break;
                 }
             }
         }
-        if items.len() > PATCH_MAX {
-            let joins = std::mem::take(&mut self.joins);
-            return self.rebuild(state, version, content, |_| joins);
+        if items.len() <= PATCH_MAX {
+            return vec![StateSlice::QueuePatch {
+                base: base.version,
+                items,
+            }];
         }
-        vec![StateSlice::QueuePatch {
-            base: base.version,
-            items,
-        }]
+        // What the library said is still what it says: the rebuild need not
+        // ask it again.
+        let pairs = || readings.iter().zip(&base.library);
+        let held = Joins {
+            album_ids: pairs()
+                .filter_map(|(r, l)| Some((r.db_id?, l.album_id?)))
+                .collect(),
+            sources: pairs()
+                .filter_map(|(r, l)| Some((r.db_id?, (l.on_server, l.on_disk))))
+                .collect(),
+        };
+        self.rebuild(state, version, content, |_| held)
     }
 
     fn rebuild(
@@ -113,10 +151,10 @@ impl QueueSender {
     ) -> Vec<StateSlice> {
         let entries = state.derive_visible_queue().entries;
         let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
-        self.joins = joins(&track_ids);
+        let joins = joins(&track_ids);
         let items: Vec<QueueItem> = entries
             .iter()
-            .map(|e| QueueItem::from_entry(e, &self.joins.album_ids, &self.joins.sources))
+            .map(|e| QueueItem::from_entry(e, &joins.album_ids, &joins.sources))
             .collect();
         let slices = vec![
             StateSlice::Queue {
@@ -132,6 +170,10 @@ impl QueueSender {
             version,
             content,
             ids: entries.iter().map(|e| e.id).collect(),
+            library: entries
+                .iter()
+                .map(|e| Library::of(e.db_id, &joins))
+                .collect(),
             items,
         });
         slices
@@ -140,29 +182,21 @@ impl QueueSender {
 
 /// `sent` as it reads now, if that differs. Only what can move without the
 /// queue's content changing is taken from the reading; the text stays as sent.
-fn moved(sent: &QueueItem, reading: &QueueReading, joins: &Joins) -> Option<QueueItem> {
+fn moved(sent: &QueueItem, reading: &QueueReading, library: Library) -> Option<QueueItem> {
     let status: EntryStatus = reading.status.into();
-    let (on_server, on_disk) = reading
-        .db_id
-        .and_then(|id| joins.sources.get(&id))
-        .copied()
-        .unwrap_or((false, false));
-    let album_id = reading
-        .db_id
-        .and_then(|id| joins.album_ids.get(&id).copied());
     let same = status == sent.status
         && reading.duration_ms == sent.duration_ms
         && reading.error == sent.failure_reason
-        && on_server == sent.on_server
-        && on_disk == sent.on_disk
-        && album_id == sent.album_id;
+        && library.on_server == sent.on_server
+        && library.on_disk == sent.on_disk
+        && library.album_id == sent.album_id;
     (!same).then(|| QueueItem {
         status,
         duration_ms: reading.duration_ms,
         failure_reason: reading.error.clone(),
-        on_server,
-        on_disk,
-        album_id,
+        on_server: library.on_server,
+        on_disk: library.on_disk,
+        album_id: library.album_id,
         ..sent.clone()
     })
 }
@@ -202,8 +236,15 @@ mod tests {
     }
 
     fn queue(n: usize) -> (std::sync::Arc<SharedPlayerState>, Vec<QueueItemId>) {
+        queue_of(n, ItemState::Pending)
+    }
+
+    fn queue_of(
+        n: usize,
+        state_of: ItemState,
+    ) -> (std::sync::Arc<SharedPlayerState>, Vec<QueueItemId>) {
         let state = SharedPlayerState::new();
-        let items: Vec<PlaylistItem> = (0..n).map(|i| item(i, ItemState::Pending)).collect();
+        let items: Vec<PlaylistItem> = (0..n).map(|i| item(i, state_of.clone())).collect();
         let ids = items.iter().map(|i| i.id).collect();
         state.add_items(items);
         (state, ids)
@@ -319,7 +360,8 @@ mod tests {
 
     #[test]
     fn a_patch_past_its_bound_sends_the_queue_whole() {
-        let (state, ids) = queue(PATCH_MAX * 3);
+        // Ready, so every row the cursor passes reads as played.
+        let (state, ids) = queue_of(PATCH_MAX * 3, ItemState::Ready);
         let mut sender = QueueSender::default();
         sender.update(&state, state.playlist_version(), false, joins);
         state.set_cursor(Some(ids[PATCH_MAX * 2]));
@@ -361,6 +403,11 @@ mod tests {
             "{ROWS} rows whole: build {built:?}, publish + read {handed:?}, {whole_bytes} bytes"
         );
 
+        let start = Instant::now();
+        let readings = state.queue_readings();
+        println!("{ROWS} rows, readings alone: {:?}", start.elapsed());
+        drop(readings);
+
         // A track change.
         state.set_cursor(Some(ids[1]));
         let start = Instant::now();
@@ -377,8 +424,8 @@ mod tests {
             "{batch:?}"
         );
 
-        // A download landing, which moves the library too.
-        state.update_item_state(ids[2], ItemState::Ready);
+        // The playing track's download landing, which moves the library too.
+        state.update_item_state(ids[1], ItemState::Ready);
         let start = Instant::now();
         let slices = sender.update(&state, state.playlist_version(), true, joins);
         let landed = start.elapsed();
@@ -388,7 +435,11 @@ mod tests {
         let batch = out.since(&mut seen);
         let landed_bytes = sent_bytes(&batch);
         println!("{ROWS} rows, download landed: {landed:?}, {landed_bytes} bytes");
-        assert!(matches!(&batch[..], [StateSlice::QueuePatch { .. }]));
+        assert!(
+            matches!(&batch[..], [StateSlice::QueuePatch { items, .. }]
+                if items.len() == 1 && items[0].status == EntryStatus::Playing),
+            "{batch:?}"
+        );
 
         assert!(patch_bytes < 2_000, "{patch_bytes}");
         assert!(landed_bytes < 2_000, "{landed_bytes}");

@@ -419,12 +419,6 @@ final class EngineMirror: Observable {
         }
     }
 
-    // MARK: - Observation plumbing
-    //
-    // What the `@Observable` macro would have written, minus the sugar that
-    // insists a mutation is an assignment. A keyPath is an identity here and
-    // nothing more — it is never read through.
-
     /// Of the rows holding one track: a track queued twice prefers the entry
     /// that is doing something over one still sitting idle.
     private func preferred(_ rows: [Int]) -> QueueItem? {
@@ -433,6 +427,12 @@ final class EngineMirror: Observable {
             return next.status == .queued ? held : next
         }
     }
+
+    // MARK: - Observation plumbing
+    //
+    // What the `@Observable` macro would have written, minus the sugar that
+    // insists a mutation is an assignment. A keyPath is an identity here and
+    // nothing more — it is never read through.
 
     private func access<V>(_ keyPath: KeyPath<EngineMirror, V>) {
         registrar.access(self, keyPath: keyPath)

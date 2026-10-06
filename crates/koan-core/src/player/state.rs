@@ -1682,7 +1682,7 @@ impl SharedPlayerState {
     /// of every row's text: for a front end that draws the whole queue. One
     /// that only needs to know what moved reads `queue_readings`.
     pub fn derive_visible_queue(&self) -> VisibleQueueSnapshot {
-        let mut entries = Vec::new();
+        let mut entries = Vec::with_capacity(self.playlist.read().items.len());
         let mut finished_count = 0;
         let mut has_playing = false;
         let mut queue_count = 0;
@@ -1728,7 +1728,7 @@ impl SharedPlayerState {
     /// else. A front end holding the rows already can find what moved from
     /// this at a small fraction of what deriving the whole queue costs.
     pub fn queue_readings(&self) -> Vec<QueueReading> {
-        let mut readings = Vec::new();
+        let mut readings = Vec::with_capacity(self.playlist.read().items.len());
         self.each_visible(|_, _, reading| readings.push(reading));
         readings
     }
