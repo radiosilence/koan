@@ -14,7 +14,7 @@ use axum::extract::{Path as UrlPath, Query, RawQuery, Request, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use koan_core::auth::Role;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
@@ -3324,10 +3324,11 @@ async fn koan_scrobbling(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
 
 /// Connect the caller's ListenBrainz account with `token`, checked with
 /// ListenBrainz first, as the web UI's Scrobbling page does. Answers as
-/// `koanScrobbling`. The token belongs in a POST body: a query string is
-/// logged by proxies.
+/// `koanScrobbling`. Only a form POST is taken, with the token in its body:
+/// a query string is logged by proxies.
 async fn koan_scrobbling_connect(
     State(state): State<Arc<AppState>>,
+    url: Option<axum::Extension<UrlQuery>>,
     RawQuery(raw): RawQuery,
 ) -> Response {
     offload_response(move || {
@@ -3336,6 +3337,15 @@ async fn koan_scrobbling_connect(
         // No connection is held while ListenBrainz answers.
         respond(&state, &auth, |caller, b| {
             let user = scrobbling_account(caller)?;
+            let in_url = url.is_none_or(|axum::Extension(UrlQuery(q))| {
+                RawParams::parse(Some(&q)).get("token").is_some()
+            });
+            if in_url {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::Generic,
+                    "Send the token in a form POST body, not the URL",
+                ));
+            }
             let pasted = params
                 .get("token")
                 .ok_or_else(|| SubsonicError::missing_param("token"))?;
@@ -4399,6 +4409,11 @@ async fn koan_pair_approve(
     .await
 }
 
+/// The query string a `formPost` request arrived with, before its body was
+/// appended: what an endpoint that takes a secret checks the secret is not in.
+#[derive(Clone)]
+struct UrlQuery(String);
+
 /// OpenSubsonic `formPost`: the parameters of an
 /// `application/x-www-form-urlencoded` POST body are appended to the query
 /// string, so every handler reads one set of parameters however they were
@@ -4420,6 +4435,9 @@ async fn form_post(req: Request, next: Next) -> Response {
     }
 
     let (mut parts, body) = req.into_parts();
+    parts
+        .extensions
+        .insert(UrlQuery(parts.uri.query().unwrap_or_default().to_owned()));
     let Ok(bytes) = axum::body::to_bytes(body, MAX_FORM_BODY).await else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     };
@@ -4768,10 +4786,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             "/rest/koanScrobbling",
             get(koan_scrobbling).post(koan_scrobbling),
         )
-        .route(
-            "/rest/koanScrobblingConnect",
-            get(koan_scrobbling_connect).post(koan_scrobbling_connect),
-        )
+        .route("/rest/koanScrobblingConnect", post(koan_scrobbling_connect))
         .route(
             "/rest/koanScrobblingDisconnect",
             get(koan_scrobbling_disconnect).post(koan_scrobbling_disconnect),
@@ -8203,8 +8218,40 @@ mod tests {
     async fn scrobbling_is_an_accounts_not_the_shared_secrets() {
         let (state, _dir) = test_state();
         let app = build_test_router(state);
-        let (_, body) =
-            get_response(app, &format!("/rest/koanScrobbling?{}", auth_query(""))).await;
+        let secret = auth_query("");
+        let (_, body) = get_response(app.clone(), &format!("/rest/koanScrobbling?{secret}")).await;
         assert!(body.contains("code=\"50\""), "{body}");
+        let body = post_form(
+            app.clone(),
+            &format!("/rest/koanScrobblingConnect?{secret}"),
+            "token=good-token",
+        )
+        .await;
+        assert!(body.contains("code=\"50\""), "{body}");
+        let (_, body) =
+            get_response(app, &format!("/rest/koanScrobblingDisconnect?{secret}")).await;
+        assert!(body.contains("code=\"50\""), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_scrobbling_token_is_taken_only_from_a_form_body() {
+        fake_listenbrainz();
+        let (state, _dir) = test_state();
+        let app = build_test_router(state);
+        let (status, _) = get_response(
+            app.clone(),
+            &format!("/rest/koanScrobblingConnect?{MATE}&token=good-token"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+        let body = post_form(
+            app.clone(),
+            &format!("/rest/koanScrobblingConnect?{MATE}&token=good-token"),
+            "",
+        )
+        .await;
+        assert!(body.contains("not the URL"), "{body}");
+        let (_, body) = get_response(app, &format!("/rest/koanScrobbling?{MATE}")).await;
+        assert!(!body.contains("lbuser"), "{body}");
     }
 }

@@ -826,6 +826,9 @@ private struct ScrobblingSettings: View {
     @Environment(EngineMirror.self) private var mirror
     @State private var connection: ScrobblingConnection?
     @State private var loaded = false
+    /// The server could not say whether the account is connected, so neither
+    /// state is shown.
+    @State private var statusFailed = false
     @State private var token = ""
     @State private var busy = false
     @State private var error: String?
@@ -850,6 +853,8 @@ private struct ScrobblingSettings: View {
                     #endif
                 } else if !loaded {
                     Text("Checking…").foregroundStyle(.secondary)
+                } else if statusFailed {
+                    Button("Try Again") { Task { await load() } }
                 } else {
                     #if os(tvOS)
                     Text("Not connected. Connect ListenBrainz from kōan on a phone or Mac.")
@@ -885,8 +890,10 @@ private struct ScrobblingSettings: View {
     private func load() async {
         do {
             connection = try await state.engine.scrobblingStatus()
+            statusFailed = false
             error = nil
         } catch {
+            statusFailed = true
             self.error = SettingsModel.describe(error)
         }
         loaded = true
