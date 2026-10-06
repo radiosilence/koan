@@ -45,6 +45,9 @@ pub fn cmd_dsp_list() {
         if !p.devices.is_empty() {
             println!("  {} {}", "devices:".dimmed(), p.devices.join(", "));
         }
+        if p.layers > 0 {
+            println!("  {} {}", "layers:".dimmed(), p.layers);
+        }
         if p.bands > 0 {
             println!("  {} {}", "filters:".dimmed(), p.bands);
         }
