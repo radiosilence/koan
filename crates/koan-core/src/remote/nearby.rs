@@ -126,6 +126,7 @@ fn is_server(s: &str) -> bool {
 
 /// The server this device announces: the one it is signed in to, without the
 /// account, or nothing while it is signed out.
+#[cfg(target_vendor = "apple")]
 fn announced_server() -> String {
     let cfg = Config::cached();
     if crate::helpers::remote_credential(&cfg).is_none() {
