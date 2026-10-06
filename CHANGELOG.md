@@ -7,6 +7,10 @@
 - **AutoEQ search from the command line.** `koan dsp autoeq search` finds a headphone in AutoEQ's index by name, and `koan dsp autoeq install` saves its parametric EQ as a profile, optionally for an output device. The index is kept beside the config and refreshed at most daily.
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
+### Changed
+
+- **One server scans a shared library at a time.** Servers sharing a state directory, as two do while one replaces the other, take turns: the one holding `watch.lock` beside the database scans and watches the library folders, and the other serves without scanning until it can take the lock. A server whose database a newer koan has migrated now exits with that reason instead of a panic.
+
 ### Fixed
 
 - **Moving the music to another device says when it has not arrived.** A hand-off paused the music here and counted it as delivered once the command was queued, which it was even on a link that had died unnoticed or for a device asleep. The Mac and iOS apps now wait for the other device to report the track, and otherwise say it has not picked the music up yet; the music stays paused where it was.

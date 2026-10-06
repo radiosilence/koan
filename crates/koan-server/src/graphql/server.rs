@@ -26,8 +26,14 @@ pub fn cmd_serve(
 ) {
     use koan_core::player::Player;
 
-    // Validate DB is accessible before starting the server.
-    let _db = koan_core::db::connection::Database::open_default().expect("failed to open database");
+    // Open, and migrate, before binding: a database this build cannot read,
+    // such as one a newer koan has migrated, stops it here with the reason
+    // rather than serving errors.
+    if let Err(e) = koan_core::db::connection::Database::open_default() {
+        log::error!("cannot open the database: {e}");
+        eprintln!("koan: cannot open the database: {e}");
+        std::process::exit(1);
+    }
     let db_path = koan_core::config::db_path();
     let pool = Arc::new(Pool::new(db_path.clone()));
 
