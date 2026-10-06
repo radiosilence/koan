@@ -1727,11 +1727,22 @@ pub fn set_config_dir(dir: impl Into<PathBuf>) {
 /// Process-wide rather than per-test on purpose: the threads koan spawns
 /// resolve the directory when they run, which is often after the test that
 /// started them has finished.
+///
+/// It waits for a test that holds `SWITCHING` (koan-core's `PERSIST_LOCK`)
+/// to finish before switching, so that test never has the directory moved
+/// out from under it mid-way.
 pub fn isolate_config_for_tests() {
+    let _one = SWITCHING.lock().unwrap_or_else(|e| e.into_inner());
     let dir = std::env::temp_dir().join(format!("koan-test-config-{}", std::process::id()));
     let _ = fs::create_dir_all(&dir);
     set_config_dir(dir);
 }
+
+/// Held by a test that points config at a directory of its own for its
+/// whole run, and by `isolate_config_for_tests` while it switches, so no
+/// test's directory changes under it.
+#[doc(hidden)]
+pub static SWITCHING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 static CONFIG_DIR: LazyLock<parking_lot::RwLock<Option<PathBuf>>> =
     LazyLock::new(|| parking_lot::RwLock::new(None));
@@ -2409,7 +2420,7 @@ fps = 30
 
     /// `persist` reads and writes process-global paths, so these run one at a
     /// time rather than racing each other through `set_config_dir`.
-    pub(crate) static PERSIST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(crate) static PERSIST_LOCK: &std::sync::Mutex<()> = &super::SWITCHING;
 
     /// Point config at a fresh directory and hand back (base, local) paths.
     fn persist_sandbox(name: &str) -> (PathBuf, PathBuf) {
