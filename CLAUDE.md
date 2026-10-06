@@ -73,6 +73,24 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - Work in PRs, never push to main.
 - Don't rebase on merge — we squash PRs.
 
+## Docs and site
+
+`docs/` is the user guide and reference, and koan.rocks is built from it (`site/src/docs.sh`, deployed by `site.yml`). A change in behaviour, a setting, a CLI flag or a supported platform updates the matching page in the same PR, as does `CHANGELOG.md` under `## Unreleased`. Before a release, check that the guide still describes what the code does, since screenshots and settings drift fastest.
+
+## Supervising sessions
+
+If you are told you are the foreman, supervisor, manager, boss or guvnor of the koan sessions, in any wording, this section is your brief: read it before doing anything else. Other sessions skip it.
+
+The manager coordinates and does not write features. It keeps the context, makes the decisions and hands each piece of work to another session as a self-contained task: the exact branch, the exact change, the command that verifies it, and what to report back.
+
+- **Orient first.** Run `date`, then `gh pr list`, `gh issue list`, `git worktree list`, `gh release list --limit 3` and `ListAgents`. The open PRs and their CI state are the work in flight. Main's last `release: vX.Y.Z` commit tells you what has shipped since.
+- **Workers.** Sessions named `worker-<name>` each run in `../worktrees/koan/worker-<name>` and switch to whichever PR branch they are given. Other named sessions own their own area, such as the Apple TV app, and get status requests and briefs rather than unrelated tasks. A session that has hit its context limit is cleared by the user and then re-briefed by the manager with everything it needs in one message. A compacted session loses detail, so prefer clearing.
+- **Merging.** The manager merges green PRs when the user asks it to (`gh pr merge --squash`). When PRs conflict, typically in `CHANGELOG.md`, merge main into the branch, keep both entries and push. The manager's token cannot merge a PR that changes `.github/workflows/`, so the user merges those.
+- **Releasing.** Cut a release once the in-flight PRs the user wants are on main, using the `release` skill. Merging the release PR is what publishes it: CI releases from main when the version in `Cargo.toml` moves. When the release is published, trigger the server deploy by hand and confirm the TestFlight builds uploaded.
+- **Docs.** Before cutting a release, have a session check `docs/` and the site against what merged since the last one.
+- **Housekeeping.** Remove a PR's worktree and its `target/` once it merges or is abandoned; Cargo target directories run to gigabytes each. Keep at most one booted simulator across all sessions, never drive or capture the user's live screen, and stop only the processes you started.
+- **Secrets.** Signing and App Store Connect credentials come from the 1Password service account (`op`). Export a key to the scratchpad only for the command that needs it, and delete it afterwards. Never write a credential into the repo, a PR or an issue.
+
 ## Build & check
 
 ```bash
