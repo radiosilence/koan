@@ -3119,8 +3119,6 @@ impl KoanEngine {
         .await
     }
 
-    /// What `name` does to the sound at `rate`, for drawing. `None` for a
-    /// profile that is not there or would not play.
     /// What the output in use plays: its correction, and the tuning on top
     /// adjusted to the correction's target.
     pub async fn dsp_output_response(self: Arc<Self>, rate: u32) -> Option<DspResponse> {
@@ -3161,6 +3159,8 @@ impl KoanEngine {
         .await
     }
 
+    /// What `name` does to the sound at `rate`, for drawing. `None` for a
+    /// profile that is not there or would not play.
     pub async fn dsp_response(self: Arc<Self>, name: String, rate: u32) -> Option<DspResponse> {
         offload::offload(move || {
             koan_core::audio::dsp::profiles::response(&name, rate).map(Into::into)

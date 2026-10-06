@@ -718,7 +718,14 @@ struct EqSettings: View {
     @State private var showing: String?
 
     private var active: String? { app.dsp.overview?.active }
-    private var tuning: String? { app.dsp.overview?.tuning }
+    /// The tuning on top, where one plays: none waits on a correction with
+    /// one baked in.
+    private var tuning: String? {
+        guard let o = app.dsp.overview,
+              o.profiles.first(where: { $0.name == o.active })?.role != .baked
+        else { return nil }
+        return o.tuning
+    }
 
     var body: some View {
         KoanForm {

@@ -20,8 +20,9 @@ struct OutputEqSection: View {
         overview.profiles.filter { $0.role != .tuning }
     }
 
+    /// Tunings are EQ: a profile with impulse responses corrects a room.
     private var tunings: [DspProfileSummary] {
-        overview.profiles.filter { $0.role == .tuning }
+        overview.profiles.filter { $0.role == .tuning && $0.rates.isEmpty }
     }
 
     private var tuning: DspProfileSummary? {

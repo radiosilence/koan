@@ -564,17 +564,20 @@ impl Player {
             return cache.setup.clone();
         }
         let chain = crate::audio::dsp::output_chain(&config.dsp, device);
-        let setup = chain.and_then(|(profile, all)| {
-            crate::audio::dsp::Setup::load(&profile, &all, &crate::config::config_dir())
+        let setup = chain.and_then(|chain| {
+            crate::audio::dsp::Setup::load(&chain.profile, &chain.all, &crate::config::config_dir())
                 .inspect_err(|e| {
                     log::error!(
                         "dsp: profile '{}' not loaded, playing without it: {e}",
-                        profile.name
+                        chain.name
                     )
                 })
                 .ok()
                 .flatten()
-                .map(Arc::new)
+                .map(|mut setup| {
+                    setup.name = chain.name;
+                    Arc::new(setup)
+                })
         });
         self.dsp = Some(DspCache {
             config,

@@ -37,7 +37,7 @@ struct Presets {
         {
             group = (g.members, g.playing, { dsp.select(current, $0) })
         }
-        let tunings = overview.profiles.filter { $0.role == .tuning }.map(\.name)
+        let tunings = overview.profiles.filter { $0.role == .tuning && $0.rates.isEmpty }.map(\.name)
         let baked = overview.profiles.first { $0.name == current }?.role == .baked
         if !tunings.isEmpty, !baked {
             tuning = (dsp.tuning(for: device), tunings, { dsp.setTuning($0, for: device) })

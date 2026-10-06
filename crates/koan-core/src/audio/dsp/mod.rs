@@ -86,63 +86,146 @@ pub fn response(filters: &[DspFilter], freqs: &[f64], rate: u32) -> Vec<f64> {
         .collect()
 }
 
-/// The filters `profile` plays: each layer that is on, in order, as that
-/// layer plays it, then its own, then the step moving it to another target.
+/// What an output plays: the profile to load, the profiles to resolve it
+/// among, and what to call it.
+pub struct OutputChain {
+    pub profile: DspProfile,
+    pub all: Vec<DspProfile>,
+    /// The correction's name, or the tuning's where there is none: never the
+    /// name the tuning is resolved under.
+    pub name: String,
+}
+
 /// What `device` plays, built from its two choices: the correction, the
 /// profile that lists it, and the tuning chosen for it on top. Where the
 /// tuning names the target it was made against and the correction aims at
 /// another, the difference between the two plays with the tuning, so it
 /// sounds as made whatever corrects the headphones: dynamic baking. A
-/// tuning is skipped on a correction with one baked in.
+/// tuning is skipped on a correction with one baked in, and a profile with
+/// impulse responses is never one.
 ///
-/// The correction keeps its own name, folder, filters and responses; the
-/// tuning joins it as a layer, played before its filters, which bands and
-/// curves, commuting, do not hear the difference of. With it, the profiles
-/// to resolve among, the tuning included under a name no profile can take.
-pub fn output_chain(
-    dsp: &crate::config::DspConfig,
-    device: &str,
-) -> Option<(DspProfile, Vec<DspProfile>)> {
-    use crate::config::{DspLayer, DspRole};
-    let correction = dsp.profile_for(device);
+/// The correction keeps its own name, folder, filters and responses; a
+/// group corrects with the member that plays. The tuning joins it as a
+/// layer, so it plays first: for bands and curves on every channel alike,
+/// which commute, that is heard as correction then tuning, and ahead of a
+/// response or a mix it is where taste belongs. The correction's graphic
+/// curves come first in the chain's budget of them: the step is left out
+/// rather than push one out, and the tuning too where it alone would.
+pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<OutputChain> {
+    use crate::config::{DspLayer, DspRole, dsp_bounds};
     let all = &dsp.profiles;
-    let tuning = (dsp.enabled)
+    let chosen = dsp.profile_for(device);
+    let correction = chosen.map(|c| member_playing(c, all));
+    let tuning = chosen
+        .is_none_or(|c| profiles::shown_role(c, all) != DspRole::Baked)
         .then(|| dsp.tunings.iter().find(|t| t.device == device))
         .flatten()
+        .filter(|_| dsp.enabled)
         .and_then(|t| all.iter().find(|p| p.name == t.tuning))
-        .filter(|t| profiles::shown_role(t, all) == DspRole::Tuning)
-        .filter(|_| correction.is_none_or(|c| profiles::shown_role(c, all) != DspRole::Baked));
-    let Some(tuning) = tuning else {
-        return correction.map(|c| (c.clone(), all.clone()));
+        .filter(|t| profiles::shown_role(t, all) == DspRole::Tuning && responses(t, all).is_empty())
+        // A group without a member to play has nothing to put a layer on.
+        .filter(|_| correction.is_none_or(|c| !c.group));
+    let name = chosen.or(tuning)?.name.clone();
+    let alone = |c: &DspProfile| OutputChain {
+        profile: c.clone(),
+        all: all.clone(),
+        name: name.clone(),
     };
+    let Some(tuning) = tuning else {
+        return correction.map(alone);
+    };
+    let curves = |p: &DspProfile| {
+        chain(p, all, &mut Vec::new()).map_or(0, |f| {
+            f.iter()
+                .filter(|f| matches!(f, DspFilter::Graphic(_)))
+                .count()
+        })
+    };
+    let held = correction.map_or(0, curves) + curves(tuning);
+    if held > dsp_bounds::CHAIN_GRAPHICS {
+        log::warn!(
+            "dsp: {} is left off {device}: with the correction it would play more graphic curves than a chain holds",
+            tuning.name
+        );
+        return correction.map(alone);
+    }
     let mut on_top = tuning.clone();
     // Control characters are taken out of every name, so none is this.
     on_top.name = format!("\u{1}{}", tuning.name);
     on_top.devices.clear();
     let aim = correction.and_then(|c| profiles::aims_at(c, all));
-    if let (Some(aim), Some(made)) = (aim, tuning.tuned_for.as_deref())
-        && aim != made
-        && targets::same_ear(&aim, made)
-        && let (Some(from), Some(to)) = (targets::choice_curve(&aim), targets::choice_curve(made))
-    {
-        on_top
-            .filters
-            .insert(0, DspFilter::Graphic(targets::difference(&from, &to)));
-    }
+    // Ahead of the tuning, and of a group's member, as a layer of its own.
+    let step = (aim.zip(made_against(tuning, all, 0)))
+        .filter(|(aim, made)| {
+            aim != made && held < dsp_bounds::CHAIN_GRAPHICS && targets::same_ear(aim, made)
+        })
+        .and_then(|(aim, made)| Some((targets::choice_curve(&aim)?, targets::choice_curve(&made)?)))
+        .map(|(from, to)| DspProfile {
+            name: "\u{1}Target difference".into(),
+            filters: vec![DspFilter::Graphic(targets::difference(&from, &to))],
+            ..Default::default()
+        });
     let mut among = all.clone();
-    let Some(correction) = correction else {
-        among.push(on_top.clone());
-        return Some((on_top, among));
+    let profile = match correction {
+        Some(c) => {
+            let mut c = c.clone();
+            for p in step.into_iter().chain([on_top]) {
+                c.layers.push(DspLayer {
+                    profile: p.name.clone(),
+                    on: true,
+                });
+                among.push(p);
+            }
+            c
+        }
+        None => {
+            among.push(on_top.clone());
+            on_top
+        }
     };
-    let mut chain = correction.clone();
-    chain.layers.push(DspLayer {
-        profile: on_top.name.clone(),
-        on: true,
-    });
-    among.push(on_top);
-    Some((chain, among))
+    Some(OutputChain {
+        profile,
+        all: among,
+        name,
+    })
 }
 
+/// The profile that plays for `profile`: itself, or for a group, the member
+/// playing, and so on down.
+fn member_playing<'a>(profile: &'a DspProfile, all: &'a [DspProfile]) -> &'a DspProfile {
+    let mut p = profile;
+    for _ in 0..MAX_LAYER_DEPTH {
+        match p.group.then(|| playing(p, all)).flatten() {
+            Some(m) => p = m,
+            None => break,
+        }
+    }
+    p
+}
+
+/// The target the tuning `profile` was made against: for a group, its
+/// playing member's, and for a stack, its own or its first layer's on.
+fn made_against(profile: &DspProfile, all: &[DspProfile], depth: usize) -> Option<String> {
+    if depth > MAX_LAYER_DEPTH {
+        return None;
+    }
+    if profile.group {
+        return playing(profile, all)
+            .and_then(|m| made_against(m, all, depth + 1))
+            .or_else(|| profile.tuned_for.clone());
+    }
+    profile.tuned_for.clone().or_else(|| {
+        profile
+            .layers
+            .iter()
+            .filter(|l| l.on)
+            .filter_map(|l| all.iter().find(|p| p.name == l.profile))
+            .find_map(|p| made_against(p, all, depth + 1))
+    })
+}
+
+/// The filters `profile` plays: each layer that is on, in order, as that
+/// layer plays it, then its own, then the step moving it to another target.
 /// `stack` holds the profiles being resolved, which a cycle would come back
 /// to. A layer is EQ alone: impulse responses belong to the profile that
 /// plays them, and two stacks of responses would make one profile's rates
