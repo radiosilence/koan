@@ -170,7 +170,7 @@ private struct NewKeySheet: View {
                         .koanText(.fine, .muted)
                 }
             }
-            .formStyle(.grouped)
+            .koanForm()
             .koanSheet()
             .navigationTitle("New Key")
             .toolbar {

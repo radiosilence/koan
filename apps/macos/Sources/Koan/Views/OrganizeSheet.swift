@@ -16,11 +16,11 @@ struct OrganizeSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            KoanDivider()
             controls
-            Divider()
+            KoanDivider()
             table
-            Divider()
+            KoanDivider()
             footer
         }
         .frame(minWidth: 560, minHeight: 400)
@@ -60,7 +60,7 @@ struct OrganizeSheet: View {
                     ForEach(organize.patterns, id: \.name) { pattern in
                         Text(pattern.name).tag(pattern.name as String?)
                     }
-                }
+                }.koanControl()
                 .frame(maxWidth: 240, alignment: .leading)
                 .disabled(organize.editing)
 
@@ -71,7 +71,7 @@ struct OrganizeSheet: View {
                         ForEach(organize.folders, id: \.self) { folder in
                             Text(shortFolder(folder)).tag(folder)
                         }
-                    }
+                    }.koanControl()
                     .frame(maxWidth: 240, alignment: .leading)
                 }
 

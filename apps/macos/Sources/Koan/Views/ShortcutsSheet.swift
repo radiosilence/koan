@@ -25,7 +25,7 @@ struct ShortcutsSheet: View {
                             .map { Row(keys: $0.keys.map(Hotkey.caption), label: $0.label) }
                     }
 
-                    Divider()
+                    KoanDivider()
 
                     KoanSectionHeader("With ⌘")
 
@@ -82,11 +82,7 @@ struct ShortcutsSheet: View {
             HStack(spacing: 3) {
                 ForEach(keys, id: \.self) { key in
                     Text(key)
-                        .koanText(.fine)
-                        .monospaced()
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .glass(.regular, fallback: .quaternary, in: .rect(cornerRadius: 6))
+                        .koanBadge()
                 }
             }
             Text(label)

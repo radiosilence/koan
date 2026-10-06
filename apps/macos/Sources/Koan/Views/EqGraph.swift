@@ -39,7 +39,6 @@ struct EqGraph: View {
 
     private var measured: Bool { response.measurement != nil }
     private var showingEq: Bool { view == .eq || !measured }
-    private static let accent = Color.koanAccent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -62,7 +61,7 @@ struct EqGraph: View {
         Chart {
             if showingEq {
                 RuleMark(y: .value("dB", 0.0))
-                    .foregroundStyle(Color.secondary.opacity(0.4))
+                    .foregroundStyle(KoanTheme.style(.rule))
                     .lineStyle(StrokeStyle(lineWidth: 0.5))
                 ForEach(bandAreas) { area in
                     AreaMark(
@@ -71,21 +70,21 @@ struct EqGraph: View {
                         yEnd: .value("dB", area.db),
                         series: .value("Band", area.series)
                     )
-                    .foregroundStyle(Self.accent.opacity(0.13))
+                    .foregroundStyle(.tint.opacity(0.15))
                 }
-                lines(curves: [Curve(name: "EQ", db: response.total)], color: Self.accent, width: 2)
+                lines(curves: [Curve(name: "EQ", db: response.total)], color: AnyShapeStyle(.tint), width: 2)
                 ForEach(shownHandles) { h in
                     PointMark(x: .value("Hz", h.hz), y: .value("dB", h.db))
                         .symbolSize(grabbed && h.index == dragging?.index ? 120 : 60)
-                        .foregroundStyle(Self.accent)
+                        .foregroundStyle(.tint)
                 }
             } else {
                 lines(curves: response.measurement.map { [Curve(name: "Measured", db: $0)] } ?? [],
-                      color: Color.secondary, width: 1.2)
+                      color: KoanTheme.style(.muted), width: 1.2)
                 lines(curves: response.target.map { [Curve(name: "Target", db: $0)] } ?? [],
-                      color: Color.primary.opacity(0.55), width: 1.2, dashed: true)
+                      color: AnyShapeStyle(KoanTheme.style(.ink).opacity(0.55)), width: 1.2, dashed: true)
                 lines(curves: response.predicted.map { [Curve(name: "Corrected", db: $0)] } ?? [],
-                      color: Self.accent, width: 2)
+                      color: AnyShapeStyle(.tint), width: 2)
             }
         }
         .chartXScale(domain: 20.0 ... 20000.0, type: .log)
@@ -130,7 +129,7 @@ struct EqGraph: View {
 
     private func lines(
         curves: [Curve],
-        color: Color,
+        color: AnyShapeStyle,
         width: CGFloat,
         dashed: Bool = false
     ) -> some ChartContent {
@@ -194,12 +193,12 @@ struct EqGraph: View {
     @ViewBuilder private var legend: some View {
         HStack(spacing: 14) {
             if showingEq {
-                key("EQ", Self.accent)
-                if !response.bands.isEmpty { key("Each band", Self.accent.opacity(0.3)) }
+                key("EQ", AnyShapeStyle(.tint))
+                if !response.bands.isEmpty { key("Each band", AnyShapeStyle(.tint.opacity(0.3))) }
             } else {
-                key("Measured", Color.secondary)
-                key("Target", Color.primary.opacity(0.55), dashed: true)
-                key("Corrected", Self.accent)
+                key("Measured", KoanTheme.style(.muted))
+                key("Target", AnyShapeStyle(KoanTheme.style(.ink).opacity(0.55)), dashed: true)
+                key("Corrected", AnyShapeStyle(.tint))
             }
             Spacer()
             Text("Preamp \(String(format: "%.1f", response.preampDb)) dB")
@@ -208,7 +207,7 @@ struct EqGraph: View {
         .koanText(.fine, .muted)
     }
 
-    private func key(_ name: String, _ color: Color, dashed: Bool = false) -> some View {
+    private func key(_ name: String, _ color: AnyShapeStyle, dashed: Bool = false) -> some View {
         HStack(spacing: 5) {
             Capsule()
                 .stroke(color, style: StrokeStyle(lineWidth: 2, dash: dashed ? [3, 2] : []))

@@ -26,9 +26,9 @@ struct PickerSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             searchField
-            Divider()
+            KoanDivider()
             kindPicker
-            Divider()
+            KoanDivider()
             resultList
                 // The commit bar floats over the results rather than being
                 // fenced off below them, so the list keeps the full height and
@@ -159,9 +159,7 @@ struct PickerSheet: View {
         .disabled(resolving || (picked.isEmpty && highlighted == nil))
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .glass(.regular, fallback: .regularMaterial, in: .rect(cornerRadius: 20))
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
+        .koanBar(radius: 20, inset: 12)
     }
 
     private func toggle(_ row: PickerRow) {

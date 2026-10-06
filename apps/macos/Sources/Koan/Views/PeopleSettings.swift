@@ -101,7 +101,7 @@ struct PeopleSettings: View {
                             .verbatimEntry()
                         Picker("Access", selection: $newRole) {
                             ForEach(AccountRole.all, id: \.self) { Text($0.label).tag($0) }
-                        }
+                        }.koanControl()
                         .labelsHidden()
                         .fixedSize()
                         Button("Add") {
@@ -191,7 +191,7 @@ struct PeopleSettings: View {
                 set: { role in Task { await model.setRole(account.username, role) } }
             )) {
                 ForEach(AccountRole.all, id: \.self) { Text($0.label).tag($0) }
-            }
+            }.koanControl()
             .labelsHidden()
             .fixedSize()
             Menu {
@@ -206,7 +206,7 @@ struct PeopleSettings: View {
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
-            }
+            }.koanControl()
             .menuStyle(.borderlessButton)
             .fixedSize()
             .accessibilityLabel("More for \(account.username)")
@@ -276,7 +276,7 @@ struct InviteSheet: View {
                     .selectableText()
                 }
             }
-            .formStyle(.grouped)
+            .koanForm()
             .koanSheet()
             .navigationTitle("Invite")
             .toolbar {

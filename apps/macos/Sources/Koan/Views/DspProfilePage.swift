@@ -103,7 +103,7 @@ struct DspProfilePage: View {
                 ProgressView()
             }
         }
-        .formStyle(.grouped)
+        .koanForm()
         .koanSheet()
         .navigationTitle(name)
         .task(id: dsp.version) { await load() }
@@ -216,7 +216,7 @@ private struct LayersSection: View {
                             dsp.setLayers(detail.name, layers + [DspLayerInfo(profile: p.name, on: true)])
                         }
                     }
-                }
+                }.koanControl()
             }
         } header: {
             KoanSectionHeader("Layers")
@@ -260,7 +260,7 @@ private struct TargetSection: View {
                 ForEach(targets.choices, id: \.id) { c in
                     Text(c.name).tag(c.id)
                 }
-            }
+            }.koanControl()
             if let c = targets.choices.first(where: { $0.id == current }), !c.character.isEmpty {
                 Text(c.character)
                     .koanText(.meta, .muted)

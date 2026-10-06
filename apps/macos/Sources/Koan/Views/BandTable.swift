@@ -102,7 +102,7 @@ private struct BandEditor: View {
                 .frame(width: 22, alignment: .leading)
             Picker("Type", selection: Binding(get: { kind }, set: { kind = $0; commit() })) {
                 ForEach(BandTable.kinds, id: \.id) { Text($0.name).tag($0.id) }
-            }
+            }.koanControl()
             .labelsHidden()
             .frame(maxWidth: .infinity, alignment: .leading)
             field($freq, .freq, width: 72, digits: 0)

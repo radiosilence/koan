@@ -107,11 +107,7 @@ struct NowPlayingPage: View {
             }
             if let format = player.currentFormat {
                 Text(Format.quality(format))
-                    .koanText(.meta, .muted)
-                    .monospaced()
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(.quaternary, in: Capsule())
+                    .koanBadge()
             }
             // The transport above the bar: down from the tabs reaches play/pause
             // first, then the bar, then what comes next, in the order they sit.

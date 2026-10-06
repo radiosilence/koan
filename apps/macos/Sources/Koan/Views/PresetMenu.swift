@@ -75,7 +75,7 @@ struct PresetMenu<Label: View>: View {
             }
         } label: {
             label()
-        }
+        }.koanControl()
         .accessibilityLabel("Preset: \(presets.summary)")
     }
 
@@ -87,7 +87,7 @@ struct PresetMenu<Label: View>: View {
             Text(presets.none).tag("")
             Divider()
             ForEach(presets.profiles, id: \.self) { Text($0).tag($0) }
-        }
+        }.koanControl()
         .pickerStyle(.inline)
     }
 }

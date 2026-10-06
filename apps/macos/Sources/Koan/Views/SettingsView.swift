@@ -265,7 +265,7 @@ private struct LibrarySettings: View {
                     .koanText(.fine, .muted)
             }
         }
-        .formStyle(.grouped)
+        .koanForm()
         .koanSheet()
         .confirmationDialog(
             "Clear the library index?",
@@ -433,7 +433,7 @@ private struct RemoteSettings: View {
                     Picker("Sign in with", selection: $model.withApiKey) {
                         Text("Password").tag(false)
                         Text("API key").tag(true)
-                    }
+                    }.koanControl()
                     #if os(tvOS)
                     // Two choices side by side, rather than a page of their
                     // own to go into and come back from.
@@ -498,7 +498,7 @@ private struct RemoteSettings: View {
                         Text("Hour").tag(UInt64(60))
                         Text("6 hours").tag(UInt64(360))
                         Text("Day").tag(UInt64(1440))
-                    }
+                    }.koanControl()
                 }
             } header: {
                 KoanSectionHeader("Automatic sync")
@@ -539,7 +539,7 @@ private struct RemoteSettings: View {
                     set: { v in model.edit { $0.downloadWorkers = UInt32(v) } }
                 )) {
                     ForEach(1...16, id: \.self) { Text("\($0)").tag($0) }
-                }
+                }.koanControl()
                 #else
                 Stepper(
                     "Parallel downloads: \(model.settings.downloadWorkers)",
@@ -548,7 +548,7 @@ private struct RemoteSettings: View {
                         set: { v in model.edit { $0.downloadWorkers = UInt32(v) } }
                     ),
                     in: 1...16
-                )
+                ).koanControl()
                 #endif
                 TextField("Cache limit, e.g. 50GB — blank for no limit", text: Binding(
                     get: { cacheLimit ?? model.settings.cacheLimit },
@@ -572,7 +572,7 @@ private struct RemoteSettings: View {
                 KoanSectionHeader("Downloads")
             }
         }
-        .formStyle(.grouped)
+        .koanForm()
         .koanSheet()
         .onAppear {
             url = model.settings.remoteUrl
@@ -635,7 +635,7 @@ private struct PlaybackSettings: View {
                     ForEach(player.devices, id: \.name) { device in
                         Text(device.name).tag(device.name)
                     }
-                }
+                }.koanControl()
             } header: {
                 KoanSectionHeader("Device")
             } footer: {
@@ -657,21 +657,21 @@ private struct PlaybackSettings: View {
                     Text("Off").tag("off")
                     Text("Per track").tag("track")
                     Text("Per album").tag("album")
-                }
+                }.koanControl()
                 if model.settings.replaygain != "off" {
                     #if os(tvOS)
                     Picker("Pre-amp", selection: model.binding(\.preAmpDb)) {
                         ForEach(Array(stride(from: -15.0, through: 15.0, by: 0.5)), id: \.self) { db in
                             Text("\(db, specifier: "%.1f") dB").tag(db)
                         }
-                    }
+                    }.koanControl()
                     #else
                     Stepper(
                         "Pre-amp: \(model.settings.preAmpDb, specifier: "%.1f") dB",
                         value: model.binding(\.preAmpDb),
                         in: -15...15,
                         step: 0.5
-                    )
+                    ).koanControl()
                     #endif
                 }
             } header: {
@@ -681,7 +681,7 @@ private struct PlaybackSettings: View {
                     .koanText(.fine, .muted)
             }
         }
-        .formStyle(.grouped)
+        .koanForm()
         .koanSheet()
     }
 }
@@ -711,7 +711,7 @@ struct EqSettings: View {
             }
             DspSettings()
         }
-        .formStyle(.grouped)
+        .koanForm()
         .koanSheet()
         .task(id: "\(active ?? "")\u{0}\(app.dsp.version)") {
             response = if let active { await app.dsp.response(active) } else { nil }
@@ -750,7 +750,7 @@ struct DspSettings: View {
                         ForEach(o.profiles, id: \.name) { p in
                             Text(p.name).tag(p.name)
                         }
-                    }
+                    }.koanControl()
                     .disabled(!o.enabled)
                 }
                 #if !os(tvOS)
@@ -1171,7 +1171,7 @@ private struct DevicesSettings: View {
                 Picker("Devices on this network", selection: model.binding(\.devicesNearbyControl)) {
                     Text("Full control").tag("full")
                     Text("Playback only").tag("playback")
-                }
+                }.koanControl()
                 if let port = mirror.connection?.listeningPort {
                     LabeledContent("Listening on port", value: String(port))
                 }
@@ -1262,7 +1262,7 @@ private struct DevicesSettings: View {
                 }
             }
         }
-        .formStyle(.grouped)
+        .koanForm()
         .koanSheet()
     }
 
@@ -1332,7 +1332,7 @@ private struct AppearanceSettings: View {
                 #if os(tvOS)
                 Picker("Level", selection: $graphics) {
                     ForEach(Graphics.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
+                }.koanControl()
                 #else
                 Slider(
                     value: Binding(
@@ -1360,7 +1360,7 @@ private struct AppearanceSettings: View {
                     .koanText(.fine, .muted)
             }
         }
-        .formStyle(.grouped)
+        .koanForm()
         .koanSheet()
     }
 }
