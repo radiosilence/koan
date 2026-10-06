@@ -99,6 +99,65 @@ fn list_devices() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Refreshes a controller asked for: one at a time, and at most one more
+/// waiting, so a burst of asking costs two at most.
+#[derive(Default)]
+struct RefreshGate {
+    running: bool,
+    queued: bool,
+}
+
+impl RefreshGate {
+    /// Whether to start a refresh now. Asked during one, it is queued.
+    fn ask(&mut self) -> bool {
+        if self.running {
+            self.queued = true;
+            return false;
+        }
+        self.running = true;
+        true
+    }
+
+    /// A refresh ended. Whether to run the one queued meanwhile.
+    fn done(&mut self) -> bool {
+        self.running = std::mem::take(&mut self.queued);
+        self.running
+    }
+}
+
+static REFRESH: parking_lot::Mutex<RefreshGate> = parking_lot::Mutex::new(RefreshGate {
+    running: false,
+    queued: false,
+});
+
+/// A controller opened its output menu: list this device's outputs again, on
+/// a thread of its own rather than the link's. Cheap by design: on a Mac a
+/// CoreAudio query; on a phone or a television the route the app last
+/// reported, with no search, since the system knows it directly; renderers
+/// from the discovery cache, searched for only once it is stale. What moved
+/// reaches the controller in the link state.
+pub fn refresh_for_controller() {
+    if !REFRESH.lock().ask() {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("koan-outputs".into())
+        .spawn(|| {
+            loop {
+                refresh_devices();
+                #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+                crate::upnp::discovery::search_if_stale();
+                if !REFRESH.lock().done() {
+                    break;
+                }
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("outputs: no refresh thread: {e}");
+        REFRESH.lock().done();
+    }
+}
+
 /// This device's outputs, as they are now.
 pub fn local(state: &SharedPlayerState) -> LinkOutputs {
     let cfg = Config::cached();
@@ -266,6 +325,39 @@ mod tests {
         assert_eq!(serde_json::from_str::<LinkCommand>(&json).unwrap(), cmd);
         assert!(cmd.relayable());
         assert!(cmd.allowed_playback());
+    }
+
+    /// One refresh at a time and one more at most while it runs, however
+    /// often controllers ask.
+    #[test]
+    fn refreshes_for_controllers_coalesce() {
+        let mut gate = RefreshGate::default();
+        assert!(gate.ask());
+        assert!(!gate.ask());
+        assert!(!gate.ask());
+        // The burst ran once more, then nothing.
+        assert!(gate.done());
+        assert!(!gate.done());
+        assert!(gate.ask());
+        assert!(!gate.done());
+    }
+
+    /// Asking for the outputs again is said live or not at all: never queued
+    /// for a device that is away, never a push to wake one.
+    #[test]
+    fn a_refresh_is_never_queued_for_an_absent_device() {
+        assert!(LinkCommand::RefreshOutputs.live_only());
+        assert!(
+            LinkCommand::Shared {
+                command: Box::new(LinkCommand::RefreshOutputs)
+            }
+            .live_only()
+        );
+        assert!(!LinkCommand::Pause.live_only());
+        assert!(!crate::remote::devices::send_live(
+            "nowhere-at-all",
+            LinkCommand::RefreshOutputs
+        ));
     }
 
     /// A device switch reaches the player as the device's own menu sends it.

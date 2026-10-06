@@ -326,6 +326,16 @@ impl LinkCommand {
         }
     }
 
+    /// Only worth saying to a device that is there to hear it: sent over a
+    /// live route or not at all, never queued for an absent device and never
+    /// a push to wake one.
+    pub fn live_only(&self) -> bool {
+        match self {
+            Self::Shared { command } => command.live_only(),
+            cmd => matches!(cmd, Self::WatchLevels { .. } | Self::RefreshOutputs),
+        }
+    }
+
     /// Whether a device on the same network, which may belong to anyone, may
     /// send this under Playback only. Playback and the queue; nothing that touches the library or
     /// the files on disk.

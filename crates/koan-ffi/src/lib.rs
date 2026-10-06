@@ -2535,19 +2535,22 @@ impl KoanEngine {
         }
     }
 
-    /// List the outputs of the device in view again, when the system says
-    /// they changed or an output menu opens: this device's own, or another's
-    /// when it is controlled, which lists its own and publishes what moved.
-    /// The `Outputs` slice follows.
+    /// List this device's audio devices again, when the system says they
+    /// changed or an output menu opens. The `Outputs` slice follows.
     pub async fn refresh_outputs(self: Arc<Self>) {
-        offload::offload(move || match koan_core::remote::devices::target() {
-            Some(to) => {
+        offload::offload(koan_core::remote::outputs::refresh_devices).await
+    }
+
+    /// Ask the device being controlled to list its outputs again: its output
+    /// menu was opened here. Over a route that is up now or not at all, since
+    /// a device that is away has nothing new to say and is not worth waking.
+    /// Its link state brings back whatever moved.
+    pub async fn refresh_controlled_outputs(self: Arc<Self>) {
+        offload::offload(|| {
+            if let Some(to) = koan_core::remote::devices::target() {
                 let cmd = koan_core::remote::link::LinkCommand::RefreshOutputs;
-                if let Err(e) = self.command_target(&to, cmd) {
-                    log::debug!("outputs: no refresh from {to}: {e}");
-                }
+                koan_core::remote::devices::send_live(&to, cmd);
             }
-            None => koan_core::remote::outputs::refresh_devices(),
         })
         .await
     }
@@ -5283,8 +5286,7 @@ impl KoanEngine {
                     .map_err(|message| KoanError::Audio { message })
             }
             LinkCommand::RefreshOutputs => {
-                koan_core::remote::outputs::refresh_devices();
-                koan_core::upnp::discovery::search();
+                koan_core::remote::outputs::refresh_for_controller();
                 Ok(())
             }
             LinkCommand::SetRendererVolume { volume } => {

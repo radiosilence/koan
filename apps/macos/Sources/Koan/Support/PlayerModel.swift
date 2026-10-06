@@ -567,7 +567,7 @@ final class PlayerModel {
     /// state brings back whatever moved.
     func refreshControlledOutputs() {
         let engine = self.engine
-        Task { await engine.refreshOutputs() }
+        Task { await engine.refreshControlledOutputs() }
     }
 
     /// Send what the controlled device is playing to `id` (this device with

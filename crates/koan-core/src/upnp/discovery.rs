@@ -39,6 +39,8 @@ struct Store {
 
 static STORE: Mutex<Option<Store>> = Mutex::new(None);
 static SEARCH: OnceLock<Option<UdpSocket>> = OnceLock::new();
+/// When `search` last ran.
+static SEARCHED: Mutex<Option<Instant>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut Store) -> R) -> R {
     f(STORE.lock().get_or_insert_with(Store::default))
@@ -179,6 +181,7 @@ pub fn search() {
     let Some(socket) = SEARCH.get_or_init(start) else {
         return;
     };
+    *SEARCHED.lock() = Some(Instant::now());
     check_busy();
     let msg = format!(
         "M-SEARCH * HTTP/1.1\r\nHOST: {GROUP}:{PORT}\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: {SEARCH_TARGET}\r\nUSER-AGENT: koan/{} UPnP/1.0\r\n\r\n",
@@ -190,6 +193,21 @@ pub fn search() {
             log::warn!("upnp: search failed: {e}");
             return;
         }
+    }
+}
+
+/// `search`, unless what is known is still good: renderers announce
+/// themselves and their departures while the listener runs, so the cache
+/// stands until one of its entries has outlived its `max-age`, or nothing has
+/// been searched for in `DEFAULT_MAX_AGE`.
+pub fn search_if_stale() {
+    let now = Instant::now();
+    let fresh = SEARCHED
+        .lock()
+        .is_some_and(|t| now.duration_since(t) < DEFAULT_MAX_AGE)
+        && with(|s| s.renderers.values().all(|k| k.expires > now));
+    if !fresh {
+        search();
     }
 }
 
