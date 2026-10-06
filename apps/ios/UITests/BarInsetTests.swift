@@ -22,6 +22,9 @@ final class BarInsetTests: XCTestCase {
         // Silent, and blind to UPnP renderers: tests share a machine with its owner.
         app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
         app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
+        // The theme's bar is what is measured, whatever look the simulator
+        // was left in.
+        app.launchEnvironment["KOAN_APPEARANCE__THEME"] = "koan"
         app.launch()
     }
 
@@ -52,12 +55,11 @@ final class BarInsetTests: XCTestCase {
 
         let bar = app.otherElements["koan-bar"]
         XCTAssertTrue(row.exists, "\(last) never appeared")
-        if bar.exists {
-            XCTAssertLessThanOrEqual(
-                row.frame.maxY, bar.frame.minY + 1,
-                "\(last) ends at \(row.frame.maxY), under the bar from \(bar.frame.minY)"
-            )
-        }
+        XCTAssertTrue(bar.waitForExistence(timeout: 5), "no koan-bar: is the kōan look on?")
+        XCTAssertLessThanOrEqual(
+            row.frame.maxY, bar.frame.minY + 1,
+            "\(last) ends at \(row.frame.maxY), under the bar from \(bar.frame.minY)"
+        )
     }
 
     private func pause(_ seconds: TimeInterval) {
