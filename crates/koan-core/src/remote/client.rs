@@ -894,7 +894,19 @@ impl SubsonicClient {
             });
             form.push(("position".into(), position_ms.to_string()));
         }
-        let resp: SubsonicResponseWrapper = self.http.post(&url).form(&form).send()?.json()?;
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(&form)
+            .finish();
+        let resp: SubsonicResponseWrapper = self
+            .http
+            .post(&url)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(body)
+            .send()?
+            .json()?;
         resp.subsonic_response.ok().map(|_| ())
     }
 
