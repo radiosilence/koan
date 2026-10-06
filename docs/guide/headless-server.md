@@ -165,7 +165,7 @@ Set `sharing.public_url` to the public address (`KOAN_SHARING__PUBLIC_URL`) for 
 
 ### Kubernetes
 
-The server needs one pod with two volumes: the library, read-only, and a state directory at `/config` that outlives the pod. It is a single SQLite index, so it runs as one replica and is replaced rather than rolled. Set `KOAN_LIBRARY__FOLDERS`, `KOAN_GRAPHQL__ALLOWED_HOSTS` and `KOAN_SHARING__PUBLIC_URL` as in the Compose example below, and terminate TLS in front of it.
+The server needs one pod with two volumes: the library, read-only, and a state directory at `/config` that outlives the pod. It is a single SQLite index, so it runs as one replica, on one node. Set `KOAN_LIBRARY__FOLDERS`, `KOAN_GRAPHQL__ALLOWED_HOSTS` and `KOAN_SHARING__PUBLIC_URL` as in the Compose example below, and terminate TLS in front of it.
 
 #### With Pulumi
 
@@ -215,6 +215,12 @@ export const routes = koan.routes;
 With persistent state, each update first runs `koan check-db` in a Job against a snapshot of the live database. If the new version's migration fails there, the update stops and the old pod keeps serving. kubelet creates a missing `hostPath` as root, and koan runs as uid 1000, so an init container hands the state directory to that uid before the server starts; `initPermissions.enabled: false` turns it off. The root filesystem is read-only, and the artwork and lyrics caches live in an `emptyDir`, rebuilt after a restart.
 
 Unknown options are rejected rather than ignored, so a stack carrying options a newer package removed fails at `pulumi preview`.
+
+#### Two servers during an upgrade
+
+Two koan processes can share one state directory on one node for the minutes an upgrade overlaps them: SQLite's WAL lets both read and write. Only one scans and watches the library, whichever holds `watch.lock` beside the database; the other serves and checks every ten seconds, taking over when the first exits, which the kernel notices however it exits. A build older than the database refuses to start, naming the schema versions, rather than serving errors.
+
+What an overlap does not cover is a release that changes the schema. The new server migrates on start, and the old one keeps serving the migrated database until it stops. For those releases the old server must stop before the new one starts, as `Recreate` does, which is what the Pulumi package still uses. Devices linked to the outgoing server reconnect to the new one, as after any restart.
 
 Once it is running, create the admin account in the pod:
 

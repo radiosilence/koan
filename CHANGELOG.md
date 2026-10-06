@@ -6,6 +6,10 @@
 
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
+### Changed
+
+- **One server scans a shared library at a time.** Servers sharing a state directory, as two do while one replaces the other, take turns: the one holding `watch.lock` beside the database scans and watches the library folders, and the other serves without scanning until it can take the lock. A server whose database a newer koan has migrated now exits with that reason instead of a panic.
+
 ### Fixed
 
 - **A library folder removed and added back left its server-held tracks without their files.** A track also on the server outlives its folder being forgotten, as the server's copy, and kept its file's scan cache entry, so a scan after re-adding the folder took the file as already read and never linked it again. Forgetting a folder now clears the folder's entries.
