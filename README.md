@@ -2,7 +2,7 @@
 
 # kōan
 
-A music player and server for your own library, local or on any OpenSubsonic server: native SwiftUI apps on macOS and iOS, a terminal UI on macOS and Linux, and a server with a web UI, on one Rust core. [koan.rocks](https://koan.rocks)
+A music player and server for your own library, local or on any OpenSubsonic server: native SwiftUI apps on macOS, iOS and Apple TV, a terminal UI on macOS and Linux, and a server with a web UI, on one Rust core. [koan.rocks](https://koan.rocks)
 
 It's a music player and server, for local collections and remote ones (anything OpenSubsonic). Remote libraries sit behind a fairly aggressive local cache. It handles multi-terabyte libraries with ease and has all the core audio features you'd want, like gapless and bit-perfect output (where the system allows). It's built from 25 years of messing about with music, being annoyed with pretty much everything, and wanting my dream application.
 
@@ -93,14 +93,14 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 
 - **Bit-perfect output** through CoreAudio on macOS and ALSA on Linux: the device is switched to the source's sample rate rather than resampled to reach it, and the format badge says when a device refuses.
 - **Gapless**, including after the queue is edited: the decoder runs ahead across track boundaries, and an edit restarts it at the playhead.
-- **EQ and convolution per output device.** Profiles are imported as other tools write them: AutoEQ, Equalizer APO configs with their includes, CamillaDSP, REW, rePhase, Convolver `.cfg` files and Roon's zips of impulse responses, one per sample rate. An output without a profile runs nothing. See [Equalisation and convolution](https://koan.rocks/docs/dsp/).
+- **EQ and convolution per output device.** Profiles are imported as other tools write them: AutoEQ, Equalizer APO configs with their includes, CamillaDSP, REW, rePhase, Convolver `.cfg` files and Roon's zips of impulse responses, one per sample rate. AutoEQ is searchable by name or by maker and model, a correction can be moved to another target curve or layered under other profiles, and the apps draw the response and edit the bands. An output without a profile runs nothing. See [Equalisation and convolution](https://koan.rocks/docs/dsp/).
 - **Network amplifiers and streamers** (UPnP/DLNA) get the original file, or, with a correction profile, one processed FLAC stream for the whole queue. See [Playing on another device](https://koan.rocks/docs/devices/).
 - **Formats**: FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF and CAF, in Ogg, Matroska/WebM and MP4.
 - **ReplayGain** in track and album modes, a **sleep timer**, shuffle and repeat, and media keys through Control Center and MPRIS.
 
 ### Devices
 
-- **Any kōan app controls any other**, on the same network directly or anywhere through a kōan server, and moves what is playing to it. The device it moves to plays its own copy, so it carries on when the phone sleeps.
+- **Any kōan app controls any other**, on the same network directly or anywhere through a kōan server, and moves what is playing to it, saying when a device has not woken or the music has not arrived. The device it moves to plays its own copy, so it carries on when the phone sleeps. With *Keep running in the menu bar*, a closed Mac app stays reachable.
 - **A cache built for losing signal**: the queue is fetched ahead of the playhead as far as the cache limit allows, so it keeps playing underground. See [Cache management](https://koan.rocks/docs/cache-management/).
 - **Signing in without a password**: invite links, approving another device by code, and app passwords for Subsonic apps that only sign in with a token. See [Authentication](https://koan.rocks/docs/authentication/).
 
@@ -119,8 +119,9 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 
 - **A web UI** laid out for a phone and a desktop, with gapless playback in the browser.
 - **Share links** whose pages play without an account and unfurl with their cover.
-- **An OpenSubsonic API**, so Subsonic apps play from it too, with ratings, bookmarks and transcoding to Opus, MP3 or AAC.
-- **ListenBrainz scrobbling** per account, sent by the server.
+- **An OpenSubsonic API**, so Subsonic apps play from it too, with favourites, ratings, bookmarks, saved play queues and transcoding to Opus, MP3 or AAC.
+- **Accounts** with API keys and app passwords, managed from the web UI or the apps, and web UI sign-in through an authenticating reverse proxy.
+- **ListenBrainz scrobbling** per account, sent by the server and set up from the web UI or the apps.
 - **MCP** at `/mcp` with its own sign-in, so an assistant such as Claude can browse the library and drive playback on your devices. It can never move, rename or delete a file. See [MCP integration](https://koan.rocks/docs/mcp-integration/).
 - **GraphQL** for everything the apps can do.
 

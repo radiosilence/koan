@@ -60,6 +60,11 @@ pub const ACK: &str = "koanAck";
 /// `LinkCommand::DeviceKeys`.
 pub const DEVICE_KEYS: &str = "koanDeviceKeys";
 
+/// The account's scrobbling, set up from an app: `/rest/koanScrobbling`
+/// reports it, `/rest/koanScrobblingConnect` checks and stores a ListenBrainz
+/// token, `/rest/koanScrobblingDisconnect` removes it. See `remote::scrobbling`.
+pub const SCROBBLING: &str = "koanScrobbling";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {
     /// OpenSubsonic's `type`: `koan`, `navidrome`. `None` from a server that

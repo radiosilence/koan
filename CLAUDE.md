@@ -177,6 +177,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/link.rs` | The standing WebSocket a client keeps to a koan server (`/rest/koanLink`), and the `LinkCommand`s the server sends down it: play, enqueue, pause, skip. Reconnects on its own; ids are resolved to local tracks, syncing first if one is new |
 | `remote/pair.rs` | A device without a keyboard signing in: opens `/rest/koanPair`, shows the code and `koan.rocks/pair/` link, and blocks until the server sends the outcome; an approved key is stored as an invite's is. Also the approver's calls (`info`, `approve`, `decline`) and `PairLink` |
 | `remote/profile.rs` | What the signed-in server is: `ping` + `getOpenSubsonicExtensions`, once per sign-in. Gate koan features on the extension (`koanLink`, `koanDevices`), never on the server's name |
+| `remote/scrobbling.rs` | The account's scrobbling on its koan server (`koanScrobbling`): status, connect with a ListenBrainz token, disconnect. The server keeps the token and never returns it |
 | `remote/devices.rs` | The devices this one can play on — the account's from the link, the network's from `nearby` — which one the app controls, and getting a command to it |
 | `remote/nearby.rs` | LAN control: listener on `devices.port`, Bonjour via `dns_sd`, a connection per device found or listed by address. Strangers get playback and the queue only (`LinkCommand::allowed_nearby`) |
 | `remote/wire.rs` | Event-driven WebSocket sessions: one `poll` on the socket and a pipe the engine's change signal rings |

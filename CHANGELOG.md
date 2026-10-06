@@ -1,9 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.58.0
+
+The library database moves from schema 19 to 20 (new tables for Subsonic saved play queues; every existing row is kept). Upgrades now run in one transaction and roll back whole if any step fails, and a server finding the database newer than it knows drains and exits. Builds older than 0.58.0 refuse a schema-20 database, so going back means restoring a copy taken before upgrading.
 
 ### Added
 
+- **Scrobbling is set up in the apps.** Settings → Server → Scrobbling in the Mac and iOS apps connects the account's ListenBrainz with its user token, shows how many plays are waiting and any token ListenBrainz stopped accepting, and disconnects; the Apple TV shows the connection. It is offered where the server lists the `koanScrobbling` extension, through which the server checks and keeps the token and never returns it. The web UI's Scrobbling page does the same.
 - **Assistants in the apps.** Settings → Server shows the server's MCP address to copy and links to its page on connecting Claude or another assistant, where the server knows its public address (`sharing.public_url`). The server offers this as `koanMcp`.
 - **API keys in the apps.** Settings → Server lists the account's API keys, makes one for another Subsonic app (shown once, to copy), and revokes one, which is how a lost device is signed out. The server offers this as `koanApiKeys`.
 - **Passwords from the apps.** An admin can set another account's password from Settings → Server, and anyone can change their own there, giving the current one. The device that changes its own stays signed in with a new key; every other device of the account signs out. The server offers this as `koanSetUserPassword` (extension `koanPasswords`), and a wrong current password counts against the account's sign-in limit.

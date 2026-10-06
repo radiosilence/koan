@@ -940,6 +940,29 @@ impl SubsonicClient {
         Ok(())
     }
 
+    // -- Scrobbling: koan servers offering `koanScrobbling` --
+
+    /// Where the account's plays are forwarded.
+    pub fn koan_scrobbling(&self) -> Result<KoanScrobbling, SubsonicError> {
+        self.get("koanScrobbling")?
+            .koan_scrobbling
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Connect the account's ListenBrainz with its user token, which the
+    /// server checks with ListenBrainz before keeping.
+    pub fn koan_scrobbling_connect(&self, token: &str) -> Result<KoanScrobbling, SubsonicError> {
+        self.post_with_params("koanScrobblingConnect", &[("token", token)])?
+            .koan_scrobbling
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    pub fn koan_scrobbling_disconnect(&self) -> Result<KoanScrobbling, SubsonicError> {
+        self.get("koanScrobblingDisconnect")?
+            .koan_scrobbling
+            .ok_or(SubsonicError::BadResponse)
+    }
+
     /// The account's saved play queue, `None` when there is none. `by_index`
     /// for a server listing `indexBasedQueue`.
     pub fn get_play_queue(&self, by_index: bool) -> Result<Option<SavedPlayQueue>, SubsonicError> {
@@ -1060,6 +1083,7 @@ struct SubsonicResponse {
     play_queue: Option<SavedPlayQueue>,
     play_queue_by_index: Option<SavedPlayQueue>,
     koan_command: Option<crate::remote::acks::AckOutcome>,
+    koan_scrobbling: Option<KoanScrobbling>,
 }
 
 /// The play queue the account saved on the server: `getPlayQueue` names the
@@ -1089,6 +1113,29 @@ impl SavedPlayQueue {
                 self.entry.iter().position(|e| e.id == current)
             })
     }
+}
+
+/// The services a koan server forwards the account's plays to
+/// (`koanScrobbling`).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct KoanScrobbling {
+    #[serde(default)]
+    pub service: Vec<KoanScrobbleService>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanScrobbleService {
+    /// `listenbrainz`.
+    pub name: String,
+    /// The account on the service.
+    pub account: String,
+    /// When it was connected, in ms since the epoch.
+    pub connected: i64,
+    /// Plays the service has not accepted yet.
+    #[serde(default)]
+    pub pending: i64,
+    /// Why the service stopped accepting the token, while it does.
+    pub error: Option<String>,
 }
 
 /// A page of a koan server's play history (`koanHistory`).
