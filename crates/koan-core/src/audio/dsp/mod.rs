@@ -129,23 +129,16 @@ pub fn output_chain(
             .filters
             .insert(0, DspFilter::Graphic(targets::difference(&from, &to)));
     }
-    let layer = DspLayer {
+    let mut among = all.clone();
+    let Some(correction) = correction else {
+        among.push(on_top.clone());
+        return Some((on_top, among));
+    };
+    let mut chain = correction.clone();
+    chain.layers.push(DspLayer {
         profile: on_top.name.clone(),
         on: true,
-    };
-    let chain = match correction {
-        Some(c) => {
-            let mut c = c.clone();
-            c.layers.push(layer);
-            c
-        }
-        None => DspProfile {
-            name: on_top.name.clone(),
-            layers: vec![layer],
-            ..Default::default()
-        },
-    };
-    let mut among = all.clone();
+    });
     among.push(on_top);
     Some((chain, among))
 }
