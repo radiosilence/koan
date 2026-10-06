@@ -44,11 +44,11 @@ struct EqGraph: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if measured {
-                Picker("Show", selection: $view) {
-                    ForEach(Shown.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                KoanSegmentedPicker(
+                    options: Shown.allCases.map { ($0.rawValue, $0) },
+                    selection: $view,
+                    title: "Show"
+                )
             }
             chart
                 .frame(height: 220)
@@ -204,9 +204,8 @@ struct EqGraph: View {
             Spacer()
             Text("Preamp \(String(format: "%.1f", response.preampDb)) dB")
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
         }
-        .font(.caption)
+        .koanText(.fine, .muted)
     }
 
     private func key(_ name: String, _ color: Color, dashed: Bool = false) -> some View {
@@ -214,7 +213,7 @@ struct EqGraph: View {
             Capsule()
                 .stroke(color, style: StrokeStyle(lineWidth: 2, dash: dashed ? [3, 2] : []))
                 .frame(width: 14, height: 2)
-            Text(name).foregroundStyle(.secondary)
+            Text(name)
         }
     }
 

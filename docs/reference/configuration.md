@@ -185,6 +185,22 @@ Run `koan devices` to list available audio outputs.
 
 ---
 
+## `[appearance]`
+
+How the macOS, iOS and tvOS apps are drawn. Read once as an app opens, so a
+change shows the next time it starts.
+
+```toml
+[appearance]
+theme = "system"   # "system": the platform's own look; "koan": the site's look throughout
+theme_icons = true # in the kōan theme, icons beside labels; false for labels alone
+```
+
+The kōan theme is a prototype, set here by hand to try it; its design is
+`docs/design/koan-theme.md`. While it is on, Settings → Appearance → **Show
+icons** sets `theme_icons` from the Mac app. The system look always draws its
+icons.
+
 ## `[library]`
 
 ```toml

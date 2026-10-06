@@ -48,6 +48,10 @@ enum EvidenceRenderer {
                 KoanThemeSheet().environment(\.koanIcons, false)
             )))
         }
+        pages += await SettingsEvidence.pages(state)
+        pages.append(("sheet-shortcuts", CGSize(width: 680, height: 620), AnyView(
+            ShortcutsSheet(hotkeys: state.hotkeys.all).koanTheme(state.appearance)
+        )))
         // `KOAN_RENDER_PAGES`, a comma-separated list of name prefixes, narrows
         // the run to the pages a pull request changes.
         if let only = ProcessInfo.processInfo.environment["KOAN_RENDER_PAGES"]?.split(separator: ",") {

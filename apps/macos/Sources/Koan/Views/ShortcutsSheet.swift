@@ -15,8 +15,8 @@ struct ShortcutsSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Keyboard Shortcuts")
-                .font(.title3.weight(.semibold))
+            Text(KoanTheme.label("Keyboard Shortcuts"))
+                .koanText(.titleSmall, .strong)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -27,9 +27,7 @@ struct ShortcutsSheet: View {
 
                     Divider()
 
-                    Text("With ⌘")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                    KoanSectionHeader("With ⌘")
 
                     columns { group in
                         MenuShortcut.all.filter { $0.group == group }
@@ -40,17 +38,18 @@ struct ShortcutsSheet: View {
             .frame(maxHeight: 460)
 
             Text("None of these fire while you're typing.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .koanText(.fine, .muted)
 
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
+                    .koanButton(.secondary)
             }
         }
         .padding(24)
         .frame(minWidth: 620)
+        .koanSheet()
     }
 
     /// One entry, whichever table it came from.
@@ -67,9 +66,7 @@ struct ShortcutsSheet: View {
                 let entries = rows(group)
                 if !entries.isEmpty {
                     VStack(alignment: .leading, spacing: 7) {
-                        Text(group.rawValue)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
+                        KoanSectionHeader(group.rawValue)
                         ForEach(entries) { row(keys: $0.keys, label: $0.label) }
                     }
                 }
@@ -83,14 +80,15 @@ struct ShortcutsSheet: View {
             HStack(spacing: 3) {
                 ForEach(keys, id: \.self) { key in
                     Text(key)
-                        .font(.caption.monospaced())
+                        .koanText(.fine)
+                        .monospaced()
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .glass(.regular, fallback: .quaternary, in: .rect(cornerRadius: 6))
                 }
             }
             Text(label)
-                .font(.callout)
+                .koanText(.meta)
             Spacer(minLength: 0)
         }
     }

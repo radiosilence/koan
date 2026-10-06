@@ -45,8 +45,7 @@ struct BandTable: View {
                     Text("dB").frame(width: 56, alignment: .trailing)
                     Text("Q").frame(width: 50, alignment: .trailing)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .koanText(.fine, .muted)
             }
             ForEach(Array(bands.enumerated()), id: \.offset) { index, band in
                 Group {
@@ -72,11 +71,10 @@ struct BandTable: View {
             Button("Add a Band") { dsp.addBand(profile) }
             #endif
         } header: {
-            Text("Filters")
+            KoanSectionHeader("Filters")
         } footer: {
             Text("Edits play at once. Frequency, gain and Q are held to 10 Hz–22 kHz, ±30 dB and 0.1–20.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .koanText(.fine, .muted)
         }
     }
 }
@@ -99,8 +97,8 @@ private struct BandEditor: View {
     var body: some View {
         HStack(spacing: 8) {
             Text("\(index + 1)")
+                .koanText(.body, .muted)
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
                 .frame(width: 22, alignment: .leading)
             Picker("Type", selection: Binding(get: { kind }, set: { kind = $0; commit() })) {
                 ForEach(BandTable.kinds, id: \.id) { Text($0.name).tag($0.id) }

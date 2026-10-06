@@ -37,12 +37,11 @@ struct ArtworkViewer: View {
 
             VStack(spacing: 3) {
                 Text(title)
-                    .font(.title3.weight(.semibold))
+                    .koanText(.titleSmall, .strong)
                     .multilineTextAlignment(.center)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .koanText(.meta, .muted)
                         .multilineTextAlignment(.center)
                 }
             }
@@ -50,6 +49,7 @@ struct ArtworkViewer: View {
             .frame(height: Self.caption - 16)
         }
         .padding(Self.margin / 2)
+        .koanSheet()
         // A click anywhere dismisses; there is no close button on a picture.
         .contentShape(.rect)
         .onTapGesture { dismiss() }

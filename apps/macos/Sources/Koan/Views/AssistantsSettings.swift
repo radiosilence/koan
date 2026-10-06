@@ -22,8 +22,9 @@ struct AssistantsSettings: View {
                     Pasteboard.write(text: assistants.mcpUrl)
                     copied = true
                 } label: {
-                    Label(copied ? "Copied" : "Copy Address", systemImage: "doc.on.doc")
+                    KoanLabel(copied ? "Copied" : "Copy Address", icon: "doc.on.doc")
                 }
+                .koanButton(.secondary)
                 .task(id: copied) {
                     guard copied else { return }
                     try? await Task.sleep(for: .seconds(1.5))
@@ -31,19 +32,19 @@ struct AssistantsSettings: View {
                 }
                 if let connect = URL(string: assistants.connectUrl) {
                     Link(destination: connect) {
-                        Label("How to Connect an Assistant", systemImage: "arrow.up.right.square")
+                        KoanLabel("How to Connect an Assistant", icon: "arrow.up.right.square")
                     }
+                    .koanButton(.text)
                 }
                 #endif
             } else if error == nil {
                 ProgressView()
             }
         } header: {
-            Text("Assistants")
+            KoanSectionHeader("Assistants")
         } footer: {
             Text(error ?? "Add the address to Claude or another assistant that speaks MCP as a custom connector. It signs in through your server, and can then search your library, make playlists and play music on your devices, as you.")
-                .font(.caption)
-                .foregroundStyle(error == nil ? .tertiary : .primary)
+                .koanText(.fine, error == nil ? .muted : .ink)
         }
         .task {
             do {
