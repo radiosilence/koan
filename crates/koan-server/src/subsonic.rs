@@ -6720,16 +6720,20 @@ mod tests {
             "{v}"
         );
 
-        // Past the limit, refused whole.
-        let form = std::iter::repeat_n(format!("id={a}"), MAX_PLAY_QUEUE + 1)
-            .collect::<Vec<_>>()
-            .join("&");
-        let body = post_form(
-            build_test_router(state.clone()),
-            "/rest/savePlayQueue?u=owner&p=sesame&v=1.16.1&c=x&f=json",
-            &form,
-        )
-        .await;
+        // Past the limit, refused whole. Asked of the handler directly: a
+        // request this long is past what a URI holds, and a form is turned
+        // into one before any endpoint sees it.
+        let query = format!(
+            "u=owner&p=sesame&v=1.16.1&c=x&f=json&{}",
+            std::iter::repeat_n(format!("id={a}"), MAX_PLAY_QUEUE + 1)
+                .collect::<Vec<_>>()
+                .join("&")
+        );
+        let resp = save_play_queue_response(&state, &RawParams::parse(Some(&query)), false);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8_lossy(&body);
         assert!(body.contains("\"code\":10"), "{body}");
         let v = call(owner, "getPlayQueueByIndex?".into()).await;
         assert_eq!(
