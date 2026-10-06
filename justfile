@@ -975,6 +975,49 @@ ios-testflight build: (ios-ffi "iphoneos") (ios-project build)
         "${auth[@]}"
     echo "uploaded build {{build}} to App Store Connect"
 
+# Archive the television app, sign, and upload to TestFlight, as
+# `ios-testflight` does for the phone. The same bundle id, so the same App
+# Store Connect record, under its tvOS platform; a build number has to rise
+# with every tvOS upload of a version.
+tv-testflight build: (tv-ffi "appletvos") (ios-project build)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${APPLE_TEAM_ID:?}" "${APPLE_API_KEY_PATH:?}" "${APPLE_API_KEY_ID:?}" "${APPLE_API_ISSUER_ID:?}"
+    out=target/tv-archive
+    rm -rf "$out" && mkdir -p "$out"
+    auth=(
+        -allowProvisioningUpdates
+        -authenticationKeyPath "$APPLE_API_KEY_PATH"
+        -authenticationKeyID "$APPLE_API_KEY_ID"
+        -authenticationKeyIssuerID "$APPLE_API_ISSUER_ID"
+    )
+    xcodebuild archive \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
+        -destination 'generic/platform=tvOS' \
+        -archivePath "$out/koan.xcarchive" \
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) KOAN_STORE' \
+        "${auth[@]}" | tail -n 20
+    cat > "$out/ExportOptions.plist" <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>method</key><string>app-store-connect</string>
+        <key>destination</key><string>upload</string>
+        <key>signingStyle</key><string>automatic</string>
+        <key>teamID</key><string>$APPLE_TEAM_ID</string>
+        <key>uploadSymbols</key><true/>
+        <key>manageAppVersionAndBuildNumber</key><false/>
+    </dict>
+    </plist>
+    PLIST
+    xcodebuild -exportArchive \
+        -archivePath "$out/koan.xcarchive" \
+        -exportOptionsPlist "$out/ExportOptions.plist" \
+        -exportPath "$out/export" \
+        "${auth[@]}"
+    echo "uploaded tvOS build {{build}} to App Store Connect"
+
 # Frame a walk's screenshots for the App Store: each screen on a blur of its
 # own colours, captioned from apps/ios/store/captions.toml, at the size it was
 # taken. `just ios-store-shots target/ios-walk target/shots-iphone`, and
