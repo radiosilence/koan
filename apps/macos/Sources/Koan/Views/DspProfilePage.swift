@@ -440,13 +440,17 @@ extension DspTargetOption {
 /// a list of its own; on the Mac, both in the menu's one line.
 struct TargetRow: View {
     let target: DspTargetOption
+    /// The target the correction was made for, which it plays unless moved.
+    var isDefault = false
+
+    private var name: String { isDefault ? "\(target.name) (default)" : target.name }
 
     var body: some View {
         #if os(macOS)
-        Text(target.label)
+        Text(target.does.isEmpty ? name : "\(name): \(target.does)")
         #else
         VStack(alignment: .leading, spacing: 2) {
-            Text(target.name)
+            Text(name)
             if !target.does.isEmpty {
                 Text(target.does)
                     .font(.caption)
@@ -481,6 +485,20 @@ private struct RoleSection: View {
                 Text("A neutral correction for these headphones").tag(DspRole.correction)
                 Text("A correction with a sound already in it").tag(DspRole.baked)
                 Text("A tuning to add on top").tag(DspRole.tuning)
+            }
+            if detail.role == .tuning, !madeForChoices.isEmpty {
+                Picker("Made against", selection: Binding(
+                    get: { detail.tunedFor ?? "" },
+                    set: { dsp.setTunedFor(detail.name, $0.isEmpty ? nil : $0) }
+                )) {
+                    Text("Unknown").tag("")
+                    ForEach(madeForChoices, id: \.id) { t in
+                        TargetRow(target: t).tag(t.id)
+                    }
+                }
+                #if os(iOS)
+                .pickerStyle(.navigationLink)
+                #endif
             }
             if detail.role == .correction {
                 if let targets {
@@ -531,7 +549,7 @@ private struct RoleSection: View {
     private var footer: String {
         switch detail.role {
         case .tuning:
-            return "A tuning is taste: more bass, a darker treble. It plays on top of a correction."
+            return "A tuning is taste: more bass, a darker treble. It plays on top of a correction. Say which target it was made against, and on headphones corrected to another, kōan plays the difference first, so it sounds as it was made to."
         case .baked:
             return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice."
         case .correction:

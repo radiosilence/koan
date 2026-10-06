@@ -3121,6 +3121,46 @@ impl KoanEngine {
 
     /// What `name` does to the sound at `rate`, for drawing. `None` for a
     /// profile that is not there or would not play.
+    /// What the output in use plays: its correction, and the tuning on top
+    /// adjusted to the correction's target.
+    pub async fn dsp_output_response(self: Arc<Self>, rate: u32) -> Option<DspResponse> {
+        offload::offload(move || {
+            let device = self.dsp_device()?;
+            koan_core::audio::dsp::profiles::output_response(&device, rate).map(Into::into)
+        })
+        .await
+    }
+
+    /// Play `tuning` on top of `device`'s correction, or none. Not a
+    /// correction, and not on one with a tuning baked in.
+    pub async fn dsp_set_tuning(
+        self: Arc<Self>,
+        device: String,
+        tuning: Option<String>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_tuning(&device, tuning.as_deref())
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// The target the tuning `name` was made against, or `None` when that is
+    /// not known, which plays it as it is on any correction.
+    pub async fn dsp_set_tuned_for(
+        self: Arc<Self>,
+        name: String,
+        target: Option<String>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_tuned_for(&name, target.as_deref())
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
     pub async fn dsp_response(self: Arc<Self>, name: String, rate: u32) -> Option<DspResponse> {
         offload::offload(move || {
             koan_core::audio::dsp::profiles::response(&name, rate).map(Into::into)
