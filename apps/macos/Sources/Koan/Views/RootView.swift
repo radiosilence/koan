@@ -343,8 +343,12 @@ struct RecordRoom: ViewModifier {
             // Overrides the app-wide tint for everything below, which is every
             // control koan draws itself. What AppKit draws — list selection,
             // focus rings — keeps the declared accent, and that is deliberately
-            // a neutral so the two never argue.
+            // a neutral so the two never argue. A television's alerts take the
+            // tint too, as text on their white focused button, so there the
+            // colour goes to the room alone.
+            #if !os(tvOS)
             .tint(tint)
+            #endif
             .environment(\.roomTint, tint)
             .onChange(of: tint, initial: true) { _, now in worn = now }
     }
