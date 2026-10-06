@@ -2404,7 +2404,9 @@ impl KoanEngine {
         measured_by: String,
         device: Option<String>,
     ) -> Result<String, KoanError> {
-        offload::sequenced(move || {
+        // The download can take as long as GitHub does, so it stays off the
+        // lane transport commands queue on; only the assignment goes there.
+        let profile = offload::offload(move || {
             use koan_core::audio::dsp::autoeq;
             let entries = autoeq::index(autoeq::Freshness::Kept)
                 .map_err(|message| KoanError::Remote { message })?;
@@ -2413,8 +2415,10 @@ impl KoanEngine {
                     message: format!("{name} is no longer in AutoEQ's index"),
                 }
             })?;
-            let profile =
-                autoeq::install(entry).map_err(|message| KoanError::Remote { message })?;
+            autoeq::install(entry).map_err(|message| KoanError::Remote { message })
+        })
+        .await?;
+        offload::sequenced(move || {
             match device {
                 Some(device) => self.assign_dsp(Some(profile.clone()), &device)?,
                 None => self.send_local(PlayerCommand::ReloadDsp)?,

@@ -47,11 +47,13 @@ hand. In the Mac and iOS apps, **Find in AutoEQ…** under EQ and convolution
 searches as you type; choosing a result installs it and plays the output in
 use through it.
 
-When the output's own name says which headphone it is, as Bluetooth headphones'
-names often do ("Jo's AirPods Pro", "WH-1000XM4"), the same section offers
-AutoEQ's profile for it. The name must hold the model's whole name, its maker
-aside, and something distinctive: a single plain word such as "AirPods" is not
-enough, so a USB DAC or a computer's speakers are never matched. Nothing is
+When the output's own name ends with a headphone's whole name as AutoEQ
+gives it, maker included ("Jo's Sony WH-1000XM4"), the same section offers
+AutoEQ's profile for it. The rule is strict because a wrong correction is
+worse than none: a name without the maker ("WH-1000XM4", "Jo's AirPods Pro")
+or with a generation the index lacks ("Apple AirPods Pro 3") is offered
+nothing, and so are audio interfaces and DACs whose model happens to share a
+headphone's ("MOTU M2", "Hugo 2"). Find in AutoEQ… covers the rest. Nothing is
 applied until you choose to, and turning the offer down for a device is
 remembered in `config.local.toml` (`dsp.autoeq_dismissed`). An output with a
 profile of its own is not offered one.

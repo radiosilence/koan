@@ -26,6 +26,9 @@ final class DspModel {
     var needsRate: Pending?
     /// AutoEQ's results for the last search.
     private(set) var autoEqResults: [AutoEqEntry] = []
+    /// Moves with every search, so one that returns after a newer one began
+    /// is dropped rather than shown for the wrong query.
+    private var autoEqSearch = 0
     /// AutoEQ's profile for the output in use, by its name, while the output
     /// has none and the offer has not been turned down.
     private(set) var suggestion: AutoEqEntry?
@@ -109,15 +112,19 @@ final class DspModel {
     /// Search AutoEQ by headphone name. The view debounces; this runs once
     /// per settled query.
     func searchAutoEq(_ query: String) async {
+        autoEqSearch += 1
+        let search = autoEqSearch
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
             autoEqResults = []
             return
         }
         do {
-            autoEqResults = try await engine.autoeqSearch(query: trimmed, limit: 40)
-            lastError = nil
+            let found = try await engine.autoeqSearch(query: trimmed, limit: 40)
+            guard search == autoEqSearch else { return }
+            autoEqResults = found
         } catch {
+            guard search == autoEqSearch else { return }
             lastError = SettingsModel.describe(error)
         }
     }

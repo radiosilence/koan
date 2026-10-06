@@ -311,45 +311,48 @@ fn fetch_index(etag: Option<&str>) -> Result<Fetched, String> {
     Ok(Fetched::New { text, etag })
 }
 
-/// The lowercase letters-and-digits runs of a name: `WH-1000XM4` →
-/// `wh`, `1000xm4`.
+/// The words of a name, lowercased: runs of letters and digits, and `+` on
+/// its own, so "Buds+" is not "Buds". `WH-1000XM4` → `wh`, `1000xm4`.
 fn words(name: &str) -> Vec<String> {
-    name.split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(str::to_lowercase)
-        .collect()
-}
-
-fn contains_run(haystack: &[String], needle: &[String]) -> bool {
-    !needle.is_empty() && haystack.windows(needle.len()).any(|w| w == needle)
+    let mut out = Vec::new();
+    let mut word = String::new();
+    for c in name.chars() {
+        if c.is_alphanumeric() {
+            word.extend(c.to_lowercase());
+            continue;
+        }
+        if !word.is_empty() {
+            out.push(std::mem::take(&mut word));
+        }
+        if c == '+' {
+            out.push("+".to_owned());
+        }
+    }
+    if !word.is_empty() {
+        out.push(word);
+    }
+    out
 }
 
 /// The entry an output device is, judged from its name alone, or `None`
-/// unless the match is beyond doubt. The device's name must hold the
-/// headphone's whole name as a run of words, or the whole name less its
-/// first word (the maker, which "AirPods Pro" and "WH-1000XM4" leave out)
-/// when what remains is distinctive: two words or more, or one with a digit
-/// in it. A single plain word ("AirPods", "Pro") is never enough, nor is a
-/// variant's qualifier left unmentioned, so "Sony WH-1000XM4" does not match
-/// "WH-1000XM4 (ANC off)". The longest name matched wins, and between
+/// unless that is beyond doubt, since a wrong correction is worse than none.
+/// The device's name must end with the headphone's whole name as AutoEQ
+/// gives it, maker included, on word boundaries: "Jo's Sony WH-1000XM4" is
+/// Sony's WH-1000XM4, while "WH-1000XM4" alone, "MOTU M2" (Brainwavz M2) and
+/// "Hugo 2" (Ortofon 2) are nothing. Ending it rules out a newer generation
+/// or a variant the index lacks: "Apple AirPods Pro 3" is not the AirPods
+/// Pro. A one-word entry never matches. The longest name wins, and between
 /// sources AutoEQ's preferred one.
 pub fn suggest<'a>(entries: &'a [Entry], device: &str) -> Option<&'a Entry> {
     let device = words(device);
     let mut best: Option<(usize, &Entry)> = None;
     for e in entries {
         let name = words(&e.name);
-        let model = name.get(1..).unwrap_or_default();
-        let distinctive =
-            model.len() >= 2 || model.iter().any(|w| w.chars().any(|c| c.is_ascii_digit()));
-        let matched = if contains_run(&device, &name) {
-            name.len()
-        } else if distinctive && contains_run(&device, model) {
-            model.len()
-        } else {
+        if name.len() < 2 || !device.ends_with(&name) {
             continue;
-        };
-        if best.is_none_or(|(n, _)| matched > n) {
-            best = Some((matched, e));
+        }
+        if best.is_none_or(|(n, _)| name.len() > n) {
+            best = Some((name.len(), e));
         }
     }
     best.map(|(_, e)| e)
@@ -561,25 +564,142 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         assert!(imported(entry, "Preamp: -1 dB\n").is_err());
     }
 
+    /// Output names as macOS and iOS give them: interfaces, DACs, built-in
+    /// speakers, Bluetooth headphones by the name they ship with or were
+    /// given. None should be offered a profile, against the real index too
+    /// (`suggestions_against_the_live_index`).
+    const NOT_HEADPHONES: &[&str] = &[
+        "MacBook Pro Speakers",
+        "MacBook Air Speakers",
+        "Mac mini Speakers",
+        "Mac Studio Speakers",
+        "iMac Speakers",
+        "Studio Display Speakers",
+        "LG UltraFine Display Audio",
+        "External Headphones",
+        "Headphones",
+        "Speaker",
+        "Speaker 2",
+        "Built-in Output",
+        "BlackHole 2ch",
+        "Microsoft Teams Audio",
+        "ZoomAudioDevice",
+        "Scarlett 2i2 USB",
+        "Scarlett 4i4 USB",
+        "Focusrite Scarlett Solo",
+        "Volt 2",
+        "Universal Audio Volt 276",
+        "MOTU M2",
+        "MOTU M4",
+        "Arturia MiniFuse 2",
+        "Apogee Duet",
+        "RME ADI-2 DAC",
+        "Zoom H6",
+        "Mojo 2",
+        "Chord Hugo 2",
+        "Hugo 2",
+        "Topping E30",
+        "Topping DX3 Pro+",
+        "SMSL SU-1",
+        "SMSL M200",
+        "FiiO K3",
+        "FiiO K5 Pro",
+        "iFi ZEN DAC V2",
+        "Zen Air DAC",
+        "Schiit Modi",
+        "AirPods",
+        "AirPods 4",
+        "AirPods Pro",
+        "AirPods Pro 2",
+        "AirPods Pro 3",
+        "AirPods Max",
+        "Jo's AirPods Pro",
+        "Jo's AirPods Max",
+        "WH-1000XM4",
+        "WF-1000XM5",
+        "Marshall Major IV",
+        "Beats Studio Buds +",
+        "Galaxy Buds+",
+        "Galaxy Buds2 Pro",
+        "CMF Buds Pro 2",
+        "Nothing Ear (2)",
+        "Jabra Elite 85t",
+    ];
+
     #[test]
     fn a_device_is_suggested_a_profile_only_when_its_name_says_which() {
         let entries = parse_index(
             "- [Apple AirPods](./a/in-ear/Apple%20AirPods) by a
 - [Apple AirPods Pro](./a/in-ear/Apple%20AirPods%20Pro) by a
 - [Apple AirPods Pro 2](./a/in-ear/Apple%20AirPods%20Pro%202) by a
+- [Apple AirPods Max](./a/over-ear/Apple%20AirPods%20Max) by a
 - [Sony WH-1000XM4](./b/over-ear/Sony%20WH-1000XM4) by b
 - [Sony WH-1000XM4](./c/over-ear/Sony%20WH-1000XM4) by c
 - [Sony WH-1000XM4 (ANC off)](./b/over-ear/Sony%20WH-1000XM4%20(ANC%20off)) by b
+- [Ortofon 2](./d/in-ear/Ortofon%202) by d
+- [Ortofon 1](./d/in-ear/Ortofon%201) by d
+- [Brainwavz M2](./d/in-ear/Brainwavz%20M2) by d
+- [Advanced M4](./d/in-ear/Advanced%20M4) by d
+- [Magaosi K3](./d/in-ear/Magaosi%20K3) by d
+- [EPZ K5](./d/in-ear/EPZ%20K5) by d
+- [Somic V2](./d/over-ear/Somic%20V2) by d
+- [Tingker H6](./d/in-ear/Tingker%20H6) by d
+- [Creative Zen Air](./d/in-ear/Creative%20Zen%20Air) by d
+- [KEF M200](./d/in-ear/KEF%20M200) by d
+- [Marshall Major](./d/on-ear/Marshall%20Major) by d
+- [Beats Studio Buds](./d/in-ear/Beats%20Studio%20Buds) by d
+- [Samsung Galaxy Buds](./d/in-ear/Samsung%20Galaxy%20Buds) by d
+- [Samsung Galaxy Buds+](./d/in-ear/Samsung%20Galaxy%20Buds+) by d
+- [OnePlus Buds Pro 2](./d/in-ear/OnePlus%20Buds%20Pro%202) by d
+- [Sennheiser HD 600](./e/over-ear/Sennheiser%20HD%20600) by e
 ",
         );
         let named =
             |device: &str| suggest(&entries, device).map(|e| (e.name.as_str(), e.source.as_str()));
-        assert_eq!(named("Jo's AirPods Pro"), Some(("Apple AirPods Pro", "a")));
-        assert_eq!(named("AirPods Pro 2"), Some(("Apple AirPods Pro 2", "a")));
-        assert_eq!(named("WH-1000XM4"), Some(("Sony WH-1000XM4", "b")));
-        assert_eq!(named("AirPods"), None, "one plain word is not enough");
-        assert_eq!(named("MacBook Pro Speakers"), None);
-        assert_eq!(named("Scarlett 4i4 USB"), None);
-        assert_eq!(named("Topping E30"), None);
+        assert_eq!(named("Sony WH-1000XM4"), Some(("Sony WH-1000XM4", "b")));
+        assert_eq!(
+            named("Jo's Sony WH-1000XM4"),
+            Some(("Sony WH-1000XM4", "b"))
+        );
+        assert_eq!(
+            named("Apple AirPods Pro 2"),
+            Some(("Apple AirPods Pro 2", "a"))
+        );
+        assert_eq!(
+            named("Samsung Galaxy Buds+"),
+            Some(("Samsung Galaxy Buds+", "d"))
+        );
+        assert_eq!(named("Sennheiser HD 600"), Some(("Sennheiser HD 600", "e")));
+        assert_eq!(
+            named("Apple AirPods Pro 3"),
+            None,
+            "a generation the index lacks"
+        );
+        assert_eq!(named("Samsung Galaxy Buds2"), None);
+        for device in NOT_HEADPHONES {
+            assert_eq!(named(device), None, "{device}");
+        }
+    }
+
+    /// The rule against AutoEQ's real index, kept out of the default run
+    /// because it needs the file: download `results/INDEX.md`, point
+    /// `KOAN_AUTOEQ_INDEX` at it and run the ignored tests.
+    #[test]
+    #[ignore]
+    fn suggestions_against_the_live_index() {
+        let path = std::env::var("KOAN_AUTOEQ_INDEX").expect("KOAN_AUTOEQ_INDEX");
+        let entries = parse_index(&std::fs::read_to_string(path).unwrap());
+        assert!(entries.len() > 1000);
+        let wrong: Vec<String> = NOT_HEADPHONES
+            .iter()
+            .filter_map(|d| suggest(&entries, d).map(|e| format!("{d} → {}", e.name)))
+            .collect();
+        assert!(wrong.is_empty(), "{wrong:#?}");
+        let found = |d: &str| suggest(&entries, d).map(|e| e.name.clone());
+        assert_eq!(found("Sony WH-1000XM4").as_deref(), Some("Sony WH-1000XM4"));
+        assert_eq!(
+            found("Sennheiser HD 650").as_deref(),
+            Some("Sennheiser HD 650")
+        );
     }
 }
