@@ -1022,7 +1022,9 @@ fn write_document(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, contents)?;
+    fs::write(path, &contents)?;
+    #[cfg(target_os = "tvos")]
+    kept::written(path, contents.as_bytes());
     #[cfg(unix)]
     if secret {
         use std::os::unix::fs::PermissionsExt;
@@ -1179,11 +1181,114 @@ fn platform_config_dir() -> PathBuf {
 
 /// A tvOS app has no persistent storage of its own: `Library/Caches` is the
 /// one directory it can write, and the system empties it when space runs short.
-/// The configuration lives there until it has somewhere that survives a purge.
-/// Beside the download cache rather than inside it, which is trimmed.
+/// The files live there, beside the download cache rather than inside it, which
+/// is trimmed; `kept` holds a copy that survives a purge.
 #[cfg(target_os = "tvos")]
 fn platform_config_dir() -> PathBuf {
-    ios_library().join("Caches").join("koan-config")
+    let dir = ios_library().join("Caches").join("koan-config");
+    kept::restore(&dir);
+    dir
+}
+
+/// The configuration files of a tvOS app, mirrored into its preferences.
+///
+/// tvOS keeps an app's preferences (up to 500 KB) when it purges
+/// `Library/Caches`, and a purge would otherwise sign the television out and
+/// forget its settings. Every write to the platform directory is copied here,
+/// and the first look at the directory puts back a file that has gone. The
+/// Keychain would also survive, and is deliberately not used for credentials.
+/// The library database is not kept: the next sync rebuilds it.
+#[cfg(target_os = "tvos")]
+mod kept {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+    use std::sync::Once;
+
+    use core_foundation::base::TCFType;
+    use core_foundation::data::{CFData, CFDataRef};
+    use core_foundation::string::CFString;
+    use core_foundation_sys::base::{CFGetTypeID, CFRelease};
+    use core_foundation_sys::data::CFDataGetTypeID;
+    use core_foundation_sys::preferences::{
+        CFPreferencesAppSynchronize, CFPreferencesCopyAppValue, CFPreferencesSetAppValue,
+        kCFPreferencesCurrentApplication,
+    };
+
+    const FILES: [&str; 2] = ["config.toml", "config.local.toml"];
+
+    /// Once per process: a file that is missing comes back from the
+    /// preferences, and one that is present is copied into them, which is how
+    /// a configuration written before this existed starts being kept.
+    pub(super) fn restore(dir: &Path) {
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            for name in FILES {
+                let path = dir.join(name);
+                match fs::read(&path) {
+                    Ok(contents) => save(name, &contents),
+                    Err(_) => {
+                        let Some(contents) = load(name) else { continue };
+                        let _ = fs::create_dir_all(dir);
+                        if fs::write(&path, &contents).is_ok() {
+                            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+                            log::info!("config: restored {name} after the system cleared it");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /// Mirror a write, if it went to the platform directory rather than one a
+    /// test or `KOAN_CONFIG_DIR` chose.
+    pub(super) fn written(path: &Path, contents: &[u8]) {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            return;
+        };
+        if FILES.contains(&name) && path.parent() == Some(super::platform_config_dir().as_path()) {
+            save(name, contents);
+        }
+    }
+
+    fn save(name: &str, contents: &[u8]) {
+        let key = CFString::new(name);
+        let data = CFData::from_buffer(contents);
+        // SAFETY: both are live CF objects for the length of the call, and the
+        // preferences retain what they keep.
+        unsafe {
+            CFPreferencesSetAppValue(
+                key.as_concrete_TypeRef(),
+                data.as_CFTypeRef(),
+                kCFPreferencesCurrentApplication,
+            );
+            CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+        }
+    }
+
+    fn load(name: &str) -> Option<Vec<u8>> {
+        let key = CFString::new(name);
+        // SAFETY: a Copy function returns an owned reference or null. Anything
+        // but data is released here; data is owned by the wrapper.
+        unsafe {
+            let value = CFPreferencesCopyAppValue(
+                key.as_concrete_TypeRef(),
+                kCFPreferencesCurrentApplication,
+            );
+            if value.is_null() {
+                return None;
+            }
+            if CFGetTypeID(value) != CFDataGetTypeID() {
+                CFRelease(value);
+                return None;
+            }
+            Some(
+                CFData::wrap_under_create_rule(value as CFDataRef)
+                    .bytes()
+                    .to_vec(),
+            )
+        }
+    }
 }
 
 #[cfg(any(target_os = "ios", target_os = "tvos"))]

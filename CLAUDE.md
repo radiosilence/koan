@@ -97,6 +97,8 @@ just tv-run         # build and launch on an Apple TV simulator
 just tv-device      # install on the Apple TV paired with Xcode
 just tv-walk        # UI test that walks every page with the remote, into target/tv-walk
 just tv-join LINK [tv] # sign the simulator, or the paired Apple TV, in through an invite
+just tv-kept        # clear Caches/koan-config as tvOS does, check the TV is still signed in
+just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (needs the ASC key)
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.

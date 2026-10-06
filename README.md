@@ -224,7 +224,7 @@ just tv-device    # install on the Apple TV paired with Xcode
 just tv-walk      # walk every page with the remote on a simulator, screenshotting each
 ```
 
-Requires tvOS 26+. tvOS gives an app no storage of its own beyond a cache the system may empty, so a TV can be signed out by a purge and the library resynced.
+Requires tvOS 26+. tvOS gives an app no storage of its own beyond a cache the system may empty; the configuration is mirrored into the app's preferences, which survive, so a purge costs a resync of the library rather than the sign-in.
 
 ## Playing on another device
 

@@ -23,8 +23,6 @@ struct AlbumBrowser: View {
 
     #if os(macOS)
     private static let emptyDetail = "Add a music folder in Settings → Library, or sign in to a server in Settings → Server."
-    #else
-    private static let emptyDetail = "Sign in to your music server in Settings → Server."
     #endif
 
     var body: some View {
@@ -38,15 +36,24 @@ struct AlbumBrowser: View {
             .onDisappear { library.selection.end() }
     }
 
+    private var emptyDetail: String {
+        #if os(macOS)
+        Self.emptyDetail
+        #else
+        library.emptyLibraryDetail
+        #endif
+    }
+
     private var empty: some View {
         EmptyState(
             icon: "square.stack",
             title: library.isNarrowed ? "Nothing matches" : "No albums yet",
             detail: !library.isNarrowed
-                ? Self.emptyDetail
+                ? emptyDetail
                 : "Try a different filter."
         )
         .frame(maxWidth: .infinity, minHeight: 340)
+        .task { if library.signedIn == nil { library.loadStats() } }
     }
 
     #if os(macOS)

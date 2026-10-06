@@ -92,6 +92,11 @@ core-foundation = "0.10"
 # The device id, kept in the Keychain so a reinstall keeps it
 security-framework = "3"
 
+[target.'cfg(target_os = "tvos")'.dependencies]
+# The configuration, mirrored into the app's preferences: see `config::kept`
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 cpal = "0.18"
 

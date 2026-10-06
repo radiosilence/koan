@@ -61,10 +61,13 @@ struct NowPlayingPage: View {
         ContentUnavailableView {
             Label("Nothing playing", systemImage: "music.note")
         } description: {
-            // Signed out, the sign-in page covers this; here there is always
-            // an account, if not always any music in it.
-            Text("Choose this Apple TV under Play on, on a phone or Mac, or pick a record from the library.")
+            if library.stats?.totalTracks == 0 {
+                Text(library.emptyLibraryDetail)
+            } else {
+                Text("Choose this Apple TV under Play on, on a phone or Mac, or pick a record from the library.")
+            }
         }
+        .task { if library.stats == nil { library.loadStats() } }
     }
 
     /// The sleeve, or the words in its place.
