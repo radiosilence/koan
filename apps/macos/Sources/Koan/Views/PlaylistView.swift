@@ -437,7 +437,7 @@ struct PlaylistView: View {
     }
 
     private func entryIds(in rowIds: Set<String>) -> [Int64] {
-        positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.id }
+        positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.entryId }
     }
 
     private func trackIds(in rowIds: Set<String>) -> [Int64] {
@@ -510,11 +510,11 @@ struct PlaylistView: View {
             let moving = Set(mine.map(\.position))
             // The row dropped onto, by identity: its index shifts once the
             // moved rows are lifted out of the list.
-            let anchor = entries[safe: position]?.id
+            let anchor = entries[safe: position]?.entryId
             var order = entries.enumerated()
                 .filter { !moving.contains($0.offset) }
-                .map(\.element.id)
-            let lifted = moving.sorted().compactMap { entries[safe: $0]?.id }
+                .map(\.element.entryId)
+            let lifted = moving.sorted().compactMap { entries[safe: $0]?.entryId }
             let at = anchor.flatMap { order.firstIndex(of: $0) } ?? order.count
             order.insert(contentsOf: lifted, at: at)
             playlists.reorder(entryIds: order, in: playlistId)
@@ -577,7 +577,7 @@ extension PlaylistView {
                 }
                 let run = entries[index...].prefix { sameRecord($0.track, first.track) }
                 rows.append(.album(
-                    id: "album:\(first.id)",
+                    id: "album:\(first.entryId)",
                     group: PlaylistGroup(
                         album: first.track.albumTitle,
                         artist: first.track.albumArtistName,
