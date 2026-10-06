@@ -6,6 +6,10 @@
 
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
+### Security
+
+- **An app password could make accounts, invites and keys.** The account endpoints kōan's apps use (`koanUsers`, `koanCreateUser`, `koanInvite`, `koanSetUserRole`, `koanDeleteUser`) and approving a device's pairing (`koanPairApprove`) accepted any Subsonic credential. Someone holding an app password, or a captured `t`/`s` token for one, could sign a device in as the account and keep its API key after the app password was revoked; an admin's could also create an admin account, invite or reset its own account, and change roles. These now need an API key or the account's own password. The shared secret is refused too.
+
 ### Fixed
 
 - **Moving the music to another device says when it has not arrived.** A hand-off paused the music here and counted it as delivered once the command was queued, which it was even on a link that had died unnoticed or for a device asleep. The Mac and iOS apps now wait for the other device to report the track, and otherwise say it has not picked the music up yet; the music stays paused where it was.
