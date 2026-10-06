@@ -16,6 +16,8 @@ struct EqGraph: View {
     let response: DspResponse
     var handles: [Handle] = []
     var onDrag: ((Int, Double, Double) -> Void)?
+    /// The view to open on, where there is a measurement to show.
+    var startOn: Shown = .eq
 
     /// A band's point: its index among the profile's filters, and where it is.
     struct Handle: Identifiable, Equatable {
@@ -42,6 +44,10 @@ struct EqGraph: View {
     private static let accent = Color.koanAccent
 
     var body: some View {
+        content.onAppear { view = startOn }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             if measured {
                 Picker("Show", selection: $view) {
@@ -72,6 +78,14 @@ struct EqGraph: View {
                         series: .value("Band", area.series)
                     )
                     .foregroundStyle(Self.accent.opacity(0.13))
+                }
+                // A chain with a correction and tuning: each in its role's
+                // colour, under the two together.
+                if let correction = response.correction, let tuning = response.tuning {
+                    lines(curves: [Curve(name: "Correction", db: correction)],
+                          color: ProfileRole.correction.color.opacity(0.7), width: 1.2, dashed: true)
+                    lines(curves: [Curve(name: "Tuning", db: tuning)],
+                          color: ProfileRole.tuning.color, width: 1.2)
                 }
                 lines(curves: [Curve(name: "EQ", db: response.total)], color: Self.accent, width: 2)
                 ForEach(shownHandles) { h in
@@ -195,6 +209,10 @@ struct EqGraph: View {
         HStack(spacing: 14) {
             if showingEq {
                 key("EQ", Self.accent)
+                if response.correction != nil, response.tuning != nil {
+                    key("Correction", ProfileRole.correction.color.opacity(0.7), dashed: true)
+                    key("Tuning", ProfileRole.tuning.color)
+                }
                 if !response.bands.isEmpty { key("Each band", Self.accent.opacity(0.3)) }
             } else {
                 key("Measured", Color.secondary)
@@ -250,7 +268,10 @@ struct EqGraph: View {
     }
 
     private var shown: [[Double]] {
-        if showingEq { return [response.total] + response.bands.map(\.db) + [handles.map(\.db)] }
+        if showingEq {
+            return [response.total, response.correction ?? [], response.tuning ?? []]
+                + response.bands.map(\.db) + [handles.map(\.db)]
+        }
         return [response.measurement, response.target, response.predicted].compactMap { $0 }
     }
 

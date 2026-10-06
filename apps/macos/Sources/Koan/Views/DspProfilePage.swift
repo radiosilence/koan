@@ -12,6 +12,8 @@ struct DspProfilePage: View {
     @State private var detail: DspProfileDetail?
     @State private var response: DspResponse?
     @State private var targets: DspTargets?
+    /// Every target, for what a ready-made EQ was made for.
+    @State private var madeForChoices: [DspTargetOption] = []
     @State private var addingTarget = false
     @State private var editingName = ""
     @State private var confirmingDelete = false
@@ -24,6 +26,9 @@ struct DspProfilePage: View {
             }
 
             if let d = detail {
+                Section {
+                    ChainSummaryCard(corrects: d.corrects, tunings: d.tunings)
+                }
                 if let r = response {
                     Section {
                         EqGraph(response: r, handles: BandTable.handles(d.bands)) { index, hz, db in
@@ -54,6 +59,7 @@ struct DspProfilePage: View {
                     }
                 }
 
+                RoleSection(dsp: dsp, detail: d, targets: madeForChoices)
                 LayersSection(dsp: dsp, detail: d)
                 ScopeSection(dsp: dsp, detail: d)
 
@@ -134,6 +140,9 @@ struct DspProfilePage: View {
         detail = await dsp.detail(name)
         response = await dsp.response(name)
         targets = await dsp.targets(name)
+        if madeForChoices.isEmpty {
+            madeForChoices = await dsp.targetsFor(inEar: false) + dsp.targetsFor(inEar: true)
+        }
         editingName = name
     }
 
@@ -183,7 +192,11 @@ private struct LayersSection: View {
                         dsp.setLayers(detail.name, changed)
                     }
                 )) {
-                    Text(layer.profile)
+                    HStack(spacing: 8) {
+                        Text(layer.profile)
+                        let corrects = index < detail.layerCorrections.count && detail.layerCorrections[index]
+                        RoleTag(role: corrects ? .correction : .tuning)
+                    }
                 }
                 #if !os(tvOS)
                 .contextMenu {
@@ -248,13 +261,14 @@ private struct TargetSection: View {
     let targets: DspTargets
     @Binding var adding: Bool
 
-    private var current: String { targets.chosen ?? targets.madeFor.id }
+    private var madeFor: String? { targets.madeFor?.id }
+    private var current: String { targets.chosen ?? madeFor ?? "" }
 
     var body: some View {
         Section {
             Picker("Correct to", selection: Binding(
                 get: { current },
-                set: { id in dsp.chooseTarget(profile, id == targets.madeFor.id ? nil : id) }
+                set: { id in dsp.chooseTarget(profile, id == madeFor ? nil : id) }
             )) {
                 ForEach(targets.choices, id: \.id) { c in
                     Text(c.name).tag(c.id)
@@ -271,10 +285,129 @@ private struct TargetSection: View {
         } header: {
             Text("Target")
         } footer: {
-            Text("Made for \(targets.madeFor.name). Another target plays as the difference between the two, after the correction. A target you add is a CSV of frequency and level, or a squig.link export.")
+            Text(footer)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    private var footer: String {
+        guard let made = targets.madeFor else {
+            return "The sound the headphone is corrected to. The correction is worked out again from the measurement for each target. A target you add is a CSV of frequency and level, or a squig.link export."
+        }
+        return "Made for \(made.name). Another target is worked out from the measurement AutoEQ kept, where there is one, or plays as the difference between the two targets. A target you add is a CSV of frequency and level, or a squig.link export."
+    }
+}
+
+/// What a profile is for, in a line each, always at the top of its page:
+/// the headphone the chain corrects and how, and the tuning on top. Each in
+/// its role's colour, as the layers and the graph show them.
+struct ChainSummaryCard: View {
+    let corrects: String?
+    let tunings: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let corrects {
+                RoleLine(role: .correction, text: corrects)
+            } else {
+                RoleLine(role: .correction, text: "None", muted: true)
+            }
+            if !tunings.isEmpty {
+                RoleLine(role: .tuning, text: tunings.joined(separator: ", "))
+            }
+        }
+    }
+}
+
+/// The two things a profile can be for, each with its label and colour.
+enum ProfileRole {
+    case correction, tuning
+
+    var label: String {
+        switch self {
+        case .correction: "Correction"
+        case .tuning: "Tuning"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .correction: .koanAccent
+        case .tuning: .orange
+        }
+    }
+}
+
+private struct RoleLine: View {
+    let role: ProfileRole
+    let text: String
+    var muted = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            RoleTag(role: role)
+            Text(text)
+                .foregroundStyle(muted ? .secondary : .primary)
+        }
+    }
+}
+
+/// A role's label, in its colour: beside a layer, in the summary.
+struct RoleTag: View {
+    let role: ProfileRole
+
+    var body: some View {
+        Text(role.label)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(role.color)
+    }
+}
+
+/// Whether a profile corrects a headphone or tunes on top of one, and for
+/// a ready-made correction, the target it was made for.
+private struct RoleSection: View {
+    let dsp: DspModel
+    let detail: DspProfileDetail
+    let targets: [DspTargetOption]
+
+    var body: some View {
+        Section {
+            Picker("This profile is", selection: Binding(
+                get: { detail.correction },
+                set: { dsp.setRole(detail.name, correction: $0) }
+            )) {
+                Text("A headphone correction").tag(true)
+                Text("A tuning").tag(false)
+            }
+            if detail.correction, !detail.measured, !targets.isEmpty {
+                Picker("Which target was this EQ made for?", selection: Binding(
+                    get: { detail.madeFor ?? "" },
+                    set: { dsp.setMadeFor(detail.name, $0.isEmpty ? nil : $0) }
+                )) {
+                    Text("Unknown").tag("")
+                    ForEach(targets, id: \.id) { t in
+                        Text(t.name).tag(t.id)
+                    }
+                }
+            }
+        } header: {
+            Text("What it's for")
+        } footer: {
+            Text(footer)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private var footer: String {
+        if !detail.correction {
+            return "A tuning is taste: more bass, a darker treble. It plays on top of a correction."
+        }
+        if detail.measured {
+            return "A correction brings your headphones to a target. This one is worked out from a measurement."
+        }
+        return "A correction brings your headphones to a target. If you don't know which target this EQ was made for, choose Unknown, and target switching stays off."
     }
 }
 

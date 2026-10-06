@@ -723,6 +723,7 @@ struct DspSettings: View {
     @Environment(AppState.self) private var app
     @State private var importing = false
     @State private var findingAutoEq = false
+    @State private var measuring = false
     /// What Find in AutoEQ opens searching for: empty from its button, a
     /// model from an offer for the output in use.
     @State private var findQuery = ""
@@ -789,6 +790,7 @@ struct DspSettings: View {
                 findQuery = ""
                 findingAutoEq = true
             }
+            Button("Use a Measurement…") { measuring = true }
             #endif
             if let error = dsp.lastError {
                 Text(error)
@@ -815,6 +817,22 @@ struct DspSettings: View {
         #if !os(tvOS)
         .sheet(isPresented: $findingAutoEq) {
             AutoEqSearch(dsp: dsp, query: findQuery)
+        }
+        .sheet(isPresented: $measuring) {
+            MeasurementFlow(dsp: dsp)
+        }
+        // A profile imported from a file: a finished EQ for the headphones,
+        // or taste to add on top? kōan cannot tell, and a chain corrects once.
+        .confirmationDialog(
+            "Is this a finished EQ for your headphones, or a tuning to add on top?",
+            isPresented: Binding(get: { dsp.askRole != nil }, set: { if !$0 { dsp.askRole = nil } }),
+            titleVisibility: .visible,
+            presenting: dsp.askRole
+        ) { name in
+            Button("A finished EQ for my headphones") { dsp.setRole(name, correction: true) }
+            Button("A tuning to add on top") { dsp.setRole(name, correction: false) }
+        } message: { _ in
+            Text("A finished EQ corrects your headphones; a stack holds one. A tuning is taste, like more bass, and plays on top of it.")
         }
         #endif
         #if os(macOS)
@@ -880,6 +898,7 @@ private struct AutoEqSearch: View {
     let dsp: DspModel
     @Environment(\.dismiss) private var dismiss
     @State private var query: String
+    @State private var measuring = false
 
     init(dsp: DspModel, query: String = "") {
         self.dsp = dsp
@@ -908,13 +927,22 @@ private struct AutoEqSearch: View {
                     }
                     .overlay {
                         if dsp.autoEqResults.isEmpty {
-                            ContentUnavailableView.search(text: query)
+                            ContentUnavailableView {
+                                Label("Not in AutoEQ", systemImage: "magnifyingglass")
+                            } description: {
+                                Text("AutoEQ has nothing for “\(query)”. A measurement of your headphones works too: kōan builds the correction from it.")
+                            } actions: {
+                                Button("Use a measurement instead") { measuring = true }
+                            }
                         }
                     }
                 }
             }
             .searchable(text: $query, prompt: "Headphone")
             .navigationTitle("AutoEQ")
+            .sheet(isPresented: $measuring) {
+                MeasurementFlow(dsp: dsp, name: query) { _ in dismiss() }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
