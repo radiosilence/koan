@@ -92,9 +92,11 @@ struct SidebarView: View {
                 play(playlist)
             }
         }
-        // The footer floats over the rows rather than being fenced off by a
-        // divider; the soft edge fades a row out as it passes underneath.
-        .scrollEdgeEffectStyle(.soft, for: .bottom)
+        // The footer is text over text: a soft edge only blurs the rows passing
+        // beneath it, and the playlists and the library counts read as one
+        // smear. The hard edge backs the footer with the sidebar and draws the
+        // line between them.
+        .scrollEdgeEffectStyle(.hard, for: .bottom)
         // The field belongs to the sidebar, not the window: in the toolbar it
         // would sit on top of the lyrics inspector.
         .searchable(text: $search.query, placement: .sidebar, prompt: "Search")
