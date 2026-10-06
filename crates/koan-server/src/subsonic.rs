@@ -6583,8 +6583,15 @@ mod tests {
     #[tokio::test]
     async fn folder_browse_carries_starred_and_ratings_in_json_and_xml() {
         let (state, _dir) = test_state();
-        let [alpha, beta, _] = seed_shelves(&state)[..] else {
+        let [alpha, ..] = seed_shelves(&state)[..] else {
             unreachable!()
+        };
+        let other = {
+            let db = Database::open(state.pool.path()).unwrap();
+            let mut meta = track_meta("/music/other.flac", "Other", "Other", 1);
+            meta.artist = "Other Artist".into();
+            meta.album_artist = Some("Other Artist".into());
+            queries::upsert_track(&db.conn, &meta).unwrap()
         };
         let uids = |track| {
             let db = Database::open(state.pool.path()).unwrap();
@@ -6596,7 +6603,8 @@ mod tests {
             )
         };
         let (song, album, artist) = uids(alpha);
-        let (_, _, other_artist) = uids(beta);
+        let (_, _, other_artist) = uids(other);
+        assert_ne!(artist, other_artist);
         let call = |path: String| {
             let state = state.clone();
             async move { json_of(build_test_router(state), &path).await }
