@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Passwords from the apps.** An admin can set another account's password from Settings → Server, and anyone can change their own there, giving the current one. The device that changes its own stays signed in with a new key; every other device of the account signs out. The server offers this as `koanSetUserPassword` (extension `koanPasswords`), and a wrong current password counts against the account's sign-in limit.
+
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
 ### Fixed

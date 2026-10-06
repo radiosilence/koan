@@ -1062,6 +1062,18 @@ pub fn set_remote_api_key(url: &str, username: &str, api_key: &str) -> Result<()
     remember_remote(url, username, credential)
 }
 
+/// Change the signed-in account's password on its koan server, keeping this
+/// device signed in. The change revokes every key the account had, so the
+/// server answers with a new one for this device, which is kept as a sign-in's
+/// is.
+pub fn change_own_password(current: &str, password: &str) -> Result<(), SignInError> {
+    let cfg = Config::load()?;
+    let client = subsonic_client(&cfg).ok_or(SignInError::Rejected(SubsonicError::BadResponse))?;
+    let device = crate::remote::link::LinkIdentity::this_device(None).name;
+    let joined = client.koan_change_own_password(current, password, &device)?;
+    adopt_api_key(&cfg.remote.url, &joined.username, &joined.api_key)
+}
+
 /// A server's refusal, with error 41 told apart: see `SignInError::NeedsKey`.
 fn rejected(e: SubsonicError) -> SignInError {
     match e {

@@ -37,6 +37,9 @@ pub const HISTORY: &str = "koanHistory";
 /// with the account's own password, makes a key for the device, which keeps
 /// the key and not the password. See `helpers::set_remote_credentials`.
 pub const SIGN_IN: &str = "koanSignIn";
+/// Setting passwords: `/rest/koanSetUserPassword`, for an admin any account's
+/// and for anyone their own, given the current one.
+pub const PASSWORDS: &str = "koanPasswords";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {

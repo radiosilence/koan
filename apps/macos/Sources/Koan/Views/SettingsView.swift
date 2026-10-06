@@ -310,6 +310,9 @@ private struct RemoteSettings: View {
     @State private var username = ""
     @State private var confirmingSignOut = false
     @State private var copiedServer = false
+    @State private var changingPassword = false
+    @State private var currentPassword = ""
+    @State private var newPassword = ""
     /// The cache limit as typed, committed whole: "5" on the way to "50GB" is
     /// not a limit anyone set.
     @State private var cacheLimit: String?
@@ -364,11 +367,34 @@ private struct RemoteSettings: View {
                         // leave.
                         Button("Sync") { model.syncNow() }
                             .disabled(activity.conflicts(with: [.remoteTracks]))
+                        #if !os(tvOS)
+                        if mirror.offers(PasswordChange.extensionName) {
+                            Button("Change Password…") { changingPassword = true }
+                        }
+                        #endif
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                     }
                     .rowButtons()
                 }
+                #if !os(tvOS)
+                .alert("Change your password", isPresented: $changingPassword) {
+                    SecureField("Current password", text: $currentPassword)
+                    SecureField("New password", text: $newPassword)
+                    Button("Change") {
+                        let (current, new) = (currentPassword, newPassword)
+                        currentPassword = ""
+                        newPassword = ""
+                        Task { _ = await model.changePassword(current: current, new: new) }
+                    }
+                    Button("Cancel", role: .cancel) {
+                        currentPassword = ""
+                        newPassword = ""
+                    }
+                } message: {
+                    Text("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.")
+                }
+                #endif
                 // Accounts and pairings are managed from a device with a keyboard.
                 #if !os(tvOS)
                 PeopleSettings(signedInAs: model.settings.remoteUsername)

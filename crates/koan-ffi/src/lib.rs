@@ -2788,6 +2788,38 @@ impl KoanEngine {
         .await
     }
 
+    /// Give another account a password. Its devices sign out.
+    pub async fn set_server_account_password(
+        self: Arc<Self>,
+        username: String,
+        password: String,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            passwords_client()?
+                .koan_set_user_password(&username, &password)
+                .map_err(remote_error)
+        })
+        .await
+    }
+
+    /// Change the signed-in account's own password. This device stays signed
+    /// in, with a new key; the account's other devices sign out.
+    pub async fn change_own_password(
+        self: Arc<Self>,
+        current: String,
+        password: String,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            passwords_client()?;
+            koan_core::helpers::change_own_password(&current, &password).map_err(|e| {
+                KoanError::BadArgument {
+                    message: e.to_string(),
+                }
+            })
+        })
+        .await
+    }
+
     pub async fn delete_server_account(self: Arc<Self>, username: String) -> Result<(), KoanError> {
         offload::offload(move || {
             account_client()?
@@ -5082,6 +5114,20 @@ fn invite_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, Koa
     if !offers {
         return Err(KoanError::BadArgument {
             message: "this server is older than this app: update it to invite people".into(),
+        });
+    }
+    Ok(client)
+}
+
+/// The signed-in server's client, when it sets passwords.
+fn passwords_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    let client = account_client()?;
+    let offers = koan_core::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| p.offers(koan_core::remote::profile::PASSWORDS));
+    if !offers {
+        return Err(KoanError::BadArgument {
+            message: "this server is older than this app: update it to change passwords here"
+                .into(),
         });
     }
     Ok(client)

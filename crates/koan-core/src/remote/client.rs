@@ -796,6 +796,41 @@ impl SubsonicClient {
             .ok_or(SubsonicError::BadResponse)
     }
 
+    /// Give `username` a password (`koanSetUserPassword`): an admin's call for
+    /// another account. Its devices sign out.
+    pub fn koan_set_user_password(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<(), SubsonicError> {
+        self.get_with_params(
+            "koanSetUserPassword",
+            &[("username", username), ("password", password)],
+        )?;
+        Ok(())
+    }
+
+    /// Change this account's own password, proving the current one. Every key
+    /// the account had is revoked, this client's included, so the server
+    /// answers with a new one named `device`.
+    pub fn koan_change_own_password(
+        &self,
+        current: &str,
+        password: &str,
+        device: &str,
+    ) -> Result<KoanJoined, SubsonicError> {
+        self.get_with_params(
+            "koanSetUserPassword",
+            &[
+                ("current", current),
+                ("password", password),
+                ("name", device),
+            ],
+        )?
+        .join
+        .ok_or(SubsonicError::BadResponse)
+    }
+
     pub fn koan_set_user_role(&self, username: &str, role: &str) -> Result<(), SubsonicError> {
         self.get_with_params("koanSetUserRole", &[("username", username), ("role", role)])?;
         Ok(())

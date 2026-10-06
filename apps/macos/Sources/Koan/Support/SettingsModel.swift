@@ -247,6 +247,20 @@ final class SettingsModel {
         }
     }
 
+    /// Change the signed-in account's password. This device stays signed in;
+    /// the account's others have to sign in again.
+    func changePassword(current: String, new: String) async -> Bool {
+        do {
+            try await engine.changeOwnPassword(current: current, password: new)
+            lastError = nil
+            lastResult = "Password changed. Your other devices will have to sign in again."
+            return true
+        } catch {
+            lastError = Self.describe(error)
+            return false
+        }
+    }
+
     /// Engine errors carry a message worth reading; Swift's default rendering
     /// of them does not.
     func report(_ message: String) {

@@ -106,9 +106,18 @@ the request signs in with.
 Creating an account generates its password, and the email carries it once, for
 the web UI and other Subsonic apps. Inviting an existing account sends only the
 link. To give an account a new password, invite it with a reset (generated,
-shown in the invite) or set one on the Users page or with `setUserPassword`.
-Either signs every device out, invited ones included, since a password change
-revokes the account's sessions and API keys.
+shown in the invite) or set one on the Users page, with **Set Password…** on
+the account in the apps' Settings, or with `setUserPassword`. Any of them signs
+every device out, invited ones included, since a password change revokes the
+account's sessions and API keys.
+
+Anyone can change their own password from the apps' Settings → Server, with
+**Change Password…**, giving the current one. The device changing it stays
+signed in: the server answers with a new key for it, as signing in does, and
+the account's other devices sign out. Both go through
+`/rest/koanSetUserPassword`, listed as the `koanPasswords` extension. A wrong
+current password counts against the account's sign-in budget (see below), even
+from an app signed in with a key.
 
 A device whose key was revoked, or whose password no longer works, finds out
 the next time it syncs or asks the server what it offers (Subsonic errors 40,
