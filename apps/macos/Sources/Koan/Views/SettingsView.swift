@@ -114,9 +114,12 @@ struct SettingsView: View {
                 ProgressView()
             }
         }
-        // The size of a settings window. A phone gets whatever it has.
+        // The settings window: tall enough for the longest pane on a 1440×900
+        // screen, resizable, and kept at whatever size it was last given. A
+        // phone gets whatever it has.
         #if os(macOS)
-        .frame(width: 560, height: 460)
+        .frame(minWidth: 600, idealWidth: 820, maxWidth: .infinity, minHeight: 480, idealHeight: 780, maxHeight: .infinity)
+        .background(SettingsFrameAutosave())
         #endif
         #if os(macOS)
         .modifier(DspImportPrompts(dsp: app.dsp))
@@ -1423,6 +1426,23 @@ extension DevicesSettings {
 #endif
 
 #if os(macOS)
+/// Saves the settings window's frame under a name of its own and restores it
+/// when the window opens, as `Window` scenes do and the `Settings` scene does
+/// not.
+private struct SettingsFrameAutosave: PlatformViewRepresentable {
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window, window.frameAutosaveName.isEmpty else { return }
+            window.setFrameUsingName("KoanSettings")
+            window.setFrameAutosaveName("KoanSettings")
+        }
+    }
+
+    func makeView(context: Context) -> Probe { Probe() }
+    func updateView(_ view: Probe, context: Context) {}
+}
+
 /// The Settings panes, each a page of its own, for the evidence renderer: the
 /// window's tabs show one at a time, and the panes are private to this file.
 @MainActor
@@ -1442,7 +1462,7 @@ enum SettingsEvidence {
                     .koanTheme(state.appearance)
             )
         }
-        let size = CGSize(width: 560, height: 760)
+        let size = CGSize(width: 820, height: 780)
         return [
             ("settings-library", size, page(LibrarySettings(model: model))),
             ("settings-server", size, page(RemoteSettings(model: model))),
