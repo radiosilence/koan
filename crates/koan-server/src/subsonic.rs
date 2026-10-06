@@ -3872,6 +3872,13 @@ async fn koan_dsp_profile_save(
                 .ok_or_else(|| SubsonicError::missing_param("doc"))?;
             let doc = SyncDoc::parse(json)
                 .map_err(|e| SubsonicError::new(SubsonicErrorCode::Generic, e))?;
+            let (kept, known) = queries::dsp::count(&db.conn, user, &uid).map_err(dsp_failed)?;
+            if !known && kept >= koan_core::remote::dsp_sync::MAX_PROFILES {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::Generic,
+                    "The account keeps as many EQ profiles as it may",
+                ));
+            }
             let named =
                 dsp_named_files(&db.conn, user, Some(&uid), Some(&doc)).map_err(dsp_failed)?;
             if named.values().sum::<u64>() > MAX_ACCOUNT {
@@ -3965,6 +3972,10 @@ async fn koan_dsp_dismiss(State(state): State<Arc<AppState>>, RawQuery(raw): Raw
                 .get("output")
                 .filter(|o| !o.trim().is_empty() && o.len() <= 256)
                 .ok_or_else(|| SubsonicError::missing_param("output"))?;
+            let held = queries::dsp::dismissed_count(&db.conn, user).map_err(dsp_failed)?;
+            if held >= koan_core::remote::dsp_sync::MAX_DISMISSED {
+                return Ok(b);
+            }
             if queries::dsp::dismiss(&db.conn, user, output).map_err(dsp_failed)? {
                 username = Some(caller.username.clone());
             }

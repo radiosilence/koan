@@ -34,6 +34,10 @@ pub const MAX_ACCOUNT: u64 = 256 << 20;
 pub const MAX_DOC: usize = 512 << 10;
 /// The most files one profile may name.
 pub const MAX_FILES: usize = 64;
+/// The most profiles a server keeps for an account, deleted ones included.
+pub const MAX_PROFILES: i64 = 1024;
+/// The most outputs an account may turn AutoEQ down for.
+pub const MAX_DISMISSED: i64 = 1024;
 
 /// A profile as it travels: as configured, without the outputs that use it
 /// or where it is kept, with its impulse responses named by file and every

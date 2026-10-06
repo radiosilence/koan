@@ -152,6 +152,25 @@ pub fn dismissed(conn: &Connection, user: i64) -> Result<Vec<String>, DbError> {
         .collect::<Result<Vec<_>, _>>()?)
 }
 
+/// How many profiles the server keeps for the account, deleted ones
+/// included, and whether `uid` is one of them.
+pub fn count(conn: &Connection, user: i64, uid: &str) -> Result<(i64, bool), DbError> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(uid = ?2), 0) > 0 FROM dsp_profiles WHERE user_id = ?1",
+        params![user, uid],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?)
+}
+
+/// How many outputs the account turned AutoEQ down for.
+pub fn dismissed_count(conn: &Connection, user: i64) -> Result<i64, DbError> {
+    Ok(conn.query_row(
+        "SELECT COUNT(*) FROM dsp_dismissed WHERE user_id = ?1",
+        [user],
+        |r| r.get(0),
+    )?)
+}
+
 /// Turn AutoEQ down for `output`. Whether it was new.
 pub fn dismiss(conn: &Connection, user: i64, output: &str) -> Result<bool, DbError> {
     let rev = next_rev(conn, user)?;
