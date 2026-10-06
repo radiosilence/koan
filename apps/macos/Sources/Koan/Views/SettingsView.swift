@@ -1395,7 +1395,7 @@ private struct DevicesSettings: View {
             } header: {
                 KoanSectionHeader("This device")
             } footer: {
-                Text("Any kōan app on this network can then see what is playing here and control it, whoever is signed in there: with Full control, the output, preset and volume too, and move the music here or away; with Playback only, play and the queue. Neither reaches your library, playlists or history. Choose Playback only on a network you share with strangers. Your own devices reach each other through your server either way.")
+                Text("Other kōan apps on this network can see and control what plays here. Full control adds the output, preset, volume and moving the music; Playback only is play and the queue. Neither reaches your library. On a network shared with strangers, choose Playback only.")
                     .koanText(.fine, .muted)
             }
 
@@ -1472,7 +1472,7 @@ private struct DevicesSettings: View {
                 } header: {
                     KoanSectionHeader("Shared with other accounts")
                 } footer: {
-                    Text("From any network, they can see what this device is playing and control its playback as on your own network: play, pause, skip, the queue, the output, preset and volume, and moving the music here or to their own devices. Each does it as their own account: nothing of your library, playlists, favourites or history, and nothing of your settings beyond what is playing and where.")
+                    Text("From any network, as their own account, they can see and control what this device plays, including the output, preset and volume. Nothing of your library, playlists, history or settings.")
                         .koanText(.fine, .muted)
                 }
             }

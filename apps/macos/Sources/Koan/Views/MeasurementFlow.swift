@@ -118,6 +118,7 @@ struct MeasurementFlow: View {
                 Text("What the file looks like")
             } footer: {
                 Text("Two numbers a line: a frequency in hertz, then a level in decibels. Commas, tabs or spaces between them all work.")
+                    .koanText(.fine, .muted)
             }
             Section {
                 Link("Learn more about headphone EQ", destination: URL(string: "https://koan.rocks/docs/headphone-eq/")!)
@@ -131,6 +132,7 @@ struct MeasurementFlow: View {
                 Button(file.map { "Chosen: \($0)" } ?? "Choose a File…") { choosing = true }
             } footer: {
                 Text("A .csv or .txt file of frequency and level.")
+                    .koanText(.fine, .muted)
             }
             Section {
                 TextEditor(text: $text)
@@ -176,6 +178,7 @@ struct MeasurementFlow: View {
             .labelsHidden()
         } footer: {
             Text("Each target is a different idea of a good sound. You can change it later on the profile's page.")
+                .koanText(.fine, .muted)
         }
     }
 
@@ -186,12 +189,14 @@ struct MeasurementFlow: View {
                     EqGraph(response: preview, startOn: .headphone)
                 } footer: {
                     Text("Headphone shows your measurement, the target, and what your headphones will sound like with the correction. EQ shows the correction itself.")
+                        .koanText(.fine, .muted)
                 }
             }
             Section {
                 TextField("Name", text: $name)
             } footer: {
                 Text("Usually the headphones' name. It becomes a correction: add tunings, like more bass, on top of it.")
+                    .koanText(.fine, .muted)
             }
         }
     }

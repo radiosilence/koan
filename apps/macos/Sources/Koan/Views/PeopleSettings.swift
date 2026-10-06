@@ -273,6 +273,7 @@ struct InviteSheet: View {
                         KoanSectionHeader("For other Subsonic apps")
                     } footer: {
                         Text("Shown this once: the server keeps only its hash.")
+                            .koanText(.fine, .muted)
                     }
                     .selectableText()
                 }
