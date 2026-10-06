@@ -222,6 +222,10 @@ pub(super) async fn proxy_resume(
     let Some(name) = vouched(&s, &headers, &ext) else {
         return see_other(&format!("/auth/resume?next={}", encode(&next)));
     };
+    // Whatever session the browser held is replaced by the one the proxy
+    // names. Its refresh token is revoked rather than only overwritten, since
+    // `/auth/refresh` sits outside the proxy and would otherwise keep it alive.
+    revoke_refresh(&s, &headers).await;
     match session_for(&s.auth, name).await {
         Some((access, refresh)) => (
             StatusCode::SEE_OTHER,
@@ -307,6 +311,19 @@ async fn rotate_from(s: &UiState, headers: &HeaderMap, from: IpAddr) -> Option<(
         .flatten()
 }
 
+/// Revoke the refresh token the browser presents, if any.
+async fn revoke_refresh(s: &UiState, headers: &HeaderMap) {
+    let Some(token) = refresh_token_from(None, headers) else {
+        return;
+    };
+    let pool = s.pool.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        let db = super::open(&pool)?;
+        auth_queries::revoke_refresh_token(&db.conn, &token).ok()
+    })
+    .await;
+}
+
 pub(super) async fn signout(
     State(s): State<UiState>,
     headers: HeaderMap,
@@ -315,14 +332,7 @@ pub(super) async fn signout(
     if !same_origin(&headers) {
         return cross_site();
     }
-    if let Some(token) = refresh_token_from(None, &headers) {
-        let pool = s.pool.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            let db = super::open(&pool)?;
-            auth_queries::revoke_refresh_token(&db.conn, &token).ok()
-        })
-        .await;
-    }
+    revoke_refresh(&s, &headers).await;
     // Back to sign in, and then to where the user was: the consent page signs
     // out to let another account approve.
     let to = match local_path(&q.next) {

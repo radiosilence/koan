@@ -1931,6 +1931,39 @@ async fn a_session_for_another_account_than_the_proxy_names_is_resumed() {
     assert_eq!(r.status, StatusCode::OK);
 }
 
+/// `/auth/refresh` and `/auth/resume` sit outside the proxy, so a session the
+/// proxy replaced must not be refreshable there.
+#[tokio::test]
+async fn a_session_the_proxy_replaces_cannot_be_refreshed() {
+    let f = setup_behind_proxy();
+    let signed_in = send(&f.app, form("/login", "username=alice&password=hunter2")).await;
+    let refresh = signed_in.cookie("koan_refresh");
+    let with_refresh =
+        |uri: &str| get(uri).header(header::COOKIE, format!("koan_refresh={refresh}"));
+
+    send(
+        &f.app,
+        from_peer(with_refresh("/ui/resume?next=%2Falbums"), "10.0.0.1")
+            .header("remote-user", "bob")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+
+    let r = send(
+        &f.app,
+        with_refresh("/auth/resume?next=%2Falbums")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        r.location(),
+        "/login?next=%2Falbums",
+        "alice's refresh is spent"
+    );
+}
+
 #[test]
 fn proxy_auth_is_off_unless_configured() {
     assert!(super::ProxyAuth::from_config("", &[]).unwrap().is_none());
