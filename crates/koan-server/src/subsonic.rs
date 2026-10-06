@@ -1708,8 +1708,10 @@ fn artist_extras(
     })
 }
 
-/// An album as a directory `child`, for the file-browse endpoints.
-fn album_child_node(album: &queries::AlbumRow, uids: &Uids) -> XmlNode {
+/// An album as a directory `child`, for the file-browse endpoints, with the
+/// caller's own marks on it as `AlbumID3` carries them.
+fn album_child_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode {
+    let uids = &extras.uids;
     XmlNode::new("child")
         .attr("id", &uids.album(album.id))
         .attr("parent", &uids.artist(album.artist_id))
@@ -1719,6 +1721,18 @@ fn album_child_node(album: &queries::AlbumRow, uids: &Uids) -> XmlNode {
         .attr("coverArt", &uids.album(album.id))
         .attr_opt_int("year", year_from_date(album.date.as_deref()))
         .attr_bool("isDir", true)
+        .attr_opt(
+            "played",
+            extras.played.get(&album.id).map(|&at| iso(at)).as_deref(),
+        )
+        .attr_opt(
+            "starred",
+            extras.starred.get(&album.id).map(|&at| iso(at)).as_deref(),
+        )
+        .attr_opt_int(
+            "userRating",
+            extras.rating.get(&album.id).map(|&r| r.into()),
+        )
 }
 
 /// Artists bucketed by first letter — the shape `getArtists` (ID3) and
@@ -1931,7 +1945,7 @@ async fn get_indexes(
     Query(indexes): Query<IndexesParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
+        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
             let last_modified = state.last_modified(db)?;
             // Nothing changed since the caller last looked: the timestamp
             // alone, which is all a client checking for changes reads.
@@ -1946,7 +1960,7 @@ async fn get_indexes(
                 ));
             }
             let index_map = artist_index(db)?;
-            let uids = Uids::load(db, index_map.values().flatten().map(|a| a.id), [], [])?;
+            let extras = artist_extras(db, user, index_map.values().flatten().map(|a| a.id))?;
 
             let mut indexes_node = XmlNode::new("indexes")
                 .attr_int("lastModified", last_modified)
@@ -1959,8 +1973,16 @@ async fn get_indexes(
                 for artist in group {
                     index_node = index_node.child(
                         XmlNode::new("artist")
-                            .attr("id", &uids.artist(artist.id))
-                            .attr("name", &artist.name),
+                            .attr("id", &extras.uids.artist(artist.id))
+                            .attr("name", &artist.name)
+                            .attr_opt(
+                                "starred",
+                                extras.starred.get(&artist.id).map(|&at| iso(at)).as_deref(),
+                            )
+                            .attr_opt_int(
+                                "userRating",
+                                extras.rating.get(&artist.id).map(|&r| r.into()),
+                            ),
                     );
                 }
                 indexes_node = indexes_node.child(index_node);
@@ -1992,13 +2014,14 @@ async fn get_music_directory(
                 if let Some(artist) = artist {
                     let albums = queries::albums_for_artist(&db.conn, id)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                    let uids = Uids::load(db, [artist.id], albums.iter().map(|a| a.id), [])?;
+                    let extras = album_extras(db, user, &albums, None)?;
+                    let uids = &extras.uids;
                     let mut dir = XmlNode::new("directory")
                         .attr("id", &uids.artist(artist.id))
                         .attr("name", &artist.name)
                         .array_of("child");
                     for album in &albums {
-                        dir = dir.child(album_child_node(album, &uids));
+                        dir = dir.child(album_child_node(album, &extras));
                     }
                     return Ok(b.child(dir));
                 }
@@ -6553,6 +6576,116 @@ mod tests {
         assert_eq!(body.matches(" starred=\"").count(), 2, "{body}");
         let body = xml(format!("getAlbum?id={other_album}")).await;
         assert!(!body.contains(" starred=\""), "{body}");
+    }
+
+    /// Folder-browse clients read artists from `getIndexes` and albums from
+    /// `getMusicDirectory`, and get the same marks as ID3 clients there.
+    #[tokio::test]
+    async fn folder_browse_carries_starred_and_ratings_in_json_and_xml() {
+        let (state, _dir) = test_state();
+        let [alpha, ..] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let other = {
+            let db = Database::open(state.pool.path()).unwrap();
+            let mut meta = track_meta("/music/other.flac", "Other", "Other", 1);
+            meta.artist = "Other Artist".into();
+            meta.album_artist = Some("Other Artist".into());
+            queries::upsert_track(&db.conn, &meta).unwrap()
+        };
+        let uids = |track| {
+            let db = Database::open(state.pool.path()).unwrap();
+            let row = queries::get_track_row(&db.conn, track).unwrap().unwrap();
+            (
+                uid_of(&state, queries::UidKind::Track, track),
+                uid_of(&state, queries::UidKind::Album, row.album_id.unwrap()),
+                uid_of(&state, queries::UidKind::Artist, row.artist_id.unwrap()),
+            )
+        };
+        let (song, album, artist) = uids(alpha);
+        let (_, _, other_artist) = uids(other);
+        assert_ne!(artist, other_artist);
+        let call = |path: String| {
+            let state = state.clone();
+            async move { json_of(build_test_router(state), &path).await }
+        };
+        call(format!(
+            "/rest/star?{}&id={song}&albumId={album}&artistId={artist}",
+            auth_query("f=json")
+        ))
+        .await;
+        call(format!(
+            "/rest/setRating?{}&id={album}&rating=4",
+            auth_query("f=json")
+        ))
+        .await;
+        call(format!(
+            "/rest/setRating?{}&id={artist}&rating=3",
+            auth_query("f=json")
+        ))
+        .await;
+        let get = |path: String| call(format!("/rest/{path}&{}", auth_query("f=json")));
+        let is_iso = |v: &serde_json::Value| {
+            v.as_str()
+                .is_some_and(|s| s.len() == 24 && s.contains('T') && s.ends_with('Z'))
+        };
+        let indexed = |v: &serde_json::Value, id: &str| {
+            v["indexes"]["index"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|i| i["artist"].as_array().unwrap().clone())
+                .find(|a| a["id"] == id)
+                .unwrap_or_else(|| panic!("{id} not indexed: {v}"))
+        };
+
+        let v = get("getIndexes?".to_owned()).await;
+        let starred = indexed(&v, &artist);
+        assert!(is_iso(&starred["starred"]), "{v}");
+        assert_eq!(starred["userRating"], 3, "{v}");
+        let other = indexed(&v, &other_artist);
+        assert!(
+            other["starred"].is_null() && other["userRating"].is_null(),
+            "{v}"
+        );
+
+        let v = get(format!("getMusicDirectory?id={artist}")).await;
+        let child = &v["directory"]["child"][0];
+        assert!(is_iso(&child["starred"]), "{v}");
+        assert_eq!(child["userRating"], 4, "{v}");
+        let v = get(format!("getMusicDirectory?id={album}")).await;
+        assert!(is_iso(&v["directory"]["child"][0]["starred"]), "{v}");
+
+        let mate = |path: &str| {
+            call(format!(
+                "/rest/{path}&u=mate&p=hunter22&v=1.16.1&c=test&f=json"
+            ))
+        };
+        let v = mate("getIndexes?").await;
+        assert!(
+            indexed(&v, &artist)["starred"].is_null(),
+            "another account's: {v}"
+        );
+        let v = mate(&format!("getMusicDirectory?id={artist}")).await;
+        assert!(v["directory"]["child"][0]["starred"].is_null(), "{v}");
+
+        let xml = |path: String| {
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("")),
+                )
+                .await
+                .1
+            }
+        };
+        let body = xml("getIndexes?".to_owned()).await;
+        assert_eq!(body.matches(" starred=\"").count(), 1, "{body}");
+        assert_eq!(body.matches(" userRating=\"3\"").count(), 1, "{body}");
+        let body = xml(format!("getMusicDirectory?id={artist}")).await;
+        assert_eq!(body.matches(" starred=\"").count(), 1, "{body}");
+        assert_eq!(body.matches(" userRating=\"4\"").count(), 1, "{body}");
     }
 
     #[tokio::test]
