@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Assistants in the apps.** Settings → Server shows the server's MCP address to copy and links to its page on connecting Claude or another assistant, where the server knows its public address (`sharing.public_url`). The server offers this as `koanMcp`.
+
 - **API keys in the apps.** Settings → Server lists the account's API keys, makes one for another Subsonic app (shown once, to copy), and revokes one, which is how a lost device is signed out. The server offers this as `koanApiKeys`.
 
 - **Passwords from the apps.** An admin can set another account's password from Settings → Server, and anyone can change their own there, giving the current one. The device that changes its own stays signed in with a new key; every other device of the account signs out. The server offers this as `koanSetUserPassword` (extension `koanPasswords`), and a wrong current password counts against the account's sign-in limit.
