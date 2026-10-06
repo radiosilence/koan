@@ -536,7 +536,7 @@ private struct DeviceChoiceRow: View {
 }
 
 enum LocalNetwork {
-    #if os(iOS)
+    #if os(iOS) || os(tvOS)
     static let settings = "Settings"
     #else
     static let settings = "System Settings"

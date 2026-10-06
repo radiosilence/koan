@@ -1125,6 +1125,8 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
     // The link rests for up to a minute while signed out; the profile Settings
     // shows is probed when it wakes.
     crate::remote::link::nudge();
+    // This device's announcement names the server it is signed in to.
+    crate::remote::nearby::readvertise();
     Ok(())
 }
 

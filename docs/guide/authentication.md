@@ -118,11 +118,7 @@ signs in again.
 
 ### Pairing a device
 
-The server and the approving side (the Mac and iOS apps, and the `/pair` page)
-are in place, but no released kōan app asks to be paired yet: the first is the
-Apple TV app, which is still to ship.
-
-A device without a keyboard, such as a television, cannot reasonably take a
+A device without a keyboard, such as the Apple TV app, cannot reasonably take a
 password or a pasted invite, so it signs in by being approved from somewhere
 that is already signed in. It opens a WebSocket at `/rest/koanPair` (listed as
 the `koanPair` extension) with no credentials and is given a code, shown as
