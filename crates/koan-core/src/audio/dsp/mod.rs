@@ -94,6 +94,11 @@ pub struct OutputChain {
     /// The correction's name, or the tuning's where there is none: never the
     /// name the tuning is resolved under.
     pub name: String,
+    /// What of the output's choices does not play, and why, to show where
+    /// the EQ is: a tuning or a target difference left out.
+    pub left_out: Option<String>,
+    /// The output's tuning plays.
+    pub tuning_plays: bool,
 }
 
 /// What `device` plays, built from its two choices: the correction, the
@@ -110,7 +115,8 @@ pub struct OutputChain {
 /// which commute, that is heard as correction then tuning, and ahead of a
 /// response or a mix it is where taste belongs. The correction's graphic
 /// curves come first in the chain's budget of them: the step is left out
-/// rather than push one out, and the tuning too where it alone would.
+/// rather than push one out, and the tuning too where it alone would, or
+/// where the chain with it would be more than one may hold.
 pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<OutputChain> {
     use crate::config::{DspLayer, DspRole, dsp_bounds};
     let all = &dsp.profiles;
@@ -126,13 +132,20 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
         // A group without a member to play has nothing to put a layer on.
         .filter(|_| correction.is_none_or(|c| !c.group));
     let name = chosen.or(tuning)?.name.clone();
-    let alone = |c: &DspProfile| OutputChain {
+    let alone = |c: &DspProfile, left_out: Option<String>| OutputChain {
         profile: c.clone(),
         all: all.clone(),
         name: name.clone(),
+        left_out,
+        tuning_plays: false,
     };
     let Some(tuning) = tuning else {
-        return correction.map(alone);
+        return correction.map(|c| alone(c, None));
+    };
+    let left_off = |why: &str| {
+        let why = format!("{} is left out: {why}", tuning.name);
+        log::warn!("dsp: {device}: {why}");
+        correction.map(|c| alone(c, Some(why)))
     };
     let curves = |p: &DspProfile| {
         chain(p, all, &mut Vec::new()).map_or(0, |f| {
@@ -143,22 +156,28 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
     };
     let held = correction.map_or(0, curves) + curves(tuning);
     if held > dsp_bounds::CHAIN_GRAPHICS {
-        log::warn!(
-            "dsp: {} is left off {device}: with the correction it would play more graphic curves than a chain holds",
-            tuning.name
+        return left_off(
+            "with the correction, it would play more graphic curves than a chain holds.",
         );
-        return correction.map(alone);
     }
     let mut on_top = tuning.clone();
     // Control characters are taken out of every name, so none is this.
     on_top.name = format!("\u{1}{}", tuning.name);
     on_top.devices.clear();
     let aim = correction.and_then(|c| profiles::aims_at(c, all));
+    let wanted = aim
+        .zip(made_against(tuning, all, 0))
+        .filter(|(aim, made)| aim != made && targets::same_ear(aim, made));
+    let mut left_out = None;
+    if wanted.is_some() && held >= dsp_bounds::CHAIN_GRAPHICS {
+        left_out = Some(format!(
+            "{} plays without the target difference: the chain's graphic curves are full, so it may not sound as made.",
+            tuning.name
+        ));
+    }
     // Ahead of the tuning, and of a group's member, as a layer of its own.
-    let step = (aim.zip(made_against(tuning, all, 0)))
-        .filter(|(aim, made)| {
-            aim != made && held < dsp_bounds::CHAIN_GRAPHICS && targets::same_ear(aim, made)
-        })
+    let step = wanted
+        .filter(|_| left_out.is_none())
         .and_then(|(aim, made)| Some((targets::choice_curve(&aim)?, targets::choice_curve(&made)?)))
         .map(|(from, to)| DspProfile {
             name: "\u{1}Target difference".into(),
@@ -183,10 +202,18 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             on_top
         }
     };
+    // A chain past what one may hold loses the tuning, never the correction.
+    if let Err(e) = chain(&profile, &among, &mut Vec::new()) {
+        return left_off(&format!(
+            "with the correction, the chain is more than one can hold ({e})."
+        ));
+    }
     Some(OutputChain {
         profile,
         all: among,
         name,
+        left_out,
+        tuning_plays: true,
     })
 }
 

@@ -1209,6 +1209,11 @@ pub struct DspOverview {
     pub active: Option<String>,
     /// The tuning it plays on top of its correction.
     pub tuning: Option<String>,
+    /// Whether that tuning plays: not on a baked correction, nor where the
+    /// chain cannot hold it.
+    pub tuning_plays: bool,
+    /// What of the output's choices does not play, and why.
+    pub left_out: Option<String>,
     /// Every output's tuning, by device.
     pub tunings: std::collections::HashMap<String, String>,
     pub profiles: Vec<DspProfileSummary>,
@@ -1558,6 +1563,8 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
             device: o.device,
             active: o.active,
             tuning: o.tuning,
+            tuning_plays: o.tuning_plays,
+            left_out: o.left_out,
             tunings: o.tunings.into_iter().collect(),
             profiles: o
                 .profiles

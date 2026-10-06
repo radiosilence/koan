@@ -721,11 +721,9 @@ struct EqSettings: View {
 
     private var active: String? { app.dsp.overview?.active }
     /// The tuning on top, where one plays: none waits on a correction with
-    /// one baked in.
+    /// one baked in, or one the chain cannot hold.
     private var tuning: String? {
-        guard let o = app.dsp.overview,
-              o.profiles.first(where: { $0.name == o.active })?.role != .baked
-        else { return nil }
+        guard let o = app.dsp.overview, o.tuningPlays else { return nil }
         return o.tuning
     }
 
