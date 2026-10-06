@@ -48,19 +48,22 @@ private struct SectionPage: View {
     let section: Navigator.Section
 
     var body: some View {
+        #if os(tvOS)
+        // In the page rather than the navigation bar: a television's toolbar
+        // takes focus, but a sheet or menu opened from it never appears. Above
+        // the listing rather than inset over it, which would scroll beneath.
+        VStack(spacing: 0) {
+            if section.isBrowser {
+                BrowseControlsRow(section: section)
+            }
+            page
+        }
+        .navigationTitle(title)
+        .modifier(SectionFilter(placeholder: section.filterPlaceholder))
+        #else
         page
             .navigationTitle(title)
             .modifier(SectionFilter(placeholder: section.filterPlaceholder))
-            #if os(tvOS)
-            // In the page rather than the navigation bar: a television's
-            // toolbar takes focus, but a sheet or menu opened from it never
-            // appears.
-            .safeAreaInset(edge: .top) {
-                if section.isBrowser {
-                    BrowseControlsRow(section: section)
-                }
-            }
-            #else
             .toolbar {
                 if section.isBrowser {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -74,7 +77,7 @@ private struct SectionPage: View {
                     TrackSortControls()
                 }
             }
-            #endif
+        #endif
     }
 
     @ViewBuilder private var page: some View {

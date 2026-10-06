@@ -102,7 +102,7 @@ final class TVWalkTests: XCTestCase {
                 // The browser's own controls sit above the listing, and each
                 // must open something: in a toolbar they took focus and did
                 // nothing.
-                press(.down)
+                press(.up)
                 snap("12a-controls")
                 press(.select)
                 pause(2)
