@@ -42,17 +42,10 @@ final class PlayerModel {
     var isBusy: Bool { pendingMutations > 0 }
 
     /// What a play still finding its tracks is for, from the tap until the
-    /// engine holds the new queue: the transport names it, loading, at once.
-    /// Without it the bar went on showing the paused track for as long as a
-    /// playlist took to read, and a press of its play button in that time
-    /// resumed the old track.
+    /// engine holds the new queue: the transport names it, loading, at once,
+    /// rather than the paused track it is about to replace. Play and pause
+    /// are ignored meanwhile, so that track cannot be resumed under it.
     private(set) var resolving: String?
-
-    /// The request most recently made of the engine. Each waits for the one
-    /// before, so requests arrive in the order they were made, a play still
-    /// finding its tracks included: a tap on pause or play cannot overtake it
-    /// and act on the queue it is about to replace.
-    @ObservationIgnored private var lastRequest: Task<Void, Never>?
 
     /// Set by `AppState`. Queue mutations register here alongside every other
     /// slow thing rather than tracking their own spinner.
@@ -233,9 +226,15 @@ final class PlayerModel {
 
     // MARK: - Transport
 
-    func togglePlayPause() { attempt { try await self.engine.togglePlayPause() } }
+    func togglePlayPause() {
+        guard resolving == nil else { return }
+        attempt { try await self.engine.togglePlayPause() }
+    }
     func pause() { attempt { try await self.engine.pause() } }
-    func resume() { attempt { try await self.engine.resume() } }
+    func resume() {
+        guard resolving == nil else { return }
+        attempt { try await self.engine.resume() }
+    }
     func next() { attempt { try await self.engine.next() } }
     func previous() { attempt { try await self.engine.previous() } }
     func stop() { attempt { try await self.engine.stop() } }
@@ -353,14 +352,13 @@ final class PlayerModel {
     /// jumped, which showed as track one flashing as playing.
     /// Replace the queue with what `resolve` finds, named `name` until it
     /// lands: a record, an artist or a playlist, whose tracks are a database
-    /// read away. In turn with every other request, so nothing tapped while it
-    /// resolves reaches the engine first.
+    /// read away.
     @discardableResult
     func playNow(resolving name: String, _ resolve: @escaping () async -> [Int64]) -> Task<Void, Never> {
         resolving = name
         let engine = self.engine
         pendingMutations += 1
-        return inTurn {
+        return Task {
             let ids = await resolve()
             if !ids.isEmpty {
                 do {
@@ -750,25 +748,13 @@ final class PlayerModel {
     /// Engine calls fail for real reasons (device vanished, track gone) but
     /// none of them are worth a modal. Surface it and carry on.
     private func attempt(_ body: @escaping () async throws -> Void) {
-        inTurn {
+        Task {
             do {
                 try await body()
             } catch {
-                self.lastError = String(describing: error)
+                lastError = String(describing: error)
             }
         }
-    }
-
-    /// Run `work` once every request made before it has been made.
-    @discardableResult
-    private func inTurn(_ work: @escaping @MainActor () async -> Void) -> Task<Void, Never> {
-        let before = lastRequest
-        let task = Task {
-            await before?.value
-            await work()
-        }
-        lastRequest = task
-        return task
     }
 
     /// A queue mutation, with the spinner and the error reporting every one of
@@ -782,14 +768,14 @@ final class PlayerModel {
         let engine = self.engine
         pendingMutations += 1
         let job = activity?.begin("Updating queue")
-        inTurn {
+        Task {
             do {
                 try await body(engine)
             } catch {
-                self.lastError = String(describing: error)
+                lastError = String(describing: error)
             }
-            if let job { self.activity?.end(job) }
-            self.pendingMutations -= 1
+            if let job { activity?.end(job) }
+            pendingMutations -= 1
         }
     }
 }

@@ -141,12 +141,12 @@ struct PlaylistView: View {
                     sleeveSize: 44
                 )))
             case .entry(let entry, let position):
-                let isCurrent = current == entry.id
+                let isCurrent = current == entry.entryId
                 return QueueLine(id: row.id, kind: .track(
                     QueueRowContent(
                         entry: entry,
                         position: position + 1,
-                        queued: mirror.queuedByPlaylistEntry[entry.id],
+                        queued: mirror.queuedByPlaylistEntry[entry.entryId],
                         isCurrent: isCurrent
                     ),
                     isCurrent: isCurrent,
@@ -427,7 +427,7 @@ struct PlaylistView: View {
         guard let first = positions(in: rowIds).min(), let entry = entries[safe: first] else {
             return
         }
-        start(at: entry.id)
+        start(at: entry.entryId)
     }
 
     /// Expand a set of row ids to the playlist positions they stand for. An
@@ -545,7 +545,7 @@ extension PlaylistView {
         var id: String {
             switch self {
             case .album(let id, _): id
-            case .entry(let entry, _): "entry:\(entry.id)"
+            case .entry(let entry, _): "entry:\(entry.entryId)"
             }
         }
 
@@ -622,14 +622,14 @@ private struct PlaylistEntryRow: View {
     @Environment(EngineMirror.self) private var mirror
 
     var body: some View {
-        let isCurrent = player.currentPlaylistEntryId == entry.id
+        let isCurrent = player.currentPlaylistEntryId == entry.entryId
         QueueRow(
             item: QueueRowContent(
                 entry: entry,
                 position: position + 1,
                 // Found by entry, not by track: two copies of one song are
                 // two rows, and each wears its own queue item's state.
-                queued: mirror.queuedByPlaylistEntry[entry.id],
+                queued: mirror.queuedByPlaylistEntry[entry.entryId],
                 isCurrent: isCurrent
             ),
             isCurrent: isCurrent,

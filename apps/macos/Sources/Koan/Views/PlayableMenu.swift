@@ -67,7 +67,7 @@ enum Playable {
         case .artist(let id, _):
             return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
         case .playlist(let id, _):
-            return (try? await engine.playlistTracks(playlistId: id))?.map(\.id) ?? []
+            return (try? await engine.playlistTracks(playlistId: id))?.map(\.track.id) ?? []
         }
     }
 }
