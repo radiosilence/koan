@@ -17,6 +17,9 @@ struct DspProfilePage: View {
     @State private var addingTarget = false
     @State private var editingName = ""
     @State private var confirmingDelete = false
+    /// Bands, responses, headroom and sync, for a correction: most people
+    /// pick a correction and its target and are done.
+    @State private var showingMore = false
 
     var body: some View {
         Form {
@@ -68,40 +71,28 @@ struct DspProfilePage: View {
                 RoleSection(dsp: dsp, detail: d, madeForChoices: madeForChoices,
                             targets: targets, adding: $addingTarget)
                 LayersSection(dsp: dsp, detail: d)
-                ScopeSection(dsp: dsp, detail: d)
 
-                if !d.impulses.isEmpty {
+                // A correction is finished as installed; what it is made of
+                // is there for those who look. A tuning is its bands.
+                if d.role != .tuning {
                     Section {
-                        ForEach(Array(d.impulses.enumerated()), id: \.offset) { _, ir in
-                            ImpulseRow(ir: ir)
+                        Button {
+                            withAnimation { showingMore.toggle() }
+                        } label: {
+                            HStack {
+                                Text(showingMore ? "Less" : "Bands, sync and more")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .rotationEffect(.degrees(showingMore ? 90 : 0))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
                         }
-                    } header: {
-                        Text("Impulse responses")
-                    } footer: {
-                        Text("A track at a rate with no response of its own is resampled to the nearest one here.")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        .buttonStyle(.plain)
                     }
                 }
-
-                BandTable(dsp: dsp, profile: name, bands: d.bands)
-
-                Section {
-                    LabeledContent("Preamp", value: "\(String(format: "%.1f", d.preampDb)) dB")
-                } header: {
-                    Text("Headroom")
-                } footer: {
-                    Text(d.preampSet
-                         ? "Set in the profile."
-                         : "Derived at \(DspModel.khz(d.preampRate)) kHz from the largest gain the filters apply, so nothing they boost can clip.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-
-                if !d.source.isEmpty {
-                    Section("Imported from") {
-                        ForEach(d.source, id: \.self) { Text($0).foregroundStyle(.secondary) }
-                    }
+                if d.role == .tuning || showingMore {
+                    more(d)
                 }
 
                 Section {
@@ -136,6 +127,44 @@ struct DspProfilePage: View {
             }
         } message: {
             Text("Its impulse responses are deleted with it.")
+        }
+    }
+
+    @ViewBuilder private func more(_ d: DspProfileDetail) -> some View {
+        ScopeSection(dsp: dsp, detail: d)
+
+        if !d.impulses.isEmpty {
+            Section {
+                ForEach(Array(d.impulses.enumerated()), id: \.offset) { _, ir in
+                    ImpulseRow(ir: ir)
+                }
+            } header: {
+                Text("Impulse responses")
+            } footer: {
+                Text("A track at a rate with no response of its own is resampled to the nearest one here.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+
+        BandTable(dsp: dsp, profile: name, bands: d.bands)
+
+        Section {
+            LabeledContent("Preamp", value: "\(String(format: "%.1f", d.preampDb)) dB")
+        } header: {
+            Text("Headroom")
+        } footer: {
+            Text(d.preampSet
+                 ? "Set in the profile."
+                 : "Derived at \(DspModel.khz(d.preampRate)) kHz from the largest gain the filters apply, so nothing they boost can clip.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+
+        if !d.source.isEmpty {
+            Section("Imported from") {
+                ForEach(d.source, id: \.self) { Text($0).foregroundStyle(.secondary) }
+            }
         }
     }
 
@@ -184,7 +213,35 @@ private struct LayersSection: View {
         }
     }
 
+    /// Tunings first, since adding one is what most people come here for.
+    private var addMenu: some View {
+        Menu(layers.isEmpty ? "Add a Tuning…" : "Add a Layer") {
+            ForEach(addable.filter { $0.role == .tuning }, id: \.name) { p in
+                Button(p.name) { add(p) }
+            }
+            let others = addable.filter { $0.role != .tuning }
+            if !others.isEmpty {
+                Section("Corrections") {
+                    ForEach(others, id: \.name) { p in
+                        Button("\(p.name) · \(ProfileRole(p.role).label)") { add(p) }
+                    }
+                }
+            }
+        }
+    }
+
     var body: some View {
+        if layers.isEmpty {
+            // Nothing on top: a quiet offer, not an empty section.
+            if !addable.isEmpty {
+                Section { addMenu }
+            }
+        } else {
+            stack
+        }
+    }
+
+    private var stack: some View {
         Section {
             ForEach(Array(layers.enumerated()), id: \.element.profile) { index, layer in
                 Toggle(isOn: Binding(
@@ -224,24 +281,18 @@ private struct LayersSection: View {
                 dsp.setLayers(detail.name, changed)
             }
             #endif
-            if !addable.isEmpty {
-                Menu("Add a Layer") {
-                    ForEach(addable, id: \.name) { p in
-                        Button("\(p.name) · \(ProfileRole(p.role).label)") {
-                            dsp.setLayers(detail.name, layers + [DspLayerInfo(profile: p.name, on: true)])
-                        }
-                    }
-                }
-            }
+            if !addable.isEmpty { addMenu }
         } header: {
             Text("Layers")
         } footer: {
-            Text(layers.isEmpty
-                 ? "Play other profiles first, in order, each switched on or off: a headphone's correction, then a bass shelf or a tilt on top."
-                 : "Played in order, before this profile's own filters. A layer switched off plays nothing.")
+            Text("Played in order, before this profile's own filters: a correction, then tunings on top. A layer switched off plays nothing.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    private func add(_ p: DspProfileSummary) {
+        dsp.setLayers(detail.name, layers + [DspLayerInfo(profile: p.name, on: true)])
     }
 
     private func move(_ index: Int, by step: Int) {

@@ -2906,6 +2906,7 @@ impl KoanEngine {
             Ok(DspTargetOption {
                 id: added.id,
                 name: added.name,
+                does: String::new(),
                 character: String::new(),
             })
         })

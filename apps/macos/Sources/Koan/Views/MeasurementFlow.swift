@@ -213,7 +213,12 @@ struct MeasurementFlow: View {
         switch step {
         case .ear:
             targets = await dsp.targetsFor(inEar: inEar)
-            if !targets.contains(where: { $0.id == target }) { target = targets.first?.id }
+            // Harman, as AutoEQ's corrections are, unless one was picked:
+            // what most people want. Neutral is listed first for the rest.
+            if !targets.contains(where: { $0.id == target }) {
+                let harman = inEar ? "harman-in-ear-2019" : "harman-over-ear-2018"
+                target = targets.first { $0.id == harman }?.id ?? targets.first?.id
+            }
         case .target:
             guard let target else { return }
             do {
