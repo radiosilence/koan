@@ -375,10 +375,27 @@ final class PlayerModel {
         }
     }
 
-    func playNow(trackIds: [Int64], startingAt index: Int = 0) {
+    /// The most a tap on a row queues from the listing it is in. A listing can
+    /// be the whole library; one longer than this is queued from the row
+    /// tapped, this many tracks of it.
+    nonisolated static let listingWindow = 500
+
+    /// Replace the queue with `trackIds` and play. With `index`, a row tapped
+    /// in a listing: it plays from there, with the listing around it, the
+    /// whole of it up to `listingWindow` tracks. Without, what was chosen is
+    /// played whole: a record, an artist, a selection.
+    func playNow(trackIds: [Int64], startingAt index: Int? = nil) {
         guard !trackIds.isEmpty else { return }
-        let start = trackIds.indices.contains(index) ? index : 0
-        mutate { _ = try await $0.replaceQueue(trackIds: trackIds, startAt: UInt32(start)) }
+        let (queued, start) = Self.listing(trackIds, from: index)
+        mutate { _ = try await $0.replaceQueue(trackIds: queued, startAt: UInt32(start)) }
+    }
+
+    /// What `playNow` queues, and where it starts.
+    nonisolated static func listing(_ ids: [Int64], from index: Int?) -> ([Int64], Int) {
+        guard let index else { return (ids, 0) }
+        let start = ids.indices.contains(index) ? index : 0
+        guard ids.count > listingWindow else { return (ids, start) }
+        return (Array(ids[start..<min(start + listingWindow, ids.count)]), 0)
     }
 
     /// Queue immediately after whatever is playing, rather than at the end.
