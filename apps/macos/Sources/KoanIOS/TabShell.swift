@@ -347,6 +347,9 @@ private struct Transport: ViewModifier {
                 }
                 .koanSurface()
             }
+            // Behind the keyboard, as the platform's tab bar stays: risen
+            // above it, the bar would cover the field being typed in.
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         } else {
             content.tabViewBottomAccessory { player }
         }
