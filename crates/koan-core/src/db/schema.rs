@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 19;
+pub const SCHEMA_VERSION: i64 = 20;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -294,6 +294,24 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             rating      INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
             changed_at  TEXT DEFAULT (datetime('now')),
             PRIMARY KEY (user_id, artist_id)
+        );
+
+        -- The queue a Subsonic client saved for its account. See
+        -- `queries::play_queues`. The current entry is held by its place in
+        -- the order as saved.
+        CREATE TABLE IF NOT EXISTS play_queues (
+            user_id           INTEGER PRIMARY KEY,
+            current_position  INTEGER,
+            position_ms       INTEGER NOT NULL,
+            changed_at        INTEGER NOT NULL,
+            changed_by        TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS play_queue_entries (
+            user_id   INTEGER NOT NULL,
+            position  INTEGER NOT NULL,
+            track_id  INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            PRIMARY KEY (user_id, position)
         );
 
         -- Where an account is in a track. See `queries::bookmarks`.
@@ -768,6 +786,13 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
              DELETE FROM track_ratings WHERE user_id = OLD.id;
              DELETE FROM album_ratings WHERE user_id = OLD.id;
              DELETE FROM artist_ratings WHERE user_id = OLD.id;
+         END;",
+    )?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_play_queue_entries_track ON play_queue_entries(track_id);
+         CREATE TRIGGER IF NOT EXISTS users_play_queues AFTER DELETE ON users BEGIN
+             DELETE FROM play_queue_entries WHERE user_id = OLD.id;
+             DELETE FROM play_queues WHERE user_id = OLD.id;
          END;",
     )?;
     conn.execute_batch(

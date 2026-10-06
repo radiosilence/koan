@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Saved play queues over the Subsonic API.** Clients that save their queue on pause or exit and offer to resume it on another device (Symfonium, Feishin, Supersonic) can now do so against a kōan server: `savePlayQueue` and `getPlayQueue` keep one queue per account, and the OpenSubsonic `indexBasedQueue` extension (`savePlayQueueByIndex`, `getPlayQueueByIndex`) names the current song by its place, so a song queued twice is unambiguous. kōan's own apps do not use it. **The library database moves to schema 20** for the `play_queues` and `play_queue_entries` tables; a build older than this one refuses it.
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
 ### Fixed

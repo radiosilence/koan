@@ -109,6 +109,7 @@ Besides playing, browsing and favourites, Subsonic clients get:
 
 - **Ratings.** `setRating` keeps a rating of one to five per account for songs, albums and artists, returned as `userRating`, and `getAlbumList2?type=highest` lists rated albums best first. kōan's own apps do not show ratings.
 - **Bookmarks.** `createBookmark`, `getBookmarks` and `deleteBookmark` keep one position and note per account and track, for clients that resume long tracks. kōan's own apps do not use them.
+- **A saved play queue.** `savePlayQueue` and `getPlayQueue` keep one queue per account, with its current song and position, for clients that save on pause or exit and resume on another device; the OpenSubsonic `indexBasedQueue` extension (`savePlayQueueByIndex`, `getPlayQueueByIndex`) names the current song by its place, so a song queued twice is unambiguous. Songs the library no longer has are left out when it is read. It needs an account: the shared secret is refused. kōan's own apps move their queues between devices over the link instead, and do not use it.
 - **Transcoding.** A client that asks `stream` for a lower `maxBitRate` than the file's, or for `format=opus`, `mp3` or `aac`, gets an encode made by `ffmpeg`, so a lossless library does not cost full bandwidth on mobile data. `format=raw` and `download` return the original. The limits, formats and fallbacks are in [Configuration](../reference/configuration.md#subsonic).
 - **Smart playlists**, read-only, as ordinary playlists. See [Smart playlists](smart-playlists.md).
 
