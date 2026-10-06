@@ -223,7 +223,7 @@ pub fn index(freshness: Freshness) -> Result<Vec<Entry>, String> {
             let kept_new = std::fs::create_dir_all(&dir)
                 .and_then(|()| std::fs::write(&part, &text))
                 .and_then(|()| std::fs::rename(&part, &file));
-            if let Err(e) = kept_new {
+            if let Err(e) = &kept_new {
                 log::info!("autoeq: index not kept: {e}");
                 let _ = std::fs::remove_file(&part);
             }
