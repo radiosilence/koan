@@ -12,9 +12,9 @@ struct TrackBrowser: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
+    @Environment(EngineMirror.self) private var mirror
     @State private var selection: Set<Int64> = []
     #if os(macOS)
-    @Environment(EngineMirror.self) private var mirror
     @Environment(CoverArtCache.self) private var art
     @Environment(PlayingLevels.self) private var levels
     @Environment(TransferMeter.self) private var meter
