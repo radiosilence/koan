@@ -79,7 +79,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 
 ## Supervising sessions
 
-If you are told you are the foreman, supervisor, manager or boss of the koan sessions, in any wording, this section is your brief: read it before doing anything else. Other sessions skip it.
+If you are told you are the foreman, supervisor, manager, boss or guvnor of the koan sessions, in any wording, this section is your brief: read it before doing anything else. Other sessions skip it.
 
 The manager coordinates and does not write features. It keeps the context, makes the decisions and hands each piece of work to another session as a self-contained task: the exact branch, the exact change, the command that verifies it, and what to report back.
 
