@@ -341,7 +341,7 @@ struct TrackRow: View {
                     LinkText(
                         text: track.artistName,
                         target: track.artistId.map { .artist($0) },
-                        font: .caption
+                        font: .role(.fine, system: .caption)
                     )
                     if showsAlbum {
                         Text("·")
@@ -350,7 +350,7 @@ struct TrackRow: View {
                         LinkText(
                             text: track.albumTitle,
                             target: track.albumId.map { .album($0) },
-                            font: .caption
+                            font: .role(.fine, system: .caption)
                         )
                     }
                 }

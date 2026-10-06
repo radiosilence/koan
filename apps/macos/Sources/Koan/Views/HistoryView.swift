@@ -252,7 +252,7 @@ private struct HistoryRow: View {
                     LinkText(
                         text: track.artistName,
                         target: track.artistId.map { .artist($0) },
-                        font: .caption
+                        font: .role(.fine, system: .caption)
                     )
                     Text("·")
                         .font(.role(.fine, system: .caption))
@@ -260,7 +260,7 @@ private struct HistoryRow: View {
                     LinkText(
                         text: track.albumTitle,
                         target: track.albumId.map { .album($0) },
-                        font: .caption
+                        font: .role(.fine, system: .caption)
                     )
                 }
             }

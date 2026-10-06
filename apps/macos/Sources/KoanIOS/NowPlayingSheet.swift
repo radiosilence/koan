@@ -87,14 +87,14 @@ struct NowPlayingSheet: View {
                     LinkText(
                         text: entry.artist,
                         target: player.currentArtistId.map { .artist($0) },
-                        font: .body
+                        font: .role(.body, system: .body)
                     )
                     .lineLimit(1)
                     if !entry.album.isEmpty {
                         LinkText(
                             text: entry.album,
                             target: player.currentAlbumId.map { .album($0) },
-                            font: .subheadline
+                            font: .role(.meta, system: .subheadline)
                         )
                         .lineLimit(1)
                     }

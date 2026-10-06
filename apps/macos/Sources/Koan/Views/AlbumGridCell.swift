@@ -100,7 +100,7 @@ struct AlbumGridCell: View {
 
             HStack(spacing: 4) {
                 if showArtist {
-                    LinkText(text: album.artistName, target: .artist(album.artistId), font: .caption)
+                    LinkText(text: album.artistName, target: .artist(album.artistId), font: .role(.fine, system: .caption))
                 }
                 if let year = album.year {
                     Text(showArtist ? "· \(String(year))" : String(year))

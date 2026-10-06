@@ -15,7 +15,7 @@ struct LinkText: View {
 
     let text: String
     let target: Target?
-    var font: Font = .callout
+    var font: Font?
     /// The link is the row's own subject rather than a reference out of it —
     /// an artist in the artists list, not the artist credited on a track.
     var prominent = false
@@ -35,16 +35,16 @@ struct LinkText: View {
         // A row is one focusable thing on a television; a link inside it can
         // never be reached, so it reads as the name it is.
         Text(text)
-            .font(font)
-            .foregroundStyle(prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            .font(font ?? .role(.control, system: .callout))
+            .foregroundStyle(prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary))
             .lineLimit(1)
         #else
         if let target {
             Text(text)
-                .font(font)
+                .font(font ?? .role(.control, system: .callout))
                 .underline(hovering)
                 .foregroundStyle(
-                    hovering || prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
+                    hovering || prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary)
                 )
                 .lineLimit(1)
                 .contentShape(.rect)
@@ -69,8 +69,8 @@ struct LinkText: View {
                 .help("Go to \(text)")
         } else {
             Text(text)
-                .font(font)
-                .foregroundStyle(prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .font(font ?? .role(.control, system: .callout))
+                .foregroundStyle(prominent ? KoanTheme.style(.ink, system: .primary) : KoanTheme.style(.muted, system: .secondary))
                 .lineLimit(1)
         }
         #endif

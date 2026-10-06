@@ -176,7 +176,7 @@ private struct ArtistRow: View {
                 LinkText(
                     text: artist.name,
                     target: .artist(artist.id),
-                    font: .body,
+                    font: .role(.body, system: .body),
                     prominent: true
                 )
                 Text(
@@ -192,7 +192,7 @@ private struct ArtistRow: View {
             LinkText(
                 text: artist.name,
                 target: .artist(artist.id),
-                font: .body,
+                font: .role(.body, system: .body),
                 prominent: true
             )
             ArtistHeart(artistId: artist.id, showing: hovered, size: .caption)

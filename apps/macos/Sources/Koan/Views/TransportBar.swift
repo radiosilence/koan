@@ -145,7 +145,7 @@ struct TransportBar: View {
                         LinkText(
                             text: entry.artist,
                             target: player.currentArtistId.map { .artist($0) },
-                            font: .role(.fine)
+                            font: .role(.fine, system: .caption)
                         )
                         if !entry.album.isEmpty {
                             Text(" — ")
@@ -153,7 +153,7 @@ struct TransportBar: View {
                             LinkText(
                                 text: entry.album,
                                 target: player.currentAlbumId.map { .album($0) },
-                                font: .caption
+                                font: .role(.fine, system: .caption)
                             )
                         }
                     }
