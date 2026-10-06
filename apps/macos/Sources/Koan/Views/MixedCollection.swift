@@ -826,7 +826,7 @@ private final class ArtistPillItem: NSCollectionViewItem {
         guard let coordinator, coordinator.picking, let artist else {
             return Symbol.image("music.mic", size: 9, colours: [.koanTertiaryLabel], appearance: appearance)
         }
-        let tint = coordinator.parent?.tileContext.tint ?? .controlAccentColor
+        let tint = coordinator.parent?.tileContext.tint ?? NSColor(KoanAccent.mint.color)
         return coordinator.isPicked(Playable.artist(id: artist.id, name: artist.name).key)
             ? Symbol.image("checkmark.circle.fill", size: 10, colours: [.white, tint], appearance: appearance)
             : Symbol.image("circle", size: 10, colours: [.koanTertiaryLabel], appearance: appearance)

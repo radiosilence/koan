@@ -29,7 +29,7 @@ struct MiniPlayer: View {
                     // is not here.
                     Label(player.controlled?.name ?? "Another device", systemImage: "laptopcomputer.and.iphone")
                         .font(.role(.fine, system: .caption))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(.tint)
                         .lineLimit(1)
                 } else if player.resolving == nil, let artist = entry?.artist, !artist.isEmpty {
                     Text(artist)

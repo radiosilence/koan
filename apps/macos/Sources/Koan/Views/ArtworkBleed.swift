@@ -53,6 +53,9 @@ struct ArtworkBleed: View {
 
     @Environment(\.powerSaving) private var powerSaving
     @Environment(\.colorScheme) private var scheme
+    /// Optional: the window's background is built outside the environment
+    /// the app hands its views, and is given this explicitly.
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
     /// Whether the wash is moving: something to breathe to, a setting that
     /// allows it, and a system that has not asked for less motion.
     private var breathes: Bool { drifts && graphics.drifts && !reduceMotion && !powerSaving }
@@ -60,7 +63,8 @@ struct ArtworkBleed: View {
     var body: some View {
         // Below `reduced` this is nothing at all rather than a transparent
         // wash: no cover fetched, no blur, no mirrored copy under the glass.
-        if graphics.showsWash {
+        // And nothing when colours from the record are off.
+        if graphics.showsWash, appearance?.recordColours != false {
             bleed
         }
     }

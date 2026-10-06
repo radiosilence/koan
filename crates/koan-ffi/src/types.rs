@@ -1446,6 +1446,8 @@ pub struct Appearance {
     pub koan: bool,
     /// In the kōan theme, icons beside labels.
     pub icons: bool,
+    /// The wash and the accent take their colour from the record playing.
+    pub record_colours: bool,
 }
 
 /// Everything the settings window reads and writes.

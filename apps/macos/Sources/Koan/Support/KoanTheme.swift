@@ -121,10 +121,17 @@ final class AppearanceModel {
         didSet { if koan != oldValue { engine.setTheme(koan: koan) } }
     }
 
+    /// "Colours from the record": the wash, and the accent from the sleeve.
+    /// Off, no wash and koan's mint, in either theme. Takes effect at once.
+    var recordColours: Bool {
+        didSet { if recordColours != oldValue { engine.setRecordColours(on: recordColours) } }
+    }
+
     init(engine: KoanEngine, appearance: Appearance) {
         self.engine = engine
         self.showIcons = appearance.icons
         self.koan = appearance.koan
+        self.recordColours = appearance.recordColours
     }
 }
 

@@ -2968,6 +2968,14 @@ impl KoanEngine {
         }
     }
 
+    /// Colours from the record, or koan's own. Saved at once; the app redraws
+    /// from its own copy.
+    pub fn set_record_colours(&self, on: bool) {
+        if let Err(e) = Config::persist(|cfg| cfg.appearance.record_colours = on) {
+            log::warn!("appearance: record_colours not saved: {e}");
+        }
+    }
+
     /// Show icons beside labels in the kōan theme, or not. Saved at once;
     /// the app redraws from its own copy.
     pub fn set_theme_icons(&self, on: bool) {
@@ -2983,6 +2991,7 @@ impl KoanEngine {
         Appearance {
             koan: cfg.appearance.theme == "koan",
             icons: cfg.appearance.theme_icons,
+            record_colours: cfg.appearance.record_colours,
         }
     }
 

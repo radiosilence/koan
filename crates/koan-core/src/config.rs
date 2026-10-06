@@ -51,6 +51,10 @@ pub struct AppearanceConfig {
     /// In the kōan theme, draw the app's icons beside navigation, tabs and
     /// controls; off, labels alone.
     pub theme_icons: bool,
+    /// Take colour from the record playing: the wash behind the window and
+    /// the accent. Off, there is no wash and the accent is koan's mint, in
+    /// either theme.
+    pub record_colours: bool,
 }
 
 impl Default for AppearanceConfig {
@@ -58,6 +62,7 @@ impl Default for AppearanceConfig {
         Self {
             theme: "koan".into(),
             theme_icons: true,
+            record_colours: true,
         }
     }
 }

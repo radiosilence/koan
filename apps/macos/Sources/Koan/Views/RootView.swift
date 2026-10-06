@@ -227,6 +227,7 @@ struct RecordRoom: ViewModifier {
     /// record in it, since a playlist has no cover of its own.
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(\.drawnOffscreen) private var offscreen
+    @Environment(AppearanceModel.self) private var appearance
 
     /// The colour of a record the cache could not already answer for, and which
     /// record it was worked out for. Only consulted when the cache cannot.
@@ -269,9 +270,11 @@ struct RecordRoom: ViewModifier {
     }
 
     /// The record's colour once it is known, and until then the one already
-    /// on; `nil` is a record with none, or nothing playing.
+    /// on; `nil` is a record with none, nothing playing, or colours from the
+    /// record turned off.
     private var record: Color? {
-        switch recordTint {
+        guard appearance.recordColours else { return nil }
+        return switch recordTint {
         case .some(let colour): colour
         case .none: worn
         }
@@ -304,6 +307,7 @@ struct RecordRoom: ViewModifier {
         let guessed = recordTint == nil
         let player = player
         let artCache = art
+        let appearanceModel = appearance
         // Over an opaque ground, because this *replaces* the window's own
         // background rather than sitting on it — a half-transparent wash on its
         // own leaves you looking through the app at the desktop.
@@ -315,6 +319,7 @@ struct RecordRoom: ViewModifier {
             }
             WindowWash(source: wash, player: player)
                 .environment(artCache)
+                .environment(appearanceModel)
         }
 
         content

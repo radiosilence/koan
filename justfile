@@ -418,6 +418,7 @@ theme-leaks:
         '\.foreground(Style|Color)\(\.(primary|secondary|tertiary|quaternary)\)'
         'cornerRadius: [0-9]'
         'AnyShapeStyle\(\.(primary|secondary|tertiary)\)'
+        'Color\.accentColor|Color\.koanAccent|\.controlAccentColor'
         'ContentUnavailableView\('
         'font: \.(caption|callout|body|subheadline|footnote|headline)\b'
         '\.shadow\(color: \.black\.opacity\([0-9]'

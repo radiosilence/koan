@@ -1133,23 +1133,23 @@ private struct ScrobblingSettings: View {
                         Label(refused, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
                         Text("Disconnect, then connect again with a current token. Plays recorded meanwhile are kept and sent.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     } else if c.pending > 0 {
                         Text(Format.count(c.pending, "play") + " waiting to be sent")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     }
                     #if !os(tvOS)
                     Button("Disconnect", role: .destructive, action: disconnect)
                         .disabled(busy)
                     #endif
                 } else if !loaded {
-                    Text("Checking…").foregroundStyle(.secondary)
+                    Text("Checking…").foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 } else if statusFailed {
                     Button("Try Again") { Task { await load() } }
                 } else {
                     #if os(tvOS)
                     Text("Not connected. Connect ListenBrainz from kōan on a phone or Mac.")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     #else
                     SecureField("User token", text: $token, prompt: Text("ListenBrainz user token"))
                         .verbatimEntry()
@@ -1171,8 +1171,8 @@ private struct ScrobblingSettings: View {
                 Text("Scrobbling")
             } footer: {
                 Text("The server sends what you play to ListenBrainz, from every app signed in as you, your history included when you connect. The token is kept on the server.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
             }
             .task(id: mirror.connection?.scrobbling) { await load() }
         }
@@ -1452,6 +1452,14 @@ private struct AppearanceSettings: View {
                 KoanSectionHeader("Theme")
             } footer: {
                 Text("kōan is the site's look; System, the platform's own. A change of theme takes effect the next time kōan opens. Show icons puts icons beside the labels in the sidebar, the tabs and the buttons.")
+                    .koanText(.fine, .muted)
+            }
+            Section {
+                Toggle("Colours from the record", isOn: $appearance.recordColours).koanToggle()
+            } header: {
+                KoanSectionHeader("Colour")
+            } footer: {
+                Text("The record playing colours the window behind the page, and the accent on selection and progress. Off, there is no wash and the accent is kōan's mint, in either theme.")
                     .koanText(.fine, .muted)
             }
             Section {

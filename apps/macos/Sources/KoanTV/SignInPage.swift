@@ -15,6 +15,7 @@ struct SignInPage: View {
     let signedIn: () -> Void
 
     @Environment(AppState.self) private var state
+    @Environment(\.roomTint) private var tint
     @Environment(ActivityModel.self) private var activity
     @Environment(EngineMirror.self) private var mirror
     @State private var server = ""
@@ -69,7 +70,7 @@ struct SignInPage: View {
             ZStack {
                 Rectangle().fill(.black)
                 RadialGradient(
-                    colors: [Color.koanAccent.opacity(0.18), .clear],
+                    colors: [tint.opacity(0.18), .clear],
                     center: UnitPoint(x: 0.2, y: 0.1),
                     startRadius: 0,
                     endRadius: 1200

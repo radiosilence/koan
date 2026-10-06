@@ -70,7 +70,8 @@ struct EqGraph: View {
                         yEnd: .value("dB", area.db),
                         series: .value("Band", area.series)
                     )
-                    .foregroundStyle(.tint.opacity(0.15))
+                    // Each band neutral, so the accent is the curve that plays.
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary).opacity(0.15))
                 }
                 lines(curves: [Curve(name: "EQ", db: response.total)], color: AnyShapeStyle(.tint), width: 2)
                 ForEach(shownHandles) { h in
@@ -194,7 +195,9 @@ struct EqGraph: View {
         HStack(spacing: 14) {
             if showingEq {
                 key("EQ", AnyShapeStyle(.tint))
-                if !response.bands.isEmpty { key("Each band", AnyShapeStyle(.tint.opacity(0.3))) }
+                if !response.bands.isEmpty {
+                    key("Each band", AnyShapeStyle(KoanTheme.style(.muted, system: .secondary).opacity(0.3)))
+                }
             } else {
                 key("Measured", KoanTheme.style(.muted))
                 key("Target", AnyShapeStyle(KoanTheme.style(.ink).opacity(0.55)), dashed: true)
