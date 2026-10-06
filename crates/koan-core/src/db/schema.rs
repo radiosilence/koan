@@ -534,9 +534,88 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
                   WHERE user_id = new.user_id;
              END;",
     )?;
+    cascade_orphans(conn)?;
+    refuse_dangling_references(conn)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
+}
+
+/// Do what `ON DELETE CASCADE` would have done for the rows the upgrade
+/// deleted. Foreign keys are off for the whole upgrade, since the table
+/// rebuilds need them off and the pragma cannot change inside a transaction,
+/// so deleting an album or an artist left its favourites and ratings behind.
+/// For every key declared to cascade, the rows naming a parent that is gone
+/// are deleted, until a pass deletes nothing: a deleted track takes its
+/// playlist entries, and so on down.
+fn cascade_orphans(conn: &Connection) -> rusqlite::Result<()> {
+    let tables: Vec<String> = conn
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut cascades = Vec::new();
+    for table in &tables {
+        let mut stmt = conn.prepare(&format!("PRAGMA foreign_key_list(\"{table}\")"))?;
+        let keys = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>("table")?,
+                r.get::<_, String>("from")?,
+                r.get::<_, Option<String>>("to")?,
+                r.get::<_, String>("on_delete")?,
+            ))
+        })?;
+        for key in keys {
+            let (parent, from, to, on_delete) = key?;
+            if on_delete.eq_ignore_ascii_case("CASCADE") {
+                let to = to.unwrap_or_else(|| "rowid".to_owned());
+                cascades.push(format!(
+                    "DELETE FROM \"{table}\" WHERE \"{from}\" IS NOT NULL
+                       AND \"{from}\" NOT IN (SELECT \"{to}\" FROM \"{parent}\")"
+                ));
+            }
+        }
+    }
+    loop {
+        let mut deleted = 0;
+        for sql in &cascades {
+            deleted += conn.execute(sql, [])?;
+        }
+        if deleted == 0 {
+            return Ok(());
+        }
+    }
+}
+
+/// Fail the upgrade, and with it roll everything back, if any row names a
+/// parent that is not there: a key that does not cascade, whose child the
+/// upgrade should have dealt with and did not.
+fn refuse_dangling_references(conn: &Connection) -> rusqlite::Result<()> {
+    let dangling: Vec<(String, i64, String)> = conn
+        .prepare(r#"SELECT "table", rowid, parent FROM pragma_foreign_key_check LIMIT 5"#)?
+        .query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get::<_, Option<i64>>(1)?.unwrap_or(0),
+                r.get(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    if dangling.is_empty() {
+        return Ok(());
+    }
+    let rows: Vec<String> = dangling
+        .iter()
+        .map(|(table, rowid, parent)| format!("{table} row {rowid} names a missing {parent}"))
+        .collect();
+    Err(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY),
+        Some(format!(
+            "the upgrade would leave rows naming what is not there: {}",
+            rows.join("; ")
+        )),
+    ))
 }
 
 /// Columns added after the initial schema. Applied when absent, so a database
@@ -1286,8 +1365,11 @@ fn autoincrement_play_history(conn: &Connection) -> rusqlite::Result<()> {
          CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
          RELEASE rebuild;",
     );
+    // Back to before the rebuild and no further: inside an upgrade, a bare
+    // ROLLBACK would end the upgrade's transaction and hide this error behind
+    // the failure of the rollback that follows.
     if rebuild.is_err() {
-        let _ = conn.execute_batch("ROLLBACK");
+        let _ = conn.execute_batch("ROLLBACK TO rebuild; RELEASE rebuild");
     }
     conn.pragma_update(None, "foreign_keys", "on")?;
     rebuild
@@ -1330,8 +1412,11 @@ fn autoincrement_user_ids(conn: &Connection) -> rusqlite::Result<()> {
          ALTER TABLE users_new RENAME TO users;
          RELEASE rebuild;",
     );
+    // Back to before the rebuild and no further: inside an upgrade, a bare
+    // ROLLBACK would end the upgrade's transaction and hide this error behind
+    // the failure of the rollback that follows.
     if rebuild.is_err() {
-        let _ = conn.execute_batch("ROLLBACK");
+        let _ = conn.execute_batch("ROLLBACK TO rebuild; RELEASE rebuild");
     }
     conn.pragma_update(None, "foreign_keys", "on")?;
     rebuild
@@ -1796,6 +1881,86 @@ mod tests {
         );
         reader.execute_batch("COMMIT").unwrap();
         assert_eq!(version(&reader), SCHEMA_VERSION);
+    }
+
+    /// What the upgrade deletes takes what hangs off it, as it would with
+    /// foreign keys on: an empty album's favourite and rating.
+    #[test]
+    fn an_upgrade_leaves_nothing_naming_what_it_deleted() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        crate::db::queries::auth::create_user(&conn, "jo", "pw", crate::auth::Role::User).unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO albums (id, title) VALUES (7, 'Empty');
+             INSERT INTO favourite_albums (user_id, album_id)
+                 SELECT id, 7 FROM users WHERE username = 'jo';
+             INSERT INTO album_ratings (user_id, album_id, rating)
+                 SELECT id, 7, 5 FROM users WHERE username = 'jo';
+             PRAGMA user_version = {};",
+            SCHEMA_VERSION - 1
+        ))
+        .unwrap();
+        create_tables(&conn).unwrap();
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM albums WHERE id = 7"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM favourite_albums"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM album_ratings"), 0);
+        assert_eq!(count("SELECT COUNT(*) FROM pragma_foreign_key_check"), 0);
+    }
+
+    /// A reference no cascade covers, left dangling, fails the upgrade and
+    /// rolls it back.
+    #[test]
+    fn an_upgrade_that_would_leave_a_dangling_reference_fails() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.pragma_update(None, "foreign_keys", "off").unwrap();
+        conn.execute_batch(&format!(
+            "INSERT INTO tracks (title, album_id, path) VALUES ('Archangel', 99, '/a.flac');
+             PRAGMA user_version = {};",
+            SCHEMA_VERSION - 1
+        ))
+        .unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        let err = create_tables(&conn).unwrap_err().to_string();
+        assert!(err.contains("missing albums"), "{err}");
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION - 1);
+        assert!(conn.is_autocommit());
+    }
+
+    /// A rebuild that fails reports its own error, not the failure of a
+    /// rollback after its transaction was already gone.
+    #[test]
+    fn a_failed_rebuild_reports_its_own_error() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.pragma_update(None, "foreign_keys", "off").unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE users_plain (
+                 id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE,
+                 password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user',
+                 created_at TEXT
+             );
+             INSERT INTO users_plain SELECT id, username, password_hash, role, created_at FROM users;
+             DROP TABLE users;
+             ALTER TABLE users_plain RENAME TO users;
+             CREATE TABLE users_new (x);
+             PRAGMA user_version = {};",
+            SCHEMA_VERSION - 1
+        ))
+        .unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        let err = create_tables(&conn).unwrap_err().to_string();
+        assert!(err.contains("users_new"), "{err}");
+        assert!(!err.contains("no transaction"), "{err}");
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION - 1);
+        assert!(conn.is_autocommit());
     }
 
     #[test]
