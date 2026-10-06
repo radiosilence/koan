@@ -54,7 +54,11 @@ struct DspProfilePage: View {
                     }
                 }
 
-                LayersSection(dsp: dsp, detail: d)
+                if d.group {
+                    GroupSection(dsp: dsp, detail: d)
+                } else {
+                    LayersSection(dsp: dsp, detail: d)
+                }
 
                 if let t = targets {
                     TargetSection(dsp: dsp, profile: d.name, targets: t, adding: $addingTarget)
@@ -155,6 +159,34 @@ struct DspProfilePage: View {
 /// The profiles a stack plays first, in order, each switched on or off: a
 /// headphone's correction, then taste on top of it. Any profile can become a
 /// stack; one with impulse responses cannot be a layer.
+/// A group's members, one playing, chosen as a radio button is.
+private struct GroupSection: View {
+    let dsp: DspModel
+    let detail: DspProfileDetail
+
+    var body: some View {
+        Section {
+            Picker("Playing", selection: Binding(
+                get: { detail.layers.first(where: \.on)?.profile ?? "" },
+                set: { dsp.select(detail.name, $0) }
+            )) {
+                ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            #if !os(tvOS)
+            Button("Make It a Stack of Layers") { dsp.setGroup(detail.name, false) }
+            #endif
+        } header: {
+            Text("Group: pick one")
+        } footer: {
+            Text("One member plays at a time. Pick another and it plays in place of the last. Each member is a profile of its own, with its own page.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+
 private struct LayersSection: View {
     let dsp: DspModel
     let detail: DspProfileDetail
@@ -215,6 +247,11 @@ private struct LayersSection: View {
                     }
                 }
             }
+            #if !os(tvOS)
+            if layers.count > 1 {
+                Button("Make It a Group, One Playing at a Time") { dsp.setGroup(detail.name, true) }
+            }
+            #endif
         } header: {
             Text("Layers")
         } footer: {

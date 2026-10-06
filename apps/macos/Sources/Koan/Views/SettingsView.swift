@@ -696,6 +696,18 @@ struct EqSettings: View {
 
     var body: some View {
         Form {
+            if let active, let detail, detail.group {
+                Section {
+                    Picker("Playing", selection: Binding(
+                        get: { detail.layers.first(where: \.on)?.profile ?? "" },
+                        set: { app.dsp.select(active, $0) }
+                    )) {
+                        ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
+                    }
+                } header: {
+                    Text("Group: pick one")
+                }
+            }
             if let active, let response, let detail {
                 Section {
                     EqGraph(response: response, handles: BandTable.handles(detail.bands)) { index, hz, db in
@@ -1053,10 +1065,15 @@ struct DspImportPrompts: ViewModifier {
                 }
                 Button("Done", role: .cancel) {}
             } message: { _ in
-                if let device = dsp.overview?.device, dsp.overview?.active == nil {
+                if let summary = dsp.importSummary {
+                    Text(summary)
+                } else if let device = dsp.overview?.device, dsp.overview?.active == nil {
                     Text("\(device) plays untouched until it has a profile.")
                 }
             }
+            #if !os(tvOS)
+            .dspImportConfirmation(dsp)
+            #endif
     }
 }
 

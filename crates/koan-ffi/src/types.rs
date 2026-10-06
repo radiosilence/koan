@@ -1217,6 +1217,9 @@ pub struct DspProfileSummary {
     pub rates: Vec<u32>,
     /// Why it would not load, if it would not.
     pub problem: Option<String>,
+    /// For a group: its members, in order, and the one playing.
+    pub members: Vec<String>,
+    pub playing: Option<String>,
 }
 
 /// A curve on `DspResponse.freqs`, in dB.
@@ -1463,6 +1466,8 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     layers: p.layers as u32,
                     rates: p.rates,
                     problem: p.problem,
+                    members: p.members,
+                    playing: p.playing,
                 })
                 .collect(),
         }

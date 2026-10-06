@@ -8,6 +8,14 @@ import Observation
 /// through: one import flow wherever it starts, asking for a sample rate only
 /// for coefficients that carry none, and offering the new profile for the
 /// output in use once it is in.
+/// Files chosen together, and what importing them will do.
+struct PendingImport: Identifiable {
+    let id = UUID()
+    let urls: [URL]
+    let plan: DspImportPlan
+    let rate: UInt32?
+}
+
 @MainActor
 @Observable
 final class DspModel {
@@ -24,6 +32,8 @@ final class DspModel {
     var lastError: String?
     /// What the last import of several files did.
     var importSummary: String?
+    /// Several files planned for import, waiting to be confirmed and named.
+    var pendingImport: PendingImport?
     /// An import waiting on the rate of what it was given.
     var needsRate: Pending?
     /// AutoEQ's results for the last search.
@@ -62,49 +72,74 @@ final class DspModel {
 
     // MARK: - Importing
 
-    /// Files, folders or zips: a profile from each file where every one is
-    /// a whole EQ by itself, one from them all otherwise. Picked or shared
-    /// ones are security-scoped and readable only while held open.
+    /// Files, folders or zips. Several are first planned and shown to be
+    /// confirmed (`pendingImport`): whole presets become a group, parts of
+    /// one profile combine into one. Picked or shared ones are
+    /// security-scoped and readable only while held open.
     func importFiles(_ urls: [URL], name: String? = nil, rate: UInt32? = nil) {
         let engine = self.engine
         Task {
-            let held = urls.filter { $0.startAccessingSecurityScopedResource() }
-            defer { held.forEach { $0.stopAccessingSecurityScopedResource() } }
-            if let name {
-                await finish(.files(urls, name: name)) {
-                    try await engine.dspImport(paths: urls.map(\.path), name: name, rate: rate)
-                }
+            if urls.count > 1, name == nil {
+                let held = urls.filter { $0.startAccessingSecurityScopedResource() }
+                let plan = await engine.dspImportPlan(paths: urls.map(\.path))
+                held.forEach { $0.stopAccessingSecurityScopedResource() }
+                pendingImport = PendingImport(urls: urls, plan: plan, rate: rate)
                 return
             }
-            do {
-                let summary = try await engine.dspImportFiles(paths: urls.map(\.path), rate: rate)
-                imported = summary.imported.first
-                lastError = nil
-                importSummary = Self.describe(summary)
-            } catch KoanError.NeedsSampleRate {
-                needsRate = .files(urls, name: nil)
-            } catch {
-                importSummary = nil
-                lastError = SettingsModel.describe(error)
-            }
-            await changed()
+            await run(urls, name: name, rate: rate)
         }
     }
 
-    /// "4 imported", or "3 imported, 1 refused: Flat.txt: …".
-    static func describe(_ summary: DspImportSummary) -> String? {
-        let count = summary.imported.count
-        guard count > 1 || !summary.refused.isEmpty || !summary.notes.isEmpty else { return nil }
-        var parts = ["\(count) imported"]
+    /// Import what `pendingImport` planned, under `name`.
+    func confirmImport(name: String) {
+        guard let pending = pendingImport else { return }
+        pendingImport = nil
+        Task { await run(pending.urls, name: name, rate: pending.rate) }
+    }
+
+    private func run(_ urls: [URL], name: String?, rate: UInt32?) async {
+        let held = urls.filter { $0.startAccessingSecurityScopedResource() }
+        defer { held.forEach { $0.stopAccessingSecurityScopedResource() } }
+        do {
+            let summary = try await engine.dspImportFiles(paths: urls.map(\.path), name: name, rate: rate)
+            imported = summary.group ?? summary.imported.first
+            lastError = nil
+            importSummary = Self.describe(summary, files: urls.count)
+        } catch KoanError.NeedsSampleRate {
+            needsRate = .files(urls, name: name)
+        } catch {
+            importSummary = nil
+            lastError = SettingsModel.describe(error)
+        }
+        await changed()
+    }
+
+    /// What an import did, in a sentence or two: nothing to say for one
+    /// file made into one profile.
+    static func describe(_ summary: DspImportSummary, files: Int) -> String? {
+        var lines: [String] = []
+        if let group = summary.group {
+            let playing = summary.imported.first.map { " “\($0)” is playing; pick another on the group's page or in an output's preset menu." } ?? ""
+            lines.append("Imported \(summary.imported.count) presets as the group “\(group)”.\(playing)")
+        } else if files > 1, let one = summary.imported.first {
+            lines.append("Combined \(files) files into “\(one)”.")
+        }
         if !summary.refused.isEmpty {
             let why = summary.refused.map { "\($0.file): \($0.reason)" }.joined(separator: "; ")
-            parts.append("\(summary.refused.count) refused: \(why)")
+            lines.append("\(summary.refused.count) refused: \(why)")
         }
-        var text = parts.joined(separator: ", ")
-        if !summary.notes.isEmpty {
-            text += ". " + summary.notes.joined(separator: ". ")
-        }
-        return text
+        lines.append(contentsOf: summary.notes)
+        return lines.isEmpty ? nil : lines.joined(separator: " ")
+    }
+
+    /// Play `member` of the group `group`.
+    func select(_ group: String, _ member: String) {
+        act { try await $0.dspSelect(group: group, member: member) }
+    }
+
+    /// Make `name` a group, one layer playing, or a stack of layers.
+    func setGroup(_ name: String, _ group: Bool) {
+        act { try await $0.dspSetGroup(name: name, group: group) }
     }
 
     func importText(_ text: String, rate: UInt32? = nil) {

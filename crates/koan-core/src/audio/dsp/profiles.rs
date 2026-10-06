@@ -22,6 +22,9 @@ pub struct Summary {
     pub rates: Vec<u32>,
     /// Why the profile would not load, if it would not.
     pub problem: Option<String>,
+    /// For a group: its members, in order, and the one playing.
+    pub members: Vec<String>,
+    pub playing: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,6 +82,15 @@ pub fn overview_for(device: Option<String>) -> Overview {
                     layers: p.layers.len(),
                     rates,
                     problem,
+                    members: if p.group {
+                        p.layers.iter().map(|l| l.profile.clone()).collect()
+                    } else {
+                        Vec::new()
+                    },
+                    playing: p
+                        .group
+                        .then(|| p.layers.iter().find(|l| l.on).map(|l| l.profile.clone()))
+                        .flatten(),
                 }
             })
             .collect(),

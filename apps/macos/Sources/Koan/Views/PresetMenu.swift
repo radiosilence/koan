@@ -12,6 +12,9 @@ struct Presets {
     let none: String
     let enabled: Bool
     let choose: (String?) -> Void
+    /// The preset in use, where it is a group: its members, the one playing,
+    /// and choosing another. Only for this device's own outputs.
+    var group: (members: [String], playing: String?, select: (String) -> Void)?
     /// Turning processing on, where this device can: nil for another device's
     /// outputs, which are turned on there.
     let enable: (() -> Void)?
@@ -25,6 +28,12 @@ struct Presets {
         enabled = overview.enabled
         choose = { dsp.assign($0, to: device) }
         enable = { dsp.setEnabled(true) }
+        if let current = current,
+           let g = overview.profiles.first(where: { $0.name == current }),
+           !g.members.isEmpty
+        {
+            group = (g.members, g.playing, { dsp.select(current, $0) })
+        }
     }
 
     /// An output of the device in view, from what that device published.
@@ -70,6 +79,17 @@ struct PresetMenu<Label: View>: View {
                 Section(title) { picker }
             } else {
                 picker
+            }
+            if let group = presets.group {
+                Section("Group: pick one") {
+                    Picker("Playing", selection: Binding(
+                        get: { group.playing ?? "" },
+                        set: { group.select($0) }
+                    )) {
+                        ForEach(group.members, id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                }
             }
         } label: {
             label()
