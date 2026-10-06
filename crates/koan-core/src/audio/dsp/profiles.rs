@@ -2906,6 +2906,34 @@ mod tests {
         assign(Some("Curved"), dac).unwrap();
         set_tuning(dac, Some("Warm")).unwrap();
 
+        // Nor without a correction: nothing plays, and it says why.
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Heavy".into(),
+                layers: ["Busy", "Base"]
+                    .map(|p| crate::config::DspLayer {
+                        profile: p.into(),
+                        on: true,
+                    })
+                    .to_vec(),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        assign(None, dac).unwrap();
+        set_tuning(dac, Some("Heavy")).unwrap();
+        assert!(plays().is_empty());
+        let o = overview_for(Some(dac.into()));
+        assert!(!o.tuning_plays);
+        assert!(
+            o.left_out
+                .as_deref()
+                .is_some_and(|l| l.starts_with("Heavy is left out")),
+            "{:?}",
+            o.left_out
+        );
+        set_tuning(dac, Some("Warm")).unwrap();
+
         // No correction: the tuning alone, called by its name.
         assign(None, dac).unwrap();
         assert_eq!(plays(), ["60"]);
