@@ -1,0 +1,1 @@
+- **Downloads follow sign-in changes.** The download queue built its server client once per process, so after signing out, changing password or signing in elsewhere it kept using the old credentials until relaunch. The client is now looked up per download.

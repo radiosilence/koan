@@ -1,0 +1,1 @@
+- **Help modal** — press `?` to open a two-column keybindings reference showing all modes (playback, navigation, queue edit, picker, library). Status bar now shows only high-priority hints; full reference lives in the modal

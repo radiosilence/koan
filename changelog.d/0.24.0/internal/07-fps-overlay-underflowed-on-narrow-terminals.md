@@ -1,0 +1,1 @@
+- **FPS overlay underflowed on narrow terminals** — the counter is 14 cells wide (19 with the beat tag) but only checked for 8, so `area.x + area.width - w` wrapped.

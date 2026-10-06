@@ -1,0 +1,1 @@
+- **The app waits to be told rather than looking.** Restoring a session and jumping to the queue after an enqueue both watched a value every five milliseconds until it moved. They wait on the mirror now, with the deadline as one sleep for the whole wait rather than one per look.

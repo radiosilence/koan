@@ -1,0 +1,1 @@
+- **Linux: ALSA/JACK stderr spam** — cpal backend probe output suppressed via fd redirect during all operations

@@ -1,0 +1,1 @@
+- **Stale album codec after format upgrade** — upgrading files from MP3→FLAC (or any format change) now correctly updates the album's codec in the picker. Previously `get_or_create_album()` only set codec on first insert, so the album row kept the old format even after all tracks were re-scanned

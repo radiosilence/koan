@@ -1,0 +1,1 @@
+- **Remote bridge hardening** — exhaustive PlayerCommand match (compiler catches new variants), incomplete downloads marked as Failed instead of Ready, 30s HTTP timeouts

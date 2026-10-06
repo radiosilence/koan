@@ -1,0 +1,1 @@
+- **Files whose names are not UTF-8 no longer lose their history on every scan (Linux).** The name was stored altered, so the same scan that added a track removed it. Such files are now skipped with a warning.

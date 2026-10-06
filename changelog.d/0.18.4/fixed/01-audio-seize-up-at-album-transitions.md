@@ -1,0 +1,1 @@
+- **Audio seize-up at album transitions** — when the gapless decode loop exhausted the playlist, the Player had no way to know playback finished. Audio engine kept running, outputting silence. Now the decode thread signals `DecodeFinished` and the Player auto-advances or stops cleanly ([#122](https://github.com/radiosilence/koan/pull/122))

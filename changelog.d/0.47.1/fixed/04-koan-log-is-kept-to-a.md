@@ -1,0 +1,1 @@
+- **`koan.log` is kept to a size.** It grew without limit; a run of lock errors took it to several gigabytes. Above 16 MiB it is moved aside to `koan.log.1`, replacing the one before, checked when opened and every few thousand lines.

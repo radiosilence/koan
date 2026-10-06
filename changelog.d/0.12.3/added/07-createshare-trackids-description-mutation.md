@@ -1,0 +1,1 @@
+- **`createShare(trackIds, description)` mutation** — create Subsonic sharing links for tracks. Returns the public URL. Claude can now share what it's playing

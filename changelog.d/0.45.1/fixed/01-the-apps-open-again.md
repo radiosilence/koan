@@ -1,0 +1,1 @@
+- **The apps open again.** 0.45.0 crashed on launch on macOS and iOS: the invite confirmation added to the scene root read the app's state from an environment it sits outside of.

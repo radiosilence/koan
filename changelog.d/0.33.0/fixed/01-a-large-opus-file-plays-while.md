@@ -1,0 +1,4 @@
+- **A large Opus file plays while it downloads again.** koan#375 taught a partial file to answer "where does this end?" with what had arrived rather than with the length the server advertised, which is what FLAC needs — it bisects between its first frame and the end it is given, and an end it cannot reach sends every probe into bytes that are not on disk.
+
+  Ogg needs the opposite. It takes the end it is handed as the end of the *stream*, so told the file stops at the write head it reported a track that was already over: nought milliseconds, and the decode thread reached the end of it in a second and moved on to the next, over and over. A large Opus download never played at all. The answer now depends on the container — Ogg, Opus, Speex and Ogg-FLAC keep the whole file's end, everything else keeps what has arrived. Neither can seek mid-download; for Ogg this is the difference between playing and not.
+

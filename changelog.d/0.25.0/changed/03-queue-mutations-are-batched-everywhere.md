@@ -1,0 +1,1 @@
+- **Queue mutations are batched everywhere.** Removing a selection took the playlist lock and bumped the version per track, and building queue items re-read `config.toml` for every one. Sharing resolved remote ids one query per track.

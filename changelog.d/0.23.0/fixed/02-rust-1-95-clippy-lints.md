@@ -1,0 +1,1 @@
+- **Rust 1.95 clippy lints** — resolved `collapsible_match`, `manual_checked_ops`, and `absurd_extreme_comparisons` across `koan-core` and `koan-tui`. Pure refactor; no behaviour change. ([#175](https://github.com/radiosilence/koan/pull/175))

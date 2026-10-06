@@ -1,0 +1,1 @@
+- **Cover art cache bounded** — `CoverArt::clear()` frees the `DynamicImage` when nothing is playing ([#77](https://github.com/radiosilence/koan/pull/77))

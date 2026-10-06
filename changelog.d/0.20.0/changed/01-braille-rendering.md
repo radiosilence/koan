@@ -1,0 +1,1 @@
+- **Braille rendering** — all braille cells now rendered bold with +25% brightness boost to compensate for dot sparsity. ([#147](https://github.com/radiosilence/koan/pull/147))

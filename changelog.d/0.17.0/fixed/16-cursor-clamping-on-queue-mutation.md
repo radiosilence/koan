@@ -1,0 +1,1 @@
+- **Cursor clamping on queue mutation** — `clamp_queue_cursor()` called after `delete_selected()` and on every playlist version change. Render-time clamp kept as safety net ([#77](https://github.com/radiosilence/koan/pull/77))

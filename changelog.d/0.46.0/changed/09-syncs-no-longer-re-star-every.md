@@ -1,0 +1,1 @@
+- **Syncs no longer re-star every favourite.** Each sync sent one request per local favourite; it now reads the server's stars first and sends only those the server lacks.

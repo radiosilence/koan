@@ -1,0 +1,1 @@
+- **Organize could jam on "Moving…" for good.** Changing the pattern or destination while a run was going invalidated the run's result before it cleared its own running flag, so the sheet never came back until relaunch.

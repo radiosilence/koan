@@ -1,0 +1,1 @@
+- **Only tracks being fetched show a download spinner.** Every track waiting its turn showed one, which read as the whole album downloading at once.

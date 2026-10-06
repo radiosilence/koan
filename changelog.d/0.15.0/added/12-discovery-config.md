@@ -1,0 +1,1 @@
+- **`[discovery]` config** — `analysis_on_scan`, `acoustic_weight` for acoustic similarity tuning

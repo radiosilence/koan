@@ -1,0 +1,2 @@
+- **Radio no longer touches the network on the path that has to produce a track.** `pick_tracks` called ListenBrainz and MusicBrainz in line, and both rate-limit to one request a second per seed artist, so a queue with nothing left to play got its next track long after the music had stopped. It now uses local signals only — genre and era, same-artist, acoustic similarity and random — all database reads. The network signals remain for a background pass that fills the similar-artists cache.
+

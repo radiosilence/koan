@@ -1,0 +1,1 @@
+- **A command from another device no longer holds up the link.** One that needed a library sync first ran on the link's own thread, which left the socket unread for as long as the sync took. Commands from other devices now run on their own lane, in order.

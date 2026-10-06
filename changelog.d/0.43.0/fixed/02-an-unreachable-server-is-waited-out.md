@@ -1,0 +1,1 @@
+- **An unreachable server is waited out** ([#421](https://github.com/radiosilence/koan/issues/421)). Every download spent its retries and failed, and the player skipped through the queue; downloads now wait for the server to answer again.

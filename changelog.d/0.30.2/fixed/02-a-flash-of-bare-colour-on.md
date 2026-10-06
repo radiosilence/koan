@@ -1,0 +1,2 @@
+- **A flash of bare colour on the first keystroke of a search.** The page's ground was put behind it before it was told to fill the column, and a background sizes itself to what it backs — so the ground was only ever as big as the page's content. The results page measures nothing while the query is still running, which left the window's wash showing everywhere around it. The page is filled first now, and every page carries an opaque ground of its own with the wash drawn over it rather than through it.
+

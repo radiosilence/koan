@@ -1,0 +1,1 @@
+- Server panics if auth enabled but keypair missing (fail-closed).

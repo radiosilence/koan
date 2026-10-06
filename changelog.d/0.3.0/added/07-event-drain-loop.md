@@ -1,0 +1,1 @@
+- **Event drain loop** — mouse move events are coalesced so the UI always renders the latest cursor position

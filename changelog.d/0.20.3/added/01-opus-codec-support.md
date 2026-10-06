@@ -1,0 +1,1 @@
+- **Opus codec support** — `.opus` files now play correctly. Uses `opus-decoder` (pure Rust, RFC 8251) to bridge Symphonia's Ogg demuxer with a real Opus decoder. Pre-skip trimming, 48 kHz output, ReplayGain scanning all handled. Closes [#149](https://github.com/radiosilence/koan/issues/149).

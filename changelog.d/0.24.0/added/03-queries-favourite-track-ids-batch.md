@@ -1,0 +1,1 @@
+- **`queries::favourite_track_ids_batch`** — favourited track IDs in one query.

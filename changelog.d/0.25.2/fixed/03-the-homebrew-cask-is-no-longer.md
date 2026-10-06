@@ -1,0 +1,1 @@
+- **The Homebrew cask is no longer published with an empty checksum.** The shas came from bare `sha256sum <path>` calls whose failure went nowhere, so a missing artifact produced `sha256 ""` — which Homebrew refuses to install — and nothing in the run said so.

@@ -1,0 +1,1 @@
+- **Container image.** A `Dockerfile` for the headless server (Debian slim, non-root, state in `/config`), published to `ghcr.io/radiosilence/koan` from `main`, tagged with the commit.

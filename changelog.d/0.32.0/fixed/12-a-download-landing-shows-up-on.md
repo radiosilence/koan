@@ -1,0 +1,2 @@
+- **A download landing shows up on the page you are looking at.** A track fetched while its record was on screen kept an empty cloud until you navigated away and back — the page showing the row was not among the things a library change refreshed. A playlist had it twice over: nothing told it a library change had happened at all, and its progress rings never moved, because progress was patched into the queue index keyed by track and not the one keyed by playlist entry, which is the one a playlist row reads.
+

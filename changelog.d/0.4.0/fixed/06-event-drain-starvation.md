@@ -1,0 +1,1 @@
+- **Event drain starvation** — opening album art (or any slow render) no longer freezes the UI. The event loop now always polls for input even when behind on frame budget

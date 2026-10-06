@@ -1,0 +1,1 @@
+- **koan sends a User-Agent to the server** (`koan/<version> (Macintosh)`, `(iOS)` or `(Linux)`), so Navidrome lists a Mac and a phone as two players rather than one `koan []`.

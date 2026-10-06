@@ -1,0 +1,1 @@
+- **Docs: `koan mcp`** — corrected all references from `--mcp` flag to `mcp` subcommand

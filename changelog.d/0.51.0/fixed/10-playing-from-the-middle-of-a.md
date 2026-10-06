@@ -1,0 +1,1 @@
+- **Playing from the middle of a long queue fetches what comes next first.** The queue was fetched from the top, so playing track 105 of 192 downloaded the 104 before it first. Tracks behind the cursor no longer show a spinner unless one is actually downloading.

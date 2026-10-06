@@ -1,0 +1,1 @@
+- **`lyrics(trackId)` query** — fetch synced LRC or plain text lyrics for any track. Checks embedded tags, sidecar `.lrc` files, and LRCLIB. Cached in DB

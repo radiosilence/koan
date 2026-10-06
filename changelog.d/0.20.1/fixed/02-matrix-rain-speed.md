@@ -1,0 +1,1 @@
+- **Matrix rain speed** — reverted post-release speed experiments. Back to the v0.20.0 formula (band energy + beat + bass) with time-based frame_dt scaling so speed is consistent across different FPS targets.

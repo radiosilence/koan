@@ -1,0 +1,1 @@
+- **Radio no longer queues a track already in the queue that has not been downloaded.** Queued tracks were excluded by file path, which a streamed track does not have; they are now excluded by id.

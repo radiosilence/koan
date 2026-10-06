@@ -1,0 +1,1 @@
+- **GraphQL playground with introspection key** — `koan --headless --playground` generates a process-scoped key, injects it into GraphiQL as a default header, auto-opens the browser. Normal JWT auth unaffected.

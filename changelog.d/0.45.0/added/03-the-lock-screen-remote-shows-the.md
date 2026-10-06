@@ -1,0 +1,1 @@
+- **The lock-screen remote shows the record's sleeve.** The server puts a small cover in each Live Activity push, so it is there with the app suspended.

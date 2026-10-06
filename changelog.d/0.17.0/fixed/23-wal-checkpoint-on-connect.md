@@ -1,0 +1,1 @@
+- **WAL checkpoint on connect** — `PRAGMA wal_checkpoint(PASSIVE)` at connection open prevents unbounded WAL growth across sessions ([#79](https://github.com/radiosilence/koan/pull/79))

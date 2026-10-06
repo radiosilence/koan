@@ -1,0 +1,1 @@
+- **Favourites in the web UI.** The signed-in account's favourite artists, records and tracks on one page, laid out as in the apps: artists as pills, records as tiles, and the tracks as a list that plays on from the one picked. On a phone it sits under a new Library tab with Playlists, which the tab bar had no room to add beside; the sidebar lists both.

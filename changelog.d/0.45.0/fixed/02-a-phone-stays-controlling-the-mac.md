@@ -1,0 +1,1 @@
+- **A phone stays controlling the Mac across backgrounding and relaunches**, and the Live Activity stays with it. The device being controlled is kept on disk and is never let go of because it dropped out of a list, which happened whenever the link reconnected before the Mac's did (a server restart, the Mac asleep); it shows as out of reach until it is back.

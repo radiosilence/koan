@@ -1,0 +1,1 @@
+- **The CoreAudio render callback no longer logs.** Two warnings on rare paths formatted and took the logger's lock on the real-time thread.

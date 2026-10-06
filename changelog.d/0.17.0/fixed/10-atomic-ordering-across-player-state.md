@@ -1,0 +1,1 @@
+- **Atomic ordering across player state** — all cross-thread atomics (`playback_state`, `position_ms`, `playback_generation`, `playlist_version`, `bytes_written`, `quit_requested`, `metadata_refresh_pending`, `radio_mode`, `pump_written`) upgraded from `Relaxed` to `Acquire`/`Release`/`AcqRel` ([#78](https://github.com/radiosilence/koan/pull/78))

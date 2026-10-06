@@ -1,0 +1,1 @@
+- **Favourites, playlists, play history and shares belong to a user** ([#576](https://github.com/radiosilence/koan/pull/576)). On a server with several accounts, one account no longer sees or edits another's favourites, playlists, plays or share links, through koan's own clients or Subsonic ones.

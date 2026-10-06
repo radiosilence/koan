@@ -1,0 +1,1 @@
+- **Ctrl+C on GraphQL server** — `axum::serve` was blocking forever. Added `with_graceful_shutdown` using `tokio::signal::ctrl_c`

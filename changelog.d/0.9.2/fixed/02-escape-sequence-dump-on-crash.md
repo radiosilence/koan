@@ -1,0 +1,1 @@
+- **Escape sequence dump on crash** — the panic hook was calling `disable_raw_mode()` and `LeaveAlternateScreen` from whichever thread panicked, corrupting the terminal when a background thread (decode, download) hit an error. The hook now captures the main thread ID at install time and only restores terminal state from the TUI thread

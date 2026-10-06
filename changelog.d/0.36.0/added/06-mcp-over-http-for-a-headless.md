@@ -1,0 +1,1 @@
+- **MCP over HTTP for a headless server.** `--mcp-bind ADDR:PORT` (or `KOAN_MCP_BIND`) serves the same two MCP tools at `/mcp` over streamable HTTP, on a listener of its own, for an authenticating gateway to proxy. It carries no credential check, as stdio does not, so it stays off the public port.

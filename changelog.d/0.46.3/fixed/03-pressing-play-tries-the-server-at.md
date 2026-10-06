@@ -1,0 +1,1 @@
+- **Pressing play tries the server at once.** After a failed request every download waited out a backoff of up to a minute, which a flaky connection or a phone in a pocket keeps extending. Queuing music, and the app's link to the server reconnecting, now makes the next try due immediately; a further failure carries the backoff on.

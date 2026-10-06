@@ -1,0 +1,1 @@
+- **Seek past end of track** — skips to next instead of crashing

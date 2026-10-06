@@ -1,0 +1,1 @@
+- **Mouse hover highlighting** — queue and library items show underline on hover

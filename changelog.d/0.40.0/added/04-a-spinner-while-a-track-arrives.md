@@ -1,0 +1,1 @@
+- **A spinner while a track arrives.** Playing a track that is not on the phone yet parks the engine until the first of it has downloaded; the play button in the mini player and Now Playing now shows that wait instead of a play button that looks as if the tap did nothing.

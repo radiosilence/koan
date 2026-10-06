@@ -1,0 +1,1 @@
+- **`koan remote login` no longer bloats `config.local.toml`** — previously wrote all default config sections; now patches only the `[remote]` section, preserving the rest of the file as-is ([#120](https://github.com/radiosilence/koan/pull/120))

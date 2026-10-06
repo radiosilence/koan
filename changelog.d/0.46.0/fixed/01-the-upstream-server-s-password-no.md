@@ -1,0 +1,1 @@
+- **The upstream server's password no longer appears in error messages.** A failed stream proxy or share returned reqwest's error, which names the request URL and with it the upstream account's credentials, to any signed-in caller, readonly included. Errors from the Subsonic client and downloads drop the URL, so logs are clean too.

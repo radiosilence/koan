@@ -1,0 +1,1 @@
+- **A Tracks browser, and Recently Played filters, in the Mac and iOS apps.** Tracks is a new browser beside Albums and Artists (⌘7 on the Mac), and the browsers gain a Recently Played filter and a Last Played sort, which a shelf's headings open (below). The Favourites and Recently Played pages no longer have a filter field: narrowing them is what a heading opens.

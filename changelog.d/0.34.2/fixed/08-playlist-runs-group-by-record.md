@@ -1,0 +1,1 @@
+- **Playlist runs group by record.** Two neighbouring "Greatest Hits" by different artists merged under one heading, named after the first track's artist.

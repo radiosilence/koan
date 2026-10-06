@@ -1,0 +1,1 @@
+- **Drag undo batching** — one drag operation (single or multi-track) is now a single undo step instead of one per row crossed

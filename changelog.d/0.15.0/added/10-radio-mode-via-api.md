@@ -1,0 +1,1 @@
+- **Radio mode via API** — `enableRadio`/`disableRadio` mutations. SharedPlayerState atomic keeps TUI and API in sync

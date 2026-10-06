@@ -1,0 +1,1 @@
+- **Album header context menu** — right-click on album headers to apply actions (organize, remove, favourite, etc.) to the whole album group

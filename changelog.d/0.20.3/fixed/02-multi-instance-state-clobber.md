@@ -1,0 +1,1 @@
+- **Multi-instance state clobber** — autosave is now event-driven (dirty flag) and throttled to 100ms. An idle koan window no longer overwrites the saved state of an active instance.

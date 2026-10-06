@@ -1,0 +1,1 @@
+- **`--jukebox` mode** — server plays audio, client is remote control only ([#55](https://github.com/radiosilence/koan/pull/55))

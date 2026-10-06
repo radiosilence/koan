@@ -1,0 +1,1 @@
+- **Two Subsonic error messages read wrongly.** `getCoverArt` for a record with no art said "No cover art embedded not found"; it now says "Cover art not found". Error 41 pointed at an "API keys page" that is now the Account page.

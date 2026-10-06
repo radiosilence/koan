@@ -1,0 +1,1 @@
+- **iPad uses the tab layout.** The iPad took the Mac's split view, built for a pointer: its lyrics inspector could not be closed by touch and choosing a page in its sidebar did not navigate. It now uses the same shell as the iPhone, whose sidebar-adaptable tab bar is iPadOS's own layout, a bar across the top that opens into a sidebar.

@@ -1,0 +1,1 @@
+- **A pause no longer re-runs the whole transport bar, and a seek no longer re-diffs every lyric line.** The reads moved into the views that draw them.

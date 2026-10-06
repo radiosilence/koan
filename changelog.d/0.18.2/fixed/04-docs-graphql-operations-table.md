@@ -1,0 +1,1 @@
+- **Docs: GraphQL operations table** — fixed naming convention, added missing operations

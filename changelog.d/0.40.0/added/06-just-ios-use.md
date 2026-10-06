@@ -1,0 +1,1 @@
+- **`just ios-use`** uses the app on a simulator as a listener does and checks each step: browse, play, pause, skip, favourite, queue, Now Playing, lyrics, playlists, search, playing on in the background, and seeking far into a track still downloading. What to run before an App Store submission, on an iPhone and an iPad.

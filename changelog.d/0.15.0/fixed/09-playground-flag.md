@@ -1,0 +1,1 @@
+- **`--playground` flag** — changed from `Option<bool>` to proper flag

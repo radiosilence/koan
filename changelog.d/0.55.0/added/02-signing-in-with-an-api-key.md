@@ -1,0 +1,1 @@
+- **Signing in with an API key.** The account form takes an OpenSubsonic API key in place of a password, on every platform: one key per device, revocable on its own.

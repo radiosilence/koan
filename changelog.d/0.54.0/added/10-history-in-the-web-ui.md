@@ -1,0 +1,1 @@
+- **History in the web UI.** What the signed-in account has played, most recent first, grouped by day in the browser's own time zone. Tick plays and forget them, as in the apps; only the account's own plays can be forgotten.

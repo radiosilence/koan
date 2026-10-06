@@ -1,0 +1,1 @@
+- **RT safety in CPAL audio callback** — changed `Mutex::lock()` to `try_lock()` in the audio render callback so the real-time thread never blocks; outputs silence on contention instead ([#99](https://github.com/radiosilence/koan/issues/99))

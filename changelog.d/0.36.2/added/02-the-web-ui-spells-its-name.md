@@ -1,0 +1,1 @@
+- The web UI spells its name kōan in the sidebar, the tab title, the sign-in page and the version label.

@@ -1,0 +1,1 @@
+- **Remote bridge hardening** — exhaustive `PlayerCommand` match, incomplete downloads marked Failed, 30s HTTP timeouts ([#60](https://github.com/radiosilence/koan/pull/60))

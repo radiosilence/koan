@@ -1,0 +1,1 @@
+- Key file permissions set before write (no world-readable window).

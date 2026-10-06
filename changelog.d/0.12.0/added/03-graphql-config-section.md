@@ -1,0 +1,1 @@
+- **`[graphql]` config section** — `port` (default 4000) and `playground` (default false) in config.toml
