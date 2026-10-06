@@ -41,6 +41,9 @@ not that.
   playing from a different server can be controlled but not sent music, since
   its track ids mean nothing here. Settings → Devices turns this off for the
   device you are on, and sets how much they may do (below).
+  A device signed in to a server names that server in its announcement,
+  without the account, so a television not signed in yet can offer it on its
+  sign-in page instead of asking for the address to be typed.
 - **Devices by address.** A tailnet carries no Bonjour; add the other device's
   name and port (`mac-mini:5626`) under Settings → Devices.
 - **Devices shared with you.** Someone with another account on the same kōan

@@ -101,6 +101,7 @@ just tv-kept        # clear Caches/koan-config as tvOS does, check the TV is sti
 just tv-pair [OUTCOME] # pair a signed-out TV simulator, approved (or declined, or left to expire) over the API
 just tv-signin [ROUTES] # each other way onto the TV and its failures, from fresh installs, against KOAN_SIGNIN_*
 just tv-pair-qr     # the same, approved by an iPhone simulator that reads the QR code off the TV
+just tv-discover    # a signed-out TV simulator finds its server through kōan on an iPhone simulator, and pairs
 just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (needs the ASC key)
 ```
 

@@ -919,6 +919,67 @@ tv-pair outcome="approve": (tv-ffi "appletvsimulator") ios-project
         exit 1
     fi
 
+# The television finds its server instead of being told it: kōan on an
+# iPhone simulator, signed in to a throwaway koan, announces that server on
+# the network, and a signed-out TV simulator offers it, asks it for a code and
+# is approved over the API. Screenshots land in target/tv-discover. Two
+# simulators, both shut down at the end.
+tv-discover: (tv-ffi "appletvsimulator") (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/tv-discover
+    rm -rf "$out" && mkdir -p "$out"
+    cleanup=()
+    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
+    pick() {
+        xcrun simctl list devices available -j | python3 -c 'import json,sys; want=sys.argv[1]; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if want+"-" in k for d in v if d["isAvailable"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))' "$1"
+    }
+    tv=$(pick tvOS)
+    phone=$(pick iOS)
+    [ -n "$tv" ] && [ -n "$phone" ] || { echo "Needs an Apple TV and an iPhone simulator." >&2; exit 1; }
+    xcodebuild build-for-testing -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
+        -destination "id=$tv" -derivedDataPath target/tv-build
+    xcodebuild build-for-testing -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "id=$phone" -derivedDataPath target/ios-build
+    url=$(just _demo-server "" "$out")
+    cleanup+=("just _demo-server-stop '$out'")
+    password=$(cat "$out/server.password")
+    for sim in "$tv" "$phone"; do
+        xcrun simctl boot "$sim" 2>/dev/null || true
+        xcrun simctl bootstatus "$sim" -b >/dev/null
+        cleanup+=("xcrun simctl shutdown '$sim'")
+        xcrun simctl uninstall "$sim" {{bundle_id}} 2>/dev/null || true
+    done
+    # The phone stays open, signed in, for as long as the TV takes.
+    TEST_RUNNER_KOAN_ANNOUNCE_SECONDS=300 \
+    TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
+    TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY="$(cat "$out/server.key")" \
+    xcodebuild test-without-building -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "id=$phone" -derivedDataPath target/ios-build \
+        -only-testing:KoanUITests/PairApproveTests/testAnnounceServer \
+        -resultBundlePath "$out/phone.xcresult" >"$out/phone-test.log" 2>&1 &
+    phone_test=$!
+    cleanup+=("kill $phone_test 2>/dev/null || true")
+    TEST_RUNNER_KOAN_PAIR_DISCOVER=1 TEST_RUNNER_KOAN_PAIR_SERVER=$url \
+    TEST_RUNNER_KOAN_PAIR_USER=owner TEST_RUNNER_KOAN_PAIR_PASSWORD=$password \
+    xcodebuild test-without-building -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
+        -destination "id=$tv" -derivedDataPath target/tv-build \
+        -only-testing:KoanTVUITests/TVPairTests \
+        -resultBundlePath "$out/tv.xcresult" >"$out/tv-test.log" 2>&1 || true
+    xcrun xcresulttool export attachments --path "$out/tv.xcresult" --output-path "$out/tv" >/dev/null 2>&1 || true
+    grep -E "pair:|link:" "$out/server.log" || true
+    if xcrun xcresulttool get test-results summary --path "$out/tv.xcresult" 2>/dev/null \
+        | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("result") != "Passed")'; then
+        echo "discovered: the television found its server on the phone and signed in (screenshots in $out)"
+    else
+        echo "FAIL: the television did not find its server or sign in; see $out" >&2
+        exit 1
+    fi
+
 # Every other way onto the television, one route at a time from a fresh
 # install: `TVSignInTests` with the route in KOAN_SIGNIN_ROUTE. Against
 # KOAN_SIGNIN_SERVER, with KOAN_SIGNIN_USER and its KOAN_SIGNIN_PASSWORD and
