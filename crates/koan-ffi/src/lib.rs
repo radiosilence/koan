@@ -2530,6 +2530,16 @@ impl KoanEngine {
 
     // --- Settings ----------------------------------------------------------
 
+    /// How the app is drawn, from `[appearance]`. Read once, as the app opens:
+    /// a change takes effect on the next launch.
+    pub fn appearance(&self) -> Appearance {
+        let cfg = Config::cached();
+        Appearance {
+            koan: cfg.appearance.theme == "koan",
+            icons: cfg.appearance.theme_icons,
+        }
+    }
+
     /// The whole configuration, as the settings window shows it.
     pub async fn settings(self: Arc<Self>) -> Settings {
         offload::offload(move || {
