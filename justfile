@@ -413,6 +413,7 @@ theme-leaks:
         '\.font\(\.(largeTitle|title|title2|title3|headline|body|callout|subheadline|footnote|caption|caption2)\b'
         '\.foreground(Style|Color)\(\.(primary|secondary|tertiary|quaternary)\)'
         'cornerRadius: [0-9]'
+        'ContentUnavailableView\('
         'font: \.(caption|callout|body|subheadline|footnote|headline)\b'
         '\.shadow\(color: \.black\.opacity\([0-9]'
         'Color\((red|white|hue):'

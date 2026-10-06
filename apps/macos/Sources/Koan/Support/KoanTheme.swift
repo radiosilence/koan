@@ -1318,6 +1318,42 @@ extension View {
     }
 }
 
+/// What an empty page says: its glyph, a line, and why. The theme's type and
+/// tones; the platform's `ContentUnavailableView` otherwise.
+struct KoanUnavailable: View {
+    let title: String
+    let icon: String
+    let detail: String
+
+    init(_ title: String, icon: String, detail: String) {
+        self.title = title
+        self.icon = icon
+        self.detail = detail
+    }
+
+    var body: some View {
+        if KoanTheme.isOn {
+            VStack(spacing: KoanTheme.Space.m) {
+                KoanIcon(icon)
+                    .font(.system(size: 28))
+                    .foregroundStyle(Color.koanMuted)
+                Text(KoanTheme.label(title))
+                    .font(.koan(.body))
+                    .foregroundStyle(Color.koanInk)
+                Text(detail)
+                    .font(.koan(.meta))
+                    .foregroundStyle(Color.koanMuted)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(KoanTheme.Space.xxl)
+            .frame(maxWidth: 420)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView(title, systemImage: icon, description: Text(detail))
+        }
+    }
+}
+
 /// A section's heading: `fine`, `ink`, lowercase, 16 points above. The
 /// platform's own heading otherwise.
 struct KoanSectionHeader: View {

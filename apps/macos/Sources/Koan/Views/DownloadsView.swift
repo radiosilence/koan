@@ -22,12 +22,10 @@ struct DownloadsView: View {
     var body: some View {
         Group {
             if mirror.transfers.isEmpty {
-                ContentUnavailableView(
+                KoanUnavailable(
                     "Nothing downloading",
-                    systemImage: Icon.downloads,
-                    description: Text(
-                        "Tracks fetched from your server appear here while they arrive."
-                    )
+                    icon: Icon.downloads,
+                    detail: "Tracks fetched from your server appear here while they arrive."
                 )
             } else {
                 #if os(macOS)

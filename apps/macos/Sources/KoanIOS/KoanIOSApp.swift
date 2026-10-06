@@ -57,11 +57,7 @@ struct KoanIOSApp: App {
                         .preferredColorScheme(.dark)
                         #endif
                 } else if let startupError {
-                    ContentUnavailableView(
-                        "kōan could not start",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(startupError)
-                    )
+                    KoanUnavailable("kōan could not start", icon: "exclamationmark.triangle", detail: startupError)
                 } else {
                     Splash()
                 }
