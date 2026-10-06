@@ -1814,6 +1814,7 @@ mod tests {
 
     use super::*;
     use crate::remote::link::LinkDeviceKey;
+    use crate::remote::wire::Session as _;
 
     /// A listener "mac", signed in and holding a key list, with what it ran.
     struct Rig {
