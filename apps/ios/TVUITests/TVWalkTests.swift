@@ -51,6 +51,8 @@ final class TVWalkTests: XCTestCase {
         press(.select)
         pause(4)
         press(.select)
+        // Paused at once: the simulator plays through the Mac's speakers.
+        press(.playPause)
         pause(8)
 
         start(at: .queue)
@@ -127,6 +129,19 @@ final class TVWalkTests: XCTestCase {
                 press(.select)
                 pause(4)
                 snap("20-artist")
+            }
+            if place == 5 {
+                // `KOAN_WALK_PLAYLIST` names one, on a server with many.
+                let wanted = ProcessInfo.processInfo.environment["KOAN_WALK_PLAYLIST"]
+                    .map { app.buttons.containing(NSPredicate(format: "label CONTAINS %@", $0)).firstMatch }
+                if let wanted, focus(wanted) {
+                    press(.select)
+                } else {
+                    press(.down)
+                    press(.select)
+                }
+                pause(4)
+                snap("15d-playlist")
             }
         }
 
