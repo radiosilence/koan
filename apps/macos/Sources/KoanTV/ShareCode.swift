@@ -18,7 +18,7 @@ struct ShareCode: View {
                     .resizable()
                     .frame(width: 440, height: 440)
                     .padding(28)
-                    .background(.white, in: .rect(cornerRadius: 24))
+                    .background(.white, in: .rect(cornerRadius: KoanTheme.radius(24))) // theme: raw — a QR code needs a white ground to scan
             }
             VStack(alignment: .leading, spacing: 24) {
                 Text(KoanTheme.label("Scan to open"))

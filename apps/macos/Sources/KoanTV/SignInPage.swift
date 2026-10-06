@@ -174,7 +174,7 @@ struct SignInPage: View {
                     .resizable()
                     .frame(width: 400, height: 400)
                     .padding(24)
-                    .background(.white, in: .rect(cornerRadius: 24))
+                    .background(.white, in: .rect(cornerRadius: KoanTheme.radius(24))) // theme: raw — a QR code needs a white ground to scan
             }
             VStack(alignment: .leading, spacing: 20) {
                 Text(host)
@@ -195,7 +195,7 @@ struct SignInPage: View {
             }
         }
         .padding(56)
-        .background(.white.opacity(0.06), in: .rect(cornerRadius: 32))
+        .koanSurface(.surface)
     }
 
     private var host: String {
