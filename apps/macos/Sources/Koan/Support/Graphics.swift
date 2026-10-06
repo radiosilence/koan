@@ -101,7 +101,7 @@ private struct AffordableGlass<S: Shape, F: ShapeStyle>: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             // The kōan theme has no materials: a raised field is `surface`.
-            content.background(Color.koanSurface, in: shape)
+            content.background(Color.koanSurface, in: Rectangle())
         } else if graphics.usesGlass {
             content.glassEffect(glass, in: shape)
         } else {

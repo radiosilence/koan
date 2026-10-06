@@ -69,7 +69,7 @@ struct AlbumGridCell: View {
                         // this is the good copy.
                         Text(codec.uppercased())
                             .font(.role(.fine, system: .system(size: 9, weight: .semibold).monospaced()))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(KoanTheme.style(.ink, system: .white))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                             // Clear glass, not a black scrim: over artwork the
