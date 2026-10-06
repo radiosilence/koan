@@ -122,10 +122,10 @@ final class TVSignInTests: XCTestCase {
         XCTAssertTrue(app.buttons["Sign Out"].waitForExistence(timeout: 10), "on the Server pane")
         remote.press(.right)
         remote.press(.select)
-        let keep = app.buttons["Sign Out, Keep Them in the Library"]
+        // The alert opens on the gentler choice, keeping the tracks.
+        let keep = app.buttons["Sign Out and Keep Its Tracks"]
         XCTAssertTrue(keep.waitForExistence(timeout: 10), "sign-out asks what to keep")
         snap("\(route)-04-confirm")
-        remote.press(.down)
         remote.press(.select)
         XCTAssertTrue(app.buttons["Get a Code"].waitForExistence(timeout: 20), "signed out, the sign-in page is back")
         snap("\(route)-05-signed-out")
