@@ -33,7 +33,7 @@ struct SignInPage: View {
                     .font(.system(size: 64, weight: .bold))
                 Text(pairing == nil
                      ? "Open kōan on a device that is signed in to your server and on this network. Its server will appear here."
-                     : "Scan with a phone signed in to \(host), or approve it on a device running kōan.")
+                     : "Scan with your phone's camera. It opens kōan if it is there, or \(host)'s own page if not.")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -124,12 +124,10 @@ struct SignInPage: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            if !servers.isEmpty {
-                Text("Or enter its address")
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 16)
-            }
+            Text(servers.isEmpty ? "Or enter your server's address" : "Or enter its address")
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+                .padding(.top, 16)
         }
     }
 
