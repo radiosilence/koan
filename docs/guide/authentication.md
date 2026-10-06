@@ -110,6 +110,12 @@ shown in the invite) or set one on the Users page or with `setUserPassword`.
 Either signs every device out, invited ones included, since a password change
 revokes the account's sessions and API keys.
 
+A device whose key was revoked, or whose password no longer works, finds out
+the next time it syncs or asks the server what it offers (Subsonic errors 40,
+41 or 44). kōan's apps then say so in Settings → Server and on their empty
+pages, rather than waiting for a sync that cannot succeed, until the device
+signs in again.
+
 ### Pairing a device
 
 The server and the approving side (the Mac and iOS apps, and the `/pair` page)

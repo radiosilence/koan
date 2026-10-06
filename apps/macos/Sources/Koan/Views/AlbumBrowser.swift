@@ -2,6 +2,7 @@ import KoanFFI
 import SwiftUI
 
 struct AlbumBrowser: View {
+    @Environment(EngineMirror.self) private var mirror
     @Environment(LibraryModel.self) private var library
     @Environment(UIState.self) private var ui
     @Environment(Navigator.self) private var nav
@@ -42,9 +43,9 @@ struct AlbumBrowser: View {
         EmptyState(
             icon: "square.stack",
             title: library.isNarrowed ? "Nothing matches" : "No albums yet",
-            detail: !library.isNarrowed
-                ? Self.emptyDetail
-                : "Try a different filter."
+            detail: library.isNarrowed
+                ? "Try a different filter."
+                : mirror.signInRefused ? EngineMirror.signInRefusedDetail : Self.emptyDetail
         )
         .frame(maxWidth: .infinity, minHeight: 340)
     }
