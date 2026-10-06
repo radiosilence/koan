@@ -363,7 +363,7 @@ impl HandedOff {
             error,
         };
         if let Some(answer) = &self.answer {
-            match answer.recv_timeout(HAND_OFF_TAKEN) {
+            match answer.recv_timeout(HAND_OFF_ANSWER) {
                 Ok(Some(AckOutcome::Done)) if self.answer_is_arrival => {
                     return MoveResult {
                         left_out: self.left_out,
@@ -424,6 +424,11 @@ fn arrived_here(
 ) -> bool {
     now.is_some_and(|(entry, remote)| Some(entry) != before && remote.as_deref() == Some(track))
 }
+
+/// How long moving the music waits for the answer to the command that moved
+/// it: long enough for every way through (the network, the link, then the
+/// server's own wait), so a late answer is still the one acted on.
+const HAND_OFF_ANSWER: std::time::Duration = std::time::Duration::from_secs(12);
 
 /// How long moving the music waits for the destination to say it has it.
 /// Long enough for a device that needs to sync a track first; a device asleep

@@ -567,14 +567,22 @@ final class PlayerModel {
     /// `nil`), and control it there.
     func moveMusic(to id: String?) {
         let name = id.flatMap { id in mirror.devices.first { $0.id == id }?.name } ?? "This device"
+        // Moved here, the answer is the controlled device's, which was asked to
+        // send the music on: name it, not the device in hand. Read before the
+        // move, which makes this device the one controlled.
+        let source = mirror.devices.first { $0.id == mirror.target }?.name ?? "The other device"
         attempt {
             let moved = try await self.engine.moveMusic(to: id)
             let left = moved.leftOut
             if let error = moved.error {
                 // Refused: the music plays on where it was, if it was playing.
-                self.lastNotice = "\(name) did not take the music: \(error)"
+                self.lastNotice = id == nil
+                    ? "\(source) did not send the music here: \(error)"
+                    : "\(name) did not take the music: \(error)"
             } else if moved.queued {
-                self.lastNotice = "\(name) is asleep. It takes the music when it wakes; until then the music is paused where it was."
+                self.lastNotice = id == nil
+                    ? "\(source) is asleep. It sends the music here when it wakes."
+                    : "\(name) is asleep. It takes the music when it wakes; until then the music is paused where it was."
             } else if !moved.started {
                 // Sent, not known to have arrived. The controls follow it there, since a
                 // device asleep takes it on waking; meanwhile it is paused where it was.

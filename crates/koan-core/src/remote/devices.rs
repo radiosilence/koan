@@ -1357,13 +1357,18 @@ fn follow(
     let _ = std::thread::Builder::new()
         .name("koan-ack".into())
         .spawn(move || {
-            let outcome = walk(&id, &cmd, ack, &answer, route, routes);
+            let walked = walk(&id, &cmd, ack, &answer, route, routes);
             acks::forget(ack);
-            told(&id, &cmd, outcome, then);
+            match walked {
+                Ok(outcome) => told(&id, &cmd, outcome, then),
+                Err(error) => unanswered(&id, &cmd, error, then),
+            }
         });
 }
 
 /// What became of a command sent under `ack`: the first answer by any way.
+/// `Err` when this device could not ask the server either: no answer, which
+/// says nothing of whether an earlier way delivered it.
 fn walk(
     id: &str,
     cmd: &LinkCommand,
@@ -1371,10 +1376,10 @@ fn walk(
     answer: &crossbeam_channel::Receiver<acks::AckOutcome>,
     first: Route,
     routes: Routes,
-) -> Option<acks::AckOutcome> {
+) -> Result<Option<acks::AckOutcome>, String> {
     if first == Route::Network {
         if let Ok(outcome) = answer.recv_timeout(NETWORK_ANSWER) {
-            return Some(outcome);
+            return Ok(Some(outcome));
         }
         log::info!("devices: no answer from {id} on the network; trying the link");
         if routes.link_answers
@@ -1385,15 +1390,26 @@ fn walk(
             })
             && let Ok(outcome) = answer.recv_timeout(LINK_ANSWER)
         {
-            return Some(outcome);
+            return Ok(Some(outcome));
         }
     } else if let Ok(outcome) = answer.recv_timeout(LINK_ANSWER) {
-        return Some(outcome);
+        return Ok(Some(outcome));
     }
     log::info!("devices: no answer from {id}; asking the server");
-    match ask_server(id, cmd, Some(ack)) {
-        Ok(outcome) => outcome,
-        Err(error) => Some(acks::AckOutcome::Failed { error }),
+    ask_server(id, cmd, Some(ack))
+}
+
+/// No answer came, and this device could not ask the server: the command may
+/// have arrived by an earlier way or may not. A sender that takes the outcome
+/// is told none, as for a way that brings no answer, so it does not act as
+/// if refused; the app is told the device could not be reached.
+fn unanswered(id: &str, cmd: &LinkCommand, error: String, then: Option<Then>) {
+    match then {
+        Some(then) => {
+            log::warn!("devices: no answer from {id} for {cmd:?}, and the server: {error}");
+            then(None);
+        }
+        None => told(id, cmd, Some(acks::AckOutcome::Failed { error }), None),
     }
 }
 
@@ -1654,6 +1670,40 @@ mod tests {
         );
         assert_eq!(*got.lock(), Some(Some(failed)));
         assert_eq!(notice(), before, "not said twice");
+    }
+
+    /// This device failing to reach the server, after no answer by the other
+    /// ways, is not the target refusing: the command may have arrived by an
+    /// earlier way. A hand-off waiting on it hears no answer, so it does not
+    /// resume the music here; the app is told the device could not be reached.
+    #[test]
+    fn failing_to_ask_the_server_is_no_answer_not_a_refusal() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        nearby_hello(hello("phone"), "10.0.0.5:5626");
+
+        let got = std::sync::Arc::new(parking_lot::Mutex::new(None));
+        let into = got.clone();
+        unanswered(
+            "phone",
+            &LinkCommand::Pause,
+            "server unreachable".into(),
+            Some(Box::new(move |o| *into.lock() = Some(o))),
+        );
+        assert_eq!(*got.lock(), Some(None), "no answer, not a refusal");
+        assert_eq!(notice(), None);
+
+        unanswered(
+            "phone",
+            &LinkCommand::Pause,
+            "server unreachable".into(),
+            None,
+        );
+        assert!(matches!(
+            notice().map(|n| n.outcome),
+            Some(acks::AckOutcome::Failed { .. })
+        ));
     }
 
     #[test]
