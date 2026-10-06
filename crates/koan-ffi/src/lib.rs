@@ -305,6 +305,65 @@ const SEEKABLE_TOLERANCE_MS: u64 = 200;
 /// one reload per track is a reload per few seconds for the length of it.
 const LANDING_COALESCE: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Music sent to another device, not yet known to have arrived.
+struct HandedOff {
+    left_out: u32,
+    /// Where it went; `None` for this device.
+    to: Option<String>,
+    /// The server's id for the track it should now be on, when known.
+    track: Option<String>,
+    /// What `to` last reported before the music was sent.
+    before: Option<koan_core::remote::link::LinkState>,
+    /// For music moved here: the queue entry under this device's cursor
+    /// before it was sent.
+    cursor_before: Option<QueueItemId>,
+}
+
+impl HandedOff {
+    /// Wait for the destination to say it has the music. Sent is not taken:
+    /// until it does, the source stays paused with its queue, and the caller
+    /// is told the music has not started rather than that it has.
+    /// `here` is the entry under this device's cursor and the server's id for
+    /// its track, for music moved to this device.
+    fn result(&self, here: impl Fn() -> Option<(QueueItemId, Option<String>)>) -> MoveResult {
+        use koan_core::remote::devices;
+        let started = self.track.as_deref().is_some_and(|track| match &self.to {
+            Some(to) => devices::await_current(to, track, self.before.as_ref(), HAND_OFF_TAKEN),
+            None => devices::await_until(
+                || arrived_here(self.cursor_before, here(), track),
+                HAND_OFF_TAKEN,
+            ),
+        });
+        if !started {
+            log::warn!(
+                "devices: {:?} has not said it has the music sent to it",
+                self.to
+            );
+        }
+        MoveResult {
+            left_out: self.left_out,
+            started,
+        }
+    }
+}
+
+/// Whether music moved here has arrived: the cursor is on `track` in an entry
+/// that was not under it before. The queue it arrives in is new, so its
+/// entries are; a cursor already on that track, in the queue this device kept
+/// when it last handed the music on, is not it arriving.
+fn arrived_here(
+    before: Option<QueueItemId>,
+    now: Option<(QueueItemId, Option<String>)>,
+    track: &str,
+) -> bool {
+    now.is_some_and(|(entry, remote)| Some(entry) != before && remote.as_deref() == Some(track))
+}
+
+/// How long moving the music waits for the destination to say it has it.
+/// Long enough for a device that needs to sync a track first; a device asleep
+/// takes longer, and is reported as not started yet.
+const HAND_OFF_TAKEN: std::time::Duration = std::time::Duration::from_secs(8);
+
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
@@ -2137,41 +2196,63 @@ impl KoanEngine {
 
     /// Move the music of the device being controlled to `to` (this device
     /// with `None`): its queue and playhead go there, it pauses, and `to` is
-    /// controlled from then on. Returns how many tracks were left out because
-    /// the server does not have them, which only this device can say.
-    pub async fn move_music(self: Arc<Self>, to: Option<String>) -> Result<u32, KoanError> {
+    /// controlled from then on. Says how many tracks were left out because
+    /// the server does not have them, which only this device can say, and
+    /// whether `to` has said it has the music.
+    pub async fn move_music(self: Arc<Self>, to: Option<String>) -> Result<MoveResult, KoanError> {
         use koan_core::remote::{devices, link::LinkCommand};
-        offload::sequenced(move || {
+        let engine = self.clone();
+        // Sent on the lane, in order with every other command; waited for off
+        // it, so the transport does not stall behind a device that is slow to
+        // answer.
+        let sent = offload::sequenced(move || {
             let from = devices::target();
             if from == to {
-                return Ok(0);
+                return Ok(None);
             }
-            let dropped = match (&from, &to) {
-                (None, Some(to)) => {
-                    self.hand_off_blocking(to, koan_core::remote::link::CommandSource::Account)?
-                }
+            let sent = match (&from, &to) {
+                (None, Some(to)) => Some(
+                    engine
+                        .hand_off_blocking(to, koan_core::remote::link::CommandSource::Account)?,
+                ),
                 (Some(from), to) => {
-                    let to = match to {
+                    let track = devices::current_track(from);
+                    let to_id = match to {
                         Some(to) => to.clone(),
                         None => devices::this_id().ok_or_else(|| KoanError::Remote {
                             message: "this device is not set up to be reached".into(),
                         })?,
                     };
-                    devices::send(from, LinkCommand::HandOff { to })
+                    let before = to.as_deref().and_then(devices::last_report);
+                    let cursor_before = engine.state.cursor();
+                    devices::send(from, LinkCommand::HandOff { to: to_id })
                         .map_err(|message| KoanError::Remote { message })?;
-                    0
+                    Some(HandedOff {
+                        left_out: 0,
+                        to: to.clone(),
+                        track,
+                        before,
+                        cursor_before,
+                    })
                 }
-                (None, None) => 0,
+                (None, None) => None,
             };
             devices::set_target(to);
-            Ok(dropped)
+            Ok(sent)
         })
-        .await
+        .await?;
+        let Some(sent) = sent else {
+            return Ok(MoveResult {
+                left_out: 0,
+                started: true,
+            });
+        };
+        Ok(offload::offload(move || sent.result(|| self.under_cursor())).await)
     }
 
     /// Send a link command, as JSON, to the device `id`. For a Live
     /// Activity's buttons, which run while iOS keeps the app's link down: it
-    /// falls back to one request to the server.
+    /// goes by the server first, which knows whether the device is linked.
     pub async fn command_device(
         self: Arc<Self>,
         id: String,
@@ -2180,7 +2261,7 @@ impl KoanEngine {
         offload::offload(move || {
             let cmd = koan_core::remote::link::parse_command(&command)
                 .map_err(|message| KoanError::BadArgument { message })?;
-            koan_core::remote::devices::send(&id, cmd)
+            koan_core::remote::devices::send_by_server_first(&id, cmd)
                 .map_err(|message| KoanError::Remote { message })
         })
         .await
@@ -3654,7 +3735,7 @@ impl KoanEngine {
                     album: st.album.clone(),
                     track_id: row.map(|r| r.id),
                     album_id: row.and_then(|r| r.album_id),
-                    position_ms: st.position_ms,
+                    position_ms: d.position_ms(),
                     duration_ms: st.duration_ms,
                     problem: d.problem.clone(),
                 }
@@ -4063,9 +4144,12 @@ impl KoanEngine {
             // What a command may cost, and where it may go, depends on who
             // sent it: see `handle_link`.
             on_command: Arc::new(move |cmd, source| {
-                if let Some(engine) = weak.upgrade() {
-                    engine.handle_link(cmd, source);
-                }
+                let weak = weak.clone();
+                offload::from_another_device(move || {
+                    if let Some(engine) = weak.upgrade() {
+                        engine.handle_link(cmd, source);
+                    }
+                });
             }),
             // The queue is read again only when it has changed: this runs on
             // every change to the engine, and naming its tracks is a query.
@@ -4256,7 +4340,31 @@ impl KoanEngine {
             PlayerCommand::ReorderPlaylist(_)
             | PlayerCommand::BeginUndoBatch
             | PlayerCommand::EndUndoBatch => return Ok(()),
-            other => return self.send_local(other),
+            // This device's own: its output, its renderer and its DSP, and
+            // the player's own events. Named rather than caught by a wildcard,
+            // so a command added later is placed here or mapped above, never
+            // acted on locally by default while another device is controlled.
+            local @ (PlayerCommand::Cue { .. }
+            | PlayerCommand::PauseAndReport(_)
+            | PlayerCommand::UpdatePaths(_)
+            | PlayerCommand::TrackReady(_)
+            | PlayerCommand::TrackStreamReady(_)
+            | PlayerCommand::StreamProbed { .. }
+            | PlayerCommand::TrackFailed(_)
+            | PlayerCommand::CacheTracks(_)
+            | PlayerCommand::DecodeFinished(_)
+            | PlayerCommand::TrackQueued
+            | PlayerCommand::SetOutputDevice(_)
+            | PlayerCommand::ClearOutputDevice
+            | PlayerCommand::ReloadDsp
+            | PlayerCommand::RestartOutput
+            | PlayerCommand::UseRenderer(_)
+            | PlayerCommand::ResumeRenderer(_)
+            | PlayerCommand::ResumeRendererMissed
+            | PlayerCommand::ReleaseRenderer(_)
+            | PlayerCommand::SetRendererVolume(_)
+            | PlayerCommand::RestorePlayMode(_)
+            | PlayerCommand::Renderer { .. }) => return self.send_local(local),
         };
         koan_core::remote::devices::send(to, link).map_err(|message| KoanError::Remote { message })
     }
@@ -4522,7 +4630,14 @@ impl KoanEngine {
             }),
             LinkCommand::Undo => self.send_local(PlayerCommand::Undo),
             LinkCommand::Redo => self.send_local(PlayerCommand::Redo),
-            LinkCommand::HandOff { to } => self.hand_off_blocking(&to, source).map(|_| ()),
+            // Asked for by another device, which learns the outcome from
+            // what the destination reports; here it is only logged, off the
+            // lane, so later commands do not wait on it.
+            LinkCommand::HandOff { to } => self.hand_off_blocking(&to, source).map(|sent| {
+                let _ = std::thread::Builder::new()
+                    .name("koan-hand-off".into())
+                    .spawn(move || sent.result(|| None));
+            }),
             // Taken off the link before it gets here.
             // From a notification tapped or an outbox: the link's own
             // check, made again.
@@ -4665,7 +4780,7 @@ impl KoanEngine {
         &self,
         to: &str,
         source: koan_core::remote::link::CommandSource,
-    ) -> Result<u32, KoanError> {
+    ) -> Result<HandedOff, KoanError> {
         use koan_core::remote::link::LinkCommand;
         let (items, cursor) = self.state.snapshot_playlist();
         let remote = self.remote_ids(&items.iter().filter_map(|i| i.db_id).collect::<Vec<_>>());
@@ -4703,6 +4818,8 @@ impl KoanEngine {
             0
         };
         let dropped = (items.len() - kept.len()) as u32;
+        let first = kept[start_at].1.clone();
+        let before = koan_core::remote::devices::last_report(to);
         let play = LinkCommand::Play {
             track_ids: kept.into_iter().map(|(_, r)| r).collect(),
             start_at: start_at as u32,
@@ -4717,8 +4834,26 @@ impl KoanEngine {
             }
             return Err(KoanError::Remote { message });
         }
-        log::info!("devices: handed the queue to {to}, {dropped} left out");
-        Ok(dropped)
+        log::info!("devices: sent the queue to {to}, {dropped} left out");
+        Ok(HandedOff {
+            left_out: dropped,
+            to: Some(to.to_owned()),
+            track: Some(first),
+            before,
+            cursor_before: None,
+        })
+    }
+
+    /// The queue entry under this device's cursor, and the server's id for
+    /// its track.
+    fn under_cursor(&self) -> Option<(QueueItemId, Option<String>)> {
+        let cursor = self.state.cursor()?;
+        let remote = self
+            .state
+            .get_item(cursor)
+            .and_then(|item| item.db_id)
+            .and_then(|id| self.remote_ids(&[id]).remove(&id));
+        Some((cursor, remote))
     }
 
     /// Rows arrived by some route the UI did not start; have its pages read
@@ -5135,6 +5270,30 @@ fn remote_error(e: SubsonicError) -> KoanError {
         e => KoanError::Remote {
             message: e.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod hand_off_tests {
+    use super::*;
+
+    /// "Move here" after this device handed the music on: its own queue is
+    /// still there, cursor on the track it would be sent back. That is not
+    /// the music arriving; a new entry for the track is.
+    #[test]
+    fn music_moved_here_arrives_only_in_a_new_entry() {
+        let kept = QueueItemId(uuid::Uuid::now_v7());
+        let arrived = QueueItemId(uuid::Uuid::now_v7());
+        let t = Some("t".to_string());
+        assert!(!arrived_here(Some(kept), Some((kept, t.clone())), "t"));
+        assert!(!arrived_here(Some(kept), None, "t"));
+        assert!(!arrived_here(
+            Some(kept),
+            Some((arrived, Some("u".into()))),
+            "t"
+        ));
+        assert!(arrived_here(Some(kept), Some((arrived, t.clone())), "t"));
+        assert!(arrived_here(None, Some((arrived, t)), "t"));
     }
 }
 
