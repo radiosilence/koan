@@ -232,6 +232,50 @@ pub fn cmd_dsp_add_target(path: &std::path::Path) {
     );
 }
 
+/// Correct the headphone `name` from the measurement at `path` to `target`.
+pub fn cmd_dsp_measure(path: &std::path::Path, name: &str, in_ear: bool, target: &str) {
+    use koan_core::config::DspEar;
+    let text =
+        std::fs::read_to_string(path).unwrap_or_else(|e| fail(format!("{}: {e}", path.display())));
+    let ear = if in_ear { DspEar::In } else { DspEar::Over };
+    let saved = profiles::save_measured(name, &text, ear, target).unwrap_or_else(|e| fail(e));
+    println!(
+        "{} '{}', corrected to {}",
+        "measured".green(),
+        saved.bold(),
+        profiles::target_name(target)
+    );
+}
+
+/// Say whether `name` corrects a headphone or tunes on top of one.
+pub fn cmd_dsp_role(name: &str, correction: bool) {
+    use koan_core::config::DspRole;
+    let role = if correction {
+        DspRole::Correction
+    } else {
+        DspRole::Tuning
+    };
+    profiles::set_role(name, role).unwrap_or_else(|e| fail(e));
+    println!(
+        "'{}' is a {}",
+        name.bold(),
+        if correction { "correction" } else { "tuning" }
+    );
+}
+
+/// The target the ready-made EQ `name` was made for, or `None` for unknown.
+pub fn cmd_dsp_made_for(name: &str, target: Option<&str>) {
+    profiles::set_made_for(name, target).unwrap_or_else(|e| fail(e));
+    match target {
+        Some(t) => println!(
+            "'{}' was made for {}",
+            name.bold(),
+            profiles::target_name(t)
+        ),
+        None => println!("'{}' was made for an unknown target", name.bold()),
+    }
+}
+
 pub fn cmd_dsp_remove(name: &str) {
     profiles::remove(name).unwrap_or_else(|e| fail(e));
     println!("{} '{}'", "removed".green(), name.bold());
