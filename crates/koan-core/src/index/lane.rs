@@ -1,10 +1,16 @@
 //! One scan at a time.
 //!
-//! A full scan, the folder watcher's rescans and an import all write the same
-//! rows, and two at once over the same folders would race: one prunes what the
-//! other is about to index, or both read every file. Every scan entry point in
+//! A full scan and the folder watcher's rescans write the same rows, and two
+//! at once over the same folders would race: one prunes what the other is
+//! about to index, or both read every file. Every scan entry point in
 //! `scanner` enters the lane first; a second waits on the lock, woken when the
 //! first leaves, with no polling.
+//!
+//! An import of dropped files does not wait for the lane: it only adds, and a
+//! scan's prune keeps what it adds, since the files are there. Someone dropped
+//! an album to play it, and a scan of a large library can take minutes. It
+//! waits only for forgetting a folder, which would otherwise remove rows it is
+//! about to hand back; imports share `IMPORTS` and a forget holds it alone.
 //!
 //! The scan in the lane can be stopped from outside: by the person, through
 //! [`cancel_all`], or by forgetting a folder it is scanning, through
@@ -15,11 +21,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use parking_lot::{Mutex, MutexGuard};
+use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use super::scanner::ScanOptions;
 
 static LANE: Mutex<()> = Mutex::new(());
+
+/// Held shared by imports, and alone by a forget.
+static IMPORTS: RwLock<()> = RwLock::new(());
 
 /// The scan in the lane: the paths it covers, and how to stop it.
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
@@ -56,10 +65,25 @@ pub(crate) fn enter(roots: &[PathBuf], opts: &mut ScanOptions) -> Turn {
     Turn { _lane: lane }
 }
 
-/// Wait for the lane with nothing to scan: for changing what a scan reads,
-/// such as forgetting a folder, without one running underneath.
-pub(crate) fn wait() -> MutexGuard<'static, ()> {
-    LANE.lock()
+/// Held while rows are being forgotten: no scan and no import underneath.
+pub(crate) struct Quiet {
+    _lane: MutexGuard<'static, ()>,
+    _imports: RwLockWriteGuard<'static, ()>,
+}
+
+/// Wait for the lane and for every import, for changing what they read, such
+/// as forgetting a folder, without one running underneath.
+pub(crate) fn wait() -> Quiet {
+    let lane = LANE.lock();
+    Quiet {
+        _lane: lane,
+        _imports: IMPORTS.write(),
+    }
+}
+
+/// Held by an import for as long as it writes. Waits only for a forget.
+pub(crate) fn importing() -> RwLockReadGuard<'static, ()> {
+    IMPORTS.read()
 }
 
 /// Stop the scan in the lane, whatever it covers. It keeps what it had

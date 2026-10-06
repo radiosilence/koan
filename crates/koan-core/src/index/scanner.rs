@@ -709,11 +709,17 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
     }
 
     // Read and written as a scan reads and writes, so an unchanged file is not
-    // read again and a dropped folder can be cancelled.
-    let mut opts = ScanOptions::default();
-    let _turn = super::lane::enter(paths, &mut opts);
+    // read again. Not in the lane: see `lane`.
+    let _importing = super::lane::importing();
     let mut scanned = ScanResult::default();
-    index_files(db, files.clone(), &opts, None, &mut scanned, Path::new(""));
+    index_files(
+        db,
+        files.clone(),
+        &ScanOptions::default(),
+        None,
+        &mut scanned,
+        Path::new(""),
+    );
     result.added = scanned.added;
     result.updated = scanned.updated;
     result.errors = scanned.errors;
@@ -886,6 +892,36 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(30))
             .expect("never ran once the lane was free");
         assert_eq!(added, 1);
+    }
+
+    /// A drop is for playing now: it does not queue behind a scan, which on a
+    /// large library can take minutes.
+    #[test]
+    fn an_import_does_not_wait_for_a_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let drop = dir.path().join("rip");
+        std::fs::create_dir_all(&drop).unwrap();
+        test_utils::generate_wav(&drop.join("a.wav"), 8000, 1, 0.1, 16);
+        let db_root = dir.path().to_path_buf();
+
+        let mut opts = ScanOptions::default();
+        let held = super::super::lane::enter(&[dir.path().join("library")], &mut opts);
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let db = test_db(&db_root);
+            done_tx
+                .send(
+                    import_paths(&db, std::slice::from_ref(&drop))
+                        .track_ids
+                        .len(),
+                )
+                .unwrap();
+        });
+        let imported = done_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("waited for the scan");
+        assert_eq!(imported, 1);
+        drop(held);
     }
 
     #[test]
