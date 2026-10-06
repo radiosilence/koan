@@ -142,10 +142,24 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
     let Some(tuning) = tuning else {
         return correction.map(|c| alone(c, None));
     };
+    // Without a correction to fall back on, the output plays untouched, and
+    // still says why.
     let left_off = |why: &str| {
         let why = format!("{} is left out: {why}", tuning.name);
         log::warn!("dsp: {device}: {why}");
-        correction.map(|c| alone(c, Some(why)))
+        Some(match correction {
+            Some(c) => alone(c, Some(why)),
+            None => OutputChain {
+                profile: DspProfile {
+                    name: name.clone(),
+                    ..Default::default()
+                },
+                all: all.clone(),
+                name: name.clone(),
+                left_out: Some(why),
+                tuning_plays: false,
+            },
+        })
     };
     let curves = |p: &DspProfile| {
         chain(p, all, &mut Vec::new()).map_or(0, |f| {
@@ -184,30 +198,52 @@ pub fn output_chain(dsp: &crate::config::DspConfig, device: &str) -> Option<Outp
             filters: vec![DspFilter::Graphic(targets::difference(&from, &to))],
             ..Default::default()
         });
-    let mut among = all.clone();
-    let profile = match correction {
-        Some(c) => {
-            let mut c = c.clone();
-            for p in step.into_iter().chain([on_top]) {
-                c.layers.push(DspLayer {
-                    profile: p.name.clone(),
-                    on: true,
-                });
-                among.push(p);
+    let build = |step: Option<DspProfile>| {
+        let mut among = all.clone();
+        let profile = match correction {
+            Some(c) => {
+                let mut c = c.clone();
+                for p in step.into_iter().chain([on_top.clone()]) {
+                    c.layers.push(DspLayer {
+                        profile: p.name.clone(),
+                        on: true,
+                    });
+                    among.push(p);
+                }
+                c
             }
-            c
-        }
-        None => {
-            among.push(on_top.clone());
-            on_top
-        }
+            None => {
+                among.push(on_top.clone());
+                on_top.clone()
+            }
+        };
+        chain(&profile, &among, &mut Vec::new()).map(|_| (profile, among))
     };
-    // A chain past what one may hold loses the tuning, never the correction.
-    if let Err(e) = chain(&profile, &among, &mut Vec::new()) {
-        return left_off(&format!(
-            "with the correction, the chain is more than one can hold ({e})."
-        ));
-    }
+    // A chain past what one may hold loses the target difference first,
+    // then the tuning, never the correction.
+    let had_step = step.is_some();
+    let (profile, among) = match build(step) {
+        Ok(built) => built,
+        Err(e) if !had_step => {
+            return left_off(&format!(
+                "with the correction, the chain is more than one can hold ({e})."
+            ));
+        }
+        Err(_) => match build(None) {
+            Ok(built) => {
+                left_out = Some(format!(
+                    "{} plays without the target difference: with it, the chain is more than one can hold, so it may not sound as made.",
+                    tuning.name
+                ));
+                built
+            }
+            Err(e) => {
+                return left_off(&format!(
+                    "with the correction, the chain is more than one can hold ({e})."
+                ));
+            }
+        },
+    };
     Some(OutputChain {
         profile,
         all: among,
