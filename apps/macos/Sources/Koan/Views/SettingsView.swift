@@ -14,6 +14,11 @@ struct SettingsView: View {
     @Environment(ActivityModel.self) private var activity
 
     @State private var model: SettingsModel?
+    /// The server's accounts, loaded here rather than in their section: the
+    /// list loading is what says the account is an admin's, and whether
+    /// there is a People section at all.
+    @State private var people: PeopleModel?
+    @Environment(EngineMirror.self) private var mirror
     #if os(macOS)
     @Environment(\.controlActiveState) private var controlActive
     #else
@@ -60,12 +65,24 @@ struct SettingsView: View {
                         .tabItem { Label("Library", systemImage: "music.note.house") }
                     RemoteSettings(model: model)
                         .tabItem { Label("Server", systemImage: "server.rack") }
+                    if AccountSettings.shown(model, mirror) {
+                        AccountSettings(model: model)
+                            .tabItem { Label("Account", systemImage: "person.crop.circle") }
+                    }
+                    if PeoplePane.shown(model, people), let people {
+                        PeoplePane(model: model, people: people)
+                            .tabItem { Label("People", systemImage: "person.2") }
+                    }
                     PlaybackSettings(model: model)
                         .tabItem { Label("Playback", systemImage: "hifispeaker") }
                     EqSettings()
                         .tabItem { Label("EQ", systemImage: "slider.vertical.3") }
                     DevicesSettings(model: model)
                         .tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
+                    if IntegrationSections.shown(model, mirror) {
+                        IntegrationsSettings()
+                            .tabItem { Label("Integrations", systemImage: "puzzlepiece.extension") }
+                    }
                     AppearanceSettings()
                         .tabItem { Label("Appearance", systemImage: "paintpalette") }
                 }
@@ -86,6 +103,21 @@ struct SettingsView: View {
                         RemoteSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
+                    // A television keeps all of the server on its one page.
+                    #if !os(tvOS)
+                    if AccountSettings.shown(model, mirror) {
+                        pane("Account", "person.crop.circle") {
+                            AccountSettings(model: model)
+                                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                        }
+                    }
+                    if PeoplePane.shown(model, people), let people {
+                        pane("People", "person.2") {
+                            PeoplePane(model: model, people: people)
+                                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                        }
+                    }
+                    #endif
                     pane("Playback", "hifispeaker") {
                         PlaybackSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
@@ -98,6 +130,14 @@ struct SettingsView: View {
                         DevicesSettings(model: model)
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
+                    #if !os(tvOS)
+                    if IntegrationSections.shown(model, mirror) {
+                        pane("Integrations", "puzzlepiece.extension") {
+                            IntegrationsSettings()
+                                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                        }
+                    }
+                    #endif
                     pane("Appearance", "paintpalette") {
                         AppearanceSettings()
                     }
@@ -128,6 +168,14 @@ struct SettingsView: View {
             if model == nil {
                 model = await SettingsModel(engine: library.engine, activity: activity, art: library.art)
             }
+        }
+        // Asked again for each account signed in as; an account that is not
+        // an admin's gets no list, and so no People section.
+        .task(id: model.map { "\($0.settings.remoteSignedIn) \($0.settings.remoteUrl) \($0.settings.remoteUsername)" }) {
+            guard let model, model.settings.remoteSignedIn else { return }
+            let people = people ?? PeopleModel(engine: library.engine)
+            self.people = people
+            await people.load()
         }
         // The CLI and TUI write the same file; coming back to this window is
         // the moment to notice they did.
@@ -321,11 +369,6 @@ private struct RemoteSettings: View {
     @State private var username = ""
     @State private var confirmingSignOut = false
     @State private var copiedServer = false
-    @State private var changingPassword = false
-    @State private var currentPassword = ""
-    @State private var newPassword = ""
-    /// What the server holds, while asking before it replaces this queue.
-    @State private var replacingQueue: ServerQueue?
     /// The cache limit as typed, committed whole: "5" on the way to "50GB" is
     /// not a limit anyone set.
     @State private var cacheLimit: String?
@@ -381,12 +424,6 @@ private struct RemoteSettings: View {
                         Button("Sync") { model.syncNow() }
                             .koanButton(.secondary)
                             .disabled(activity.conflicts(with: [.remoteTracks]))
-                        #if !os(tvOS)
-                        if mirror.offers(PasswordChange.extensionName) {
-                            Button("Change Password…") { changingPassword = true }
-                                .koanButton(.secondary)
-                        }
-                        #endif
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                             .koanButton(.secondary)
@@ -395,36 +432,14 @@ private struct RemoteSettings: View {
                 } header: {
                     KoanSectionHeader("Signed in")
                 }
-                #if !os(tvOS)
-                .alert("Change your password", isPresented: $changingPassword) {
-                    SecureField("Current password", text: $currentPassword)
-                    SecureField("New password", text: $newPassword)
-                    Button("Change") {
-                        let (current, new) = (currentPassword, newPassword)
-                        currentPassword = ""
-                        newPassword = ""
-                        Task { _ = await model.changePassword(current: current, new: new) }
-                    }
-                    Button("Cancel", role: .cancel) {
-                        currentPassword = ""
-                        newPassword = ""
-                    }
-                } message: {
-                    Text("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.")
-                }
-                #endif
+                #if os(tvOS)
+                // A television keeps the server on one page: what a phone or a
+                // Mac splits into sections, less what needs a keyboard.
                 if mirror.offers(ApiKeysSettings.extensionName) {
                     ApiKeysSettings()
                 }
-                if mirror.offers(AssistantsSettings.extensionName) {
-                    AssistantsSettings()
-                }
-                // Accounts and pairings are managed from a device with a keyboard.
-                #if !os(tvOS)
-                PeopleSettings(signedInAs: model.settings.remoteUsername)
-                PairDevice()
+                IntegrationSections()
                 #endif
-                ScrobblingSettings()
                 ServerOffers()
             } else {
                 Section {
@@ -522,29 +537,11 @@ private struct RemoteSettings: View {
                     .koanText(.fine, .muted)
             }
 
+            #if os(tvOS)
             if model.settings.remoteSignedIn {
-            Section {
-                Toggle("Keep the queue on the server", isOn: Binding(
-                    get: { model.settings.playQueue },
-                    set: { on in
-                        Task {
-                            // Turning it on takes the server's queue in place of
-                            // this one, so say so first when there is one.
-                            if on, let saved = await model.serverQueue(), saved.savedTracks > 0 {
-                                replacingQueue = saved
-                            } else {
-                                await model.setServerQueue(on)
-                            }
-                        }
-                    }
-                )).koanToggle()
-            } header: {
-                KoanSectionHeader("Play queue")
-            } footer: {
-                Text("Saves this device's queue to your account on the server, where other apps can pick it up, and picks up a queue another app saved there when kōan starts. Moving music between kōan devices does not need it.")
-                    .koanText(.fine, .muted)
+                ServerQueueSection(model: model)
             }
-            }
+            #endif
 
             Section {
                 #if os(tvOS)
@@ -610,6 +607,149 @@ private struct RemoteSettings: View {
         } message: {
             Text("Tracks you also have as local files are kept either way. Keeping the rest leaves records in the library that cannot be played until you sign in again.")
         }
+    }
+
+    private func commitCacheLimit() {
+        guard let draft = cacheLimit else { return }
+        cacheLimit = nil
+        if draft != model.settings.cacheLimit { model.edit { $0.cacheLimit = draft } }
+    }
+}
+
+// MARK: - Account
+
+/// The signed-in account's own keys to the server: its password, and the API
+/// keys apps sign in with. Each where the server has it.
+private struct AccountSettings: View {
+    @Bindable var model: SettingsModel
+    @Environment(EngineMirror.self) private var mirror
+    @State private var changingPassword = false
+    @State private var currentPassword = ""
+    @State private var newPassword = ""
+
+    /// Whether there is anything here: signed in to a server with either.
+    static func shown(_ model: SettingsModel, _ mirror: EngineMirror) -> Bool {
+        model.settings.remoteSignedIn
+            && (mirror.offers(PasswordChange.extensionName) || mirror.offers(ApiKeysSettings.extensionName))
+    }
+
+    var body: some View {
+        KoanForm {
+            if mirror.offers(PasswordChange.extensionName) {
+                Section {
+                    LabeledContent("User", value: model.settings.remoteUsername)
+                    Button("Change Password…") { changingPassword = true }
+                        .koanButton(.secondary)
+                } header: {
+                    KoanSectionHeader("Password")
+                } footer: {
+                    Text("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.")
+                        .koanText(.fine, .muted)
+                }
+                .alert("Change your password", isPresented: $changingPassword) {
+                    SecureField("Current password", text: $currentPassword)
+                    SecureField("New password", text: $newPassword)
+                    Button("Change") {
+                        let (current, new) = (currentPassword, newPassword)
+                        currentPassword = ""
+                        newPassword = ""
+                        Task { _ = await model.changePassword(current: current, new: new) }
+                    }
+                    Button("Cancel", role: .cancel) {
+                        currentPassword = ""
+                        newPassword = ""
+                    }
+                } message: {
+                    Text("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.")
+                }
+            }
+            if mirror.offers(ApiKeysSettings.extensionName) {
+                ApiKeysSettings()
+            }
+        }
+        .koanSheet()
+    }
+}
+
+// MARK: - People
+
+/// The server's accounts, for its admins. Shown only once the list has
+/// loaded, which the server allows an admin alone.
+private struct PeoplePane: View {
+    @Bindable var model: SettingsModel
+    let people: PeopleModel
+
+    static func shown(_ model: SettingsModel, _ people: PeopleModel?) -> Bool {
+        model.settings.remoteSignedIn && people?.accounts != nil
+    }
+
+    var body: some View {
+        KoanForm {
+            PeopleSettings(signedInAs: model.settings.remoteUsername, model: people)
+        }
+        .koanSheet()
+    }
+}
+
+// MARK: - Integrations
+
+/// What the account is connected to beyond kōan's own apps: ListenBrainz,
+/// and assistants over MCP. Each where the server has it.
+private struct IntegrationSections: View {
+    @Environment(EngineMirror.self) private var mirror
+
+    static func shown(_ model: SettingsModel, _ mirror: EngineMirror) -> Bool {
+        model.settings.remoteSignedIn
+            && (mirror.connection?.scrobbling == true || mirror.offers(AssistantsSettings.extensionName))
+    }
+
+    var body: some View {
+        ScrobblingSettings()
+        if mirror.offers(AssistantsSettings.extensionName) {
+            AssistantsSettings()
+        }
+    }
+}
+
+private struct IntegrationsSettings: View {
+    var body: some View {
+        KoanForm {
+            IntegrationSections()
+        }
+        .koanSheet()
+    }
+}
+
+// MARK: - Server play queue
+
+/// This device's queue kept on the server, for other apps to pick up.
+private struct ServerQueueSection: View {
+    @Bindable var model: SettingsModel
+    /// What the server holds, while asking before it replaces this queue.
+    @State private var replacingQueue: ServerQueue?
+
+    var body: some View {
+        Section {
+            Toggle("Keep the queue on the server", isOn: Binding(
+                get: { model.settings.playQueue },
+                set: { on in
+                    Task {
+                        // Turning it on takes the server's queue in place of
+                        // this one, so say so first when there is one.
+                        if on, let saved = await model.serverQueue(), saved.savedTracks > 0 {
+                            replacingQueue = saved
+                        } else {
+                            await model.setServerQueue(on)
+                        }
+                    }
+                }
+            )).koanToggle()
+        } header: {
+            KoanSectionHeader("Play queue")
+        } footer: {
+            Text("Saves this device's queue to your account on the server, where other apps can pick it up, and picks up a queue another app saved there when kōan starts. Moving music between kōan devices does not need it.")
+                .koanText(.fine, .muted)
+        }
         .confirmationDialog(
             "Replace this queue?",
             isPresented: Binding(
@@ -626,12 +766,6 @@ private struct RemoteSettings: View {
         } message: { saved in
             Text("Your server has a queue of \(saved.savedTracks) \(saved.savedTracks == 1 ? "track" : "tracks") saved by \(saved.savedBy). Keeping the queue on the server replaces the one on this device with it.")
         }
-    }
-
-    private func commitCacheLimit() {
-        guard let draft = cacheLimit else { return }
-        cacheLimit = nil
-        if draft != model.settings.cacheLimit { model.edit { $0.cacheLimit = draft } }
     }
 }
 
@@ -1295,6 +1429,14 @@ private struct DevicesSettings: View {
 
     var body: some View {
         KoanForm {
+            // Pairing is approved from a device with a keyboard; a television
+            // keeps its play queue setting with the server's.
+            #if !os(tvOS)
+            PairDevice()
+            if model.settings.remoteSignedIn {
+                ServerQueueSection(model: model)
+            }
+            #endif
             Section {
                 Toggle("Discoverable on this network", isOn: model.binding(\.devicesDiscoverable)).koanToggle()
                 Picker("Devices on this network", selection: model.binding(\.devicesNearbyControl)) {
@@ -1571,6 +1713,8 @@ private struct SettingsFrameAutosave: NSViewRepresentable {
 enum SettingsEvidence {
     static func pages(_ state: AppState) async -> [(name: String, size: CGSize, view: AnyView)] {
         let model = await SettingsModel(engine: state.library.engine, activity: state.activity, art: state.art)
+        let people = PeopleModel(engine: state.library.engine)
+        await people.load()
         // What the Settings scene injects, so a pane renders as it does there.
         func page(_ view: some View) -> AnyView {
             AnyView(
@@ -1588,6 +1732,9 @@ enum SettingsEvidence {
         return [
             ("settings-library", size, page(LibrarySettings(model: model))),
             ("settings-server", size, page(RemoteSettings(model: model))),
+            ("settings-account", size, page(AccountSettings(model: model))),
+            ("settings-people", size, page(PeoplePane(model: model, people: people))),
+            ("settings-integrations", size, page(IntegrationsSettings())),
             ("settings-playback", size, page(PlaybackSettings(model: model))),
             ("settings-eq", size, page(EqSettings())),
             ("settings-devices", size, page(DevicesSettings(model: model))),

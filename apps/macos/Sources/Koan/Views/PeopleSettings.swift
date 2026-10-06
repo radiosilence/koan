@@ -80,8 +80,7 @@ extension AccountRole {
 
 struct PeopleSettings: View {
     let signedInAs: String
-    @Environment(LibraryModel.self) private var library
-    @State private var model: PeopleModel?
+    let model: PeopleModel
     @State private var newUsername = ""
     @State private var newRole = AccountRole.readonly
     @State private var deleting: String?
@@ -91,7 +90,7 @@ struct PeopleSettings: View {
 
     var body: some View {
         Group {
-            if let model, let accounts = model.accounts {
+            if let accounts = model.accounts {
                 Section {
                     ForEach(accounts, id: \.username) { account in
                         row(account, model: model)
@@ -173,11 +172,7 @@ struct PeopleSettings: View {
                 }
             }
         }
-        .task {
-            let model = model ?? PeopleModel(engine: library.engine)
-            self.model = model
-            await model.load()
-        }
+        .task { await model.load() }
     }
 
     private func row(_ account: ServerAccount, model: PeopleModel) -> some View {
