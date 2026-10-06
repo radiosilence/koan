@@ -19,6 +19,7 @@ pages=(
   "Library|docs/format-strings.md"
   "Library|docs/recipes/cache-management.md"
   "Playback|docs/guide/devices.md"
+  "Playback|docs/guide/apple-tv.md"
   "Playback|docs/guide/sleep-timer.md"
   "Playback|docs/guide/dsp.md"
   "Automation|docs/guide/mcp-integration.md"

@@ -21,3 +21,13 @@ function Link(el)
   end
   return el
 end
+
+-- Pictures are written as paths into the site's public folder, so GitHub shows
+-- them too; on the site that folder is the root.
+function Image(el)
+  local path = el.src:match("site/public(/.*)$")
+  if path then
+    el.src = path
+  end
+  return el
+end
