@@ -41,20 +41,23 @@ pub const SERVICE: &str = "_koan._tcp";
 #[serde(tag = "type", rename_all = "camelCase")]
 enum ProofFrame {
     /// The dialler: who it is, its nonce, and its signature over both nonces.
-    NearbyAuth {
+    #[serde(rename = "nearbyAuth")]
+    Auth {
         id: String,
         nonce: String,
         sig: String,
     },
     /// The listener's answer: whether it took the dialler for the account's
     /// or a shared device, and its own signature, when it has a key.
-    NearbyProof {
+    #[serde(rename = "nearbyProof")]
+    Proof {
         verified: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sig: Option<String>,
     },
     /// A command from a proven dialler, as JSON, signed for this session.
-    NearbySigned {
+    #[serde(rename = "nearbySigned")]
+    Signed {
         seq: u64,
         sig: String,
         command: String,
@@ -700,7 +703,7 @@ struct Serving<'a> {
 impl Serving<'_> {
     fn proof(&mut self, frame_in: ProofFrame) {
         match frame_in {
-            ProofFrame::NearbyAuth { id, nonce, sig } => {
+            ProofFrame::Auth { id, nonce, sig } => {
                 if std::mem::replace(&mut self.answered, true) {
                     return;
                 }
@@ -715,9 +718,9 @@ impl Serving<'_> {
                     proven.map(|p| (p, proof::Session::new(me, &id, &self.nonce, &nonce)));
                 let sig = proof::sign_listen(&id, me, &nonce, &self.nonce, verified);
                 self.pending
-                    .extend(frame(&ProofFrame::NearbyProof { verified, sig }));
+                    .extend(frame(&ProofFrame::Proof { verified, sig }));
             }
-            ProofFrame::NearbySigned { seq, sig, command } => {
+            ProofFrame::Signed { seq, sig, command } => {
                 let Some((by, session)) = self.proven.as_mut() else {
                     log::warn!("nearby: a signed command from a peer that proved nothing; refused");
                     return;
@@ -733,7 +736,7 @@ impl Serving<'_> {
                 let peer = by.peer.clone();
                 self.run(cmd, &peer);
             }
-            ProofFrame::NearbyProof { .. } => {}
+            ProofFrame::Proof { .. } => {}
         }
     }
 
@@ -1036,7 +1039,7 @@ impl Controlling<'_> {
         let Some(sig) = proof::sign_dial(listener, &me, &listen_nonce, &dial_nonce) else {
             return;
         };
-        self.pending.extend(frame(&ProofFrame::NearbyAuth {
+        self.pending.extend(frame(&ProofFrame::Auth {
             id: me.clone(),
             nonce: dial_nonce.clone(),
             sig,
@@ -1097,7 +1100,7 @@ impl wire::Session for Controlling<'_> {
             };
             match &mut self.handshake {
                 Handshake::Signed(session) => match session.sign(&json) {
-                    Some((seq, sig)) => out.extend(frame(&ProofFrame::NearbySigned {
+                    Some((seq, sig)) => out.extend(frame(&ProofFrame::Signed {
                         seq,
                         sig,
                         command: json,
@@ -1113,7 +1116,7 @@ impl wire::Session for Controlling<'_> {
     }
 
     fn incoming(&mut self, text: &str) {
-        if let Ok(ProofFrame::NearbyProof { verified, sig }) = serde_json::from_str(text) {
+        if let Ok(ProofFrame::Proof { verified, sig }) = serde_json::from_str(text) {
             return self.answered(verified, sig);
         }
         match serde_json::from_str::<LinkReport>(text) {
@@ -1889,7 +1892,7 @@ mod tests {
         let dial_nonce = proof::nonce();
         let sig = proof::sign_dial("mac", dialer, &s.nonce, &dial_nonce).unwrap();
         let session = proof::Session::new("mac", dialer, &s.nonce, &dial_nonce);
-        s.incoming(&json(&ProofFrame::NearbyAuth {
+        s.incoming(&json(&ProofFrame::Auth {
             id: dialer.into(),
             nonce: dial_nonce.clone(),
             sig,
@@ -1900,14 +1903,14 @@ mod tests {
     fn signed(session: &mut proof::Session, cmd: &LinkCommand) -> String {
         let command = serde_json::to_string(cmd).unwrap();
         let (seq, sig) = session.sign(&command).unwrap();
-        json(&ProofFrame::NearbySigned { seq, sig, command })
+        json(&ProofFrame::Signed { seq, sig, command })
     }
 
     fn answer(s: &mut Serving) -> (bool, Option<String>) {
         let out = wire::Session::outgoing(s);
         out.iter()
             .find_map(|t| match serde_json::from_str::<ProofFrame>(t) {
-                Ok(ProofFrame::NearbyProof { verified, sig }) => Some((verified, sig)),
+                Ok(ProofFrame::Proof { verified, sig }) => Some((verified, sig)),
                 _ => None,
             })
             .expect("an answer")
