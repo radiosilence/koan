@@ -1855,6 +1855,7 @@ mod tests {
                     owner: owner.map(Into::into),
                 })
                 .collect(),
+            proof::account_of(&Config::cached()),
         );
         let ran = Arc::new(Mutex::new(Vec::new()));
         let seen = ran.clone();

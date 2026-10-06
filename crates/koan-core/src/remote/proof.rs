@@ -321,11 +321,12 @@ struct Kept {
     keys: Vec<LinkDeviceKey>,
 }
 
-/// Which account on which server this device is signed in to, as kept keys
-/// are tagged with: the server's `library_fingerprint` and the username.
-fn account_of(cfg: &Config) -> Option<String> {
+/// Which account on which server `cfg` signs in to, as kept keys are tagged
+/// with: the server's `library_fingerprint` and the username, compared as the
+/// server compares it, exactly.
+pub fn account_of(cfg: &Config) -> Option<String> {
     let server = crate::remote::link::library_fingerprint(cfg)?;
-    Some(format!("{server}/{}", cfg.remote.username.to_lowercase()))
+    Some(format!("{server}/{}", cfg.remote.username))
 }
 
 static KEPT: Mutex<Option<Kept>> = Mutex::new(None);
@@ -341,11 +342,14 @@ fn now() -> i64 {
         .unwrap_or_default()
 }
 
-/// Keep the key list the server just sent, replacing the last whole: a key
-/// revoked is a key no longer listed.
-pub fn keep(keys: Vec<LinkDeviceKey>) {
+/// Keep the key list the server just sent to the link signed in as
+/// `account`, replacing the last whole: a key revoked is a key no longer
+/// listed. Tagged with the link's account, not whoever is signed in now, so a
+/// list that reaches a link still open for the last account is never taken
+/// for the next one's.
+pub fn keep(keys: Vec<LinkDeviceKey>, account: Option<String>) {
     let kept = Kept {
-        account: account_of(&Config::cached()),
+        account,
         at: now(),
         keys,
     };
@@ -475,6 +479,35 @@ mod tests {
         );
     }
 
+    /// jo signs out and kim signs in, and a key list reaches the link still
+    /// open as jo: kept as jo's, it proves nothing for kim.
+    #[test]
+    fn keys_from_the_last_accounts_link_prove_nothing_for_the_next() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        let sign_in = |user: &str| {
+            Config::persist(|c| {
+                c.remote.enabled = true;
+                c.remote.url = "http://koan.test".into();
+                c.remote.username = user.into();
+                c.remote.api_key = "k".into();
+            })
+            .unwrap();
+        };
+        sign_in("jo");
+        let jo = account_of(&Config::cached());
+        sign_in("kim");
+        keep(vec![key("phone", "K", None)], jo);
+        assert!(kept().is_empty(), "jo's link, kim signed in");
+        keep(vec![key("phone", "K", None)], account_of(&Config::cached()));
+        assert_eq!(kept().len(), 1, "kim's own link");
+        forget();
+        assert!(kept().is_empty());
+    }
+
     #[test]
     fn signed_commands_are_bound_to_their_session_and_order() {
         let (phone, phone_pub) = pair();
@@ -527,9 +560,13 @@ mod tests {
         };
         assert_eq!(trusted(&kept, jo.as_deref(), 1_000_000 + 60).len(), 1);
         assert_eq!(
-            trusted(&kept, cfg("http://koan.test/", "JO").as_deref(), 1_000_000).len(),
+            trusted(&kept, cfg("http://KOAN.test/", "jo").as_deref(), 1_000_000).len(),
             1,
-            "the same account, spelt differently"
+            "the same server, spelt differently"
+        );
+        assert!(
+            trusted(&kept, cfg("http://koan.test", "Jo").as_deref(), 1_000_000).is_empty(),
+            "usernames are matched exactly, as the server matches them"
         );
         let kim = cfg("http://koan.test", "kim");
         assert!(

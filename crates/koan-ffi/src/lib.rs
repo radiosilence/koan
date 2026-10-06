@@ -2893,6 +2893,7 @@ impl KoanEngine {
                 message: e.to_string(),
             })?;
             koan_core::remote::proof::forget();
+            koan_core::remote::link::relink();
             koan_core::remote::nearby::readvertise();
             Ok(())
         })

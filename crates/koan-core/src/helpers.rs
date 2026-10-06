@@ -1134,11 +1134,10 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
             Credential::Password(_) => String::new(),
         };
     })?;
-    // Whatever account was here before, its devices are not this one's.
+    // Whatever account was here before, its devices are not this one's, and
+    // the link it had open closes, to open again as this one.
     crate::remote::proof::forget();
-    // The link rests for up to a minute while signed out; the profile Settings
-    // shows is probed when it wakes.
-    crate::remote::link::nudge();
+    crate::remote::link::relink();
     // This device's announcement names the server it is signed in to.
     crate::remote::nearby::readvertise();
     Ok(())

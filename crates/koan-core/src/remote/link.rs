@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::net::TcpStream;
 use std::os::fd::RawFd;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -706,11 +707,30 @@ pub fn spawn(local: Local) {
 const RETRY_MIN: Duration = Duration::from_secs(2);
 const RETRY_MAX: Duration = Duration::from_secs(60);
 
+/// Moved at every sign-in and sign-out. A link opened under an earlier one
+/// is the last account's, and closes, to open again as whoever is signed in.
+static SIGN_IN: AtomicU64 = AtomicU64::new(0);
+
+/// The account changed: close the link that is up, which was opened for the
+/// last one, and link again now as the new one. A link carries an account's
+/// news, its device keys among them, and none of it is the next account's.
+pub fn relink() {
+    SIGN_IN.fetch_add(1, Ordering::SeqCst);
+    if let Some(up) = LINK.lock().as_ref() {
+        up.waker.wake();
+    }
+    nudge();
+}
+
 fn run(local: Local) {
     let mut wait = RETRY_MIN;
     loop {
         crate::quiet::wait_until_awake();
+        // Before the config is read: a sign-in after this closes the link
+        // about to open with what it read.
+        let signed_in = SIGN_IN.load(Ordering::SeqCst);
         let cfg = Config::load().unwrap_or_default();
+        let account = crate::remote::proof::account_of(&cfg);
         let Some(auth) = subsonic_auth(&cfg) else {
             rest(RETRY_MAX);
             continue;
@@ -738,7 +758,7 @@ fn run(local: Local) {
                     client.outage().retry_now();
                 }
                 wait = RETRY_MIN;
-                if let Err(e) = serve(&mut socket, fd, &local) {
+                if let Err(e) = serve(&mut socket, fd, &local, signed_in, account) {
                     log::info!("link: closed: {e}");
                 }
                 *LINK.lock() = None;
@@ -852,7 +872,13 @@ fn link_url(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<String, Stri
     Ok(format!("{base}/rest/koanLink?{query}"))
 }
 
-fn serve(socket: &mut Socket, fd: RawFd, local: &Local) -> Result<(), String> {
+fn serve(
+    socket: &mut Socket,
+    fd: RawFd,
+    local: &Local,
+    signed_in: u64,
+    account: Option<String>,
+) -> Result<(), String> {
     let waker = Waker::new().map_err(|e| e.to_string())?;
     let watcher = waker.clone();
     wire::wake_on_engine_change(&waker);
@@ -868,6 +894,8 @@ fn serve(socket: &mut Socket, fd: RawFd, local: &Local) -> Result<(), String> {
         sent_activity: None,
         waker: watcher,
         levels: None,
+        signed_in,
+        account,
     };
     wire::drive(socket, fd, &waker, &mut session)
 }
@@ -881,6 +909,11 @@ struct LinkSession<'a> {
     /// Set while the server says a device of the account is watching this
     /// one's levels. It counts the watchers; this link holds one watch.
     levels: Option<crate::remote::levels::Watch>,
+    /// `SIGN_IN` when the config this link signed in with was read.
+    signed_in: u64,
+    /// The account it signed in as, which the device keys it is sent are
+    /// for (`proof::account_of`).
+    account: Option<String>,
 }
 
 impl wire::Session for LinkSession<'_> {
@@ -932,7 +965,7 @@ impl wire::Session for LinkSession<'_> {
                 crate::remote::devices::set_account(devices);
             }
             Ok(LinkCommand::DeviceKeys { keys }) => {
-                crate::remote::proof::keep(keys);
+                crate::remote::proof::keep(keys, self.account.clone());
             }
             Ok(LinkCommand::Shares {
                 grantees,
@@ -965,7 +998,7 @@ impl wire::Session for LinkSession<'_> {
     }
 
     fn done(&self) -> bool {
-        !crate::quiet::awake()
+        !crate::quiet::awake() || SIGN_IN.load(Ordering::SeqCst) != self.signed_in
     }
 }
 
