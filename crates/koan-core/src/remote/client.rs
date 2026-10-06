@@ -216,7 +216,8 @@ impl SubsonicClient {
     }
 
     /// As `get_with_params`, sent as a form POST (OpenSubsonic `formPost`): for
-    /// endpoints that change something and take only POST.
+    /// endpoints that change something and take only POST, and for anything
+    /// that must not sit in a URL.
     fn post_with_params(
         &self,
         endpoint: &str,
@@ -819,7 +820,7 @@ impl SubsonicClient {
         username: &str,
         password: &str,
     ) -> Result<(), SubsonicError> {
-        self.get_with_params(
+        self.post_with_params(
             "koanSetUserPassword",
             &[("username", username), ("password", password)],
         )?;
@@ -835,7 +836,7 @@ impl SubsonicClient {
         password: &str,
         device: &str,
     ) -> Result<KoanJoined, SubsonicError> {
-        self.get_with_params(
+        self.post_with_params(
             "koanSetUserPassword",
             &[
                 ("current", current),
