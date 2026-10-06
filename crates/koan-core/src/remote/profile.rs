@@ -38,6 +38,11 @@ pub const HISTORY: &str = "koanHistory";
 /// the key and not the password. See `helpers::set_remote_credentials`.
 pub const SIGN_IN: &str = "koanSignIn";
 
+/// The account's scrobbling, set up from an app: `/rest/koanScrobbling`
+/// reports it, `/rest/koanScrobblingConnect` checks and stores a ListenBrainz
+/// token, `/rest/koanScrobblingDisconnect` removes it. See `remote::scrobbling`.
+pub const SCROBBLING: &str = "koanScrobbling";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {
     /// OpenSubsonic's `type`: `koan`, `navidrome`. `None` from a server that

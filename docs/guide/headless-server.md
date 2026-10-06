@@ -116,9 +116,11 @@ Sign-in, and which credential each kind of client should use, is in [Authenticat
 
 ## Scrobbling
 
-Each account can forward its plays to ListenBrainz from the web UI's Scrobbling page, linked from Account: paste the user token from ListenBrainz's settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
+Each account can forward its plays to ListenBrainz from the web UI's Scrobbling page, linked from Account, or from Settings → Server → Scrobbling in the Mac and iOS apps: paste the user token from ListenBrainz's settings and the server checks it, then sends the plays already in the account's history and, from then on, every play kōan's apps and other Subsonic clients report (`scrobble`), with now-playing notices. It is the server that sends, so no client needs configuring, and a play reported once is forwarded once whichever device made it.
 
 Plays wait in the database until ListenBrainz accepts them, so a restart or an outage delays them rather than losing them; the page shows how many are waiting. A token ListenBrainz stops accepting is shown there, and plays are kept until the account connects again. Plays the server's own player records are forwarded in the history sent on connecting, when they were listened to for half the track or four minutes, but not as they happen. Tracks without an artist or title are not sent.
+
+The apps reach this through the `koanScrobbling` extension: `koanScrobbling` reports the account's connection (account name, plays waiting, and the error when the token was refused), `koanScrobblingConnect` takes a `token`, in a POST body so that it stays out of access logs, and `koanScrobblingDisconnect` removes it. The token is never sent back. The Apple TV app shows the connection but cannot change it, having no keyboard.
 
 ## Sharing
 

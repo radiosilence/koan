@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Scrobbling is set up in the apps.** Settings → Server → Scrobbling in the Mac and iOS apps connects the account's ListenBrainz with its user token, shows how many plays are waiting and any token ListenBrainz stopped accepting, and disconnects; the Apple TV shows the connection. It is offered where the server lists the `koanScrobbling` extension, through which the server checks and keeps the token and never returns it. The web UI's Scrobbling page does the same.
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
 ## 0.56.0

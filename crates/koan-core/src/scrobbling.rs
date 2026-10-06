@@ -22,6 +22,23 @@ use crate::db::queries::scrobbling::{self as queries, LISTENBRAINZ, Listen, Scro
 
 const API: &str = "https://api.listenbrainz.org";
 
+/// Where ListenBrainz is reached in place of [`API`]: a stand-in for tests.
+static API_OVERRIDE: Mutex<Option<String>> = Mutex::new(None);
+
+fn api() -> String {
+    API_OVERRIDE
+        .lock()
+        .clone()
+        .unwrap_or_else(|| API.to_owned())
+}
+
+/// Send every ListenBrainz call in this process to `base` instead. For tests,
+/// which answer for ListenBrainz themselves.
+#[doc(hidden)]
+pub fn use_api(base: &str) {
+    *API_OVERRIDE.lock() = Some(base.trim_end_matches('/').to_owned());
+}
+
 /// Listens per submission. ListenBrainz takes up to 1000; a smaller batch
 /// keeps one rejected listen from holding back many good ones for long.
 const BATCH: usize = 100;
@@ -319,7 +336,7 @@ fn submit(
             .collect::<Vec<_>>(),
     });
     let resp = http
-        .post(format!("{API}/1/submit-listens"))
+        .post(format!("{}/1/submit-listens", api()))
         .header("Authorization", format!("Token {token}"))
         .json(&body)
         .send()
@@ -390,6 +407,54 @@ pub enum TokenError {
     Unreachable,
 }
 
+/// Why a ListenBrainz account could not be connected. Each message is fit to
+/// show the person who pasted the token.
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectError {
+    #[error("Paste the user token from your ListenBrainz settings.")]
+    NoToken,
+    #[error(transparent)]
+    Token(#[from] TokenError),
+    #[error("The connection could not be saved.")]
+    Saving,
+}
+
+/// A pasted token, trimmed and checked with ListenBrainz: the token and the
+/// account it belongs to. Blocks on the network, so call it without a
+/// database connection held.
+pub fn check_listenbrainz_token(pasted: &str) -> Result<(String, String), ConnectError> {
+    let token = pasted.trim();
+    if token.is_empty() || token.len() > 200 {
+        return Err(ConnectError::NoToken);
+    }
+    let name = validate_listenbrainz_token(token)?;
+    Ok((token.to_owned(), name))
+}
+
+/// Connect `user`'s ListenBrainz account with a token [`check_listenbrainz_token`]
+/// accepted, queue their history and wake the sender. Returns how many plays
+/// were queued, and the connection as stored.
+pub fn connect_listenbrainz(
+    conn: &rusqlite::Connection,
+    user: i64,
+    token: &str,
+    account_name: &str,
+) -> Result<(usize, queries::ScrobbleService), ConnectError> {
+    let saved = queries::connect(conn, user, LISTENBRAINZ, token, account_name)
+        .and_then(|queued| Ok((queued, queries::service(conn, user, LISTENBRAINZ)?)));
+    match saved {
+        Ok((queued, Some(service))) => {
+            wake();
+            Ok((queued, service))
+        }
+        Ok((_, None)) => Err(ConnectError::Saving),
+        Err(e) => {
+            log::warn!("scrobbling: saving a connection failed: {e}");
+            Err(ConnectError::Saving)
+        }
+    }
+}
+
 /// Check a ListenBrainz user token, returning the account name it belongs to.
 pub fn validate_listenbrainz_token(token: &str) -> Result<String, TokenError> {
     let http = reqwest::blocking::Client::builder()
@@ -397,7 +462,7 @@ pub fn validate_listenbrainz_token(token: &str) -> Result<String, TokenError> {
         .build()
         .map_err(|_| TokenError::Unreachable)?;
     let resp = http
-        .get(format!("{API}/1/validate-token"))
+        .get(format!("{}/1/validate-token", api()))
         .header("Authorization", format!("Token {token}"))
         .send()
         .map_err(|_| TokenError::Unreachable)?;

@@ -215,6 +215,26 @@ impl SubsonicClient {
         resp.subsonic_response.ok()
     }
 
+    /// As `get_with_params`, with `form` in a POST body (OpenSubsonic's
+    /// `formPost`) rather than the query string, for a secret that should not
+    /// reach a proxy's access log.
+    fn post_form(
+        &self,
+        endpoint: &str,
+        form: &[(&str, &str)],
+    ) -> Result<SubsonicResponse, SubsonicError> {
+        let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
+        let params = self.auth_params()?;
+        let resp: SubsonicResponseWrapper = self
+            .http
+            .post(&url)
+            .query(&params)
+            .form(form)
+            .send()?
+            .json()?;
+        resp.subsonic_response.ok()
+    }
+
     /// As `get_with_params`, for a parameter given more than once: Subsonic
     /// batches by repeating `id` and `time`.
     fn get_with_pairs(
@@ -848,6 +868,29 @@ impl SubsonicClient {
         Ok(())
     }
 
+    // -- Scrobbling: koan servers offering `koanScrobbling` --
+
+    /// Where the account's plays are forwarded.
+    pub fn koan_scrobbling(&self) -> Result<KoanScrobbling, SubsonicError> {
+        self.get("koanScrobbling")?
+            .koan_scrobbling
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Connect the account's ListenBrainz with its user token, which the
+    /// server checks with ListenBrainz before keeping.
+    pub fn koan_scrobbling_connect(&self, token: &str) -> Result<KoanScrobbling, SubsonicError> {
+        self.post_form("koanScrobblingConnect", &[("token", token)])?
+            .koan_scrobbling
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    pub fn koan_scrobbling_disconnect(&self) -> Result<KoanScrobbling, SubsonicError> {
+        self.get("koanScrobblingDisconnect")?
+            .koan_scrobbling
+            .ok_or(SubsonicError::BadResponse)
+    }
+
     pub fn auth(&self) -> &SubsonicAuth {
         &self.auth
     }
@@ -895,6 +938,30 @@ struct SubsonicResponse {
     join: Option<KoanJoined>,
     pair: Option<KoanPair>,
     koan_history: Option<KoanHistoryPage>,
+    koan_scrobbling: Option<KoanScrobbling>,
+}
+
+/// The services a koan server forwards the account's plays to
+/// (`koanScrobbling`).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct KoanScrobbling {
+    #[serde(default)]
+    pub service: Vec<KoanScrobbleService>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanScrobbleService {
+    /// `listenbrainz`.
+    pub name: String,
+    /// The account on the service.
+    pub account: String,
+    /// When it was connected, in ms since the epoch.
+    pub connected: i64,
+    /// Plays the service has not accepted yet.
+    #[serde(default)]
+    pub pending: i64,
+    /// Why the service stopped accepting the token, while it does.
+    pub error: Option<String>,
 }
 
 /// A page of a koan server's play history (`koanHistory`).

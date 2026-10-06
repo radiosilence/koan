@@ -374,6 +374,7 @@ private struct RemoteSettings: View {
                 PeopleSettings(signedInAs: model.settings.remoteUsername)
                 PairDevice()
                 #endif
+                ScrobblingSettings()
                 ServerOffers()
             } else {
                 Section {
@@ -813,6 +814,112 @@ private struct PairDevice: View {
         guard !typed.isEmpty else { return }
         code = ""
         Task { await state.offerPairing(typed) }
+    }
+}
+
+/// The account's scrobbling, which the server does: the token is handed over
+/// once and never comes back. Offered where the server lists
+/// `koanScrobbling`. A television shows where things stand and leaves the
+/// typing to a device with a keyboard.
+private struct ScrobblingSettings: View {
+    @Environment(AppState.self) private var state
+    @Environment(EngineMirror.self) private var mirror
+    @State private var connection: ScrobblingConnection?
+    @State private var loaded = false
+    @State private var token = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        if mirror.connection?.scrobbling == true {
+            Section {
+                if let c = connection {
+                    Text("Scrobbling to ListenBrainz as \(c.account)")
+                    if let refused = c.error {
+                        Label(refused, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                        Text("Disconnect, then connect again with a current token. Plays recorded meanwhile are kept and sent.")
+                            .foregroundStyle(.secondary)
+                    } else if c.pending > 0 {
+                        Text(Format.count(c.pending, "play") + " waiting to be sent")
+                            .foregroundStyle(.secondary)
+                    }
+                    #if !os(tvOS)
+                    Button("Disconnect", role: .destructive, action: disconnect)
+                        .disabled(busy)
+                    #endif
+                } else if !loaded {
+                    Text("Checking…").foregroundStyle(.secondary)
+                } else {
+                    #if os(tvOS)
+                    Text("Not connected. Connect ListenBrainz from kōan on a phone or Mac.")
+                        .foregroundStyle(.secondary)
+                    #else
+                    SecureField("User token", text: $token, prompt: Text("ListenBrainz user token"))
+                        .verbatimEntry()
+                        .onSubmit(connect)
+                    HStack {
+                        Link("Find your token", destination: URL(string: "https://listenbrainz.org/settings/")!)
+                        Spacer()
+                        Button("Connect", action: connect)
+                            .disabled(busy || token.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    .rowButtons()
+                    #endif
+                }
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("Scrobbling")
+            } footer: {
+                Text("The server sends what you play to ListenBrainz, from every app signed in as you, your history included when you connect. The token is kept on the server.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .task(id: mirror.connection?.scrobbling) { await load() }
+        }
+    }
+
+    private func load() async {
+        do {
+            connection = try await state.engine.scrobblingStatus()
+            error = nil
+        } catch {
+            self.error = SettingsModel.describe(error)
+        }
+        loaded = true
+    }
+
+    private func connect() {
+        let typed = token.trimmingCharacters(in: .whitespaces)
+        guard !typed.isEmpty, !busy else { return }
+        busy = true
+        Task {
+            do {
+                connection = try await state.engine.connectScrobbling(token: typed)
+                token = ""
+                error = nil
+            } catch {
+                self.error = SettingsModel.describe(error)
+            }
+            busy = false
+        }
+    }
+
+    private func disconnect() {
+        busy = true
+        Task {
+            do {
+                try await state.engine.disconnectScrobbling()
+                connection = nil
+                error = nil
+            } catch {
+                self.error = SettingsModel.describe(error)
+            }
+            busy = false
+        }
     }
 }
 
