@@ -14,7 +14,7 @@ use axum::extract::{Path as UrlPath, Query, RawQuery, Request, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use koan_core::auth::Role;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
@@ -56,6 +56,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::HISTORY, &[1]),
     (koan_core::remote::profile::SIGN_IN, &[1]),
     (koan_core::remote::profile::PASSWORDS, &[1]),
+    (koan_core::remote::profile::API_KEYS, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -4197,6 +4198,99 @@ async fn koan_set_user_password(
     .await
 }
 
+/// The caller's API keys, with the one the request signed in with marked
+/// `current`. Never the keys: only their hashes are kept.
+async fn koan_api_keys(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let keys = queries::api_keys::list_api_keys(&db.conn, Some(caller.user_id))
+                .map_err(internal)?;
+            let current = match auth.api_key.as_deref() {
+                Some(key) => queries::api_keys::id_of(&db.conn, key).map_err(internal)?,
+                None => None,
+            };
+            Ok(b.child(XmlNode::new("apiKeys").list(
+                "apiKey",
+                keys.iter().map(|k| api_key_node(k, current == Some(k.id))),
+            )))
+        })
+    })
+    .await
+}
+
+fn api_key_node(key: &queries::api_keys::ApiKeyRow, current: bool) -> XmlNode {
+    XmlNode::new("apiKey")
+        .attr_int("id", key.id)
+        .attr("name", &key.name)
+        .attr("created", &iso(key.created_at))
+        .attr_opt("lastUsed", key.last_used_at.map(iso).as_deref())
+        .attr_bool("current", current)
+}
+
+/// Make an API key named `name` for the caller, for another Subsonic app. The
+/// answer carries the key, once.
+async fn koan_create_api_key(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            let name = params
+                .get("name")
+                .map(koan_core::invite::device_name)
+                .ok_or_else(|| SubsonicError::missing_param("name"))?;
+            let (id, key) = queries::api_keys::create_api_key(&db.conn, caller.user_id, &name)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("apiKey")
+                    .attr_int("id", id)
+                    .attr("name", &name)
+                    .attr("key", &key),
+            ))
+        })
+    })
+    .await
+}
+
+/// Revoke one of the caller's API keys, by `id`. Not the one the request is
+/// signed in with: that is signing out, which the app does itself.
+async fn koan_revoke_api_key(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let id: i64 = params
+                .get("id")
+                .ok_or_else(|| SubsonicError::missing_param("id"))?
+                .parse()
+                .map_err(|_| SubsonicError::bad_param("id"))?;
+            if let Some(key) = auth.api_key.as_deref()
+                && queries::api_keys::id_of(&db.conn, key).map_err(internal)? == Some(id)
+            {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::Generic,
+                    "this device signs in with that key; sign out instead",
+                ));
+            }
+            if !queries::api_keys::revoke_api_key(&db.conn, id, Some(caller.user_id))
+                .map_err(internal)?
+            {
+                return Err(SubsonicError::not_found("API key"));
+            }
+            Ok(b)
+        })
+    })
+    .await
+}
+
 /// Revoke the API key the request is signed in with: for an app giving up a
 /// key it no longer holds, such as the one a join replaced.
 async fn koan_revoke_key(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
@@ -4714,6 +4808,9 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             get(koan_create_user).post(koan_create_user),
         )
         .route("/rest/koanInvite", get(koan_invite).post(koan_invite))
+        .route("/rest/koanApiKeys", get(koan_api_keys).post(koan_api_keys))
+        .route("/rest/koanCreateApiKey", post(koan_create_api_key))
+        .route("/rest/koanRevokeApiKey", post(koan_revoke_api_key))
         .route(
             "/rest/koanSetUserPassword",
             get(koan_set_user_password).post(koan_set_user_password),
@@ -6024,6 +6121,97 @@ mod tests {
         assert!(
             body.contains("status=\"ok\""),
             "the key still works: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_account_lists_makes_and_revokes_its_own_api_keys() {
+        let (state, _dir) = test_state();
+        let phone = api_key(&state, "mate");
+        let owners = api_key(&state, "owner");
+        let auth = format!("apiKey={phone}&v=1.16.1&c=test&f=json");
+        let json = |body: String| -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"].clone()
+        };
+        let post = |path: &str, form: String| {
+            let state = state.clone();
+            let path = path.to_owned();
+            async move { json(post_form(build_test_router(state), &path, &form).await) }
+        };
+        let list = || {
+            let state = state.clone();
+            let auth = auth.clone();
+            async move {
+                json(
+                    get_response(
+                        build_test_router(state),
+                        &format!("/rest/koanApiKeys?{auth}"),
+                    )
+                    .await
+                    .1,
+                )
+            }
+        };
+
+        let made = post("/rest/koanCreateApiKey", format!("name=Feishin&{auth}")).await;
+        let key = made["apiKey"]["key"].as_str().unwrap().to_owned();
+        let id = made["apiKey"]["id"].as_i64().unwrap();
+        assert_eq!(made["apiKey"]["name"], "Feishin", "{made}");
+        let pinged = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(pinged.contains("status=\"ok\""), "{pinged}");
+
+        // Only this account's, the request's own marked, and never a key.
+        let v = list().await;
+        let keys = v["apiKeys"]["apiKey"].as_array().unwrap();
+        assert_eq!(keys.len(), 2, "{v}");
+        assert_eq!(keys[0]["name"], "test");
+        assert_eq!(keys[0]["current"], true);
+        assert_eq!(keys[1]["current"], false);
+        assert!(keys[0]["created"].as_str().unwrap().ends_with('Z'), "{v}");
+        assert!(
+            !v.to_string().contains(&phone) && !v.to_string().contains(&key),
+            "{v}"
+        );
+
+        // Making and revoking take POST.
+        let (status, _) = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/koanCreateApiKey?name=x&{auth}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+        // Not this device's own key, and not another account's.
+        let db = state.open_db().unwrap();
+        let own = queries::api_keys::id_of(&db.conn, &phone).unwrap().unwrap();
+        let v = post("/rest/koanRevokeApiKey", format!("id={own}&{auth}")).await;
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("sign out"),
+            "{v}"
+        );
+        let theirs = queries::api_keys::id_of(&db.conn, &owners)
+            .unwrap()
+            .unwrap();
+        let v = post("/rest/koanRevokeApiKey", format!("id={theirs}&{auth}")).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
+
+        let v = post("/rest/koanRevokeApiKey", format!("id={id}&{auth}")).await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let pinged = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(pinged.contains("code=\"44\""), "{pinged}");
+        assert_eq!(
+            list().await["apiKeys"]["apiKey"].as_array().unwrap().len(),
+            1
         );
     }
 

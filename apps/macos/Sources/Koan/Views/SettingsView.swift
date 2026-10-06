@@ -395,6 +395,9 @@ private struct RemoteSettings: View {
                     Text("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.")
                 }
                 #endif
+                if mirror.offers(ApiKeysSettings.extensionName) {
+                    ApiKeysSettings()
+                }
                 // Accounts and pairings are managed from a device with a keyboard.
                 #if !os(tvOS)
                 PeopleSettings(signedInAs: model.settings.remoteUsername)

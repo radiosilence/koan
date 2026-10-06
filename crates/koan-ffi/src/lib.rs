@@ -2788,6 +2788,57 @@ impl KoanEngine {
         .await
     }
 
+    /// The signed-in account's API keys.
+    pub async fn api_keys(self: Arc<Self>) -> Result<Vec<ApiKeyInfo>, KoanError> {
+        offload::offload(move || {
+            let seconds = |iso: Option<String>| {
+                iso.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|t| t.timestamp())
+            };
+            Ok(api_keys_client()?
+                .koan_api_keys()
+                .map_err(remote_error)?
+                .into_iter()
+                .map(|k| ApiKeyInfo {
+                    id: k.id,
+                    name: k.name,
+                    created: seconds(k.created),
+                    last_used: seconds(k.last_used),
+                    this_device: k.current,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// Make an API key for another app. The key is in the answer and nowhere
+    /// else, ever.
+    pub async fn create_api_key(self: Arc<Self>, name: String) -> Result<NewApiKey, KoanError> {
+        offload::offload(move || {
+            let made = api_keys_client()?
+                .koan_create_api_key(&name)
+                .map_err(remote_error)?;
+            Ok(NewApiKey {
+                name: made.name,
+                key: made.key.ok_or(KoanError::BadArgument {
+                    message: "the server made the key but did not send it".into(),
+                })?,
+            })
+        })
+        .await
+    }
+
+    /// Revoke one of the account's keys. Not this device's own: that is
+    /// signing out.
+    pub async fn revoke_api_key(self: Arc<Self>, id: i64) -> Result<(), KoanError> {
+        offload::offload(move || {
+            api_keys_client()?
+                .koan_revoke_api_key(id)
+                .map_err(remote_error)
+        })
+        .await
+    }
+
     /// Give another account a password. Its devices sign out.
     pub async fn set_server_account_password(
         self: Arc<Self>,
@@ -5114,6 +5165,19 @@ fn invite_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, Koa
     if !offers {
         return Err(KoanError::BadArgument {
             message: "this server is older than this app: update it to invite people".into(),
+        });
+    }
+    Ok(client)
+}
+
+/// The signed-in server's client, when it lists and makes API keys.
+fn api_keys_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    let client = account_client()?;
+    let offers = koan_core::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| p.offers(koan_core::remote::profile::API_KEYS));
+    if !offers {
+        return Err(KoanError::BadArgument {
+            message: "this server is older than this app: update it to manage API keys here".into(),
         });
     }
     Ok(client)

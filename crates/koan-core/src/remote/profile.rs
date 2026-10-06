@@ -40,6 +40,10 @@ pub const SIGN_IN: &str = "koanSignIn";
 /// Setting passwords: `/rest/koanSetUserPassword`, for an admin any account's
 /// and for anyone their own, given the current one.
 pub const PASSWORDS: &str = "koanPasswords";
+/// The account's own API keys: `/rest/koanApiKeys` lists them (never the
+/// keys themselves), `/rest/koanCreateApiKey` and `/rest/koanRevokeApiKey`
+/// make and revoke one.
+pub const API_KEYS: &str = "koanApiKeys";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {

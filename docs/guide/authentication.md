@@ -344,7 +344,14 @@ koan subsonic status
 koan subsonic disable
 ```
 
-Signed-in users manage their own keys in the web UI under **API keys**.
+Signed-in users manage their own keys in the web UI under **API keys**, and in
+the apps under Settings → Server → API keys, where the server lists the
+`koanApiKeys` extension (`/rest/koanApiKeys`, and `koanCreateApiKey` and
+`koanRevokeApiKey` by POST). Both list each key's name, when it was made and
+when it was last used, never the key itself. A new key is shown once. Each
+device signed in to kōan has a key of its own, so revoking one is how a lost
+phone is cut off; the apps mark their own key and leave revoking it to
+**Sign Out**.
 
 A koan app that joined by invite keeps its key as `remote.api_key` in `config.local.toml`, and signs in with it ahead of any password, `KOAN_REMOTE__PASSWORD` included. Sign out to go back to a password. `readonly` accounts, and their keys, get error 50 from every endpoint that writes.
 

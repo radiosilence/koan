@@ -215,6 +215,22 @@ impl SubsonicClient {
         resp.subsonic_response.ok()
     }
 
+    /// As `get_with_params`, sent as a form POST (OpenSubsonic `formPost`): for
+    /// endpoints that change something and take only POST.
+    fn post_with_params(
+        &self,
+        endpoint: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<SubsonicResponse, SubsonicError> {
+        let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
+        let mut params = self.auth_params()?;
+        for (k, v) in extra {
+            params.insert((*k).to_string(), (*v).to_string());
+        }
+        let resp: SubsonicResponseWrapper = self.http.post(&url).form(&params).send()?.json()?;
+        resp.subsonic_response.ok()
+    }
+
     /// As `get_with_params`, for a parameter given more than once: Subsonic
     /// batches by repeating `id` and `time`.
     fn get_with_pairs(
@@ -831,6 +847,28 @@ impl SubsonicClient {
         .ok_or(SubsonicError::BadResponse)
     }
 
+    // -- API keys: koan servers offering `koanApiKeys`, the account's own --
+
+    pub fn koan_api_keys(&self) -> Result<Vec<KoanApiKey>, SubsonicError> {
+        Ok(self
+            .get("koanApiKeys")?
+            .api_keys
+            .map(|k| k.api_key)
+            .unwrap_or_default())
+    }
+
+    /// A new key named `name`, with the key itself, which is never shown again.
+    pub fn koan_create_api_key(&self, name: &str) -> Result<KoanApiKey, SubsonicError> {
+        self.post_with_params("koanCreateApiKey", &[("name", name)])?
+            .api_key
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    pub fn koan_revoke_api_key(&self, id: i64) -> Result<(), SubsonicError> {
+        self.post_with_params("koanRevokeApiKey", &[("id", &id.to_string())])?;
+        Ok(())
+    }
+
     pub fn koan_set_user_role(&self, username: &str, role: &str) -> Result<(), SubsonicError> {
         self.get_with_params("koanSetUserRole", &[("username", username), ("role", role)])?;
         Ok(())
@@ -926,6 +964,8 @@ struct SubsonicResponse {
     scan_status: Option<SubsonicScanStatus>,
     indexes: Option<SubsonicIndexes>,
     users: Option<KoanUsers>,
+    api_keys: Option<KoanApiKeys>,
+    api_key: Option<KoanApiKey>,
     invite: Option<KoanInvite>,
     join: Option<KoanJoined>,
     pair: Option<KoanPair>,
@@ -975,6 +1015,29 @@ pub struct KoanPair {
     pub from: String,
     #[serde(default)]
     pub local: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KoanApiKeys {
+    #[serde(default)]
+    api_key: Vec<KoanApiKey>,
+}
+
+/// One of the account's API keys, as `koanApiKeys` lists it; `key` is there
+/// only in the answer to making one.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KoanApiKey {
+    pub id: i64,
+    pub name: String,
+    /// ISO 8601.
+    pub created: Option<String>,
+    pub last_used: Option<String>,
+    /// The key this client signs in with.
+    #[serde(default)]
+    pub current: bool,
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
