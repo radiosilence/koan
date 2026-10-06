@@ -129,14 +129,18 @@ pub fn search<'a>(entries: &'a [Entry], query: &str, limit: usize) -> Vec<&'a En
     use nucleo::pattern::{CaseMatching, Normalization, Pattern};
     use nucleo::{Config, Matcher, Utf32Str};
 
-    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    let pattern = Pattern::parse(
+        &fold_makers(query),
+        CaseMatching::Ignore,
+        Normalization::Smart,
+    );
     let mut matcher = Matcher::new(Config::DEFAULT);
     let mut buf = Vec::new();
     let mut scored: Vec<(u32, &Entry)> = entries
         .iter()
         .filter_map(|e| {
             pattern
-                .score(Utf32Str::new(&e.name, &mut buf), &mut matcher)
+                .score(Utf32Str::new(&fold_makers(&e.name), &mut buf), &mut matcher)
                 .map(|score| (score, e))
         })
         .collect();
@@ -390,10 +394,10 @@ const MAKERLESS: &[&str] = &[
 /// model. A one-word entry never matches. The longest name wins, and between
 /// sources AutoEQ's preferred one.
 pub fn suggest<'a>(entries: &'a [Entry], device: &str) -> Option<&'a Entry> {
-    let device = words(device);
+    let device = words(&fold_makers(device));
     let mut best: Option<(usize, &Entry)> = None;
     for e in entries {
-        let name = words(&e.name);
+        let name = words(&fold_makers(&e.name));
         if name.len() < 2 {
             continue;
         }
@@ -497,18 +501,72 @@ const ABBREVIATED: &[(&str, &[&str], &str)] = &[
 /// Makers whose names are more than one word, as the index spells them, and
 /// that neither rule in `maker_of` finds.
 const MULTIWORD_MAKERS: &[&str] = &[
+    "Alpha Design Labs",
     "Alpha Omega",
+    "Ambient Dynamics",
     "Audio Genetic",
     "Audio Zenith",
     "Custom Art",
     "Dan Clark Audio",
     "NF ACOUS",
     "Queen of Audio",
+    "Sound Intone",
+    "Sound Linear",
     "Sound Rhyme",
     "Tansio Mirai",
     "Turtle Beach",
     "Unique Melody",
 ];
+
+/// Makers the index files under two names, each with the name it files
+/// most under: "AFUL Cantor" and "AFUL Acoustics Cantor" are one maker's.
+/// Folded wherever a maker is compared (browsing by maker, searching,
+/// matching a device), while an entry keeps its own name for showing and
+/// installing.
+const MAKER_ALIASES: &[(&str, &str)] = &[
+    ("AFUL Acoustics", "AFUL"),
+    ("HEDD Audio", "HEDD"),
+    ("JQ Audio", "JQ"),
+    ("Ollo Audio", "OLLO"),
+    ("Sivga Audio", "Sivga"),
+];
+
+/// Makers whose names begin with another maker's and are not that maker:
+/// what the live-index test accepts besides `MAKER_ALIASES`.
+#[cfg(test)]
+const DISTINCT_MAKERS: &[(&str, &str)] = &[("Shozy", "Shozy & Neo")];
+
+/// The maker an entry is filed under, aliases folded: `maker_of`, as one.
+pub fn maker(name: &str) -> &str {
+    let m = maker_of(name);
+    MAKER_ALIASES
+        .iter()
+        .find(|(alias, _)| alias.eq_ignore_ascii_case(m))
+        .map_or(m, |(_, canonical)| canonical)
+}
+
+/// `text` with any maker alias in it, on word boundaries, as the maker's
+/// own name: what searching and matching compare.
+fn fold_makers(text: &str) -> String {
+    let mut out = text.to_owned();
+    for (alias, canonical) in MAKER_ALIASES {
+        // ASCII lowering keeps every byte where it was, so offsets found in
+        // it are offsets in `out`; the aliases are ASCII.
+        let lower = out.to_ascii_lowercase();
+        let wanted = alias.to_ascii_lowercase();
+        let mut from = 0;
+        while let Some(at) = lower[from..].find(&wanted).map(|i| i + from) {
+            let end = at + wanted.len();
+            let bounded = |i: Option<char>| i.is_none_or(|c| !c.is_alphanumeric());
+            if bounded(lower[..at].chars().next_back()) && bounded(lower[end..].chars().next()) {
+                out.replace_range(at..end, canonical);
+                return fold_makers(&out);
+            }
+            from = end;
+        }
+    }
+    out
+}
 
 /// Second words that make a maker's name two words: "Final Audio", "Kiwi
 /// Ears", "LZ Hi-Fi".
@@ -555,7 +613,7 @@ pub fn maker_of(name: &str) -> &str {
 pub fn makers(entries: &[Entry]) -> Vec<(String, usize)> {
     let mut counts: std::collections::BTreeMap<String, (String, usize)> = Default::default();
     for e in entries {
-        let maker = maker_of(&e.name);
+        let maker = maker(&e.name);
         let slot = counts
             .entry(maker.to_lowercase())
             .or_insert_with(|| (maker.to_owned(), 0));
@@ -569,7 +627,7 @@ pub fn makers(entries: &[Entry]) -> Vec<(String, usize)> {
 pub fn models<'a>(entries: &'a [Entry], maker: &str) -> Vec<&'a Entry> {
     let mut found: Vec<&Entry> = entries
         .iter()
-        .filter(|e| maker_of(&e.name).eq_ignore_ascii_case(maker))
+        .filter(|e| self::maker(&e.name).eq_ignore_ascii_case(self::maker(maker)))
         .collect();
     found.sort_by(|a, b| {
         a.name
@@ -1039,12 +1097,85 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
     /// The rule against AutoEQ's real index, kept out of the default run
     /// because it needs the file: download `results/INDEX.md`, point
     /// `KOAN_AUTOEQ_INDEX` at it and run the ignored tests.
+    /// A maker the index files under two names is one maker to browse,
+    /// search and match, and each entry keeps the name it is filed under.
+    #[test]
+    fn a_maker_under_two_names_is_one() {
+        let entries = parse_index(
+            "# Index
+- [AFUL Cantor](./crinacle/IEC%20711/AFUL%20Cantor) by crinacle
+- [AFUL Acoustics Cantor](./Super%20Review/in-ear/AFUL%20Acoustics%20Cantor) by Super Review
+- [AFUL Performer 5](./crinacle/IEC%20711/AFUL%20Performer%205) by crinacle
+- [Alpha Design Labs H128](./oratory1990/over-ear/Alpha%20Design%20Labs%20H128) by oratory1990
+",
+        );
+        assert_eq!(
+            makers(&entries),
+            vec![("AFUL".to_owned(), 3), ("Alpha Design Labs".to_owned(), 1)]
+        );
+        for asked in ["AFUL", "AFUL Acoustics"] {
+            let names: Vec<&str> = models(&entries, asked)
+                .iter()
+                .map(|e| e.name.as_str())
+                .collect();
+            assert_eq!(
+                names,
+                ["AFUL Acoustics Cantor", "AFUL Cantor", "AFUL Performer 5"],
+                "{asked}"
+            );
+        }
+        let found: Vec<&str> = search(&entries, "AFUL Acoustics Cantor", 5)
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert!(suggest(&entries, "Jo's AFUL Acoustics Cantor").is_some());
+        assert!(suggest(&entries, "AFUL Cantor").is_some());
+        assert_eq!(fold_makers("aful acoustics cantor"), "AFUL cantor");
+        assert_eq!(
+            fold_makers("AFULAcoustics X"),
+            "AFULAcoustics X",
+            "on word boundaries"
+        );
+        // Characters whose lower case is longer or shorter than they are.
+        assert_eq!(
+            fold_makers("İzel's AFUL Acoustics Cantor"),
+            "İzel's AFUL Cantor"
+        );
+        assert_eq!(
+            fold_makers("\u{212A} AFUL Acoustics Cantor"),
+            "\u{212A} AFUL Cantor"
+        );
+    }
+
     #[test]
     #[ignore]
     fn suggestions_against_the_live_index() {
         let path = std::env::var("KOAN_AUTOEQ_INDEX").expect("KOAN_AUTOEQ_INDEX");
         let entries = parse_index(&std::fs::read_to_string(path).unwrap());
         assert!(entries.len() > 1000);
+        // Every maker whose name begins with another's is that maker under
+        // another name, folded in `MAKER_ALIASES`, or one of its own, in
+        // `DISTINCT_MAKERS`: a new pair in the index fails here until it is
+        // sorted into one or the other.
+        let raw: std::collections::BTreeSet<&str> =
+            entries.iter().map(|e| maker_of(&e.name)).collect();
+        let unsorted: Vec<String> = raw
+            .iter()
+            .flat_map(|short| raw.iter().map(move |long| (*short, *long)))
+            .filter(|(short, long)| {
+                long.to_lowercase()
+                    .starts_with(&format!("{} ", short.to_lowercase()))
+            })
+            .filter(|(short, long)| {
+                let folded = MAKER_ALIASES
+                    .iter()
+                    .any(|(a, c)| a.eq_ignore_ascii_case(long) && c.eq_ignore_ascii_case(short));
+                !folded && !DISTINCT_MAKERS.contains(&(*short, *long))
+            })
+            .map(|(short, long)| format!("{short} / {long}"))
+            .collect();
+        assert!(unsorted.is_empty(), "{unsorted:#?}");
         let wrong: Vec<String> = NOT_HEADPHONES
             .iter()
             .filter_map(|d| suggest(&entries, d).map(|e| format!("{d} → {}", e.name)))
