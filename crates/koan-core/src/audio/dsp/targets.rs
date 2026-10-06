@@ -332,16 +332,7 @@ pub fn add(path: &Path) -> Result<Added, String> {
         return Err("A target file is a few kilobytes; this one is over a megabyte".into());
     }
     let text = String::from_utf8_lossy(&bytes);
-    let curve = parse(&text);
-    let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
-        return Err("No frequency and level pairs in it".into());
-    };
-    if curve.len() < 20 || first.0 > 100.0 || last.0 < 10_000.0 {
-        return Err(
-            "A target needs points from below 100 Hz to above 10 kHz, at least twenty of them"
-                .into(),
-        );
-    }
+    let curve = covering(&text, "A target")?;
     let name: String = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -353,17 +344,100 @@ pub fn add(path: &Path) -> Result<Added, String> {
     if name.is_empty() || name.starts_with('.') {
         return Err("The file needs a name to call the target by".into());
     }
-    let mut out = String::from("frequency,raw\n");
-    for hz in grid() {
-        out.push_str(&format!("{hz:.2},{:.2}\n", at(&curve, hz)));
-    }
     let dir = added_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join(format!("{name}.csv")), out).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(format!("{name}.csv")), on_grid(&curve)).map_err(|e| e.to_string())?;
     Ok(Added {
         id: format!("{ADDED}{name}"),
         name,
     })
+}
+
+/// The curve in `text`, if it covers the audible band well enough to correct
+/// from or to: points from below 100 Hz to above 10 kHz, at least twenty.
+/// `what` names it in the refusal.
+pub fn covering(text: &str, what: &str) -> Result<Curve, String> {
+    if text.len() as u64 > FILE_CAP {
+        return Err(format!(
+            "{what} is a few kilobytes; this is over a megabyte"
+        ));
+    }
+    let curve = parse(text);
+    let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
+        return Err("No frequency and level pairs in it".into());
+    };
+    if curve.len() < 20 || first.0 > 100.0 || last.0 < 10_000.0 {
+        return Err(format!(
+            "{what} needs points from below 100 Hz to above 10 kHz, at least twenty of them"
+        ));
+    }
+    Ok(curve)
+}
+
+/// `curve` on AutoEQ's grid, as a CSV of frequency and level.
+pub fn on_grid(curve: &[(f64, f64)]) -> String {
+    let mut out = String::from("frequency,raw\n");
+    for hz in grid() {
+        out.push_str(&format!("{hz:.2},{:.2}\n", at(curve, hz)));
+    }
+    out
+}
+
+/// Where a correction built from a measurement keeps it.
+pub fn measurement_path(dsp_dir: &Path) -> PathBuf {
+    dsp_dir.join("measurement.csv")
+}
+
+/// The headphone's measurement kept in `dsp_dir`, if there is one.
+pub fn measurement(dsp_dir: &Path) -> Option<Curve> {
+    let text = std::fs::read_to_string(measurement_path(dsp_dir)).ok()?;
+    Some(parse(&text)).filter(|c| !c.is_empty())
+}
+
+/// Above here, measurements of one headphone on different rigs disagree
+/// most, and a correction is held to `TREBLE_DB`; it narrows to that from
+/// `TREBLE_FROM` on.
+const TREBLE_FROM: f64 = 6_000.0;
+const TREBLE_AT: f64 = 10_000.0;
+const TREBLE_DB: f64 = 3.0;
+
+/// What brings a headphone measured as `measurement` to `target`: their
+/// difference, made as a target swap's is (levelled at 1 kHz, smoothed,
+/// within ±12 dB), and held to ±3 dB in the treble, where a measurement
+/// says least about the headphone and most about the rig.
+pub fn correction(measurement: &[(f64, f64)], target: &[(f64, f64)]) -> GraphicEq {
+    let mut g = difference(measurement, target);
+    for (hz, db) in &mut g.points {
+        let limit = if *hz <= TREBLE_FROM {
+            MAX_DB
+        } else if *hz >= TREBLE_AT {
+            TREBLE_DB
+        } else {
+            let t = (*hz / TREBLE_FROM).ln() / (TREBLE_AT / TREBLE_FROM).ln();
+            MAX_DB + (TREBLE_DB - MAX_DB) * t
+        };
+        *db = db.clamp(-limit, limit);
+    }
+    g
+}
+
+/// What an AutoEQ install in `dsp_dir` kept of its result: the headphone as
+/// measured, and the target it was corrected to, on the rig it was measured
+/// on.
+pub fn autoeq_measurement(dsp_dir: &Path) -> Option<(Curve, Curve)> {
+    let text = std::fs::read_to_string(result_path(dsp_dir)).ok()?;
+    let (raw, target) = (result_column(&text, "raw"), result_column(&text, "target"));
+    (!raw.is_empty() && !target.is_empty()).then_some((raw, target))
+}
+
+/// `target` moved by `step`: a result's own target, rig and all, taken to
+/// another target by the two targets' difference, which is what a rebuilt
+/// correction aims at.
+pub fn moved(target: &[(f64, f64)], step: &GraphicEq) -> Curve {
+    target
+        .iter()
+        .map(|&(hz, db)| (hz, db + at(&step.points, hz)))
+        .collect()
 }
 
 /// The curve a chosen target id names: one that ships, or one added.

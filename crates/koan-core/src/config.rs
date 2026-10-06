@@ -632,6 +632,42 @@ pub struct DspProfile {
     /// change; this does not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uid: Option<String>,
+    /// What it is for: correcting a headphone, or tuning on top of one.
+    /// Unset, it follows from what the profile is: see
+    /// `audio::dsp::profiles::role`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<DspRole>,
+    /// A correction built from a headphone's measurement, kept as
+    /// `measurement.csv` in the profile's folder, to `target`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement: Option<DspMeasurement>,
+}
+
+/// What a profile is for. A chain, a profile with its layers, corrects a
+/// headphone once: two corrections would each undo the same headphone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DspRole {
+    /// Brings a headphone to a target: an AutoEQ install, a correction built
+    /// from a measurement, or a finished EQ made for the headphone.
+    Correction,
+    /// Taste on top: a bass shelf, a tilt, bands made by hand.
+    Tuning,
+}
+
+/// A headphone's measurement and the target it is corrected to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DspMeasurement {
+    pub ear: DspEar,
+    /// A target id: one that ships, or `added:<name>`.
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DspEar {
+    In,
+    Over,
 }
 
 /// The bounds a profile must keep to be played: what any real correction
@@ -901,6 +937,14 @@ impl DspProfile {
             dropped.push(format!("layers past {} dropped", b::LAYERS));
         }
         self.layers.retain(|l| l.profile.chars().count() <= b::NAME);
+        if self
+            .measurement
+            .as_ref()
+            .is_some_and(|m| m.target.chars().count() > b::NAME)
+        {
+            self.measurement = None;
+            dropped.push("measurement's target dropped".to_owned());
+        }
         if let Some(t) = &mut self.target {
             let long = |s: &str| s.chars().count() > b::NAME;
             if long(&t.made_for) {
@@ -2518,6 +2562,8 @@ fps = 30
             layers: vec![],
             scope: None,
             uid: None,
+            role: None,
+            measurement: None,
         };
         Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
 

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::import::Imported;
 use super::{Setup, convolver, raw};
-use crate::config::{self, Config, DspProfile, DspScope};
+use crate::config::{self, Config, DspEar, DspMeasurement, DspProfile, DspRole, DspScope};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Summary {
@@ -351,10 +351,51 @@ pub fn set_made_for(name: &str, made_for: Option<&str>) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// The headphone `p` corrects, as measured, and the target it is corrected
+/// to, for drawing: an AutoEQ result's own two curves, its target moved as a
+/// chosen target moves it; or a measurement and its target, levelled at
+/// 1 kHz so they are drawn against each other.
+fn headphone(p: &DspProfile) -> Option<(targets::Curve, targets::Curve)> {
+    use super::targets;
+    let folder = dir(&p.name);
+    if let Some(m) = &p.measurement {
+        let level = |c: targets::Curve| {
+            let k = targets::at(&c, 1000.0);
+            c.into_iter()
+                .map(|(hz, db)| (hz, db - k))
+                .collect::<targets::Curve>()
+        };
+        return Some((
+            level(targets::measurement(&folder)?),
+            level(targets::choice_curve(&m.target)?),
+        ));
+    }
+    let (raw, made_for) = targets::autoeq_measurement(&folder)?;
+    let moved = p
+        .target
+        .as_ref()
+        .and_then(|t| Some((t.chosen.as_ref()?, &t.made_for)))
+        .and_then(|(to, from)| {
+            Some(targets::difference(
+                &targets::choice_curve(from)?,
+                &targets::choice_curve(to)?,
+            ))
+        });
+    Some((
+        raw,
+        match moved {
+            Some(step) => targets::moved(&made_for, &step),
+            None => made_for,
+        },
+    ))
+}
+
 /// What `name` offers to move its correction to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TargetChoices {
-    pub made_for: &'static super::targets::Target,
+    /// The target an AutoEQ correction or a ready-made EQ was made for;
+    /// none for one built from a measurement, which is made for `chosen`.
+    pub made_for: Option<&'static super::targets::Target>,
     pub chosen: Option<String>,
     /// The shipped targets for the same kind of headphone, then those added.
     pub choices: Vec<TargetChoice>,
@@ -373,17 +414,25 @@ pub struct TargetChoice {
 pub fn target_choices(name: &str) -> Option<TargetChoices> {
     use super::targets;
     let cfg = Config::cached();
-    let t = cfg
-        .dsp
-        .profiles
-        .iter()
-        .find(|p| p.name == name)?
-        .target
-        .clone()?;
-    let made_for = targets::shipped(&t.made_for)?;
+    let p = cfg.dsp.profiles.iter().find(|p| p.name == name)?;
+    let (made_for, chosen, ear) = match (&p.measurement, &p.target) {
+        (Some(m), _) => (
+            None,
+            Some(m.target.clone()),
+            match m.ear {
+                DspEar::In => targets::Ear::In,
+                DspEar::Over => targets::Ear::Over,
+            },
+        ),
+        (None, Some(t)) => {
+            let made_for = targets::shipped(&t.made_for)?;
+            (Some(made_for), t.chosen.clone(), made_for.ear)
+        }
+        (None, None) => return None,
+    };
     let mut choices: Vec<TargetChoice> = targets::TARGETS
         .iter()
-        .filter(|c| c.ear == made_for.ear)
+        .filter(|c| c.ear == ear)
         .map(|c| TargetChoice {
             id: c.id.into(),
             name: c.name.into(),
@@ -397,7 +446,7 @@ pub fn target_choices(name: &str) -> Option<TargetChoices> {
     }));
     Some(TargetChoices {
         made_for,
-        chosen: t.chosen,
+        chosen,
         choices,
     })
 }
@@ -413,13 +462,15 @@ pub fn choose_target(name: &str, chosen: Option<&str>) -> Result<(), String> {
         return Err(format!("No target {c} for {name}"));
     }
     persist(|cfg| {
-        if let Some(t) = cfg
-            .dsp
-            .profiles
-            .iter_mut()
-            .find(|p| p.name == name)
-            .and_then(|p| p.target.as_mut())
-        {
+        let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) else {
+            return;
+        };
+        if let Some(m) = p.measurement.as_mut() {
+            // Built from a measurement: it is made for the target chosen.
+            if let Some(c) = chosen {
+                m.target = c.to_owned();
+            }
+        } else if let Some(t) = p.target.as_mut() {
             t.chosen = chosen.filter(|c| *c != t.made_for).map(str::to_owned);
         }
     })
@@ -594,8 +645,8 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
         })
         .collect();
 
-    // The measurement kept with an AutoEQ correction: this profile's, or the
-    // first of its layers that has one.
+    // The headphone this chain corrects, as measured, and the target it is
+    // corrected to: this profile's, or the first of its layers that has one.
     let measured = std::iter::once(profile)
         .chain(
             profile
@@ -604,36 +655,13 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
                 .filter(|l| l.on)
                 .filter_map(|l| all.iter().find(|p| p.name == l.profile)),
         )
-        .find_map(|p| {
-            let text = std::fs::read_to_string(targets::result_path(&dir(&p.name))).ok()?;
-            let raw = targets::result_column(&text, "raw");
-            let target = targets::result_column(&text, "target");
-            (!raw.is_empty() && !target.is_empty()).then_some((p, raw, target))
-        });
+        .find_map(headphone);
     let (measurement, target, predicted) = match measured {
-        Some((p, raw, made_for)) => {
+        Some((raw, aim)) => {
             let raw: Vec<f64> = freqs.iter().map(|&hz| targets::at(&raw, hz)).collect();
-            // The target it plays to: the one in the result, moved as the
-            // chosen target moves it.
-            let moved = p
-                .target
-                .as_ref()
-                .and_then(|t| Some((t.chosen.as_ref()?, &t.made_for)))
-                .and_then(|(to, from)| {
-                    Some(targets::difference(
-                        &targets::choice_curve(from)?,
-                        &targets::choice_curve(to)?,
-                    ))
-                });
-            let target: Vec<f64> = freqs
-                .iter()
-                .map(|&hz| {
-                    targets::at(&made_for, hz)
-                        + moved.as_ref().map_or(0.0, |g| targets::at(&g.points, hz))
-                })
-                .collect();
+            let aim: Vec<f64> = freqs.iter().map(|&hz| targets::at(&aim, hz)).collect();
             let predicted = raw.iter().zip(&total).map(|(r, t)| r + t).collect();
-            (Some(raw), Some(target), Some(predicted))
+            (Some(raw), Some(aim), Some(predicted))
         }
         None => (None, None, None),
     };
@@ -676,7 +704,7 @@ fn scope_in(profile: &DspProfile, all: &[DspProfile], seen: &mut Vec<String>) ->
     if !profile.impulses.is_empty() {
         return DspScope::Device;
     }
-    if profile.target.is_some() {
+    if profile.target.is_some() || profile.measurement.is_some() {
         return DspScope::Everywhere;
     }
     if !profile.layers.is_empty() {
@@ -768,6 +796,220 @@ pub fn set_scope(name: &str, to: DspScope) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// What `profile` is for: as set, or a correction where it was installed
+/// from AutoEQ, built from a measurement or said to be made for a target,
+/// and a tuning otherwise.
+pub fn role(profile: &DspProfile) -> DspRole {
+    profile.role.unwrap_or(
+        if profile.target.is_some() || profile.measurement.is_some() {
+            DspRole::Correction
+        } else {
+            DspRole::Tuning
+        },
+    )
+}
+
+/// The corrections a chain plays, `profile` and its layers switched on, in
+/// the order they play.
+pub fn corrections_in(profile: &DspProfile, all: &[DspProfile]) -> Vec<String> {
+    fn walk(p: &DspProfile, all: &[DspProfile], seen: &mut Vec<String>, out: &mut Vec<String>) {
+        if seen.contains(&p.name) || seen.len() > 64 {
+            return;
+        }
+        seen.push(p.name.clone());
+        for l in p.layers.iter().filter(|l| l.on) {
+            if let Some(q) = all.iter().find(|q| q.name == l.profile) {
+                walk(q, all, seen, out);
+            }
+        }
+        if role(p) == DspRole::Correction && !out.contains(&p.name) {
+            out.push(p.name.clone());
+        }
+    }
+    let mut out = Vec::new();
+    walk(profile, all, &mut Vec::new(), &mut out);
+    out
+}
+
+/// Why a chain with more than one correction is refused.
+pub fn two_corrections(corrections: &[String]) -> String {
+    format!(
+        "This stack already corrects for {}. Remove that correction first, or add {} as a tuning instead.",
+        corrections[0],
+        corrections.get(1).map_or("this", String::as_str)
+    )
+}
+
+/// Say what `name` is for. A correction is refused where it would be a
+/// chain's second.
+pub fn set_role(name: &str, to: DspRole) -> Result<(), String> {
+    let cfg = Config::cached();
+    let mut all = cfg.dsp.profiles.clone();
+    let Some(p) = all.iter_mut().find(|p| p.name == name) else {
+        return Err(format!("No profile called {name}"));
+    };
+    p.role = Some(to);
+    if to == DspRole::Correction {
+        for stack in &all {
+            let c = corrections_in(stack, &all);
+            if c.len() > 1 {
+                return Err(two_corrections(&c));
+            }
+        }
+    }
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.role = Some(to);
+        }
+    })
+}
+
+/// A target's name, by id: one that ships, one added, or the id itself.
+pub fn target_name(id: &str) -> String {
+    use super::targets;
+    targets::shipped(id).map_or_else(
+        || {
+            targets::added()
+                .into_iter()
+                .find(|a| a.id == id)
+                .map_or_else(|| id.to_owned(), |a| a.name)
+        },
+        |t| t.name.to_owned(),
+    )
+}
+
+/// What a chain does, in a line each: the headphone it corrects and how,
+/// and the tunings on top.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ChainSummary {
+    pub correction: Option<String>,
+    pub tunings: Vec<String>,
+}
+
+pub fn summary(name: &str) -> Option<ChainSummary> {
+    use super::targets;
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let profile = all.iter().find(|p| p.name == name)?;
+    let mut chain: Vec<&DspProfile> = profile
+        .layers
+        .iter()
+        .filter(|l| l.on)
+        .filter_map(|l| all.iter().find(|p| p.name == l.profile))
+        .collect();
+    chain.push(profile);
+    let mut out = ChainSummary::default();
+    for p in chain {
+        if role(p) == DspRole::Tuning {
+            if !p.filters.is_empty() || !p.impulses.is_empty() {
+                out.tunings.push(p.name.clone());
+            }
+            continue;
+        }
+        let line = if let Some(m) = &p.measurement {
+            format!("{} → {} (from measurement)", p.name, target_name(&m.target))
+        } else if let Some(t) = &p.target {
+            let autoeq = targets::autoeq_measurement(&dir(&p.name)).is_some();
+            match (&t.chosen, autoeq) {
+                (Some(c), true) => format!(
+                    "{} → {} (rebuilt from AutoEQ's measurement)",
+                    p.name,
+                    target_name(c)
+                ),
+                (Some(c), false) => format!("{} → {}", p.name, target_name(c)),
+                (None, true) => format!("{} → {}", p.name, target_name(&t.made_for)),
+                (None, false) => format!(
+                    "{}: ready-made EQ (made for {})",
+                    p.name,
+                    target_name(&t.made_for)
+                ),
+            }
+        } else {
+            format!("{}: ready-made EQ (made for an unknown target)", p.name)
+        };
+        out.correction.get_or_insert(line);
+    }
+    Some(out)
+}
+
+/// A measurement, checked: frequency and level pairs covering the audible
+/// band, as squig.link and REW export them.
+pub fn read_measurement(text: &str) -> Result<super::targets::Curve, String> {
+    super::targets::covering(text, "A measurement")
+}
+
+/// What a measurement corrected to a target would do, before anything is
+/// saved: the curves the Headphone view draws, and the EQ's own.
+pub fn preview_measurement(text: &str, target: &str, rate: u32) -> Result<Response, String> {
+    use super::targets;
+    let measured = read_measurement(text)?;
+    let aim = targets::choice_curve(target).ok_or_else(|| format!("No target {target}"))?;
+    let freqs = targets::grid();
+    let filters = [config::DspFilter::Graphic(targets::correction(
+        &measured, &aim,
+    ))];
+    let total = super::response(&filters, &freqs, rate);
+    let level = |c: &targets::Curve| {
+        let k = targets::at(c, 1000.0);
+        freqs
+            .iter()
+            .map(|&hz| targets::at(c, hz) - k)
+            .collect::<Vec<f64>>()
+    };
+    let raw = level(&measured);
+    let predicted = raw.iter().zip(&total).map(|(r, t)| r + t).collect();
+    Ok(Response {
+        bands: Vec::new(),
+        layers: Vec::new(),
+        measurement: Some(raw),
+        target: Some(level(&aim)),
+        predicted: Some(predicted),
+        preamp_db: 0.0,
+        total,
+        freqs,
+    })
+}
+
+/// Save a correction built from a measurement: the headphone `name`,
+/// measured as `text`, corrected to `target`. A correction, kept everywhere
+/// like any headphone's.
+pub fn save_measured(name: &str, text: &str, ear: DspEar, target: &str) -> Result<String, String> {
+    use super::targets;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A profile needs a name".into());
+    }
+    if Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Err(format!("There is already a profile called {name}"));
+    }
+    let measured = read_measurement(text)?;
+    if targets::choice_curve(target).is_none() {
+        return Err(format!("No target {target}"));
+    }
+    let folder = dir(name);
+    if folder.exists() {
+        return Err(format!("{} is in the way", folder.display()));
+    }
+    std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+    std::fs::write(
+        targets::measurement_path(&folder),
+        targets::on_grid(&measured),
+    )
+    .map_err(|e| e.to_string())?;
+    persist(|cfg| {
+        cfg.dsp.profiles.push(DspProfile {
+            name: name.to_owned(),
+            role: Some(DspRole::Correction),
+            measurement: Some(DspMeasurement {
+                ear,
+                target: target.to_owned(),
+            }),
+            ..Default::default()
+        })
+    })?;
+    Ok(name.to_owned())
+}
+
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
 /// Refused where it could not play: a layer missing, a layer of itself, one
 /// with impulse responses, one kept on this device under a stack kept
@@ -793,6 +1035,24 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
     let mut check = probe.clone();
     for l in &mut check.layers {
         l.on = true;
+    }
+    let corrections = corrections_in(&check, &all);
+    if corrections.len() > 1 {
+        // The one it had first, then the one being added.
+        let before = cfg
+            .dsp
+            .profiles
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| corrections_in(p, &cfg.dsp.profiles))
+            .unwrap_or_default();
+        let mut named: Vec<String> = before
+            .iter()
+            .filter(|c| corrections.contains(c))
+            .cloned()
+            .collect();
+        named.extend(corrections.iter().filter(|c| !before.contains(c)).cloned());
+        return Err(two_corrections(&named));
     }
     super::chain(&check, &all, &mut Vec::new()).map_err(|e| e.to_string())?;
     if everywhere_by_choice(&all, name)
