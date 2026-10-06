@@ -5259,7 +5259,9 @@ mod tests {
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::STANDARD;
         let (state, _dir) = test_state();
-        let key = api_key(&state, "mate");
+        // Not `mate`: account changes are announced by user id process-wide,
+        // and another test changes `mate`'s while its link is open.
+        let key = api_key(&state, "owner");
         let pool = state.pool.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -5289,7 +5291,7 @@ mod tests {
         // Signed in with the password, or sending what is not a key: nothing
         // is kept, though the link still hears the account's keys.
         let other = b64.encode([2u8; 32]);
-        let url = link("u=mate&p=hunter22", "dev-password", &other);
+        let url = link("u=owner&p=sesame", "dev-password", &other);
         let keys = tokio::task::spawn_blocking(move || keys_sent(url))
             .await
             .unwrap();
@@ -5304,7 +5306,7 @@ mod tests {
         let db = pool.get().unwrap();
         db.conn.execute("DELETE FROM api_keys", []).unwrap();
         assert!(
-            queries::api_keys::device_keys(&db.conn, "mate")
+            queries::api_keys::device_keys(&db.conn, "owner")
                 .unwrap()
                 .is_empty()
         );
