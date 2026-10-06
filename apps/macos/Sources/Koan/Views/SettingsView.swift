@@ -696,6 +696,18 @@ struct EqSettings: View {
 
     var body: some View {
         Form {
+            if let active, let detail, detail.group {
+                Section {
+                    Picker("Playing", selection: Binding(
+                        get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
+                        set: { app.dsp.select(active, $0) }
+                    )) {
+                        ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
+                    }
+                } header: {
+                    Text("Group: pick one")
+                }
+            }
             if let active, let response, let detail {
                 Section {
                     EqGraph(response: response, handles: BandTable.handles(detail.bands)) { index, hz, db in
@@ -792,6 +804,11 @@ struct DspSettings: View {
             }
             Button("Use a Measurement…") { measuring = true }
             #endif
+            if let summary = dsp.importSummary {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let error = dsp.lastError {
                 Text(error)
                     .font(.caption)
@@ -825,14 +842,14 @@ struct DspSettings: View {
         // tuning already in it, or taste to add on top? kōan cannot tell,
         // and a chain corrects once.
         .confirmationDialog(
-            "What is this EQ?",
+            dsp.askRole?.count ?? 0 > 1 ? "What are these EQs?" : "What is this EQ?",
             isPresented: Binding(get: { dsp.askRole != nil }, set: { if !$0 { dsp.askRole = nil } }),
             titleVisibility: .visible,
             presenting: dsp.askRole
-        ) { name in
-            Button("A neutral correction for these headphones") { dsp.setRole(name, .correction) }
-            Button("A correction with a sound already in it") { dsp.setRole(name, .baked) }
-            Button("A tuning to add on top") { dsp.setRole(name, .tuning) }
+        ) { names in
+            Button("A neutral correction for these headphones") { dsp.setRole(names, .correction) }
+            Button("A correction with a sound already in it") { dsp.setRole(names, .baked) }
+            Button("A tuning to add on top") { dsp.setRole(names, .tuning) }
         } message: { _ in
             Text("A correction makes your headphones neutral; a stack holds one. Most presets named for a sound, like “Lush”, are a correction with a tuning baked in. A tuning is taste, like more bass, and plays on top of a correction.")
         }
@@ -1081,10 +1098,15 @@ struct DspImportPrompts: ViewModifier {
                 }
                 Button("Done", role: .cancel) {}
             } message: { _ in
-                if let device = dsp.overview?.device, dsp.overview?.active == nil {
+                if let summary = dsp.importSummary {
+                    Text(summary)
+                } else if let device = dsp.overview?.device, dsp.overview?.active == nil {
                     Text("\(device) plays untouched until it has a profile.")
                 }
             }
+            #if !os(tvOS)
+            .dspImportConfirmation(dsp)
+            #endif
     }
 }
 

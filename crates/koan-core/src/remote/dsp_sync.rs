@@ -274,7 +274,10 @@ fn same(a: &SyncDoc, b: &SyncDoc, member: &dyn Fn(&str) -> Option<SyncDoc>, dept
         (None, None) => true,
         _ => false,
     };
-    if !preamp || pa.target != pb.target {
+    // What the correction aims at, and whether its layers play together or
+    // one at a time, change the sound as much as any band.
+    if !preamp || pa.target != pb.target || pa.measurement != pb.measurement || pa.group != pb.group
+    {
         return false;
     }
     let files = |d: &SyncDoc| {
@@ -1354,6 +1357,50 @@ mod tests {
         assert!(a.profile("Room").is_some());
     }
 
+    /// A correction built from a measurement arrives as made: its role, its
+    /// measurement and target, and the measurement's file.
+    #[test]
+    fn a_measured_correction_travels_whole() {
+        use crate::audio::dsp::profiles;
+        use crate::config::{DspEar, DspRole};
+        let _guard = lock();
+        let server = Server::new();
+        let (a, b) = (Device::new(), Device::new());
+        a.on();
+        let mut text = String::from("frequency,raw\n");
+        for hz in crate::audio::dsp::targets::grid() {
+            text.push_str(&format!("{hz:.2},{:.1}\n", 90.0 + (hz / 1000.0).log2()));
+        }
+        profiles::save_measured("IEM", &text, DspEar::In, "diffuse-field-iso-11904-1").unwrap();
+        let sent = a.profile("IEM").unwrap();
+        let (doc, paths) = doc_of(&sent).unwrap();
+        let back = SyncDoc::parse(&doc.json()).unwrap();
+        assert_eq!(back.profile.measurement, sent.measurement);
+        assert!(back.files.iter().any(|f| f.name == "measurement.csv"));
+        assert!(paths.values().any(|p| p.ends_with("measurement.csv")));
+
+        a.sync(&server);
+        b.sync(&server);
+        b.on();
+        let got = b.profile("IEM").unwrap();
+        assert_eq!(got.measurement, sent.measurement);
+        assert_eq!(profiles::role(&got), DspRole::Correction);
+        a.on();
+        let file = std::fs::read(profiles::dir("IEM").join("measurement.csv")).unwrap();
+        b.on();
+        assert_eq!(
+            std::fs::read(profiles::dir("IEM").join("measurement.csv")).unwrap(),
+            file
+        );
+
+        // A role said on one device is said on the other.
+        a.on();
+        profiles::set_role("IEM", DspRole::Baked).unwrap();
+        a.sync(&server);
+        b.sync(&server);
+        assert_eq!(b.profile("IEM").unwrap().role, Some(DspRole::Baked));
+    }
+
     /// The same headphone installed on two devices before either synced is
     /// one profile; another holding a synced profile's name gives it up.
     /// Two devices with a profile of one name: one profile where they would
@@ -1550,6 +1597,28 @@ mod tests {
             vec![],
         );
         assert!(!sounds_same(&a, &extra, &none), "one band more");
+        let measured = |target: &str| {
+            let mut d = a.clone();
+            d.profile.measurement = Some(crate::config::DspMeasurement {
+                ear: crate::config::DspEar::In,
+                target: target.into(),
+            });
+            d
+        };
+        assert!(
+            !sounds_same(
+                &measured("harman-in-ear-2019"),
+                &measured("diffuse-field-iso-11904-1"),
+                &none
+            ),
+            "one measurement corrected to two targets"
+        );
+        let mut grouped = a.clone();
+        grouped.profile.group = true;
+        assert!(
+            !sounds_same(&a, &grouped, &none),
+            "one at a time is not together"
+        );
         let mut renamed = a.clone();
         renamed.profile.name = "Y".into();
         renamed.profile.origin = Some("iPhone".into());

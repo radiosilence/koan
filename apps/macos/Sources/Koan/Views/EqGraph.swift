@@ -219,7 +219,7 @@ struct EqGraph: View {
                 if !response.bands.isEmpty { key("Each band", Self.accent.opacity(0.3)) }
             } else {
                 key("Measured", Color.secondary)
-                key("Neutral (target)", Color.primary.opacity(0.55), dashed: true)
+                key("Target", Color.primary.opacity(0.55), dashed: true)
                 key("Corrected", Self.accent)
             }
             Spacer()

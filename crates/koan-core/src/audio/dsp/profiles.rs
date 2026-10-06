@@ -23,6 +23,9 @@ pub struct Summary {
     /// Why the profile would not load, if it would not.
     pub problem: Option<String>,
     pub role: DspRole,
+    /// For a group: its members, in order, and the one playing.
+    pub members: Vec<String>,
+    pub playing: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +84,15 @@ pub fn overview_for(device: Option<String>) -> Overview {
                     rates,
                     problem,
                     role: role(p),
+                    members: if p.group {
+                        p.layers.iter().map(|l| l.profile.clone()).collect()
+                    } else {
+                        Vec::new()
+                    },
+                    playing: p
+                        .group
+                        .then(|| p.layers.iter().find(|l| l.on).map(|l| l.profile.clone()))
+                        .flatten(),
                 }
             })
             .collect(),
@@ -191,6 +203,8 @@ pub struct Detail {
     pub problem: Option<String>,
     /// Profiles it plays first, for a stack.
     pub layers: Vec<crate::config::DspLayer>,
+    /// A group: one of `layers` plays, the one switched on.
+    pub group: bool,
     /// Kept on every device of the account, rather than this one alone.
     pub everywhere: bool,
     /// Where it is kept was chosen, rather than following from what it is.
@@ -278,6 +292,7 @@ pub fn detail(name: &str) -> Option<Detail> {
         preamp_rate,
         preamp_set: profile.preamp_db.is_some(),
         layers: profile.layers.clone(),
+        group: profile.group,
         problem,
         everywhere: scope(profile, &cfg.dsp.profiles) == DspScope::Everywhere,
         scope_set: profile.scope.is_some(),
@@ -372,18 +387,42 @@ pub fn dir(name: &str) -> PathBuf {
     config::config_dir().join("dsp").join(slug(name))
 }
 
-/// Record the target `name`'s correction was made for, keeping any target
-/// chosen in its place.
+/// Record the target `name`'s correction was made for: one that ships,
+/// since a move is worked out against it. A target chosen in its place is
+/// kept where it is for the same kind of headphone. Refused for a
+/// correction built from a measurement, which is made for the target it is
+/// corrected to.
 pub fn set_made_for(name: &str, made_for: Option<&str>) -> Result<(), String> {
+    use super::targets;
+    let cfg = Config::cached();
+    let p = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("No profile called {name}"))?;
+    if p.measurement.is_some() {
+        return Err(format!(
+            "{name} is built from a measurement: choose the target it is corrected to instead"
+        ));
+    }
+    let made = match made_for {
+        Some(id) => Some(targets::shipped(id).ok_or_else(|| format!("No target called {id}"))?),
+        None => None,
+    };
+    let chosen = p
+        .target
+        .as_ref()
+        .and_then(|t| t.chosen.clone())
+        .filter(|c| made.is_some_and(|m| targets::shipped(c).is_none_or(|t| t.ear == m.ear)));
     persist(|cfg| {
         if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
-            p.target = made_for.map(|m| crate::config::DspTarget {
-                made_for: m.to_owned(),
-                chosen: p.target.as_ref().and_then(|t| t.chosen.clone()),
+            p.target = made.map(|m| crate::config::DspTarget {
+                made_for: m.id.to_owned(),
+                chosen,
             });
         }
     })
-    .map_err(|e| e.to_string())
 }
 
 /// The headphone `p` corrects, as measured, and the target it is corrected
@@ -760,6 +799,103 @@ fn stacks_of(cfg: &Config, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// Play `member` of the group `group`, and none of the others.
+pub fn select(group: &str, member: &str) -> Result<(), String> {
+    let cfg = Config::cached();
+    let g = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == group)
+        .ok_or_else(|| format!("No profile called {group}"))?;
+    if !g.group {
+        return Err(format!("{group} is not a group"));
+    }
+    if !g.layers.iter().any(|l| l.profile == member) {
+        return Err(format!("{member} is not in {group}"));
+    }
+    persist(|cfg| {
+        if let Some(g) = cfg.dsp.profiles.iter_mut().find(|p| p.name == group) {
+            for l in &mut g.layers {
+                l.on = l.profile == member;
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// Make `name` a group, where one of its layers plays, or a stack, where
+/// each is switched on or off. Made a group, the first layer switched on
+/// is the one that plays.
+pub fn set_group(name: &str, group: bool) -> Result<(), String> {
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.group = group;
+            if group {
+                let first = p.layers.iter().position(|l| l.on).unwrap_or(0);
+                for (i, l) in p.layers.iter_mut().enumerate() {
+                    l.on = i == first;
+                }
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// `name`, or numbered where it or the folder its files would go in is
+/// taken, so nothing already here is written over.
+pub fn free_name(name: &str) -> String {
+    let cfg = Config::cached();
+    let taken = |n: &str| {
+        let folder = dir(n);
+        cfg.dsp
+            .profiles
+            .iter()
+            .any(|p| p.name == n || dir(&p.name) == folder)
+            || folder.exists()
+    };
+    std::iter::once(name.to_owned())
+        .chain((2..).map(|n| format!("{name} {n}")))
+        .find(|n| !taken(n))
+        .expect("some number is free")
+}
+
+/// Make `name` a group of `members`, in order, the first playing. Refused
+/// over a profile of that name.
+pub fn make_group(name: &str, members: &[String]) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A group needs a name".into());
+    }
+    if Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Err(format!("There is already a profile called {name}"));
+    }
+    let group = DspProfile {
+        name: name.to_owned(),
+        layers: members
+            .iter()
+            .enumerate()
+            .map(|(i, m)| crate::config::DspLayer {
+                profile: m.clone(),
+                on: i == 0,
+            })
+            .collect(),
+        group: true,
+        ..Default::default()
+    };
+    // Each member as it would play, so a group that cannot is never kept.
+    let mut all = Config::cached().dsp.profiles.clone();
+    all.push(group.clone());
+    for m in members {
+        let mut check = group.clone();
+        for l in &mut check.layers {
+            l.on = &l.profile == m;
+        }
+        super::chain(&check, &all, &mut Vec::new()).map_err(|e| e.to_string())?;
+    }
+    persist(|cfg| cfg.dsp.profiles.push(group)).map_err(|e| e.to_string())
+}
+
 /// Where `profile` is kept: as set, or as follows from what it is. A room
 /// or speaker correction, with impulse responses, or one for an output that
 /// stays put (built in, or an amplifier on the network) is this device's; a
@@ -889,10 +1025,18 @@ pub fn corrections_in(profile: &DspProfile, all: &[DspProfile]) -> Vec<String> {
             return;
         }
         seen.push(p.name.clone());
-        for l in p.layers.iter().filter(|l| l.on) {
-            if let Some(q) = all.iter().find(|q| q.name == l.profile) {
-                walk(q, all, seen, out);
-            }
+        // A group plays one member, so only it counts.
+        let played: Vec<&DspProfile> = if p.group {
+            super::playing(p, all).into_iter().collect()
+        } else {
+            p.layers
+                .iter()
+                .filter(|l| l.on)
+                .filter_map(|l| all.iter().find(|q| q.name == l.profile))
+                .collect()
+        };
+        for q in played {
+            walk(q, all, seen, out);
         }
         if role(p).corrects() && !out.contains(&p.name) {
             out.push(p.name.clone());
@@ -1144,9 +1288,12 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
     let probe = profile_mut(&mut all, name);
     probe.layers = layers.clone();
     // Every layer, on or off: one switched off now is one switched on later.
+    // A group's members are alternatives, one playing whichever is picked.
     let mut check = probe.clone();
-    for l in &mut check.layers {
-        l.on = true;
+    if !check.group {
+        for l in &mut check.layers {
+            l.on = true;
+        }
     }
     let corrections = corrections_in(&check, &all);
     // Every correction it had, on or off: a stack that already corrects
@@ -1158,8 +1305,10 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
         .find(|p| p.name == name)
         .map(|p| {
             let mut p = p.clone();
-            for l in &mut p.layers {
-                l.on = true;
+            if !p.group {
+                for l in &mut p.layers {
+                    l.on = true;
+                }
             }
             corrections_in(&p, &cfg.dsp.profiles)
         })
@@ -1180,8 +1329,18 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
     {
         return Err(kept_here(name, layer));
     }
-    persist(|cfg| profile_mut(&mut cfg.dsp.profiles, name).layers = layers)
-        .map_err(|e| e.to_string())
+    persist(|cfg| {
+        let p = profile_mut(&mut cfg.dsp.profiles, name);
+        p.layers = layers;
+        // A group plays one: the first switched on, or the first of all.
+        if p.group {
+            let first = p.layers.iter().position(|l| l.on).unwrap_or(0);
+            for (i, l) in p.layers.iter_mut().enumerate() {
+                l.on = i == first;
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Delete a profile, and the responses koan keeps for it. Refused while a
@@ -1635,6 +1794,188 @@ mod tests {
         assert!(add_band("Nobody").is_err());
     }
 
+    /// A group plays one member, chosen like a radio button; a stack plays
+    /// each layer switched on. A group can itself be a stack's layer.
+    #[test]
+    fn a_group_plays_one_member() {
+        use crate::config::{DspFilter, DspLayer};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            for (name, hz) in [
+                ("Warm", 100.0),
+                ("Bright", 8000.0),
+                ("Flat", 1000.0),
+                ("Bass", 60.0),
+            ] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(hz)],
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        let names = ["Warm", "Bright", "Flat"].map(String::from);
+        make_group("Presets", &names).unwrap();
+        assert!(make_group("Presets", &names).is_err());
+        let freqs = |name: &str| -> Vec<f64> {
+            let cfg = Config::cached();
+            let p = cfg
+                .dsp
+                .profiles
+                .iter()
+                .find(|p| p.name == name)
+                .unwrap()
+                .clone();
+            super::super::chain(&p, &cfg.dsp.profiles, &mut Vec::new())
+                .unwrap()
+                .into_iter()
+                .map(|f| match f {
+                    DspFilter::Band(b) => b.freq,
+                    other => panic!("{other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(freqs("Presets"), [100.0], "the first plays");
+        select("Presets", "Bright").unwrap();
+        assert_eq!(freqs("Presets"), [8000.0]);
+        assert!(select("Presets", "Bass").is_err(), "not a member");
+
+        // Switching two on in a group leaves the first of them on.
+        let layer = |p: &str, on: bool| DspLayer {
+            profile: p.into(),
+            on,
+        };
+        set_layers(
+            "Presets",
+            vec![
+                layer("Warm", false),
+                layer("Bright", true),
+                layer("Flat", true),
+            ],
+        )
+        .unwrap();
+        assert_eq!(freqs("Presets"), [8000.0]);
+        assert_eq!(
+            detail("Presets")
+                .unwrap()
+                .layers
+                .iter()
+                .filter(|l| l.on)
+                .count(),
+            1
+        );
+
+        // A group as a stack's layer: its chosen member, then the tuning.
+        set_layers("Desk", vec![layer("Presets", true), layer("Bass", true)]).unwrap();
+        assert_eq!(freqs("Desk"), [8000.0, 60.0]);
+
+        // A stack again: each layer switched on plays.
+        set_group("Presets", false).unwrap();
+        set_layers(
+            "Presets",
+            vec![
+                layer("Warm", true),
+                layer("Bright", true),
+                layer("Flat", false),
+            ],
+        )
+        .unwrap();
+        assert_eq!(freqs("Presets"), [100.0, 8000.0]);
+        set_group("Presets", true).unwrap();
+        assert_eq!(
+            freqs("Presets"),
+            [100.0],
+            "the first switched on keeps playing"
+        );
+
+        // None on, as a hand edit can leave it: the first plays.
+        persist(|c| {
+            let p = c.dsp.profiles.iter_mut().find(|p| p.name == "Presets");
+            for l in &mut p.unwrap().layers {
+                l.on = false;
+            }
+        })
+        .unwrap();
+        assert_eq!(freqs("Presets"), [100.0]);
+    }
+
+    /// A group of room corrections plays the chosen one's responses, since
+    /// only one plays; a stack cannot layer such a group, as it cannot a
+    /// response.
+    #[test]
+    fn a_group_plays_its_members_responses() {
+        use crate::config::DspLayer;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let mut paths = Vec::new();
+        for rate in [44100, 48000] {
+            let path = dir.path().join(format!("{rate}.wav"));
+            super::super::raw::write_wav(&path, rate, &[vec![1.0, 0.0]]).unwrap();
+            paths.push(path);
+        }
+        persist(|c| {
+            for (name, path) in [("Room 44", &paths[0]), ("Room 48", &paths[1])] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    impulses: vec![path.clone()],
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        make_group("Room", &["Room 44".into(), "Room 48".into()]).unwrap();
+        let rates = || {
+            let cfg = Config::cached();
+            let p = cfg.dsp.profiles.iter().find(|p| p.name == "Room").unwrap();
+            super::super::Setup::load(p, &cfg.dsp.profiles, dir.path())
+                .unwrap()
+                .unwrap()
+                .rates()
+        };
+        assert_eq!(rates(), [44100]);
+        select("Room", "Room 48").unwrap();
+        assert_eq!(rates(), [48000]);
+        let refused = set_layers(
+            "Desk",
+            vec![DspLayer {
+                profile: "Room".into(),
+                on: true,
+            }],
+        )
+        .unwrap_err();
+        assert!(refused.contains("only EQ can be a layer"), "{refused}");
+    }
+
+    /// A name already taken, or one whose files would go in a folder that is,
+    /// is numbered: nothing is written over.
+    #[test]
+    fn a_free_name_takes_nothing() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        assert_eq!(free_name("Room"), "Room");
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Room".into(),
+                filters: vec![band(100.0)],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        assert_eq!(free_name("Room"), "Room 2");
+        assert_eq!(free_name("room!"), "room! 2", "the same folder as Room's");
+    }
+
     /// A headphone correction travels and a room correction stays; a stack
     /// follows its layers unless set; a stack kept everywhere cannot have a
     /// layer kept here, either way round.
@@ -1855,6 +2196,57 @@ mod tests {
             vec![layer("HD 650"), layer("Warm"), layer("HD 600")],
         )
         .unwrap();
+    }
+
+    /// What a ready-made EQ was made for is a target that ships, said of a
+    /// profile that is there and not built from a measurement; a target
+    /// chosen for another kind of headphone goes with the old one.
+    #[test]
+    fn made_for_is_checked() {
+        use crate::config::{DspEar, DspMeasurement};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Preset".into(),
+                filters: vec![band(100.0)],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Measured".into(),
+                measurement: Some(DspMeasurement {
+                    ear: DspEar::In,
+                    target: "harman-in-ear-2019".into(),
+                }),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        assert!(set_made_for("Nobody", Some("harman-in-ear-2019")).is_err());
+        assert!(set_made_for("Preset", Some("made-up")).is_err());
+        assert!(set_made_for("Measured", Some("harman-in-ear-2019")).is_err());
+        let target = || {
+            Config::cached()
+                .dsp
+                .profiles
+                .iter()
+                .find(|p| p.name == "Preset")
+                .unwrap()
+                .target
+                .clone()
+        };
+        assert_eq!(target(), None);
+        set_made_for("Preset", Some("harman-in-ear-2019")).unwrap();
+        choose_target("Preset", Some("diffuse-field-iso-11904-1")).unwrap();
+        set_made_for("Preset", Some("harman-over-ear-2018")).unwrap();
+        let t = target().unwrap();
+        assert_eq!(t.made_for, "harman-over-ear-2018");
+        assert_eq!(t.chosen, None, "an in-ear target is no move for over-ears");
+        set_made_for("Preset", None).unwrap();
+        assert_eq!(target(), None);
     }
 
     /// A correction with a tuning baked in is the chain's correction. A stack

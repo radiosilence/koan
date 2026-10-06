@@ -162,6 +162,14 @@ pub type Curve = Vec<(f64, f64)>;
 /// text have them. Header and comment lines are skipped, and so is a point
 /// that is not a frequency in hertz with a level within ±40 dB.
 pub fn parse(text: &str) -> Curve {
+    let mut curve = points(text);
+    curve.retain(|(_, db)| db.abs() <= LEVEL_LIMIT_DB);
+    curve
+}
+
+/// Every frequency and level pair in `text`, at whatever level: a
+/// measurement in dB SPL sits around 90.
+fn points(text: &str) -> Curve {
     let mut curve: Curve = text
         .lines()
         .filter_map(|line| {
@@ -170,8 +178,7 @@ pub fn parse(text: &str) -> Curve {
                 .filter(|f| !f.is_empty());
             let hz: f64 = fields.next()?.parse().ok()?;
             let db: f64 = fields.next()?.parse().ok()?;
-            (hz > 0.0 && hz.is_finite() && db.is_finite() && db.abs() <= LEVEL_LIMIT_DB)
-                .then_some((hz, db))
+            (hz > 0.0 && hz.is_finite() && db.is_finite()).then_some((hz, db))
         })
         .collect();
     curve.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -381,7 +388,14 @@ pub fn covering(text: &str, what: &str) -> Result<Curve, String> {
             "{what} is a few kilobytes; this is over a megabyte"
         ));
     }
-    let curve = parse(text);
+    // Levelled at 1 kHz before anything is checked: REW and squig.link
+    // export absolute levels, which only the shape of matters here.
+    let mut curve = points(text);
+    let k = at(&curve, 1000.0);
+    for (_, db) in &mut curve {
+        *db -= k;
+    }
+    curve.retain(|(_, db)| db.abs() <= LEVEL_LIMIT_DB);
     let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
         return Err("No frequency and level pairs in it".into());
     };
@@ -515,6 +529,25 @@ mod tests {
             assert_eq!(c.len(), 695, "{}", t.id);
             assert!(c.iter().zip(&grid).all(|((f, _), g)| f == g), "{}", t.id);
         }
+    }
+
+    /// REW and squig.link export dB SPL: read for its shape, levelled at
+    /// 1 kHz, as the measurement flow's own example is written.
+    #[test]
+    fn a_measurement_in_db_spl_is_read() {
+        let mut text = String::from("Frequency(Hz), SPL(dB)\n");
+        for hz in grid() {
+            let db = 92.0 + if hz < 100.0 { 6.0 } else { 0.0 };
+            text.push_str(&format!("{hz:.2}, {db:.1}\n"));
+        }
+        let curve = covering(&text, "A measurement").unwrap();
+        assert_eq!(curve.len(), 695);
+        assert!(at(&curve, 1000.0).abs() < 1e-9);
+        assert!((at(&curve, 50.0) - 6.0).abs() < 1e-9);
+        assert!(
+            covering("20, 92.4\n21, 92.6\n", "A measurement").is_err(),
+            "too few"
+        );
     }
 
     #[test]

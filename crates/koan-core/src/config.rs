@@ -623,6 +623,12 @@ pub struct DspProfile {
     /// layers is a stack. See `audio::dsp::Setup::load`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<DspLayer>,
+    /// A group rather than a stack of layers: exactly one of its layers
+    /// plays, the one switched on, chosen as one picks a radio button.
+    /// Whole presets imported together are a group: alternatives, not taste
+    /// to play together.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub group: bool,
     /// Whether it is the account's, kept on every device signed in to its
     /// kōan server, or this device's alone. Unset, it follows from what the
     /// profile is: see `audio::dsp::profiles::scope`.
@@ -2594,6 +2600,7 @@ fps = 30
             source: vec![],
             target: None,
             layers: vec![],
+            group: false,
             scope: None,
             uid: None,
             origin: None,

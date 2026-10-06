@@ -2635,6 +2635,139 @@ impl KoanEngine {
         .await
     }
 
+    /// What importing `paths` will do: a group of presets, or one profile
+    /// combined from them all, with a name to suggest.
+    pub async fn dsp_import_plan(self: Arc<Self>, paths: Vec<String>) -> DspImportPlan {
+        offload::offload(move || {
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            let plan = koan_core::audio::dsp::import::plan(&paths);
+            DspImportPlan {
+                group: plan.group,
+                files: plan.files,
+                name: plan.name,
+            }
+        })
+        .await
+    }
+
+    /// Import a selection of files. Whole presets become a profile each and
+    /// a group of them called `name`, the first playing; parts of one
+    /// profile combine into one called `name`. A file refused does not stop
+    /// the others; each refusal is reported, and logged.
+    pub async fn dsp_import_files(
+        self: Arc<Self>,
+        paths: Vec<String>,
+        name: Option<String>,
+        rate: Option<u32>,
+    ) -> Result<DspImportSummary, KoanError> {
+        offload::sequenced(move || {
+            use koan_core::audio::dsp::{
+                import::{self, Batch, Outcome},
+                profiles,
+            };
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            let taken: Vec<String> = koan_core::config::Config::cached()
+                .dsp
+                .profiles
+                .iter()
+                .map(|p| p.name.clone())
+                .collect();
+            let batch = import::import_batch(&paths, rate, &taken).map_err(|e| {
+                log::warn!("dsp import: {e}");
+                dsp_error(e)
+            })?;
+            let mut summary = DspImportSummary {
+                imported: Vec::new(),
+                refused: Vec::new(),
+                notes: Vec::new(),
+                group: None,
+            };
+            match batch {
+                Batch::One(imported) => {
+                    // Never written over: a name already taken is numbered.
+                    let wanted = name
+                        .filter(|n| !n.trim().is_empty())
+                        .unwrap_or_else(|| imported.name.clone());
+                    let free = profiles::free_name(&wanted);
+                    if free != wanted {
+                        summary
+                            .notes
+                            .push(format!("{wanted} is taken; imported as {free}"));
+                    }
+                    summary.imported.push(self.save_dsp(imported, Some(free))?)
+                }
+                Batch::Group(each) => {
+                    for item in each {
+                        let file = item.file;
+                        let saved = match item.outcome {
+                            Outcome::Skipped(why) => {
+                                summary.notes.push(format!("{file} left out: {why}"));
+                                continue;
+                            }
+                            Outcome::Refused(e) => Err(e.to_string()),
+                            Outcome::Imported(i, note) => {
+                                summary.notes.extend(note.map(|n| format!("{file}: {n}")));
+                                self.save_dsp(i, None).map_err(|e| e.to_string())
+                            }
+                        };
+                        match saved {
+                            Ok(name) => summary.imported.push(name),
+                            Err(reason) => {
+                                log::warn!("dsp import: {file}: {reason}");
+                                summary.refused.push(DspImportRefusal { file, reason });
+                            }
+                        }
+                    }
+                    if summary.imported.len() > 1 {
+                        let wanted = name
+                            .filter(|n| !n.trim().is_empty())
+                            .unwrap_or_else(|| import::group_name(&summary.imported));
+                        let group = profiles::free_name(&wanted);
+                        if group != wanted {
+                            summary
+                                .notes
+                                .push(format!("{wanted} is taken; the group is {group}"));
+                        }
+                        profiles::make_group(&group, &summary.imported)
+                            .map_err(|message| KoanError::BadArgument { message })?;
+                        self.send_local(PlayerCommand::ReloadDsp)?;
+                        summary.group = Some(group);
+                    }
+                }
+            }
+            Ok(summary)
+        })
+        .await
+    }
+
+    /// Play `member` of the group `group`, and none of the others.
+    pub async fn dsp_select(
+        self: Arc<Self>,
+        group: String,
+        member: String,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::select(&group, &member)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Make `name` a group, one layer playing, or a stack of layers.
+    pub async fn dsp_set_group(
+        self: Arc<Self>,
+        name: String,
+        group: bool,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_group(&name, group)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
     /// Import text: shared from another app, or pasted.
     pub async fn dsp_import_text(
         self: Arc<Self>,

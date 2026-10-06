@@ -70,7 +70,11 @@ struct DspProfilePage: View {
 
                 RoleSection(dsp: dsp, detail: d, madeForChoices: madeForChoices,
                             targets: targets, adding: $addingTarget)
-                LayersSection(dsp: dsp, detail: d)
+                if d.group {
+                    GroupSection(dsp: dsp, detail: d)
+                } else {
+                    LayersSection(dsp: dsp, detail: d)
+                }
 
                 // A correction is finished as installed; what it is made of
                 // is there for those who look. A tuning is its bands.
@@ -194,6 +198,36 @@ struct DspProfilePage: View {
     }
 }
 
+/// A group's members, one playing, chosen as a radio button is.
+private struct GroupSection: View {
+    let dsp: DspModel
+    let detail: DspProfileDetail
+
+    var body: some View {
+        Section {
+            Picker("Playing", selection: Binding(
+                get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
+                set: { dsp.select(detail.name, $0) }
+            )) {
+                ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            #if !os(tvOS)
+            Button("Make It a Stack of Layers") { dsp.setGroup(detail.name, false) }
+            #endif
+        } header: {
+            Text("Group: pick one")
+        } footer: {
+            Text(detail.layers.contains(where: \.on)
+                 ? "One member plays at a time. Pick another and it plays in place of the last. Each member is a profile of its own, with its own page."
+                 : "None was picked, so the first plays. Pick one to change it.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+
 /// The profiles a stack plays first, in order, each switched on or off: a
 /// headphone's correction, then taste on top of it. Any profile can become a
 /// stack; one with impulse responses cannot be a layer.
@@ -282,6 +316,11 @@ private struct LayersSection: View {
             }
             #endif
             if !addable.isEmpty { addMenu }
+            #if !os(tvOS)
+            if layers.count > 1 {
+                Button("Make It a Group, One Playing at a Time") { dsp.setGroup(detail.name, true) }
+            }
+            #endif
         } header: {
             Text("Layers")
         } footer: {
