@@ -92,10 +92,10 @@ struct SidebarView: View {
                 play(playlist)
             }
         }
-        // The footer is text over text: a soft edge only blurs the rows passing
-        // beneath it, and the playlists and the library counts read as one
-        // smear. The hard edge backs the footer with the sidebar and draws the
-        // line between them.
+        // The footer is text over text, so the rows passing beneath it get the
+        // hard edge: the sidebar behind the footer and a line between them. It
+        // applies only under a bar (`safeAreaBar` below); a plain
+        // `safeAreaInset` takes no edge effect, and the rows showed through.
         .scrollEdgeEffectStyle(.hard, for: .bottom)
         // The field belongs to the sidebar, not the window: in the toolbar it
         // would sit on top of the lyrics inspector.
@@ -107,7 +107,7 @@ struct SidebarView: View {
         .onChange(of: ui.searchFocusToken) { _, _ in
             searchFocused = true
         }
-        .safeAreaInset(edge: .bottom) { SidebarFooter() }
+        .safeAreaBar(edge: .bottom) { SidebarFooter() }
         .alert("Rename Playlist", isPresented: Binding(
             get: { renaming != nil },
             set: { if !$0 { renaming = nil } }
