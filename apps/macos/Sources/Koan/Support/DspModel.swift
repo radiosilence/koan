@@ -36,6 +36,9 @@ final class DspModel {
     /// phone. Set on each route change; nil on the Mac.
     private(set) var route: String?
     var lastError: String?
+    /// Profiles just imported, whose role is asked, once for all of them: a
+    /// neutral correction, one with a tuning baked in, or a tuning on top.
+    var askRole: [String]?
     /// What the last import of several files did.
     var importSummary: String?
     /// Several files planned for import, waiting to be confirmed and named.
@@ -110,6 +113,8 @@ final class DspModel {
             let summary = try await engine.dspImportFiles(paths: urls.map(\.path), name: name, rate: rate)
             imported = summary.group ?? summary.imported.first
             lastError = nil
+            // A group's members are alike, so one answer does for them all.
+            if !summary.imported.isEmpty { askRole = summary.imported }
             importSummary = Self.describe(summary, files: urls.count)
         } catch KoanError.NeedsSampleRate {
             needsRate = .files(urls, name: name)
@@ -171,6 +176,7 @@ final class DspModel {
         do {
             imported = try await run()
             lastError = nil
+            askRole = imported.map { [$0] }
         } catch KoanError.NeedsSampleRate {
             needsRate = pending
         } catch {
@@ -317,6 +323,44 @@ final class DspModel {
         act { try await $0.dspSetLayers(name: name, layers: layers) }
     }
 
+    /// Say whether `name` corrects a headphone or tunes on top of one.
+    func setRole(_ name: String, _ role: DspRole) {
+        act { try await $0.dspSetRole(name: name, role: role) }
+    }
+
+    /// Say what each of `names` is for, as one import's answer.
+    func setRole(_ names: [String], _ role: DspRole) {
+        act { engine in
+            for name in names {
+                try await engine.dspSetRole(name: name, role: role)
+            }
+        }
+    }
+
+    /// The target a ready-made EQ was made for, or nil for Unknown.
+    func setMadeFor(_ name: String, _ target: String?) {
+        act { try await $0.dspSetMadeFor(name: name, target: target) }
+    }
+
+    /// The targets for in-ear or over-ear headphones, each with what it
+    /// sounds like.
+    func targetsFor(inEar: Bool) async -> [DspTargetOption] {
+        await engine.dspTargetsFor(inEar: inEar)
+    }
+
+    /// What correcting a measurement to a target would do, before saving.
+    func previewMeasurement(_ text: String, target: String) async throws -> DspResponse {
+        try await engine.dspPreviewMeasurement(text: text, target: target)
+    }
+
+    /// Save a headphone's measurement corrected to a target, as a profile.
+    func saveMeasured(name: String, text: String, inEar: Bool, target: String) async throws -> String {
+        let saved = try await engine.dspSaveMeasured(name: name, text: text, inEar: inEar, target: target)
+        imported = saved
+        await changed()
+        return saved
+    }
+
     /// Keep `name` on every device of the account, or on this one alone.
     func setScope(_ name: String, everywhere: Bool) {
         act { try await $0.dspSetScope(name: name, everywhere: everywhere) }
@@ -366,6 +410,7 @@ final class DspModel {
 
     static func describe(_ p: DspProfileSummary) -> String {
         var parts: [String] = []
+        if p.measured { parts.append("From a measurement") }
         if p.layers > 0 { parts.append("\(p.layers) \(p.layers == 1 ? "layer" : "layers")") }
         if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "filter" : "filters")") }
         if !p.rates.isEmpty {

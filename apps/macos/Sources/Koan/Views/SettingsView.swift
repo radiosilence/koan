@@ -696,6 +696,7 @@ struct EqSettings: View {
     // the presentation ends when that row is made again.
     @State private var importing = false
     @State private var finding: AutoEqFind?
+    @State private var measuring = false
     @State private var showing: String?
 
     private var active: String? { app.dsp.overview?.active }
@@ -725,7 +726,7 @@ struct EqSettings: View {
                 }
                 BandTable(dsp: app.dsp, profile: active, bands: detail.bands)
             }
-            DspSettings(importing: $importing, finding: $finding, showing: $showing)
+            DspSettings(importing: $importing, finding: $finding, measuring: $measuring, showing: $showing)
         }
         .formStyle(.grouped)
         .task(id: "\(active ?? "")\u{0}\(app.dsp.stamp)") {
@@ -745,6 +746,24 @@ struct EqSettings: View {
         #if !os(tvOS)
         .sheet(item: $finding) { find in
             AutoEqSearch(dsp: app.dsp, query: find.query)
+        }
+        .sheet(isPresented: $measuring) {
+            MeasurementFlow(dsp: app.dsp)
+        }
+        // A profile imported from a file: a neutral correction, one with a
+        // tuning already in it, or taste to add on top? kōan cannot tell,
+        // and a chain corrects once.
+        .confirmationDialog(
+            app.dsp.askRole?.count ?? 0 > 1 ? "What are these EQs?" : "What is this EQ?",
+            isPresented: Binding(get: { app.dsp.askRole != nil }, set: { if !$0 { app.dsp.askRole = nil } }),
+            titleVisibility: .visible,
+            presenting: app.dsp.askRole
+        ) { names in
+            Button("A neutral correction for these headphones") { app.dsp.setRole(names, .correction) }
+            Button("A correction with a sound already in it") { app.dsp.setRole(names, .baked) }
+            Button("A tuning to add on top") { app.dsp.setRole(names, .tuning) }
+        } message: { _ in
+            Text("A correction makes your headphones neutral; a stack holds one. Most presets named for a sound, like “Lush”, are a correction with a tuning baked in. A tuning is taste, like more bass, and plays on top of a correction.")
         }
         #endif
         #if os(macOS)
@@ -779,6 +798,7 @@ struct DspSettings: View {
     @Environment(AppState.self) private var app
     @Binding var importing: Bool
     @Binding fileprivate var finding: AutoEqFind?
+    @Binding var measuring: Bool
     /// The profile whose page is open, on the Mac, where settings has no
     /// navigation stack to push it onto.
     @Binding var showing: String?
@@ -838,6 +858,7 @@ struct DspSettings: View {
             #if !os(tvOS)
             Button("Import…") { importing = true }
             Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
+            Button("Use a Measurement…") { measuring = true }
             #endif
             if let summary = dsp.importSummary {
                 Text(summary)
@@ -903,6 +924,7 @@ private struct AutoEqSearch: View {
     let dsp: DspModel
     @Environment(\.dismiss) private var dismiss
     @State private var query: String
+    @State private var measuring = false
 
     init(dsp: DspModel, query: String = "") {
         self.dsp = dsp
@@ -931,13 +953,22 @@ private struct AutoEqSearch: View {
                     }
                     .overlay {
                         if dsp.autoEqResults.isEmpty {
-                            ContentUnavailableView.search(text: query)
+                            ContentUnavailableView {
+                                Label("Not in AutoEQ", systemImage: "magnifyingglass")
+                            } description: {
+                                Text("AutoEQ has nothing for “\(query)”. A measurement of your headphones works too: kōan builds the correction from it.")
+                            } actions: {
+                                Button("Use a measurement instead") { measuring = true }
+                            }
                         }
                     }
                 }
             }
             .searchable(text: $query, prompt: "Headphone")
             .navigationTitle("AutoEQ")
+            .sheet(isPresented: $measuring) {
+                MeasurementFlow(dsp: dsp, name: query) { _ in dismiss() }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -1013,7 +1044,10 @@ private struct ProfileRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(profile.name)
+                HStack(spacing: 6) {
+                    Text(profile.name)
+                    RoleTag(role: ProfileRole(profile.role))
+                }
                 if let problem = profile.problem {
                     Text(problem)
                         .font(.caption)

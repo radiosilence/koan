@@ -12,12 +12,26 @@ struct DspProfilePage: View {
     @State private var detail: DspProfileDetail?
     @State private var response: DspResponse?
     @State private var targets: DspTargets?
+    /// Every target, for what a ready-made EQ was made for.
+    @State private var madeForChoices: [DspTargetOption] = []
     @State private var addingTarget = false
     @State private var editingName = ""
     @State private var confirmingDelete = false
+    /// Bands, responses, headroom and sync, for a correction: most people
+    /// pick a correction and its target and are done.
+    @State private var showingMore = false
 
     var body: some View {
         Form {
+            if let d = detail {
+                Section {
+                    ChainSummaryCard(corrects: d.corrects, baked: d.correctsBaked, tunings: d.tunings)
+                    if let twice = d.correctsTwice {
+                        Label(twice, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
             Section {
                 TextField("Name", text: $editingName)
                     .onSubmit(rename)
@@ -54,49 +68,38 @@ struct DspProfilePage: View {
                     }
                 }
 
+                // A stack with nothing of its own is what its layers are.
+                if d.layers.isEmpty || !d.bands.isEmpty || !d.impulses.isEmpty {
+                    RoleSection(dsp: dsp, detail: d, madeForChoices: madeForChoices,
+                                targets: targets, adding: $addingTarget)
+                }
                 if d.group {
                     GroupSection(dsp: dsp, detail: d)
                 } else {
                     LayersSection(dsp: dsp, detail: d)
                 }
-                ScopeSection(dsp: dsp, detail: d)
 
-                if let t = targets {
-                    TargetSection(dsp: dsp, profile: d.name, targets: t, adding: $addingTarget)
-                }
-
-                if !d.impulses.isEmpty {
+                // A correction is finished as installed; what it is made of
+                // is there for those who look. A tuning is its bands.
+                if d.role != .tuning {
                     Section {
-                        ForEach(Array(d.impulses.enumerated()), id: \.offset) { _, ir in
-                            ImpulseRow(ir: ir)
+                        Button {
+                            withAnimation { showingMore.toggle() }
+                        } label: {
+                            HStack {
+                                Text(showingMore ? "Less" : "Bands, sync and more")
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .rotationEffect(.degrees(showingMore ? 90 : 0))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
                         }
-                    } header: {
-                        Text("Impulse responses")
-                    } footer: {
-                        Text("A track at a rate with no response of its own is resampled to the nearest one here.")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        .buttonStyle(.plain)
                     }
                 }
-
-                BandTable(dsp: dsp, profile: name, bands: d.bands)
-
-                Section {
-                    LabeledContent("Preamp", value: "\(String(format: "%.1f", d.preampDb)) dB")
-                } header: {
-                    Text("Headroom")
-                } footer: {
-                    Text(d.preampSet
-                         ? "Set in the profile."
-                         : "Derived at \(DspModel.khz(d.preampRate)) kHz from the largest gain the filters apply, so nothing they boost can clip.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-
-                if !d.source.isEmpty {
-                    Section("Imported from") {
-                        ForEach(d.source, id: \.self) { Text($0).foregroundStyle(.secondary) }
-                    }
+                if d.role == .tuning || showingMore {
+                    more(d)
                 }
 
                 Section {
@@ -134,10 +137,51 @@ struct DspProfilePage: View {
         }
     }
 
+    @ViewBuilder private func more(_ d: DspProfileDetail) -> some View {
+        ScopeSection(dsp: dsp, detail: d)
+
+        if !d.impulses.isEmpty {
+            Section {
+                ForEach(Array(d.impulses.enumerated()), id: \.offset) { _, ir in
+                    ImpulseRow(ir: ir)
+                }
+            } header: {
+                Text("Impulse responses")
+            } footer: {
+                Text("A track at a rate with no response of its own is resampled to the nearest one here.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+
+        BandTable(dsp: dsp, profile: name, bands: d.bands)
+
+        Section {
+            LabeledContent("Preamp", value: "\(String(format: "%.1f", d.preampDb)) dB")
+        } header: {
+            Text("Headroom")
+        } footer: {
+            Text(d.preampSet
+                 ? "Set in the profile."
+                 : "Derived at \(DspModel.khz(d.preampRate)) kHz from the largest gain the filters apply, so nothing they boost can clip.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+
+        if !d.source.isEmpty {
+            Section("Imported from") {
+                ForEach(d.source, id: \.self) { Text($0).foregroundStyle(.secondary) }
+            }
+        }
+    }
+
     private func load() async {
         detail = await dsp.detail(name)
         response = await dsp.response(name)
         targets = await dsp.targets(name)
+        if madeForChoices.isEmpty {
+            madeForChoices = await dsp.targetsFor(inEar: false) + dsp.targetsFor(inEar: true)
+        }
         editingName = name
     }
 
@@ -206,7 +250,35 @@ private struct LayersSection: View {
         }
     }
 
+    /// Tunings first, since adding one is what most people come here for.
+    private var addMenu: some View {
+        Menu(layers.isEmpty ? "Add a Tuning…" : "Add a Layer") {
+            ForEach(addable.filter { $0.role == .tuning }, id: \.name) { p in
+                Button(p.name) { add(p) }
+            }
+            let others = addable.filter { $0.role != .tuning }
+            if !others.isEmpty {
+                Section("Corrections") {
+                    ForEach(others, id: \.name) { p in
+                        Button("\(p.name) · \(ProfileRole(p.role).label)") { add(p) }
+                    }
+                }
+            }
+        }
+    }
+
     var body: some View {
+        if layers.isEmpty {
+            // Nothing on top: a quiet offer, not an empty section.
+            if !addable.isEmpty {
+                Section { addMenu }
+            }
+        } else {
+            stack
+        }
+    }
+
+    private var stack: some View {
         Section {
             ForEach(Array(layers.enumerated()), id: \.element.profile) { index, layer in
                 Toggle(isOn: Binding(
@@ -217,7 +289,12 @@ private struct LayersSection: View {
                         dsp.setLayers(detail.name, changed)
                     }
                 )) {
-                    Text(layer.profile)
+                    HStack(spacing: 8) {
+                        Text(layer.profile)
+                        if index < detail.layerRoles.count, let role = detail.layerRoles[index] {
+                            RoleTag(role: ProfileRole(role))
+                        }
+                    }
                 }
                 #if !os(tvOS)
                 .contextMenu {
@@ -241,15 +318,7 @@ private struct LayersSection: View {
                 dsp.setLayers(detail.name, changed)
             }
             #endif
-            if !addable.isEmpty {
-                Menu("Add a Layer") {
-                    ForEach(addable, id: \.name) { p in
-                        Button(p.name) {
-                            dsp.setLayers(detail.name, layers + [DspLayerInfo(profile: p.name, on: true)])
-                        }
-                    }
-                }
-            }
+            if !addable.isEmpty { addMenu }
             #if !os(tvOS)
             if layers.count > 1 {
                 Button("Make It a Group, One Playing at a Time") { dsp.setGroup(detail.name, true) }
@@ -258,12 +327,14 @@ private struct LayersSection: View {
         } header: {
             Text("Layers")
         } footer: {
-            Text(layers.isEmpty
-                 ? "Play other profiles first, in order, each switched on or off: a headphone's correction, then a bass shelf or a tilt on top."
-                 : "Played in order, before this profile's own filters. A layer switched off plays nothing.")
+            Text("Played in order, before this profile's own filters: a correction, then tunings on top. A layer switched off plays nothing.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    private func add(_ p: DspProfileSummary) {
+        dsp.setLayers(detail.name, layers + [DspLayerInfo(profile: p.name, on: true)])
     }
 
     private func move(_ index: Int, by step: Int) {
@@ -279,41 +350,200 @@ private struct LayersSection: View {
     }
 }
 
-/// The target an AutoEQ correction was made for, and another to move it to:
-/// their difference plays after the correction.
-private struct TargetSection: View {
+/// What a profile is for, in a line each, always at the top of its page:
+/// the headphone the chain corrects and how, and the tuning on top. Each in
+/// its role's colour, as the layers and the graph show them.
+struct ChainSummaryCard: View {
+    let corrects: String?
+    var baked = false
+    let tunings: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let corrects {
+                RoleLine(role: baked ? .baked : .correction, text: corrects)
+            } else {
+                RoleLine(role: .correction, text: "None", muted: true)
+            }
+            if !tunings.isEmpty {
+                RoleLine(role: .tuning, text: tunings.joined(separator: ", "))
+            }
+        }
+    }
+}
+
+/// The three things a profile can be for, each with its label and colour,
+/// the same wherever profiles are listed or drawn.
+enum ProfileRole {
+    case correction, tuning, baked
+
+    init(_ role: DspRole) {
+        switch role {
+        case .correction: self = .correction
+        case .tuning: self = .tuning
+        case .baked: self = .baked
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .correction: "Correction"
+        case .tuning: "Tuning"
+        case .baked: "Baked"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .correction: .koanAccent
+        case .tuning: .orange
+        case .baked: .purple
+        }
+    }
+}
+
+private struct RoleLine: View {
+    let role: ProfileRole
+    let text: String
+    var muted = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            RoleTag(role: role)
+            Text(text)
+                .foregroundStyle(muted ? .secondary : .primary)
+        }
+    }
+}
+
+/// A role's badge, in its colour: beside a layer, in a list of profiles,
+/// in the summary.
+struct RoleTag: View {
+    let role: ProfileRole
+
+    var body: some View {
+        Text(role.label)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(role.color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(role.color.opacity(0.15), in: Capsule())
+    }
+}
+
+extension DspTargetOption {
+    /// Its name, and what it does in a few plain words.
+    var label: String { does.isEmpty ? name : "\(name): \(does)" }
+}
+
+/// A target in a picker: on a phone, its name with what it does beneath, in
+/// a list of its own; on the Mac, both in the menu's one line.
+struct TargetRow: View {
+    let target: DspTargetOption
+
+    var body: some View {
+        #if os(macOS)
+        Text(target.label)
+        #else
+        VStack(alignment: .leading, spacing: 2) {
+            Text(target.name)
+            if !target.does.isEmpty {
+                Text(target.does)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        #endif
+    }
+}
+
+/// What a profile is for, and for a correction, the target it corrects to:
+/// the target belongs to the correction, whose job is to make the headphone
+/// neutral, and anything more is said against neutral.
+private struct RoleSection: View {
     let dsp: DspModel
-    let profile: String
-    let targets: DspTargets
+    let detail: DspProfileDetail
+    /// Every target, for what a ready-made EQ was made for.
+    let madeForChoices: [DspTargetOption]
+    /// The targets this correction can move to, once its own is known.
+    let targets: DspTargets?
     @Binding var adding: Bool
 
-    private var current: String { targets.chosen ?? targets.madeFor.id }
+    private var madeFor: String? { targets?.madeFor?.id }
+    private var current: String { targets?.chosen ?? madeFor ?? "" }
 
     var body: some View {
         Section {
-            Picker("Correct to", selection: Binding(
-                get: { current },
-                set: { id in dsp.chooseTarget(profile, id == targets.madeFor.id ? nil : id) }
+            Picker("This profile is", selection: Binding(
+                get: { detail.role },
+                set: { dsp.setRole(detail.name, $0) }
             )) {
-                ForEach(targets.choices, id: \.id) { c in
-                    Text(c.name).tag(c.id)
+                Text("A neutral correction for these headphones").tag(DspRole.correction)
+                Text("A correction with a sound already in it").tag(DspRole.baked)
+                Text("A tuning to add on top").tag(DspRole.tuning)
+            }
+            if detail.role == .correction {
+                if let targets {
+                    Picker("Corrected to", selection: Binding(
+                        get: { current },
+                        set: { id in dsp.chooseTarget(detail.name, id == madeFor ? nil : id) }
+                    )) {
+                        ForEach(targets.choices, id: \.id) { c in
+                            TargetRow(target: c).tag(c.id)
+                        }
+                    }
+                    #if os(iOS)
+                    .pickerStyle(.navigationLink)
+                    #endif
+                    if let c = targets.choices.first(where: { $0.id == current }), !c.character.isEmpty {
+                        Text(c.character)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    #if !os(tvOS)
+                    Button("Add a Target…") { adding = true }
+                    #endif
+                }
+                if targets == nil, !detail.measured, !madeForChoices.isEmpty {
+                    Picker("Made for", selection: Binding(
+                        get: { detail.madeFor ?? "" },
+                        set: { dsp.setMadeFor(detail.name, $0.isEmpty ? nil : $0) }
+                    )) {
+                        Text("Unknown").tag("")
+                        ForEach(madeForChoices, id: \.id) { t in
+                            TargetRow(target: t).tag(t.id)
+                        }
+                    }
+                    #if os(iOS)
+                    .pickerStyle(.navigationLink)
+                    #endif
                 }
             }
-            if let c = targets.choices.first(where: { $0.id == current }), !c.character.isEmpty {
-                Text(c.character)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            #if !os(tvOS)
-            Button("Add a Target…") { adding = true }
-            #endif
         } header: {
-            Text("Target")
+            Text("What it's for")
         } footer: {
-            Text("Made for \(targets.madeFor.name). Another target plays as the difference between the two, after the correction. A target you add is a CSV of frequency and level, or a squig.link export.")
+            Text(footer)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    private var footer: String {
+        switch detail.role {
+        case .tuning:
+            return "A tuning is taste: more bass, a darker treble. It plays on top of a correction."
+        case .baked:
+            return "A correction with a tuning already in it, as most finished presets are. It counts as the stack's correction, so a tuning on top would add taste twice."
+        case .correction:
+            break
+        }
+        if detail.measured {
+            return "A correction makes your headphones neutral, and the target says what neutral is. This one is worked out again from the measurement for each target."
+        }
+        if let made = targets?.madeFor {
+            return "Made for \(made.name). Another target is worked out from the measurement AutoEQ kept, where there is one, or plays as the difference between the two. Moving from Harman to neutral takes Harman's bass and treble out."
+        }
+        return "A correction makes your headphones neutral. Say which target this EQ was made for, and you can move it to another; if you don't know, leave it Unknown and target switching stays off."
     }
 }
 
@@ -366,12 +596,12 @@ private struct ScopeSection: View {
 
     var body: some View {
         Section {
-            Picker("Kept", selection: Binding(
+            Picker("Sync", selection: Binding(
                 get: { detail.everywhere },
                 set: { dsp.setScope(detail.name, everywhere: $0) }
             )) {
-                Text("On every device").tag(true)
-                Text("On this device").tag(false)
+                Text("Everywhere").tag(true)
+                Text("This device").tag(false)
             }
             if let problem = detail.syncProblem {
                 Label(problem, systemImage: "exclamationmark.icloud")
@@ -383,11 +613,11 @@ private struct ScopeSection: View {
                     .foregroundStyle(.secondary)
             }
         } header: {
-            Text("Kept")
+            Text("Sync")
         } footer: {
             Text(detail.everywhere
-                 ? "Synced through your kōan server to every device signed in to the account. Which output plays it stays each device's own."
-                 : "Never leaves this device. Moving a profile here from every device removes it from the others.")
+                 ? "Everywhere: kept on every device signed in to your kōan server, and an edit on one reaches the rest. Which output plays it stays each device's own. Headphone corrections sync by default, since headphones move between devices."
+                 : "This device: never leaves it. Room and speaker corrections stay by default, since they belong to where they were measured. Moving a profile here from everywhere removes it from your other devices.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

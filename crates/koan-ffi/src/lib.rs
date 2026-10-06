@@ -2907,14 +2907,107 @@ impl KoanEngine {
         offload::offload(move || {
             let t = koan_core::audio::dsp::profiles::target_choices(&name)?;
             Some(DspTargets {
-                made_for: DspTargetOption {
-                    id: t.made_for.id.into(),
-                    name: t.made_for.name.into(),
-                    character: t.made_for.character.into(),
-                },
+                made_for: t.made_for.map(|m| DspTargetOption {
+                    id: m.id.into(),
+                    name: m.name.into(),
+                    does: m.does.into(),
+                    character: m.character.into(),
+                }),
                 chosen: t.chosen,
                 choices: t.choices.into_iter().map(Into::into).collect(),
             })
+        })
+        .await
+    }
+
+    /// Say what `name` is for. A second correction in a chain is refused,
+    /// naming the first.
+    pub async fn dsp_set_role(
+        self: Arc<Self>,
+        name: String,
+        role: crate::types::DspRole,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_role(&name, role.into())
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// The target a ready-made EQ was made for, by id, or `None` when it is
+    /// not known, which leaves target switching off.
+    pub async fn dsp_set_made_for(
+        self: Arc<Self>,
+        name: String,
+        target: Option<String>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_made_for(&name, target.as_deref())
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// The targets for a kind of headphone, in-ear or over-ear, with what
+    /// each sounds like: shipped ones, then those added.
+    pub async fn dsp_targets_for(self: Arc<Self>, in_ear: bool) -> Vec<DspTargetOption> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::targets::{self, Ear};
+            let ear = if in_ear { Ear::In } else { Ear::Over };
+            let mut out: Vec<DspTargetOption> = targets::TARGETS
+                .iter()
+                .filter(|t| t.ear == ear)
+                .map(|t| DspTargetOption {
+                    id: t.id.into(),
+                    name: t.name.into(),
+                    does: t.does.into(),
+                    character: t.character.into(),
+                })
+                .collect();
+            out.extend(targets::added().into_iter().map(|a| DspTargetOption {
+                id: a.id,
+                name: a.name,
+                does: String::new(),
+                character: String::new(),
+            }));
+            out
+        })
+        .await
+    }
+
+    /// What correcting the measurement in `text` to `target` would do, before
+    /// it is saved: the measurement, the target, the predicted response and
+    /// the EQ itself.
+    pub async fn dsp_preview_measurement(
+        self: Arc<Self>,
+        text: String,
+        target: String,
+    ) -> Result<DspResponse, KoanError> {
+        offload::offload(move || {
+            koan_core::audio::dsp::profiles::preview_measurement(&text, &target, 48000)
+                .map(Into::into)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// Save the headphone `name`, measured as `text`, corrected to `target`.
+    pub async fn dsp_save_measured(
+        self: Arc<Self>,
+        name: String,
+        text: String,
+        in_ear: bool,
+        target: String,
+    ) -> Result<String, KoanError> {
+        offload::sequenced(move || {
+            use koan_core::config::DspEar;
+            let ear = if in_ear { DspEar::In } else { DspEar::Over };
+            let name = koan_core::audio::dsp::profiles::save_measured(&name, &text, ear, &target)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)?;
+            Ok(name)
         })
         .await
     }
@@ -2946,6 +3039,7 @@ impl KoanEngine {
             Ok(DspTargetOption {
                 id: added.id,
                 name: added.name,
+                does: String::new(),
                 character: String::new(),
             })
         })
