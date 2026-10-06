@@ -96,6 +96,7 @@ The manager coordinates and does not write features. It keeps the context, makes
 ```bash
 just check          # cargo test + clippy -D warnings
 just fmt            # cargo fmt
+just theme-leaks    # styling in the apps that bypasses the kōan theme's roles
 just cli            # cargo run --release -p koan-cli -- <args>
 just build          # cargo build --release
 just macos-run      # build + launch the macOS app
@@ -250,6 +251,8 @@ follows the top of the stack in front — see `TabShell`.
 | `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Each task declares what it holds — files on disk, local rows, remote rows, downloads — and a new one is disabled only where those overlap |
 | `Support/Pairing.swift` | Approving a device that is waiting to sign in: a `koan.rocks/pair/` link arriving through `AppState.open(url:)`, or a code typed in Settings, asks the server for the device's name and then the person, as invites do |
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
+| `Support/KoanTheme.swift` | The kōan theme: tokens, the record accent (OKLCH, cached per colour), motion, and the roles views use instead of colours, fonts, corners and materials. Each role draws the platform's look unchanged when the theme is off. Spec: `docs/design/koan-theme.md`; `just theme-leaks` finds what bypasses it |
+| `Support/KoanThemeSheet.swift` | Every component of the theme on one page, for the evidence renderer |
 | `Support/EngineMirror.swift` | The engine's state as SwiftUI sees it. `Observable` by hand: one property per slice, invalidated only where a slice actually moved |
 | `Support/PlayerModel.swift` | What the app *does* to the player — commands, and the little that is genuinely local. Reads everything through the mirror |
 | `Support/Navigator.swift` | Where the app is: one page, the linear history of pages visited, and a cursor. No `NavigationStack` — koan navigates like a browser, any page from any page |

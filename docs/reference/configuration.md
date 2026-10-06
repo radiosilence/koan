@@ -203,8 +203,8 @@ Settings → Appearance → **Theme** chooses between them on every app, and
 system look always draws its icons. **Colours from the record** sets
 `record_colours`: off, there is no wash behind the window and the accent is
 koan's mint, in either theme. The graphics level is separate, and governs what
-the wash and the playing bars cost rather than whether they take colour. The theme's design is
-`docs/design/koan-theme.md`.
+the wash and the playing bars cost rather than whether they take colour. The
+theme's design is `docs/design/koan-theme.md`.
 
 ## `[library]`
 
