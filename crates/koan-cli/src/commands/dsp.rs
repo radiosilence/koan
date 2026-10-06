@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use koan_core::audio::dsp::autoeq;
 use koan_core::audio::dsp::import::{self, ImportError};
 use koan_core::audio::dsp::profiles;
 use owo_colors::OwoColorize;
@@ -108,6 +109,62 @@ pub fn cmd_dsp_clear(named: Option<String>) {
     let device = device(named);
     profiles::assign(None, &device).unwrap_or_else(|e| fail(e));
     println!("{} plays untouched", device.bold());
+}
+
+/// AutoEQ's results matching `query`, best first, numbered as `install`
+/// takes them.
+pub fn cmd_dsp_autoeq_search(query: &str, limit: usize, refresh: bool) {
+    let freshness = if refresh {
+        autoeq::Freshness::Refresh
+    } else {
+        autoeq::Freshness::Daily
+    };
+    let entries = autoeq::index(freshness).unwrap_or_else(|e| fail(e));
+    let found = autoeq::search(&entries, query, limit);
+    if found.is_empty() {
+        println!("{}", "no matches".dimmed());
+        return;
+    }
+    let width = found
+        .iter()
+        .map(|e| e.number.to_string().len())
+        .max()
+        .unwrap_or(1);
+    for e in found {
+        println!(
+            "{:>width$}  {}  {}",
+            e.number.to_string().dimmed(),
+            e.name.bold(),
+            e.measured_by().dimmed()
+        );
+    }
+}
+
+/// Install an AutoEQ result as a profile, and play `device` through it if
+/// named.
+pub fn cmd_dsp_autoeq_install(wanted: &str, source: Option<&str>, device: Option<String>) {
+    // A number refers to the index search showed, so the copy kept is used
+    // however old it is.
+    let entries = autoeq::index(autoeq::Freshness::Kept).unwrap_or_else(|e| fail(e));
+    let Some(entry) = autoeq::find(&entries, wanted, source) else {
+        let near: Vec<String> = autoeq::search(&entries, wanted, 5)
+            .iter()
+            .map(|e| format!("{} {} ({})", e.number, e.name, e.measured_by()))
+            .collect();
+        if near.is_empty() {
+            fail(format!("nothing in AutoEQ called {wanted}"));
+        }
+        fail(format!(
+            "nothing in AutoEQ called {wanted}{}; closest:\n  {}",
+            source.map(|s| format!(" from {s}")).unwrap_or_default(),
+            near.join("\n  ")
+        ));
+    };
+    let name = autoeq::install(entry).unwrap_or_else(|e| fail(e));
+    println!("{} '{}'", "installed".green(), name.bold());
+    if let Some(device) = device {
+        cmd_dsp_use(&name, Some(device));
+    }
 }
 
 pub fn cmd_dsp_remove(name: &str) {

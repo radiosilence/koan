@@ -17,6 +17,7 @@
 //! rate, which is what the timeline counts and the playhead reads.
 
 pub mod apo;
+pub mod autoeq;
 pub mod camilla;
 pub mod convolver;
 pub mod import;

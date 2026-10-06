@@ -155,6 +155,8 @@ koan dsp import room.txt --rate 48000           # coefficients that do not say t
 koan dsp use "Living room" [--device NAME]      # play a device through a profile
 koan dsp clear [--device NAME]                  # play a device untouched
 koan dsp remove NAME
+koan dsp autoeq search QUERY [--limit N] [--refresh]   # AutoEQ results by headphone name, numbered
+koan dsp autoeq install NUMBER|NAME [--source SOURCE] [--device NAME]
 koan dsp off | on                               # bypass every profile, or stop bypassing
 ```
 
