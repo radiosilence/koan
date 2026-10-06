@@ -69,19 +69,15 @@ final class TVSignInTests: XCTestCase {
 
         type(server, into: address)
         type(user, into: app.textFields["username"])
-        // Below the username: the picker, then the secret, then Sign In.
+        // Below the username: password or API key side by side, then the
+        // secret, then Sign In.
         if apiKey {
             remote.press(.down)
-            snap("\(route)-02a-picker")
+            remote.press(.right)
             remote.press(.select)
             sleep(1)
-            snap("\(route)-02b-choices")
-            remote.press(.down)
-            remote.press(.select)
-            sleep(1)
-            snap("\(route)-02c-chosen")
             XCTAssertEqual(
-                app.buttons["Sign in with"].firstMatch.value as? String, "API key",
+                app.secureTextFields["secret"].placeholderValue, "API key",
                 "the form asks for an API key"
             )
         }

@@ -74,11 +74,15 @@ struct SignInPage: View {
             if server.isEmpty { server = settings.remoteUrl }
         }
         .onDisappear { cancel() }
-        .sheet(isPresented: $manual, onDismiss: recheck) {
+        // The whole screen, as the Settings tab has it: a sheet on a
+        // television is a narrow card, too small for a form read from across
+        // the room. Menu closes it.
+        .fullScreenCover(isPresented: $manual, onDismiss: recheck) {
             NavigationStack { SettingsView() }
+                .background(Color.black.ignoresSafeArea())
         }
         // The form's sign-in runs as an activity, and can finish after the
-        // sheet has been dismissed.
+        // cover has been closed.
         .onChange(of: activity.tasks.count) { recheck() }
     }
 
