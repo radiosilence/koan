@@ -61,6 +61,22 @@ The server keeps only an argon2 hash of each password, never a copy it can read
 back, so no admin can see an account's password. A generated one is shown once,
 when it is made.
 
+### Signing in with a password
+
+kōan's apps and terminal UI sign in to a kōan server with a username and
+password once. The server lists the `koanSignIn` extension; seeing it, the
+client sends the password as `p=enc:` to `/rest/koanSignIn`, over plain HTTP
+too, and gets back an API key of the device's own, named after it. It keeps the
+key in `config.local.toml` and not the password, which is never sent again.
+Signing in again from the same device replaces that device's key, so a
+reinstall leaves no unused key behind. Only the account's own password is
+traded for a key: an app password or the shared secret is refused there (error
+50), and the client then keeps it as typed and signs with it as a salted token,
+as before. Against any other Subsonic server the password
+is kept as before, and sent as a salted token over plain HTTP. A server that
+refuses token sign-in (error 41) is reported as needing an app password or API
+key.
+
 ### Invites
 
 An invite is a link carrying the server, the username and a token:
@@ -293,7 +309,7 @@ Which credential a client should use:
 | Client | Credential |
 | --- | --- |
 | The web UI | The account's password |
-| kōan's apps, and Subsonic clients that support OpenSubsonic API keys | An API key (kōan's apps get one from an invite) |
+| kōan's apps, and Subsonic clients that support OpenSubsonic API keys | An API key (kōan's apps get one from an invite, pairing, or by signing in with the password once) |
 | Subsonic clients that sign in with a token (`t`/`s`) | An app password |
 | Older clients that send the password itself (`p=`) | The account's password over HTTPS, or an app password |
 

@@ -287,8 +287,8 @@ impl AudioEngineHandle for CpalEngineHandle {
         self.fade.fade_out();
     }
 
-    fn fade_out_slowly(&self) {
-        self.fade.fade_out_slowly();
+    fn set_sleep_gain(&self, gain: f32, snap: bool) {
+        self.fade.set_sleep_gain(gain, snap);
     }
 
     fn fade_in(&self) -> Result<(), BackendError> {

@@ -116,6 +116,7 @@ final class PlayerModel {
     var shuffle: Bool { mirror.playback.shuffle }
     var repeatMode: RepeatMode { mirror.playback.repeatMode }
     var sleep: SleepState? { mirror.playback.sleep }
+    var sleepFading: Bool { mirror.playback.sleepFading }
     /// Asked to play a track that has not arrived yet, which with nothing on
     /// screen to say so reads as a tap that did nothing. A wait paused by hand
     /// reads as paused, since it will open paused.

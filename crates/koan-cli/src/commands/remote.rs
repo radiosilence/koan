@@ -16,13 +16,24 @@ pub fn cmd_remote_login(url: &str, username: &str) {
         std::process::exit(1);
     });
 
-    // Pings, then writes the credentials to config.local.toml.
+    // Checks, then writes the credentials to config.local.toml.
     if let Err(e) = koan_core::helpers::set_remote_credentials(url, username, &password) {
         eprintln!("{} {}", "sign-in failed:".red().bold(), e);
         std::process::exit(1);
     }
     println!("{} {}", "connected".green(), url);
-    println!("{}", "password stored in the OS credential store".green());
+    let kept = match config::Config::load() {
+        Ok(cfg) if !cfg.remote.api_key.is_empty() => "an API key for this device",
+        _ => "the password",
+    };
+    println!(
+        "{}",
+        format!(
+            "{kept} stored in {}",
+            config::config_local_file_path().display()
+        )
+        .green()
+    );
 }
 
 pub fn cmd_remote_sync() {

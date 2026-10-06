@@ -33,6 +33,10 @@ pub const PAIR: &str = "koanPair";
 /// `/rest/koanHistory` pages it, `/rest/koanForgetPlays` forgets from it, and
 /// `LinkCommand::HistoryChanged` says when it moved. See `remote::history`.
 pub const HISTORY: &str = "koanHistory";
+/// Signing in with a password ends in an API key: `/rest/koanSignIn`, signed
+/// with the account's own password, makes a key for the device, which keeps
+/// the key and not the password. See `helpers::set_remote_credentials`.
+pub const SIGN_IN: &str = "koanSignIn";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {
