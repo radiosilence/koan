@@ -283,7 +283,7 @@ private struct SidebarFooter: View {
                         Text("\(stats.cachedTracks.formatted(.number)) of \(stats.remoteTracks.formatted(.number)) remote cached")
                     }
                 }
-                .koanText(.fine, .muted)
+                .koanText(.meta, .muted)
             }
         }
         // In the theme: the rows' own inset at the sides, and clear of the

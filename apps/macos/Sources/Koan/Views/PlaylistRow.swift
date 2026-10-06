@@ -17,7 +17,7 @@ struct PlaylistRow: View {
                 Text(playlist.name)
                     .lineLimit(1)
                 Text(Format.count(Int64(playlist.trackCount), "track"))
-                    .font(.role(.fine, system: .caption2))
+                    .font(.role(.meta, system: .caption2))
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
         }

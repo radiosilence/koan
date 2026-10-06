@@ -21,7 +21,9 @@ final class ArtistTableRow: NSTableCellView, TableRow {
     private static let countFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular
     ))
-    private static let countWidth: CGFloat = 78
+    /// Wide enough for the longest count in the count's own face, which in the
+    /// theme's monospace is wider than the system's digits.
+    private static let countWidth = max(78, ceil(("9,999 tracks" as NSString).size(withAttributes: [.font: countFont]).width) + 8)
 
     private enum Part { case mark, name, heart, elsewhere }
 
