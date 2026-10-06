@@ -4,6 +4,7 @@ import AppKit
 import UIKit
 #endif
 import CoreText
+import os
 import KoanFFI
 import SwiftUI
 
@@ -319,6 +320,11 @@ struct KoanAccent: Equatable, Sendable {
 
     let dark: Shade
     let light: Shade
+    /// Built once, here: a dynamic colour made afresh on each read is a new
+    /// value each time, and every view reading the tint would re-run with it.
+    let color: Color
+
+    static func == (a: KoanAccent, b: KoanAccent) -> Bool { a.dark == b.dark && a.light == b.light }
 
     static let mint = KoanAccent(
         dark: Shade(red: 0x7D / 255, green: 0xD3 / 255, blue: 0xA7 / 255, readsAsText: true),
@@ -340,7 +346,7 @@ struct KoanAccent: Equatable, Sendable {
 
     func shade(_ scheme: ColorScheme) -> Shade { scheme == .dark ? dark : light }
 
-    var color: Color {
+    private static func color(dark: Shade, light: Shade) -> Color {
         #if canImport(AppKit)
         Color(nsColor: NSColor(name: nil) { appearance in
             let s = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
@@ -355,8 +361,22 @@ struct KoanAccent: Equatable, Sendable {
     }
 
     /// The accent for a record's colour, as `Color.dominant` gives it; `nil`
-    /// is no record, or none with a colour.
-    init(record: Color?) {
+    /// is no record, or none with a colour. Worked out once per colour: the
+    /// room asks on every pass, and the same record must give the same value.
+    static func of(_ record: Color?) -> KoanAccent {
+        guard let record else { return .mint }
+        return cache.withLock { known in
+            if let hit = known[record] { return hit }
+            if known.count >= 64 { known.removeAll() }
+            let made = KoanAccent(record: record)
+            known[record] = made
+            return made
+        }
+    }
+
+    private static let cache = OSAllocatedUnfairLock(initialState: [Color: KoanAccent]())
+
+    private init(record: Color?) {
         guard let record else { self = .mint; return }
         let resolved = record.resolve(in: EnvironmentValues())
         let (_, c, h) = OKLCH.from(
@@ -366,13 +386,13 @@ struct KoanAccent: Equatable, Sendable {
               let dark = Self.shade(hue: h, chroma: c, band: Self.darkBand, bad: 0xEF6B73, bg: 0x1E1E1E, surface: 0x2A2A2A),
               let light = Self.shade(hue: h, chroma: c, band: Self.lightBand, bad: 0xC43F3F, bg: 0xFFFFFF, surface: 0xF2F2F2)
         else { self = .mint; return }
-        self.dark = dark
-        self.light = light
+        self.init(dark: dark, light: light)
     }
 
     private init(dark: Shade, light: Shade) {
         self.dark = dark
         self.light = light
+        self.color = Self.color(dark: dark, light: light)
     }
 
     /// The most vivid lightness in the band that reads as text — the darkest in
@@ -895,6 +915,18 @@ private struct KoanButtonRole: ViewModifier {
 /// motion of their own.
 struct KoanButtonStyle: ButtonStyle {
     let kind: KoanButtonKind
+
+    func makeBody(configuration: Configuration) -> some View {
+        KoanButtonBody(kind: kind, configuration: configuration)
+    }
+}
+
+/// A theme button as drawn. A view of its own rather than the style's body:
+/// focus is the button's, and only a view inside the button sees it in
+/// `isFocused`; the style itself reads the environment the button sits in.
+private struct KoanButtonBody: View {
+    let kind: KoanButtonKind
+    let configuration: ButtonStyleConfiguration
     @Environment(\.isEnabled) private var enabled
     @Environment(\.koanAccent) private var accent
     @Environment(\.colorScheme) private var scheme
@@ -902,7 +934,7 @@ struct KoanButtonStyle: ButtonStyle {
     @Environment(\.isFocused) private var focused
     #endif
 
-    func makeBody(configuration: Configuration) -> some View {
+    var body: some View {
         typed(configuration)
             .padding(padding)
             .frame(minWidth: hit, minHeight: hit)
@@ -921,7 +953,7 @@ struct KoanButtonStyle: ButtonStyle {
     /// a title the app writes is lowercased where it is written
     /// (`KoanTheme.label`, `KoanLabel`), and library text keeps its own.
     @ViewBuilder
-    private func typed(_ configuration: Configuration) -> some View {
+    private func typed(_ configuration: ButtonStyleConfiguration) -> some View {
         if kind == .card {
             configuration.label
         } else if kind.setsType {
@@ -943,7 +975,7 @@ struct KoanButtonStyle: ButtonStyle {
         #endif
     }
 
-    private func foreground(_ configuration: Configuration) -> AnyShapeStyle {
+    private func foreground(_ configuration: ButtonStyleConfiguration) -> AnyShapeStyle {
         switch kind {
         case .primary:
             accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
@@ -1187,12 +1219,29 @@ private struct KoanFocusRole: ViewModifier {
 }
 
 extension View {
-    /// The ring tvOS focus draws in the theme: 2 points of the accent, outside
-    /// the control. No lift, no shadow, no glass.
+    /// The ring tvOS focus draws in the theme: the accent, outside the
+    /// control. No lift, no shadow, no glass.
     fileprivate func koanFocusRing(_ on: Bool) -> some View {
-        overlay {
+        modifier(KoanFocusRing(on: on))
+    }
+}
+
+/// The accent's own colour rather than `.tint`, which a television never
+/// sets: the system's default there is white on white platters. Heavier
+/// than a pointer's ring, to be found from across the room.
+private struct KoanFocusRing: ViewModifier {
+    let on: Bool
+    @Environment(\.koanAccent) private var accent
+
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        let (width, gap): (CGFloat, CGFloat) = (4, 8)
+        #else
+        let (width, gap): (CGFloat, CGFloat) = (2, 4)
+        #endif
+        content.overlay {
             if on {
-                Rectangle().strokeBorder(.tint, lineWidth: 2).padding(-4)
+                Rectangle().strokeBorder(accent.color, lineWidth: width).padding(-gap)
             }
         }
     }
@@ -1297,6 +1346,12 @@ private struct KoanListRole: ViewModifier {
 }
 
 private struct KoanFieldRole: ViewModifier {
+    #if os(tvOS)
+    /// A plain field draws no focus of its own on a television; the ring is
+    /// all that says which field the remote is on.
+    @FocusState private var focused: Bool
+    #endif
+
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             content
@@ -1306,6 +1361,10 @@ private struct KoanFieldRole: ViewModifier {
                 .padding(.horizontal, KoanTheme.Space.m)
                 .padding(.vertical, KoanTheme.Space.s)
                 .background(Color.koanSurface)
+                #if os(tvOS)
+                .focused($focused)
+                .koanFocusRing(focused)
+                #endif
         } else {
             content
         }
@@ -1424,6 +1483,10 @@ struct KoanTabItem: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
+        .accessibilityShowsLargeContentViewer {
+            KoanIcon(icon)
+            Text(title)
+        }
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 }
@@ -1431,11 +1494,7 @@ struct KoanTabItem: View {
 extension View {
     /// Hides the platform's tab bar where the theme draws its own (iOS).
     func koanHidesSystemTabBar() -> some View {
-        #if os(iOS)
-        toolbar(KoanTheme.isOn ? .hidden : .automatic, for: .tabBar)
-        #else
-        self
-        #endif
+        modifier(KoanHidesSystemTabBar())
     }
 }
 
@@ -1506,6 +1565,20 @@ struct KoanUnavailable: View {
         } else {
             ContentUnavailableView(title, systemImage: icon, description: Text(detail))
         }
+    }
+}
+
+/// On a phone, in the theme, the platform's tab bar gives way to the theme's
+/// own. An iPad keeps its sidebar layout, the platform's.
+private struct KoanHidesSystemTabBar: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var width
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.toolbar(KoanTheme.isOn && width == .compact ? .hidden : .automatic, for: .tabBar)
+        #else
+        content
+        #endif
     }
 }
 

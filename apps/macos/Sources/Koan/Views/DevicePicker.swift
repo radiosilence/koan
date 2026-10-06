@@ -229,7 +229,11 @@ struct OutputPicker: View {
         .frame(minWidth: 340)
         .padding(.bottom, 6)
         .onAppear {
-            if !player.isControllingAnother {
+            // The device in view lists its outputs again: this one, or the
+            // one controlled, asked over the link to republish what moved.
+            if player.isControllingAnother {
+                player.refreshControlledOutputs()
+            } else {
                 player.searchRenderers()
                 player.refreshDevices()
                 app.dsp.reload()

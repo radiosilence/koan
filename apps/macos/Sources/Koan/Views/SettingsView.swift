@@ -865,7 +865,7 @@ struct EqSettings: View {
             DspSettings()
         }
         .koanSheet()
-        .task(id: "\(active ?? "")\u{0}\(app.dsp.version)") {
+        .task(id: "\(active ?? "")\u{0}\(app.dsp.stamp)") {
             response = if let active { await app.dsp.response(active) } else { nil }
             detail = if let active { await app.dsp.detail(active) } else { nil }
         }
@@ -966,7 +966,7 @@ struct DspSettings: View {
                 dsp.importFiles(urls)
             }
         }
-        .task { dsp.reload() }
+        .task(id: dsp.stamp) { dsp.reload() }
         #if !os(tvOS)
         .sheet(isPresented: $findingAutoEq) {
             AutoEqSearch(dsp: dsp, query: findQuery)

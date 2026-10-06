@@ -102,7 +102,8 @@ struct TabShell: View {
         .modifier(Transport(
             showingNowPlaying: $showingNowPlaying,
             showingDevices: $showingDevices,
-            selection: tab
+            selection: tab,
+            reselect: { paths[$0] = [] }
         ))
         #if os(tvOS)
         // The remote's Play/Pause, wherever focus is.
@@ -326,27 +327,41 @@ private struct Transport: ViewModifier {
     @Binding var showingNowPlaying: Bool
     @Binding var showingDevices: Bool
     @Binding var selection: TabShell.TabID
+    /// The tab already showing, chosen again: back to its root, as a tab bar does.
+    let reselect: (TabShell.TabID) -> Void
+    @Environment(\.horizontalSizeClass) private var width
+    /// The bar's height as laid out, which Dynamic Type moves.
+    @State private var barHeight: CGFloat = 0
 
     func body(content: Content) -> some View {
         #if os(tvOS)
         // Now Playing is a tab of its own there.
         content
         #else
-        if KoanTheme.isOn {
+        // A phone's theme bar; an iPad keeps the platform's sidebar layout.
+        if KoanTheme.isOn && width == .compact {
             // The theme's own bar in place of the platform's glass: the mini
             // player as a row with the playhead along its top, the tabs flat
-            // beneath it.
-            content.safeAreaInset(edge: .bottom, spacing: 0) {
-                VStack(spacing: 0) {
-                    player
-                        .padding(.vertical, 8)
-                        .overlay(alignment: .top) { MiniPlayhead() }
-                        .koanRule(.top)
-                    tabs
-                        .koanRule(.top)
+            // beneath it. Laid over the content and kept behind the keyboard,
+            // as the platform's tab bar is; the content makes room for it with
+            // an inset of its height, which still gives way to the keyboard.
+            content
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Color.clear.frame(height: barHeight)
                 }
-                .koanSurface()
-            }
+                .overlay(alignment: .bottom) {
+                    VStack(spacing: 0) {
+                        player
+                            .padding(.vertical, 8)
+                            .overlay(alignment: .top) { MiniPlayhead() }
+                            .koanRule(.top)
+                        tabs
+                            .koanRule(.top)
+                    }
+                    .koanSurface()
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
+                }
         } else {
             content.tabViewBottomAccessory { player }
         }
@@ -357,14 +372,22 @@ private struct Transport: ViewModifier {
     private var tabs: some View {
         HStack(spacing: 0) {
             ForEach(Self.items, id: \.id) { item in
-                Button { selection = item.id } label: {
+                Button {
+                    if selection == item.id { reselect(item.id) } else { selection = item.id }
+                } label: {
                     KoanTabItem(title: item.title, icon: item.icon, selected: selection == item.id)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.top, 10)
-        .frame(height: 64, alignment: .top)
+        .padding(.bottom, 4)
+        .frame(minHeight: 64, alignment: .top)
+        // A tab bar to VoiceOver, which then says "tab, 2 of 4"; and capped,
+        // as the platform's is, with the large content viewer past the cap.
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isTabBar)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 
     private static let items: [(id: TabShell.TabID, title: String, icon: String)] = [

@@ -281,7 +281,7 @@ struct RecordRoom: ViewModifier {
     }
 
     /// The accent for that record, tone-mapped to its bands — in either look.
-    private var accent: KoanAccent { KoanAccent(record: record) }
+    private var accent: KoanAccent { KoanAccent.of(record) }
 
     /// The colour to put on.
     private var tint: Color { accent.color }
@@ -375,7 +375,11 @@ struct RecordRoom: ViewModifier {
             .environment(\.roomTint, tint)
             .environment(\.koanAccent, accent)
             // The theme's text button for every button that names no style.
+            // Not on a television, whose shell gives them `TelevisionButton`:
+            // a bare text button there shows no focus.
+            #if !os(tvOS)
             .koanButtons(.text)
+            #endif
             .onChange(of: record, initial: true) { _, now in worn = now }
     }
 }

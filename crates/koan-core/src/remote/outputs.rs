@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::Config;
+use crate::config::{Config, DspProfile};
 use crate::player::commands::PlayerCommand;
 use crate::player::state::SharedPlayerState;
 
@@ -79,7 +79,8 @@ pub enum OutputChoice {
 static DEVICES: parking_lot::Mutex<Option<Vec<(String, String)>>> = parking_lot::Mutex::new(None);
 
 /// List this device's audio devices again: on the platform's device-change
-/// notification, and when an output menu opens. Rings the engine's change
+/// notification, when an output menu opens, and on a phone when the route
+/// changes. Rings the engine's change
 /// signal if they moved, so every view of them follows.
 pub fn refresh_devices() {
     let now = list_devices();
@@ -99,32 +100,101 @@ fn list_devices() -> Vec<(String, String)> {
         .collect()
 }
 
-/// This device's outputs, as they are now.
-pub fn local(state: &SharedPlayerState) -> LinkOutputs {
-    let cfg = Config::cached();
-    let preset = |device: &str| {
-        cfg.dsp
-            .profiles
-            .iter()
-            .find(|p| p.devices.iter().any(|d| d == device))
-            .map(|p| p.name.clone())
-    };
-    let devices = DEVICES
-        .lock()
-        .get_or_insert_with(list_devices)
+/// Refreshes a controller asked for: one at a time, and at most one more
+/// waiting, so a burst of asking costs two at most.
+#[derive(Default)]
+struct RefreshGate {
+    running: bool,
+    queued: bool,
+}
+
+impl RefreshGate {
+    /// Whether to start a refresh now. Asked during one, it is queued.
+    fn ask(&mut self) -> bool {
+        if self.running {
+            self.queued = true;
+            return false;
+        }
+        self.running = true;
+        true
+    }
+
+    /// A refresh ended. Whether to run the one queued meanwhile.
+    fn done(&mut self) -> bool {
+        self.running = std::mem::take(&mut self.queued);
+        self.running
+    }
+}
+
+static REFRESH: parking_lot::Mutex<RefreshGate> = parking_lot::Mutex::new(RefreshGate {
+    running: false,
+    queued: false,
+});
+
+/// A controller opened its output menu: list this device's outputs again, on
+/// a thread of its own rather than the link's. Cheap by design: on a Mac a
+/// CoreAudio query; on a phone or a television the route the app last
+/// reported, with no search, since the system knows it directly; renderers
+/// from the discovery cache, searched for only once it is stale. What moved
+/// reaches the controller in the link state.
+pub fn refresh_for_controller() {
+    if !REFRESH.lock().ask() {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("koan-outputs".into())
+        .spawn(|| {
+            loop {
+                refresh_devices();
+                #[cfg(not(any(target_os = "ios", target_os = "tvos")))]
+                crate::upnp::discovery::search_if_stale();
+                if !REFRESH.lock().done() {
+                    break;
+                }
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("outputs: no refresh thread: {e}");
+        REFRESH.lock().done();
+    }
+}
+
+/// The DSP profile `device` plays through: the one that lists it. Profiles are
+/// keyed by the device's name, which on a phone is the route's port name, so
+/// the preset published for an output is the one its audio goes through.
+fn preset(profiles: &[DspProfile], device: &str) -> Option<String> {
+    profiles
+        .iter()
+        .find(|p| p.devices.iter().any(|d| d == device))
+        .map(|p| p.name.clone())
+}
+
+/// Audio devices as published: each by its name, which is also its id, since
+/// a name is what `SetOutput` and `SetPreset` address it by.
+fn device_outputs(devices: &[(String, String)], profiles: &[DspProfile]) -> Vec<LinkOutput> {
+    devices
         .iter()
         .map(|(name, kind)| LinkOutput {
-            preset: preset(name),
+            preset: preset(profiles, name),
             id: name.clone(),
             name: name.clone(),
             kind: kind.clone(),
             ..Default::default()
         })
-        .collect();
+        .collect()
+}
+
+/// This device's outputs, as they are now.
+pub fn local(state: &SharedPlayerState) -> LinkOutputs {
+    let cfg = Config::cached();
+    let devices = device_outputs(
+        DEVICES.lock().get_or_insert_with(list_devices),
+        &cfg.dsp.profiles,
+    );
     let renderers = crate::upnp::discovery::renderers()
         .into_iter()
         .map(|r| LinkOutput {
-            preset: preset(r.device_name()),
+            preset: preset(&cfg.dsp.profiles, r.device_name()),
             busy: crate::upnp::discovery::busy(&r.udn),
             detail: [r.manufacturer.as_str(), r.model.as_str()]
                 .iter()
@@ -236,6 +306,30 @@ mod tests {
         assert_eq!(serde_json::from_str::<LinkCommand>(&json).unwrap(), cmd);
     }
 
+    /// A phone publishes its route by the port's own name, with the preset
+    /// that route plays through: what `SetPreset` from another device then
+    /// assigns to, under the same name.
+    #[test]
+    fn a_route_is_published_by_name_with_its_preset() {
+        let profiles = vec![DspProfile {
+            name: "Qudelix Harman".into(),
+            devices: vec!["Qudelix-5K".into()],
+            ..Default::default()
+        }];
+        let route = [("Qudelix-5K".to_string(), String::new())];
+        assert_eq!(
+            device_outputs(&route, &profiles),
+            vec![LinkOutput {
+                id: "Qudelix-5K".into(),
+                name: "Qudelix-5K".into(),
+                preset: Some("Qudelix Harman".into()),
+                ..Default::default()
+            }]
+        );
+        let speaker = [("Speaker".to_string(), String::new())];
+        assert_eq!(device_outputs(&speaker, &profiles)[0].preset, None);
+    }
+
     /// Anyone on the network may play and pause, but where the sound goes,
     /// how loud the amplifier is and what a preset does are the account's.
     #[test]
@@ -249,10 +343,56 @@ mod tests {
                 device: "Speakers".into(),
                 profile: None,
             },
+            LinkCommand::RefreshOutputs,
         ] {
             assert!(!cmd.allowed_nearby(), "{cmd:?}");
         }
         assert!(LinkCommand::Pause.allowed_nearby());
+    }
+
+    /// An output menu opened on a controller asks the controlled device to
+    /// list its outputs again: a command one device gives another, relayed by
+    /// the server, and run under Full control.
+    #[test]
+    fn a_controller_can_ask_for_the_outputs_again() {
+        let cmd = LinkCommand::RefreshOutputs;
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert_eq!(serde_json::from_str::<LinkCommand>(&json).unwrap(), cmd);
+        assert!(cmd.relayable());
+        assert!(cmd.allowed_playback());
+    }
+
+    /// One refresh at a time and one more at most while it runs, however
+    /// often controllers ask.
+    #[test]
+    fn refreshes_for_controllers_coalesce() {
+        let mut gate = RefreshGate::default();
+        assert!(gate.ask());
+        assert!(!gate.ask());
+        assert!(!gate.ask());
+        // The burst ran once more, then nothing.
+        assert!(gate.done());
+        assert!(!gate.done());
+        assert!(gate.ask());
+        assert!(!gate.done());
+    }
+
+    /// Asking for the outputs again is said live or not at all: never queued
+    /// for a device that is away, never a push to wake one.
+    #[test]
+    fn a_refresh_is_never_queued_for_an_absent_device() {
+        assert!(LinkCommand::RefreshOutputs.live_only());
+        assert!(
+            LinkCommand::Shared {
+                command: Box::new(LinkCommand::RefreshOutputs)
+            }
+            .live_only()
+        );
+        assert!(!LinkCommand::Pause.live_only());
+        assert!(!crate::remote::devices::send_live(
+            "nowhere-at-all",
+            LinkCommand::RefreshOutputs
+        ));
     }
 
     /// A device switch reaches the player as the device's own menu sends it.

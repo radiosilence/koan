@@ -26,9 +26,13 @@ pub struct IosAudioBackend;
 /// "AirPods Pro", "Headphones", "Speaker". What DSP profiles are keyed on.
 static ROUTE: parking_lot::RwLock<Option<String>> = parking_lot::RwLock::new(None);
 
-/// Told by the app on each route change.
+/// Told by the app on activation and each route change. A new route is a new
+/// output to every device controlling this one, so they are told.
 pub fn set_route(name: String) {
-    *ROUTE.write() = Some(name);
+    let changed = ROUTE.write().replace(name.clone()).as_ref() != Some(&name);
+    if changed {
+        crate::remote::outputs::refresh_devices();
+    }
 }
 
 /// The one device there is: whatever the session is routed to.

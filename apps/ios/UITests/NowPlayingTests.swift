@@ -40,7 +40,7 @@ final class NowPlayingTests: XCTestCase {
         // menu opened again to see the names it offers.
         if let preset = env["KOAN_SHOTS_PRESET"], open(labelled(beginningWith: "Preset")) {
             pause(1)
-            if open(app.buttons[preset].firstMatch) { pause(2) }
+            if open(app.buttons[any: preset].firstMatch) { pause(2) }
             snap("03-preset-chosen")
             if open(labelled(beginningWith: "Preset")) {
                 pause(1)

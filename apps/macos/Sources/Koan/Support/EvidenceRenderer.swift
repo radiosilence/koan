@@ -41,7 +41,7 @@ enum EvidenceRenderer {
         // In the room's accent, as they open over the transport.
         var sleeve: Color?
         if let source = state.player.currentArtwork { sleeve = await state.art.dominantColour(for: source) }
-        let room = KoanAccent(record: sleeve)
+        let room = KoanAccent.of(sleeve)
         pages.append(("popover-output", CGSize(width: 340, height: 420), AnyView(
             OutputPicker().koanSurface().appEnvironment(state)
                 .tint(room.color).environment(\.koanAccent, room).environment(\.roomTint, room.color)
@@ -51,8 +51,8 @@ enum EvidenceRenderer {
                 .tint(room.color).environment(\.koanAccent, room).environment(\.roomTint, room.color)
         )))
         if KoanTheme.isOn {
-            let warm = KoanAccent(record: Color(red: 0.94, green: 0.54, blue: 0.36)) // theme: raw — a sleeve's colour, as input
-            let navy = KoanAccent(record: Color(red: 0.04, green: 0.10, blue: 0.23)) // theme: raw — a sleeve's colour, as input
+            let warm = KoanAccent.of(Color(red: 0.94, green: 0.54, blue: 0.36)) // theme: raw — a sleeve's colour, as input
+            let navy = KoanAccent.of(Color(red: 0.04, green: 0.10, blue: 0.23)) // theme: raw — a sleeve's colour, as input
             for (name, accent) in [("mint", KoanAccent.mint), ("warm", warm), ("navy", navy)] {
                 pages.append(("theme-\(name)", CGSize(width: 760, height: 1400), AnyView(
                     KoanThemeSheet(accent: accent)

@@ -17,7 +17,7 @@ import SwiftUI
 /// playing row's title and every borderless control are drawn in the tint,
 /// and in grey they read as disabled.
 extension Color {
-    static var koanAccent: Color { KoanAccent.mint.color }
+    static let koanAccent = KoanAccent.mint.color
 }
 
 

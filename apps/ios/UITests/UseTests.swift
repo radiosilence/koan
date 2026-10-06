@@ -137,8 +137,8 @@ final class UseTests: XCTestCase {
     }
 
     private func tab(_ name: String) {
-        let bar = app.tabBars.buttons[name]
-        if bar.waitForExistence(timeout: 3) { bar.tap() } else { app.buttons[name].firstMatch.tap() }
+        let bar = app.tabBars.buttons[any: name]
+        if bar.waitForExistence(timeout: 3) { bar.tap() } else { app.buttons[any: name].firstMatch.tap() }
         pause(1)
     }
 

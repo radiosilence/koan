@@ -617,10 +617,13 @@ pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbErro
         )?;
         removed += u64::from(!kept);
     }
-    // What waited for this server, and how far its history was read.
+    // What waited for this server, and how far its history and the
+    // account's EQ profiles were read. The profiles themselves stay.
     tx.execute_batch(
         "DELETE FROM history_outbox;
-         UPDATE remote_servers SET history_cursor = NULL;",
+         UPDATE remote_servers SET history_cursor = NULL;
+         DELETE FROM dsp_synced;
+         DELETE FROM dsp_sync_cursor;",
     )?;
     tx.commit()?;
     Ok(removed)
@@ -851,6 +854,7 @@ pub struct Synced {
     pub favourites: FavouriteSync,
     pub playlists: crate::playlists::PlaylistSync,
     pub history: crate::remote::history::HistorySync,
+    pub dsp: crate::remote::dsp_sync::DspSync,
 }
 
 /// Whether a sync walks the server's library.
@@ -920,6 +924,7 @@ pub fn sync_remote(
         favourites: reconcile_favourites(db, client),
         playlists: crate::playlists::reconcile_playlists(db, client, url, username),
         history: crate::remote::history::reconcile(db, client, url, username),
+        dsp: crate::remote::dsp_sync::reconcile(db, client, url),
     })
 }
 
