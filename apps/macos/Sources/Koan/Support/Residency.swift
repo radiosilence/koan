@@ -19,11 +19,9 @@ import SwiftUI
 @Observable
 final class Residency {
     /// A run with no one at the screen: the evidence renderer
-    /// (`KOAN_RENDER_EVIDENCE`), or a throwaway device signed in for it to see
-    /// (`KOAN_WINDOWLESS`). The engine runs; no window opens.
+    /// (`KOAN_RENDER_EVIDENCE`). The engine runs; no window opens.
     nonisolated static var windowless: Bool {
-        let env = ProcessInfo.processInfo.environment
-        return env["KOAN_RENDER_EVIDENCE"] != nil || env["KOAN_WINDOWLESS"] != nil
+        ProcessInfo.processInfo.environment["KOAN_RENDER_EVIDENCE"] != nil
     }
 
     /// `devices.keep_running`, as last read or set. Written through the

@@ -601,6 +601,12 @@ extension KoanTheme {
         isOn ? style(tone) : AnyShapeStyle(system)
     }
 
+    /// A measure that differs between the looks: a thickness, a size, a
+    /// margin. The theme's in the theme, the platform's otherwise.
+    nonisolated static func metric<T>(_ theme: T, system: T) -> T {
+        isOn ? theme : system
+    }
+
     /// The bare ground of a page or a sheet: `bg` in the theme, `system`
     /// otherwise.
     nonisolated static func ground(_ system: some ShapeStyle) -> AnyShapeStyle {

@@ -127,7 +127,7 @@ struct NowPlayingSheet: View {
                         ProgressView().controlSize(.large)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
-                            .font(.system(size: KoanTheme.isOn ? 24 : 46))
+                            .font(.system(size: KoanTheme.metric(24, system: 46)))
                             .contentTransition(.symbolEffect(.replace))
                     }
                 }
