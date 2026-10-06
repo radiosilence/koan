@@ -1119,6 +1119,9 @@ pub struct DspTargetOption {
 pub struct DspImportSummary {
     pub imported: Vec<String>,
     pub refused: Vec<DspImportRefusal>,
+    /// Files imported under another name than their own, and files left
+    /// out, each with what happened.
+    pub notes: Vec<String>,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

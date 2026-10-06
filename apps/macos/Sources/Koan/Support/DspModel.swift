@@ -94,13 +94,17 @@ final class DspModel {
     /// "4 imported", or "3 imported, 1 refused: Flat.txt: …".
     static func describe(_ summary: DspImportSummary) -> String? {
         let count = summary.imported.count
-        guard count > 1 || !summary.refused.isEmpty else { return nil }
+        guard count > 1 || !summary.refused.isEmpty || !summary.notes.isEmpty else { return nil }
         var parts = ["\(count) imported"]
         if !summary.refused.isEmpty {
             let why = summary.refused.map { "\($0.file): \($0.reason)" }.joined(separator: "; ")
             parts.append("\(summary.refused.count) refused: \(why)")
         }
-        return parts.joined(separator: ", ")
+        var text = parts.joined(separator: ", ")
+        if !summary.notes.isEmpty {
+            text += ". " + summary.notes.joined(separator: ". ")
+        }
+        return text
     }
 
     func importText(_ text: String, rate: UInt32? = nil) {

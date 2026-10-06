@@ -2630,23 +2630,39 @@ impl KoanEngine {
         rate: Option<u32>,
     ) -> Result<DspImportSummary, KoanError> {
         offload::sequenced(move || {
-            use koan_core::audio::dsp::import::{self, Batch};
+            use koan_core::audio::dsp::import::{self, Batch, Outcome};
             let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-            let batch = import::import_batch(&paths, rate).map_err(|e| {
+            let taken: Vec<String> = koan_core::config::Config::cached()
+                .dsp
+                .profiles
+                .iter()
+                .map(|p| p.name.clone())
+                .collect();
+            let batch = import::import_batch(&paths, rate, &taken).map_err(|e| {
                 log::warn!("dsp import: {e}");
                 dsp_error(e)
             })?;
             let mut summary = DspImportSummary {
                 imported: Vec::new(),
                 refused: Vec::new(),
+                notes: Vec::new(),
             };
             match batch {
                 Batch::One(imported) => summary.imported.push(self.save_dsp(imported, None)?),
                 Batch::Each(each) => {
-                    for (file, result) in each {
-                        let saved = result
-                            .map_err(|e| e.to_string())
-                            .and_then(|i| self.save_dsp(i, None).map_err(|e| e.to_string()));
+                    for item in each {
+                        let file = item.file;
+                        let saved = match item.outcome {
+                            Outcome::Skipped(why) => {
+                                summary.notes.push(format!("{file} left out: {why}"));
+                                continue;
+                            }
+                            Outcome::Refused(e) => Err(e.to_string()),
+                            Outcome::Imported(i, note) => {
+                                summary.notes.extend(note.map(|n| format!("{file}: {n}")));
+                                self.save_dsp(i, None).map_err(|e| e.to_string())
+                            }
+                        };
                         match saved {
                             Ok(name) => summary.imported.push(name),
                             Err(reason) => {
