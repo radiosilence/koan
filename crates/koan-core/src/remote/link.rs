@@ -266,6 +266,51 @@ impl LinkCommand {
         }
     }
 
+    /// Whether a client may have the server relay this to another device:
+    /// the commands one device gives another. The server's own news (the
+    /// device list, the device keys, shares, forgettings, history) it alone
+    /// originates; relayed, a forged copy would read as the server's. Levels
+    /// go only between live links, by their own route. Exhaustive, so a new
+    /// variant is relayable only once someone decides it is.
+    pub fn relayable(&self) -> bool {
+        match self {
+            Self::Play { .. }
+            | Self::Enqueue { .. }
+            | Self::PlayNext { .. }
+            | Self::Remove { .. }
+            | Self::Clear
+            | Self::Sync { .. }
+            | Self::Evict { .. }
+            | Self::JumpTo { .. }
+            | Self::Seek { .. }
+            | Self::Pause
+            | Self::Resume
+            | Self::Next
+            | Self::Previous
+            | Self::PlayItem { .. }
+            | Self::RemoveItems { .. }
+            | Self::MoveItems { .. }
+            | Self::Insert { .. }
+            | Self::Undo
+            | Self::Redo
+            | Self::Shuffle { .. }
+            | Self::Repeat { .. }
+            | Self::SleepTimer { .. }
+            | Self::HandOff { .. }
+            | Self::SetOutput { .. }
+            | Self::SetRendererVolume { .. }
+            | Self::SetPreset { .. } => true,
+            Self::Devices { .. }
+            | Self::DeviceKeys { .. }
+            | Self::Shares { .. }
+            | Self::Shared { .. }
+            | Self::Forgotten { .. }
+            | Self::HistoryChanged
+            | Self::WatchLevels { .. }
+            | Self::Levels { .. } => false,
+        }
+    }
+
     /// Whether a device on the same network, which may belong to anyone, may
     /// send this under Playback only. Playback and the queue; nothing that touches the library or
     /// the files on disk.
@@ -1352,6 +1397,21 @@ mod device_key_tests {
         assert!(!cmd.allowed_playback());
         assert_eq!(cmd.from_the_network(true), None);
         assert_eq!(cmd.from_the_network(false), None);
+    }
+
+    #[test]
+    fn the_server_never_relays_its_own_news() {
+        for news in [
+            LinkCommand::DeviceKeys { keys: vec![] },
+            LinkCommand::Devices { devices: vec![] },
+            LinkCommand::HistoryChanged,
+            LinkCommand::Shared {
+                command: Box::new(LinkCommand::Pause),
+            },
+        ] {
+            assert!(!news.relayable(), "{news:?}");
+        }
+        assert!(LinkCommand::Pause.relayable());
     }
 
     #[test]

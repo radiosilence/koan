@@ -324,8 +324,15 @@ pub struct DeviceKey {
 }
 
 /// Record that the API key `raw_key` signed in `device`, which proves itself
-/// with `public_key`. Replaces whatever that key recorded before: a device
-/// makes a new keypair each time it signs in. Whether the key matched a row.
+/// with `public_key`. Whether it was kept.
+///
+/// A key row is bound to the first device it records, and a device id to the
+/// one standing key row of its account that claimed it. Otherwise a thief
+/// holding one device's key could link as another device's id and have its
+/// own public key published in that device's place. A device signing in again
+/// is given a new key in place of its old one (`replace_api_key`), so the
+/// rightful claim is never refused; a new keypair on the same key replaces
+/// the old public key.
 pub fn set_device_key(
     conn: &Connection,
     raw_key: &str,
@@ -333,7 +340,13 @@ pub fn set_device_key(
     public_key: &str,
 ) -> rusqlite::Result<bool> {
     let changed = conn.execute(
-        "UPDATE api_keys SET device = ?1, device_key = ?2 WHERE key_hash = ?3",
+        "UPDATE api_keys SET device = ?1, device_key = ?2
+          WHERE key_hash = ?3
+            AND (device IS NULL OR device = ?1)
+            AND NOT EXISTS (SELECT 1 FROM api_keys other
+                             WHERE other.user_id = api_keys.user_id
+                               AND other.device = ?1
+                               AND other.id != api_keys.id)",
         params![device, public_key, auth::sha256_hex(raw_key)],
     )?;
     Ok(changed > 0)
@@ -395,26 +408,46 @@ mod device_key_tests {
     fn a_key_records_its_device_and_is_published_until_revoked() {
         let conn = db();
         let jo = user(&conn, "jo");
-        let (phone_id, phone) = create_api_key(&conn, jo, "phone").unwrap();
-        let (_, mac) = create_api_key(&conn, jo, "mac").unwrap();
+        let (_, phone) = create_api_key(&conn, jo, "phone").unwrap();
+        let (mac_id, mac) = create_api_key(&conn, jo, "mac").unwrap();
         assert!(set_device_key(&conn, &phone, "dev-phone", "PHONE1").unwrap());
         assert!(set_device_key(&conn, &mac, "dev-mac", "MAC").unwrap());
         assert!(!set_device_key(&conn, "not a key", "dev-x", "X").unwrap());
-        // Signing in again on the phone: a new key row, a new keypair.
-        let (_, phone2) = create_api_key(&conn, jo, "phone again").unwrap();
-        set_device_key(&conn, &phone2, "dev-phone", "PHONE2").unwrap();
+        // Signing in again on the phone: its key replaced, a new keypair.
+        let (_, phone2) = replace_api_key(&conn, jo, "phone").unwrap();
+        assert!(set_device_key(&conn, &phone2, "dev-phone", "PHONE2").unwrap());
 
         let keys = device_keys(&conn, "jo").unwrap();
         let of = |d: &str| keys.iter().find(|k| k.device == d).map(|k| k.key.as_str());
-        assert_eq!(of("dev-phone"), Some("PHONE2"), "the newest key wins");
+        assert_eq!(of("dev-phone"), Some("PHONE2"));
         assert_eq!(of("dev-mac"), Some("MAC"));
         assert!(keys.iter().all(|k| k.owner.is_none()));
         assert!(device_keys(&conn, "kim").unwrap().is_empty());
 
-        conn.execute("DELETE FROM api_keys WHERE id = ?1", [phone_id])
-            .unwrap();
+        revoke_api_key(&conn, mac_id, None).unwrap();
         let keys = device_keys(&conn, "jo").unwrap();
-        assert_eq!(keys.len(), 2, "the newer phone key stands");
+        assert_eq!(keys.len(), 1, "the Mac's key went with its API key");
+    }
+
+    /// The phone's key, stolen, cannot take the Mac's place: a device id
+    /// belongs to the key row that claimed it, and a key row to its device.
+    #[test]
+    fn a_key_cannot_claim_another_devices_id() {
+        let conn = db();
+        let jo = user(&conn, "jo");
+        let (_, phone) = create_api_key(&conn, jo, "phone").unwrap();
+        let (_, mac) = create_api_key(&conn, jo, "mac").unwrap();
+        assert!(set_device_key(&conn, &mac, "dev-mac", "MAC").unwrap());
+        assert!(set_device_key(&conn, &phone, "dev-phone", "PHONE").unwrap());
+        assert!(!set_device_key(&conn, &phone, "dev-mac", "THIEF").unwrap());
+        assert!(!set_device_key(&conn, &phone, "dev-new", "THIEF").unwrap());
+        // Its own id, with a new keypair, is still its to change.
+        assert!(set_device_key(&conn, &phone, "dev-phone", "PHONE2").unwrap());
+        let keys = device_keys(&conn, "jo").unwrap();
+        let of = |d: &str| keys.iter().find(|k| k.device == d).map(|k| k.key.as_str());
+        assert_eq!(of("dev-mac"), Some("MAC"));
+        assert_eq!(of("dev-phone"), Some("PHONE2"));
+        assert_eq!(keys.len(), 2);
     }
 
     #[test]

@@ -4438,10 +4438,42 @@ struct LinkPeer {
     addr: std::net::IpAddr,
 }
 
+/// Keep every keyed link's list current as accounts change. A revoked key,
+/// a signed-out device or a deleted account takes its public key with it,
+/// and the accounts it was shared with are linked on their own, so nothing
+/// else would tell them. Account changes are rare, and each sends every
+/// keyed account its list again.
+fn spawn_key_publisher(pool: Arc<Pool>) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        let mut mark = koan_core::auth::account_mark();
+        loop {
+            mark = koan_core::auth::any_account_changed_since(mark).await;
+            let pool = pool.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                for username in crate::clients::registry().keyed_accounts() {
+                    publish_device_keys(&pool, &username);
+                }
+            })
+            .await;
+        }
+    });
+}
+
 /// Send `username`'s links that asked for them the device keys they check
 /// the network against: the account's own, and devices shared with it.
+/// Nothing for an account this database does not have: the registry is the
+/// process's, and a link may be another database's.
 fn publish_device_keys(pool: &Pool, username: &str) {
     let Ok(db) = pool.get() else { return };
+    if !matches!(
+        queries::auth::get_user_by_username(&db.conn, username),
+        Ok(Some(_))
+    ) {
+        return;
+    }
     let Ok(keys) = queries::api_keys::device_keys(&db.conn, username) else {
         return;
     };
@@ -5001,6 +5033,9 @@ pub fn subsonic_router(
         last_modified: Default::default(),
         transcoder,
     });
+    // Once per process, though the router may be built for two ports.
+    static KEYS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    KEYS.get_or_init(|| spawn_key_publisher(state.pool.clone()));
 
     Some(subsonic_app(state))
 }
@@ -5310,6 +5345,128 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// jo's phone, shared with kim, is revoked while kim's device is linked:
+    /// kim's device is sent a list without it, though neither the phone nor
+    /// any device of kim's links again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_revoked_shared_device_leaves_its_grantees_list() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let (state, _dir) = test_state();
+        let pool = state.pool.clone();
+        // Accounts of this test's own: account changes are announced by user
+        // id process-wide.
+        let raw = {
+            let db = pool.get().unwrap();
+            queries::auth::create_user(&db.conn, "keyowner", "pw-owner", Role::User).unwrap();
+            queries::auth::create_user(&db.conn, "keygrantee", "pw-grantee", Role::User).unwrap();
+            db.conn
+                .execute(
+                    "INSERT INTO link_grants (device, owner, grantee, created_at)
+                     VALUES ('kdev-phone', 'keyowner', 'keygrantee', 0)",
+                    [],
+                )
+                .unwrap();
+            let owner = queries::auth::get_user_by_username(&db.conn, "keyowner")
+                .unwrap()
+                .unwrap();
+            queries::api_keys::create_api_key(&db.conn, owner.id, "phone")
+                .unwrap()
+                .1
+        };
+        crate::clients::registry()
+            .share("keyowner", "kdev-phone", "keygrantee", true)
+            .unwrap();
+        spawn_key_publisher(pool.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        let encode = |k: String| {
+            k.replace('+', "%2B")
+                .replace('/', "%2F")
+                .replace('=', "%3D")
+        };
+        let phone_key = b64.encode([3u8; 32]);
+        let url = format!(
+            "ws://{addr}/rest/koanLink?apiKey={raw}&v=1.16.1&c=test&device=kdev-phone&deviceKey={}",
+            encode(phone_key.clone())
+        );
+        tokio::task::spawn_blocking(move || keys_sent(url))
+            .await
+            .unwrap();
+
+        let url = format!(
+            "ws://{addr}/rest/koanLink?u=keygrantee&p=pw-grantee&v=1.16.1&c=test&device=kdev-grantee&deviceKey={}",
+            encode(b64.encode([4u8; 32]))
+        );
+        let (revoke_tx, revoke_rx) = std::sync::mpsc::channel::<()>();
+        let grantee = tokio::task::spawn_blocking(move || {
+            let (mut socket, _) = tungstenite::connect(url.as_str()).unwrap();
+            if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = socket.get_ref() {
+                tcp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            }
+            let mut saw_phone = false;
+            loop {
+                let tungstenite::Message::Text(text) = socket.read().unwrap() else {
+                    continue;
+                };
+                let Ok(koan_core::remote::link::LinkCommand::DeviceKeys { keys }) =
+                    serde_json::from_str(&text)
+                else {
+                    continue;
+                };
+                let has_phone = keys
+                    .iter()
+                    .any(|k| k.id == "kdev-phone" && k.owner.as_deref() == Some("keyowner"));
+                if !saw_phone {
+                    assert!(has_phone, "shared before the revocation: {keys:?}");
+                    saw_phone = true;
+                    revoke_tx.send(()).unwrap();
+                } else if !has_phone {
+                    return true;
+                }
+            }
+        });
+        tokio::task::spawn_blocking(move || {
+            revoke_rx.recv().unwrap();
+            let db = pool.get().unwrap();
+            assert!(queries::api_keys::revoke_api_key_value(&db.conn, &raw).unwrap());
+        })
+        .await
+        .unwrap();
+        assert!(grantee.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn device_keys_are_never_relayed() {
+        let reg = crate::clients::registry();
+        let forged = koan_core::remote::link::LinkCommand::DeviceKeys {
+            keys: vec![koan_core::remote::link::LinkDeviceKey {
+                id: "evil".into(),
+                key: "AAAA".into(),
+                owner: None,
+            }],
+        };
+        assert!(
+            reg.relay_from("relay-jo", Some("dev-a"), "dev-b", forged.clone())
+                .is_err()
+        );
+        assert!(reg.relay("relay-jo", "dev-b", forged).is_err());
+
+        // And over HTTP, as any credential for the account could send it.
+        let (state, _dir) = test_state();
+        let command = r#"{"type":"deviceKeys","keys":[{"id":"evil","key":"AAAA"}]}"#;
+        let command: String = form_urlencoded::byte_serialize(command.as_bytes()).collect();
+        let (_, body) = get_response(
+            build_test_router(state),
+            &format!(
+                "/rest/koanCommand?u=mate&p=hunter22&v=1.16.1&c=test&f=json&to=dev-b&command={command}"
+            ),
+        )
+        .await;
+        assert!(body.contains("\"failed\""), "{body}");
     }
 
     #[tokio::test]

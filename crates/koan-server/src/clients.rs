@@ -244,6 +244,20 @@ impl Registry {
         }
     }
 
+    /// Every account with a link that takes device keys.
+    pub fn keyed_accounts(&self) -> Vec<String> {
+        let mut accounts: Vec<String> = self
+            .entries
+            .lock()
+            .iter()
+            .filter(|e| e.wants_keys)
+            .map(|e| e.info.username.clone())
+            .collect();
+        accounts.sort();
+        accounts.dedup();
+        accounts
+    }
+
     /// The accounts `owner` shares `device` with.
     pub fn grantees_of(&self, owner: &str, device: &str) -> Vec<String> {
         self.grants
@@ -731,18 +745,10 @@ impl Registry {
         to: &str,
         command: LinkCommand,
     ) -> Result<ClientInfo, String> {
-        // Levels are relayed only between live links, by `watch_levels` and
-        // `levels`: never queued for a device that is away, never a push.
-        if matches!(
-            command,
-            LinkCommand::Devices { .. }
-                | LinkCommand::Forgotten { .. }
-                | LinkCommand::HistoryChanged
-                | LinkCommand::Levels { .. }
-                | LinkCommand::WatchLevels { .. }
-                | LinkCommand::Shares { .. }
-                | LinkCommand::Shared { .. }
-        ) {
+        // What one device may have another do, and nothing the server says
+        // itself: relayed, a forged device list or key list would reach the
+        // device as the server's own.
+        if !command.relayable() {
             return Err("not a command".into());
         }
         // A device shared with `username` takes the playback set, marked as
