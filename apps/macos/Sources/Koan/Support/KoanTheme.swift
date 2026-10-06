@@ -516,6 +516,9 @@ extension EnvironmentValues {
     /// The accent in force, for roles that must know whether it reads as text.
     /// Set beside `.tint` and `roomTint` by the room.
     @Entry var koanAccent = KoanAccent.mint
+    /// How tall the theme's own tab bar and mini player stand over a phone's
+    /// pages, as laid out; zero where the platform's bar is drawn.
+    @Entry var koanBarHeight: CGFloat = 0
 }
 
 // MARK: - Type
@@ -1543,7 +1546,11 @@ struct KoanTabItem: View {
 }
 
 extension View {
-    /// Hides the platform's tab bar where the theme draws its own (iOS).
+    /// Hides the platform's tab bar where the theme draws its own (iOS), and
+    /// makes the page room for that bar at its foot. Applied to every page in
+    /// a tab, root and pushed alike: an inset from outside the tab view does
+    /// not reach a list inside a tab's stack in every case, and a list that
+    /// misses it stops scrolling with its last rows under the bar.
     func koanHidesSystemTabBar() -> some View {
         modifier(KoanHidesSystemTabBar())
     }
@@ -1623,10 +1630,19 @@ struct KoanUnavailable: View {
 /// own. An iPad keeps its sidebar layout, the platform's.
 private struct KoanHidesSystemTabBar: ViewModifier {
     @Environment(\.horizontalSizeClass) private var width
+    @Environment(\.koanBarHeight) private var bar
 
     func body(content: Content) -> some View {
         #if os(iOS)
-        content.toolbar(KoanTheme.isOn && width == .compact ? .hidden : .automatic, for: .tabBar)
+        if KoanTheme.isOn && width == .compact {
+            content
+                .toolbar(.hidden, for: .tabBar)
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    Color.clear.frame(height: bar)
+                }
+        } else {
+            content
+        }
         #else
         content
         #endif

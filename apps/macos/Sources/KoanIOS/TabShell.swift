@@ -344,12 +344,10 @@ private struct Transport: ViewModifier {
             // The theme's own bar in place of the platform's glass: the mini
             // player as a row with the playhead along its top, the tabs flat
             // beneath it. Laid over the content and kept behind the keyboard,
-            // as the platform's tab bar is; the content makes room for it with
-            // an inset of its height, which still gives way to the keyboard.
+            // as the platform's tab bar is. Each page makes room for it itself,
+            // from its height (`koanHidesSystemTabBar`).
             content
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Color.clear.frame(height: barHeight)
-                }
+                .environment(\.koanBarHeight, barHeight)
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 0) {
                         player
