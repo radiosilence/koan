@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Qudelix PEQ presets import.** A preset exported from the Qudelix app was refused at its first line (`TYPE: PEQ`). Its `//` comments, type line and closing impedance and sensitivity lines are now read past, each channel keeps its own preamp and filters, and a preset of another type, such as a graphic EQ, is refused by name.
+
 ## 0.58.0
 
 The library database moves from schema 19 to 20 (new tables for Subsonic saved play queues; every existing row is kept). Upgrades now run in one transaction and roll back whole if any step fails, and a server finding the database newer than it knows drains and exits. Builds older than 0.58.0 refuse a schema-20 database, so going back means restoring a copy taken before upgrading.
