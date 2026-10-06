@@ -24,6 +24,7 @@ struct OrganizeSheet: View {
             footer
         }
         .frame(minWidth: 560, minHeight: 400)
+        .koanSheet()
     }
 
     // MARK: - Header
@@ -32,7 +33,7 @@ struct OrganizeSheet: View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Organize Files")
-                    .font(.headline)
+                    .koanText(.body, .strong)
                 if let subject = organize.subject {
                     Text(subject.title)
                         .koanText(.fine, .muted)
@@ -82,12 +83,15 @@ struct OrganizeSheet: View {
                     // They are handed back to Close and Move on the way out.
                     Button("Cancel") { organize.cancelEditing() }
                         .shortcut(.cancelAction)
+                        .koanButton(.secondary)
                     Button("Save") { organize.saveEditing() }
                         .shortcut(.defaultAction)
+                        .koanButton(.primary)
                         .disabled(!organize.isModified)
                         .help("Store this pattern in config.toml under its name")
                 } else {
                     Button("Edit") { organize.beginEditing() }
+                        .koanButton(.secondary)
                         .disabled(organize.patternName == nil)
                 }
             }
@@ -100,8 +104,8 @@ struct OrganizeSheet: View {
                     .monospaced()
             } else {
                 Text(organize.pattern)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+                    .koanText(.fine, .muted)
+                    .monospaced()
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .selectableText()
@@ -124,7 +128,7 @@ struct OrganizeSheet: View {
                 // say which state you are looking at.
                 if organize.isModified {
                     Text("· unsaved changes")
-                        .foregroundStyle(.orange)
+                        .koanText(.fine, .bad)
                 }
             }
             .koanText(.fine, .muted)
@@ -185,8 +189,10 @@ struct OrganizeSheet: View {
                 dismiss()
             }
             .shortcut(organize.editing ? nil : .cancelAction)
+            .koanButton(.secondary)
             Button(runTitle) { organize.run() }
                 .shortcut(organize.editing ? nil : .defaultAction)
+                .koanButton(.primary)
                 .disabled(!canRun)
         }
         .padding(.horizontal, 18)
@@ -200,19 +206,17 @@ struct OrganizeSheet: View {
                 Text(Format.count(Int64(plan.movedCount), "file") + " to move")
                 if plan.unchangedCount > 0 {
                     KoanLabel("\(plan.unchangedCount) already in place", icon: "checkmark")
-                        .foregroundStyle(.secondary)
                 }
                 if plan.conflictCount > 0 {
                     KoanLabel("\(plan.conflictCount) blocked", icon: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
+                        .koanText(.fine, .bad)
                 }
                 if plan.errorCount > 0 {
                     KoanLabel("\(plan.errorCount) failed", icon: "xmark.octagon")
-                        .foregroundStyle(.red)
+                        .koanText(.fine, .bad)
                 }
                 if plan.unresolved > 0 {
                     KoanLabel("\(plan.unresolved) not on disk", icon: "cloud")
-                        .foregroundStyle(.secondary)
                 }
             }
             .koanText(.fine, .muted)
@@ -250,31 +254,28 @@ private struct OrganizeRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: icon)
-                .foregroundStyle(tint)
-                .koanText(.fine, .muted)
+                .koanText(.fine, tone)
                 .frame(width: 14)
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.fromPath)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.tertiary)
+                    .koanText(.fine, .muted)
+                    .monospaced()
                     .lineLimit(1)
                     .truncationMode(.middle)
 
                 if let destination {
                     Text(destination)
-                        .koanText(.meta)
+                        .koanText(.meta, tone)
                         .monospaced()
-                        .foregroundStyle(tint)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
 
                 if let reason = entry.reason {
                     Text(reason)
-                        .koanText(.fine, .muted)
-                        .foregroundStyle(tint)
+                        .koanText(.fine, tone)
                 }
 
                 if !entry.ancillary.isEmpty {
@@ -282,8 +283,7 @@ private struct OrganizeRow: View {
                     // the music is usually wanted and occasionally not, and
                     // "+1 file" cannot tell you which.
                     Text("+ \(entry.ancillary.joined(separator: ", "))")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .koanText(.fine, .muted)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .help(entry.ancillary.joined(separator: "\n"))
@@ -310,12 +310,11 @@ private struct OrganizeRow: View {
         }
     }
 
-    private var tint: Color {
+    private var tone: KoanTone {
         switch entry.outcome {
-        case .move: .primary
-        case .unchanged: .secondary
-        case .conflict: .orange
-        case .error: .red
+        case .move: .ink
+        case .unchanged: .muted
+        case .conflict, .error: .bad
         }
     }
 }
@@ -340,6 +339,7 @@ struct OrganizeWindow: View {
                 detail: "Select tracks in the queue or the library, then choose Organize Files."
             )
             .frame(minWidth: 560, minHeight: 400)
+            .koanSheet()
         }
     }
 }

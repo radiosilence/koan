@@ -36,6 +36,7 @@ struct PickerSheet: View {
                 .safeAreaInset(edge: .bottom, spacing: 0) { commitBar }
         }
         .frame(width: 660, height: 500)
+        .koanSheet()
         .onAppear { fieldFocused = true }
         .onChange(of: query) { _, new in schedule(new) }
         .onChange(of: kind) { _, _ in schedule(query) }
@@ -47,11 +48,11 @@ struct PickerSheet: View {
     private var searchField: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+                .koanText(.body, .muted)
             TextField(prompt, text: $query)
                 .verbatimEntry()
                 .textFieldStyle(.plain)
-                .font(.title3)
+                .koanText(.titleSmall)
                 .focused($fieldFocused)
                 .onSubmit { commit(.append) }
             if !query.isEmpty {
@@ -60,8 +61,7 @@ struct PickerSheet: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
+                .koanButton(.text)
             }
         }
         .padding(.horizontal, 18)
@@ -77,13 +77,11 @@ struct PickerSheet: View {
     }
 
     private var kindPicker: some View {
-        Picker("", selection: $kind) {
-            Text("Tracks").tag(SearchKind.track)
-            Text("Albums").tag(SearchKind.album)
-            Text("Artists").tag(SearchKind.artist)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
+        KoanSegmentedPicker(
+            options: [("Tracks", SearchKind.track), ("Albums", .album), ("Artists", .artist)],
+            selection: $kind,
+            title: "Kind"
+        )
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
     }
@@ -140,7 +138,6 @@ struct PickerSheet: View {
                     .koanText(.fine, .muted)
                 Button("Clear") { picked = [] }
                     .koanButton(.text)
-                    .koanText(.fine, .muted)
             }
 
             Spacer()
@@ -151,11 +148,13 @@ struct PickerSheet: View {
 
             Button("Replace Queue") { commit(.replace) }
                 .shortcut(.return, modifiers: [.command, .shift])
+                .koanButton(.secondary)
             Button("Add") { commit(.append) }
                 .shortcut(.return, modifiers: [])
+                .koanButton(.secondary)
             Button("Add & Play") { commit(.appendAndPlay) }
                 .shortcut(.return, modifiers: .command)
-                .buttonStyle(.borderedProminent)
+                .koanButton(.primary)
         }
         .disabled(resolving || (picked.isEmpty && highlighted == nil))
         .padding(.horizontal, 14)
@@ -282,7 +281,7 @@ private struct PickerRowView: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: isPicked ? "checkmark.circle.fill" : icon)
-                .foregroundStyle(isPicked ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+                .koanText(.body, isPicked ? .accent : .muted)
                 .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 1) {
