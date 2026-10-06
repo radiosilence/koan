@@ -10796,6 +10796,35 @@ mod tests {
         assert!(body.contains("at most 32 MB"), "{body}");
     }
 
+    /// An account holds at most `MAX_PROFILES`, checked in the transaction
+    /// that saves: a profile it already has may still change.
+    #[tokio::test]
+    async fn an_account_keeps_a_bounded_number_of_profiles() {
+        use koan_core::remote::dsp_sync::MAX_PROFILES;
+        let (state, _dir) = test_state();
+        {
+            let db = Database::open(state.pool.path()).unwrap();
+            for i in 0..MAX_PROFILES {
+                queries::dsp::save(&db.conn, 1, &format!("uid-{i}"), 1, None).unwrap();
+            }
+        }
+        let app = build_test_router(state);
+        let doc = koan_core::remote::dsp_sync::SyncDoc {
+            profile: koan_core::config::DspProfile {
+                name: "One more".into(),
+                ..Default::default()
+            },
+            files: vec![],
+        };
+        let body = post_form(
+            app,
+            &format!("/rest/koanDspProfileSave?{MATE}"),
+            &format!("uid={UID}&editedAt=1&doc={}", form_value(&doc.json())),
+        )
+        .await;
+        assert!(body.contains("as many EQ profiles as it may"), "{body}");
+    }
+
     #[tokio::test]
     async fn scrobbling_is_an_accounts_not_the_shared_secrets() {
         let (state, _dir) = test_state();
