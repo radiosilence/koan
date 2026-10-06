@@ -21,39 +21,95 @@ struct TabShell: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(ActivityModel.self) private var activity
+    #if os(tvOS)
+    @Environment(AppState.self) private var app
+    /// Taken as signed in until the engine says otherwise, so a signed-in TV
+    /// never flashes the sign-in page on launch.
+    @State private var signedIn = true
+    #endif
     @State private var showingNowPlaying = false
     @State private var showingDevices = false
     /// Which tab is showing. Held rather than derived from the navigator: a
     /// record belongs to whichever tab it was opened from, and the navigator
     /// cannot say which that was.
+    #if os(tvOS)
+    @State private var selection: TabID = .nowPlaying
+    #else
     @State private var selection: TabID = .queue
+    #endif
 
     var body: some View {
+        #if os(tvOS)
+        // Signed out, the television has nothing to show but the way in: in
+        // place of the tabs rather than over them, since Menu dismisses a
+        // cover and would leave an empty room behind it.
+        Group {
+            if signedIn {
+                shell
+            } else {
+                SignInPage { joined() }
+            }
+        }
+        .toggleStyle(SystemSwitch())
+        .buttonStyle(TelevisionButton())
+        .task { await checkSignedIn() }
+        #else
+        shell
+        #endif
+    }
+
+    private var shell: some View {
         // The record's colour: the tint here, for everything below, and the wash
         // as each tab's navigation background — see `roomBackground()`. A phone
         // has no window to hang one wash on, and a stack paints its own ground
         // over anything placed behind it.
         TabView(selection: tab) {
+            #if os(tvOS)
+            // The room's first page: what is playing, at the size a sofa reads.
+            Tab("Now Playing", systemImage: "play.circle", value: TabID.nowPlaying) {
+                NowPlayingPage()
+            }
+            #endif
             Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
                 stack(.queue) { QueueView() }
             }
             Tab("Library", systemImage: "music.note.house", value: TabID.library) {
                 stack(.library) { LibraryTab() }
             }
+            #if !os(tvOS)
             Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
                 stack(.settings) { SettingsView() }
             }
+            #endif
             Tab(value: TabID.search, role: .search) {
                 stack(.search) { IOSSearchView() }
             }
+            // Last on a television, where it is visited least.
+            #if os(tvOS)
+            Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
+                stack(.settings) { SettingsView() }
+            }
+            #endif
         }
+        #if os(tvOS)
+        // Tabs across the top, as every television app has them; the sidebar
+        // style folds them behind a pill a remote has to find first.
+        .tabViewStyle(.tabBarOnly)
+        #else
         .tabViewStyle(.sidebarAdaptable)
+        #endif
         .toggleStyle(SystemSwitch())
-        // Above the tab bar rather than below it — `safeAreaInset` would put
-        // the transport where the tab bar goes, which is to say on top of it.
-        .tabViewBottomAccessory {
-            MiniPlayer(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices)
+        .modifier(Transport(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices))
+        #if os(tvOS)
+        // The remote's Play/Pause, wherever focus is.
+        .onPlayPauseCommand { player.togglePlayPause() }
+        .shareCodes(player)
+        .onChange(of: selection) { Task { await checkSignedIn() } }
+        .onChange(of: mirror.connection?.linked) { Task { await checkSignedIn() } }
+        .onReceive(NotificationCenter.default.publisher(for: .koanSignedOut)) { _ in
+            Task { await checkSignedIn() }
         }
+        #endif
         .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
         // sidebar; with no sidebar they float above the transport, which is
@@ -124,6 +180,12 @@ struct TabShell: View {
             },
             message: { Text(player.lastError ?? "") }
         )
+        #if os(tvOS)
+        // Every button that does not choose its own style, sheets and covers
+        // included, which take their environment from where they hang; see
+        // `TelevisionButton`.
+        .buttonStyle(TelevisionButton())
+        #endif
     }
 
     /// A tab's navigation stack. Pages are drawn from their routes — see
@@ -153,6 +215,8 @@ struct TabShell: View {
     /// and More brings a navigation stack of its own.
     enum TabID: Hashable {
         case queue, library, settings, search
+        /// tvOS only, where Now Playing is a page rather than a sheet.
+        case nowPlaying
 
         /// The page the tab itself is, under anything pushed onto it. The
         /// library is a list of sections rather than one, and settings is not
@@ -161,7 +225,7 @@ struct TabShell: View {
             switch self {
             case .queue: .section(.queue)
             case .search: .section(.searchResults)
-            case .library, .settings: nil
+            case .library, .settings, .nowPlaying: nil
             }
         }
     }
@@ -213,6 +277,29 @@ struct TabShell: View {
         paths[selection] = routes
     }
 
+    #if os(tvOS)
+    private func checkSignedIn() async {
+        signedIn = await app.engine.settings().remoteSignedIn
+    }
+
+    /// Signed in by pairing or the account form: load the library, as joining
+    /// with an invite does.
+    private func joined() {
+        signedIn = true
+        let engine = app.engine
+        Task {
+            let synced = await activity.run(
+                "Loading the library", uses: [.remoteTracks], followsSync: true
+            ) {
+                try await engine.syncRemote()
+            }
+            if case .failure(let error) = synced {
+                player.lastError = SettingsModel.describe(error)
+            }
+        }
+    }
+    #endif
+
     private var tab: Binding<TabID> {
         Binding(
             get: { selection },
@@ -221,5 +308,25 @@ struct TabShell: View {
                 follow(chosen)
             }
         )
+    }
+}
+
+/// The mini player. On a phone it sits above the tab bar: `safeAreaInset`
+/// would put it where the tab bar goes, which is to say on top of it.
+private struct Transport: ViewModifier {
+    @Binding var showingNowPlaying: Bool
+    @Binding var showingDevices: Bool
+
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        // Now Playing is a tab of its own there.
+        content
+        #else
+        content.tabViewBottomAccessory { player }
+        #endif
+    }
+
+    private var player: some View {
+        MiniPlayer(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices)
     }
 }

@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><script src="sleeves.js"></script></head><body>
+<div class="wash" style="background:radial-gradient(1200px 900px at 10% 20%,rgba(30,90,220,.4),transparent 70%),#10131c"></div>
+<div class="content">
+ <div style="position:absolute;top:90px;left:110px;display:flex;align-items:baseline;gap:24px;right:110px">
+  <div style="font-size:52px;font-weight:700">Queue</div><div class="dim" style="font-size:26px">38 tracks · 2 h 41 min</div>
+  <div style="margin-left:auto;display:flex;gap:14px"><span class="btn" style="font-size:22px;padding:12px 24px">Clear played</span><span class="btn" style="font-size:22px;padding:12px 24px">Save as playlist</span></div>
+ </div>
+ <div id="q" style="position:absolute;top:200px;left:110px;right:110px"></div>
+</div>
+<div class="label">Queue · grouped by record, as on the Mac · click-and-hold to move or remove</div>
+<script>
+const G=[[15,[["Golden Skans (David E Sugar Remix)","5:20","play"]]],[16,[["Grounding","2:49"],["Tidal","5:51","focus"],["Low Light","4:40"]]],[17,[["Yeah Yeah","1:27","dl"],["Yeah Yeah (Radio Edit)","3:12","dl"]]]];
+let h='';G.forEach(([i,ts])=>{h+=`<div style="display:flex;gap:40px;margin-bottom:34px"><div>${sl(i,170,false)}</div><div style="flex:1"><div style="font-size:28px;font-weight:700">${AL[i][0]}</div><div class="dim" style="font-size:22px;margin-bottom:10px">${AL[i][1]}</div>`;ts.forEach(([t,d,s])=>{const f=s=='focus';h+=`<div style="display:flex;align-items:center;gap:24px;padding:14px 26px;margin-left:-26px;border-radius:14px;font-size:27px;${f?'background:#f2f2f4;color:#141416;transform:scale(1.02);box-shadow:0 14px 34px rgba(0,0,0,.4)':''}"><span style="width:30px">${s=='play'?'<span class=mint>▮▮▯</span>':s=='dl'?'<span style="display:inline-block;width:22px;height:22px;border-radius:11px;border:3px solid rgba(255,255,255,.25);border-top-color:#7DD3A7"></span>':''}</span><span style="flex:1;${s=='play'?'color:#7DD3A7':''}">${t}</span><span style="opacity:.5;font-variant-numeric:tabular-nums">${d}</span></div>`});h+='</div></div>'});
+document.getElementById('q').innerHTML=h;
+</script></body></html>

@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><script src="sleeves.js"></script></head><body>
+<div class="wash" style="background:radial-gradient(1100px 900px at 15% 40%,rgba(214,120,80,.38),transparent 70%),radial-gradient(900px 800px at 80% 90%,rgba(38,64,92,.6),transparent 70%)"></div>
+<div class="content">
+ <div style="position:absolute;top:120px;left:110px" id="art"></div>
+ <div style="position:absolute;top:690px;left:110px;width:620px">
+  <div style="font-size:50px;font-weight:700;line-height:1.1">Ships in Glass Bottles</div>
+  <div style="font-size:32px;margin-top:10px" class="dim">Bliss Routine · 2023</div>
+  <div style="display:flex;gap:12px;margin-top:20px"><span class="badge">FLAC 24/44.1</span><span class="badge">9 tracks · 51 min</span></div>
+  <div style="display:flex;gap:18px;margin-top:34px"><span class="btn f">▶ Play</span><span class="btn">⤮ Shuffle</span><span class="btn">⋯</span><span class="btn" style="color:#ff5a5f">♥</span></div>
+ </div>
+ <div id="tracks" style="position:absolute;top:120px;left:860px;right:110px"></div>
+</div>
+<div class="label">Album · ⋯ holds Play Next, Queue, Add to playlist, Go to artist</div>
+<script>
+document.getElementById('art').innerHTML=sl(0,560,false);
+const T=[["Ships in Glass Bottles","6:19"],["Walls","7:22"],["Outing","5:06"],["Grounding","2:49"],["Tidal","5:51"],["Low Light","4:40"],["Salt","6:02"],["Arrival","5:33"],["Glass","7:11"]];
+let h='';T.forEach(([t,d],i)=>{const f=i==2,p=i==0;h+=`<div style="display:flex;align-items:center;gap:28px;padding:20px 30px;border-radius:16px;font-size:29px;${f?'background:#f2f2f4;color:#141416;transform:scale(1.03);box-shadow:0 14px 34px rgba(0,0,0,.4)':''}"><span style="width:36px;text-align:right;${f?'opacity:.5':'opacity:.4'}">${p?'<span class=mint>▮▮▯</span>':i+1}</span><span style="flex:1;${p&&!f?'color:#7DD3A7':''}">${t}</span>${i==1||i==5?'<span style="color:#ff5a5f">♥</span>':''}<span style="${f?'opacity:.6':'opacity:.45'};font-variant-numeric:tabular-nums">${d}</span></div>`});
+document.getElementById('tracks').innerHTML=h;
+</script></body></html>

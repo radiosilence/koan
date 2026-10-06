@@ -1,4 +1,5 @@
 import CoreGraphics
+import SwiftUI
 
 /// How tall a list's rows are, on every page. Rows holding the same things are
 /// the same height wherever they appear, so moving between the queue, a
@@ -31,4 +32,16 @@ enum RowMetrics {
     static let sleeve: CGFloat = 32
     static let artPadding: CGFloat = 4
     #endif
+}
+
+extension GridItem {
+    /// Columns of record tiles, as many as fit. A television is read from
+    /// across a room, so there they come about six across whatever is asked.
+    static func tiles(minimum: CGFloat, maximum: CGFloat, spacing: CGFloat) -> [GridItem] {
+        #if os(tvOS)
+        [GridItem(.adaptive(minimum: 250, maximum: 300), spacing: 48)]
+        #else
+        [GridItem(.adaptive(minimum: minimum, maximum: maximum), spacing: spacing)]
+        #endif
+    }
 }

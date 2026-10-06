@@ -272,6 +272,41 @@ jobs:
       # built on every push. Rides in this job because it needs the same
       # bindings and nothing else -- no Rust iOS build, no simulator.
       - run: just ios-typecheck
+      # And for tvOS, for the same reasons: a SwiftUI change made for the Mac
+      # or the phone can use an API tvOS lacks.
+      - run: just tv-typecheck
+
+  tvos-app:
+    name: tvOS App
+    runs-on: macos-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    timeout-minutes: 45
+    concurrency:
+      group: tvos-app-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-tvos,aarch64-apple-tvos-sim
+      # The engine builds for tvOS into a target directory of its own (see
+      # `tv-ffi`), which rust-cache does not look in unless told.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: tvos-app
+          workspaces: |
+            . -> target/tv-26.0
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - run: brew install xcodegen
+      # The device target as well as the simulator's: they take different
+      # cfgs in places, and only the simulator is built below.
+      - run: cargo check -p koan-ffi --target aarch64-apple-tvos --target-dir target/tv-26.0
+        env:
+          TVOS_DEPLOYMENT_TARGET: "26.0"
+      - run: just tv-build
 
   msrv:
     name: MSRV (1.89)

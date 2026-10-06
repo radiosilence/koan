@@ -10,8 +10,10 @@ import UserNotifications
 /// comes down the link. A notification asks for music; iOS will not let a
 /// suspended app start playing on its own, so it waits for a tap, and the
 /// command it carries runs then.
+///
+/// tvOS shows no notifications, so a TV takes background pushes only.
 @MainActor
-final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+final class PushDelegate: NSObject, UIApplicationDelegate {
     /// Set once the engine is up. A token or a tapped notification that
     /// arrives before then waits for it: a tap can be what launched the app.
     static var engine: KoanEngine? {
@@ -35,7 +37,9 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        #if !os(tvOS)
         UNUserNotificationCenter.current().delegate = self
+        #endif
         // A token needs no permission; showing a notification does, and is
         // asked for once there is a server to send one.
         application.registerForRemoteNotifications()
@@ -69,6 +73,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         return .newData
     }
 
+    #if !os(tvOS)
     /// A notification tapped: run what it asked for. Nonisolated, and the
     /// command taken out as a string before crossing to the main actor: the
     /// notification objects themselves are not `Sendable`.
@@ -93,10 +98,12 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
     ) {
         completionHandler([.banner, .sound])
     }
+    #endif
 
     /// Ask to show notifications, if a server is signed in to send them.
     /// Asked once; iOS remembers the answer.
     static func requestAlertsIfSignedIn() {
+        #if !os(tvOS)
         guard let engine else { return }
         Task {
             let settings = await engine.settings()
@@ -104,14 +111,17 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
             _ = try? await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound])
         }
+        #endif
     }
 
+    #if !os(tvOS)
     private nonisolated static func command(in userInfo: [AnyHashable: Any]) -> String? {
         guard let koan = userInfo["koan"],
               let data = try? JSONSerialization.data(withJSONObject: koan)
         else { return nil }
         return String(data: data, encoding: .utf8)
     }
+    #endif
 
     private static func run(_ command: String) {
         guard let engine else {
@@ -134,3 +144,7 @@ final class PushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCen
         }
     }
 }
+
+#if !os(tvOS)
+extension PushDelegate: UNUserNotificationCenterDelegate {}
+#endif

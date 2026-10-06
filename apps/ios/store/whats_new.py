@@ -4,7 +4,8 @@
 # ///
 """Set a TestFlight build's "What to Test" from the changelog.
 
-`whats_new.py BUILD` waits for build BUILD of the workspace version to finish
+`whats_new.py BUILD [PLATFORM]` waits for build BUILD of the workspace version,
+on PLATFORM (`IOS`, the default, or `TV_OS`), to finish
 processing, then writes that version's CHANGELOG.md section, as plain text, to
 the build's en-GB localization: what testers see when they install it.
 
@@ -48,6 +49,7 @@ def notes(version):
 
 def main():
     build_number = sys.argv[1]
+    platform = sys.argv[2] if len(sys.argv) > 2 else "IOS"
     version = workspace_version()
     text = notes(version)
     if not text:
@@ -59,7 +61,8 @@ def main():
         builds = call(
             "GET",
             f"/v1/builds?filter[app]={app['id']}&filter[version]={build_number}"
-            f"&filter[preReleaseVersion.version]={version}",
+            f"&filter[preReleaseVersion.version]={version}"
+            f"&filter[preReleaseVersion.platform]={platform}",
         )["data"]
         state = builds[0]["attributes"]["processingState"] if builds else "NOT_YET_LISTED"
         if state == "VALID":

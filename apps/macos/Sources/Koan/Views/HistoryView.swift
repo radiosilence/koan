@@ -123,17 +123,17 @@ struct HistoryView: View {
                         Section(day.key) {
                             ForEach(day.entries, id: \.id) { entry in
                                 HistoryRow(entry: entry)
-                                    .primaryTap { play([entry.id]) }
+                                    .primaryTap { play([entry.id]) } menu: { menu(for: [entry.id]) }
                                     .washedRow()
                                     .tag(entry.id)
                             }
                         }
                     }
                 }
-                .listStyle(.inset)
+                .insetList()
                 .washedGround()
                 .clearsSelection($selection)
-                .contextMenu(forSelectionType: Int64.self) { ids in
+                .selectionMenu(for: Int64.self) { ids in
                     menu(for: ids)
                 } primaryAction: { ids in
                     play(ids)
@@ -237,7 +237,7 @@ private struct HistoryRow: View {
                 }
             }
             .font(.caption.monospacedDigit())
-            .frame(width: 46, alignment: .trailing)
+            .frame(width: HistoryColumns.time, alignment: .trailing)
 
             // The cover is what you recognise a record by, and scanning back
             // through a week of listening is exactly that job.
@@ -278,11 +278,16 @@ private struct HistoryRow: View {
             Text(Format.duration(track.durationMs))
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 48, alignment: .trailing)
+                .frame(width: HistoryColumns.duration, alignment: .trailing)
         }
+        #if os(tvOS)
+        // Television type is taller than the sleeve; the row grows to it.
+        .frame(minHeight: RowMetrics.art)
+        #else
         .frame(height: RowMetrics.art)
+        #endif
         .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .pointerHover { hovering = $0 }
     }
 }
 
@@ -311,4 +316,15 @@ private enum HistoryDate {
     static func time(_ unixSeconds: Int64) -> String {
         timeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixSeconds)))
     }
+}
+
+/// The time and length columns, at a width television type fits in.
+private enum HistoryColumns {
+    #if os(tvOS)
+    static let time = 96.0
+    static let duration = 96.0
+    #else
+    static let time = 46.0
+    static let duration = 48.0
+    #endif
 }

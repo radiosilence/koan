@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><script src="sleeves.js"></script></head><body>
+<div class="wash" style="background:radial-gradient(1400px 700px at 50% -10%,rgba(214,120,80,.22),transparent 70%)"></div>
+<div class="content">
+ <div class="tabs"><span>Now Playing</span><span class="sel">Albums</span><span>Artists</span><span>Playlists</span><span>Favourites</span><span>Search</span><span>Settings</span></div>
+ <div style="position:absolute;top:150px;left:90px;right:90px;display:flex;align-items:baseline;gap:24px">
+  <div style="font-size:52px;font-weight:700">Albums</div><div class="dim" style="font-size:26px">1,284 records</div>
+  <div style="margin-left:auto;display:flex;gap:14px"><span class="btn" style="font-size:22px;padding:12px 24px">Recently added ▾</span><span class="btn" style="font-size:22px;padding:12px 24px">All sources ▾</span></div>
+ </div>
+ <div id="grid" style="position:absolute;top:260px;left:90px;right:90px;display:grid;grid-template-columns:repeat(6,1fr);column-gap:48px;row-gap:28px"></div>
+ <div style="position:absolute;bottom:0;left:0;right:0;height:120px;background:linear-gradient(transparent,#141416)"></div>
+</div>
+<div class="label">Albums · focus on a sleeve</div>
+<script>
+let h='';for(let i=0;i<18;i++){const f=i==7;h+=`<div style="position:relative;${f?'z-index:5':''}"><div style="${f?'transform:scale(1.12) translateY(-10px);':''}border-radius:12px;${f?'box-shadow:0 30px 60px rgba(0,0,0,.6)':''}">${sl(i,256,false)}</div><div style="margin-top:${f?26:14}px;font-size:23px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${f?'':'opacity:.85'}">${AL[i][0]}</div><div class="dim" style="font-size:20px;margin-top:2px">${AL[i][1]}${i==7?' · <span class="mint">● playing</span>':''}</div></div>`}
+document.getElementById('grid').innerHTML=h;
+</script></body></html>

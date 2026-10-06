@@ -31,6 +31,14 @@ struct LinkText: View {
     }
 
     var body: some View {
+        #if os(tvOS)
+        // A row is one focusable thing on a television; a link inside it can
+        // never be reached, so it reads as the name it is.
+        Text(text)
+            .font(font)
+            .foregroundStyle(prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+            .lineLimit(1)
+        #else
         if let target {
             Text(text)
                 .font(font)
@@ -43,7 +51,7 @@ struct LinkText: View {
                 #if os(macOS)
                 .pointerStyle(.link)
                 #endif
-                .onHover { hovering = $0 }
+                .pointerHover { hovering = $0 }
                 // A row that scrolls or filters away while hovered never sees
                 // the exit, so it would come back still underlined.
                 .onDisappear { hovering = false }
@@ -57,7 +65,7 @@ struct LinkText: View {
                 // necessarily what the surrounding row or tile stands for: the
                 // artist link on an album tile queues the whole artist, while
                 // the artwork beside it queues just that record.
-                .draggable(transfer(for: target))
+                .dragSource(transfer(for: target))
                 .help("Go to \(text)")
         } else {
             Text(text)
@@ -65,6 +73,7 @@ struct LinkText: View {
                 .foregroundStyle(prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                 .lineLimit(1)
         }
+        #endif
     }
 }
 
@@ -105,7 +114,7 @@ struct PlayableArtwork: View {
                 }
             }
             .animation(.easeOut(duration: 0.12), value: hovering)
-            .onHover { hovering = $0 }
+            .pointerHover { hovering = $0 }
             .onTapGesture { play() }
             .help("Play album")
     }

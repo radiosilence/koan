@@ -141,6 +141,13 @@ final class EngineMirror: Observable {
         return _connection
     }
 
+    /// The server refused the credential this device signs in with: a revoked
+    /// key or a changed password. Until someone signs in again nothing more
+    /// arrives from it, so an empty page says this rather than waiting.
+    var signInRefused: Bool { connection?.signInRefused == true }
+
+    static let signInRefusedDetail = "Your server refused kōan's sign-in. Sign in again in Settings → Server."
+
     /// UPnP renderers on the network: amplifiers and streamers this device
     /// can play to.
     var renderers: [RendererInfo] {

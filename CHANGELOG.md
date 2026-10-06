@@ -4,6 +4,31 @@
 
 ### Changed
 
+- **Tapping the server's address in Settings → Server copies it,** in the Mac and iOS apps, for signing another app or device in to the same server. The row reads *Copied* for a moment.
+
+## 0.55.0
+
+### Added
+
+- **kōan on Apple TV.** The engine and the iOS app's pages on tvOS, built for the remote: Now Playing is the first tab, with the sleeve, controls and what comes next; the tabs run across the top; a long press opens a row's menu; Play/Pause works from anywhere. A TV is a device the phone and the Mac play to with Play on, and plays gaplessly through HDMI. It signs in with a password, an OpenSubsonic API key, or a koan invite pasted from a phone, so any OpenSubsonic server works. Share links show as a code to scan, since a television has no pasteboard. tvOS keeps app data only in a cache the system may empty; the configuration, sign-in included, is mirrored into the app's preferences, which tvOS keeps, and put back after a purge. The library is synced again.
+- **Signing in with an API key.** The account form takes an OpenSubsonic API key in place of a password, on every platform: one key per device, revocable on its own.
+- **`devices.nearby`.** Off, a device takes no part in the local network: it neither listens nor announces itself, and neither looks for other devices nor dials them, reaching them only through the server. For a shared network, and for test runs that relaunch an app over and over, which would otherwise announce it to every device in the house each time; the television's UI tests set it.
+- **Sign an Apple TV in by pairing.** Signed out, the TV asks for its server's address and shows a QR code and a code. Scanning the QR code with kōan on a phone signed in to that server, typing the code under Settings → Server → Pair a device on a phone or Mac, or entering it on the server's `/pair` page signs the TV in at once. Every ending says what happened and offers a way back: a declined or lapsed code is asked for again, and a server without pairing is pointed to the account form, which takes a password, an API key or an invite as before.
+
+### Changed
+
+- **Signing in to a kōan server with a password ends in an API key** ([#819](https://github.com/radiosilence/koan/issues/819)). The apps and terminal UI send the password once, over plain HTTP too, to the new `/rest/koanSignIn`, and keep the API key it returns for the device in place of the password, as an invite does. Signing in again from the same device replaces its key rather than adding one. An app password or the shared secret typed in place of the password is kept as before. Signing in over plain HTTP no longer fails with error 41. Other Subsonic servers are unchanged, and error 41 from one now reads as needing an app password or API key. Servers list the `koanSignIn` extension.
+
+### Fixed
+
+- **A device whose sign-in the server refuses now says so.** When a key is revoked or a password changed, the server answers every request from that device with error 40, 41 or 44, and the apps went on showing an empty library as if a sync were still to come. The refusal is now noticed on sync or when the server is asked what it offers, and Settings → Server, the iOS Library tab and the empty Albums, Tracks and queue pages say *Your server refused kōan's sign-in. Sign in again in Settings → Server.* until the device signs in again or the server accepts the credential once more. See [Authentication](docs/guide/authentication.md).
+- **A playlist's play button played the wrong tracks.** It looked its tracks up by the playlist's entry numbers rather than the tracks' own, so it played whichever tracks happened to share those numbers, often one already queued. It now plays the playlist. The transport also names what is loading from the moment play is pressed, and play and pause wait until it has loaded rather than acting on the queue it replaces.
+- **A long Ogg track streaming from a server showed no length.** Ogg keeps its duration on its last page, which arrives last; a track opened before then now runs on the library's duration, so a nine-hour recording shows its length and progress from the start.
+
+## 0.54.2
+
+### Changed
+
 - **The sleep timer eases you to sleep.** A timer set for a time now fades over a tenth of its length, between one and five minutes (90 seconds for 15 minutes, 5 minutes for an hour), reaching silence at the deadline; the end of a track or record fades over the track's last minute. The level falls evenly in decibels rather than over six seconds, and the timer shows *Fading* meanwhile. Playback is not bit-perfect during the fade, since it is a gain on the samples; a UPnP renderer's own volume is stepped down instead and put back after. Cancelling or changing the timer mid-fade brings the level back over a second, and pausing by hand cancels it. See [Sleep timer](docs/guide/sleep-timer.md#the-fade).
 
 ### Fixed
@@ -12,6 +37,7 @@
 - **A rare crash when the Mac or iOS app changes track or output.** When CoreAudio could not confirm the output had fully stopped, its playback data was freed while the audio thread might still read it. It is now kept instead.
 - **One failed command no longer stops the Mac and iOS apps' controls.** An error such as importing a malformed EQ or convolution file stopped every later play, queue and transport command until the app was relaunched; the failing command now reports an error and the rest carry on.
 - **The iOS Live Activity no longer busies the app for a record without art.** Controlling another device playing a record with no cover, or whose cover could not be fetched, asked for the cover again continuously.
+- **The Mac's lyrics panel opens without tearing the window.** Opening or closing it slid the panel while the album grid and track lists jumped to their new width at once, so for a moment the two halves of the window were out of step and the sidebar was pushed off the left edge. The panel now opens and closes in one step, with every page laid out alongside it.
 - **The sleep timer's moon is lit only while a timer is set.** On the Mac it showed in the accent colour with no timer set.
 - **Playlist sync no longer removes songs from the server's copy.** A server playlist naming a song the library had not synced yet was stored without it, and the next edit pushed that shorter list back, deleting the song on the server. Songs the library does not have now stay on the server: every push puts them back where they were. A database error while reading a playlist is reported rather than read as an empty list, and a playlist whose entries are all local files no longer empties its server copy; only one emptied by hand does.
 - **A server that lists no playlists no longer deletes yours.** A playlist the server stops listing is now deleted locally only once the server, asked for it, says it does not have it; a listing that comes back short or empty deletes nothing. A failed lookup no longer creates a duplicate of a playlist, and a playlist's name, owner, contents and sync state are stored together or not at all.

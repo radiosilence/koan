@@ -6,7 +6,7 @@ A music player and server for your own library, local or on any OpenSubsonic ser
 
 It's a music player and server, for local collections and remote ones (anything OpenSubsonic). Remote libraries sit behind a fairly aggressive local cache. It handles multi-terabyte libraries with ease and has all the core audio features you'd want, like gapless and bit-perfect output (where the system allows). It's built from 25 years of messing about with music, being annoyed with pretty much everything, and wanting my dream application.
 
-The idea is to be fully compatible with the existing ecosystem while bringing the decent UX and modern ideas that professionally made streaming services have. It started as a little cross-platform CLI and TUI app on a Rust core. Now there's a native SwiftUI macOS app (no Electron) that links that core directly, an iOS app, a server, and soon a tvOS app. The UX takes what I like about Apple Music and fb2k and fixes the things I thought were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.
+The idea is to be fully compatible with the existing ecosystem while bringing the decent UX and modern ideas that professionally made streaming services have. It started as a little cross-platform CLI and TUI app on a Rust core. Now there's a native SwiftUI macOS app (no Electron) that links that core directly, an iOS app, a server, and an Apple TV app on TestFlight. The UX takes what I like about Apple Music and fb2k and fixes the things I thought were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.
 
 I wanted UX that makes it easy as hell to do what you want, while staying SUPER low on resources (and now battery). And I wanted the stuff you don't really see in the self-hosted space: device control and handoff, EQ profiles and convolution, DLNA output (with EQ!), and a cache built for a commuter who often has no signal, so you never have to remember to download your whole queue first. The best of every world, why not?
 
@@ -169,7 +169,6 @@ A full-screen Ratatui player on macOS and Linux: album art, an album-grouped que
 ## Planned
 
 - **Tag editing**: inline editing, bulk operations and a vimv-style external editor.
-- **The Apple TV app**, signed in by pairing ([#752](https://github.com/radiosilence/koan/pull/752), [#782](https://github.com/radiosilence/koan/pull/782)).
 - **Similar artists**, from MusicBrainz and Last.fm.
 
 ## Documentation
@@ -184,7 +183,7 @@ File -> Symphonia -> f32 samples -> rtrb ring buffer -> CoreAudio/cpal callback 
 
 Five crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for native clients), and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
-The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the terminal UI. The iOS app is the same SwiftUI sources and engine in a phone's shell; its output crosses the system mixer, so bit-perfect is a claim for the Mac and Linux only.
+The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the terminal UI. The iOS app is the same SwiftUI sources and engine in a phone's shell; its output crosses the system mixer, so bit-perfect is a claim for the Mac and Linux only. The Apple TV app is the same again, built around the remote and mostly played to from a phone or a Mac; tvOS keeps app files only in a cache it may empty, so the configuration is mirrored into the app's preferences, which survive.
 
 ## Dev
 
@@ -196,6 +195,8 @@ just macos-run   # build and launch the macOS app
 just macos-dmg   # package the macOS app for release
 just ios-run     # build and launch the iOS app on a simulator
 just ios-phone   # install on the iPhone plugged in, signed with your personal team
+just tv-run      # build and launch the Apple TV app on a simulator
+just tv-device   # install on the Apple TV paired with Xcode
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

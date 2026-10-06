@@ -9,6 +9,7 @@ name: Koan
 options:
   deploymentTarget:
     iOS: "26.0"
+    tvOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: false
 
@@ -140,6 +141,83 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
 
+  # The same module for tvOS, which links its own Rust slice.
+  KoanFFITV:
+    type: library.static
+    platform: tvOS
+    sources:
+      - path: ../macos/Sources/KoanFFI
+    settings:
+      base:
+        PRODUCT_MODULE_NAME: KoanFFI
+
+  # The shared sources on the Apple TV. Push, extensions and the Live Activity
+  # are the phone's; ActivityKit does not exist on tvOS.
+  KoanTV:
+    type: application
+    platform: tvOS
+    sources:
+      - path: ../macos/Sources/KoanIOS
+        excludes:
+          - RemoteActivity.swift
+          - RemoteActivityController.swift
+      - path: ../macos/Sources/KoanTV
+      - path: ../macos/Sources/Koan
+        # The iOS target's list, plus the Mac's sidebar, which the phone
+        # compiles and the TV cannot.
+        excludes:
+          - KoanApp.swift
+          - Support/Hotkeys.swift
+          - Support/TextFocus.swift
+          - Support/EditCommands.swift
+          - Support/MenuShortcuts.swift
+          - Views/ShortcutsSheet.swift
+          - Views/SidebarView.swift
+      - path: ../macos/Resources/Assets.xcassets
+    dependencies:
+      - target: KoanFFITV
+    settings:
+      base:
+        PRODUCT_NAME: koan
+        # One universal purchase with the iPhone app.
+        PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan
+        MARKETING_VERSION: ${KOAN_VERSION}
+        CURRENT_PROJECT_VERSION: ${KOAN_BUILD}
+        TARGETED_DEVICE_FAMILY: "3"
+        # A layered icon and the Top Shelf banners, drawn by
+        # `apps/ios/tv-brand.swift`.
+        ASSETCATALOG_COMPILER_APPICON_NAME: App Icon & Top Shelf Image
+        # No global accent: the shared catalog's green tints system alerts,
+        # which a television draws as green text on a white focused button.
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: ""
+        LIBRARY_SEARCH_PATHS: $(SRCROOT)/../../target/tv-link/$(PLATFORM_NAME)
+        OTHER_LDFLAGS: -lkoan_ffi
+    # A background push is how the server reaches a TV tvOS has suspended,
+    # to link and take what Play on sent it. tvOS shows no notifications, so
+    # there is nothing more to ask for. `development` is the sandbox gateway a
+    # development build's token belongs to; an App Store export, as
+    # `ios-testflight` makes for the phone, rewrites it to `production`.
+    entitlements:
+      path: ../../target/ios-project/koan-tv.entitlements
+      properties:
+        aps-environment: development
+    info:
+      path: ../../target/ios-project/TV-Info.plist
+      properties:
+        CFBundleDisplayName: kōan
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleURLTypes:
+          - CFBundleURLName: cc.blit.koan
+            CFBundleURLSchemes: [koan]
+        # `remote-notification`: a background push wakes the app to link.
+        UIBackgroundModes: [audio, remote-notification]
+        NSLocalNetworkUsageDescription: >-
+          koan connects to your music server when it is on your local network,
+          and finds other koan apps on it to play music on.
+        NSBonjourServices: [_koan._tcp]
+        ITSAppUsesNonExemptEncryption: false
+
   # Draws the Live Activity; the intents its buttons run are the app's.
   KoanWidgets:
     type: app-extension
@@ -237,6 +315,19 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan.uitests
         GENERATE_INFOPLIST_FILE: YES
 
+  # The remote's walk through the television app. See `just tv-walk`.
+  KoanTVUITests:
+    type: bundle.ui-testing
+    platform: tvOS
+    sources:
+      - path: TVUITests
+    dependencies:
+      - target: KoanTV
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cc.blit.koan.tvuitests
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   Koan:
     build:
@@ -245,5 +336,14 @@ schemes:
     test:
       targets:
         - KoanUITests
+    archive:
+      config: Release
+  KoanTV:
+    build:
+      targets:
+        KoanTV: all
+    test:
+      targets:
+        - KoanTVUITests
     archive:
       config: Release

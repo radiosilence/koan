@@ -86,7 +86,7 @@ struct FilterField: View {
 
     var body: some View {
         TextField(placeholder, text: $text)
-            .textFieldStyle(.roundedBorder)
+            .borderedField()
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
     }
