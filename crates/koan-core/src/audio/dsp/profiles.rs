@@ -355,7 +355,7 @@ pub fn set_made_for(name: &str, made_for: Option<&str>) -> Result<(), String> {
 /// to, for drawing: an AutoEQ result's own two curves, its target moved as a
 /// chosen target moves it; or a measurement and its target, levelled at
 /// 1 kHz so they are drawn against each other.
-fn headphone(p: &DspProfile) -> Option<(targets::Curve, targets::Curve)> {
+fn headphone(p: &DspProfile) -> Option<(super::targets::Curve, super::targets::Curve)> {
     use super::targets;
     let folder = dir(&p.name);
     if let Some(m) = &p.measurement {
@@ -603,6 +603,11 @@ pub struct Response {
     pub predicted: Option<Vec<f64>>,
     /// The gain ahead of it all at `rate`.
     pub preamp_db: f64,
+    /// For a chain with both a correction and tuning: what the correction
+    /// does, and what the tuning on top does, so each can be drawn as its
+    /// own. `total` is the two together.
+    pub correction: Option<Vec<f64>>,
+    pub tuning: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -631,6 +636,32 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
         .filter(|f| matches!(f, crate::config::DspFilter::Band(_)))
         .map(|f| curve(std::slice::from_ref(f)))
         .collect();
+    // The correction alone, where the chain has tuning besides.
+    let corrector = corrections_in(profile, all)
+        .first()
+        .and_then(|c| all.iter().find(|p| &p.name == c))
+        .filter(|c| c.name != profile.name || !profile.layers.is_empty());
+    let correction = corrector.and_then(|c| {
+        let alone = DspProfile {
+            layers: Vec::new(),
+            ..c.clone()
+        };
+        Setup::load(&alone, all, &config::config_dir())
+            .ok()
+            .flatten()
+            .map(|s| s.response(&freqs, rate))
+    });
+    let tuning = correction
+        .as_ref()
+        .map(|c| {
+            total
+                .iter()
+                .zip(c)
+                .map(|(t, c)| t - c)
+                .collect::<Vec<f64>>()
+        })
+        .filter(|t| t.iter().any(|db| db.abs() > 0.05));
+    let correction = correction.filter(|_| tuning.is_some());
     let layers = profile
         .layers
         .iter()
@@ -675,6 +706,8 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
         target,
         predicted,
         preamp_db,
+        correction,
+        tuning,
     })
 }
 
@@ -965,6 +998,8 @@ pub fn preview_measurement(text: &str, target: &str, rate: u32) -> Result<Respon
         target: Some(level(&aim)),
         predicted: Some(predicted),
         preamp_db: 0.0,
+        correction: None,
+        tuning: None,
         total,
         freqs,
     })

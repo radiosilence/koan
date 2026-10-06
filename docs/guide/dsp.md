@@ -26,6 +26,10 @@ filter's rate and the stream never ends between tracks. Seeking opens a new
 stream at the new position. A renderer that cannot take FLAC is sent WAV;
 one that takes neither is handed the original file.
 
+New to headphone EQ? [Headphone EQ, explained](headphone-eq.md) covers
+measurements, targets and corrections, and which way to go for your
+headphones.
+
 ## Importing
 
 In the apps, **Settings → Playback → EQ and convolution → Import…** takes files,

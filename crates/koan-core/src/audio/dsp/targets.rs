@@ -703,7 +703,7 @@ mod tests {
         assert_eq!(loaded(), vec![band.clone()]);
 
         let choices = profiles::target_choices(name).unwrap();
-        assert_eq!(choices.made_for.id, "harman-over-ear-2018");
+        assert_eq!(choices.made_for.unwrap().id, "harman-over-ear-2018");
         assert!(
             choices
                 .choices

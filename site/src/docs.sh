@@ -22,6 +22,7 @@ pages=(
   "Playback|docs/guide/apple-tv.md"
   "Playback|docs/guide/sleep-timer.md"
   "Playback|docs/guide/dsp.md"
+  "Playback|docs/guide/headphone-eq.md"
   "Automation|docs/guide/mcp-integration.md"
   "Automation|docs/guide/graphql-api.md"
   "Reference|docs/reference/configuration.md"
