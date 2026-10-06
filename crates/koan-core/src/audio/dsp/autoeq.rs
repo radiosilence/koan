@@ -618,12 +618,9 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         "WH-1000XM4",
         "WF-1000XM5",
         "Marshall Major IV",
-        "Beats Studio Buds +",
         "Galaxy Buds+",
         "Galaxy Buds2 Pro",
         "CMF Buds Pro 2",
-        "Nothing Ear (2)",
-        "Jabra Elite 85t",
     ];
 
     #[test]
@@ -701,5 +698,13 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
             found("Sennheiser HD 650").as_deref(),
             Some("Sennheiser HD 650")
         );
+        // Headphones that ship named in full, maker first.
+        for (device, entry) in [
+            ("Beats Studio Buds +", "Beats Studio Buds +"),
+            ("Nothing Ear (2)", "Nothing ear (2)"),
+            ("Jabra Elite 85t", "Jabra Elite 85t"),
+        ] {
+            assert_eq!(found(device).as_deref(), Some(entry), "{device}");
+        }
     }
 }
