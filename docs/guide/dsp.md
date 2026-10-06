@@ -84,6 +84,47 @@ most once a day, by ETag, so an unchanged index costs one empty response;
 `search --refresh` asks regardless. When GitHub cannot be reached, the copy
 kept is used. Numbers refer to that copy, so `install` never refreshes it.
 
+### Targets
+
+An AutoEQ correction brings a headphone to one target, usually Harman's. A
+profile installed from AutoEQ keeps the result's measurement and the target it
+was made for beside it, and its page in Settings (or `koan dsp target NAME`)
+offers others for the same kind of headphone:
+
+| Target | Character |
+|---|---|
+| Harman over-ear 2018 | What most listeners in Harman's research preferred: a warm bass shelf, a forward upper midrange, a soft top end |
+| Harman over-ear 2018, no bass shelf | The same with a flat low end |
+| oratory1990 over-ear | oratory1990's target, close to Harman's |
+| Diffuse field | Even sound from every direction: no bass shelf, brighter than Harman |
+| Harman in-ear 2019 | Harman's in-ear target: a bigger bass shelf and more treble than over-ear |
+| Harman in-ear 2019, no bass shelf | The same with a flat low end |
+| AutoEQ in-ear | AutoEQ's own in-ear target |
+| oratory1990 in-ear | oratory1990's target for in-ears |
+
+Another target plays as the difference between the two, after the
+correction. Both curves come from the same reference set, so whatever AutoEQ
+compensated for the rig the headphone was measured on is common to both and
+cancels; a result whose own target matches none of the set offers no others,
+since a difference across rigs would correct the rig rather than the sound.
+The difference is levelled at 1 kHz, smoothed over a twelfth of an octave and
+held within ±12 dB, and runs as a minimum-phase filter; the preamp lowers the
+level for any boost it adds. The targets are AutoEQ's, under its MIT licence;
+`crates/koan-core/src/audio/dsp/targets/SOURCES.md` records where each came
+from.
+
+**Add a Target…** (or `koan dsp add-target FILE`) takes a CSV of frequency and
+level, or a squig.link export, for a target koan does not ship: a community
+one, or your own. It is offered for every correction, whatever kind of
+headphone, so choose one meant for yours.
+
+```bash
+koan dsp target "Sennheiser HD 650 (AutoEQ, oratory1990)"              # what it was made for, and the others
+koan dsp target "Sennheiser HD 650 (AutoEQ, oratory1990)" --use diffuse-field-gras-kemar
+koan dsp target "Sennheiser HD 650 (AutoEQ, oratory1990)" --reset
+koan dsp add-target "My target.csv"
+```
+
 A profile is named after what it came from; rename it on its page in Settings
 (or pass `--name`). Importing into a profile of the same name adds to it, so a
 room's responses and a headphone EQ can live in one profile.

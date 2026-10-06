@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Choose a target for an AutoEQ correction.** A headphone installed from AutoEQ can be moved from the target it was made for to another: Harman over-ear 2018 or in-ear 2019 (with or without their bass shelf), oratory1990's, AutoEQ's in-ear, or diffuse field, each described in the picker. The difference between the two plays after the correction. A target of your own can be added from a CSV or a squig.link export.
 - **Find in AutoEQ by maker and model,** before anything is typed, and AutoEQ offered for headphones whose own names leave the maker out, where the name still says which model and generation they are (Sony WH-1000XM4, AirPods Max). A name that says only roughly (AirPods Pro, a Bose QC45) is offered a search for the model instead, to pick the variant from.
 - **AutoEQ in the apps.** *Find in AutoEQ…* in the Mac and iOS apps' EQ settings searches AutoEQ by headphone name and installs a result for the output in use. An output whose name ends with a headphone's full name, maker included, is offered AutoEQ's profile for it; the match is strict, and the offer can be turned down per device.
 - **AutoEQ search from the command line.** `koan dsp autoeq search` finds a headphone in AutoEQ's index by name, and `koan dsp autoeq install` saves its parametric EQ as a profile, optionally for an output device. The index is kept beside the config and refreshed at most daily.
