@@ -56,7 +56,7 @@ struct AlbumGridCell: View {
     private var tile: some View {
         VStack(alignment: .leading, spacing: 7) {
             PlayableArtwork(albumId: album.id)
-                .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.28), radius: 7, y: 3)
+                .koanShadow(0.28, radius: 7, y: 3)
                 .overlay {
                     if selecting, let selection {
                         SelectionMark(key: Playable.album(album).key, selection: selection)
@@ -179,7 +179,7 @@ private struct SelectionMark: View {
                     .font(.system(size: 20))
                     .symbolRenderingMode(.palette)
                     .foregroundStyle(.white, selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.black.opacity(0.25)))
-                    .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.35), radius: 2)
+                    .koanShadow(0.35, radius: 2)
                     .padding(7)
             }
     }

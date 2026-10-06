@@ -261,7 +261,7 @@ struct PlaylistView: View {
     private var artwork: some View {
         PlaylistArtwork(sources: playlists.covers[playlistId] ?? [], cornerRadius: KoanTheme.radius(8))
             .frame(width: 132, height: 132)
-            .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.3), radius: 10, y: 4)
+            .koanShadow(0.3, radius: 10, y: 4)
     }
 
     private var titleBlock: some View {
@@ -681,7 +681,7 @@ private struct PlaylistAlbumHeader: View {
                     source: track.albumId.map { .album($0) } ?? .track(track.id), cornerRadius: KoanTheme.radius(5)
                 )
                     .frame(width: 44, height: 44)
-                    .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.28), radius: 4, y: 2)
+                    .koanShadow(0.28, radius: 4, y: 2)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(group.album)

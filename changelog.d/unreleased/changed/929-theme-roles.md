@@ -1,0 +1,1 @@
+- **API key and account errors read as errors in the system look too.** Settings showed them in the label colour there, and in the theme's red only under the kōan theme.
