@@ -65,6 +65,22 @@ const MAX_CHAIN_FILTERS: usize = 256;
 /// they hold: a diamond of empty stacks costs time if not memory.
 const MAX_LAYER_VISITS: usize = 1024;
 
+/// The level `filters` leave channel 0 at, in dB, at each of `freqs`, as
+/// the DSP runs them at `rate`: the same plan, and the same gain the derived
+/// preamp is worked out from. A graphic curve counts as its design, which
+/// its minimum-phase FIR follows; delays change no level.
+pub fn response(filters: &[DspFilter], freqs: &[f64], rate: u32) -> Vec<f64> {
+    let plan = steps::plan(filters, rate, 2);
+    freqs
+        .iter()
+        .map(|&hz| {
+            let w = std::f64::consts::TAU * hz / rate as f64;
+            let gain: f64 = steps::gain_matrix(&plan, 2, w, rate)[0].iter().sum();
+            20.0 * gain.max(1e-6).log10()
+        })
+        .collect()
+}
+
 /// The filters `profile` plays: each layer that is on, in order, as that
 /// layer plays it, then its own, then the step moving it to another target.
 /// `stack` holds the profiles being resolved, which a cycle would come back

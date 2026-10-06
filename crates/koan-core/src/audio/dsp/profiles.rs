@@ -423,6 +423,124 @@ pub fn assign(name: Option<&str>, device: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// What a profile does to the sound, for drawing: every curve on AutoEQ's
+/// grid, in dB.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Response {
+    pub freqs: Vec<f64>,
+    /// Everything it plays, layers and target step included.
+    pub total: Vec<f64>,
+    /// Each of its own parametric bands alone, in order.
+    pub bands: Vec<Vec<f64>>,
+    /// Each layer as it plays alone, for a stack.
+    pub layers: Vec<LayerResponse>,
+    /// For a correction from AutoEQ (or a stack with one among its layers):
+    /// the headphone as measured, the target it plays to, and the measurement
+    /// with everything here applied.
+    pub measurement: Option<Vec<f64>>,
+    pub target: Option<Vec<f64>>,
+    pub predicted: Option<Vec<f64>>,
+    /// The gain ahead of it all at `rate`.
+    pub preamp_db: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayerResponse {
+    pub name: String,
+    pub on: bool,
+    pub db: Vec<f64>,
+}
+
+/// What `name` does to the sound at `rate`, from the filters the DSP runs.
+/// `None` for a profile that is not there or would not play.
+pub fn response(name: &str, rate: u32) -> Option<Response> {
+    use super::targets;
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let profile = all.iter().find(|p| p.name == name)?;
+    let freqs = targets::grid();
+    let curve = |filters: &[crate::config::DspFilter]| super::response(filters, &freqs, rate);
+    let chain = super::chain(profile, all, &mut Vec::new()).ok()?;
+    let total = curve(&chain);
+    let bands = profile
+        .filters
+        .iter()
+        .filter(|f| matches!(f, crate::config::DspFilter::Band(_)))
+        .map(|f| curve(std::slice::from_ref(f)))
+        .collect();
+    let layers = profile
+        .layers
+        .iter()
+        .filter_map(|l| {
+            let p = all.iter().find(|p| p.name == l.profile)?;
+            let filters = super::chain(p, all, &mut Vec::new()).ok()?;
+            Some(LayerResponse {
+                name: l.profile.clone(),
+                on: l.on,
+                db: curve(&filters),
+            })
+        })
+        .collect();
+
+    // The measurement kept with an AutoEQ correction: this profile's, or the
+    // first of its layers that has one.
+    let measured = std::iter::once(profile)
+        .chain(
+            profile
+                .layers
+                .iter()
+                .filter(|l| l.on)
+                .filter_map(|l| all.iter().find(|p| p.name == l.profile)),
+        )
+        .find_map(|p| {
+            let text = std::fs::read_to_string(targets::result_path(&dir(&p.name))).ok()?;
+            let raw = targets::result_column(&text, "raw");
+            let target = targets::result_column(&text, "target");
+            (!raw.is_empty() && !target.is_empty()).then_some((p, raw, target))
+        });
+    let (measurement, target, predicted) = match measured {
+        Some((p, raw, made_for)) => {
+            let raw: Vec<f64> = freqs.iter().map(|&hz| targets::at(&raw, hz)).collect();
+            // The target it plays to: the one in the result, moved as the
+            // chosen target moves it.
+            let moved = p
+                .target
+                .as_ref()
+                .and_then(|t| Some((t.chosen.as_ref()?, &t.made_for)))
+                .and_then(|(to, from)| {
+                    Some(targets::difference(
+                        &targets::choice_curve(from)?,
+                        &targets::choice_curve(to)?,
+                    ))
+                });
+            let target: Vec<f64> = freqs
+                .iter()
+                .map(|&hz| {
+                    targets::at(&made_for, hz)
+                        + moved.as_ref().map_or(0.0, |g| targets::at(&g.points, hz))
+                })
+                .collect();
+            let predicted = raw.iter().zip(&total).map(|(r, t)| r + t).collect();
+            (Some(raw), Some(target), Some(predicted))
+        }
+        None => (None, None, None),
+    };
+    let preamp_db = Setup::load(profile, all, &config::config_dir())
+        .ok()
+        .flatten()
+        .map_or(0.0, |s| s.preamp_db(rate, 2));
+    Some(Response {
+        freqs,
+        total,
+        bands,
+        layers,
+        measurement,
+        target,
+        predicted,
+        preamp_db,
+    })
+}
+
 /// The stacks `name` is a layer of.
 fn stacks_of(cfg: &Config, name: &str) -> Vec<String> {
     cfg.dsp
@@ -787,5 +905,65 @@ mod tests {
         let l29 = summary.profiles.iter().find(|p| p.name == "L29").unwrap();
         assert!(l29.problem.is_some(), "Settings shows why it does not play");
         assert!(set_layers("L30", vec![layer("L29", true)]).is_err());
+    }
+
+    /// The response is what the DSP plays: a 3 dB peak shows as 3 dB at its
+    /// frequency and nothing far from it, a stack is its layers summed, and a
+    /// band's own curve is drawn alone.
+    #[test]
+    fn a_response_is_the_filters_the_dsp_runs() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Peak".into(),
+                filters: vec![band(1000.0)],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Shelf".into(),
+                filters: vec![crate::config::DspFilter::Band(crate::config::EqFilter {
+                    kind: crate::config::EqFilterKind::LowShelf,
+                    freq: 100.0,
+                    gain_db: 6.0,
+                    q: 0.7,
+                    channels: vec![],
+                })],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let r = response("Peak", 48000).unwrap();
+        let at = |r: &Response, curve: &[f64], hz: f64| {
+            let i = r.freqs.iter().position(|f| *f >= hz).unwrap();
+            curve[i]
+        };
+        assert!(
+            (at(&r, &r.total, 1000.0) - 3.0).abs() < 0.2,
+            "{}",
+            at(&r, &r.total, 1000.0)
+        );
+        assert!(at(&r, &r.total, 20.0).abs() < 0.1);
+        assert_eq!(r.bands.len(), 1);
+        assert!(r.measurement.is_none());
+        assert!(
+            r.preamp_db < -2.5,
+            "the peak is taken off ahead: {}",
+            r.preamp_db
+        );
+
+        set_layers("Both", vec![layer("Shelf", true), layer("Peak", true)]).unwrap();
+        let r = response("Both", 48000).unwrap();
+        assert_eq!(r.layers.len(), 2);
+        assert!((at(&r, &r.total, 30.0) - 6.0).abs() < 0.5, "the shelf");
+        assert!((at(&r, &r.total, 1000.0) - 3.0).abs() < 0.5, "the peak");
+        assert!(r.bands.is_empty(), "no bands of its own");
+        set_layers("Both", vec![layer("Shelf", false), layer("Peak", true)]).unwrap();
+        let r = response("Both", 48000).unwrap();
+        assert!(at(&r, &r.total, 30.0).abs() < 0.3, "the shelf off");
+        assert!(!r.layers[0].on);
     }
 }

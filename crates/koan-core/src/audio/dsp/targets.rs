@@ -172,7 +172,7 @@ pub fn shipped(id: &str) -> Option<&'static Target> {
 
 /// The level of `curve` at `hz`, interpolated against log frequency and held
 /// past either end.
-fn at(curve: &[(f64, f64)], hz: f64) -> f64 {
+pub(crate) fn at(curve: &[(f64, f64)], hz: f64) -> f64 {
     let (Some(first), Some(last)) = (curve.first(), curve.last()) else {
         return 0.0;
     };
@@ -187,8 +187,9 @@ fn at(curve: &[(f64, f64)], hz: f64) -> f64 {
     g0 + (g1 - g0) * (hz / f0).ln() / (f1 / f0).ln()
 }
 
-/// AutoEQ's grid: what the shipped targets and every result use.
-fn grid() -> Vec<f64> {
+/// AutoEQ's grid: what the shipped targets and every result use, and what
+/// responses are drawn on.
+pub fn grid() -> Vec<f64> {
     TARGETS[0].curve().into_iter().map(|(hz, _)| hz).collect()
 }
 
