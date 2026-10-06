@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Path as UrlPath, Query, RawQuery, Request, State};
+use axum::extract::{FromRequestParts, Path as UrlPath, Request, State};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -304,6 +305,64 @@ impl SubsonicParams {
     }
 }
 
+/// A `formPost` body, read by [`form_post`] and handed to the parameter
+/// extractors beside the URL's query string, which is left as it came. Not
+/// written into the URI: `http` refuses one past 64 KB, and a form is how a
+/// client sends what does not fit in a URL.
+#[derive(Clone)]
+struct FormBody(Arc<str>);
+
+/// The URL's query string, then the form body's, as one: what handlers read,
+/// and what the sign-in throttle must read too, or credentials sent in a form
+/// would pass it unseen.
+fn request_params(uri: &axum::http::Uri, extensions: &axum::http::Extensions) -> Option<String> {
+    let query = uri.query().filter(|q| !q.is_empty());
+    let form = extensions
+        .get::<FormBody>()
+        .map(|f| &*f.0)
+        .filter(|f| !f.is_empty());
+    match (query, form) {
+        (Some(q), Some(f)) => Some(format!("{q}&{f}")),
+        (q, f) => q.or(f).map(str::to_owned),
+    }
+}
+
+/// The request's parameters as one query string: the URL's first, then a
+/// `formPost` body's, so a parameter in the URL wins where a handler reads one
+/// value. In place of axum's `RawQuery`, which sees only the URL.
+struct RawQuery(Option<String>);
+
+impl<S: Send + Sync> FromRequestParts<S> for RawQuery {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(request_params(&parts.uri, &parts.extensions)))
+    }
+}
+
+/// axum's `Query` over the parameters [`RawQuery`] sees.
+struct Query<T>(T);
+
+impl<T: serde::de::DeserializeOwned, S: Send + Sync> FromRequestParts<S> for Query<T> {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        serde_urlencoded::from_str(
+            request_params(&parts.uri, &parts.extensions)
+                .as_deref()
+                .unwrap_or_default(),
+        )
+        .map(Query)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to deserialize query string: {e}"),
+            )
+                .into_response()
+        })
+    }
+}
+
 /// Query parameters kept as an ordered list of pairs.
 ///
 /// `serde_urlencoded`, which axum's `Query` uses, cannot deserialise a repeated
@@ -445,7 +504,7 @@ async fn throttle_auth(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let params = RawParams::parse(request.uri().query());
+    let params = RawParams::parse(request_params(request.uri(), request.extensions()).as_deref());
     let username = params.get("u").unwrap_or_default().to_owned();
     let unguessable = params.get("apiKey").is_some()
         || (params.get("t").is_some()
@@ -4404,10 +4463,11 @@ async fn koan_pair_approve(
 }
 
 /// OpenSubsonic `formPost`: the parameters of an
-/// `application/x-www-form-urlencoded` POST body are appended to the query
-/// string, so every handler reads one set of parameters however they were
-/// sent, repeated keys included. Query parameters come first, so they win
-/// where a handler reads a single value.
+/// `application/x-www-form-urlencoded` POST body are read here and kept as a
+/// [`FormBody`], which the parameter extractors read after the query string,
+/// so every handler sees one set of parameters however they were sent,
+/// repeated keys included. A body past [`MAX_FORM_BODY`], or not UTF-8, is
+/// refused with a Subsonic error.
 async fn form_post(req: Request, next: Next) -> Response {
     let is_form = req.method() == Method::POST
         && req
@@ -4424,28 +4484,20 @@ async fn form_post(req: Request, next: Next) -> Response {
     }
 
     let (mut parts, body) = req.into_parts();
+    let json = RawParams::parse(parts.uri.query()).auth().wants_json();
     let Ok(bytes) = axum::body::to_bytes(body, MAX_FORM_BODY).await else {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+        return SubsonicResponse::error(
+            json,
+            &SubsonicError::internal(format!(
+                "The form is larger than {} KB",
+                MAX_FORM_BODY >> 10
+            )),
+        );
     };
     let Ok(form) = std::str::from_utf8(&bytes) else {
-        return StatusCode::BAD_REQUEST.into_response();
+        return SubsonicResponse::error(json, &SubsonicError::internal("The form is not UTF-8"));
     };
-    let form = form.trim();
-    let query = match parts.uri.query().filter(|q| !q.is_empty()) {
-        Some(q) if !form.is_empty() => format!("{q}&{form}"),
-        Some(q) => q.to_owned(),
-        None => form.to_owned(),
-    };
-    let path_and_query = format!("{}?{query}", parts.uri.path());
-    let mut uri = parts.uri.into_parts();
-    uri.path_and_query = match path_and_query.parse() {
-        Ok(pq) => Some(pq),
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
-    parts.uri = match axum::http::Uri::from_parts(uri) {
-        Ok(u) => u,
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
+    parts.extensions.insert(FormBody(form.trim().into()));
     next.run(Request::from_parts(parts, axum::body::Body::empty()))
         .await
 }
@@ -4968,8 +5020,10 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
 }
 
 /// The Subsonic routes with their state and the layers every request passes.
-/// `form_post` is outermost, so the sign-in throttle sees credentials sent in
-/// a form body as well as in the query.
+/// `form_post` is outermost, so its [`FormBody`] is in place when the sign-in
+/// throttle reads the request's parameters, which it does through
+/// [`request_params`] as the handlers do: credentials sent in a form body are
+/// throttled, and an API key sent in one passes, as in the query.
 fn subsonic_app(state: Arc<AppState>) -> axum::Router {
     let throttle = Arc::new(AuthThrottle::new(
         state.password.is_some().then(|| state.username.clone()),
@@ -8209,6 +8263,181 @@ mod tests {
                 uid_of(&state, queries::UidKind::Track, first),
                 uid_of(&state, queries::UidKind::Track, second)
             ]
+        );
+    }
+
+    /// The router on a real socket, so requests go through hyper's own
+    /// parsing, URI limits included.
+    async fn serve(state: Arc<AppState>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        format!("http://{addr}")
+    }
+
+    /// The whole Subsonic app, throttle included, on a real socket that tells
+    /// the throttle where each request came from.
+    async fn serve_app(state: Arc<AppState>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = subsonic_app(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{addr}")
+    }
+
+    async fn post_text(http: &reqwest::Client, url: &str, form: &str) -> String {
+        http.post(url)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(form.to_owned())
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn passwords_sent_in_a_form_are_throttled_as_in_the_query() {
+        let (state, _dir) = test_state();
+        let base = serve_app(state).await;
+        let http = reqwest::Client::new();
+        let ping = format!("{base}/rest/ping");
+        for _ in 0..10 {
+            let body = post_text(&http, &ping, "u=mate&p=wrong&v=1.16.1&c=test").await;
+            assert!(body.contains("code=\"40\""), "{body}");
+        }
+        let body = post_text(&http, &ping, "u=mate&p=hunter22&v=1.16.1&c=test").await;
+        assert!(body.contains("Too many failed sign-ins"), "{body}");
+        // In the query, the same account is as spent.
+        let body = http
+            .get(format!("{ping}?u=mate&p=hunter22&v=1.16.1&c=test"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(body.contains("Too many failed sign-ins"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_api_key_or_the_shared_token_in_a_form_is_not_a_password_guess() {
+        let (state, _dir) = test_state();
+        let key = api_key(&state, "mate");
+        let base = serve_app(state).await;
+        let http = reqwest::Client::new();
+        let ping = format!("{base}/rest/ping");
+        // More wrong keys than the address may fail passwords: none counts.
+        for _ in 0..=AUTH_FAILURES_PER_ADDRESS_PER_MINUTE {
+            let body = post_text(&http, &ping, "apiKey=wrong&v=1.16.1&c=test").await;
+            assert!(body.contains("code=\"44\""), "{body}");
+        }
+        let body = post_text(&http, &ping, &format!("apiKey={key}&v=1.16.1&c=test")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = post_text(&http, &ping, &auth_query("")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = post_text(&http, &ping, "u=mate&p=hunter22&v=1.16.1&c=test").await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+    }
+
+    /// A form past the 64 KB `http` allows a URI: what `formPost` is for.
+    #[tokio::test]
+    async fn a_form_longer_than_any_url_reaches_the_handler() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let track = {
+            let db = Database::open(state.pool.path()).unwrap();
+            queries::track_id_by_path(&db.conn, "/music/test.flac")
+                .unwrap()
+                .unwrap()
+        };
+        let uid = uid_of(&state, queries::UidKind::Track, track);
+        let base = serve(state).await;
+        let http = reqwest::Client::new();
+        let songs = vec![format!("songId={uid}"); 2500].join("&");
+        assert!(songs.len() > 65_534);
+
+        let created: serde_json::Value = http
+            .post(format!(
+                "{base}/rest/createPlaylist?{}",
+                auth_query("f=json")
+            ))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(format!("name=long&{songs}"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let playlist = &created["subsonic-response"]["playlist"];
+        assert_eq!(playlist["songCount"], 2500, "{created}");
+
+        let id = playlist["id"].as_str().unwrap();
+        let added = vec![format!("songIdToAdd={uid}"); 2500].join("&");
+        let updated: serde_json::Value = http
+            .post(format!("{base}/rest/updatePlaylist"))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(format!("{}&playlistId={id}&{added}", auth_query("f=json")))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(updated["subsonic-response"]["status"], "ok", "{updated}");
+        let got: serde_json::Value = http
+            .get(format!(
+                "{base}/rest/getPlaylist?{}&id={id}",
+                auth_query("f=json")
+            ))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            got["subsonic-response"]["playlist"]["songCount"], 5000,
+            "{got}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_get_reads_its_query_and_an_oversized_form_is_refused() {
+        let (state, _dir) = test_state();
+        let base = serve(state).await;
+        let http = reqwest::Client::new();
+        let ping: serde_json::Value = http
+            .get(format!("{base}/rest/ping?{}", auth_query("f=json")))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(ping["subsonic-response"]["status"], "ok", "{ping}");
+
+        let padding = "x".repeat(MAX_FORM_BODY + 1);
+        let refused: serde_json::Value = http
+            .post(format!("{base}/rest/ping?f=json"))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(format!("{}&pad={padding}", auth_query("")))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let r = &refused["subsonic-response"];
+        assert_eq!(r["status"], "failed", "{refused}");
+        assert!(
+            r["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("larger than"),
+            "{refused}"
         );
     }
 

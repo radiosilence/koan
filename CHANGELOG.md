@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- **Large form POSTs to the Subsonic API no longer fail.** A form body past about 64 KB was refused with an empty 400, because it was rewritten into the request's URL, which is capped there; `createPlaylist` or `updatePlaylist` with more than about 1,600 songs failed. Forms are now read beside the URL up to 1 MiB, and one past that is refused with a Subsonic error.
 - **Subsonic clients showed no hearts outside the starred list.** Songs, albums and artists never carried `starred`, so a client that reads it on album pages, search results and album lists showed nothing as favourited. They now carry the time the account favourited them, as `getStarred2` always implied.
 - **Folder-browse Subsonic clients get hearts and ratings too.** `getIndexes`' artists and the albums `getMusicDirectory` lists under an artist carried no `starred`, `userRating` or `played`, so a client browsing by folder (DSub and similar) showed none of the account's favourites or ratings there. They now carry the caller's own, read for the whole listing at once ([#864](https://github.com/radiosilence/koan/issues/864)).
 - **Cancelling a library scan stops the folder watcher's too.** The watcher's scans had no way to be stopped, so the apps' Cancel did nothing to the scan the activity row was showing. Forgetting a library folder now also stops a scan of it, rather than leaving it to index again what was just forgotten.
