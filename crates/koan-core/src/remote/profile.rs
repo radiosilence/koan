@@ -44,6 +44,11 @@ pub const PASSWORDS: &str = "koanPasswords";
 /// keys themselves), `/rest/koanCreateApiKey` and `/rest/koanRevokeApiKey`
 /// make and revoke one.
 pub const API_KEYS: &str = "koanApiKeys";
+/// Assistants connect to this server's `/mcp`: `/rest/koanMcp` gives its
+/// address and the page explaining how. Listed only where the server knows
+/// the address it is reached at (`sharing.public_url`), which MCP's sign-in
+/// needs.
+pub const MCP: &str = "koanMcp";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {

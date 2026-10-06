@@ -398,6 +398,9 @@ private struct RemoteSettings: View {
                 if mirror.offers(ApiKeysSettings.extensionName) {
                     ApiKeysSettings()
                 }
+                if mirror.offers(AssistantsSettings.extensionName) {
+                    AssistantsSettings()
+                }
                 // Accounts and pairings are managed from a device with a keyboard.
                 #if !os(tvOS)
                 PeopleSettings(signedInAs: model.settings.remoteUsername)

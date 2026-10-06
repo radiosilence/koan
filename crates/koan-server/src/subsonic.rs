@@ -91,6 +91,9 @@ struct AppState {
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
     /// `ffmpeg`, where transcoding is on and it was found at startup.
     transcoder: Option<crate::transcode::Transcoder>,
+    /// `sharing.public_url`, trimmed: where an assistant reaches `/mcp`.
+    /// Without it, MCP's sign-in cannot work, so none is offered.
+    public_url: Option<String>,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -3388,19 +3391,28 @@ async fn get_open_subsonic_extensions(
     } else {
         &[]
     };
+    let mcp: &[(&str, &[i64])] = if state.public_url.is_some() {
+        &[(koan_core::remote::profile::MCP, &[1])]
+    } else {
+        &[]
+    };
     SubsonicResponse::ok(params.wants_json())
         .list(
             "openSubsonicExtensions",
-            EXTENSIONS.iter().chain(transcode).map(|(name, versions)| {
-                XmlNode::new("openSubsonicExtensions")
-                    .attr("name", name)
-                    .list(
-                        "versions",
-                        versions
-                            .iter()
-                            .map(|v| XmlNode::scalar("versions", AttrValue::Int(*v))),
-                    )
-            }),
+            EXTENSIONS
+                .iter()
+                .chain(transcode)
+                .chain(mcp)
+                .map(|(name, versions)| {
+                    XmlNode::new("openSubsonicExtensions")
+                        .attr("name", name)
+                        .list(
+                            "versions",
+                            versions
+                                .iter()
+                                .map(|v| XmlNode::scalar("versions", AttrValue::Int(*v))),
+                        )
+                }),
         )
         .build()
 }
@@ -4222,6 +4234,29 @@ async fn koan_set_user_password(
     .await
 }
 
+/// Where an assistant connects to this server (`/mcp`), and the page that says
+/// how (`/connect`). Signing in is MCP's own OAuth, through this server's web
+/// pages; this only says where.
+async fn koan_mcp(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    offload_response(move || {
+        respond_db_caller(&state, &params, Role::Readonly, |_, _, b| {
+            let base = state
+                .public_url
+                .as_deref()
+                .ok_or_else(|| SubsonicError::not_found("An address for assistants"))?;
+            Ok(b.child(
+                XmlNode::new("mcp")
+                    .attr("url", &format!("{base}/mcp"))
+                    .attr("connect", &format!("{base}/connect")),
+            ))
+        })
+    })
+    .await
+}
+
 /// The caller's API keys, with the one the request signed in with marked
 /// `current`. Never the keys: only their hashes are kept.
 async fn koan_api_keys(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
@@ -4836,6 +4871,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         )
         .route("/rest/koanInvite", get(koan_invite).post(koan_invite))
         .route("/rest/koanApiKeys", get(koan_api_keys).post(koan_api_keys))
+        .route("/rest/koanMcp", get(koan_mcp).post(koan_mcp))
         .route("/rest/koanCreateApiKey", post(koan_create_api_key))
         .route("/rest/koanRevokeApiKey", post(koan_revoke_api_key))
         .route("/rest/koanSetUserPassword", post(koan_set_user_password))
@@ -5139,6 +5175,12 @@ pub fn subsonic_router(
         covers,
         last_modified: Default::default(),
         transcoder,
+        public_url: cfg
+            .sharing
+            .public_url
+            .as_deref()
+            .map(|u| u.trim().trim_end_matches('/').to_owned())
+            .filter(|u| !u.is_empty()),
     });
 
     Some(subsonic_app(state))
@@ -5181,6 +5223,7 @@ mod tests {
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
             transcoder: None,
+            public_url: None,
         });
         (state, dir)
     }
@@ -6288,6 +6331,48 @@ mod tests {
             list().await["apiKeys"]["apiKey"].as_array().unwrap().len(),
             1
         );
+    }
+
+    /// Assistants are offered only where the server knows the address it is
+    /// reached at: MCP's sign-in goes through it.
+    #[tokio::test]
+    async fn assistants_are_offered_with_a_public_address() {
+        let extensions = |state: Arc<AppState>| async move {
+            get_response(
+                build_test_router(state),
+                "/rest/getOpenSubsonicExtensions?f=json",
+            )
+            .await
+            .1
+        };
+        let mcp = |state: Arc<AppState>, auth: &str| {
+            let path = format!("/rest/koanMcp?{auth}&v=1.16.1&c=test&f=json");
+            async move {
+                let body = get_response(build_test_router(state), &path).await.1;
+                serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"]
+                    .clone()
+            }
+        };
+        let mate = "u=mate&p=hunter22";
+
+        let (state, _dir) = test_state();
+        assert!(!extensions(state.clone()).await.contains("koanMcp"));
+        let v = mcp(state.clone(), mate).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
+
+        let (state, _dir) = test_state();
+        let mut inner = Arc::try_unwrap(state).ok().unwrap();
+        inner.public_url = Some("https://koan.example.com".into());
+        let state = Arc::new(inner);
+        assert!(extensions(state.clone()).await.contains("koanMcp"));
+        let v = mcp(state.clone(), mate).await;
+        assert_eq!(v["mcp"]["url"], "https://koan.example.com/mcp", "{v}");
+        assert_eq!(
+            v["mcp"]["connect"], "https://koan.example.com/connect",
+            "{v}"
+        );
+        let v = mcp(state, "u=mate&p=wrong").await;
+        assert_eq!(v["error"]["code"], 40, "signed in only: {v}");
     }
 
     /// An app password must not mint keys that outlive it, nor revoke the

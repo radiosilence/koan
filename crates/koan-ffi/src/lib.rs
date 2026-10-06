@@ -2788,6 +2788,26 @@ impl KoanEngine {
         .await
     }
 
+    /// Where an assistant connects to the signed-in server.
+    pub async fn assistants(self: Arc<Self>) -> Result<Assistants, KoanError> {
+        offload::offload(move || {
+            let client = account_client()?;
+            let offers = koan_core::remote::profile::for_auth(client.auth())
+                .is_some_and(|p| p.offers(koan_core::remote::profile::MCP));
+            if !offers {
+                return Err(KoanError::NotFound {
+                    message: "this server does not offer assistants".into(),
+                });
+            }
+            let mcp = client.koan_mcp().map_err(remote_error)?;
+            Ok(Assistants {
+                mcp_url: mcp.url,
+                connect_url: mcp.connect,
+            })
+        })
+        .await
+    }
+
     /// The signed-in account's API keys.
     pub async fn api_keys(self: Arc<Self>) -> Result<Vec<ApiKeyInfo>, KoanError> {
         offload::offload(move || {

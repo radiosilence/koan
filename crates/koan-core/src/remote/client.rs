@@ -848,6 +848,12 @@ impl SubsonicClient {
         .ok_or(SubsonicError::BadResponse)
     }
 
+    /// Where assistants connect to this server, and the page saying how: koan
+    /// servers offering `koanMcp`.
+    pub fn koan_mcp(&self) -> Result<KoanMcp, SubsonicError> {
+        self.get("koanMcp")?.mcp.ok_or(SubsonicError::BadResponse)
+    }
+
     // -- API keys: koan servers offering `koanApiKeys`, the account's own --
 
     pub fn koan_api_keys(&self) -> Result<Vec<KoanApiKey>, SubsonicError> {
@@ -967,6 +973,7 @@ struct SubsonicResponse {
     users: Option<KoanUsers>,
     api_keys: Option<KoanApiKeys>,
     api_key: Option<KoanApiKey>,
+    mcp: Option<KoanMcp>,
     invite: Option<KoanInvite>,
     join: Option<KoanJoined>,
     pair: Option<KoanPair>,
@@ -1016,6 +1023,13 @@ pub struct KoanPair {
     pub from: String,
     #[serde(default)]
     pub local: bool,
+}
+
+/// A koan server's MCP endpoint and its page on connecting an assistant.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanMcp {
+    pub url: String,
+    pub connect: String,
 }
 
 #[derive(Debug, Deserialize)]
