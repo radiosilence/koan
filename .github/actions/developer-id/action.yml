@@ -1,0 +1,43 @@
+name: Developer ID keychain
+description: >
+  Imports the Developer ID Application certificate into a keychain made for
+  this job alone, with a random password, which codesign may use without a
+  prompt, and sets KOAN_SIGN_IDENTITY to the identity's full name. The name is
+  read back from the certificate, so it can be renewed without editing callers.
+
+inputs:
+  certificate-p12:
+    description: Base64 of the Developer ID Application certificate (.p12).
+    required: true
+  certificate-password:
+    description: Password of the .p12.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CERTIFICATE_P12: ${{ inputs.certificate-p12 }}
+        CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
+      run: |
+        set -euo pipefail
+        if [ -z "$CERTIFICATE_P12" ] || [ -z "$CERTIFICATE_PASSWORD" ]; then
+          echo "::error::developer-id: set the MACOS_CERTIFICATE_P12 and MACOS_CERTIFICATE_PASSWORD secrets"
+          exit 1
+        fi
+        keychain="$RUNNER_TEMP/signing.keychain-db"
+        password=$(openssl rand -hex 24)
+        security create-keychain -p "$password" "$keychain"
+        security set-keychain-settings -lut 21600 "$keychain"
+        security unlock-keychain -p "$password" "$keychain"
+        printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+        security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+          -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+        rm "$RUNNER_TEMP/certificate.p12"
+        security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+        security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+        identity=$(security find-identity -v -p codesigning "$keychain" \
+          | awk -F'"' '/Developer ID Application/ { print $2; exit }')
+        test -n "$identity" || { echo "::error::developer-id: no Developer ID Application identity in the certificate"; exit 1; }
+        echo "KOAN_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"

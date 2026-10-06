@@ -146,11 +146,12 @@ struct HistoryView: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text("History")
-                .font(.system(size: 26, weight: .semibold))
-            Text(entries.count == 1 ? "1 play" : "\(entries.count) plays")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            Text("History").koanCase()
+                .font(.role(.title, system: .system(size: 26, weight: .semibold)))
+                .foregroundStyle(KoanTheme.style(.strong, system: .primary))
+            Text(entries.count == 1 ? "1 play" : "\(entries.count) plays").koanCase()
+                .font(.role(.control, system: .callout))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             Spacer(minLength: 0)
             Button("Clear…") { confirmingClear = true }
                 .disabled(entries.isEmpty)
@@ -233,10 +234,10 @@ private struct HistoryRow: View {
                     RowPlayButton(playable: .track(track), visible: true)
                 } else {
                     Text(HistoryDate.time(entry.playedAt))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }
-            .font(.caption.monospacedDigit())
+            .font(.role(.fine, system: .caption.monospacedDigit()))
             .frame(width: HistoryColumns.time, alignment: .trailing)
 
             // The cover is what you recognise a record by, and scanning back
@@ -251,15 +252,15 @@ private struct HistoryRow: View {
                     LinkText(
                         text: track.artistName,
                         target: track.artistId.map { .artist($0) },
-                        font: .caption
+                        font: .role(.fine, system: .caption)
                     )
                     Text("·")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .font(.role(.fine, system: .caption))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     LinkText(
                         text: track.albumTitle,
                         target: track.albumId.map { .album($0) },
-                        font: .caption
+                        font: .role(.fine, system: .caption)
                     )
                 }
             }
@@ -270,14 +271,14 @@ private struct HistoryRow: View {
             // here, and saying so stops it reading as a phantom.
             if entry.source != "local" {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     .help("Scrobbled by another client")
             }
 
             Text(Format.duration(track.durationMs))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption.monospacedDigit()))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .frame(width: HistoryColumns.duration, alignment: .trailing)
         }
         #if os(tvOS)

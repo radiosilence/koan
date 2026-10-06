@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.60.0
+
+0.59.0 was never published: its macOS notarisation timed out on Apple's side, so its GitHub release and server image did not go out. 0.60.0 is the first release to carry its changes, below under 0.59.0, including the move from schema 20 to 21. Upgrading from 0.58.0 or earlier runs that migration; snapshot the database first.
+
+### Added
+
+- **The kōan theme.** The apps on the Mac, iPhone and Apple TV are drawn as koan.rocks is, by default: Geist Mono, flat greys, square controls and lowercase labels, with the wash kept behind the bare ground. Settings → Appearance → Theme brings back the platform's look, and "Show icons" turns the theme's icons off. The design is set down in `docs/design/koan-theme.md`.
+- **Colours from the record, optional.** Settings → Appearance turns off the wash and the record's accent together, leaving koan's mint in either theme; the playing bars and the graphics level are untouched (`appearance.record_colours`).
+- **Presets imported together become a group.** Several whole EQ files chosen together (APO, AutoEQ or Qudelix presets, CamillaDSP YAML) become a profile each and a group holding them, named for what their names share and editable before importing. A group plays one member at a time, picked on its page, on the EQ page or in an output's preset menu; a stack of several layers can be made a group and back. Files that are parts of one profile, such as a response or Convolver `.cfg` for each channel or rate, a folder, a zip or REW's file for each side, still combine into one, and the app says which will happen before it imports. A name already taken gets a number, AutoEQ's fixed-band file is left out beside its parametric twin, each refused file is named with why, and import errors are written to `koan.log`.
+- **Headphones corrected from a measurement.** Headphones AutoEQ doesn't cover can be corrected from a measurement (a squig.link or REW CSV) to any target, through a guided sheet that previews the result; the correction is worked out again for each target chosen. An AutoEQ install moved to another target is now rebuilt from the measurement AutoEQ kept, and a ready-made EQ can be told the target it was made for. A neutral in-ear target, diffuse field after ISO 11904-1, ships beside the over-ear one, and each target says in the picker what it does. "Headphone EQ, explained" in the guide covers measurements, targets and corrections.
+
+### Changed
+
+- **The accent follows the record more legibly.** In either theme the record's colour is tone-mapped before it tints anything: its hue kept, its lightness held to a band per light and dark mode, its chroma floored so a dark or muddy sleeve still gives a clean colour, and moved away from the error red. Where it cannot reach 4.5:1 against the background it marks selection and progress but never colours text.
+- **A larger Settings window on the Mac.** It opens at 820×780, can be resized, and keeps its size between launches, so the longer panes, EQ among them, no longer scroll on a laptop screen.
+- **A DSP change while playing no longer clicks.** Editing a band or switching a profile used to cut the output mid-waveform and restart it. The old processing now fades out over 15 ms and the new one fades in over the same, a short dip in place of a step. Pausing keeps its own, longer fade.
+- **Each EQ profile says what it is for.** A profile is a correction, a tuning, or baked (a correction with a tuning already in it, as most named presets are), shown as a badge wherever profiles are listed; imports ask which. A stack holds one correction: a second layer is refused, and a stack made before that rule still plays and says which two it holds. A correction's target is chosen inside it, and its bands and sync settings sit under "Bands, sync and more". "Kept: On every device" is now "Sync: Everywhere".
+
+### Fixed
+
+- **Find in AutoEQ stays open on iOS.** Opened for the first time from Settings → EQ, it closed itself as AutoEQ's index arrived.
+
 ## 0.59.0
 
 The library database moves from schema 20 to 21. The upgrade only adds tables: the EQ profiles a server keeps for its accounts, and a device's record of what it synced. Every existing row is kept as it was, and the upgrade runs in one transaction. Builds older than this one refuse a schema-21 database, so going back means restoring a copy taken before upgrading.

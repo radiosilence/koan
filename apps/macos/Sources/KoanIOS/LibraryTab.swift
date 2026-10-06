@@ -19,7 +19,7 @@ struct LibraryTab: View {
             if mirror.signInRefused {
                 Section {
                     Label(EngineMirror.signInRefusedDetail, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                 }
             } else if let connection = mirror.connection, connection.offline {
                 offline(manual: connection.offlineManual)
@@ -34,7 +34,8 @@ struct LibraryTab: View {
             row("History", Icon.history, .page(.section(.playHistory)))
             row("Downloads", Icon.downloads, .page(.section(.downloads)))
         }
-        .navigationTitle("Library")
+        .koanList()
+        .navigationTitle(KoanTheme.label("Library"))
     }
 
     /// Offline, and why: by hand, with the way back, or the server out of
@@ -46,8 +47,8 @@ struct LibraryTab: View {
                 systemImage: "wifi.slash"
             )
             Text("Showing what is on this iPhone.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             if manual {
                 Button("Go Online") { library.engine.setOffline(on: false) }
             }
@@ -64,7 +65,7 @@ struct LibraryTab: View {
                 Text(title)
             }
             #else
-            Label(title, systemImage: symbol)
+            KoanLabel(title, icon: symbol)
             #endif
         }
         .listLink()

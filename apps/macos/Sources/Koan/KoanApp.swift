@@ -13,19 +13,7 @@ struct KoanApp: App {
             Group {
                 if let state {
                     RootView(hotkeys: state.hotkeys)
-                        .environment(state)
-                        .environment(state.ui)
-                        .environment(state.player)
-                        .environment(state.library)
-                        .environment(state.nav)
-                        .environment(state.search)
-                        .environment(state.art)
-                        .environment(state.organize)
-                        .environment(state.playlists)
-                        .environment(state.activity)
-                        .environment(state.levels)
-                        .environment(state.meter)
-                        .environment(state.mirror)
+                        .appEnvironment(state)
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))
                         // One accent for the whole app, from the icon. Without
@@ -60,6 +48,9 @@ struct KoanApp: App {
             }
         }
         .windowToolbarStyle(.unified(showsTitle: false))
+        // A run with no one at the screen — the evidence renderer, or a
+        // throwaway device for it to see — opens no window there.
+        .defaultLaunchBehavior(Residency.windowless ? .suppressed : .automatic)
         // Menu commands must not *read* anything that changes often. `.commands`
         // is part of the Scene body, so reading an observable that ticks —
         // `isPlaying`, the queue — makes SwiftUI rebuild every menu ten times
@@ -253,8 +244,14 @@ struct KoanApp: App {
                     .environment(state.activity)
                     .environment(state.art)
                     .environment(state.mirror)
+                    // The window has no record to take a colour from: koan's own.
+                    .tint(.koanAccent)
+                    .environment(\.roomTint, .koanAccent)
+                    .koanTheme(state.appearance)
             }
         }
+        .defaultSize(width: 820, height: 780)
+        .windowResizability(.contentMinSize)
     }
 }
 
@@ -306,12 +303,12 @@ private struct StartupErrorView: View {
         VStack(spacing: 14) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 34, weight: .light))
-                .foregroundStyle(.orange)
+                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
             Text("Couldn't open your library")
-                .font(.title3.weight(.medium))
+                .font(.role(.titleSmall, system: .title3.weight(.medium)))
             Text(message)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+                .font(.role(.control, system: .callout))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .multilineTextAlignment(.center)
                 .textSelection(.enabled)
 

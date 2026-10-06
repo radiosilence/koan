@@ -65,9 +65,7 @@ struct TransportBar: View {
         }
         .padding(.horizontal, Self.inset)
         .padding(.vertical, 9)
-        .glass(.regular, fallback: .regularMaterial, in: .rect(cornerRadius: Self.radius))
-        .padding(.horizontal, Self.inset)
-        .padding(.bottom, 14)
+        .koanBar(radius: Self.radius, inset: Self.inset)
         // Measured outside the paddings, so nothing the layout below decides
         // feeds back into the width it was decided from.
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
@@ -107,7 +105,7 @@ struct TransportBar: View {
         HStack(spacing: 11) {
             if showsArtwork {
                 if let sleeve = player.currentArtwork {
-                    AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 8)
+                    AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: KoanTheme.radius(8))
                         .frame(width: 44, height: 44)
                         .showsArtworkFullSize(
                             source: sleeve,
@@ -117,12 +115,12 @@ struct TransportBar: View {
                             }
                         )
                 } else {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: KoanTheme.radius(8))
                         .fill(.quaternary)
                         .frame(width: 44, height: 44)
                         .overlay {
                             Image(systemName: "music.note")
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                         }
                 }
             }
@@ -132,14 +130,13 @@ struct TransportBar: View {
                 // than leaving the track it replaces on show.
                 if let name = player.resolving {
                     Text(name)
-                        .font(.callout.weight(.medium))
+                        .koanText(.meta, .strong)
                         .lineLimit(1)
-                    Text("Loading…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Text("Loading…").koanCase()
+                        .koanText(.fine, .muted)
                 } else if let entry = player.currentEntry {
                     Text(entry.title)
-                        .font(.callout.weight(.medium))
+                        .koanText(.meta, .strong)
                         .lineLimit(1)
                     // Both names go where they say they go, rather than the
                     // line as a whole meaning one of them. `LinkText` is the
@@ -148,24 +145,22 @@ struct TransportBar: View {
                         LinkText(
                             text: entry.artist,
                             target: player.currentArtistId.map { .artist($0) },
-                            font: .caption
+                            font: .role(.fine, system: .caption)
                         )
                         if !entry.album.isEmpty {
                             Text(" — ")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .koanText(.fine, .muted)
                             LinkText(
                                 text: entry.album,
                                 target: player.currentAlbumId.map { .album($0) },
-                                font: .caption
+                                font: .role(.fine, system: .caption)
                             )
                         }
                     }
                     .lineLimit(1)
                 } else {
-                    Text("Nothing playing")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                    Text("Nothing playing").koanCase()
+                        .koanText(.meta, .muted)
                 }
             }
             // No minimum: a narrow bar should truncate the names, which is what
@@ -220,7 +215,8 @@ struct TransportBar: View {
 
             RepeatButton()
         }
-        .buttonStyle(.plain)
+        .koanButton(.icon, system: .plain)
+        .foregroundStyle(KoanTheme.style(.ink))
         .font(.system(size: 13))
     }
 
@@ -232,7 +228,6 @@ struct TransportBar: View {
             // The whole point of the player: what the DAC is being handed.
             if let format = player.currentFormat, showsFormat {
                 Text(Format.quality(format))
-                    .font(.caption.monospaced())
                     // One line or none. Mid-resize the zone is briefly narrower
                     // than the badge, and a badge that wraps to two lines is
                     // taller than the bar it sits in.
@@ -240,23 +235,20 @@ struct TransportBar: View {
                     // A refused rate isn't a fault to raise an alarm over, so
                     // it reads at the same weight as the rest of the badge and
                     // explains itself only to someone who looks.
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.quaternary, in: Capsule())
+                    .koanBadge()
                     .help(Format.outputExplanation(format))
             }
 
             SleepButton()
-                .font(.caption)
+                .font(.role(.fine, system: .caption))
 
             if player.hasOtherDevices || player.isControllingAnother {
                 ControlButton(open: $showingControl, labelled: !compact, iconSize: 17)
-                    .font(.caption)
+                    .font(.role(.fine, system: .caption))
             }
             if player.canChooseOutput {
                 OutputButton(open: $showingDevices, labelled: !compact, iconSize: 17)
-                    .font(.caption)
+                    .font(.role(.fine, system: .caption))
             }
 
             // AirPlay is the system's to choose, so it is the system's button:
@@ -292,8 +284,8 @@ struct SeekBar: View {
     var body: some View {
         HStack(spacing: 8) {
             elapsed
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .koanText(.fine, .muted)
+                .monospacedDigit()
                 // At least the width of "0:00", and wider for an hour or more
                 // rather than wrapping.
                 .lineLimit(1)
@@ -348,8 +340,8 @@ struct SeekBar: View {
             .frame(height: Self.reach)
 
             Text(Format.duration(player.durationMs))
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .koanText(.fine, .muted)
+                .monospacedDigit()
                 .lineLimit(1)
                 .fixedSize()
                 .frame(minWidth: 40, alignment: .leading)
@@ -357,7 +349,7 @@ struct SeekBar: View {
         .disabled(player.durationMs == 0)
     }
 
-    private static let thickness = 4.0
+    private static var thickness: Double { KoanTheme.isOn ? 3 : 4 }
     /// How tall a target the bar is. A pointer finds four points; a thumb
     /// wants a good deal more, and the layers centre themselves either way.
     #if os(macOS)
@@ -500,19 +492,20 @@ final class FetchedMarkView: LayerView, TransferGauge {
     }
 
     override func layoutLayers() {
-        let thickness = 4.0
+        // The theme's track is a rule under a thicker played extent.
+        let thickness = KoanTheme.isOn ? 1.0 : 4.0
         let y = (bounds.height - thickness) / 2
         let reach = bounds.width * (fraction ?? 1).clamped()
         whole.frame = CGRect(x: 0, y: y, width: bounds.width, height: thickness)
         // Shorter than its own thickness it would draw as a squashed dot.
         arrived.frame = CGRect(x: 0, y: y, width: reach >= thickness ? reach : 0, height: thickness)
-        whole.cornerRadius = thickness / 2
-        arrived.cornerRadius = thickness / 2
+        whole.cornerRadius = KoanTheme.radius(thickness / 2)
+        arrived.cornerRadius = KoanTheme.radius(thickness / 2)
     }
 
     override func appearanceChanged() {
-        whole.backgroundColor = resolved(.quaternaryLabel)
-        arrived.backgroundColor = resolved(.quaternaryLabel)
+        whole.backgroundColor = resolved(.koanQuaternaryLabel)
+        arrived.backgroundColor = resolved(.koanQuaternaryLabel)
     }
 }
 
@@ -525,10 +518,11 @@ private struct PlayPauseButton: View {
         // for without looking.
         Button(action: player.togglePlayPause) {
             Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
-                .font(.system(size: 25))
+                .font(.system(size: KoanTheme.isOn ? 13 : 25))
                 .contentTransition(.symbolEffect(.replace))
-                .frame(width: 30)
+                .frame(width: KoanTheme.isOn ? 16 : 30)
         }
+        .koanButton(.iconOutlined)
         .help(player.isPlaying ? "Pause (Space)" : "Play (Space)")
     }
 }
@@ -541,7 +535,7 @@ struct ShuffleButton: View {
     var body: some View {
         Button(action: player.toggleShuffle) {
             Image(systemName: Icon.shuffle)
-                .foregroundStyle(player.shuffle ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .foregroundStyle(KoanTheme.style(player.shuffle ? .accent : .muted))
         }
         .help(player.shuffle ? "Shuffle is on: turn it off to put the queue back" : "Shuffle the rest of the queue")
         .accessibilityLabel("Shuffle")
@@ -557,7 +551,7 @@ struct RepeatButton: View {
         let mode = player.repeatMode
         Button(action: player.cycleRepeat) {
             Image(systemName: mode == .one ? Icon.repeatOne : Icon.repeatQueue)
-                .foregroundStyle(mode == .off ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                .foregroundStyle(KoanTheme.style(mode == .off ? .muted : .accent))
                 .contentTransition(.symbolEffect(.replace))
         }
         .help(help(mode))
@@ -605,17 +599,17 @@ struct SleepButton: View {
             HStack(spacing: 4) {
                 Image(systemName: sleep == nil ? "moon" : "moon.zzz.fill")
                 switch sleep {
-                case _ where player.sleepFading: Text("Fading")
+                case _ where player.sleepFading: Text("Fading").koanCase()
                 case .at(let unixMs):
                     let now = Date.now
                     Text(timerInterval: now...max(now, Self.date(unixMs)), countsDown: true)
                         .monospacedDigit()
-                case .endOfTrack: Text("Track")
-                case .endOfRecord: Text("Record")
+                case .endOfTrack: Text("Track").koanCase()
+                case .endOfRecord: Text("Record").koanCase()
                 case nil: EmptyView()
                 }
             }
-            .foregroundStyle(sleep == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+            .foregroundStyle(KoanTheme.style(sleep == nil ? .muted : .accent))
         }
         // A plain button's label keeps its own colour, as shuffle's and
         // repeat's do; a borderless menu draws it in the accent whatever it

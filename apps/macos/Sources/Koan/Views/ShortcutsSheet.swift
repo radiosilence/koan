@@ -15,8 +15,8 @@ struct ShortcutsSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Keyboard Shortcuts")
-                .font(.title3.weight(.semibold))
+            Text("Keyboard Shortcuts").koanCase()
+                .koanText(.titleSmall, .strong)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -25,11 +25,9 @@ struct ShortcutsSheet: View {
                             .map { Row(keys: $0.keys.map(Hotkey.caption), label: $0.label) }
                     }
 
-                    Divider()
+                    KoanDivider()
 
-                    Text("With ⌘")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                    KoanSectionHeader("With ⌘")
 
                     columns { group in
                         MenuShortcut.all.filter { $0.group == group }
@@ -40,17 +38,18 @@ struct ShortcutsSheet: View {
             .frame(maxHeight: 460)
 
             Text("None of these fire while you're typing.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .koanText(.fine, .muted)
 
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
+                    .koanButton(.secondary)
             }
         }
         .padding(24)
         .frame(minWidth: 620)
+        .koanSheet()
     }
 
     /// One entry, whichever table it came from.
@@ -60,21 +59,21 @@ struct ShortcutsSheet: View {
         var id: String { label }
     }
 
-    /// The groups side by side, skipping the ones this table has nothing in.
+    /// The groups side by side, skipping the ones this table has nothing in,
+    /// as many to a line as fit: a wider face takes fewer, and a label is
+    /// never broken mid-word to squeeze in another.
     private func columns(_ rows: @escaping (Hotkey.Group) -> [Row]) -> some View {
-        HStack(alignment: .top, spacing: 30) {
-            ForEach(Hotkey.Group.allCases, id: \.self) { group in
-                let entries = rows(group)
-                if !entries.isEmpty {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(group.rawValue)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        ForEach(entries) { row(keys: $0.keys, label: $0.label) }
-                    }
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 210), spacing: 30, alignment: .topLeading)],
+            alignment: .leading,
+            spacing: 20
+        ) {
+            ForEach(Hotkey.Group.allCases.filter { !rows($0).isEmpty }, id: \.self) { group in
+                VStack(alignment: .leading, spacing: 7) {
+                    KoanSectionHeader(group.rawValue)
+                    ForEach(rows(group)) { row(keys: $0.keys, label: $0.label) }
                 }
             }
-            Spacer(minLength: 0)
         }
     }
 
@@ -83,14 +82,11 @@ struct ShortcutsSheet: View {
             HStack(spacing: 3) {
                 ForEach(keys, id: \.self) { key in
                     Text(key)
-                        .font(.caption.monospaced())
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .glass(.regular, fallback: .quaternary, in: .rect(cornerRadius: 6))
+                        .koanBadge()
                 }
             }
             Text(label)
-                .font(.callout)
+                .koanText(.meta)
             Spacer(minLength: 0)
         }
     }

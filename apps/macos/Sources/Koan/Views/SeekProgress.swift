@@ -18,6 +18,9 @@ struct SeekProgress: PlatformViewRepresentable {
     /// is not advancing — paused, stopped, or being dragged.
     let remaining: TimeInterval
     let thickness: CGFloat
+    /// The played extent's colour: the room's accent in the kōan theme, the
+    /// label colour otherwise.
+    @Environment(\.roomTint) private var tint
 
     typealias PlatformViewType = ProgressView
 
@@ -26,6 +29,7 @@ struct SeekProgress: PlatformViewRepresentable {
     }
 
     func updateView(_ view: ProgressView, context: Context) {
+        view.tint = KoanTheme.isOn ? PlatformColor(tint) : nil
         view.apply(fraction: fraction, remaining: remaining)
     }
 
@@ -36,6 +40,9 @@ struct SeekProgress: PlatformViewRepresentable {
         private let head = CALayer()
         private let thickness: CGFloat
         private var fraction = 0.0
+        var tint: PlatformColor? {
+            didSet { if tint != oldValue { paint() } }
+        }
         private var remaining = 0.0
 
         init(thickness: CGFloat) {
@@ -44,8 +51,8 @@ struct SeekProgress: PlatformViewRepresentable {
             // Grown from its leading edge, so widening it is one animatable
             // number rather than a width and a position that must agree.
             played.anchorPoint = CGPoint(x: 0, y: 0.5)
-            played.cornerRadius = thickness / 2
-            head.cornerRadius = thickness
+            played.cornerRadius = KoanTheme.radius(thickness / 2)
+            head.cornerRadius = KoanTheme.radius(thickness)
             for sublayer in [played, head] {
                 sublayer.actions = ["bounds": NSNull(), "position": NSNull()]
                 hostLayer.addSublayer(sublayer)
@@ -72,9 +79,8 @@ struct SeekProgress: PlatformViewRepresentable {
         }
 
         private func paint() {
-            let colour = resolved(.label)
-            played.backgroundColor = colour
-            head.backgroundColor = colour
+            played.backgroundColor = resolved(tint ?? .label)
+            head.backgroundColor = resolved(KoanTheme.isOn ? .koanInk : .label)
         }
 
         /// Put both layers where the fraction says, then — if the track is

@@ -106,9 +106,9 @@ struct AlbumArtwork: View {
             // Covers in the grid land tens of milliseconds apart, and cutting
             // straight from placeholder to art reads as a stutter of pops.
             .animation(.easeOut(duration: 0.2), value: ready == nil)
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: KoanTheme.radius(cornerRadius)))
             .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
+                RoundedRectangle(cornerRadius: KoanTheme.radius(cornerRadius))
                     .strokeBorder(.white.opacity(0.06))
             }
             // Keyed on the source, so a recycled cell in a scrolling grid

@@ -46,6 +46,7 @@ struct OutputEqSection: View {
                     Text(p.name).tag(p.name)
                 }
             }
+            .koanControl()
             .task(id: "\(overview.active ?? "")\u{0}\(dsp.stamp)") {
                 targets = if let name = overview.active { await dsp.targets(name) } else { nil }
             }
@@ -59,6 +60,7 @@ struct OutputEqSection: View {
                         TargetRow(target: c, isDefault: c.id == targets.madeFor?.id).tag(c.id)
                     }
                 }
+                .koanControl()
                 #if os(iOS)
                 .pickerStyle(.navigationLink)
                 #endif
@@ -67,8 +69,7 @@ struct OutputEqSection: View {
             if correction?.role == .baked, let name = overview.active {
                 // Greyed with its reason, never silently missing.
                 Label("\(name) already has a tuning baked in. Split it to swap tunings.", systemImage: "info.circle")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .koanText(.meta, .muted)
             } else if let tuning {
                 Picker("Tuning", selection: Binding(
                     get: { tuning.name },
@@ -79,6 +80,7 @@ struct OutputEqSection: View {
                         Text(t.name).tag(t.name)
                     }
                 }
+                .koanControl()
                 // A group of tunings is a quick switch between them.
                 if !tuning.members.isEmpty {
                     Picker("Playing", selection: Binding(
@@ -87,6 +89,7 @@ struct OutputEqSection: View {
                     )) {
                         ForEach(tuning.members, id: \.self) { Text($0).tag($0) }
                     }
+                    .koanControl()
                 }
             } else if !tunings.isEmpty {
                 Menu("Add a Tuning…") {
@@ -94,13 +97,13 @@ struct OutputEqSection: View {
                         Button(t.name) { dsp.setTuning(t.name, for: device) }
                     }
                 }
+                .koanControl()
             }
         } header: {
             Text(dsp.label(device))
         } footer: {
             Text(sentence)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .koanText(.fine, .muted)
         }
         .disabled(!overview.enabled)
     }

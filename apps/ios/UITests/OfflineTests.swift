@@ -28,22 +28,22 @@ final class OfflineTests: XCTestCase {
         case "signin":
             let env = ProcessInfo.processInfo.environment
             tab("Settings")
-            app.buttons["Server"].firstMatch.tap()
-            if !app.buttons["Sign Out"].waitForExistence(timeout: 2) {
+            app.buttons[any: "Server"].firstMatch.tap()
+            if !app.buttons[any: "Sign Out"].waitForExistence(timeout: 2) {
                 fill(app.textFields, "Server URL", env["KOAN_SIGNIN_URL"] ?? "")
                 fill(app.textFields, "Username", env["KOAN_SIGNIN_USER"] ?? "")
                 fill(app.secureTextFields, "Password", env["KOAN_SIGNIN_PASSWORD"] ?? "")
                 // The keyboard covers the button on a phone.
-                if app.keyboards.buttons["return"].exists { app.keyboards.buttons["return"].tap() }
-                let signIn = app.buttons["Sign In"].firstMatch
+                if app.keyboards.buttons[any: "return"].exists { app.keyboards.buttons[any: "return"].tap() }
+                let signIn = app.buttons[any: "Sign In"].firstMatch
                 if !signIn.isHittable { app.swipeUp() }
                 signIn.tap()
             }
-            XCTAssert(app.buttons["Sign Out"].waitForExistence(timeout: 60), "not signed in")
+            XCTAssert(app.buttons[any: "Sign Out"].waitForExistence(timeout: 60), "not signed in")
             snap("signed-in")
         case "downloaded":
             tab("Library")
-            app.buttons["Downloaded"].firstMatch.tap()
+            app.buttons[any: "Downloaded"].firstMatch.tap()
             XCTAssert(app.images.firstMatch.waitForExistence(timeout: 20), "nothing downloaded")
             pause(2)
             snap("downloaded")
@@ -52,7 +52,7 @@ final class OfflineTests: XCTestCase {
             // started from outside once the app is up: a relaunch sweeps any
             // that were in flight.
             tab("Library")
-            app.buttons["Downloaded"].firstMatch.tap()
+            app.buttons[any: "Downloaded"].firstMatch.tap()
             XCTAssert(app.images.firstMatch.waitForExistence(timeout: 20), "nothing downloaded")
             let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
             from.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62)))
@@ -61,26 +61,26 @@ final class OfflineTests: XCTestCase {
         case "manual":
             setOffline(true)
             tab("Library")
-            XCTAssert(app.staticTexts["Offline mode is on"].waitForExistence(timeout: 10))
+            XCTAssert(app.staticTexts[any: "Offline mode is on"].waitForExistence(timeout: 10))
             snap("manual-library")
             shown(narrowedTo: "manual")
             setOffline(false)
             tab("Library")
-            XCTAssert(app.staticTexts["Offline mode is on"].waitForNonExistence(timeout: 10))
+            XCTAssert(app.staticTexts[any: "Offline mode is on"].waitForNonExistence(timeout: 10))
             snap("manual-off")
             tab("Queue")
             pause(2)
             snap("manual-off-queue")
         case "cut":
             tab("Library")
-            XCTAssert(app.staticTexts["Can't reach your server"].waitForExistence(timeout: 60), "never went offline")
+            XCTAssert(app.staticTexts[any: "Can't reach your server"].waitForExistence(timeout: 60), "never went offline")
             snap("cut-library")
             shown(narrowedTo: "cut")
         case "back":
             tab("Library")
-            XCTAssert(app.staticTexts["Can't reach your server"].waitForNonExistence(timeout: 90), "never came back")
+            XCTAssert(app.staticTexts[any: "Can't reach your server"].waitForNonExistence(timeout: 90), "never came back")
             snap("back-library")
-            app.buttons["Albums"].firstMatch.tap()
+            app.buttons[any: "Albums"].firstMatch.tap()
             pause(2)
             snap("back-albums")
         default:
@@ -90,7 +90,7 @@ final class OfflineTests: XCTestCase {
 
     /// Albums, a search and the queue, as offline narrows them.
     private func shown(narrowedTo name: String) {
-        app.buttons["Albums"].firstMatch.tap()
+        app.buttons[any: "Albums"].firstMatch.tap()
         pause(2)
         snap("\(name)-albums")
         back()
@@ -113,8 +113,8 @@ final class OfflineTests: XCTestCase {
     private func setOffline(_ on: Bool) {
         tab("Settings")
         // The tab keeps the page it was left on.
-        if !app.switches["Offline mode"].exists { app.buttons["Server"].firstMatch.tap() }
-        let toggle = app.switches["Offline mode"].firstMatch
+        if !app.switches[any: "Offline mode"].exists { app.buttons[any: "Server"].firstMatch.tap() }
+        let toggle = app.switches[any: "Offline mode"].firstMatch
         XCTAssert(toggle.waitForExistence(timeout: 10), "no Offline mode switch")
         if (toggle.value as? String == "1") != on {
             // The label takes the tap on a form's switch; the switch's own
@@ -134,8 +134,8 @@ final class OfflineTests: XCTestCase {
 
     /// A phone's tabs are a tab bar; an iPad's are buttons in a bar across the top.
     private func tab(_ name: String) {
-        let bar = app.tabBars.buttons[name]
-        if bar.waitForExistence(timeout: 10) { bar.tap() } else { app.buttons[name].firstMatch.tap() }
+        let bar = app.tabBars.buttons[any: name]
+        if bar.waitForExistence(timeout: 10) { bar.tap() } else { app.buttons[any: name].firstMatch.tap() }
         pause(1)
     }
 

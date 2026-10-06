@@ -22,12 +22,10 @@ struct DownloadsView: View {
     var body: some View {
         Group {
             if mirror.transfers.isEmpty {
-                ContentUnavailableView(
+                KoanUnavailable(
                     "Nothing downloading",
-                    systemImage: Icon.downloads,
-                    description: Text(
-                        "Tracks fetched from your server appear here while they arrive."
-                    )
+                    icon: Icon.downloads,
+                    detail: "Tracks fetched from your server appear here while they arrive."
                 )
             } else {
                 #if os(macOS)
@@ -43,7 +41,7 @@ struct DownloadsView: View {
                 #endif
             }
         }
-        .navigationTitle("Downloads")
+        .navigationTitle(KoanTheme.label("Downloads"))
         .toolbar {
             if mirror.hasSettledTransfers {
                 Button { app.engine.clearSettledDownloads() } label: {
@@ -158,7 +156,7 @@ private struct DownloadRow: View {
         HStack(spacing: 10) {
             // A record is what you recognise a download by, and this is a list
             // of things you are waiting for.
-            AlbumArtwork(source: .track(transfer.trackId), size: .thumb, cornerRadius: 3)
+            AlbumArtwork(source: .track(transfer.trackId), size: .thumb, cornerRadius: KoanTheme.radius(3))
                 .frame(width: RowMetrics.sleeve, height: RowMetrics.sleeve)
 
             rows
@@ -176,8 +174,8 @@ private struct DownloadRow: View {
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 Text(figure)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption.monospacedDigit()))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
 
             // Drawn rather than a `ProgressView`: the stock linear style
@@ -204,17 +202,17 @@ private struct DownloadRow: View {
                 Text(subtitle)
                     .lineLimit(1)
                     .foregroundStyle(
-                        transfer.state == .failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
+                        transfer.state == .failed ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.muted, system: .secondary)
                     )
                 Spacer(minLength: 8)
                 // No hover on a phone: a link that waits for one never shows.
                 if hovering || width == .compact {
                     Button("Show in Library") { showInLibrary() }
                         .linkButton()
-                        .font(.caption)
+                        .font(.role(.fine, system: .caption))
                 }
             }
-            .font(.caption)
+            .font(.role(.fine, system: .caption))
         }
     }
 
@@ -322,8 +320,8 @@ final class TransferBarView: LayerView, TransferGauge {
 
     override func layoutLayers() {
         let height = bounds.height
-        track.cornerRadius = height / 2
-        filled.cornerRadius = height / 2
+        track.cornerRadius = KoanTheme.radius(height / 2)
+        filled.cornerRadius = KoanTheme.radius(height / 2)
         track.frame = bounds
         filled.frame = CGRect(x: 0, y: 0, width: bounds.width * fraction.clamped(), height: height)
     }

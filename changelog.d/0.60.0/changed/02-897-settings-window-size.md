@@ -1,0 +1,1 @@
+- **A larger Settings window on the Mac.** It opens at 820×780, can be resized, and keeps its size between launches, so the longer panes, EQ among them, no longer scroll on a laptop screen.

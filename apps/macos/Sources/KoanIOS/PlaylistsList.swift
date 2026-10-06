@@ -16,11 +16,7 @@ struct PlaylistsList: View {
     var body: some View {
         Group {
             if playlists.playlists.isEmpty {
-                ContentUnavailableView(
-                    "No playlists",
-                    systemImage: Icon.playlist,
-                    description: Text(Self.emptyDetail)
-                )
+                KoanUnavailable("No playlists", icon: Icon.playlist, detail: Self.emptyDetail)
             } else {
                 List(playlists.playlists, id: \.id) { playlist in
                     NavigationLink(value: Route.page(.section(.playlist(playlist.id)))) {
@@ -33,7 +29,7 @@ struct PlaylistsList: View {
                 }
             }
         }
-        .navigationTitle("Playlists")
+        .navigationTitle(KoanTheme.label("Playlists"))
         #if !os(tvOS)
         // Playlists are made and edited on a phone or a computer; a television
         // plays them.

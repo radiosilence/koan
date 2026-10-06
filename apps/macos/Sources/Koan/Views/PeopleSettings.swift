@@ -99,9 +99,10 @@ struct PeopleSettings: View {
                     HStack {
                         TextField("Username", text: $newUsername, prompt: Text("Username"))
                             .verbatimEntry()
+                            .koanField()
                         Picker("Access", selection: $newRole) {
                             ForEach(AccountRole.all, id: \.self) { Text($0.label).tag($0) }
-                        }
+                        }.koanControl()
                         .labelsHidden()
                         .fixedSize()
                         Button("Add") {
@@ -111,15 +112,15 @@ struct PeopleSettings: View {
                                 }
                             }
                         }
+                        .koanButton(.secondary)
                         .disabled(newUsername.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     .rowButtons()
                 } header: {
-                    Text("People")
+                    KoanSectionHeader("People")
                 } footer: {
                     Text(model.error ?? "Adding someone makes their invite: one link that sets kōan up with the account.")
-                        .font(.caption)
-                        .foregroundStyle(model.error == nil ? .tertiary : .primary)
+                        .koanText(.fine, model.error == nil ? .muted : (KoanTheme.isOn ? .bad : .ink))
                 }
                 .sheet(item: Binding(
                     get: { model.invite.map(InviteItem.init) },
@@ -183,7 +184,7 @@ struct PeopleSettings: View {
         HStack {
             Text(account.username)
             if account.username == signedInAs {
-                Text("you").foregroundStyle(.secondary)
+                Text("you").koanText(.body, .muted)
             }
             Spacer()
             Picker("Access", selection: Binding(
@@ -191,7 +192,7 @@ struct PeopleSettings: View {
                 set: { role in Task { await model.setRole(account.username, role) } }
             )) {
                 ForEach(AccountRole.all, id: \.self) { Text($0.label).tag($0) }
-            }
+            }.koanControl()
             .labelsHidden()
             .fixedSize()
             Menu {
@@ -206,7 +207,7 @@ struct PeopleSettings: View {
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
-            }
+            }.koanControl()
             .menuStyle(.borderlessButton)
             .fixedSize()
             .accessibilityLabel("More for \(account.username)")
@@ -228,36 +229,40 @@ struct InviteSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            KoanForm {
                 Section {
                     Text("Opening the link on a phone, tablet or Mac with kōan installed signs in and loads the library, on each device, for a week.")
-                        .foregroundStyle(.secondary)
+                        .koanText(.body, .muted)
                     #if !os(tvOS)
                     ShareLink(
                         item: invite.emailText,
                         subject: Text(invite.emailSubject),
                         message: Text(invite.emailText)
                     ) {
-                        Label("Send Invite…", systemImage: "square.and.arrow.up")
+                        KoanLabel("Send Invite…", icon: "square.and.arrow.up")
                     }
+                    .koanButton(.primary)
                     #endif
                     if let mail = URL(string: invite.mailto) {
-                        Link(destination: mail) { Label("Open in Mail", systemImage: "envelope") }
+                        Link(destination: mail) { KoanLabel("Open in Mail", icon: "envelope") }
+                            .koanButton(.secondary)
                     }
                     Button {
                         Pasteboard.write(html: invite.emailHtml, text: invite.emailText)
                         copied = "email"
                     } label: {
-                        Label(copied == "email" ? "Copied" : "Copy Email", systemImage: "doc.on.doc")
+                        KoanLabel(copied == "email" ? "Copied" : "Copy Email", icon: "doc.on.doc")
                     }
+                    .koanButton(.secondary)
                     Button {
                         Pasteboard.write(text: invite.link)
                         copied = "link"
                     } label: {
-                        Label(copied == "link" ? "Copied" : "Copy Link", systemImage: "link")
+                        KoanLabel(copied == "link" ? "Copied" : "Copy Link", icon: "link")
                     }
+                    .koanButton(.secondary)
                 } header: {
-                    Text("Invite for \(invite.username)")
+                    KoanSectionHeader("Invite for \(invite.username)")
                 }
                 if let password = invite.password {
                     Section {
@@ -265,15 +270,15 @@ struct InviteSheet: View {
                         LabeledContent("Username", value: invite.username)
                         LabeledContent("Password", value: password)
                     } header: {
-                        Text("For other Subsonic apps")
+                        KoanSectionHeader("For other Subsonic apps")
                     } footer: {
                         Text("Shown this once: the server keeps only its hash.")
                     }
                     .selectableText()
                 }
             }
-            .formStyle(.grouped)
-            .navigationTitle("Invite")
+            .koanSheet()
+            .navigationTitle(KoanTheme.label("Invite"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }

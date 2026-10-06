@@ -47,7 +47,7 @@ struct MeasurementFlow: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            KoanForm {
                 switch step {
                 case .learn: learn
                 case .file: fileStep
@@ -58,11 +58,10 @@ struct MeasurementFlow: View {
                 if let problem {
                     Section {
                         Label(problem, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                     }
                 }
             }
-            .formStyle(.grouped)
             .navigationTitle(step.title)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -114,7 +113,7 @@ struct MeasurementFlow: View {
             Section {
                 Text("20, 92.4\n21, 92.6\n22, 92.7\n…")
                     .font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             } header: {
                 Text("What the file looks like")
             } footer: {
@@ -166,8 +165,8 @@ struct MeasurementFlow: View {
                         Text(t.label)
                         if !t.character.isEmpty {
                             Text(t.character)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(.role(.fine, system: .caption))
+                                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         }
                     }
                     .tag(Optional(t.id))

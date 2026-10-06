@@ -21,7 +21,7 @@ private struct DspImportSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            KoanForm {
                 Section {
                     ForEach(plan.files, id: \.self) { Text($0) }
                 } header: {
@@ -37,7 +37,6 @@ private struct DspImportSheet: View {
                     TextField("Name", text: $name)
                 }
             }
-            .formStyle(.grouped)
             .navigationTitle("Import")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

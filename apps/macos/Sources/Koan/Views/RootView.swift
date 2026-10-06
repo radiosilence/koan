@@ -88,12 +88,9 @@ struct RootView: View {
                         }
                         .help("Lyrics panel (⌥⌘L)")
                     }
+                    .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
                 }
         }
-        // The wash and the tint, both the colour of one record. Its own
-        // modifier because what it reads moves per track, and a read here
-        // re-runs the window — see `RecordRoom`.
-        .modifier(RecordRoom())
         // The one place a library change reaches the app's own lists. Every
         // page showing something asked for on demand reloads where it is
         // drawn — see `View.reloading(on:)` — so nothing here decides which
@@ -120,15 +117,7 @@ struct RootView: View {
         // edge effect keeps rows legible as they pass under.
         // Restored at `bare`: the ground it paints is opaque, so nothing behind
         // it is sampled and a page switch does not redraw it.
-        #if os(macOS)
-        .toolbarBackgroundVisibility(
-            graphics.usesWindowGlass ? .hidden : .automatic, for: .windowToolbar
-        )
-        #else
-        .toolbarBackgroundVisibility(
-            graphics.usesWindowGlass ? .hidden : .automatic, for: .navigationBar
-        )
-        #endif
+        .koanToolbar(glass: graphics.usesWindowGlass)
         .onSubmit(of: .search) { search.submit() }
         // Backgrounding is the last dependable moment before termination. A
         // notification rather than `scenePhase`: reading that re-runs whatever
@@ -145,6 +134,11 @@ struct RootView: View {
         .overlay(alignment: .bottom) {
             TransportOverlay(columns: columns)
         }
+        // The wash and the tint, both the colour of one record. Its own
+        // modifier because what it reads moves per track, and a read here
+        // re-runs the window — see `RecordRoom`. Outside the transport, which
+        // draws in the tint too.
+        .modifier(RecordRoom())
         .onPreferenceChange(TransportHeightKey.self) { transportHeight = $0 }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { ui.windowSize = $0 }
         // Its own content rather than built here: it reads the page, and a read in
@@ -204,6 +198,8 @@ extension EnvironmentValues {
     /// drawing in it has to be handed the colour. Set beside the tint, by the
     /// same modifier, so the two cannot disagree.
     @Entry var roomTint: Color = .koanAccent
+    /// Drawn by the evidence renderer, in a window no scene manages.
+    @Entry var drawnOffscreen = false
 }
 
 /// The room around the page: the wash on the window and the tint on the
@@ -230,6 +226,9 @@ struct RecordRoom: ViewModifier {
     /// Read for the wash a playlist page sits in: its colour is the first
     /// record in it, since a playlist has no cover of its own.
     @Environment(PlaylistsModel.self) private var playlists
+    @Environment(\.drawnOffscreen) private var offscreen
+    @Environment(AppearanceModel.self) private var appearance
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The colour of a record the cache could not already answer for, and which
     /// record it was worked out for. Only consulted when the cache cannot.
@@ -249,7 +248,13 @@ struct RecordRoom: ViewModifier {
     /// cannot take this one — easing it over two seconds is a hundred and
     /// twenty renders of the whole window, each one a commit, and each commit a
     /// synchronous round trip to the render server.
-    private static let tintEase = Animation.easeInOut(duration: 2)
+    ///
+    /// The kōan theme eases for a quarter of a second (`Motion.settle`): its
+    /// accent is the colour of every selection and indicator, and a two-second
+    /// drift there reads as something wrong rather than a room changing.
+    @MainActor private static var tintEase: Animation {
+        KoanTheme.isOn ? KoanTheme.Motion.settle : .easeInOut(duration: 2)
+    }
 
     /// Read straight through the cache on every pass, the way `AlbumArtwork`
     /// reads its bitmap: a colour the app already holds lands in the same commit
@@ -265,14 +270,22 @@ struct RecordRoom: ViewModifier {
         return .some(fetchedTint.colour)
     }
 
-    /// The colour to put on: the record's once it is known, and until then
-    /// the one already on.
-    private var tint: Color {
-        switch recordTint {
-        case .some(let colour): colour ?? .koanAccent
-        case .none: worn ?? .koanAccent
+    /// The record's colour once it is known, and until then the one already
+    /// on; `nil` is a record with none, nothing playing, or colours from the
+    /// record turned off.
+    private var record: Color? {
+        guard appearance.recordColours else { return nil }
+        return switch recordTint {
+        case .some(let colour): colour
+        case .none: worn
         }
     }
+
+    /// The accent for that record, tone-mapped to its bands — in either look.
+    private var accent: KoanAccent { KoanAccent.of(record) }
+
+    /// The colour to put on.
+    private var tint: Color { accent.color }
 
     private var colourSource: AlbumArtwork.Source? {
         switch nav.current {
@@ -295,13 +308,19 @@ struct RecordRoom: ViewModifier {
         let guessed = recordTint == nil
         let player = player
         let artCache = art
+        let appearanceModel = appearance
         // Over an opaque ground, because this *replaces* the window's own
         // background rather than sitting on it — a half-transparent wash on its
         // own leaves you looking through the app at the desktop.
         let washLayer = ZStack {
-            Rectangle().fill(.background)
+            if KoanTheme.isOn {
+                Rectangle().fill(Color.koanBg)
+            } else {
+                Rectangle().fill(.background)
+            }
             WindowWash(source: wash, player: player)
                 .environment(artCache)
+                .environment(appearanceModel)
         }
 
         content
@@ -315,6 +334,8 @@ struct RecordRoom: ViewModifier {
             // intent, and neither platform has the other's container.
             #if os(macOS)
             .containerBackground(for: .window) { washLayer }
+            // A window the renderer draws has no scene to hand that to.
+            .background { if offscreen { washLayer } }
             #elseif os(tvOS)
             .background { washLayer.ignoresSafeArea() }
             #else
@@ -341,7 +362,7 @@ struct RecordRoom: ViewModifier {
                 try? await Task.sleep(for: .milliseconds(150))
                 let colour = await art.dominantColour(for: colourSource)
                 guard !Task.isCancelled else { return }
-                withAnimation(Self.tintEase) { fetchedTint = (colourSource, colour) }
+                withAnimation(reduceMotion ? nil : Self.tintEase) { fetchedTint = (colourSource, colour) }
             }
             // Overrides the app-wide tint for everything below, which is every
             // control koan draws itself. What AppKit draws — list selection,
@@ -353,7 +374,14 @@ struct RecordRoom: ViewModifier {
             .tint(tint)
             #endif
             .environment(\.roomTint, tint)
-            .onChange(of: tint, initial: true) { _, now in worn = now }
+            .environment(\.koanAccent, accent)
+            // The theme's text button for every button that names no style.
+            // Not on a television, whose shell gives them `TelevisionButton`:
+            // a bare text button there shows no focus.
+            #if !os(tvOS)
+            .koanButtons(.text)
+            #endif
+            .onChange(of: record, initial: true) { _, now in worn = now }
     }
 }
 
@@ -560,13 +588,13 @@ private struct ErrorToast: View {
             Image(systemName: kind.symbol)
                 .foregroundStyle(kind.tint)
             Text(message)
-                .font(.callout)
+                .font(.role(.control, system: .callout))
                 .lineLimit(2)
             Button(action: dismiss) {
                 Image(systemName: "xmark")
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
@@ -642,6 +670,7 @@ private struct PageToolbar: ToolbarContent {
             .disabled(!nav.canGoForward)
             .help("Forward (⌘])")
         }
+        .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
 
         // Separate items with `ToolbarSpacer` between them, not one
         // `ToolbarItemGroup`: a group shares a single pane of glass, which
@@ -656,7 +685,7 @@ private struct PageToolbar: ToolbarContent {
                     .frame(width: 180)
             }
         }
-        .sharedBackgroundVisibility(nav.section?.filterPlaceholder == nil ? .hidden : .automatic)
+        .sharedBackgroundVisibility(KoanTheme.pane(nav.section?.filterPlaceholder == nil ? .hidden : .automatic))
 
         // Sort and filters belong next to what they narrow, so they only
         // appear there. Typing a name and picking from a menu are different
@@ -677,7 +706,7 @@ private struct PageToolbar: ToolbarContent {
                 }
             }
         }
-        .sharedBackgroundVisibility(nav.section?.isBrowser == true ? .automatic : .hidden)
+        .sharedBackgroundVisibility(KoanTheme.pane(nav.section?.isBrowser == true ? .automatic : .hidden))
 
         // Last, and apart from the filter: what you do with a pick is not part
         // of narrowing the grid, and next to the field the two read as one
@@ -689,7 +718,7 @@ private struct PageToolbar: ToolbarContent {
                 SelectionControls(selection: selection)
             }
         }
-        .sharedBackgroundVisibility(selection == nil ? .hidden : .automatic)
+        .sharedBackgroundVisibility(KoanTheme.pane(selection == nil ? .hidden : .automatic))
     }
 
     /// The pick the page on screen makes, if it makes one: the album grid, an

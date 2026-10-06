@@ -17,15 +17,15 @@ struct LyricsPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Lyrics")
-                    .font(.headline)
+                Text("Lyrics").koanCase()
+                    .font(.role(.body, system: .headline))
                 Spacer()
                 if loading {
                     ProgressView().controlSize(.small)
                 } else if let source = lyrics?.source {
                     Text(source)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(.role(.fine, system: .caption2))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }
             .padding(.horizontal, 16)
@@ -35,7 +35,14 @@ struct LyricsPanel: View {
 
             content
         }
-        .background(.background.secondary)
+        .background {
+            if KoanTheme.isOn {
+                Color.koanBg
+            } else {
+                Rectangle().fill(.background.secondary)
+            }
+        }
+        .koanRule(.leading)
         .task(id: player.currentTrackId) { await load() }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { ui.lyricsWidth = $0 }
         .onDisappear { ui.lyricsWidth = 0 }
@@ -48,7 +55,7 @@ struct LyricsPanel: View {
         } else if let lyrics, !lyrics.content.isEmpty {
             ScrollView {
                 Text(lyrics.content)
-                    .font(.callout)
+                    .font(.role(.control, system: .callout))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(18)
                     .selectableText()
@@ -112,8 +119,12 @@ private struct SyncedLyrics: View {
                 LazyVStack(alignment: .leading, spacing: 11) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { index, line in
                         Text(line.text.isEmpty ? " " : line.text)
-                            .font(index == active ? .title3.weight(.semibold) : .callout)
-                            .foregroundStyle(index == active ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                            .font(index == active
+                                ? .role(.titleSmall, system: .title3.weight(.semibold))
+                                : .role(.control, system: .callout))
+                            .foregroundStyle(index == active
+                                ? KoanTheme.style(.strong, system: .primary)
+                                : KoanTheme.style(.muted, system: .secondary))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .id(index)
                             .onTapGesture { player.seek(fraction: fraction(of: line)) }

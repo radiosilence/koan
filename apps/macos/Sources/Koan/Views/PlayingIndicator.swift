@@ -97,7 +97,7 @@ final class PlayingBarsView: LayerView {
         hostLayer.isGeometryFlipped = true
         #endif
         for (index, bar) in bars.enumerated() {
-            bar.cornerRadius = Self.barWidth / 2
+            bar.cornerRadius = KoanTheme.radius(Self.barWidth / 2)
             // Grown from the foot, so a height is one number rather than a
             // height and a position that must agree.
             bar.anchorPoint = CGPoint(x: 0.5, y: 0)

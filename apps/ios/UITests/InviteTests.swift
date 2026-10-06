@@ -19,7 +19,7 @@ final class InviteTests: XCTestCase {
         app.launch()
         app.open(url)
         // A custom scheme opened from outside the app asks first.
-        let open = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Open"]
+        let open = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons[any: "Open"]
         if open.waitForExistence(timeout: 5) { open.tap() }
 
         XCTAssert(app.images.firstMatch.waitForExistence(timeout: 180), "no albums after joining")

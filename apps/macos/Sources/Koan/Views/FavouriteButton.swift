@@ -18,7 +18,7 @@ struct FavouriteButton: View {
         Button(action: action) {
             Image(systemName: isOn ? "heart.fill" : "heart")
                 .font(size)
-                .foregroundStyle(isOn ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
+                .foregroundStyle(isOn ? KoanTheme.style(.bad, system: .red) : KoanTheme.style(.muted, system: .tertiary))
                 .contentTransition(.symbolEffect(.replace))
                 // A little jump on every change, and on a phone a tap in the
                 // hand when something becomes a favourite.
