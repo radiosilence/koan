@@ -184,6 +184,7 @@ pub fn registry() -> &'static Registry {
 impl Registry {
     /// Add a client, replacing any earlier connection from the same device
     /// and account. Returns its id.
+    #[allow(clippy::too_many_arguments)]
     pub fn register(
         &self,
         username: &str,
@@ -2049,7 +2050,7 @@ mod tests {
     #[test]
     fn a_watch_is_never_queued_and_is_renewed_when_the_target_relinks() {
         let reg = Registry::default();
-        let watches = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkCommand>| {
+        let watches = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<Envelope>| {
             std::iter::from_fn(|| rx.try_recv().ok().map(|e| e.command))
                 .filter(|c| matches!(c, LinkCommand::WatchLevels { .. }))
                 .collect::<Vec<_>>()
@@ -2085,7 +2086,7 @@ mod tests {
         let (tx_phone, mut phone) = tokio::sync::mpsc::unbounded_channel();
         let mac_id = reg.register("lv", "mac", "macos", "lv-mac", tx_mac, false, false);
         reg.register("lv", "phone", "ios", "lv-phone", tx_phone, false, false);
-        let levels = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkCommand>| {
+        let levels = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<Envelope>| {
             std::iter::from_fn(|| rx.try_recv().ok().map(|e| e.command))
                 .filter(|c| {
                     matches!(
@@ -2324,16 +2325,16 @@ mod tests {
         let _ = mac;
     }
 
-    fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<LinkCommand>) -> Vec<LinkCommand> {
+    fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Envelope>) -> Vec<LinkCommand> {
         std::iter::from_fn(|| rx.try_recv().ok().map(|e| e.command)).collect()
     }
 
     /// `j` shares the phone with `k`, not the Mac.
     fn shared() -> (
         Registry,
-        tokio::sync::mpsc::UnboundedReceiver<LinkCommand>,
-        tokio::sync::mpsc::UnboundedReceiver<LinkCommand>,
-        tokio::sync::mpsc::UnboundedReceiver<LinkCommand>,
+        tokio::sync::mpsc::UnboundedReceiver<Envelope>,
+        tokio::sync::mpsc::UnboundedReceiver<Envelope>,
+        tokio::sync::mpsc::UnboundedReceiver<Envelope>,
     ) {
         let reg = Registry::default();
         let (phone_tx, mut phone) = tokio::sync::mpsc::unbounded_channel();
