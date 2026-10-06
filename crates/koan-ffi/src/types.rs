@@ -51,6 +51,17 @@ impl From<QueueEntryStatus> for EntryStatus {
     }
 }
 
+/// This device and the account's play queue on the server.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct ServerQueue {
+    /// This device keeps its queue there.
+    pub on: bool,
+    /// How many tracks the server holds; 0 when it has none.
+    pub saved_tracks: u32,
+    /// Who saved it, as a person would name them.
+    pub saved_by: String,
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct Artist {
     pub id: i64,
@@ -1312,6 +1323,10 @@ pub struct Settings {
     pub cache_bytes: u64,
     pub auto_sync: bool,
     pub auto_sync_interval_mins: u64,
+    /// This device keeps its queue in the account's play queue on the server.
+    /// Read only here: turning it on or off goes through `set_server_queue`,
+    /// which replaces or saves the queue as it does.
+    pub play_queue: bool,
 
     /// `off`, `track` or `album`.
     pub replaygain: String,

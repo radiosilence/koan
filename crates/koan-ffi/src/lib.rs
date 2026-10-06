@@ -35,6 +35,7 @@ use uuid::Uuid;
 use koan_core::db::queries::RECENT_LIMIT;
 
 mod offload;
+mod server_queue;
 mod state;
 mod types;
 pub use state::*;
@@ -1964,6 +1965,60 @@ impl KoanEngine {
         offload::offload(move || self.write_position(&*self.db()?)).await
     }
 
+    /// Whether this device keeps its queue in the account's play queue on the
+    /// server, and what the server holds now, for asking before turning it on:
+    /// turning it on replaces this device's queue with that one.
+    pub async fn server_queue(self: Arc<Self>) -> Result<ServerQueue, KoanError> {
+        offload::offload(move || {
+            let saved = server_queue::saved()?;
+            Ok(ServerQueue {
+                on: Config::cached().remote.play_queue,
+                saved_tracks: saved.as_ref().map_or(0, |q| q.entry.len() as u32),
+                saved_by: saved.map(|q| saved_by(&q.changed_by)).unwrap_or_default(),
+            })
+        })
+        .await
+    }
+
+    /// Keep this device's queue in the account's play queue on the server, or
+    /// stop. On, the server's queue replaces this device's, or this device's
+    /// is saved there when the server has none; off leaves both as they are.
+    pub async fn set_server_queue(self: Arc<Self>, on: bool) -> Result<(), KoanError> {
+        offload::offload(move || {
+            if on {
+                match server_queue::saved()? {
+                    Some(queue) => self.load_server_queue(&queue)?,
+                    None => self.save_server_queue()?,
+                }
+            }
+            Config::persist(|cfg| cfg.remote.play_queue = on).map_err(|e| {
+                KoanError::BadArgument {
+                    message: e.to_string(),
+                }
+            })?;
+            if on {
+                server_queue::start(Arc::downgrade(&self), false);
+            } else {
+                server_queue::stop();
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Save the queue and playhead to the server now, if this device keeps
+    /// them there: the app is going to the background or quitting.
+    pub async fn save_server_queue_now(self: Arc<Self>) {
+        offload::offload(move || {
+            if Config::cached().remote.play_queue
+                && let Err(e) = self.save_server_queue()
+            {
+                log::info!("server queue: not saved: {e}");
+            }
+        })
+        .await
+    }
+
     /// Restore the queue saved by `save_session`, cursor and position included.
     ///
     /// Resumes only if playback was running when the session was saved: closing
@@ -1973,7 +2028,10 @@ impl KoanEngine {
     ///
     /// Returns the number of items restored.
     pub async fn restore_session(self: Arc<Self>) -> Result<u32, KoanError> {
-        offload::sequenced(move || {
+        // Once this device's own queue is back, the server's may take its
+        // place: see `server_queue`.
+        let engine = Arc::downgrade(&self);
+        let restored = offload::sequenced(move || {
             let db = self.db()?;
             // Before the queue and whether there is one: the mode is the
             // player's, and a queue added under it would be shuffled again.
@@ -2021,7 +2079,11 @@ impl KoanEngine {
 
             Ok(count)
         })
-        .await
+        .await;
+        if Config::cached().remote.play_queue {
+            server_queue::start(engine, true);
+        }
+        restored
     }
 
     // --- Output device -----------------------------------------------------
@@ -2485,6 +2547,7 @@ impl KoanEngine {
                 cache_bytes,
                 auto_sync: cfg.remote.auto_sync,
                 auto_sync_interval_mins: cfg.remote.auto_sync_interval_mins,
+                play_queue: cfg.remote.play_queue,
 
                 replaygain: match cfg.playback.replaygain {
                     config::ReplayGainMode::Off => "off".into(),
@@ -5037,6 +5100,19 @@ fn connection_info() -> ConnectionInfo {
 
 /// The queue as the server is told it, with each track's id on the server. At
 /// most `LINK_QUEUE_MAX` entries, from a few before the current one.
+/// Who saved the server's play queue, as a person would name it: a kōan
+/// device by its name, another client by what it calls itself.
+fn saved_by(changed_by: &str) -> String {
+    match changed_by.strip_prefix("koan ") {
+        Some(id) => koan_core::remote::devices::list()
+            .into_iter()
+            .find(|d| d.id == id)
+            .map_or_else(|| "another kōan device".to_owned(), |d| d.name),
+        None if changed_by == "koan" => "a kōan device".to_owned(),
+        None => changed_by.to_owned(),
+    }
+}
+
 fn link_queue(state: &SharedPlayerState) -> Vec<koan_core::remote::link::LinkQueueEntry> {
     const LINK_QUEUE_MAX: usize = 300;
     let (items, cursor) = state.snapshot_playlist();

@@ -133,7 +133,7 @@ struct RootView: View {
         .onReceive(
             NotificationCenter.default.publisher(for: .appResignsActive)
         ) { _ in
-            Task { await player.saveSession() }
+            Task { await player.saveOnLeaving() }
         }
         // On the window rather than inside the detail column, padded clear of
         // both columns: glass floating on glass reads as neither, and over the

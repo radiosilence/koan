@@ -883,7 +883,10 @@ impl SubsonicClient {
         params.insert("c".into(), client.to_string());
         let mut form: Vec<(String, String)> = params.into_iter().collect();
         form.extend(song_ids.iter().map(|id| ("id".to_string(), id.clone())));
-        if let Some(at) = current.filter(|at| *at < song_ids.len()) {
+        // With songs, a current one is required by index; the first will do
+        // when none is known.
+        if !song_ids.is_empty() {
+            let at = current.filter(|at| *at < song_ids.len()).unwrap_or(0);
             form.push(if by_index {
                 ("currentIndex".into(), at.to_string())
             } else {
@@ -1385,6 +1388,35 @@ fn random_salt() -> Result<String, getrandom::Error> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_saved_play_queue_reads_by_index_or_by_id() {
+        let parse = |json: &str| {
+            serde_json::from_str::<SubsonicResponseWrapper>(json)
+                .unwrap()
+                .subsonic_response
+        };
+        let entries = r#"[{"id":"a","title":"A"},{"id":"b","title":"B"},{"id":"a","title":"A"}]"#;
+        let by_index = parse(&format!(
+            r#"{{"subsonic-response":{{"status":"ok","playQueueByIndex":{{"entry":{entries},"currentIndex":2,"position":1500,"changedBy":"koan d1"}}}}}}"#
+        ));
+        let q = by_index.play_queue_by_index.unwrap();
+        assert_eq!(
+            (q.current_at(), q.position, q.changed_by.as_str()),
+            (Some(2), 1500, "koan d1")
+        );
+
+        // By id, the first entry with that song; a song not queued is none.
+        let by_id = parse(&format!(
+            r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"entry":{entries},"current":"a"}}}}}}"#
+        ));
+        assert_eq!(by_id.play_queue.unwrap().current_at(), Some(0));
+        let gone = parse(&format!(
+            r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"entry":{entries},"current":"z"}}}}}}"#
+        ));
+        assert_eq!(gone.play_queue.unwrap().current_at(), None);
+    }
+
     use super::*;
 
     fn response(json: &str) -> SubsonicResponse {

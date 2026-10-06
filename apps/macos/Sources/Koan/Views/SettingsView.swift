@@ -310,6 +310,8 @@ private struct RemoteSettings: View {
     @State private var username = ""
     @State private var confirmingSignOut = false
     @State private var copiedServer = false
+    /// What the server holds, while asking before it replaces this queue.
+    @State private var replacingQueue: ServerQueue?
     /// The cache limit as typed, committed whole: "5" on the way to "50GB" is
     /// not a limit anyone set.
     @State private var cacheLimit: String?
@@ -464,6 +466,31 @@ private struct RemoteSettings: View {
                     .foregroundStyle(.tertiary)
             }
 
+            if model.settings.remoteSignedIn {
+            Section {
+                Toggle("Keep the queue on the server", isOn: Binding(
+                    get: { model.settings.playQueue },
+                    set: { on in
+                        Task {
+                            // Turning it on takes the server's queue in place of
+                            // this one, so say so first when there is one.
+                            if on, let saved = await model.serverQueue(), saved.savedTracks > 0 {
+                                replacingQueue = saved
+                            } else {
+                                await model.setServerQueue(on)
+                            }
+                        }
+                    }
+                ))
+            } header: {
+                Text("Play queue")
+            } footer: {
+                Text("Saves this device's queue to your account on the server, where other apps can pick it up, and picks up a queue another app saved there when kōan starts. Moving music between kōan devices does not need it.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            }
+
             Section("Downloads") {
                 #if os(tvOS)
                 // tvOS has no stepper.
@@ -522,6 +549,22 @@ private struct RemoteSettings: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Tracks you also have as local files are kept either way. Keeping the rest leaves records in the library that cannot be played until you sign in again.")
+        }
+        .confirmationDialog(
+            "Replace this queue?",
+            isPresented: Binding(
+                get: { replacingQueue != nil },
+                set: { if !$0 { replacingQueue = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: replacingQueue
+        ) { _ in
+            Button("Replace With the Server's Queue", role: .destructive) {
+                Task { await model.setServerQueue(true) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { saved in
+            Text("Your server has a queue of \(saved.savedTracks) \(saved.savedTracks == 1 ? "track" : "tracks") saved by \(saved.savedBy). Keeping the queue on the server replaces the one on this device with it.")
         }
     }
 

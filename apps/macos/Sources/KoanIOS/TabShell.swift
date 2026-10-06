@@ -157,7 +157,7 @@ struct TabShell: View {
         // widens it again.
         .onChange(of: mirror.connection?.offline ?? false) { _, _ in library.libraryChanged() }
         .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
-            Task { await player.saveSession() }
+            Task { await player.saveOnLeaving() }
         }
         // One alert for both, as the Mac has one toast slot: a failure
         // outranks a notice, and only a failure is titled as one.
