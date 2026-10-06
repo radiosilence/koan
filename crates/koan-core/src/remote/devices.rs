@@ -116,7 +116,29 @@ struct Store {
     share_error: Option<String>,
     /// Every account on the server, to share with.
     accounts: Vec<String>,
+    /// The last command that did not simply arrive, for the app to say so.
+    notice: Option<Notice>,
 }
+
+/// A command that was queued for a device asleep, or did not reach one: what
+/// the app tells the person, since the device's state cannot show it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notice {
+    /// Counts up, so the same notice twice is still news.
+    pub seq: u64,
+    /// The device's name, as listed.
+    pub device: String,
+    pub outcome: acks::AckOutcome,
+}
+
+/// The last command that did not simply arrive.
+pub fn notice() -> Option<Notice> {
+    with(|s| s.notice.clone())
+}
+
+/// What to do with a command's outcome once it is known: `None` when it was
+/// sent by a way that brings no answer.
+pub type Then = Box<dyn FnOnce(Option<acks::AckOutcome>) + Send>;
 
 /// A stage of waking a device, in the order they are tried.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -460,9 +482,25 @@ pub fn forget_shares() {
 /// network or to a device that is not this account's (the asker's own,
 /// through the server).
 pub fn send_for(source: CommandSource, id: &str, cmd: LinkCommand) -> Result<(), String> {
+    send_for_then(source, id, cmd, None)
+}
+
+/// `send_for`, handing the outcome to `then` rather than to the app's notice.
+pub fn send_for_then(
+    source: CommandSource,
+    id: &str,
+    cmd: LinkCommand,
+    then: Option<Then>,
+) -> Result<(), String> {
     match source {
-        CommandSource::Account => send(id, cmd),
-        CommandSource::Stranger => send_nearby(id, cmd),
+        CommandSource::Account => send_then(id, cmd, then),
+        CommandSource::Stranger => {
+            send_nearby(id, cmd)?;
+            if let Some(then) = then {
+                then(None);
+            }
+            Ok(())
+        }
         CommandSource::Shared | CommandSource::Nearby => {
             let (nearby, own) = with(|s| {
                 (
@@ -475,7 +513,7 @@ pub fn send_for(source: CommandSource, id: &str, cmd: LinkCommand) -> Result<(),
             if own && !nearby {
                 return Err(format!("{id} is this account's, not the asker's"));
             }
-            send(id, cmd)
+            send_then(id, cmd, then)
         }
     }
 }
@@ -1212,6 +1250,12 @@ pub fn send_live(id: &str, cmd: LinkCommand) -> bool {
 /// else up the link, else in one request to the server, which is what a Live
 /// Activity's button has while iOS keeps the app's link down.
 pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
+    send_then(id, cmd, None)
+}
+
+/// `send`, handing the outcome to `then` once it is known, rather than to the
+/// app's notice. Returns as soon as the command is on its way.
+pub fn send_then(id: &str, cmd: LinkCommand, then: Option<Then>) -> Result<(), String> {
     choosable(id)?;
     used(id);
     let (nearby, own, shared) = with(|s| {
@@ -1245,7 +1289,7 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
             crate::remote::nearby::send(id, cmd.clone())
         };
         if sent {
-            follow(id, cmd, ack, answer, Route::Network, routes);
+            follow(id, cmd, ack, answer, Route::Network, routes, then);
             return Ok(());
         }
     }
@@ -1255,7 +1299,7 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
         command: cmd.clone(),
         ack: routes.link_answers.then_some(ack),
     }) {
-        follow(id, cmd, ack, answer, Route::Link, routes);
+        follow(id, cmd, ack, answer, Route::Link, routes, then);
         return Ok(());
     }
     if !account && !nearby {
@@ -1264,7 +1308,9 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
         log::info!("devices: {id} is not listed; asking the server");
     }
     acks::forget(ack);
-    ask_server(id, &cmd, Some(ack)).map(|outcome| told(id, &cmd, outcome))
+    let outcome = ask_server(id, &cmd, Some(ack))?;
+    told(id, &cmd, outcome, then);
+    Ok(())
 }
 
 /// The ways a command can reach a device, and which of them bring an answer.
@@ -1296,6 +1342,7 @@ fn follow(
     answer: crossbeam_channel::Receiver<acks::AckOutcome>,
     route: Route,
     routes: Routes,
+    then: Option<Then>,
 ) {
     let answers = match route {
         Route::Network => routes.lan_answers,
@@ -1303,6 +1350,7 @@ fn follow(
     };
     if !answers {
         acks::forget(ack);
+        told(id, &cmd, None, then);
         return;
     }
     let id = id.to_owned();
@@ -1311,7 +1359,7 @@ fn follow(
         .spawn(move || {
             let outcome = walk(&id, &cmd, ack, &answer, route, routes);
             acks::forget(ack);
-            told(&id, &cmd, outcome);
+            told(&id, &cmd, outcome, then);
         });
 }
 
@@ -1351,14 +1399,35 @@ fn walk(
 
 /// What a command came to, once known. `None`: sent by a way that brings no
 /// answer.
-fn told(id: &str, cmd: &LinkCommand, outcome: Option<acks::AckOutcome>) {
-    match outcome {
+/// `then` has it when given; otherwise one that was queued or did not arrive
+/// becomes the app's notice.
+fn told(id: &str, cmd: &LinkCommand, outcome: Option<acks::AckOutcome>, then: Option<Then>) {
+    match &outcome {
         Some(acks::AckOutcome::Done) | None => {}
         Some(acks::AckOutcome::Queued) => {
             log::info!("devices: {id} is asleep; {cmd:?} waits for it")
         }
         Some(other) => log::warn!("devices: {cmd:?} did not reach {id}: {other:?}"),
     }
+    if let Some(then) = then {
+        then(outcome);
+        return;
+    }
+    let Some(outcome) = outcome.filter(|o| *o != acks::AckOutcome::Done) else {
+        return;
+    };
+    let device = list()
+        .into_iter()
+        .find(|d| d.id == id)
+        .map_or_else(|| id.to_owned(), |d| d.name);
+    changed(|s| {
+        let seq = s.notice.as_ref().map_or(1, |n| n.seq + 1);
+        s.notice = Some(Notice {
+            seq,
+            device,
+            outcome,
+        });
+    });
 }
 
 /// Whether `id`, reached on the local network, answers commands.
@@ -1401,7 +1470,7 @@ pub fn send_by_server_first(id: &str, cmd: LinkCommand) -> Result<(), String> {
             ask_server(id, &cmd, Some(acks::next_id())).map(|outcome| match outcome {
                 Some(acks::AckOutcome::Refused { reason }) => Err(reason),
                 outcome => {
-                    told(id, &cmd, outcome);
+                    told(id, &cmd, outcome, None);
                     Ok(())
                 }
             })?
@@ -1533,6 +1602,58 @@ mod tests {
         nearby_state("speaker", at(false));
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(position(), 1000, "paused, it stays put");
+    }
+
+    #[test]
+    fn a_command_queued_or_refused_becomes_the_notice_unless_its_sender_takes_it() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        nearby_hello(hello("phone"), "10.0.0.5:5626");
+
+        told(
+            "phone",
+            &LinkCommand::Pause,
+            Some(acks::AckOutcome::Done),
+            None,
+        );
+        told("phone", &LinkCommand::Pause, None, None);
+        assert_eq!(notice(), None, "arrived, or sent as ever: nothing to say");
+
+        told(
+            "phone",
+            &LinkCommand::Pause,
+            Some(acks::AckOutcome::Queued),
+            None,
+        );
+        let queued = notice().unwrap();
+        assert_eq!(
+            (queued.device.as_str(), &queued.outcome),
+            ("phone", &acks::AckOutcome::Queued)
+        );
+
+        let failed = acks::AckOutcome::Failed {
+            error: "gone".into(),
+        };
+        told("phone", &LinkCommand::Pause, Some(failed.clone()), None);
+        assert_eq!(
+            notice().unwrap().seq,
+            queued.seq + 1,
+            "the same twice is still news"
+        );
+
+        // A sender that takes the outcome itself, as a hand-off does.
+        let got = std::sync::Arc::new(parking_lot::Mutex::new(None));
+        let into = got.clone();
+        let before = notice();
+        told(
+            "phone",
+            &LinkCommand::Pause,
+            Some(failed.clone()),
+            Some(Box::new(move |o| *into.lock() = Some(o))),
+        );
+        assert_eq!(*got.lock(), Some(Some(failed)));
+        assert_eq!(notice(), before, "not said twice");
     }
 
     #[test]

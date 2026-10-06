@@ -317,6 +317,29 @@ struct HandedOff {
     /// For music moved here: the queue entry under this device's cursor
     /// before it was sent.
     cursor_before: Option<QueueItemId>,
+    /// The answer to the command that moved it, when it went by a way that
+    /// brings one: `None` through the channel when it did not.
+    answer: Option<crossbeam_channel::Receiver<Option<koan_core::remote::acks::AckOutcome>>>,
+    /// `answer` is the destination's own, to the Play it was sent: done means
+    /// the music is there. Otherwise it is from the device asked to send it
+    /// on, and only says whether that device did.
+    answer_is_arrival: bool,
+    /// The source was playing, and plays on if the music was refused.
+    was_playing: bool,
+}
+
+/// A channel for a command's outcome, and what `send_then` hands it to.
+fn outcome_channel() -> (
+    koan_core::remote::devices::Then,
+    crossbeam_channel::Receiver<Option<koan_core::remote::acks::AckOutcome>>,
+) {
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    (
+        Box::new(move |outcome| {
+            let _ = tx.send(outcome);
+        }),
+        rx,
+    )
 }
 
 impl HandedOff {
@@ -325,8 +348,49 @@ impl HandedOff {
     /// is told the music has not started rather than that it has.
     /// `here` is the entry under this device's cursor and the server's id for
     /// its track, for music moved to this device.
-    fn result(&self, here: impl Fn() -> Option<(QueueItemId, Option<String>)>) -> MoveResult {
+    /// `resume` plays on here when the music was refused.
+    fn result(
+        &self,
+        here: impl Fn() -> Option<(QueueItemId, Option<String>)>,
+        resume: impl Fn(),
+    ) -> MoveResult {
+        use koan_core::remote::acks::AckOutcome;
         use koan_core::remote::devices;
+        let not_started = |queued, error| MoveResult {
+            left_out: self.left_out,
+            started: false,
+            queued,
+            error,
+        };
+        if let Some(answer) = &self.answer {
+            match answer.recv_timeout(HAND_OFF_TAKEN) {
+                Ok(Some(AckOutcome::Done)) if self.answer_is_arrival => {
+                    return MoveResult {
+                        left_out: self.left_out,
+                        started: true,
+                        queued: false,
+                        error: None,
+                    };
+                }
+                Ok(Some(AckOutcome::Queued)) => return not_started(true, None),
+                Ok(Some(
+                    AckOutcome::Refused { reason: why } | AckOutcome::Failed { error: why },
+                )) => {
+                    log::warn!("devices: {:?} did not take the music: {why}", self.to);
+                    if self.was_playing {
+                        resume();
+                    }
+                    return not_started(false, Some(why));
+                }
+                // Asked to send it on, and did: whether it arrived is the
+                // destination's to say, below.
+                Ok(Some(AckOutcome::Done)) => {}
+                // Sent by a way that brings no answer: watch for it instead.
+                Ok(None) => {}
+                Err(_) if self.answer_is_arrival => return not_started(false, None),
+                Err(_) => {}
+            }
+        }
         let started = self.track.as_deref().is_some_and(|track| match &self.to {
             Some(to) => devices::await_current(to, track, self.before.as_ref(), HAND_OFF_TAKEN),
             None => devices::await_until(
@@ -343,6 +407,8 @@ impl HandedOff {
         MoveResult {
             left_out: self.left_out,
             started,
+            queued: false,
+            error: None,
         }
     }
 }
@@ -2225,7 +2291,8 @@ impl KoanEngine {
                     };
                     let before = to.as_deref().and_then(devices::last_report);
                     let cursor_before = engine.state.cursor();
-                    devices::send(from, LinkCommand::HandOff { to: to_id })
+                    let (then, answer) = outcome_channel();
+                    devices::send_then(from, LinkCommand::HandOff { to: to_id }, Some(then))
                         .map_err(|message| KoanError::Remote { message })?;
                     Some(HandedOff {
                         left_out: 0,
@@ -2233,6 +2300,9 @@ impl KoanEngine {
                         track,
                         before,
                         cursor_before,
+                        answer: Some(answer),
+                        answer_is_arrival: false,
+                        was_playing: false,
                     })
                 }
                 (None, None) => None,
@@ -2245,9 +2315,19 @@ impl KoanEngine {
             return Ok(MoveResult {
                 left_out: 0,
                 started: true,
+                queued: false,
+                error: None,
             });
         };
-        Ok(offload::offload(move || sent.result(|| self.under_cursor())).await)
+        Ok(offload::offload(move || {
+            sent.result(
+                || self.under_cursor(),
+                || {
+                    let _ = self.send_local(PlayerCommand::Resume);
+                },
+            )
+        })
+        .await)
     }
 
     /// Send a link command, as JSON, to the device `id`. For a Live
@@ -4655,9 +4735,17 @@ impl KoanEngine {
             // what the destination reports; here it is only logged, off the
             // lane, so later commands do not wait on it.
             LinkCommand::HandOff { to } => self.hand_off_blocking(&to, source).map(|sent| {
+                let player = self.tx.clone();
                 let _ = std::thread::Builder::new()
                     .name("koan-hand-off".into())
-                    .spawn(move || sent.result(|| None));
+                    .spawn(move || {
+                        sent.result(
+                            || None,
+                            || {
+                                let _ = player.send(PlayerCommand::Resume);
+                            },
+                        )
+                    });
             }),
             // Taken off the link before it gets here.
             // From a notification tapped or an outbox: the link's own
@@ -4846,7 +4934,8 @@ impl KoanEngine {
             paused,
             handoff: true,
         };
-        let sent = koan_core::remote::devices::send_for(source, to, play);
+        let (then, answer) = outcome_channel();
+        let sent = koan_core::remote::devices::send_for_then(source, to, play, Some(then));
         if let Err(message) = sent {
             if !paused {
                 self.send_local(PlayerCommand::Resume)?;
@@ -4860,6 +4949,9 @@ impl KoanEngine {
             track: Some(first),
             before,
             cursor_before: None,
+            answer: Some(answer),
+            answer_is_arrival: true,
+            was_playing: !paused,
         })
     }
 
@@ -5186,6 +5278,19 @@ fn connection_info() -> ConnectionInfo {
             .into_iter()
             .map(|(url, devices)| NearbyServer { url, devices })
             .collect(),
+        command_notice: devices::notice().map(|n| {
+            use koan_core::remote::acks::AckOutcome;
+            CommandNotice {
+                seq: n.seq,
+                device: n.device,
+                queued: n.outcome == AckOutcome::Queued,
+                detail: match n.outcome {
+                    AckOutcome::Refused { reason } => reason,
+                    AckOutcome::Failed { error } => error,
+                    AckOutcome::Done | AckOutcome::Queued => String::new(),
+                },
+            }
+        }),
     }
 }
 
@@ -5295,6 +5400,51 @@ fn remote_error(e: SubsonicError) -> KoanError {
 #[cfg(test)]
 mod hand_off_tests {
     use super::*;
+
+    fn handed(answer: Option<koan_core::remote::acks::AckOutcome>, is_arrival: bool) -> HandedOff {
+        let (then, rx) = outcome_channel();
+        then(answer);
+        HandedOff {
+            left_out: 0,
+            to: Some("phone".into()),
+            track: None,
+            before: None,
+            cursor_before: None,
+            answer: Some(rx),
+            answer_is_arrival: is_arrival,
+            was_playing: true,
+        }
+    }
+
+    /// The Play's own answer says how a hand-off went: there, waiting for a
+    /// device asleep, or refused, when the music plays on here.
+    #[test]
+    fn a_hand_off_goes_by_the_plays_answer() {
+        use koan_core::remote::acks::AckOutcome;
+        let resumed = std::cell::Cell::new(0);
+        let resume = || resumed.set(resumed.get() + 1);
+
+        let there = handed(Some(AckOutcome::Done), true).result(|| None, resume);
+        assert!(there.started && !there.queued && there.error.is_none());
+
+        let asleep = handed(Some(AckOutcome::Queued), true).result(|| None, resume);
+        assert!(!asleep.started && asleep.queued);
+        assert_eq!(resumed.get(), 0, "paused, for the device to take on waking");
+
+        let refused = handed(
+            Some(AckOutcome::Refused {
+                reason: "not allowed".into(),
+            }),
+            true,
+        )
+        .result(|| None, resume);
+        assert_eq!(refused.error.as_deref(), Some("not allowed"));
+        assert_eq!(resumed.get(), 1, "plays on here");
+
+        // A device that sent it on said only that it did: not that it arrived.
+        let sent_on = handed(Some(AckOutcome::Done), false).result(|| None, resume);
+        assert!(!sent_on.started);
+    }
 
     /// "Move here" after this device handed the music on: its own queue is
     /// still there, cursor on the track it would be sent back. That is not

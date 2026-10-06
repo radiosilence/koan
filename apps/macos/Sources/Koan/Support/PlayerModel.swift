@@ -570,7 +570,12 @@ final class PlayerModel {
         attempt {
             let moved = try await self.engine.moveMusic(to: id)
             let left = moved.leftOut
-            if !moved.started {
+            if let error = moved.error {
+                // Refused: the music plays on where it was, if it was playing.
+                self.lastNotice = "\(name) did not take the music: \(error)"
+            } else if moved.queued {
+                self.lastNotice = "\(name) is asleep. It takes the music when it wakes; until then the music is paused where it was."
+            } else if !moved.started {
                 // Sent, not known to have arrived. The controls follow it there, since a
                 // device asleep takes it on waking; meanwhile it is paused where it was.
                 self.lastNotice = "Sent to \(name), which has not started it yet. It may when it wakes; until then the music is paused where it was."
@@ -580,6 +585,15 @@ final class PlayerModel {
                     : "\(left) tracks only on this device stayed behind"
             }
         }
+    }
+
+    /// Say what became of a command to another device that did not simply
+    /// arrive: its state on screen cannot show a command that never got there.
+    func show(_ notice: CommandNotice?) {
+        guard let notice else { return }
+        lastNotice = notice.queued
+            ? "Waiting for \(notice.device) to wake"
+            : "Couldn't reach \(notice.device): \(notice.detail)"
     }
 
     /// Whether `destination` (this device for `nil`) can take the music the
