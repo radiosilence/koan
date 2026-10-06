@@ -38,6 +38,12 @@ pub const HISTORY: &str = "koanHistory";
 /// the key and not the password. See `helpers::set_remote_credentials`.
 pub const SIGN_IN: &str = "koanSignIn";
 
+/// Devices proving to each other on the local network that they belong to
+/// the same account: a linking device registers its public key with
+/// `deviceKey`, and links that did are sent the account's keys as
+/// `LinkCommand::DeviceKeys`.
+pub const DEVICE_KEYS: &str = "koanDeviceKeys";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {
     /// OpenSubsonic's `type`: `koan`, `navidrome`. `None` from a server that

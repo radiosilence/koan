@@ -64,6 +64,9 @@ struct Entry {
     /// Sent the account's other devices whenever one changes. Asked for by
     /// the client; one that predates them would log each as a bad command.
     wants_devices: bool,
+    /// Sent `LinkCommand::DeviceKeys`: it registered a key of its own, so it
+    /// knows the command.
+    wants_keys: bool,
 }
 
 /// A Live Activity on a phone showing another device, and where to push its
@@ -201,6 +204,7 @@ impl Registry {
             device: device.to_string(),
             tx,
             wants_devices,
+            wants_keys: false,
         });
         drop(entries);
         // Always, empty or not: an app signed in elsewhere before holds that
@@ -218,6 +222,36 @@ impl Registry {
             self.send_live(username, device, LinkCommand::WatchLevels { on: true });
         }
         id
+    }
+
+    /// Send the link `id` the account's device keys from now on.
+    pub fn wants_keys(&self, id: &str) {
+        if let Some(e) = self.entries.lock().iter_mut().find(|e| e.info.id == id) {
+            e.wants_keys = true;
+        }
+    }
+
+    /// Hand `username`'s links that take them the device keys they check the
+    /// local network against.
+    pub fn publish_keys(&self, username: &str, keys: Vec<koan_core::remote::link::LinkDeviceKey>) {
+        for e in self
+            .entries
+            .lock()
+            .iter()
+            .filter(|e| e.info.username == username && e.wants_keys)
+        {
+            let _ = e.tx.send(LinkCommand::DeviceKeys { keys: keys.clone() });
+        }
+    }
+
+    /// The accounts `owner` shares `device` with.
+    pub fn grantees_of(&self, owner: &str, device: &str) -> Vec<String> {
+        self.grants
+            .lock()
+            .iter()
+            .filter(|g| g.owner == owner && g.device == device)
+            .map(|g| g.grantee.clone())
+            .collect()
     }
 
     /// Record what a client says it is doing.

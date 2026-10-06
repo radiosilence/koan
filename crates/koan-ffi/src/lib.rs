@@ -4649,6 +4649,7 @@ impl KoanEngine {
             }
             // Answered by the link session itself, which holds the watch.
             LinkCommand::Devices { .. }
+            | LinkCommand::DeviceKeys { .. }
             | LinkCommand::Shares { .. }
             | LinkCommand::Forgotten { .. }
             | LinkCommand::WatchLevels { .. }

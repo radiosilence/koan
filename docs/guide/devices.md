@@ -255,6 +255,7 @@ uses one only where the server lists it:
 | `koanLink` | The app's standing WebSocket at `/rest/koanLink`: the server can command it, and it reports what it is playing. |
 | `koanShares` | Sharing a device with other accounts on the server: the grant from the device, the server's accounts to choose from, and shared devices in each grantee's list, relayed with their outputs for the playback set. |
 | `koanHistory` | The account's play history as every device's: `/rest/koanHistory` pages the plays and forgettings after a cursor, `/rest/koanForgetPlays` forgets plays for every device, and the link says when the history moved. See [Play history](remote-servers.md#play-history). |
+| `koanDeviceKeys` | Each device's public key, for proving on the local network that it is the account's own (or shared with it) without the server in the room. A device registers it as `deviceKey` when it links with an API key; it is kept on that key's row, so revoking the key or signing out drops it. Links that registered one are sent the account's keys, and those of devices shared with it, as `DeviceKeys`. The local network never may send them. |
 | `koanDevices` | The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. Each device's outputs travel with its state; a server older than the apps drops them, so the Output menu for another device needs the server updated too. |
 
 Settings → Server shows what the server said it is and the extensions it

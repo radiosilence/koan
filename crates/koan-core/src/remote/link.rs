@@ -138,6 +138,14 @@ pub enum LinkCommand {
     Devices {
         devices: Vec<LinkDevice>,
     },
+    /// The public keys the account's devices, and devices shared with it,
+    /// prove themselves with on the local network (`koanDeviceKeys`). News,
+    /// as `Devices` is: sent when a device that registered a key links, and
+    /// whenever the account's keys change. From the server alone, never from
+    /// the network: it is what the network's claims are checked against.
+    DeviceKeys {
+        keys: Vec<LinkDeviceKey>,
+    },
     /// The accounts this device lets control it. News, as `Devices` is: sent
     /// when it links and whenever the list changes.
     Shares {
@@ -238,6 +246,7 @@ impl LinkCommand {
             Self::Sync { .. }
             | Self::Evict { .. }
             | Self::Devices { .. }
+            | Self::DeviceKeys { .. }
             | Self::Shares { .. }
             | Self::Shared { .. }
             | Self::Forgotten { .. }
@@ -269,6 +278,7 @@ impl LinkCommand {
             Self::Sync { .. }
                 | Self::Evict { .. }
                 | Self::Devices { .. }
+                | Self::DeviceKeys { .. }
                 | Self::Forgotten { .. }
                 | Self::HistoryChanged
                 | Self::Levels { .. }
@@ -312,6 +322,28 @@ pub enum CommandSource {
     /// a stranger's set (`allowed_nearby`), and a hand-off that stays on the
     /// network.
     Stranger,
+}
+
+/// A device's public key, as `LinkCommand::DeviceKeys` carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkDeviceKey {
+    /// The device's id.
+    pub id: String,
+    /// Base64 of its 32-byte Ed25519 public key.
+    pub key: String,
+    /// The account it belongs to, for a device shared with this one's: `None`
+    /// for the account's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+}
+
+/// Whether `key` is a public key a device may register: base64 of 32 bytes,
+/// the size of an Ed25519 public key.
+pub fn valid_device_key(key: &str) -> bool {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(key)
+        .is_ok_and(|bytes| bytes.len() == 32)
 }
 
 /// Another device on the same account, as the server sends it.
@@ -365,6 +397,7 @@ impl LinkCommand {
             | Self::SleepTimer { .. }
             | Self::HandOff { .. }
             | Self::Devices { .. }
+            | Self::DeviceKeys { .. }
             | Self::Shares { .. }
             | Self::Forgotten { .. }
             | Self::HistoryChanged
@@ -841,6 +874,9 @@ impl wire::Session for LinkSession<'_> {
             Ok(LinkCommand::Devices { devices }) => {
                 crate::remote::devices::set_account(devices);
             }
+            // Sent only to a link that registered a key, which this one does
+            // not yet.
+            Ok(LinkCommand::DeviceKeys { .. }) => {}
             Ok(LinkCommand::Shares {
                 grantees,
                 error,
@@ -1299,5 +1335,33 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let first = device_id(dir.path());
         assert_eq!(device_id(dir.path()), first);
+    }
+}
+
+#[cfg(test)]
+mod device_key_tests {
+    use super::*;
+
+    /// The keys are what a network peer's claims are checked against, so no
+    /// peer may send them: not a stranger, not under Full control, not a
+    /// shared account.
+    #[test]
+    fn device_keys_come_from_the_server_alone() {
+        let cmd = LinkCommand::DeviceKeys { keys: vec![] };
+        assert!(!cmd.allowed_nearby());
+        assert!(!cmd.allowed_playback());
+        assert_eq!(cmd.from_the_network(true), None);
+        assert_eq!(cmd.from_the_network(false), None);
+    }
+
+    #[test]
+    fn a_device_key_is_32_bytes_of_base64() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        assert!(valid_device_key(&b64.encode([7u8; 32])));
+        assert!(!valid_device_key(&b64.encode([7u8; 31])));
+        assert!(!valid_device_key(&b64.encode([7u8; 33])));
+        assert!(!valid_device_key("not base64!"));
+        assert!(!valid_device_key(""));
     }
 }
