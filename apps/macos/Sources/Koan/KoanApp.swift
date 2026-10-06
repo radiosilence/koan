@@ -65,6 +65,9 @@ struct KoanApp: App {
                     let created = try await AppState()
                     await created.start()
                     state = created
+                    if let dir = EvidenceRenderer.directory {
+                        await EvidenceRenderer.run(created, into: dir)
+                    }
                     if let pendingURL {
                         created.open(url: pendingURL)
                         self.pendingURL = nil

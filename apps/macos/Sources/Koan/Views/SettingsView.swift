@@ -606,7 +606,7 @@ private struct PlaybackSettings: View {
 
 /// Correction for the output in use: a profile of bands, impulse responses or
 /// both, imported from what other tools write.
-private struct DspSettings: View {
+struct DspSettings: View {
     @Environment(AppState.self) private var app
     @State private var importing = false
     @State private var findingAutoEq = false
