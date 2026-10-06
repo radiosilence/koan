@@ -144,10 +144,7 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
                 super::search::match_rank("a.name")
             )
         }
-        (ArtistOrder::Relevance, None, Some(ids)) => {
-            params.push(Box::new(super::json_list(ids)));
-            "(SELECT key FROM json_each(?) WHERE value = a.id)".into()
-        }
+        (ArtistOrder::Relevance, None, Some(_)) => "MIN(r.key)".into(),
         (order, ..) => order.clause().into(),
     };
     let mut sql = format!("SELECT {columns} {body} ORDER BY {order_by}");
@@ -183,6 +180,11 @@ pub fn count_artists(conn: &Connection, q: &ArtistQuery) -> Result<u64, DbError>
         |r| r.get(0),
     )?;
     Ok(n as u64)
+}
+
+/// Whether `q` lists its ids in their own order: `Relevance` with no search.
+fn ranked_by_ids(q: &ArtistQuery) -> bool {
+    q.order == ArtistOrder::Relevance && q.search.is_none()
 }
 
 /// What `q`'s search lists when no artist's name holds it: the fuzzy matches,
@@ -239,9 +241,18 @@ fn artist_body(
         );
     }
     let mut wheres: Vec<String> = Vec::new();
-    if let Some(ids) = q.ids {
-        params.push(Box::new(super::json_list(ids)));
-        wheres.push("a.id IN (SELECT value FROM json_each(?))".into());
+    match q.ids {
+        // Joined once rather than looked up per row, so the order of the ids
+        // is `r.key`.
+        Some(ids) if ranked_by_ids(q) => {
+            params.push(Box::new(super::json_list(ids)));
+            sql.push_str(" JOIN json_each(?) r ON r.value = a.id");
+        }
+        Some(ids) => {
+            params.push(Box::new(super::json_list(ids)));
+            wheres.push("a.id IN (SELECT value FROM json_each(?))".into());
+        }
+        None => {}
     }
     if let Some(query) = q.search {
         params.push(Box::new(format!("%{}%", escape_like(query))));

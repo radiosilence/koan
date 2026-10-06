@@ -378,7 +378,7 @@ pub fn filter_tracks(
     if let Some(fallback) = fuzzy_fallback(conn, filter)? {
         return filter_tracks(conn, &fallback, order, descending, limit, offset);
     }
-    let Some((body, mut binds)) = track_body(conn, filter)? else {
+    let Some((body, mut binds)) = track_body(conn, filter, order == TrackOrder::Relevance)? else {
         return Ok(Vec::new());
     };
     let order = match order {
@@ -403,10 +403,7 @@ pub fn filter_tracks(
                     super::search::match_rank("al.title"),
                 )
             }
-            (None, Some(ids)) => {
-                binds.push(Box::new(json_list(ids)));
-                format!("(SELECT key FROM json_each(?) WHERE value = t.id) {dir}")
-            }
+            (None, Some(_)) => format!("r.key {dir}"),
             (None, None) => shelved,
         },
         TrackOrder::Title => format!("t.title {dir}"),
@@ -436,7 +433,7 @@ pub fn count_tracks(conn: &Connection, filter: &TrackFilter) -> Result<u64, DbEr
     if let Some(fallback) = fuzzy_fallback(conn, filter)? {
         return count_tracks(conn, &fallback);
     }
-    let Some((body, binds)) = track_body(conn, filter)? else {
+    let Some((body, binds)) = track_body(conn, filter, false)? else {
         return Ok(0);
     };
     let n: i64 = conn.query_row(
@@ -454,7 +451,7 @@ fn fuzzy_fallback(conn: &Connection, filter: &TrackFilter) -> Result<Option<Trac
     let Some(query) = &filter.search else {
         return Ok(None);
     };
-    let Some((body, binds)) = track_body(conn, filter)? else {
+    let Some((body, binds)) = track_body(conn, filter, false)? else {
         return Ok(None);
     };
     let found: bool = conn.query_row(
@@ -478,10 +475,12 @@ fn fuzzy_fallback(conn: &Connection, filter: &TrackFilter) -> Result<Option<Trac
 
 /// The FROM and WHERE that `filter_tracks` and `count_tracks` share, and their
 /// parameters in order. `None` when nothing can match: an empty id list.
+/// `ranked` joins the ids as `r`, for `TrackOrder::Relevance` to order by.
 #[allow(clippy::type_complexity)]
 fn track_body(
     conn: &Connection,
     filter: &TrackFilter,
+    ranked: bool,
 ) -> Result<Option<(String, Vec<Box<dyn ToSql>>)>, DbError> {
     let mut clauses: Vec<String> = Vec::new();
     let mut binds: Vec<Box<dyn ToSql>> = Vec::new();
@@ -501,7 +500,13 @@ fn track_body(
         if ids.is_empty() {
             return Ok(None);
         }
-        clauses.push(format!("t.id IN {IN_LIST}"));
+        if ranked && filter.search.is_none() {
+            // Joined once rather than looked up per row, so the order of the
+            // ids is `r.key`. In the FROM, after the joins above bind theirs.
+            joins.push_str(" JOIN json_each(?) r ON r.value = t.id");
+        } else {
+            clauses.push(format!("t.id IN {IN_LIST}"));
+        }
         binds.push(Box::new(json_list(ids)));
     }
 

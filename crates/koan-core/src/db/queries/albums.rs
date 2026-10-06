@@ -417,10 +417,7 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
                 AlbumOrder::ArtistThenDate.clause()
             ));
         }
-        (AlbumOrder::Relevance, None, Some(ids)) => {
-            params.push(Box::new(super::json_list(ids)));
-            sql.push_str("(SELECT key FROM json_each(?) WHERE value = al.id)");
-        }
+        (AlbumOrder::Relevance, None, Some(_)) => sql.push_str("r.key"),
         _ => sql.push_str(order.clause()),
     }
 
@@ -516,9 +513,18 @@ fn album_body(
         );
     }
     let mut wheres: Vec<String> = Vec::new();
-    if let Some(ids) = q.ids {
-        params.push(Box::new(super::json_list(ids)));
-        wheres.push("al.id IN (SELECT value FROM json_each(?))".into());
+    match q.ids {
+        // Joined once rather than looked up per row, so the order of the ids
+        // is `r.key`.
+        Some(ids) if q.order == AlbumOrder::Relevance && q.search.is_none() => {
+            params.push(Box::new(super::json_list(ids)));
+            sql.push_str(" JOIN json_each(?) r ON r.value = al.id");
+        }
+        Some(ids) => {
+            params.push(Box::new(super::json_list(ids)));
+            wheres.push("al.id IN (SELECT value FROM json_each(?))".into());
+        }
+        None => {}
     }
     if let Some(id) = q.artist_id {
         params.push(Box::new(id));

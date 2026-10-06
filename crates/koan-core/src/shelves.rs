@@ -530,4 +530,36 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn a_search_reads_nucleos_operators_as_characters() {
+        let db = db();
+        krew_library(&db);
+        for q in ["!!!", "^x"] {
+            let s = assert_agrees(&db, q);
+            assert!(s.is_empty(), "{q}: nothing holds these characters");
+        }
+    }
+
+    #[test]
+    fn a_fallback_sees_what_was_written_since_the_last_search() {
+        let db = db();
+        krew_library(&db);
+        let before = summary(
+            &db.conn,
+            Shelf::Search("Polr Bear"),
+            queries::LOCAL_USER,
+            NOW,
+            false,
+        )
+        .unwrap();
+        assert!(before.artists.preview.is_empty());
+        upsert_track(
+            &db.conn,
+            &sample_meta("Fluffy", "Polar Bear", "Held On The Tips Of Fingers"),
+        )
+        .unwrap();
+        let s = assert_agrees(&db, "Polr Bear");
+        assert_eq!(s.artists.preview[0].name, "Polar Bear");
+    }
 }
