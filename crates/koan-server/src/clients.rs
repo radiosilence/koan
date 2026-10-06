@@ -67,9 +67,6 @@ struct Entry {
     /// Sent the account's other devices whenever one changes. Asked for by
     /// the client; one that predates them would log each as a bad command.
     wants_devices: bool,
-    /// When anything last came up this link, in Unix milliseconds: what
-    /// tells a link that has stopped answering from one that is only slow.
-    heard_ms: i64,
 }
 
 /// A command relayed with an id, and what to do with the answer: `None` when
@@ -82,14 +79,16 @@ pub struct Acking {
 /// An answer the server is waiting for.
 struct Waiting {
     reply: Box<dyn FnOnce(Option<AckOutcome>) + Send>,
-    sent_ms: i64,
+    /// The device said the command came off its link.
+    received: bool,
 }
 
-/// How long a linked device has to answer before the server looks at its
-/// link; and, if it has heard from the device since, how long in all before
-/// it gives up.
+/// How long a linked device has to say a command came off its link before it
+/// is reached as one that is away; and how long an answer to one it did take
+/// is waited for, however long the command runs, before the asker is told
+/// only that it arrived.
 const FIRST_LOOK: std::time::Duration = std::time::Duration::from_millis(2500);
-const SLOW_ANSWER: std::time::Duration = std::time::Duration::from_secs(10);
+const LONGEST_ANSWER: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// A Live Activity on a phone showing another device, and where to push its
 /// updates.
@@ -208,8 +207,8 @@ impl Registry {
         // What waited for this device while it was away goes down the new
         // link first.
         let live = self.live();
-        for cmd in outbox::take_and_remember(username, device, name, platform, &live) {
-            let _ = tx.send(cmd.into());
+        for envelope in outbox::take_and_remember(username, device, name, platform, &live) {
+            let _ = tx.send(envelope);
         }
         let mut entries = self.entries.lock();
         entries.retain(|e| !(e.device == device && e.info.username == username));
@@ -231,7 +230,6 @@ impl Registry {
             device: device.to_string(),
             tx,
             wants_devices,
-            heard_ms: chrono::Utc::now().timestamp_millis(),
         });
         drop(entries);
         // Always, empty or not: an app signed in elsewhere before holds that
@@ -357,7 +355,7 @@ impl Registry {
     }
 
     /// Send `cmd` to `device` if it is linked now, and nowhere else.
-    fn send_live(&self, username: &str, device: &str, cmd: LinkCommand) {
+    pub(crate) fn send_live(&self, username: &str, device: &str, cmd: LinkCommand) {
         if let Some(e) = self
             .entries
             .lock()
@@ -922,12 +920,15 @@ impl Registry {
         };
         // Not linked: a phone iOS has suspended is woken to take it.
         let Some(target) = target else {
-            let reached = reach_absent(username, id, &cmd).unwrap_or_else(|| {
-                Err(match id {
-                    Some(id) => format!("no linked client {id}; see `clients`"),
-                    None => "no koan app is linked to this server; open koan on the device".into(),
-                })
-            });
+            let reached = reach_absent(username, id, &cmd, acking.as_ref().map(|a| a.id))
+                .unwrap_or_else(|| {
+                    Err(match id {
+                        Some(id) => format!("no linked client {id}; see `clients`"),
+                        None => {
+                            "no koan app is linked to this server; open koan on the device".into()
+                        }
+                    })
+                });
             if let (Ok(_), Some(acking)) = (&reached, acking) {
                 (acking.reply)(Some(AckOutcome::Queued));
             }
@@ -949,7 +950,7 @@ impl Registry {
                     (device.clone(), acking.id),
                     Waiting {
                         reply: acking.reply,
-                        sent_ms: chrono::Utc::now().timestamp_millis(),
+                        received: false,
                     },
                 );
                 (Some(acking.id), None)
@@ -987,16 +988,47 @@ impl Registry {
         }
     }
 
-    /// Something came up `device`'s link.
-    pub fn heard(&self, username: &str, device: &str) {
-        let now = chrono::Utc::now().timestamp_millis();
-        if let Some(e) = self
-            .entries
-            .lock()
-            .iter_mut()
-            .find(|e| e.info.username == username && e.device == device)
-        {
-            e.heard_ms = now;
+    /// `device` says the command sent under `ack` came off its link.
+    pub fn received(&self, device: &str, ack: u64) {
+        if let Some(w) = self.answers.lock().get_mut(&(device.to_string(), ack)) {
+            w.received = true;
+        }
+    }
+
+    /// The first look at a command sent to `device` under `ack`. Taken off its
+    /// link: its answer is waited for, however long the command runs, and
+    /// `true` says so. Not taken: the link is not delivering, though it may be
+    /// open (a phone iOS has suspended, a socket not yet closed), so the
+    /// device is reached as one that is away, with the command kept under its
+    /// id so the device acts on it once whichever copy arrives first. The link
+    /// is left to end of its own accord.
+    fn look(&self, username: &str, device: &str, ack: u64, cmd: &LinkCommand) -> bool {
+        let key = (device.to_string(), ack);
+        let mut answers = self.answers.lock();
+        match answers.get(&key) {
+            None => return false,
+            Some(w) if w.received => return true,
+            Some(_) => {}
+        }
+        let w = answers.remove(&key).expect("just seen");
+        drop(answers);
+        log::info!("link: {device} has not taken a command; reaching it as away");
+        let outcome = match reach_absent(Some(username), Some(device), cmd, Some(ack)) {
+            Some(Ok(_)) => AckOutcome::Queued,
+            _ => AckOutcome::Failed {
+                error: format!("{device} did not take it"),
+            },
+        };
+        (w.reply)(Some(outcome));
+        false
+    }
+
+    /// Stop waiting for the answer to a command `device` took long ago; the
+    /// asker learns only that it arrived.
+    fn give_up(&self, device: &str, ack: u64) {
+        let waiting = self.answers.lock().remove(&(device.to_string(), ack));
+        if let Some(w) = waiting {
+            (w.reply)(None);
         }
     }
 }
@@ -1261,7 +1293,12 @@ fn reach_absent(
     username: Option<&str>,
     id: Option<&str>,
     cmd: &LinkCommand,
+    ack: Option<u64>,
 ) -> Option<Result<ClientInfo, String>> {
+    let envelope = Envelope {
+        command: cmd.clone(),
+        ack,
+    };
     let pusher = crate::push::pusher()?;
     // Most recently seen first: a reinstall leaves its old entry behind under
     // the same name, and the newest is the one in the person's hand.
@@ -1295,13 +1332,13 @@ fn reach_absent(
         Some(verb) => crate::push::Push::Notify {
             title: format!("{verb} on {}", target.name),
             body: outbox::describe(asked).unwrap_or_else(|| "From your koan server".into()),
-            command: serde_json::to_value(cmd).ok()?,
+            command: serde_json::to_value(&envelope).ok()?,
             image: cover_track(asked)
                 .and_then(outbox::track_row)
                 .and_then(|t| pusher.cover_link(t)),
         },
         None => {
-            outbox::queue_for(&target.device, &target.username, cmd);
+            outbox::queue_envelope_for(&target.device, &target.username, &envelope);
             crate::push::Push::Wake
         }
     };
@@ -1309,49 +1346,14 @@ fn reach_absent(
     Some(Ok(info))
 }
 
-/// After `FIRST_LOOK`, see whether `device` has answered the command sent
-/// under `ack`. If nothing has come up its link since it was sent, the link is
-/// dead though the socket is not yet closed: drop it, and reach the device as
-/// one that is away. If something has, it is busy; give it until
-/// `SLOW_ANSWER`.
+/// After `FIRST_LOOK`, see whether `device` has taken the command sent under
+/// `ack`; see `Registry::look`.
 fn watch_answer(username: String, device: String, ack: u64, cmd: LinkCommand) {
     std::thread::sleep(FIRST_LOOK);
-    let registry = registry();
-    let key = (device.clone(), ack);
-    let Some(sent_ms) = registry.answers.lock().get(&key).map(|w| w.sent_ms) else {
-        return;
-    };
-    let heard = registry
-        .entries
-        .lock()
-        .iter()
-        .find(|e| e.info.username == username && e.device == device)
-        .is_some_and(|e| e.heard_ms > sent_ms);
-    if heard {
-        std::thread::sleep(SLOW_ANSWER.saturating_sub(FIRST_LOOK));
-        if let Some(w) = registry.answers.lock().remove(&key) {
-            (w.reply)(Some(AckOutcome::Failed {
-                error: format!("{device} did not answer"),
-            }));
-        }
-        return;
+    if registry().look(&username, &device, ack, &cmd) {
+        std::thread::sleep(LONGEST_ANSWER.saturating_sub(FIRST_LOOK));
+        registry().give_up(&device, ack);
     }
-    let Some(w) = registry.answers.lock().remove(&key) else {
-        return;
-    };
-    log::info!("link: {device} went quiet; its link is dropped and it is woken instead");
-    // Dropping the entry ends its session, which closes the socket.
-    registry
-        .entries
-        .lock()
-        .retain(|e| !(e.info.username == username && e.device == device));
-    let outcome = match reach_absent(Some(&username), Some(&device), &cmd) {
-        Some(Ok(_)) => AckOutcome::Queued,
-        _ => AckOutcome::Failed {
-            error: format!("{device} is not reachable"),
-        },
-    };
-    (w.reply)(Some(outcome));
 }
 
 /// The track whose album cover a notification for `cmd` shows. Commands carry
@@ -1593,7 +1595,7 @@ mod outbox {
         name: &str,
         platform: &str,
         live: &[(String, String)],
-    ) -> Vec<LinkCommand> {
+    ) -> Vec<Envelope> {
         let Some(db) = db() else { return Vec::new() };
         let now = chrono::Utc::now().timestamp();
         let _ = db.conn.execute(
@@ -1742,7 +1744,13 @@ mod outbox {
 
     /// Queue `cmd` for one device, to go down its next link.
     pub fn queue_for(device: &str, username: &str, cmd: &LinkCommand) {
-        let (Some(db), Ok(text)) = (db(), serde_json::to_string(cmd)) else {
+        queue_envelope_for(device, username, &Envelope::from(cmd.clone()));
+    }
+
+    /// `queue_for`, keeping the id the command was sent under, so a device
+    /// that also got it over its link acts on it once.
+    pub fn queue_envelope_for(device: &str, username: &str, envelope: &Envelope) {
+        let (Some(db), Ok(text)) = (db(), serde_json::to_string(envelope)) else {
             return;
         };
         let _ = db.conn.execute(
@@ -2004,6 +2012,49 @@ fn pick(clients: &[ClientInfo], now: i64) -> Result<&ClientInfo, String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A link that has said nothing for a while is not dead for it: a device
+    /// that took the command keeps its link and is waited for, however long
+    /// the command runs. One that has not taken it is reached as away, and
+    /// its link is still left alone.
+    #[test]
+    fn a_quiet_link_that_took_the_command_is_kept_and_waited_for() {
+        use koan_core::remote::acks::AckOutcome;
+        let reg = Registry::default();
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        reg.register("q", "mac", "macos", "dev-quiet", tx, false, true);
+        let answers = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let acking = |id: u64| {
+            let answers = answers.clone();
+            Acking {
+                id,
+                reply: Box::new(move |outcome| answers.lock().unwrap().push((id, outcome))),
+            }
+        };
+
+        // Taken off its link, then busy (a sync) and silent: kept, waited for.
+        reg.relay_acked("q", None, "dev-quiet", LinkCommand::Pause, Some(acking(1)))
+            .unwrap();
+        reg.received("dev-quiet", 1);
+        assert!(reg.look("q", "dev-quiet", 1, &LinkCommand::Pause));
+        assert!(answers.lock().unwrap().is_empty(), "still waiting");
+        reg.answered("dev-quiet", 1, AckOutcome::Done);
+        assert_eq!(
+            answers.lock().unwrap().last(),
+            Some(&(1, Some(AckOutcome::Done)))
+        );
+
+        // Not taken: reached as away (no push key here, so not reachable),
+        // and the link itself left alone.
+        reg.relay_acked("q", None, "dev-quiet", LinkCommand::Pause, Some(acking(2)))
+            .unwrap();
+        assert!(!reg.look("q", "dev-quiet", 2, &LinkCommand::Pause));
+        assert!(matches!(
+            answers.lock().unwrap().last(),
+            Some((2, Some(AckOutcome::Failed { .. })))
+        ));
+        assert_eq!(reg.list(Some("q")).len(), 1, "the link is not dropped");
+    }
 
     #[test]
     fn a_command_relayed_with_an_id_is_answered_once() {

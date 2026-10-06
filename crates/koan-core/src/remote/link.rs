@@ -488,6 +488,12 @@ pub enum LinkReport {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         ack: Option<u64>,
     },
+    /// A command sent under `ack` has come off this device's link, before
+    /// it is acted on: what tells the server the link is alive, however long
+    /// the command then takes.
+    Received {
+        ack: u64,
+    },
     /// This device's answer to a command sent to it under `ack`.
     Ack {
         ack: u64,
@@ -877,6 +883,9 @@ impl wire::Session for LinkSession<'_> {
                 return;
             }
         };
+        if let Some(ack) = envelope.ack {
+            report(LinkReport::Received { ack });
+        }
         // Answered up this link, whichever thread finishes it.
         let Some((command, pending)) = crate::remote::acks::take(envelope, |ack, outcome| {
             report(LinkReport::Ack { ack, outcome });

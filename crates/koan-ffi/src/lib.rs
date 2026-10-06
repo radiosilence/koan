@@ -445,12 +445,22 @@ impl KoanEngine {
     /// every transport call waits on only resolves what is already here.
     pub async fn run_pushed_command(self: Arc<Self>, command: String) -> Result<(), KoanError> {
         koan_core::remote::link::nudge();
-        let cmd = match koan_core::remote::link::parse_command(&command) {
-            Ok(cmd) => cmd,
+        let envelope = match serde_json::from_str::<koan_core::remote::acks::Envelope>(&command) {
+            Ok(envelope) => envelope,
             Err(e) => {
                 log::warn!("push: not a command ({e}): {command}");
                 return Ok(());
             }
+        };
+        // Under the id it was sent with: a copy that also came down the link
+        // is acted on once, and the answer goes up the link when there is one.
+        let Some((cmd, pending)) = koan_core::remote::acks::take(envelope, |ack, outcome| {
+            koan_core::remote::link::report(koan_core::remote::link::LinkReport::Ack {
+                ack,
+                outcome,
+            });
+        }) else {
+            return Ok(());
         };
         let ids = cmd.track_ids().to_vec();
         if !ids.is_empty() {
@@ -471,13 +481,21 @@ impl KoanEngine {
                 | koan_core::remote::link::LinkCommand::HistoryChanged
         ) {
             return offload::offload(move || {
-                self.handle_link(cmd, koan_core::remote::link::CommandSource::Account, None);
+                self.handle_link(
+                    cmd,
+                    koan_core::remote::link::CommandSource::Account,
+                    pending,
+                );
                 Ok(())
             })
             .await;
         }
         offload::sequenced(move || {
-            self.handle_link(cmd, koan_core::remote::link::CommandSource::Account, None);
+            self.handle_link(
+                cmd,
+                koan_core::remote::link::CommandSource::Account,
+                pending,
+            );
             Ok(())
         })
         .await
