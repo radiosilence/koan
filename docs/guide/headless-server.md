@@ -107,6 +107,7 @@ Sign in with a kōan account (`koan auth create-user`). The session is the same 
 
 Besides playing, browsing and favourites, Subsonic clients get:
 
+- **Favourites on every listing.** A song, album or artist the account has favourited carries `starred`, the time it was favourited, in the ID3 listings (album and artist pages, search, album lists, playlists, random songs) and in the folder browse (`getIndexes`' artists, and the albums and songs `getMusicDirectory` lists), so a client shows its hearts without reading `getStarred2` first. Ratings (`userRating`) and an album's last play (`played`) are carried in the same places.
 - **Ratings.** `setRating` keeps a rating of one to five per account for songs, albums and artists, returned as `userRating`, and `getAlbumList2?type=highest` lists rated albums best first. kōan's own apps do not show ratings.
 - **Bookmarks.** `createBookmark`, `getBookmarks` and `deleteBookmark` keep one position and note per account and track, for clients that resume long tracks. kōan's own apps do not use them.
 - **Transcoding.** A client that asks `stream` for a lower `maxBitRate` than the file's, or for `format=opus`, `mp3` or `aac`, gets an encode made by `ffmpeg`, so a lossless library does not cost full bandwidth on mobile data. `format=raw` and `download` return the original. The limits, formats and fallbacks are in [Configuration](../reference/configuration.md#subsonic).
@@ -165,7 +166,7 @@ Set `sharing.public_url` to the public address (`KOAN_SHARING__PUBLIC_URL`) for 
 
 ### Kubernetes
 
-The server needs one pod with two volumes: the library, read-only, and a state directory at `/config` that outlives the pod. It is a single SQLite index, so it runs as one replica and is replaced rather than rolled. Set `KOAN_LIBRARY__FOLDERS`, `KOAN_GRAPHQL__ALLOWED_HOSTS` and `KOAN_SHARING__PUBLIC_URL` as in the Compose example below, and terminate TLS in front of it.
+The server needs one pod with two volumes: the library, read-only, and a state directory at `/config` that outlives the pod. It is a single SQLite index, so it runs as one replica, on one node. Set `KOAN_LIBRARY__FOLDERS`, `KOAN_GRAPHQL__ALLOWED_HOSTS` and `KOAN_SHARING__PUBLIC_URL` as in the Compose example below, and terminate TLS in front of it.
 
 #### With Pulumi
 
@@ -215,6 +216,12 @@ export const routes = koan.routes;
 With persistent state, each update first runs `koan check-db` in a Job against a snapshot of the live database. If the new version's migration fails there, the update stops and the old pod keeps serving. kubelet creates a missing `hostPath` as root, and koan runs as uid 1000, so an init container hands the state directory to that uid before the server starts; `initPermissions.enabled: false` turns it off. The root filesystem is read-only, and the artwork and lyrics caches live in an `emptyDir`, rebuilt after a restart.
 
 Unknown options are rejected rather than ignored, so a stack carrying options a newer package removed fails at `pulumi preview`.
+
+#### Two servers during an upgrade
+
+Two koan processes can share one state directory on one node for the minutes an upgrade overlaps them: SQLite's WAL lets both read and write. The state directory must be on a local filesystem, which WAL needs anyway and the lock below relies on. Only one scans and watches the library, whichever holds `watch.lock` beside the database; the other serves and waits on the lock, taking over the moment the first exits, however it exits. A build older than the database refuses to start, naming the schema versions, rather than serving errors.
+
+What an overlap does not cover is a release that changes the schema. The new server migrates on start, and the old one keeps serving the migrated database until it stops. For those releases the old server must stop before the new one starts, as `Recreate` does, which is what the Pulumi package still uses. Devices linked to the outgoing server reconnect to the new one, as after any restart.
 
 Once it is running, create the admin account in the pod:
 
