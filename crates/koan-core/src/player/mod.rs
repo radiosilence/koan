@@ -935,10 +935,17 @@ impl Player {
             return self.try_open_on_renderer(id, source, info, seek_ms, start);
         }
         self.stop_engine();
-        let info = match info {
+        let mut info = match info {
             Some(info) => info,
             None => buffer::probe_file(source.path())?,
         };
+        // A stream opened before its container says how long it is (an Ogg
+        // whose last page has not arrived) runs on the library's duration.
+        if info.duration_ms == 0
+            && let Some(known) = self.shared_state.get_item(id).and_then(|i| i.duration_ms)
+        {
+            info.duration_ms = known;
+        }
         let path = source.path().to_path_buf();
         let streaming = matches!(source, Source::Stream(_));
 
