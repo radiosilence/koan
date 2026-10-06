@@ -70,8 +70,8 @@ Search takes the on-screen keyboard and finds artists, albums and tracks.
 
 Hold the remote's Siri button and say "Play a record in kōan": Siri asks which
 record and finds it in your library by name, then plays it from the first
-track. "Play kōan" carries on with the queue and "Pause kōan" pauses it. They
-work with kōan in the background, and with it closed, which Siri opens first.
+track. "Play kōan" carries on with the queue and "Pause kōan" pauses it,
+with kōan in the background as well as on screen.
 
 ## What it leaves out
 
