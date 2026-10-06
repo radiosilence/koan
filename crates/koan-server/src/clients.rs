@@ -287,7 +287,8 @@ impl Registry {
             .iter()
             .filter(|e| e.info.username == username && e.wants_keys)
         {
-            let _ = e.tx.send(LinkCommand::DeviceKeys { keys: keys.clone() });
+            let _ =
+                e.tx.send(LinkCommand::DeviceKeys { keys: keys.clone() }.into());
         }
     }
 
