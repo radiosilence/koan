@@ -382,9 +382,10 @@ private struct Transport: ViewModifier {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.top, 10)
-        .padding(.bottom, 4)
-        .frame(minHeight: 64, alignment: .top)
+        // The platform's bar's height, the items centred in it as its are.
+        // Below it, the home indicator's strip takes the bar's ground and
+        // nothing else.
+        .frame(minHeight: 49)
         // Capped, as the platform's bar is, with the large content viewer
         // past the cap.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
