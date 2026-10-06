@@ -1088,18 +1088,7 @@ pub fn resume() {
 /// prefers it. Cheap enough for every display frame, which `list` is not.
 pub fn target_playhead() -> Option<(u64, bool)> {
     with(|s| {
-        let id = &s.target.as_ref()?.id;
-        let (state, at) = s
-            .nearby
-            .iter()
-            .find(|n| n.hello.id == *id)
-            .and_then(|n| Some((n.state.as_ref()?, n.at)))
-            .or_else(|| {
-                s.account
-                    .iter()
-                    .find(|(d, _)| d.id == *id)
-                    .and_then(|(d, at)| Some((d.state.as_ref()?, *at)))
-            })?;
+        let (state, at) = reported(s, &s.target.as_ref()?.id)?;
         let mut position = state.position_ms;
         if state.playing {
             position += at.elapsed().as_millis() as u64;
@@ -1109,6 +1098,79 @@ pub fn target_playhead() -> Option<(u64, bool)> {
         }
         Some((position, state.playing))
     })
+}
+
+/// What `id` last reported and when it was heard: the network's report when
+/// there is one, as `list` prefers it.
+fn reported<'s>(s: &'s Store, id: &str) -> Option<(&'s LinkState, Instant)> {
+    s.nearby
+        .iter()
+        .find(|n| n.hello.id == id)
+        .and_then(|n| Some((n.state.as_ref()?, n.at)))
+        .or_else(|| {
+            s.account
+                .iter()
+                .find(|(d, _)| d.id == id)
+                .and_then(|(d, at)| Some((d.state.as_ref()?, *at)))
+        })
+}
+
+/// The server's id for the track `id` last reported as current.
+pub fn current_track(id: &str) -> Option<String> {
+    with(|s| {
+        let (state, _) = reported(s, id)?;
+        state.queue.iter().find(|e| e.current)?.track_id.clone()
+    })
+}
+
+/// What `id` last reported, to compare with what it reports next.
+pub fn last_report(id: &str) -> Option<LinkState> {
+    with(|s| reported(s, id).map(|(state, _)| state.clone()))
+}
+
+/// Wait up to `within` for `id` to report `track_id` as its current track,
+/// in a report other than `before` (`last_report` from just before asking).
+/// Sending a command only queues it: on a socket that may have died
+/// unnoticed, in the server's store for a device asleep, or in a push nobody
+/// has tapped. A hand-off learns the music arrived from this. The report
+/// itself, not when it was heard, is what counts: the server's list stamps
+/// every device each time any of them changes.
+pub fn await_current(
+    id: &str,
+    track_id: &str,
+    before: Option<&LinkState>,
+    within: Duration,
+) -> bool {
+    let took = || {
+        with(|s| {
+            reported(s, id).is_some_and(|(state, _)| {
+                Some(state) != before
+                    && state
+                        .queue
+                        .iter()
+                        .any(|e| e.current && e.track_id.as_deref() == Some(track_id))
+            })
+        })
+    };
+    await_until(took, within)
+}
+
+/// Wait up to `within` for `done` to hold, looking again at each change to
+/// the engine or to this store.
+pub fn await_until(done: impl Fn() -> bool, within: Duration) -> bool {
+    let until = Instant::now() + within;
+    let signal = crate::signal::engine_changed();
+    let mut seen = signal.generation();
+    loop {
+        if done() {
+            return true;
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        seen = signal.wait_until(seen, left);
+    }
 }
 
 /// The target as `list` would give it.
@@ -1170,10 +1232,36 @@ pub fn send(id: &str, cmd: LinkCommand) -> Result<(), String> {
         // Activity outlives this process's list of devices.
         log::info!("devices: {id} is not listed; asking the server");
     }
+    ask_server(id, &cmd)
+}
+
+/// Get `cmd` to `id` in one request to the server, which relays it down the
+/// device's link or wakes it.
+fn ask_server(id: &str, cmd: &LinkCommand) -> Result<(), String> {
     let cfg = Config::load().unwrap_or_default();
     let client = crate::helpers::subsonic_client(&cfg).ok_or("not signed in to a server")?;
-    let json = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
     client.koan_command(id, &json).map_err(|e| e.to_string())
+}
+
+/// `send`, by the server first: for the lock screen's buttons. iOS runs
+/// their intent without waking the app's scene, so the link the app left
+/// open is most likely dead, and `send` would put the command into it and
+/// call it sent. The server knows whether the device is linked, and pushes
+/// to it if not. A device the server cannot reach, one only on this
+/// network, falls back to `send`.
+pub fn send_by_server_first(id: &str, cmd: LinkCommand) -> Result<(), String> {
+    server_first(|| ask_server(id, &cmd), || send(id, cmd.clone()))
+}
+
+fn server_first(
+    server: impl FnOnce() -> Result<(), String>,
+    otherwise: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    server().or_else(|why| {
+        log::info!("devices: the server did not take it ({why}); sending it here");
+        otherwise()
+    })
 }
 
 /// This device's id, as other devices know it.
@@ -1223,6 +1311,114 @@ mod tests {
             platform: "ios".into(),
             library: None,
         }
+    }
+
+    #[test]
+    fn the_lock_screen_goes_by_the_server_and_falls_back_only_when_refused() {
+        let local = std::cell::Cell::new(0);
+        let here = || {
+            local.set(local.get() + 1);
+            Ok(())
+        };
+        assert_eq!(server_first(|| Ok(()), here), Ok(()));
+        assert_eq!(local.get(), 0, "the server took it: nothing sent here");
+
+        assert_eq!(server_first(|| Err("no such device".into()), here), Ok(()));
+        assert_eq!(local.get(), 1, "refused there: sent here instead");
+
+        assert_eq!(
+            server_first(|| Err("offline".into()), || Err("not reachable".into())),
+            Err("not reachable".to_string())
+        );
+    }
+
+    fn playing(track: &str) -> LinkState {
+        LinkState {
+            queue: vec![crate::remote::link::LinkQueueEntry {
+                track_id: Some(track.into()),
+                current: true,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// What the apps are given for a device's playhead runs on from the
+    /// report, so stamping it with the time the list was published does not
+    /// set it back by however long ago the device reported.
+    #[test]
+    fn a_playing_devices_playhead_runs_on_from_its_report() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        nearby_hello(hello("speaker"), "10.0.0.6:5626");
+        let at = |playing| LinkState {
+            playing,
+            position_ms: 1000,
+            duration_ms: 60_000,
+            ..Default::default()
+        };
+        let position = || {
+            list()
+                .into_iter()
+                .find(|d| d.id == "speaker")
+                .unwrap()
+                .position_ms()
+        };
+
+        nearby_state("speaker", at(true));
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(position() >= 1050, "{}", position());
+
+        nearby_state("speaker", at(false));
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(position(), 1000, "paused, it stays put");
+    }
+
+    #[test]
+    fn a_hand_off_is_taken_only_when_the_device_reports_the_track() {
+        let _held = STORE_LOCK.lock();
+        crate::config::isolate_config_for_tests();
+        with(|s| *s = Store::default());
+        nearby_hello(hello("phone"), "10.0.0.5:5626");
+        nearby_state("phone", playing("before"));
+        let short = Duration::from_millis(50);
+
+        // Sent, and nothing heard back: queued is not taken.
+        let before = last_report("phone");
+        assert!(!await_current("phone", "handed", before.as_ref(), short));
+
+        // The same track it already had is no answer either.
+        nearby_state("phone", playing("handed"));
+        let before = last_report("phone");
+        assert!(!await_current("phone", "handed", before.as_ref(), short));
+
+        // Another track is not this one.
+        let reporter = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(20));
+            nearby_state("phone", playing("other"));
+        });
+        assert!(!await_current(
+            "phone",
+            "handed",
+            before.as_ref(),
+            Duration::from_millis(200)
+        ));
+        reporter.join().unwrap();
+
+        // The device saying it has the track, while the hand-off waits.
+        let before = last_report("phone");
+        let reporter = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(20));
+            nearby_state("phone", playing("handed"));
+        });
+        assert!(await_current(
+            "phone",
+            "handed",
+            before.as_ref(),
+            Duration::from_secs(5)
+        ));
+        reporter.join().unwrap();
     }
 
     #[test]

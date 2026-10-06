@@ -6,6 +6,13 @@
 
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
+### Fixed
+
+- **Moving the music to another device says when it has not arrived.** A hand-off paused the music here and counted it as delivered once the command was queued, which it was even on a link that had died unnoticed or for a device asleep. The Mac and iOS apps now wait for the other device to report the track, and otherwise say it has not picked the music up yet; the music stays paused where it was.
+- **The Live Activity's buttons go by the server first.** iOS runs them without waking the app, whose link is then most likely dead, and a command put into it was lost. The server knows whether the device is linked and wakes it if not; a device only on the local network is still reached directly.
+- **A command from another device no longer holds up the link.** One that needed a library sync first ran on the link's own thread, which left the socket unread for as long as the sync took. Commands from other devices now run on their own lane, in order.
+- **The Live Activity's timer no longer jumps back** when the device list is published again for another device's change. Each device's playhead is given as of publishing, not as of its last report.
+
 ## 0.56.0
 
 ### Added

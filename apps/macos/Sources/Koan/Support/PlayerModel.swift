@@ -566,9 +566,14 @@ final class PlayerModel {
     /// Send what the controlled device is playing to `id` (this device with
     /// `nil`), and control it there.
     func moveMusic(to id: String?) {
+        let name = id.flatMap { id in mirror.devices.first { $0.id == id }?.name } ?? "This device"
         attempt {
-            let left = try await self.engine.moveMusic(to: id)
-            if left > 0 {
+            let moved = try await self.engine.moveMusic(to: id)
+            let left = moved.leftOut
+            if !moved.started {
+                // Sent, not known to have arrived: the music is still where it was, paused.
+                self.lastNotice = "\(name) has not picked up the music yet. It is paused where it was."
+            } else if left > 0 {
                 self.lastNotice = left == 1
                     ? "1 track only on this device stayed behind"
                     : "\(left) tracks only on this device stayed behind"
