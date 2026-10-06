@@ -70,12 +70,17 @@ final class WalkTests: XCTestCase {
         tab("Settings")
         pause(1)
         snap("09-settings")
-        if open(app.buttons["Server"]) {
+        if open(app.buttons.matching(NSPredicate(format: "label ==[c] %@", "Server")).firstMatch) {
             pause(1)
             app.swipeUp(velocity: .fast)
             app.swipeUp(velocity: .fast)
             pause(1)
             snap("09b-server-end")
+            back()
+        }
+        if open(app.buttons.matching(NSPredicate(format: "label ==[c] %@", "Appearance")).firstMatch) {
+            pause(1)
+            snap("09c-appearance")
             back()
         }
 
