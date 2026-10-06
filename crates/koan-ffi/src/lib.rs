@@ -2620,6 +2620,48 @@ impl KoanEngine {
         .await
     }
 
+    /// Import a selection of files: one profile from each where every file
+    /// is a whole configuration by itself, one from them all otherwise. A
+    /// file refused does not stop the others; each refusal is reported, and
+    /// logged.
+    pub async fn dsp_import_files(
+        self: Arc<Self>,
+        paths: Vec<String>,
+        rate: Option<u32>,
+    ) -> Result<DspImportSummary, KoanError> {
+        offload::sequenced(move || {
+            use koan_core::audio::dsp::import::{self, Batch};
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            let batch = import::import_batch(&paths, rate).map_err(|e| {
+                log::warn!("dsp import: {e}");
+                dsp_error(e)
+            })?;
+            let mut summary = DspImportSummary {
+                imported: Vec::new(),
+                refused: Vec::new(),
+            };
+            match batch {
+                Batch::One(imported) => summary.imported.push(self.save_dsp(imported, None)?),
+                Batch::Each(each) => {
+                    for (file, result) in each {
+                        let saved = result
+                            .map_err(|e| e.to_string())
+                            .and_then(|i| self.save_dsp(i, None).map_err(|e| e.to_string()));
+                        match saved {
+                            Ok(name) => summary.imported.push(name),
+                            Err(reason) => {
+                                log::warn!("dsp import: {file}: {reason}");
+                                summary.refused.push(DspImportRefusal { file, reason });
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(summary)
+        })
+        .await
+    }
+
     /// Import text: shared from another app, or pasted.
     pub async fn dsp_import_text(
         self: Arc<Self>,

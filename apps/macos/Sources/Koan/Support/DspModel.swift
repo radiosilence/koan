@@ -22,6 +22,8 @@ final class DspModel {
     /// phone. Set on each route change; nil on the Mac.
     private(set) var route: String?
     var lastError: String?
+    /// What the last import of several files did.
+    var importSummary: String?
     /// An import waiting on the rate of what it was given.
     var needsRate: Pending?
     /// AutoEQ's results for the last search.
@@ -60,17 +62,45 @@ final class DspModel {
 
     // MARK: - Importing
 
-    /// Files, folders or zips, as one profile. Picked or shared ones are
-    /// security-scoped and readable only while held open.
+    /// Files, folders or zips: a profile from each file where every one is
+    /// a whole EQ by itself, one from them all otherwise. Picked or shared
+    /// ones are security-scoped and readable only while held open.
     func importFiles(_ urls: [URL], name: String? = nil, rate: UInt32? = nil) {
         let engine = self.engine
         Task {
             let held = urls.filter { $0.startAccessingSecurityScopedResource() }
             defer { held.forEach { $0.stopAccessingSecurityScopedResource() } }
-            await finish(.files(urls, name: name)) {
-                try await engine.dspImport(paths: urls.map(\.path), name: name, rate: rate)
+            if let name {
+                await finish(.files(urls, name: name)) {
+                    try await engine.dspImport(paths: urls.map(\.path), name: name, rate: rate)
+                }
+                return
             }
+            do {
+                let summary = try await engine.dspImportFiles(paths: urls.map(\.path), rate: rate)
+                imported = summary.imported.first
+                lastError = nil
+                importSummary = Self.describe(summary)
+            } catch KoanError.NeedsSampleRate {
+                needsRate = .files(urls, name: nil)
+            } catch {
+                importSummary = nil
+                lastError = SettingsModel.describe(error)
+            }
+            await changed()
         }
+    }
+
+    /// "4 imported", or "3 imported, 1 refused: Flat.txt: …".
+    static func describe(_ summary: DspImportSummary) -> String? {
+        let count = summary.imported.count
+        guard count > 1 || !summary.refused.isEmpty else { return nil }
+        var parts = ["\(count) imported"]
+        if !summary.refused.isEmpty {
+            let why = summary.refused.map { "\($0.file): \($0.reason)" }.joined(separator: "; ")
+            parts.append("\(summary.refused.count) refused: \(why)")
+        }
+        return parts.joined(separator: ", ")
     }
 
     func importText(_ text: String, rate: UInt32? = nil) {

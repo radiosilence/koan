@@ -1113,6 +1113,20 @@ pub struct DspTargetOption {
     pub character: String,
 }
 
+/// What importing a selection of files did: the profiles it made or added
+/// to, and each file it refused, with why.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspImportSummary {
+    pub imported: Vec<String>,
+    pub refused: Vec<DspImportRefusal>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspImportRefusal {
+    pub file: String,
+    pub reason: String,
+}
+
 /// The target a correction was made for, the one chosen, and the others.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspTargets {

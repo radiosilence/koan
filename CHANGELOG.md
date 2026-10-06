@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Importing several EQ files makes a profile of each.** Choosing several presets in the apps' Import (or sharing several to kōan on iOS) merged them all into one profile named after the first. Each whole EQ file (APO, AutoEQ or Qudelix text, CamillaDSP YAML, a Convolver `.cfg`) now becomes its own profile, named after its file, while the parts of one profile (an impulse response per channel or rate, a folder, a zip, REW's per-side files) still combine. The app reports how many were imported and each file refused, with why, and import errors are written to `koan.log`.
+
 ## 0.58.0
 
 The library database moves from schema 19 to 20 (new tables for Subsonic saved play queues; every existing row is kept). Upgrades now run in one transaction and roll back whole if any step fails, and a server finding the database newer than it knows drains and exits. Builds older than 0.58.0 refuse a schema-20 database, so going back means restoring a copy taken before upgrading.

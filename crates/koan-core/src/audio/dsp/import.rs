@@ -64,6 +64,45 @@ pub fn import(paths: &[PathBuf], rate: Option<u32>) -> Result<Imported, ImportEr
     Ok(imported)
 }
 
+/// What a selection of files imports as: one profile from them all, or one
+/// profile from each.
+pub enum Batch {
+    One(Imported),
+    /// Each file by name, with its profile or why it was refused.
+    Each(Vec<(String, Result<Imported, ImportError>)>),
+}
+
+/// Import a selection: each file its own profile where every one is a whole
+/// EQ or filter configuration by itself (Equalizer APO, AutoEQ or Qudelix
+/// text, CamillaDSP YAML, a Convolver `.cfg`), and one profile from them all
+/// otherwise, as [`import`] does, for what are parts of one: responses a
+/// file per channel or rate, a folder, a zip, or REW's file for each side.
+pub fn import_batch(paths: &[PathBuf], rate: Option<u32>) -> Result<Batch, ImportError> {
+    let whole = |path: &PathBuf| {
+        if !path.is_file() {
+            return false;
+        }
+        match extension(path).as_deref() {
+            Some("cfg" | "yml" | "yaml") => true,
+            Some(e) if AUDIO.contains(&e) || matches!(e, "zip" | "pcm" | "dbl" | "raw" | "bin") => {
+                false
+            }
+            _ => std::fs::read_to_string(path)
+                .is_ok_and(|t| apo::looks_like(&t) || camilla::looks_like(&t)),
+        }
+    };
+    let sides = paths.iter().all(|p| side_in_name(p).is_some());
+    if paths.len() < 2 || sides || !paths.iter().all(whole) {
+        return import(paths, rate).map(Batch::One);
+    }
+    Ok(Batch::Each(
+        paths
+            .iter()
+            .map(|p| (file_name(p), import(std::slice::from_ref(p), rate)))
+            .collect(),
+    ))
+}
+
 /// Import text with no file behind it: Equalizer APO or AutoEQ lines,
 /// CamillaDSP YAML, or a list of coefficients.
 pub fn import_text(text: &str, rate: Option<u32>) -> Result<Imported, ImportError> {
@@ -417,6 +456,55 @@ impl Drop for Scratch {
 
 #[cfg(test)]
 mod tests {
+    /// Four presets chosen together (Qudelix's, its header and footer lines
+    /// aside) are four profiles, each named for its file; a broken one is
+    /// refused by itself, the rest kept.
+    #[test]
+    fn each_whole_file_is_its_own_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let preset = |gain: f64| {
+            format!(
+                "Channel: L\r\nPreamp: -2.3 dB \r\n\
+                 Filter 1: ON PK Fc 1000 Hz Gain {gain} dB Q 1.0 \r\n\
+                 Channel: R\r\nPreamp: -2.3 dB \r\n\
+                 Filter 1: ON PK Fc 1000 Hz Gain {gain} dB Q 1.0 \r\n"
+            )
+        };
+        let mut paths = Vec::new();
+        for (i, name) in ["Warm", "Bright", "Flat", "Vocal"].iter().enumerate() {
+            let path = dir.path().join(format!("{name}.txt"));
+            std::fs::write(&path, preset(i as f64)).unwrap();
+            paths.push(path);
+        }
+        let Batch::Each(each) = import_batch(&paths, None).unwrap() else {
+            panic!("one profile from four presets");
+        };
+        let names: Vec<String> = each
+            .iter()
+            .map(|(_, r)| r.as_ref().unwrap().name.clone())
+            .collect();
+        assert_eq!(names, ["Warm", "Bright", "Flat", "Vocal"]);
+
+        std::fs::write(&paths[2], "Filter 1: ON XX Fc 1000 Hz\n").unwrap();
+        let Batch::Each(each) = import_batch(&paths, None).unwrap() else {
+            panic!();
+        };
+        assert_eq!(each.iter().filter(|(_, r)| r.is_ok()).count(), 3);
+        assert_eq!(each[2].0, "Flat.txt");
+        assert!(each[2].1.is_err());
+
+        // A response a file per channel is one profile, as before.
+        let wavs: Vec<PathBuf> = ["room_L.wav", "room_R.wav"]
+            .iter()
+            .map(|n| {
+                let path = dir.path().join(n);
+                crate::audio::dsp::raw::write_wav(&path, 48000, &[vec![1.0, 0.0]]).unwrap();
+                path
+            })
+            .collect();
+        assert!(matches!(import_batch(&wavs, None).unwrap(), Batch::One(_)));
+    }
+
     use super::*;
     use crate::audio::dsp::raw::write_wav;
     use std::io::Write as _;

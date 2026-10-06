@@ -34,6 +34,14 @@ kōan from Files or Mail, or choose kōan in the share sheet — a zip sent in a
 chat, or EQ text pasted into a message. A share is saved for the app and
 imported when kōan next comes to the front.
 
+Several files chosen together become one profile each when every one is a
+whole EQ by itself: Equalizer APO, AutoEQ or Qudelix text, CamillaDSP YAML or a
+Convolver `.cfg`, each named after its file. Files that are parts of one
+profile, such as an impulse response a file per channel or rate, a folder, a
+zip, or REW's file for each side, still make one. The app says how many were
+imported, and which were refused and why; a refused file does not stop the
+rest.
+
 From the command line:
 
 ```bash

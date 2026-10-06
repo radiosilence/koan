@@ -790,6 +790,11 @@ struct DspSettings: View {
                 findingAutoEq = true
             }
             #endif
+            if let summary = dsp.importSummary {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let error = dsp.lastError {
                 Text(error)
                     .font(.caption)
