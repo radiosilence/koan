@@ -328,7 +328,8 @@ Which track a source belongs to is decided only by `sources::link`, on one norma
 
 | File | Purpose |
 |---|---|
-| `scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → one DB transaction per 1000 files, reads and writes running at the same time |
+| `scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → one DB transaction per 1000 files, reads and writes running at the same time. An import of dropped files goes through the same reads and writes |
+| `lane.rs` | One scan at a time: a full scan, the watcher's rescans and an import wait for each other on one lock rather than racing over the same rows. The scan holding it can be cancelled by the person or by forgetting a folder it covers |
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
 | `folder_art.rs` | Covers kept as image files beside the tracks: `cover.*`, `folder.*`, `front.*` in that order (Navidrome's default), any case, from a disc folder's parent when the disc folder has none, then embedded art. `cover_art` is the one lookup every front end and the server use. Each directory's listing is kept against its mtime. A watcher rescan of a folder writes its albums and tracks to `art_evictions`, so the apps' caches drop covers an image change made stale |
 | `playlist_files.rs` | Playlist files the scan walk finds: Navidrome `.nsp` into smart playlists, `.m3u`/`.m3u8` into ordinary ones resolved by path. The file stays authoritative: changed, it rewrites the rules; gone from a directory the scan covered completely, it deletes the playlist |
@@ -465,7 +466,7 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **Track identity across sources:** a local file and a Subsonic entry for the same song are two source rows under one track. The file's tags and path win.
 
-**Stale removal is guarded, not eager:** deleting a track takes its play history and lyrics with it, so an unmounted volume must never look like a deletion. A folder that yields zero audio files is skipped entirely; an IO error while stat-ing a path counts as "cannot tell", not "gone"; and a run that would clear more than 20% of a folder holding at least 100 tracks is refused outright. `koan scan --force-remove` lifts that last brake and only that one.
+**Stale removal is guarded, not eager:** deleting a track takes its play history and lyrics with it, so an unmounted volume must never look like a deletion. A folder that yields zero audio files is skipped entirely; an IO error while stat-ing a path counts as "cannot tell", not "gone"; and a run that would clear more than 20% of a folder holding at least 100 tracks is refused outright. A file the scan's own walk found is present without a second stat; only the rows the walk did not find are asked of the filesystem, so a rescan of a network mount costs one walk rather than a walk and a stat per track. `koan scan --force-remove` lifts that last brake and only that one.
 
 ## Dependencies
 
