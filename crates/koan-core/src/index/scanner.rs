@@ -336,10 +336,15 @@ struct Walked {
 ///
 /// A path that is not UTF-8 is left out: the database stores paths as text, so
 /// it would be stored under a name no stat finds, and the same scan would
-/// remove it again along with its play history.
+/// remove it again along with its play history. So is anything under a name
+/// the watcher ignores (see [`super::watch::is_ignored`]), below `path` itself.
 fn walk(path: &Path, result: &mut ScanResult) -> Walked {
     let mut found = Walked::default();
-    for entry in walkdir::WalkDir::new(path).follow_links(true) {
+    let entries = walkdir::WalkDir::new(path)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|e| e.depth() == 0 || !super::watch::is_ignored(e.file_name()));
+    for entry in entries {
         match entry {
             Ok(e) if e.path().to_str().is_none() => {
                 if e.file_type().is_file() {
@@ -936,6 +941,74 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap()
+    }
+
+    /// A track also on the server outlives its folder being forgotten, as the
+    /// server's copy. Added back, the folder's file must be read again.
+    #[test]
+    fn a_forgotten_folder_added_back_is_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        let file = music.join("kept.wav");
+        test_utils::generate_wav(&file, 8000, 1, 0.1, 16);
+        let db = test_db(dir.path());
+        let mut both = metadata::read_metadata(&file).unwrap();
+        both.remote_id = Some("sub-1".into());
+        let track = queries::upsert_track(&db.conn, &both).unwrap();
+        let local = |db: &Database| -> Option<String> {
+            db.conn
+                .query_row("SELECT path FROM tracks WHERE id = ?1", [track], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+        scan_folder(&db, &music, ScanOptions::default(), None);
+
+        assert_eq!(crate::helpers::forget_folder(&db, &music).unwrap(), 1);
+        assert_eq!(local(&db), None, "kept as the server's copy");
+
+        let again = scan_folder(&db, &music, ScanOptions::default(), None);
+        assert_eq!(again.skipped, 0, "{:?}", again.errors);
+        assert_eq!(local(&db), Some(file.to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn scans_skip_what_the_watcher_ignores() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        let album = music.join("Artist/Album");
+        let dotted = music.join("Britney Spears/...Baby One More Time");
+        for sub in [
+            album.join(".stversions"),
+            album.join("Disc 2.part"),
+            dotted.clone(),
+        ] {
+            std::fs::create_dir_all(sub).unwrap();
+        }
+        let wav = |p: PathBuf| test_utils::generate_wav(&p, 8000, 1, 0.1, 16);
+        wav(album.join("01.wav"));
+        wav(dotted.join("01.wav"));
+        wav(album.join(".stversions/01~20261006-120000.wav"));
+        wav(album.join("._01.wav"));
+        wav(album.join("Disc 2.part/02.wav"));
+        wav(album.join("~syncthing~03.wav"));
+        let db = test_db(dir.path());
+
+        let full = scan_folder(&db, &music, ScanOptions::default(), None);
+        assert_eq!(full.added, 2, "{:?}", full.errors);
+        let dirs = scan_dirs(
+            &db,
+            std::slice::from_ref(&music),
+            std::slice::from_ref(&album),
+            ScanOptions::default(),
+            None,
+        );
+        assert_eq!(dirs.added, 0, "{:?}", dirs.errors);
+        assert_eq!(
+            track_paths(&db),
+            [album.join("01.wav"), dotted.join("01.wav")].map(|p| p.to_string_lossy().into_owned())
+        );
     }
 
     #[test]

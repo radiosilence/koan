@@ -6,6 +6,12 @@
 
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
+### Fixed
+
+- **A library folder removed and added back left its server-held tracks without their files.** A track also on the server outlives its folder being forgotten, as the server's copy, and kept its file's scan cache entry, so a scan after re-adding the folder took the file as already read and never linked it again. Forgetting a folder now clears the folder's entries.
+- **Full scans indexed what the folder watcher ignores.** Syncthing's `.stversions` copies, macOS's `._` AppleDouble files and the like were indexed by a full scan and by a rescan of a directory, though the watcher skips them. Both now skip the same names. Tracks already indexed from such paths stay until their files go.
+- **The folder watcher ignored music whose name starts with a dot.** It skipped every name with a leading dot, so an album such as "...Baby One More Time" was indexed only by a full scan. It now skips only the names Syncthing, macOS and version control leave in folders.
+
 ## 0.56.0
 
 ### Added
