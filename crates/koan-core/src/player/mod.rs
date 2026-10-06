@@ -2084,6 +2084,21 @@ impl Player {
         self.bank_listening();
         let ended = self.in_flight.as_ref().map(|f| f.item);
         let heard = self.in_flight.as_ref().is_some_and(|f| f.listened_ms() > 0);
+        // A track streamed while it downloads, ended with nothing heard and
+        // its download still running, did not play: the stream gave out ahead
+        // of the bytes. It is waited for and opened from disk when it lands,
+        // as a track not yet downloaded is, rather than passed over for the
+        // next. Only a track that has failed is moved past.
+        if !heard
+            && let Some(id) = self.session().map(|s| s.track.id)
+            && self.shared_state.is_cursor(id)
+            && matches!(self.shared_state.item_state(id), Some(ItemState::Pending))
+        {
+            log::info!("track {id:?} ended unheard before its download did; waiting for it");
+            let start = self.intent().unwrap_or(Run::Playing);
+            self.park(id, 0, start);
+            return;
+        }
         if self.mode.repeat != Repeat::Off && !heard {
             log::info!("track ended with nothing heard; not repeating it");
             self.stop_playback_and_clear_state();
@@ -4852,6 +4867,58 @@ mod tests {
 
         assert_eq!(player.playback_starts, 1);
         assert_eq!(player.shared_state.cursor(), Some(waiting_id));
+    }
+
+    /// Play pressed on an album whose first track is still on the server and
+    /// whose next two are cached: the first is waited for and played first,
+    /// not passed over for the first that happens to be on disk.
+    #[test]
+    fn an_album_starts_at_its_first_track_however_much_is_cached() {
+        let mut player = Player::new();
+        let remote = pending_item("remote");
+        let cached = [make_item("cached 2"), make_item("cached 3")];
+        let first = remote.id;
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items: [vec![remote], cached.to_vec()].concat(),
+            start: 0,
+            position_ms: 0,
+            play: true,
+        });
+
+        assert_eq!(player.shared_state.cursor(), Some(first));
+        assert_eq!(player.playback_starts, 0, "nothing decodes before it lands");
+
+        player
+            .shared_state
+            .update_item_state(first, ItemState::Ready);
+        player.process_command(PlayerCommand::TrackReady(first));
+        assert_eq!(player.playback_starts, 1);
+        assert_eq!(
+            player.shared_state.cursor(),
+            Some(first),
+            "the first track decodes first"
+        );
+    }
+
+    /// A stream opened ahead of its download that gives out with nothing
+    /// heard has not played: the track is waited for, not skipped.
+    #[test]
+    fn a_stream_that_ends_unheard_mid_download_waits_for_its_track() {
+        let mut player = Player::new();
+        let streaming = pending_item("streaming");
+        let next = make_item("next");
+        let id = streaming.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![streaming, next]));
+        pretend_playing(&mut player, id);
+
+        player.process_command(PlayerCommand::DecodeFinished(player.session));
+        assert_eq!(player.shared_state.cursor(), Some(id), "not passed over");
+        assert_eq!(player.playback_starts, 0);
+
+        player.shared_state.update_item_state(id, ItemState::Ready);
+        player.process_command(PlayerCommand::TrackReady(id));
+        assert_eq!(player.playback_starts, 1);
+        assert_eq!(player.shared_state.cursor(), Some(id));
     }
 
     #[test]
