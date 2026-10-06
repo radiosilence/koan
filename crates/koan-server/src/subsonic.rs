@@ -7880,8 +7880,17 @@ mod tests {
     #[tokio::test]
     async fn favourites_carry_starred_in_json_and_xml() {
         let (state, _dir) = test_state();
-        let [alpha, beta, _] = seed_shelves(&state)[..] else {
+        let [alpha, _, _] = seed_shelves(&state)[..] else {
             unreachable!()
+        };
+        // Not favourited, and by another artist: every shelf track is Test
+        // Artist's, the artist the test stars.
+        let elsewhere = {
+            let db = Database::open(state.pool.path()).unwrap();
+            let mut meta = track_meta("/music/elsewhere.flac", "Away", "Elsewhere", 1);
+            meta.artist = "Other Artist".into();
+            meta.album_artist = Some("Other Artist".into());
+            queries::upsert_track(&db.conn, &meta).unwrap()
         };
         let uids = |track| {
             let db = Database::open(state.pool.path()).unwrap();
@@ -7893,7 +7902,7 @@ mod tests {
             )
         };
         let (song, album, artist) = uids(alpha);
-        let (_, other_album, other_artist) = uids(beta);
+        let (_, other_album, other_artist) = uids(elsewhere);
         json_of(
             build_test_router(state.clone()),
             &format!(
