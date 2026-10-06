@@ -551,6 +551,7 @@ impl KoanEngine {
             cmd,
             koan_core::remote::link::LinkCommand::Sync { .. }
                 | koan_core::remote::link::LinkCommand::HistoryChanged
+                | koan_core::remote::link::LinkCommand::DspProfilesChanged
         ) {
             return offload::offload(move || {
                 self.handle_link(
@@ -2541,6 +2542,20 @@ impl KoanEngine {
         offload::offload(koan_core::remote::outputs::refresh_devices).await
     }
 
+    /// Ask the device being controlled to list its outputs again: its output
+    /// menu was opened here. Over a route that is up now or not at all, since
+    /// a device that is away has nothing new to say and is not worth waking.
+    /// Its link state brings back whatever moved.
+    pub async fn refresh_controlled_outputs(self: Arc<Self>) {
+        offload::offload(|| {
+            if let Some(to) = koan_core::remote::devices::target() {
+                let cmd = koan_core::remote::link::LinkCommand::RefreshOutputs;
+                koan_core::remote::devices::send_live(&to, cmd);
+            }
+        })
+        .await
+    }
+
     /// The volume of the renderer the device in view plays to, 0–100.
     pub async fn set_output_volume(self: Arc<Self>, volume: u8) -> Result<(), KoanError> {
         offload::sequenced(move || match koan_core::remote::devices::target() {
@@ -2616,6 +2631,139 @@ impl KoanEngine {
             let imported =
                 koan_core::audio::dsp::import::import(&paths, rate).map_err(dsp_error)?;
             self.save_dsp(imported, name)
+        })
+        .await
+    }
+
+    /// What importing `paths` will do: a group of presets, or one profile
+    /// combined from them all, with a name to suggest.
+    pub async fn dsp_import_plan(self: Arc<Self>, paths: Vec<String>) -> DspImportPlan {
+        offload::offload(move || {
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            let plan = koan_core::audio::dsp::import::plan(&paths);
+            DspImportPlan {
+                group: plan.group,
+                files: plan.files,
+                name: plan.name,
+            }
+        })
+        .await
+    }
+
+    /// Import a selection of files. Whole presets become a profile each and
+    /// a group of them called `name`, the first playing; parts of one
+    /// profile combine into one called `name`. A file refused does not stop
+    /// the others; each refusal is reported, and logged.
+    pub async fn dsp_import_files(
+        self: Arc<Self>,
+        paths: Vec<String>,
+        name: Option<String>,
+        rate: Option<u32>,
+    ) -> Result<DspImportSummary, KoanError> {
+        offload::sequenced(move || {
+            use koan_core::audio::dsp::{
+                import::{self, Batch, Outcome},
+                profiles,
+            };
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            let taken: Vec<String> = koan_core::config::Config::cached()
+                .dsp
+                .profiles
+                .iter()
+                .map(|p| p.name.clone())
+                .collect();
+            let batch = import::import_batch(&paths, rate, &taken).map_err(|e| {
+                log::warn!("dsp import: {e}");
+                dsp_error(e)
+            })?;
+            let mut summary = DspImportSummary {
+                imported: Vec::new(),
+                refused: Vec::new(),
+                notes: Vec::new(),
+                group: None,
+            };
+            match batch {
+                Batch::One(imported) => {
+                    // Never written over: a name already taken is numbered.
+                    let wanted = name
+                        .filter(|n| !n.trim().is_empty())
+                        .unwrap_or_else(|| imported.name.clone());
+                    let free = profiles::free_name(&wanted);
+                    if free != wanted {
+                        summary
+                            .notes
+                            .push(format!("{wanted} is taken; imported as {free}"));
+                    }
+                    summary.imported.push(self.save_dsp(imported, Some(free))?)
+                }
+                Batch::Group(each) => {
+                    for item in each {
+                        let file = item.file;
+                        let saved = match item.outcome {
+                            Outcome::Skipped(why) => {
+                                summary.notes.push(format!("{file} left out: {why}"));
+                                continue;
+                            }
+                            Outcome::Refused(e) => Err(e.to_string()),
+                            Outcome::Imported(i, note) => {
+                                summary.notes.extend(note.map(|n| format!("{file}: {n}")));
+                                self.save_dsp(i, None).map_err(|e| e.to_string())
+                            }
+                        };
+                        match saved {
+                            Ok(name) => summary.imported.push(name),
+                            Err(reason) => {
+                                log::warn!("dsp import: {file}: {reason}");
+                                summary.refused.push(DspImportRefusal { file, reason });
+                            }
+                        }
+                    }
+                    if summary.imported.len() > 1 {
+                        let wanted = name
+                            .filter(|n| !n.trim().is_empty())
+                            .unwrap_or_else(|| import::group_name(&summary.imported));
+                        let group = profiles::free_name(&wanted);
+                        if group != wanted {
+                            summary
+                                .notes
+                                .push(format!("{wanted} is taken; the group is {group}"));
+                        }
+                        profiles::make_group(&group, &summary.imported)
+                            .map_err(|message| KoanError::BadArgument { message })?;
+                        self.send_local(PlayerCommand::ReloadDsp)?;
+                        summary.group = Some(group);
+                    }
+                }
+            }
+            Ok(summary)
+        })
+        .await
+    }
+
+    /// Play `member` of the group `group`, and none of the others.
+    pub async fn dsp_select(
+        self: Arc<Self>,
+        group: String,
+        member: String,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::select(&group, &member)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Make `name` a group, one layer playing, or a stack of layers.
+    pub async fn dsp_set_group(
+        self: Arc<Self>,
+        name: String,
+        group: bool,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_group(&name, group)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
         })
         .await
     }
@@ -2887,8 +3035,37 @@ impl KoanEngine {
     }
 
     pub async fn dsp_detail(self: Arc<Self>, name: String) -> Option<DspProfileDetail> {
-        offload::offload(move || koan_core::audio::dsp::profiles::detail(&name).map(Into::into))
-            .await
+        offload::offload(move || {
+            let mut detail: DspProfileDetail =
+                koan_core::audio::dsp::profiles::detail(&name)?.into();
+            if let Ok(db) = self.db() {
+                if detail.everywhere {
+                    detail.sync_problem = koan_core::remote::dsp_sync::refusal(&db, &name);
+                }
+                detail.sync_note = koan_core::remote::dsp_sync::note(&db, &name);
+            }
+            Some(detail)
+        })
+        .await
+    }
+
+    /// Keep `name` on every device of the account, or on this one alone.
+    pub async fn dsp_set_scope(
+        self: Arc<Self>,
+        name: String,
+        everywhere: bool,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            use koan_core::config::DspScope;
+            let to = if everywhere {
+                DspScope::Everywhere
+            } else {
+                DspScope::Device
+            };
+            koan_core::audio::dsp::profiles::set_scope(&name, to)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
     }
 
     pub async fn dsp_rename(self: Arc<Self>, old: String, new: String) -> Result<(), KoanError> {
@@ -4714,6 +4891,8 @@ impl KoanEngine {
             .provide(engine.viz.clone(), move || playhead.position_ms());
         let held =
             std::sync::Mutex::new(None::<(u64, Vec<koan_core::remote::link::LinkQueueEntry>)>);
+        // Profiles of one name from two devices are told apart by it.
+        koan_core::remote::dsp_sync::set_device_name(device_name.clone());
         koan_core::remote::devices::start(koan_core::remote::link::Local {
             identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
             // What a command may cost, and where it may go, depends on who
@@ -5271,6 +5450,10 @@ impl KoanEngine {
                 koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
                     .map_err(|message| KoanError::Audio { message })
             }
+            LinkCommand::RefreshOutputs => {
+                koan_core::remote::outputs::refresh_for_controller();
+                Ok(())
+            }
             LinkCommand::SetRendererVolume { volume } => {
                 self.send_local(PlayerCommand::SetRendererVolume(volume))
             }
@@ -5358,6 +5541,14 @@ impl KoanEngine {
                 if koan_core::remote::history::sync(&db).library_synced {
                     self.library_changed();
                 }
+            }),
+            LinkCommand::DspProfilesChanged => self.db().and_then(|db| {
+                if koan_core::remote::dsp_sync::sync(&db).changed() {
+                    // Pages showing profiles follow the library's version.
+                    self.library_changed();
+                    self.send_local(PlayerCommand::ReloadDsp)?;
+                }
+                Ok(())
             }),
             LinkCommand::Sync { full } => self.db().map(|db| {
                 let walk = if full {

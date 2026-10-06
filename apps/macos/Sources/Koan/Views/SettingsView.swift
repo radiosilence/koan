@@ -702,6 +702,18 @@ struct EqSettings: View {
 
     var body: some View {
         Form {
+            if let active, let detail, detail.group {
+                Section {
+                    Picker("Playing", selection: Binding(
+                        get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
+                        set: { app.dsp.select(active, $0) }
+                    )) {
+                        ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
+                    }
+                } header: {
+                    Text("Group: pick one")
+                }
+            }
             if let active, let response, let detail {
                 Section {
                     EqGraph(response: response, handles: BandTable.handles(detail.bands)) { index, hz, db in
@@ -716,11 +728,11 @@ struct EqSettings: View {
             DspSettings(importing: $importing, finding: $finding, showing: $showing)
         }
         .formStyle(.grouped)
-        .task(id: "\(active ?? "")\u{0}\(app.dsp.version)") {
+        .task(id: "\(active ?? "")\u{0}\(app.dsp.stamp)") {
             response = if let active { await app.dsp.response(active) } else { nil }
             detail = if let active { await app.dsp.detail(active) } else { nil }
         }
-        .task { app.dsp.reload() }
+        .task(id: app.dsp.stamp) { app.dsp.reload() }
         .filePicker(
             isPresented: $importing,
             allowedContentTypes: [.item, .folder],
@@ -827,6 +839,11 @@ struct DspSettings: View {
             Button("Import…") { importing = true }
             Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
             #endif
+            if let summary = dsp.importSummary {
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let error = dsp.lastError {
                 Text(error)
                     .font(.caption)
@@ -1054,10 +1071,15 @@ struct DspImportPrompts: ViewModifier {
                 }
                 Button("Done", role: .cancel) {}
             } message: { _ in
-                if let device = dsp.overview?.device, dsp.overview?.active == nil {
+                if let summary = dsp.importSummary {
+                    Text(summary)
+                } else if let device = dsp.overview?.device, dsp.overview?.active == nil {
                     Text("\(device) plays untouched until it has a profile.")
                 }
             }
+            #if !os(tvOS)
+            .dspImportConfirmation(dsp)
+            #endif
     }
 }
 

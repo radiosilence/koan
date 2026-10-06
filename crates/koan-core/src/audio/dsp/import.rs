@@ -64,6 +64,170 @@ pub fn import(paths: &[PathBuf], rate: Option<u32>) -> Result<Imported, ImportEr
     Ok(imported)
 }
 
+/// What a selection of files imports as: one profile from them all, or a
+/// group, a profile from each of which one plays at a time.
+pub enum Batch {
+    One(Imported),
+    Group(Vec<BatchItem>),
+}
+
+/// One file of a selection imported as a group.
+pub struct BatchItem {
+    /// The file, by name.
+    pub file: String,
+    pub outcome: Outcome,
+}
+
+pub enum Outcome {
+    /// Its profile, and why it is named otherwise than for its file, if it
+    /// is: another profile, here already or earlier in the selection, has
+    /// that name.
+    Imported(Imported, Option<String>),
+    Refused(ImportError),
+    /// Left out, and why: AutoEQ's fixed-band file beside its parametric one.
+    Skipped(String),
+}
+
+/// Whether a selection imports as a group, a profile from each file: when there are
+/// several, and each is a whole EQ or filter configuration by itself
+/// (Equalizer APO, AutoEQ or Qudelix text, CamillaDSP YAML), and they are not
+/// REW's files for each side of one setup. Convolver `.cfg` files are one
+/// correction's rates, a file for each, so they combine.
+pub fn separately(paths: &[PathBuf]) -> bool {
+    let whole = |path: &PathBuf| {
+        if !path.is_file() {
+            return false;
+        }
+        match extension(path).as_deref() {
+            Some("yml" | "yaml") => true,
+            Some(e)
+                if AUDIO.contains(&e)
+                    || matches!(e, "cfg" | "zip" | "pcm" | "dbl" | "raw" | "bin") =>
+            {
+                false
+            }
+            _ => std::fs::read_to_string(path)
+                .is_ok_and(|t| apo::looks_like(&t) || camilla::looks_like(&t)),
+        }
+    };
+    let sides = paths.iter().all(|p| side_in_name(p).is_some());
+    paths.len() > 1 && !sides && paths.iter().all(whole)
+}
+
+/// Import a selection: a group, a profile from each file, where
+/// [`separately`] says so, one from them all otherwise, as [`import`] does,
+/// for what are parts
+/// of one: responses a file per channel or rate, a folder, a zip, or REW's
+/// file for each side.
+///
+/// Imported as a group, no file takes a name in `taken` (the profiles
+/// there already) or one an earlier file took: it is named for its whole
+/// file name instead, or numbered. AutoEQ's `FixedBandEQ` file is left out
+/// beside its `ParametricEQ` one from the same folder, which is the same
+/// correction.
+pub fn import_batch(
+    paths: &[PathBuf],
+    rate: Option<u32>,
+    taken: &[String],
+) -> Result<Batch, ImportError> {
+    if !separately(paths) {
+        return import(paths, rate).map(Batch::One);
+    }
+    let mut names: Vec<String> = taken.to_vec();
+    let mut out = Vec::new();
+    for path in paths {
+        let file = file_name(path);
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if let Some(head) = stem.strip_suffix("FixedBandEQ") {
+            let parametric = path.with_file_name(format!("{head}ParametricEQ.txt"));
+            if paths.contains(&parametric) {
+                out.push(BatchItem {
+                    file,
+                    outcome: Outcome::Skipped(format!(
+                        "the same correction as {}, which was imported",
+                        file_name(&parametric)
+                    )),
+                });
+                continue;
+            }
+        }
+        let outcome = match import(std::slice::from_ref(path), rate) {
+            Err(e) => Outcome::Refused(e),
+            Ok(mut imported) => {
+                let wanted = imported.name.clone();
+                // Taken by name, or by the folder a name's files go in.
+                let free = |n: &str| {
+                    let folder = crate::audio::dsp::profiles::dir(n);
+                    !names
+                        .iter()
+                        .any(|t| t == n || crate::audio::dsp::profiles::dir(t) == folder)
+                };
+                let name = std::iter::once(wanted.clone())
+                    .chain(std::iter::once(stem.clone()))
+                    .chain((2..).map(|n| format!("{wanted} {n}")))
+                    .find(|n| !n.is_empty() && free(n))
+                    .expect("some number is free");
+                let note =
+                    (name != wanted).then(|| format!("{wanted} is taken; imported as {name}"));
+                imported.name = name.clone();
+                names.push(name);
+                Outcome::Imported(imported, note)
+            }
+        };
+        out.push(BatchItem { file, outcome });
+    }
+    Ok(Batch::Group(out))
+}
+
+/// What importing `paths` will do, before it is done: whether they become a
+/// group, the files by name, and a name to suggest for the group or the one
+/// profile they combine into.
+pub struct Plan {
+    pub group: bool,
+    pub files: Vec<String>,
+    pub name: String,
+}
+
+pub fn plan(paths: &[PathBuf]) -> Plan {
+    let group = separately(paths);
+    let names: Vec<String> = paths.iter().map(|p| profile_name(p)).collect();
+    Plan {
+        group,
+        files: paths.iter().map(|p| file_name(p)).collect(),
+        name: if group {
+            group_name(&names)
+        } else {
+            names.first().cloned().unwrap_or_else(|| "Imported".into())
+        },
+    }
+}
+
+/// A name for the group of `members`: the words they begin with alike
+/// ("AFUL Performer 8S" for "AFUL Performer 8S Warm" and "AFUL Performer 8S
+/// Bright"), or the first's when they have none in common.
+pub fn group_name(members: &[String]) -> String {
+    let words: Vec<Vec<&str>> = members
+        .iter()
+        .map(|m| m.split_whitespace().collect())
+        .collect();
+    let Some(first) = words.first() else {
+        return "Imported".into();
+    };
+    let common = (0..first.len())
+        .take_while(|&i| words.iter().all(|w| w.get(i) == first.get(i)))
+        .count();
+    let name = first[..common].join(" ");
+    let name = name.trim_end_matches(['-', '_', ',', '(']).trim();
+    if name.is_empty() {
+        members[0].clone()
+    } else {
+        name.to_owned()
+    }
+}
+
 /// Import text with no file behind it: Equalizer APO or AutoEQ lines,
 /// CamillaDSP YAML, or a list of coefficients.
 pub fn import_text(text: &str, rate: Option<u32>) -> Result<Imported, ImportError> {
@@ -420,6 +584,163 @@ mod tests {
     use super::*;
     use crate::audio::dsp::raw::write_wav;
     use std::io::Write as _;
+
+    fn imported(batch: Batch) -> Vec<(String, Result<String, String>)> {
+        let Batch::Group(each) = batch else {
+            panic!("one profile from them all");
+        };
+        each.into_iter()
+            .map(|i| {
+                let r = match i.outcome {
+                    Outcome::Imported(p, _) => Ok(p.name),
+                    Outcome::Refused(e) => Err(e.to_string()),
+                    Outcome::Skipped(why) => Err(format!("skipped: {why}")),
+                };
+                (i.file, r)
+            })
+            .collect()
+    }
+
+    /// Four presets chosen together (Qudelix's, its header and footer lines
+    /// aside) are four profiles, each named for its file; a broken one is
+    /// refused by itself, the rest kept.
+    #[test]
+    fn each_whole_file_is_its_own_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let preset = |gain: f64| {
+            format!(
+                "Channel: L\r\nPreamp: -2.3 dB \r\n\
+                 Filter 1: ON PK Fc 1000 Hz Gain {gain} dB Q 1.0 \r\n\
+                 Channel: R\r\nPreamp: -2.3 dB \r\n\
+                 Filter 1: ON PK Fc 1000 Hz Gain {gain} dB Q 1.0 \r\n"
+            )
+        };
+        let mut paths = Vec::new();
+        for (i, name) in ["Warm", "Bright", "Flat", "Vocal"].iter().enumerate() {
+            let path = dir.path().join(format!("{name}.txt"));
+            std::fs::write(&path, preset(i as f64)).unwrap();
+            paths.push(path);
+        }
+        let names: Vec<String> = imported(import_batch(&paths, None, &[]).unwrap())
+            .into_iter()
+            .map(|(_, r)| r.unwrap())
+            .collect();
+        assert_eq!(names, ["Warm", "Bright", "Flat", "Vocal"]);
+
+        std::fs::write(&paths[2], "Filter 1: ON XX Fc 1000 Hz\n").unwrap();
+        let each = imported(import_batch(&paths, None, &[]).unwrap());
+        assert_eq!(each.iter().filter(|(_, r)| r.is_ok()).count(), 3);
+        assert_eq!(each[2].0, "Flat.txt");
+        assert!(each[2].1.is_err());
+    }
+
+    /// A group is named by what its members' names share; parts of one
+    /// profile by the first file.
+    #[test]
+    fn a_plan_says_what_will_happen() {
+        assert_eq!(
+            group_name(&[
+                "AFUL Performer 8S Warm".into(),
+                "AFUL Performer 8S Bright".into()
+            ]),
+            "AFUL Performer 8S"
+        );
+        assert_eq!(group_name(&["Warm".into(), "Bright".into()]), "Warm");
+        let dir = tempfile::tempdir().unwrap();
+        let mut presets = Vec::new();
+        for name in ["AFUL Performer 8S Warm", "AFUL Performer 8S Bright"] {
+            let path = dir.path().join(format!("{name}.txt"));
+            std::fs::write(&path, "Filter 1: ON PK Fc 100 Hz Gain -3 dB Q 1\n").unwrap();
+            presets.push(path);
+        }
+        let p = plan(&presets);
+        assert!(p.group);
+        assert_eq!(p.name, "AFUL Performer 8S");
+        let wav = dir.path().join("room.wav");
+        crate::audio::dsp::raw::write_wav(&wav, 48000, &[vec![1.0, 0.0]]).unwrap();
+        let p = plan(&[presets[0].clone(), wav]);
+        assert!(!p.group, "a response is part of one profile");
+        assert_eq!(p.name, "AFUL Performer 8S Warm");
+    }
+
+    /// The parts of one profile chosen together are still one: a Convolver
+    /// `.cfg` with its responses, an APO config with the response its
+    /// `Convolution:` names, REW's file for each side.
+    #[test]
+    fn parts_of_one_profile_stay_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, text: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, text).unwrap();
+            path
+        };
+        let wav = dir.path().join("room.wav");
+        crate::audio::dsp::raw::write_wav(&wav, 48000, &[vec![1.0, 0.0]]).unwrap();
+        let cfg = file("room.cfg", "48000 1 2 0\n0\n0\nroom.wav\n0\n0.0\n0.0\n");
+        assert!(!separately(&[cfg, wav.clone()]));
+        let apo = file("config.txt", "Preamp: -3 dB\nConvolution: room.wav\n");
+        assert!(!separately(&[apo, wav]));
+        let left = file("room_L.txt", "Filter 1: ON PK Fc 100 Hz Gain -3 dB Q 1\n");
+        let right = file("room_R.txt", "Filter 1: ON PK Fc 120 Hz Gain -2 dB Q 1\n");
+        assert!(!separately(&[left, right]));
+
+        // A .cfg for each rate, chosen without the responses beside them:
+        // one correction, a response for each rate.
+        let mut cfgs = Vec::new();
+        for rate in [44100, 48000] {
+            let wav = dir.path().join(format!("{rate}.wav"));
+            crate::audio::dsp::raw::write_wav(&wav, rate, &[vec![1.0, 0.0]]).unwrap();
+            cfgs.push(file(
+                &format!("{rate}.cfg"),
+                &format!(
+                    "{rate} 2 2 0\n0 0\n0 0\n{rate}.wav\n0\n0.0\n0.0\n{rate}.wav\n0\n1.0\n1.0\n"
+                ),
+            ));
+        }
+        assert!(!separately(&cfgs));
+        let Batch::One(one) = import_batch(&cfgs, None, &[]).unwrap() else {
+            panic!("a group of rates")
+        };
+        let mut rates: Vec<u32> = one.impulses.iter().map(|i| i.rate).collect();
+        rates.sort();
+        assert_eq!(rates, [44100, 48000]);
+    }
+
+    /// A file whose name is taken, by a profile there already or one earlier
+    /// in the selection, is imported under another, and says so; AutoEQ's
+    /// fixed-band file beside its parametric one is left out, saying why.
+    #[test]
+    fn a_taken_name_is_never_written_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let band = "Preamp: -3 dB\nFilter 1: ON PK Fc 100 Hz Gain -3 dB Q 1\n";
+        let mut paths = Vec::new();
+        for (folder, name) in [
+            ("a", "Sennheiser HD 600 ParametricEQ.txt"),
+            ("a", "Sennheiser HD 600 FixedBandEQ.txt"),
+            ("a", "Flat.txt"),
+            ("b", "Flat.txt"),
+        ] {
+            let path = dir.path().join(folder).join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, band).unwrap();
+            paths.push(path);
+        }
+        let each = imported(import_batch(&paths, None, &["Flat".to_string()]).unwrap());
+        assert_eq!(each[0].1.as_deref(), Ok("Sennheiser HD 600"));
+        assert!(
+            each[1]
+                .1
+                .as_ref()
+                .unwrap_err()
+                .starts_with("skipped: the same correction as")
+        );
+        assert_eq!(
+            each[2].1.as_deref(),
+            Ok("Flat 2"),
+            "named for its stem, which is taken too"
+        );
+        assert_eq!(each[3].1.as_deref(), Ok("Flat 3"));
+    }
 
     #[test]
     fn rates_and_sides_in_names() {

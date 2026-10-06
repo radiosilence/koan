@@ -54,7 +54,12 @@ struct DspProfilePage: View {
                     }
                 }
 
-                LayersSection(dsp: dsp, detail: d)
+                if d.group {
+                    GroupSection(dsp: dsp, detail: d)
+                } else {
+                    LayersSection(dsp: dsp, detail: d)
+                }
+                ScopeSection(dsp: dsp, detail: d)
 
                 if let t = targets {
                     TargetSection(dsp: dsp, profile: d.name, targets: t, adding: $addingTarget)
@@ -103,7 +108,7 @@ struct DspProfilePage: View {
         }
         .formStyle(.grouped)
         .navigationTitle(name)
-        .task(id: dsp.version) { await load() }
+        .task(id: dsp.stamp) { await load() }
         #if !os(tvOS)
         .filePicker(
             isPresented: $addingTarget,
@@ -148,6 +153,36 @@ struct DspProfilePage: View {
             } else {
                 editingName = name
             }
+        }
+    }
+}
+
+/// A group's members, one playing, chosen as a radio button is.
+private struct GroupSection: View {
+    let dsp: DspModel
+    let detail: DspProfileDetail
+
+    var body: some View {
+        Section {
+            Picker("Playing", selection: Binding(
+                get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
+                set: { dsp.select(detail.name, $0) }
+            )) {
+                ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            #if !os(tvOS)
+            Button("Make It a Stack of Layers") { dsp.setGroup(detail.name, false) }
+            #endif
+        } header: {
+            Text("Group: pick one")
+        } footer: {
+            Text(detail.layers.contains(where: \.on)
+                 ? "One member plays at a time. Pick another and it plays in place of the last. Each member is a profile of its own, with its own page."
+                 : "None was picked, so the first plays. Pick one to change it.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
     }
 }
@@ -215,6 +250,11 @@ private struct LayersSection: View {
                     }
                 }
             }
+            #if !os(tvOS)
+            if layers.count > 1 {
+                Button("Make It a Group, One Playing at a Time") { dsp.setGroup(detail.name, true) }
+            }
+            #endif
         } header: {
             Text("Layers")
         } footer: {
@@ -315,6 +355,42 @@ private struct ImpulseRow: View {
         if ir.mixes { parts.append("mixes channels") }
         if ir.delayed { parts.append("delays channels") }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Where a profile is kept: on every device signed in to the account's kōan
+/// server, or on this one alone.
+private struct ScopeSection: View {
+    let dsp: DspModel
+    let detail: DspProfileDetail
+
+    var body: some View {
+        Section {
+            Picker("Kept", selection: Binding(
+                get: { detail.everywhere },
+                set: { dsp.setScope(detail.name, everywhere: $0) }
+            )) {
+                Text("On every device").tag(true)
+                Text("On this device").tag(false)
+            }
+            if let problem = detail.syncProblem {
+                Label(problem, systemImage: "exclamationmark.icloud")
+                    .foregroundStyle(.orange)
+            }
+            if let note = detail.syncNote {
+                Label(note, systemImage: "arrow.triangle.2.circlepath")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Kept")
+        } footer: {
+            Text(detail.everywhere
+                 ? "Synced through your kōan server to every device signed in to the account. Which output plays it stays each device's own."
+                 : "Never leaves this device. Moving a profile here from every device removes it from the others.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
     }
 }
 

@@ -172,11 +172,18 @@ pub enum LinkCommand {
     /// forgotten on one of its devices. The device reads what changed
     /// (`remote::history::sync`).
     HistoryChanged,
+    /// The account's EQ profiles kept everywhere moved on the server: one
+    /// changed or deleted on another of its devices. The device reads what
+    /// changed (`remote::dsp_sync::sync`).
+    DspProfilesChanged,
     /// Play through this output from now on, carrying on from where the music
     /// is, as the device's own output menu would.
     SetOutput {
         output: OutputChoice,
     },
+    /// List the outputs again, and publish them if they moved: a controller
+    /// has opened its output menu. Cheap, and answered by the link state.
+    RefreshOutputs,
     /// The volume of the renderer the device plays to, 0–100.
     SetRendererVolume {
         volume: u8,
@@ -247,6 +254,7 @@ impl LinkCommand {
             | Self::SleepTimer { .. }
             | Self::HandOff { .. }
             | Self::SetOutput { .. }
+            | Self::RefreshOutputs
             | Self::SetRendererVolume { .. }
             | Self::SetPreset { .. }
             | Self::WatchLevels { .. } => true,
@@ -259,6 +267,7 @@ impl LinkCommand {
             | Self::Shared { .. }
             | Self::Forgotten { .. }
             | Self::HistoryChanged
+            | Self::DspProfilesChanged
             | Self::Levels { .. }
             | Self::Acked { .. } => false,
         }
@@ -307,6 +316,7 @@ impl LinkCommand {
             | Self::SleepTimer { .. }
             | Self::HandOff { .. }
             | Self::SetOutput { .. }
+            | Self::RefreshOutputs
             | Self::SetRendererVolume { .. }
             | Self::SetPreset { .. } => true,
             Self::Devices { .. }
@@ -316,8 +326,19 @@ impl LinkCommand {
             | Self::Shared { .. }
             | Self::Forgotten { .. }
             | Self::HistoryChanged
+            | Self::DspProfilesChanged
             | Self::WatchLevels { .. }
             | Self::Levels { .. } => false,
+        }
+    }
+
+    /// Only worth saying to a device that is there to hear it: sent over a
+    /// live route or not at all, never queued for an absent device and never
+    /// a push to wake one.
+    pub fn live_only(&self) -> bool {
+        match self {
+            Self::Shared { command } => command.live_only(),
+            cmd => matches!(cmd, Self::WatchLevels { .. } | Self::RefreshOutputs),
         }
     }
 
@@ -336,9 +357,11 @@ impl LinkCommand {
                 | Self::DeviceKeys { .. }
                 | Self::Forgotten { .. }
                 | Self::HistoryChanged
+                | Self::DspProfilesChanged
                 | Self::Levels { .. }
                 | Self::Acked { .. }
                 | Self::SetOutput { .. }
+                | Self::RefreshOutputs
                 | Self::SetRendererVolume { .. }
                 | Self::SetPreset { .. }
                 | Self::Shares { .. }
@@ -461,10 +484,12 @@ impl LinkCommand {
             | Self::Shares { .. }
             | Self::Forgotten { .. }
             | Self::HistoryChanged
+            | Self::DspProfilesChanged
             | Self::WatchLevels { .. }
             | Self::Levels { .. }
             | Self::Acked { .. }
             | Self::SetOutput { .. }
+            | Self::RefreshOutputs
             | Self::SetRendererVolume { .. }
             | Self::SetPreset { .. }
             | Self::Clear
@@ -1514,6 +1539,7 @@ mod device_key_tests {
             LinkCommand::DeviceKeys { keys: vec![] },
             LinkCommand::Devices { devices: vec![] },
             LinkCommand::HistoryChanged,
+            LinkCommand::DspProfilesChanged,
             LinkCommand::Shared {
                 command: Box::new(LinkCommand::Pause),
             },
