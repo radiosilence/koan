@@ -154,6 +154,9 @@ struct KoanIOSApp: App {
                     ShareInbox.collect(into: built.dsp)
                 } catch {
                     startupError = String(describing: error)
+                    #if os(tvOS)
+                    IntentTarget.fail(String(describing: error))
+                    #endif
                 }
             }
         }
