@@ -260,10 +260,7 @@ mod tests {
         assert_eq!(decide(&edited, &edited, Some(long_ago)), (true, None));
 
         // Another track, or a pause, saves at once, edits and all.
-        assert_eq!(
-            decide(&edited, &(3, b, PlaybackState::Playing), pending).0,
-            true
-        );
+        assert!(decide(&edited, &(3, b, PlaybackState::Playing), pending).0);
         assert_eq!(
             decide(&playing, &(1, a, PlaybackState::Paused), None),
             (true, None)
