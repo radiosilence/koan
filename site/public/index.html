@@ -153,16 +153,19 @@
           if you then reorder or remove it, playback restarts at the playhead with your edit, instead of playing the
           thing you just got rid of. <a href="#features">Playback</a></li>
         <li><strong>Room and headphone correction, per output.</strong> Roon filter packs, REW and rePhase impulses,
-          CamillaDSP and Equalizer APO configs, AutoEQ: they all import as they are. A device without a profile runs
-          nothing at all. <a href="/docs/dsp/">Equalisation and convolution</a></li>
+          CamillaDSP and Equalizer APO configs: they all import as they are. Or pick your headphones from AutoEQ by
+          maker and model, move the correction to another target curve, and stack a bass shelf on top without touching
+          it. The graph shows what actually plays, worked out from the same filters the DSP runs. A device without a
+          profile runs nothing at all. <a href="/docs/dsp/">Equalisation and convolution</a></li>
         <li><strong>Network amps get the actual file.</strong> A UPnP/DLNA renderer gets handed the file itself. Or, if
           you've given it a correction profile, one FLAC stream for the whole queue, gapless whether the amp can do
           gapless or not. <a href="/docs/devices/#amplifiers-and-streamers-upnp">Amplifiers and streamers</a></li>
         <li><strong>Music moves between devices, properly.</strong> It picks up exactly where it stopped, straight away
           if the other device already has the track, and with none of AirPlay's buffering. That device plays its own
-          copy, so it keeps going if your phone sleeps or drops signal. Devices on the same network can control each
-          other whoever's signed in, and you can share a device with another account on your server to control it from
-          anywhere. One device at a time though, no multiroom yet. <a
+          copy, so it keeps going if your phone sleeps or drops signal, and the app tells you if it's still waiting for
+          that device to wake or the music never got there. Devices on the same network can control each other
+          whoever's signed in; yours prove to each other they're on your account, so they get everything a stranger's
+          doesn't. You can share a device with another account on your server to control it from anywhere. One device at a time though, no multiroom yet. <a
             href="/docs/devices/#controlling-and-moving">Controlling and moving</a></li>
         <li><strong>Built for losing signal on the Tube.</strong> While you've got signal, the queue gets fetched ahead
           of the playhead (current track first) as far as the cache limit allows, so it keeps playing underground, and
@@ -411,7 +414,10 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
           they're the output. Profiles import from what other tools write: Roon and Convolver configs, impulse responses
           from REW or rePhase, CamillaDSP and Equalizer APO (mixers, delays and graphic EQ included), and AutoEQ. A
           device without a profile runs nothing and stays bit-perfect, and the format badge tells you when audio's being
-          processed. See <a href="/docs/dsp/">Equalisation and convolution</a>.</li>
+          processed. AutoEQ is searchable from the apps and the command line, by name or by maker and model, and a
+          correction can be moved to another target (Harman, oratory1990's, diffuse field, or your own) or layered under
+          other profiles. The EQ page draws the response with each band behind the total, and the bands can be edited
+          in a table or dragged on the graph. See <a href="/docs/dsp/">Equalisation and convolution</a>.</li>
         <li><strong>Sleep timer</strong>: after 15 to 60 minutes, fading out, or at the end of the track or record. It
           pauses and keeps the queue, and a phone controlling a Mac sets the Mac's. See <a
             href="/docs/sleep-timer/">Sleep timer</a>.</li>
@@ -463,6 +469,17 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
         with an EQ per output, and every other kōan you can drive or send the music to.</figcaption>
     </figure>
 
+    <figure class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
+      <img class="h-auto w-full rounded-xl border border-rule" src="/screens/mac-eq.webp" width="1240" height="1180"
+        loading="lazy" decoding="async"
+        alt="The EQ page in the macOS app: an AutoEQ correction for the Sennheiser HD 650 drawn as each band's shape behind the total, with a point on each band to drag, and the bands below as a table of type, frequency, gain and Q">
+      <img class="h-auto w-full rounded-xl border border-rule" src="/screens/mac-eq-target.webp" width="1240"
+        height="680" loading="lazy" decoding="async"
+        alt="A profile's layers and target in the macOS app: the HD 650 correction moved to Harman over-ear 2018 without its bass shelf">
+      <figcaption class="text-muted md:col-span-2">The EQ page: what the profile on the output does, band by band,
+        and a correction moved to another target.</figcaption>
+    </figure>
+
     <section id="app" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>The macOS app</h2>
       <p>A SwiftUI app built for macOS 26. Browse and search the library (<kbd>⌘K</kbd>), build and reorder the queue,
@@ -470,7 +487,10 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
         played recently, set a sleep timer and reorganise files on disk. The Output menu sends the music to this Mac's
         audio devices or to UPnP amps on the network, each with its own EQ or convolution preset, and marks the speaker
         button whenever what you're hearing is processed. Once you've got another kōan device, Control drives that one
-        instead, and Output then lists its outputs. First-run setup covers library folders and remote sign-in.</p>
+        instead, and Output then lists its outputs. First-run setup covers library folders and remote sign-in, and
+        Settings covers the server side too: accounts and passwords, API keys for other apps, ListenBrainz, and the
+        address to give an assistant. Turn on <strong>Keep running in the menu bar</strong> and closing the window
+        leaves it running, so your phone can still reach it.</p>
       <p>It links the Rust core in-process through FFI instead of talking to a server, so there's no daemon, port or
         auth surface between the interface and the audio engine, and CoreAudio output never leaves Rust. It shares one
         library and one config with the terminal UI, so a queue saved in one shows up in the other.</p>
@@ -573,13 +593,16 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
           cover.</li>
         <li><strong>OpenSubsonic API.</strong> Subsonic apps like Play:Sub, and kōan's own app and terminal UI on other
           machines, connect with a kōan account: by password, with an API key, or with an app password for apps that
-          only sign in with a token. Ratings and bookmarks are kept per account, and a stream gets transcoded to Opus,
-          MP3 or AAC for an app that asks for a lower bitrate.</li>
-        <li><strong>Scrobbling.</strong> Each account can connect ListenBrainz, and the server sends every play its apps
-          report, so you don't have to set it up in each app. See <a
+          only sign in with a token. Favourites, ratings, bookmarks and a saved play queue are kept per account, so
+          Symfonium or Feishin can pick up a queue another device left, and a stream gets transcoded to Opus, MP3 or AAC
+          for an app that asks for a lower bitrate.</li>
+        <li><strong>Scrobbling.</strong> Each account can connect ListenBrainz, from the web UI or the apps' settings,
+          and the server sends every play its apps report, so you don't have to set it up in each app. See <a
             href="/docs/headless-server/#scrobbling">Scrobbling</a>.</li>
         <li><strong>Accounts.</strong> Admin, user and read-only roles, plus API keys and app passwords you can revoke
-          from the web UI's Account page.</li>
+          from the web UI's Account page or the apps' settings. Behind Authelia, Authentik or another authenticating
+          proxy, the web UI can take the signed-in user from the proxy's header. See <a
+            href="/docs/headless-server/#behind-an-authenticating-proxy">Behind an authenticating proxy</a>.</li>
         <li><strong>Linked apps.</strong> kōan's Mac and iPhone apps keep a connection open to a kōan server, which makes
           each one a remote the server can drive: see what it's playing and its queue, start an album on it, queue,
           pause and skip. Playlist edits and library changes reach every device without a sync, and one that's away
@@ -653,9 +676,12 @@ class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mis
         <li><a href="/docs/headless-server/">Running a server</a></li>
         <li><a href="/docs/authentication/">Authentication</a></li>
         <li><a href="/docs/devices/">Playing on another device</a></li>
+        <li><a href="/docs/apple-tv/">Apple TV</a></li>
+        <li><a href="/docs/sleep-timer/">Sleep timer</a></li>
         <li><a href="/docs/remote-servers/">Remote servers</a></li>
         <li><a href="/docs/dsp/">Equalisation and convolution</a></li>
         <li><a href="/docs/cache-management/">Cache management</a></li>
+        <li><a href="/docs/smart-playlists/">Smart playlists</a></li>
         <li><a href="/docs/file-organization/">File organisation</a></li>
         <li><a href="/docs/format-strings/">Format strings</a></li>
         <li><a href="/docs/mcp-integration/">MCP integration</a></li>

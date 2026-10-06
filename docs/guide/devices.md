@@ -256,6 +256,13 @@ paused source arrives paused. On a phone, **Move here** on *This iPhone* brings
 the Mac's music to the phone. Tracks only on the source device, with no server
 id, stay behind, and the app says how many.
 
+A command counts as delivered only once the other device answers that it has
+acted on it. Until then the Mac and iOS apps say so: "Waiting for Phone to
+wake" while it is queued for a device asleep, and "Couldn't reach Phone", with
+the reason, when it was refused or no way through answered. A move waits for
+the destination's answer: refused, and the music plays on here; not yet picked
+up, and it stays paused here.
+
 A device that receives music moved to it while it was controlling another
 stops controlling it: the music is here now. Move the Mac's music to the phone,
 then later move it back from the phone, and the Mac is playing its own music
