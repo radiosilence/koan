@@ -41,8 +41,7 @@ struct ArtworkViewer: View {
                     .multilineTextAlignment(.center)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .koanText(.meta, .muted)
                         .multilineTextAlignment(.center)
                 }
             }

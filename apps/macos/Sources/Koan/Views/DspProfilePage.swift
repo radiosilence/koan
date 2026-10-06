@@ -34,7 +34,7 @@ struct DspProfilePage: View {
                 }
                 if let problem = d.problem {
                     Section {
-                        Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        KoanLabel(problem, icon: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                     }
                 }
@@ -66,11 +66,10 @@ struct DspProfilePage: View {
                             ImpulseRow(ir: ir)
                         }
                     } header: {
-                        Text("Impulse responses")
+                        KoanSectionHeader("Impulse responses")
                     } footer: {
                         Text("A track at a rate with no response of its own is resampled to the nearest one here.")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                            .koanText(.fine, .muted)
                     }
                 }
 
@@ -79,13 +78,12 @@ struct DspProfilePage: View {
                 Section {
                     LabeledContent("Preamp", value: "\(String(format: "%.1f", d.preampDb)) dB")
                 } header: {
-                    Text("Headroom")
+                    KoanSectionHeader("Headroom")
                 } footer: {
                     Text(d.preampSet
                          ? "Set in the profile."
                          : "Derived at \(DspModel.khz(d.preampRate)) kHz from the largest gain the filters apply, so nothing they boost can clip.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .koanText(.fine, .muted)
                 }
 
                 if !d.source.isEmpty {
@@ -102,6 +100,7 @@ struct DspProfilePage: View {
             }
         }
         .formStyle(.grouped)
+        .koanSheet()
         .navigationTitle(name)
         .task(id: dsp.version) { await load() }
         #if !os(tvOS)
@@ -183,7 +182,7 @@ private struct LayersSection: View {
                     }
                 )) {
                     Text(layer.profile)
-                }
+                }.koanToggle()
                 #if !os(tvOS)
                 .contextMenu {
                     Button("Move Up") { move(index, by: -1) }
@@ -216,13 +215,12 @@ private struct LayersSection: View {
                 }
             }
         } header: {
-            Text("Layers")
+            KoanSectionHeader("Layers")
         } footer: {
             Text(layers.isEmpty
                  ? "Play other profiles first, in order, each switched on or off: a headphone's correction, then a bass shelf or a tilt on top."
                  : "Played in order, before this profile's own filters. A layer switched off plays nothing.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .koanText(.fine, .muted)
         }
     }
 
@@ -261,18 +259,16 @@ private struct TargetSection: View {
             }
             if let c = targets.choices.first(where: { $0.id == current }), !c.character.isEmpty {
                 Text(c.character)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .koanText(.meta, .muted)
             }
             #if !os(tvOS)
             Button("Add a Target…") { adding = true }
             #endif
         } header: {
-            Text("Target")
+            KoanSectionHeader("Target")
         } footer: {
             Text("Made for \(targets.madeFor.name). Another target plays as the difference between the two, after the correction. A target you add is a CSV of frequency and level, or a squig.link export.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .koanText(.fine, .muted)
         }
     }
 }
@@ -289,11 +285,9 @@ private struct ImpulseRow: View {
                     .foregroundStyle(.secondary)
             }
             Text(shape)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .koanText(.fine, .muted)
             Text(ir.file)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .koanText(.fine, .muted)
         }
     }
 

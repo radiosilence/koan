@@ -206,7 +206,7 @@ struct EqGraph: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
-        .font(.caption)
+        .koanText(.fine, .muted)
     }
 
     private func key(_ name: String, _ color: Color, dashed: Bool = false) -> some View {

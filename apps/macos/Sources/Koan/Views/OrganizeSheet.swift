@@ -35,8 +35,7 @@ struct OrganizeSheet: View {
                     .font(.headline)
                 if let subject = organize.subject {
                     Text(subject.title)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .koanText(.fine, .muted)
                 }
             }
             Spacer()
@@ -97,7 +96,8 @@ struct OrganizeSheet: View {
                 TextField("Format string", text: $organize.draft)
                     .verbatimEntry()
                     .borderedField()
-                    .font(.callout.monospaced())
+                    .koanText(.meta)
+                    .monospaced()
             } else {
                 Text(organize.pattern)
                     .font(.caption.monospaced())
@@ -108,12 +108,11 @@ struct OrganizeSheet: View {
             }
 
             HStack(spacing: 6) {
-                Toggle("Move cover art and cue sheets", isOn: $organize.moveAncillary)
+                Toggle("Move cover art and cue sheets", isOn: $organize.moveAncillary).koanToggle()
                     #if os(macOS)
                     .toggleStyle(.checkbox)
                     #endif
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .koanText(.fine, .muted)
                     .help("Artwork, .cue and .log files in the same folder travel with the music")
 
                 Text("·")
@@ -128,8 +127,7 @@ struct OrganizeSheet: View {
                         .foregroundStyle(.orange)
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.tertiary)
+            .koanText(.fine, .muted)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
@@ -201,23 +199,23 @@ struct OrganizeSheet: View {
             HStack(spacing: 10) {
                 Text(Format.count(Int64(plan.movedCount), "file") + " to move")
                 if plan.unchangedCount > 0 {
-                    Label("\(plan.unchangedCount) already in place", systemImage: "checkmark")
+                    KoanLabel("\(plan.unchangedCount) already in place", icon: "checkmark")
                         .foregroundStyle(.secondary)
                 }
                 if plan.conflictCount > 0 {
-                    Label("\(plan.conflictCount) blocked", systemImage: "exclamationmark.triangle")
+                    KoanLabel("\(plan.conflictCount) blocked", icon: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
                 }
                 if plan.errorCount > 0 {
-                    Label("\(plan.errorCount) failed", systemImage: "xmark.octagon")
+                    KoanLabel("\(plan.errorCount) failed", icon: "xmark.octagon")
                         .foregroundStyle(.red)
                 }
                 if plan.unresolved > 0 {
-                    Label("\(plan.unresolved) not on disk", systemImage: "cloud")
+                    KoanLabel("\(plan.unresolved) not on disk", icon: "cloud")
                         .foregroundStyle(.secondary)
                 }
             }
-            .font(.caption)
+            .koanText(.fine, .muted)
             .labelStyle(.titleAndIcon)
         }
     }
@@ -253,7 +251,7 @@ private struct OrganizeRow: View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: icon)
                 .foregroundStyle(tint)
-                .font(.caption)
+                .koanText(.fine, .muted)
                 .frame(width: 14)
                 .padding(.top, 2)
 
@@ -266,7 +264,8 @@ private struct OrganizeRow: View {
 
                 if let destination {
                     Text(destination)
-                        .font(.callout.monospaced())
+                        .koanText(.meta)
+                        .monospaced()
                         .foregroundStyle(tint)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -274,7 +273,7 @@ private struct OrganizeRow: View {
 
                 if let reason = entry.reason {
                     Text(reason)
-                        .font(.caption)
+                        .koanText(.fine, .muted)
                         .foregroundStyle(tint)
                 }
 

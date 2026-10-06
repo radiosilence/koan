@@ -71,6 +71,7 @@ struct ApiKeysSettings: View {
                             }
                         }
                     }
+                    .koanButton(.secondary)
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 .rowButtons()
@@ -78,11 +79,10 @@ struct ApiKeysSettings: View {
                 ProgressView()
             }
         } header: {
-            Text("API keys")
+            KoanSectionHeader("API keys")
         } footer: {
             Text(model?.error ?? "A key signs another Subsonic app in as you, without your password. Each device kōan is signed in on has one too; revoking it signs that device out.")
-                .font(.caption)
-                .foregroundStyle(model?.error == nil ? .tertiary : .primary)
+                .koanText(.fine, model?.error == nil ? .muted : .ink)
         }
         .sheet(item: Binding(
             get: { model?.made.map(MadeKey.init) },
@@ -112,18 +112,17 @@ struct ApiKeysSettings: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(key.name)
                 Text(detail(key))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .koanText(.fine, .muted)
             }
             Spacer()
             if key.thisDevice {
                 // Revoking it is signing out, which Sign Out does properly.
                 Text("This device")
-                    .foregroundStyle(.secondary)
+                    .koanText(.body, .muted)
                     .help("To stop using it, sign out")
             } else {
                 Button("Revoke", role: .destructive) { revoking = key }
-                    .buttonStyle(.borderless)
+                    .koanButton(.text)
             }
         }
     }
@@ -160,16 +159,19 @@ private struct NewKeySheet: View {
                         Pasteboard.write(text: key.key)
                         copied = true
                     } label: {
-                        Label(copied ? "Copied" : "Copy Key", systemImage: "doc.on.doc")
+                        KoanLabel(copied ? "Copied" : "Copy Key", icon: "doc.on.doc")
                     }
+                    .koanButton(.secondary)
                     #endif
                 } header: {
-                    Text("Key for \(key.name)")
+                    KoanSectionHeader("Key for \(key.name)")
                 } footer: {
                     Text("This is the only time the key is shown. Copy it into the app now; if it is lost, revoke it and make another.")
+                        .koanText(.fine, .muted)
                 }
             }
             .formStyle(.grouped)
+            .koanSheet()
             .navigationTitle("New Key")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

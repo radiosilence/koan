@@ -40,8 +40,7 @@ struct ShortcutsSheet: View {
             .frame(maxHeight: 460)
 
             Text("None of these fire while you're typing.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .koanText(.fine, .muted)
 
             HStack {
                 Spacer()
@@ -90,7 +89,7 @@ struct ShortcutsSheet: View {
                 }
             }
             Text(label)
-                .font(.callout)
+                .koanText(.meta)
             Spacer(minLength: 0)
         }
     }

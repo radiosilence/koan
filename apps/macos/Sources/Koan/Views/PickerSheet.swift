@@ -132,15 +132,13 @@ struct PickerSheet: View {
         HStack(spacing: 10) {
             if picked.isEmpty {
                 Text("Click to select · double-click to play now")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .koanText(.fine, .muted)
             } else {
                 Text("\(picked.count) selected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .koanText(.fine, .muted)
                 Button("Clear") { picked = [] }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
+                    .koanButton(.text)
+                    .koanText(.fine, .muted)
             }
 
             Spacer()
@@ -289,8 +287,7 @@ private struct PickerRowView: View {
                 Text(row.title).lineLimit(1)
                 if let subtitle = row.subtitle {
                     Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .koanText(.fine, .muted)
                         .lineLimit(1)
                 }
             }
@@ -299,8 +296,8 @@ private struct PickerRowView: View {
 
             if let ms = row.durationMs {
                 Text(Format.duration(ms))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .koanText(.fine, .muted)
+                    .monospacedDigit()
             }
         }
         .contentShape(.rect)
