@@ -105,6 +105,7 @@ struct EqGraph: View {
             }
         }
         .chartLegend(.hidden)
+        #if !os(tvOS)
         .chartOverlay { proxy in
             if showingEq, onDrag != nil {
                 GeometryReader { geo in
@@ -115,6 +116,7 @@ struct EqGraph: View {
                 }
             }
         }
+        #endif
         .accessibilityLabel(showingEq ? "EQ response" : "Headphone response")
     }
 
@@ -142,6 +144,7 @@ struct EqGraph: View {
         handles.map { h in dragging?.index == h.index ? dragging! : h }
     }
 
+    #if !os(tvOS)
     private func drag(_ proxy: ChartProxy, _ geo: GeometryProxy) -> some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { g in
@@ -167,6 +170,7 @@ struct EqGraph: View {
                 dragging = nil
             }
     }
+    #endif
 
     /// The handle under `point`, within a finger's width of it.
     private func nearest(to point: CGPoint, _ proxy: ChartProxy) -> Handle? {
