@@ -286,7 +286,12 @@ struct ArtistDetailView: View {
                             }
                             #endif
                             Text(artist?.name ?? "Artist")
+                                // The album page's title size, on each platform.
+                                #if os(tvOS)
+                                .font(.system(size: 48, weight: .semibold))
+                                #else
                                 .font(.system(size: 26, weight: .semibold))
+                                #endif
                         }
                         Text(Format.count(Int64(albums.count), "album"))
                             .font(.callout)

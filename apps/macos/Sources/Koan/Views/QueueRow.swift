@@ -278,7 +278,13 @@ struct QueueRow: View {
         case .played:
             Image(systemName: "checkmark").foregroundStyle(.tertiary)
         case .queued:
+            // On a desktop or a phone, where rows are picked out; a television
+            // has no selection for the mark to belong to.
+            #if os(tvOS)
+            Color.clear
+            #else
             Image(systemName: "circle.dotted").foregroundStyle(.quaternary)
+            #endif
         }
     }
 }

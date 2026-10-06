@@ -137,7 +137,12 @@ private struct TrackSortControls: ToolbarContent {
                     }
                 }
             } label: {
+                #if os(tvOS)
+                // See `BrowseFilterButton`: the symbol alone.
+                Image(systemName: "arrow.up.arrow.down").accessibilityLabel("Sort")
+                #else
                 Label("Sort", systemImage: "arrow.up.arrow.down")
+                #endif
             }
             .toolbarButton()
         }
@@ -173,7 +178,12 @@ private struct AlbumSortControls: ToolbarContent {
                     }
                 }
             } label: {
+                #if os(tvOS)
+                // See `BrowseFilterButton`: the symbol alone.
+                Image(systemName: "arrow.up.arrow.down").accessibilityLabel("Sort")
+                #else
                 Label("Sort", systemImage: "arrow.up.arrow.down")
+                #endif
             }
             .toolbarButton()
         }

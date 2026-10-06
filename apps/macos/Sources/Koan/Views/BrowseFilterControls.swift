@@ -15,9 +15,11 @@ struct BrowseFilterButton: View {
             : "line.3.horizontal.decrease.circle"
         Button { open = true } label: {
             #if os(tvOS)
-            // A television's toolbar draws a `Label` as an icon, like the sort
-            // menu beside it. The filled symbol says filters are on.
-            Label(count > 0 ? "Filters, \(count) on" : "Filters", systemImage: symbol)
+            // The symbol alone: a television's toolbar draws a `Label`'s title
+            // as well, cut to a letter or two. The filled symbol says filters
+            // are on.
+            Image(systemName: symbol)
+                .accessibilityLabel(count > 0 ? "Filters, \(count) on" : "Filters")
             #else
             HStack(spacing: 3) {
                 Image(systemName: symbol)

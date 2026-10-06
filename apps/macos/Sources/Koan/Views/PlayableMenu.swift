@@ -148,7 +148,11 @@ struct PlayableMenu: View {
                 Label("Organize Files…", systemImage: Icon.organize)
             }
             #endif
+            // The cache looks after itself on a television, which has nowhere
+            // to keep a library for later.
+            #if !os(tvOS)
             cacheActions
+            #endif
         }
 
         if case .track(let track) = playable, let albumId = track.albumId {
