@@ -110,6 +110,17 @@ extension View {
 }
 
 extension View {
+    /// A control drawn as its glyph alone on the Mac and the phone. A
+    /// television gives it the round platter its neighbours have: a bare glyph
+    /// shows no focus, and cannot be found from across the room.
+    func controlButton() -> some View {
+        #if os(tvOS)
+        buttonStyle(TelevisionButton())
+        #else
+        buttonStyle(.plain)
+        #endif
+    }
+
     /// A button or menu in a toolbar. On tvOS it takes the system's toolbar
     /// style back from the shell's `TelevisionButton`, which would draw it as a
     /// capsule with its symbol at text size, and shows the symbol alone: a

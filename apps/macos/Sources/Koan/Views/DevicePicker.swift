@@ -650,7 +650,7 @@ struct OutputButton: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .controlButton()
         .help(help)
         .accessibilityLabel(help)
         #if os(macOS)

@@ -350,23 +350,40 @@ struct QueueView: View {
                 }
                 .disabled(player.queue.isEmpty)
                 #endif
+                // Playlists are made elsewhere; a television plays them.
+                #if !os(tvOS)
                 Button {
                     playlists.naming = player.queue.compactMap(\.trackId)
                 } label: {
                     Label("Save as Playlist…", systemImage: Icon.playlist)
                 }
                 Divider()
+                #endif
                 Button(role: .destructive) { player.clearQueue() } label: {
                     Label("Clear Queue", systemImage: Icon.clear)
                 }
             } label: {
+                #if os(tvOS)
+                Image(systemName: "ellipsis")
+                #else
                 Image(systemName: "ellipsis.circle")
+                #endif
             }
+            #if os(tvOS)
+            .accessibilityLabel("More")
+            #else
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .frame(width: 22)
+            #endif
         }
+        // A television's controls are the size of its other buttons: a
+        // borderless glyph is too small to find from across the room.
+        #if os(tvOS)
+        .buttonStyle(TelevisionButton())
+        #else
         .buttonStyle(.borderless)
+        #endif
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
     }
@@ -873,6 +890,16 @@ private struct JumpToPlayingButton: View {
 private struct QueueAlbumHeader: View {
     let group: QueueGroup
 
+    // A fixed size reads as a heading on a desktop; a television scales the
+    // text styles beneath it and left the record smaller than its artist.
+    #if os(tvOS)
+    private static let titleFont = Font.title3.weight(.semibold)
+    private static let sleeve: CGFloat = 96
+    #else
+    private static let titleFont = Font.system(size: 14, weight: .semibold)
+    private static let sleeve: CGFloat = 52
+    #endif
+
     var body: some View {
         HStack(spacing: 12) {
             // No tap-to-view here, unlike the album page: this cover sits in a
@@ -880,13 +907,13 @@ private struct QueueAlbumHeader: View {
             // click that selects the row.
             if let sleeve = group.items.first?.sleeve {
                 AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 5)
-                    .frame(width: 52, height: 52)
+                    .frame(width: Self.sleeve, height: Self.sleeve)
                     .shadow(color: .black.opacity(0.28), radius: 4, y: 2)
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(Format.title(group.title))
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(Self.titleFont)
                     .foregroundStyle(.primary)
                     .lineLimit(Format.titleLines)
 
