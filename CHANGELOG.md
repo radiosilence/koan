@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **An Apple TV finds its server on its own.** kōan on a phone or Mac announces the server it is signed in to on the local network, without the account, and a signed-out TV lists each server it hears of on its sign-in page, a press away from a pairing code. It keeps looking while the page is open and asks for kōan to be opened on a signed-in device; typing the address stays as the fallback. A device that is not discoverable announces nothing.
+
+### Security
+
+- **Password guessing is limited per account, whatever the address.** The per-address limits on failed sign-ins did not stop a guesser with many addresses. A username now has 60 failed password sign-ins a minute across every address and every door that takes a password: Subsonic `p=` and token sign-ins against app passwords, `/auth/login` and the web UI's form. That is far more than a person mistyping reaches. So that an outsider spending the budget cannot lock an account out, the networks it signed in from in the last week (by password, or by a browser refreshing its session) are spared it. API keys and the Subsonic shared secret are random and not counted, so a flood of wrong passwords cannot lock out apps signed in with them.
+- **A Subsonic password guess could skip the sign-in limits.** A request for the shared username carrying `t` but no `s` was exempted as a shared-secret token, while the server checked its `p=` instead. The exemption now requires both, exactly as the check does.
+- **Per-address limits count an IPv6 client by its /64.** One subscriber is usually given a whole /64, so keying on the full address gave a client a fresh allowance per address. IPv4-mapped IPv6 addresses now count as the IPv4 address they carry.
+- **The web UI's sign-in shares the server's ceiling on password checks.** It ran argon2 with only a per-address limit, so requests from many addresses could run any number of checks at once. It now goes through the same verifier as the Subsonic API and `/auth/login`.
+- **An account's name could run script on an admin's Users page.** The Delete button's confirmation put the escaped name inside a Datastar expression, which the browser decodes before evaluating. The name is now passed as data.
+- **Sockets close when their account changes.** A GraphQL subscription socket or an app's link kept the access it opened with: a demoted admin kept admin over `/graphql/ws`, and a deleted account, a new password, a revoked key or app password, or a device's key replaced when it signs in again left both open. They now close when anything about the account that can narrow its access changes, and a subscription socket also closes when its token expires. Clients reconnect and are authenticated as things then stand; kōan's apps treat it as any dropped link.
+
+### Changed
+
+- **Tapping the server's address in Settings → Server copies it,** in the Mac and iOS apps, for signing another app or device in to the same server. The row reads *Copied* for a moment.
+
+### Fixed
+
+- **The Apple TV's filter and sort did nothing.** In the navigation bar they took focus, but tvOS never showed the sheet or menu they open. They are now a row of buttons above the album, artist and track listings, named in full.
+- **Playlist sync no longer removes songs from the server's copy.** A server playlist naming a song the library had not synced yet was stored without it, and the next edit pushed that shorter list back, deleting the song on the server. Songs the library does not have now stay on the server: every push puts them back where they were. A database error while reading a playlist is reported rather than read as an empty list, and a playlist whose entries are all local files no longer empties its server copy; only one emptied by hand does.
+- **A server that lists no playlists no longer deletes yours.** A playlist the server stops listing is now deleted locally only once the server, asked for it, says it does not have it; a listing that comes back short or empty deletes nothing. A failed lookup no longer creates a duplicate of a playlist, and a playlist's name, owner, contents and sync state are stored together or not at all.
+- **Organize keeps playlists read from M3U files.** Moving an album moved its `.m3u` with it, and the next scan read the list as deleted, made a new playlist under a new id, and dropped every entry whose file had been renamed. Organize now rewrites the M3U files in the library to name the files where they went, and moves the playlist with its file; undo puts both back.
+- **Organize undo survives an unplugged drive.** Undo dropped the record of any move whose destination it could not see, including every file on a drive that was disconnected. It now drops one only when the file is gone while the library folder or drive it was moved to is still there, and otherwise keeps it for when the drive is back. An album deleted by hand after organizing still leaves the batches before it undoable.
+- **A symlinked share going away no longer deletes its tracks.** With part of the library linked in from a network share, the share being unmounted made every file under the link read as deleted, and a rescan removed those tracks with their play history, whatever the size of the removal. A file is now taken as deleted only when the folder that should hold it is there.
+- **Moving or renaming files outside kōan keeps their history.** A file that disappeared from one path and appeared at another was indexed as a new track and the old one deleted, with its play history, favourites, ratings and playlist places. A file found at a new path now takes over the track of a file gone from the index's view, when it is the same recording, the same place on the same release with the same size or length, or, for an untagged file, the same size, length and modification time; when more than one gone file fits, none is taken. This holds within one scan or one batch of the folder watcher, and across library folders in a full scan.
+- **Files whose names are not UTF-8 no longer lose their history on every scan (Linux).** The name was stored altered, so the same scan that added a track removed it. Such files are now skipped with a warning.
+
 ## 0.55.0
 
 ### Added

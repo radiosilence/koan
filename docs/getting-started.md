@@ -82,7 +82,11 @@ source <(COMPLETE=zsh koan)    # zsh; bash and fish take COMPLETE=bash and COMPL
 
 ## Removed files
 
-A scan removes tracks whose files have gone, along with their play history. It refuses when the pattern looks like a missing mount rather than a deletion: a folder with no audio files, a path it cannot read, or more than 20% of a folder of at least 100 tracks gone at once. `koan scan --force-remove` lifts the last of these after a deliberate mass deletion.
+A scan removes tracks whose files have gone, along with their play history. It refuses when the pattern looks like a missing mount rather than a deletion: a folder with no audio files, a path it cannot read, or more than 20% of a folder of at least 100 tracks gone at once. `koan scan --force-remove` lifts the last of these after a deliberate mass deletion. A file behind a symlink whose target has gone, such as an unmounted network share linked into the library, counts as unreachable rather than deleted.
+
+A file moved or renamed outside kōan keeps its track, and with it its play history, favourites and playlist places, when the scan that finds it at the new path also finds it gone from the old one: it must be the same MusicBrainz recording, the same disc and number on the same release with the same size or length, or, untagged, the same size, length and modification time. When more than one missing file fits, none is taken, and the new file is indexed as a new track. A full scan matches moves between library folders too; the folder watcher matches them within one batch of changes.
+
+On Linux, a file whose name is not valid UTF-8 is skipped with a warning, since its path cannot be stored as it is.
 
 ## Local and remote together
 

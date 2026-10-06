@@ -594,11 +594,12 @@ pub(super) async fn token(State(s): State<UiState>, Form(t): Form<TokenRequest>)
         "refresh_token" => {
             let auth = s.auth.clone();
             let rt = t.refresh_token;
-            let rotated =
-                tokio::task::spawn_blocking(move || crate::auth::routes::rotate(&auth, &rt).ok())
-                    .await
-                    .ok()
-                    .flatten();
+            let rotated = tokio::task::spawn_blocking(move || {
+                crate::auth::routes::rotate(&auth, &rt, None).ok()
+            })
+            .await
+            .ok()
+            .flatten();
             match rotated {
                 Some((access, refresh)) => tokens(&s, access, refresh),
                 None => invalid("unknown or expired refresh token"),

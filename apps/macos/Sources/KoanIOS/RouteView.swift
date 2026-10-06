@@ -51,6 +51,16 @@ private struct SectionPage: View {
         page
             .navigationTitle(title)
             .modifier(SectionFilter(placeholder: section.filterPlaceholder))
+            #if os(tvOS)
+            // In the page rather than the navigation bar: a television's
+            // toolbar takes focus, but a sheet or menu opened from it never
+            // appears.
+            .safeAreaInset(edge: .top) {
+                if section.isBrowser {
+                    BrowseControlsRow(section: section)
+                }
+            }
+            #else
             .toolbar {
                 if section.isBrowser {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -64,6 +74,7 @@ private struct SectionPage: View {
                     TrackSortControls()
                 }
             }
+            #endif
     }
 
     @ViewBuilder private var page: some View {
@@ -121,31 +132,81 @@ private struct SectionFilter: ViewModifier {
     }
 }
 
-/// The track browser's sort, in the navigation bar.
-private struct TrackSortControls: ToolbarContent {
+/// The track browser's sort: the choices, ticked, under one control.
+private struct TrackSortMenu: View {
     @Environment(LibraryModel.self) private var library
 
-    var body: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                Picker("Sort", selection: Binding(
-                    get: { library.trackSort },
-                    set: { library.trackSort = $0 }
-                )) {
-                    ForEach(TrackBrowseSort.offered(recent: library.browseFilter.recent), id: \.self) { sort in
-                        Text(sort.label).tag(sort)
-                    }
+    var body: some View {
+        Menu {
+            Picker("Sort", selection: Binding(
+                get: { library.trackSort },
+                set: { library.trackSort = $0 }
+            )) {
+                ForEach(TrackBrowseSort.offered(recent: library.browseFilter.recent), id: \.self) { sort in
+                    Text(sort.label).tag(sort)
                 }
-            } label: {
-                #if os(tvOS)
-                // See `BrowseFilterButton`: the symbol alone.
-                Image(systemName: "arrow.up.arrow.down").accessibilityLabel("Sort")
-                #else
-                Label("Sort", systemImage: "arrow.up.arrow.down")
-                #endif
             }
-            .toolbarButton()
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
         }
+    }
+}
+
+/// The album browser's sort, as `TrackSortMenu` is the track browser's.
+private struct AlbumSortMenu: View {
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        Menu {
+            Picker("Sort", selection: Binding(
+                get: { library.albumSort },
+                set: { library.albumSort = $0 }
+            )) {
+                ForEach(AlbumSort.offered(
+                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded
+                ), id: \.self) { sort in
+                    Text(sort.label).tag(sort)
+                }
+            }
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+        }
+    }
+}
+
+#if os(tvOS)
+/// A browser's filters and sort on a television: a row of buttons above the
+/// listing, reached by moving up from it, with room for their names.
+private struct BrowseControlsRow: View {
+    let section: Navigator.Section
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        HStack(spacing: 24) {
+            Spacer()
+            if section == .albums, library.albumSort == .random {
+                Button { library.reshuffleAlbums() } label: {
+                    Label("Shuffle", systemImage: Icon.reshuffle)
+                }
+            }
+            BrowseFilterButton()
+            if section == .albums {
+                AlbumSortMenu()
+            }
+            if section == .tracks {
+                TrackSortMenu()
+            }
+        }
+        .padding(.horizontal, 80)
+        .padding(.bottom, 16)
+        .focusSection()
+    }
+}
+#else
+/// The track browser's sort, in the navigation bar.
+private struct TrackSortControls: ToolbarContent {
+    var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) { TrackSortMenu() }
     }
 }
 
@@ -162,30 +223,9 @@ private struct AlbumSortControls: ToolbarContent {
                 } label: {
                     Label("Shuffle", systemImage: Icon.reshuffle)
                 }
-                .toolbarButton()
             }
         }
-        ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                Picker("Sort", selection: Binding(
-                    get: { library.albumSort },
-                    set: { library.albumSort = $0 }
-                )) {
-                    ForEach(AlbumSort.offered(
-                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded
-                ), id: \.self) { sort in
-                        Text(sort.label).tag(sort)
-                    }
-                }
-            } label: {
-                #if os(tvOS)
-                // See `BrowseFilterButton`: the symbol alone.
-                Image(systemName: "arrow.up.arrow.down").accessibilityLabel("Sort")
-                #else
-                Label("Sort", systemImage: "arrow.up.arrow.down")
-                #endif
-            }
-            .toolbarButton()
-        }
+        ToolbarItem(placement: .topBarTrailing) { AlbumSortMenu() }
     }
 }
+#endif

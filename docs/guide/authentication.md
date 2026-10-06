@@ -118,11 +118,7 @@ signs in again.
 
 ### Pairing a device
 
-The server and the approving side (the Mac and iOS apps, and the `/pair` page)
-are in place, but no released kōan app asks to be paired yet: the first is the
-Apple TV app, which is still to ship.
-
-A device without a keyboard, such as a television, cannot reasonably take a
+A device without a keyboard, such as the Apple TV app, cannot reasonably take a
 password or a pasted invite, so it signs in by being approved from somewhere
 that is already signed in. It opens a WebSocket at `/rest/koanPair` (listed as
 the `koanPair` extension) with no credentials and is given a code, shown as
@@ -301,6 +297,10 @@ The refresh token is also returned in the login response body, because the CLI a
 
 Refresh tokens are stored in the database as `sha256(token)`, so a database read yields nothing usable.
 
+## Sockets
+
+A socket is authenticated once, when it opens, so `/graphql/ws` and an app's link at `/rest/koanLink` close whenever something about their account changes that can narrow what it may do: its role, its password, its deletion, a key or app password revoked, or a device's key replaced when it signs in again. Signing out does not: no socket rests on a refresh token, so the account's other devices stay connected. A subscription socket also closes when the token it opened with expires. The client reconnects and is authenticated as things then stand. A change made by another process, such as `koan auth` at a terminal while the server runs, reaches sockets when they next reconnect.
+
 ## Subsonic API
 
 `/rest/*` is kōan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`), and koan's own. Clients sign in with one of:
@@ -318,6 +318,10 @@ Which credential a client should use:
 | kōan's apps, and Subsonic clients that support OpenSubsonic API keys | An API key (kōan's apps get one from an invite, pairing, or by signing in with the password once) |
 | Subsonic clients that sign in with a token (`t`/`s`) | An app password |
 | Older clients that send the password itself (`p=`) | The account's password over HTTPS, or an app password |
+
+### Sign-in limits
+
+Every request carries its credential, so failed password sign-ins are limited three ways: per address and username (10 a minute), per address (30), and per username from every address together (60). The last is shared with `/auth/login` and the web UI's sign-in, so spreading guesses across addresses or doors gains nothing. Since anyone can spend that budget, it does not apply to a network the account signed in from in the last week, by password or by a browser refreshing its session: an outsider cannot lock the account's own people out. Only failures count, so a client syncing a library is never slowed. API keys and the shared secret's token are random and not worth guessing, so they are never limited, and a flood of wrong passwords for an account cannot lock out the apps signed in with either. An IPv6 address counts as its /64.
 
 Subsonic token auth (`t = md5(password + salt)`) cannot be checked against the account's own password, because the server keeps only its argon2 hash; a password the server can read back is one its admins and anyone with the database can read too. App passwords are the exception made for token-only clients. Each is random, never the account's password, and stored sealed with ChaCha20-Poly1305 under a key derived (HKDF) from the server's Ed25519 signing key and bound to its account, so a copy of the database alone does not yield them, and regenerating the keypair retires them with every session. An account without app passwords gets error 41 for a token, which tells a client to fall back to a password or a key. Token auth still protects little in transit — a captured token replays — so use HTTPS.
 

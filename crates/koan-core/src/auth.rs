@@ -462,6 +462,74 @@ pub fn validate_scoped_token(
 }
 
 // ---------------------------------------------------------------------------
+// Account changes
+// ---------------------------------------------------------------------------
+
+/// Changes to accounts, as a running count, and the count at each account's
+/// latest change.
+///
+/// A request is authenticated once, but a socket outlives it and asks the
+/// database nothing afterwards. So every change that can narrow what an
+/// account's sockets hold — a new role or password, a revoked key or app
+/// password, the account deleted — is announced here, and a socket closes when
+/// its account's is. The client reconnects and is authenticated as things now
+/// stand.
+///
+/// Revoking a refresh token is not such a change: no socket rests on one, and
+/// closing every socket on the account at each sign-out would only make them
+/// all reconnect.
+///
+/// Announced by the queries that make the change, so no caller can forget to.
+/// Only within this process: a change made by another, such as the CLI's,
+/// reaches sockets when they next reconnect.
+struct AccountChanges {
+    count: tokio::sync::watch::Sender<u64>,
+    latest: parking_lot::Mutex<std::collections::HashMap<i64, u64>>,
+}
+
+fn account_changes() -> &'static AccountChanges {
+    static CHANGES: std::sync::OnceLock<AccountChanges> = std::sync::OnceLock::new();
+    CHANGES.get_or_init(|| AccountChanges {
+        count: tokio::sync::watch::Sender::new(0),
+        latest: Default::default(),
+    })
+}
+
+/// Announce a change to `user_id`'s account.
+pub fn account_changed(user_id: i64) {
+    let changes = account_changes();
+    changes.count.send_modify(|count| {
+        *count += 1;
+        changes.latest.lock().insert(user_id, *count);
+    });
+}
+
+/// Where the count of changes stands. Taken before a credential is checked,
+/// so a change made while it is being checked still counts against it.
+pub fn account_mark() -> u64 {
+    *account_changes().count.borrow()
+}
+
+/// Resolves once `user_id`'s account has changed after `mark`.
+pub async fn account_changed_since(user_id: i64, mark: u64) {
+    let changes = account_changes();
+    let mut count = changes.count.subscribe();
+    loop {
+        if changes
+            .latest
+            .lock()
+            .get(&user_id)
+            .is_some_and(|&at| at > mark)
+        {
+            return;
+        }
+        if count.changed().await.is_err() {
+            return std::future::pending().await;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Time helpers
 // ---------------------------------------------------------------------------
 

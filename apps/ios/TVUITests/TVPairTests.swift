@@ -10,7 +10,10 @@ import XCTest
 /// the screen. `KOAN_PAIR_OUTCOME` asks for the other endings instead:
 /// `decline`, which turns the code away, or `expire`, which approves nothing
 /// and waits for the code to lapse; either must say what happened and offer
-/// the code again. Screenshots of each step are kept.
+/// the code again. With `KOAN_PAIR_DISCOVER`, the TV is given no address and
+/// leaves the local network on: it must find the server announced by kōan on
+/// another device, which is `just tv-discover`. Screenshots of each step are
+/// kept.
 @MainActor
 final class TVPairTests: XCTestCase {
     func testPairing() throws {
@@ -18,20 +21,37 @@ final class TVPairTests: XCTestCase {
         guard let server = env["KOAN_PAIR_SERVER"]
         else { throw XCTSkip("KOAN_PAIR_SERVER names the server") }
 
+        let discover = env["KOAN_PAIR_DISCOVER"] != nil
         let app = XCUIApplication()
-        app.launchEnvironment["KOAN_REMOTE__URL"] = server
-        // Nothing here needs the local network; see `TVWalkTests`.
-        app.launchEnvironment["KOAN_DEVICES__NEARBY"] = "false"
+        if !discover {
+            app.launchEnvironment["KOAN_REMOTE__URL"] = server
+            // Nothing here needs the local network; see `TVWalkTests`.
+            app.launchEnvironment["KOAN_DEVICES__NEARBY"] = "false"
+        }
         app.launch()
 
         let getCode = app.buttons["Get a Code"]
         XCTAssertTrue(getCode.waitForExistence(timeout: 20), "the sign-in page shows")
         snap("01-sign-in")
-        // From the address field, along to the button beside it.
-        for _ in 0..<4 where !getCode.hasFocus {
-            XCUIRemote.shared.press(.right)
+        if discover {
+            // Announced by the other device, and offered above the address.
+            let host = URLComponents(string: server).map { "\($0.host ?? ""):\($0.port ?? 0)" } ?? server
+            let offered = app.buttons.matching(identifier: "found-server")
+                .containing(NSPredicate(format: "label CONTAINS %@", host)).firstMatch
+            let anyOffered = app.buttons.matching(identifier: "found-server").firstMatch
+            XCTAssertTrue(anyOffered.waitForExistence(timeout: 90), "a server another device is signed in to is offered")
+            snap("01b-found")
+            XCTAssertTrue(offered.exists || anyOffered.label.contains(host), "the one the other device announced: \(host)")
+            // The address field has focus on arrival; the server found sits above it.
+            XCUIRemote.shared.press(.up)
+            XCUIRemote.shared.press(.select)
+        } else {
+            // From the address field, along to the button beside it.
+            for _ in 0..<4 where !getCode.hasFocus {
+                XCUIRemote.shared.press(.right)
+            }
+            XCUIRemote.shared.press(.select)
         }
-        XCUIRemote.shared.press(.select)
 
         let code = app.staticTexts.matching(
             NSPredicate(format: "label MATCHES %@", "^[0-9A-Z]{4}-[0-9A-Z]{4}$")

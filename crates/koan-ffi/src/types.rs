@@ -1680,6 +1680,17 @@ pub struct ConnectionInfo {
     /// The server refused the stored credential (a revoked API key, a changed
     /// password) when it was last used, and has not accepted it since.
     pub sign_in_refused: bool,
+    /// The servers devices on this network are signed in to, announced over
+    /// Bonjour: what a device not signed in yet offers to sign in to.
+    pub nearby_servers: Vec<NearbyServer>,
+}
+
+/// A server another device on this network announced it is signed in to.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct NearbyServer {
+    pub url: String,
+    /// The devices that announced it, by name.
+    pub devices: Vec<String>,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]

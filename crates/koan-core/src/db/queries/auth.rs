@@ -1,6 +1,6 @@
 //! Auth queries: user CRUD, refresh token management.
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::auth::{self, Role};
 
@@ -217,6 +217,9 @@ pub fn list_users(conn: &Connection) -> Result<Vec<UserRow>, rusqlite::Error> {
 /// Delete a user by ID. Returns true if a row was deleted.
 pub fn delete_user(conn: &Connection, user_id: i64) -> Result<bool, rusqlite::Error> {
     let count = conn.execute("DELETE FROM users WHERE id = ?1", params![user_id])?;
+    if count > 0 {
+        auth::account_changed(user_id);
+    }
     Ok(count > 0)
 }
 
@@ -239,6 +242,7 @@ pub fn update_password(
             revoke_all_user_tokens(conn, user.id)?;
             super::api_keys::revoke_user_api_keys(conn, user.id)?;
             super::app_passwords::revoke_user_app_passwords(conn, user.id)?;
+            auth::account_changed(user.id);
         }
     }
     Ok(updated > 0)
@@ -250,12 +254,18 @@ pub fn update_role(
     username: &str,
     role: crate::auth::Role,
 ) -> Result<bool, rusqlite::Error> {
-    let updated = conn.execute(
-        "UPDATE users SET role = ?1 WHERE username = ?2",
-        params![role.as_str(), username],
-    )?;
+    let updated: Option<i64> = conn
+        .query_row(
+            "UPDATE users SET role = ?1 WHERE username = ?2 RETURNING id",
+            params![role.as_str(), username],
+            |row| row.get(0),
+        )
+        .optional()?;
     adopt_local_rows(conn)?;
-    Ok(updated > 0)
+    if let Some(id) = updated {
+        auth::account_changed(id);
+    }
+    Ok(updated.is_some())
 }
 
 /// Check if any users exist (for first-run detection).

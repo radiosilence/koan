@@ -79,6 +79,7 @@ fn setup_at(auth_enabled: bool, public_url: Option<&str>) -> Fixture {
         refresh_ttl_secs: 3600,
         cookie_secure: true,
         login_limiter: Arc::new(RateLimiter::default()),
+        users: Arc::new(crate::auth::password::PasswordVerifier::new(pool.clone())),
     };
     Fixture {
         app: super::router(
@@ -1877,4 +1878,63 @@ async fn track_rows_carry_what_the_track_menu_needs() {
     assert!(row.contains("data-act=menu"), "the phone's way in");
     assert!(row.contains("data-fav="), "the heart the menu presses");
     assert!(row.contains("data-act-share"), "the share the menu presses");
+}
+
+#[tokio::test]
+async fn a_spent_username_budget_refuses_strangers_but_not_the_accounts_network() {
+    let f = setup(true);
+    let from = |ip: [u8; 4]| {
+        let mut req = form("/login", "username=alice&password=hunter2");
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                ip, 1234,
+            ))));
+        req
+    };
+    let home = [198, 51, 100, 4];
+    assert_eq!(send(&f.app, from(home)).await.status, StatusCode::SEE_OTHER);
+    // Spent by guesses from elsewhere.
+    for _ in 0..crate::auth::password::FAILURES_PER_USERNAME_PER_MINUTE {
+        f.state.users.failed("alice");
+    }
+    let r = send(&f.app, from([203, 0, 113, 9])).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        r.body
+            .contains("Too many failed sign-ins for this account.")
+    );
+    assert!(r.cookies().is_empty());
+    // The network alice signed in from still signs in.
+    assert_eq!(send(&f.app, from(home)).await.status, StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn a_username_reaches_the_delete_confirmation_as_data() {
+    let f = setup(true);
+    let db = Database::open(f.state.pool.path()).unwrap();
+    let boss = queries::auth::create_user(&db.conn, "boss", "sesame", Role::Admin).unwrap();
+    queries::auth::create_user(&db.conn, "x');alert(1)//", "sesame", Role::User).unwrap();
+    let admin =
+        auth::mint_access_token(&f.state.private_pem, boss, "boss", Role::Admin, 900).unwrap();
+    let r = send(
+        &f.app,
+        get("/users")
+            .header(header::COOKIE, format!("koan_access={admin}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let button = r
+        .body
+        .split("<button")
+        .find(|b| b.contains("data-username=\"x&#39;);alert(1)//\""))
+        .unwrap_or_else(|| panic!("{}", r.body));
+    let expression = button
+        .split("data-on:click=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap();
+    assert!(expression.contains("/delete')"), "{expression}");
+    assert!(!expression.contains("alert"), "{expression}");
 }
