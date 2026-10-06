@@ -48,11 +48,11 @@ enum EvidenceRenderer {
             let warm = KoanAccent(record: Color(red: 0.94, green: 0.54, blue: 0.36)) // theme: raw — a sleeve's colour, as input
             let navy = KoanAccent(record: Color(red: 0.04, green: 0.10, blue: 0.23)) // theme: raw — a sleeve's colour, as input
             for (name, accent) in [("mint", KoanAccent.mint), ("warm", warm), ("navy", navy)] {
-                pages.append(("theme-\(name)", CGSize(width: 760, height: 1100), AnyView(
+                pages.append(("theme-\(name)", CGSize(width: 760, height: 1400), AnyView(
                     KoanThemeSheet(accent: accent)
                 )))
             }
-            pages.append(("theme-no-icons", CGSize(width: 760, height: 1100), AnyView(
+            pages.append(("theme-no-icons", CGSize(width: 760, height: 1400), AnyView(
                 KoanThemeSheet().environment(\.koanIcons, false)
             )))
         }

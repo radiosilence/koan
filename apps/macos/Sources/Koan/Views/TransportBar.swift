@@ -589,11 +589,11 @@ struct SleepButton: View {
                 Button("\(minutes) Minutes") { player.setSleepTimer(.after(minutes: UInt32(minutes))) }
             }
             Divider()
-            Button("End of Track") { player.setSleepTimer(.endOfTrack) }
-            Button("End of Record") { player.setSleepTimer(.endOfRecord) }
+            Button(KoanTheme.label("End of Track")) { player.setSleepTimer(.endOfTrack) }
+            Button(KoanTheme.label("End of Record")) { player.setSleepTimer(.endOfRecord) }
             if sleep != nil {
                 Divider()
-                Button("Cancel Sleep Timer", role: .destructive) { player.cancelSleepTimer() }
+                Button(KoanTheme.label("Cancel Sleep Timer"), role: .destructive) { player.cancelSleepTimer() }
             }
         } label: {
             HStack(spacing: 4) {

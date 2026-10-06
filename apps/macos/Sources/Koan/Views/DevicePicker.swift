@@ -84,7 +84,7 @@ private struct DeviceRow: View {
         // for what can be done to a row beyond choosing it.
         .contextMenu {
             if !device.awake {
-                Button("Forget", systemImage: "trash", role: .destructive) {
+                Button(KoanTheme.label("Forget"), systemImage: "trash", role: .destructive) {
                     player.forget(device.id)
                 }
             }
@@ -326,13 +326,13 @@ private struct RendererVolume: View {
                     #if os(tvOS)
                     // No slider on tvOS: a step either way, as a remote's own
                     // volume buttons do.
-                    Button("Quieter", systemImage: "speaker.fill") {
+                    Button(KoanTheme.label("Quieter"), systemImage: "speaker.fill") {
                         player.setOutputVolume(UInt8(max(0, Int(volume) - 5)))
                     }
                     Text("\(volume)")
                         .monospacedDigit()
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    Button("Louder", systemImage: "speaker.wave.3.fill") {
+                    Button(KoanTheme.label("Louder"), systemImage: "speaker.wave.3.fill") {
                         player.setOutputVolume(UInt8(min(100, Int(volume) + 5)))
                     }
                     #else
@@ -427,7 +427,7 @@ private struct SectionHeading: View {
             }
             Spacer(minLength: 0)
             if let move {
-                Button("Move here", action: move)
+                Button(KoanTheme.label("Move here"), action: move)
                     .font(.role(.fine, system: .caption))
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -525,7 +525,7 @@ private struct DeviceChoiceRow: View {
             }
 
             if canMove {
-                Button("Move here", action: onMove)
+                Button(KoanTheme.label("Move here"), action: onMove)
                     .font(.role(.fine, system: .caption))
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -561,7 +561,7 @@ private struct LocalNetworkBlocked: View {
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .fixedSize(horizontal: false, vertical: true)
             #if os(iOS)
-            Button("Open Settings") {
+            Button(KoanTheme.label("Open Settings")) {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }

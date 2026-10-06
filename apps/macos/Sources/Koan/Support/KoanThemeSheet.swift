@@ -57,6 +57,22 @@ struct KoanThemeSheet: View {
                 }
             }
 
+            KoanSectionHeader("Form")
+            KoanForm {
+                Section {
+                    Toggle("Gapless", isOn: $off)
+                    LabeledContent("Name") {
+                        TextField("Name", text: .constant("Sunday morning")).koanField()
+                    }
+                } header: {
+                    KoanSectionHeader("Playback")
+                } footer: {
+                    Text("A footer that explains the section, long enough to wrap onto a second line.")
+                        .koanText(.fine, .muted)
+                }
+            }
+            .frame(height: 220)
+
             KoanSectionHeader("Surface")
             Text("search").koanText(.body, .muted)
                 .padding(KoanTheme.Space.m)

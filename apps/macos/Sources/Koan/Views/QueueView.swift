@@ -314,7 +314,7 @@ struct QueueView: View {
 
             #if os(iOS)
             if editMode.isEditing {
-                Button("Done") { editMode = .inactive }
+                Button(KoanTheme.label("Done")) { editMode = .inactive }
                     .fixedSize()
             }
             #endif

@@ -279,11 +279,11 @@ private struct MenuBarMenu: View {
         Divider()
         Button(state.player.isPlaying ? "Pause" : "Play") { state.player.togglePlayPause() }
             .disabled(entry == nil)
-        Button("Next") { state.player.next() }
+        Button(KoanTheme.label("Next")) { state.player.next() }
             .disabled(entry == nil)
         Divider()
-        Button("Open kōan") { state.residency.showWindow(with: openWindow) }
-        Button("Quit kōan") { NSApp.terminate(nil) }
+        Button(KoanTheme.label("Open kōan")) { state.residency.showWindow(with: openWindow) }
+        Button(KoanTheme.label("Quit kōan")) { NSApp.terminate(nil) }
     }
 }
 

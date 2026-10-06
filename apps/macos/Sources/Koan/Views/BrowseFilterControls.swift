@@ -44,7 +44,7 @@ struct BrowseFilterButton: View {
                     #endif
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { open = false }
+                            Button(KoanTheme.label("Done")) { open = false }
                                 .toolbarButton()
                         }
                     }
@@ -93,7 +93,7 @@ private struct BrowseFilterForm: View {
                 }
             }
             Section {
-                Button("Reset") { library.browseFilter = .none }
+                Button(KoanTheme.label("Reset")) { library.browseFilter = .none }
                     .disabled(library.browseFilter.activeCount == 0)
             }
         }

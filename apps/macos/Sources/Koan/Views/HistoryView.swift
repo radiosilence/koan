@@ -53,8 +53,8 @@ struct HistoryView: View {
             }
         }
         .alert("Clear History?", isPresented: $confirmingClear) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear", role: .destructive) { library.clearPlayHistory() }
+            Button(KoanTheme.label("Cancel"), role: .cancel) {}
+            Button(KoanTheme.label("Clear"), role: .destructive) { library.clearPlayHistory() }
         } message: {
             Text("Every play is forgotten. This cannot be undone.")
         }
@@ -153,7 +153,7 @@ struct HistoryView: View {
                 .font(.role(.control, system: .callout))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             Spacer(minLength: 0)
-            Button("Clear…") { confirmingClear = true }
+            Button(KoanTheme.label("Clear…")) { confirmingClear = true }
                 .disabled(entries.isEmpty)
         }
     }

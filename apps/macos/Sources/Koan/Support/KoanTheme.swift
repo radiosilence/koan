@@ -470,7 +470,17 @@ extension EnvironmentValues {
 enum KoanType {
     case display, title, titleSmall, body, control, meta, fine
 
+    /// Points, at the distance the device is read from: a television is read
+    /// from across a room, so its scale is the same steps, larger.
     var size: CGFloat {
+        #if os(tvOS)
+        base * 1.8
+        #else
+        base
+        #endif
+    }
+
+    private var base: CGFloat {
         switch self {
         case .display: 34
         case .title: 26
@@ -550,7 +560,7 @@ extension KoanTheme {
     }
 }
 
-#if os(iOS) || os(tvOS)
+#if os(iOS)
 extension UIFont {
     /// A role of the theme's type scale, for UIKit's own drawing (navigation
     /// titles), scaled with Dynamic Type as the role's text style is.
@@ -704,6 +714,18 @@ extension View {
         modifier(KoanFormRole())
     }
 
+    /// A text field: the theme's type on a `surface` field, square, no bezel.
+    /// The platform's field otherwise.
+    func koanField() -> some View {
+        modifier(KoanFieldRole())
+    }
+
+    /// A form section with no card behind its rows. Forms on the Mac draw a
+    /// card per section, which `.koanForm()` cannot reach from outside it.
+    func koanSection() -> some View {
+        modifier(KoanSectionRole())
+    }
+
     /// A pop-up picker, menu or stepper: the system control, in `ink` and the
     /// theme's type rather than the accent. Unchanged in the platform's look.
     func koanControl() -> some View {
@@ -719,8 +741,13 @@ extension View {
     /// The window's toolbar, or a phone's navigation bar: flat `bg` in the
     /// theme. Otherwise hidden over the wash where the window's glass is
     /// affordable (`glass`), and the platform's own where it is not.
+    @ViewBuilder
     func koanToolbar(glass: Bool) -> some View {
+        #if os(tvOS)
+        self
+        #else
         modifier(KoanToolbarRole(glass: glass))
+        #endif
     }
 
     /// A sheet's chrome: `bg` beneath, no material, the theme's type for
@@ -743,6 +770,19 @@ enum KoanButtonKind {
     case icon
     /// Play and pause: a glyph in a square `ink` outline.
     case iconOutlined
+    /// A button that is a thing from the library — a record, a track, a
+    /// person: its own content, type and case, with the theme's pressed fill
+    /// and focus ring.
+    case card
+
+    /// Whether the theme sets the label's type. Glyphs keep the size the page
+    /// gives them, and cards their own.
+    fileprivate var setsType: Bool {
+        switch self {
+        case .primary, .secondary, .text: true
+        case .icon, .iconOutlined, .card: false
+        }
+    }
 }
 
 private struct KoanTextRole: ViewModifier {
@@ -835,7 +875,7 @@ private struct KoanButtonRole: ViewModifier {
             case .primary: content.buttonStyle(.borderedProminent)
             case .secondary: content.buttonStyle(.bordered)
             case .text: content.buttonStyle(.borderless)
-            case .icon, .iconOutlined: content.buttonStyle(.plain)
+            case .icon, .iconOutlined, .card: content.buttonStyle(.plain)
             }
         }
     }
@@ -853,10 +893,7 @@ struct KoanButtonStyle: ButtonStyle {
     #endif
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.koan(.control))
-            .textCase(.lowercase)
-            .foregroundStyle(foreground(configuration))
+        typed(configuration)
             .padding(padding)
             .frame(minWidth: hit, minHeight: hit)
             .background(configuration.isPressed ? Color.koanHover : .clear)
@@ -868,6 +905,23 @@ struct KoanButtonStyle: ButtonStyle {
             .contentShape(Rectangle())
             .opacity(enabled ? 1 : 0.4)
             .koanFocusRing(focusedNow)
+    }
+
+    /// Type and colour for the kinds that set them. Case is left to the label:
+    /// a title the app writes is lowercased where it is written
+    /// (`KoanTheme.label`, `KoanLabel`), and library text keeps its own.
+    @ViewBuilder
+    private func typed(_ configuration: Configuration) -> some View {
+        if kind == .card {
+            configuration.label
+        } else if kind.setsType {
+            configuration.label
+                .font(.koan(.control))
+                .foregroundStyle(foreground(configuration))
+        } else {
+            configuration.label
+                .foregroundStyle(foreground(configuration))
+        }
     }
 
     private var focusedNow: Bool {
@@ -882,7 +936,7 @@ struct KoanButtonStyle: ButtonStyle {
         switch kind {
         case .primary:
             accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
-        case .secondary, .icon, .iconOutlined: AnyShapeStyle(Color.koanInk)
+        case .secondary, .icon, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
         case .text: AnyShapeStyle(configuration.isPressed ? Color.koanInk : Color.koanMuted)
         }
     }
@@ -892,7 +946,7 @@ struct KoanButtonStyle: ButtonStyle {
         case .primary: AnyShapeStyle(.tint)
         case .secondary: AnyShapeStyle(Color.koanMuted)
         case .iconOutlined: AnyShapeStyle(Color.koanInk)
-        case .text, .icon: nil
+        case .text, .icon, .card: nil
         }
     }
 
@@ -900,7 +954,7 @@ struct KoanButtonStyle: ButtonStyle {
         switch kind {
         case .primary, .secondary: EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
         case .text: EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
-        case .icon: EdgeInsets()
+        case .icon, .card: EdgeInsets()
         case .iconOutlined: EdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
         }
     }
@@ -1208,6 +1262,38 @@ private struct KoanListRole: ViewModifier {
     }
 }
 
+private struct KoanFieldRole: ViewModifier {
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content
+                .textFieldStyle(.plain)
+                .font(.koan(.control))
+                .foregroundStyle(Color.koanInk)
+                .padding(.horizontal, KoanTheme.Space.m)
+                .padding(.vertical, KoanTheme.Space.s)
+                .background(Color.koanSurface)
+        } else {
+            content
+        }
+    }
+}
+
+private struct KoanSectionRole: ViewModifier {
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            #if os(tvOS)
+            content
+            #else
+            content
+                .listRowBackground(Color.clear)
+                .listRowSeparatorTint(Color.koanRule)
+            #endif
+        } else {
+            content
+        }
+    }
+}
+
 private struct KoanControlRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
@@ -1314,6 +1400,37 @@ extension View {
         toolbar(KoanTheme.isOn ? .hidden : .automatic, for: .tabBar)
         #else
         self
+        #endif
+    }
+}
+
+/// A form. In the platform's look, a grouped `Form`. In the theme, its
+/// sections stacked on the ground, header, rows and footer, with no cards:
+/// AppKit's grouped form draws a rounded card behind each section whatever it
+/// is told, so the theme does not use one there. iOS and tvOS forms take
+/// `.koanForm()` instead, which reaches their rows.
+struct KoanForm<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        #if os(macOS)
+        if KoanTheme.isOn {
+            ScrollView {
+                VStack(alignment: .leading, spacing: KoanTheme.Space.l) {
+                    content
+                }
+                .padding(KoanTheme.Space.xl)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .font(.koan(.body))
+            .foregroundStyle(Color.koanInk)
+            .toggleStyle(KoanToggleStyle())
+            .textFieldStyle(.plain)
+        } else {
+            Form { content }.formStyle(.grouped)
+        }
+        #else
+        Form { content }.koanForm()
         #endif
     }
 }

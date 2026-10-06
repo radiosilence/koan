@@ -120,8 +120,8 @@ struct PlaylistView: View {
         .onChange(of: playlistId) { selection = [] }
         .alert("Rename Playlist", isPresented: $renaming) {
             TextField("Name", text: $renameTo)
-            Button("Cancel", role: .cancel) {}
-            Button("Rename") { playlists.rename(id: playlistId, to: renameTo) }
+            Button(KoanTheme.label("Cancel"), role: .cancel) {}
+            Button(KoanTheme.label("Rename")) { playlists.rename(id: playlistId, to: renameTo) }
         }
     }
 
@@ -315,13 +315,13 @@ struct PlaylistView: View {
             .help("Group by album, or one row per track — remembered for this playlist")
 
             Menu {
-                Button("Rename…") {
+                Button(KoanTheme.label("Rename…")) {
                     renameTo = playlist?.name ?? ""
                     renaming = true
                 }
                 .disabled(playlist?.fromFile == true)
                 Divider()
-                Button("Delete Playlist", role: .destructive) {
+                Button(KoanTheme.label("Delete Playlist"), role: .destructive) {
                     playlists.delete(id: playlistId)
                     nav.forget(.playlist(playlistId))
                     nav.show(.queue)
@@ -661,8 +661,8 @@ private struct PlaylistSelectionHeader: View {
                 Text("\(PlaylistView.Row.positions(in: selection, of: rows).count) selected")
                     .font(.role(.fine, system: .caption))
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                Button("Remove", role: .destructive, action: remove)
-                Button("Clear") { selection = [] }
+                Button(KoanTheme.label("Remove"), role: .destructive, action: remove)
+                Button(KoanTheme.label("Clear")) { selection = [] }
             }
             .buttonStyle(.borderless)
         }
