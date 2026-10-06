@@ -1429,7 +1429,7 @@ extension DevicesSettings {
 /// Saves the settings window's frame under a name of its own and restores it
 /// when the window opens, as `Window` scenes do and the `Settings` scene does
 /// not.
-private struct SettingsFrameAutosave: PlatformViewRepresentable {
+private struct SettingsFrameAutosave: NSViewRepresentable {
     final class Probe: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -1439,8 +1439,8 @@ private struct SettingsFrameAutosave: PlatformViewRepresentable {
         }
     }
 
-    func makeView(context: Context) -> Probe { Probe() }
-    func updateView(_ view: Probe, context: Context) {}
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ view: Probe, context: Context) {}
 }
 
 /// The Settings panes, each a page of its own, for the evidence renderer: the
