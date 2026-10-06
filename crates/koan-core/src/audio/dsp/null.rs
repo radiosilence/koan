@@ -77,11 +77,23 @@ fn signals(channels: usize) -> Vec<(&'static str, Vec<f32>)> {
     ]
 }
 
-/// The chain's output for `filters` at unity preamp, `input` handed over in
-/// packets.
-fn chain(filters: &[DspFilter], channels: usize, input: &[f32]) -> Vec<f64> {
+/// The chain's output for `filters` with the preamp at 0 dB, `input` handed
+/// over in packets, and the gain it applied: 0 dB lowered to whatever
+/// headroom the filters need.
+fn chain(filters: &[DspFilter], channels: usize, input: &[f32]) -> (Vec<f64>, f64) {
     let setup = Setup::new(filters.to_vec(), vec![]).with_preamp(0.0);
-    run(&setup, channels, input)
+    (run(&setup, channels, input), applied(&setup, channels))
+}
+
+/// The gain the chain puts ahead of the filters, linear: the reference
+/// applies the same, so that headroom is not counted as a difference.
+fn applied(setup: &Setup, channels: usize) -> f64 {
+    10f64.powf(setup.preamp_db(RATE, channels) / 20.0)
+}
+
+/// `x` at `gain`.
+fn scaled(x: &[f64], gain: f64) -> Vec<f64> {
+    x.iter().map(|v| v * gain).collect()
 }
 
 fn run(setup: &Setup, channels: usize, input: &[f32]) -> Vec<f64> {
@@ -115,8 +127,9 @@ fn null(
     reference: impl Fn(&[f64]) -> Vec<f64>,
 ) {
     for (signal, input) in signals(channels) {
-        let wide: Vec<f64> = input.iter().map(|&s| s as f64).collect();
-        let db = residual_dbfs(&chain(filters, channels, &input), &reference(&wide));
+        let (got, gain) = chain(filters, channels, &input);
+        let wide: Vec<f64> = input.iter().map(|&s| s as f64 * gain).collect();
+        let db = residual_dbfs(&got, &reference(&wide));
         eprintln!("{name}, {signal}: {db:.1} dBFS");
         assert!(db < BOUND_DBFS, "{name}, {signal}: residual {db:.1} dBFS");
     }
@@ -471,7 +484,10 @@ fn a_band_then_convolution_nulls_against_both_by_hand() {
     .with_preamp(0.0);
     let s = Section::cookbook(peak.kind, peak.freq, peak.gain_db, peak.q);
     for (signal, input) in signals(2) {
-        let wide: Vec<f64> = input.iter().map(|&v| v as f64).collect();
+        let wide = scaled(
+            &input.iter().map(|&v| v as f64).collect::<Vec<_>>(),
+            applied(&setup, 2),
+        );
         let want = per_channel(&wide, 2, |c, p| {
             s.run(p);
             let ir: Vec<f64> = irs[c].iter().map(|&v| v as f64).collect();
@@ -493,8 +509,9 @@ fn a_band_slightly_off_does_not_null() {
     let b = band(EqFilterKind::Peaking, 1000.0, 3.0, 1.0);
     let off = Section::cookbook(b.kind, b.freq, b.gain_db + 0.1, b.q);
     let (_, input) = signals(2).remove(2);
-    let wide: Vec<f64> = input.iter().map(|&v| v as f64).collect();
+    let (got, gain) = chain(&[DspFilter::Band(b)], 2, &input);
+    let wide: Vec<f64> = input.iter().map(|&v| v as f64 * gain).collect();
     let want = per_channel(&wide, 2, |_, p| off.run(p));
-    let db = residual_dbfs(&chain(&[DspFilter::Band(b)], 2, &input), &want);
+    let db = residual_dbfs(&got, &want);
     assert!(db > -60.0, "0.1 dB off still nulls to {db:.1} dBFS");
 }
