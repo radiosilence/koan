@@ -1440,6 +1440,7 @@ impl Player {
         self.queue_next_on_renderer();
         if self.sleeps_between(ended, Some(id)) {
             self.pause();
+            self.end_sleep_fade();
         }
     }
 }
@@ -1876,6 +1877,34 @@ mod tests {
         r.player.set_renderer_volume(55);
         assert_eq!(r.fake.state.lock().volume, 55);
         assert_eq!(r.player.shared_state.renderer().unwrap().volume, Some(55));
+    }
+
+    /// The file is the renderer's to play, so a sleep timer's fade steps
+    /// its volume down, and puts it back once it has paused.
+    #[test]
+    fn a_sleep_fade_steps_a_renderers_volume_down_and_back() {
+        use crate::player::state::SleepTimer;
+        let mut r = rig(WAV, false, &["a.wav"]);
+        r.player.play(r.ids[0]);
+        r.player.set_renderer_volume(40);
+        r.past_grace();
+
+        r.player
+            .process_command(PlayerCommand::SetSleepTimer(Some(SleepTimer::After {
+                minutes: 15,
+            })));
+        // Half way through its 90 s fade.
+        r.player.sleep.as_mut().unwrap().at = Some(Instant::now() + Duration::from_secs(45));
+        r.player.update_playback_state();
+        let half = r.fake.state.lock().volume;
+        assert!((19..=21).contains(&half), "stepped to about half: {half}");
+        assert!(r.player.shared_state.sleep_fading());
+
+        // Its time.
+        r.player.sleep.as_mut().unwrap().at = Some(Instant::now());
+        r.player.update_playback_state();
+        assert_eq!(r.state(), PlaybackState::Paused);
+        assert_eq!(r.fake.state.lock().volume, 40, "put back after the pause");
     }
 
     #[test]

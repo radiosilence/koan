@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod history;
 mod renderer;
+mod sleep;
 pub mod state;
 pub mod undo;
 
@@ -150,6 +151,10 @@ pub struct Player {
     mode: PlayMode,
     /// The sleep timer, while one is set.
     sleep: Option<SleepSet>,
+    /// Its fade, while one runs or full level is being brought back.
+    sleep_fade: Option<sleep::SleepFade>,
+    /// Paused by hand during a fade: resuming plays at full level.
+    sleep_snap_on_resume: bool,
     /// Playback sessions started — lets tests assert how many engine restarts
     /// an operation costs.
     #[cfg(test)]
@@ -176,6 +181,8 @@ pub struct Player {
 struct SleepSet {
     sleep: Sleep,
     at: Option<std::time::Instant>,
+    /// How long the fade before `at` runs.
+    fade: Option<std::time::Duration>,
 }
 
 struct DspCache {
@@ -189,8 +196,6 @@ struct DspCache {
 enum Fade {
     Cut,
     Short,
-    /// Over seconds: a sleep timer's.
-    Slow,
 }
 
 /// Whether a session plays or sits paused, and how a track waited for opens.
@@ -346,6 +351,8 @@ impl Player {
             renderer: None,
             mode: PlayMode::default(),
             sleep: None,
+            sleep_fade: None,
+            sleep_snap_on_resume: false,
             timeline,
             viz_buffer,
             viz_snapshot,
@@ -744,6 +751,7 @@ impl Player {
         }
         state.set_play_mode(self.mode);
         state.set_sleep(self.sleep.map(|s| s.sleep));
+        state.set_sleep_fading(self.sleep_fading());
     }
 
     /// What the listener last asked for: to hear something, to have it
@@ -1423,7 +1431,6 @@ impl Player {
                 if let Output::Local(local) = &session.output {
                     match fade {
                         Fade::Short => local.engine.fade_out(),
-                        Fade::Slow => local.engine.fade_out_slowly(),
                         Fade::Cut => {
                             if let Err(e) = local.engine.stop() {
                                 log::error!("pause failed: {}", e);
@@ -1447,6 +1454,9 @@ impl Player {
     /// position it was waiting to open at.
     pub fn resume(&mut self) {
         self.answer_silence();
+        if std::mem::take(&mut self.sleep_snap_on_resume) {
+            self.set_sleep_gain(1.0, true);
+        }
         let session = match &mut self.transport {
             Transport::Idle => {
                 if let Some(id) = self.shared_state.cursor() {
@@ -1782,14 +1792,17 @@ impl Player {
     /// running out, a pause's fade reaching silence, and the playhead crossing
     /// into the next queued track. Called from the command loop on each wake.
     pub fn update_playback_state(&mut self) {
+        self.sleep_tick();
         if let Some(SleepSet { at: Some(at), .. }) = self.sleep
             && std::time::Instant::now() >= at
         {
             self.sleep = None;
             log::info!("sleep timer: time's up");
+            // Faded to silence by now: what is cut is not heard.
             if self.intent() == Some(Run::Playing) {
-                self.pause_with(Fade::Slow);
+                self.pause_with(Fade::Cut);
             }
+            self.end_sleep_fade();
         }
 
         if self.session().is_some()
@@ -1838,6 +1851,7 @@ impl Player {
             && self.sleeps_between(Some(ended), Some(next))
         {
             self.pause_with(Fade::Cut);
+            self.end_sleep_fade();
         }
     }
 
@@ -1910,6 +1924,7 @@ impl Player {
 
     /// Set the sleep timer, or cancel it.
     fn set_sleep_timer(&mut self, timer: Option<SleepTimer>) {
+        self.restore_sleep_fade();
         self.sleep = timer.map(|timer| match timer {
             SleepTimer::After { minutes } => {
                 let after = std::time::Duration::from_secs(u64::from(minutes) * 60);
@@ -1922,15 +1937,18 @@ impl Player {
                         unix_ms: unix_ms.as_millis() as u64,
                     },
                     at: Some(std::time::Instant::now() + after),
+                    fade: Some(sleep::fade_length(minutes)),
                 }
             }
             SleepTimer::EndOfTrack => SleepSet {
                 sleep: Sleep::EndOfTrack,
                 at: None,
+                fade: None,
             },
             SleepTimer::EndOfRecord => SleepSet {
                 sleep: Sleep::EndOfRecord,
                 at: None,
+                fade: None,
             },
         });
         log::info!("sleep timer: {:?}", self.sleep.map(|s| s.sleep));
@@ -2002,11 +2020,16 @@ impl Player {
         if next.is_some() && next == ended {
             self.finish_play();
         }
-        let intent = match self.intent() {
-            Some(_) if self.sleeps_between(ended, next) => Some(Run::Paused),
-            intent => intent,
+        let sleeps = self.intent().is_some() && self.sleeps_between(ended, next);
+        let intent = if sleeps {
+            Some(Run::Paused)
+        } else {
+            self.intent()
         };
         self.carry_on(next, intent);
+        if sleeps {
+            self.end_sleep_fade();
+        }
     }
 
     /// Restart the session at the playhead if the queue no longer follows the
@@ -2147,7 +2170,10 @@ impl Player {
                 position_ms,
                 if play { Run::Playing } else { Run::Paused },
             ),
-            PlayerCommand::Pause => self.pause(),
+            PlayerCommand::Pause => {
+                self.paused_in_sleep_fade();
+                self.pause();
+            }
             PlayerCommand::PauseAndReport(reply) => {
                 self.pause();
                 self.silence_waiters.push(reply);
@@ -2532,11 +2558,14 @@ impl Player {
     /// When something changes that no command announces: one of the
     /// session's events (`next_event`), or a sleep timer's time coming.
     fn next_wake(&self) -> Option<std::time::Instant> {
-        let sleep = self.sleep.and_then(|s| s.at);
-        match (self.next_event(), sleep) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        [
+            self.next_event(),
+            self.sleep.and_then(|s| s.at),
+            self.sleep_wake(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// The playhead reaching the next queued track, the silence after a rate
@@ -3531,17 +3560,149 @@ mod tests {
         let at = player.sleep.and_then(|s| s.at).unwrap();
         assert!(player.next_wake().is_some_and(|w| w <= at), "woken for it");
 
-        // Its time comes.
+        // Its time comes, the fade having run down to silence.
         player.sleep.as_mut().unwrap().at = Some(std::time::Instant::now());
         player.update_playback_state();
         assert_eq!(session_run(&player), Some(Run::Paused));
         assert!(
-            player.session().unwrap().engine().unwrap().is_running(),
-            "fading, not cut off"
+            !player.session().unwrap().engine().unwrap().is_running(),
+            "stopped at silence: the fade did the fading"
+        );
+        assert!(
+            player.sleep_fade.is_none(),
+            "full level for what plays next"
         );
         assert_eq!(player.shared_state.sleep(), None, "spent");
         assert_eq!(playlist_ids(&player), ids, "the queue as it was");
         assert_eq!(player.shared_state.cursor(), Some(ids[0]));
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    fn fading_gain(player: &Player) -> Option<f32> {
+        match player.sleep_fade {
+            Some(sleep::SleepFade::Falling { gain, .. }) => Some(gain),
+            _ => None,
+        }
+    }
+
+    fn db(gain: f32) -> f32 {
+        20.0 * gain.log10()
+    }
+
+    /// A 15-minute timer fades for 90 s: nothing before the deadline less
+    /// that, then down evenly in decibels to silence at the deadline.
+    #[test]
+    fn a_sleep_timer_fades_over_the_run_up_to_its_deadline() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, _) = wavs_playing(dir.path(), &["a"], 1.0);
+        player.process_command(PlayerCommand::SetSleepTimer(Some(SleepTimer::After {
+            minutes: 15,
+        })));
+        let now = std::time::Instant::now();
+        let secs = std::time::Duration::from_secs;
+
+        player.sleep.as_mut().unwrap().at = Some(now + secs(91));
+        player.update_playback_state();
+        assert_eq!(fading_gain(&player), None, "not yet: 91 s out");
+        assert!(!player.shared_state.sleep_fading());
+        let wake = player.next_wake().unwrap();
+        assert!(
+            wake <= now + secs(2),
+            "woken for the fade's start, a second away"
+        );
+
+        player.sleep.as_mut().unwrap().at = Some(now + secs(45));
+        player.update_playback_state();
+        let half = fading_gain(&player).expect("half way through the fade");
+        assert!((db(half) + 30.0).abs() < 1.0, "{} dB", db(half));
+        assert!(player.shared_state.sleep_fading(), "published as fading");
+        assert!(player.next_wake().unwrap() <= std::time::Instant::now() + secs(1));
+
+        player.sleep.as_mut().unwrap().at = Some(now + std::time::Duration::from_millis(900));
+        player.update_playback_state();
+        let late = fading_gain(&player).unwrap();
+        assert!(
+            db(late) < -59.0,
+            "all but silent at the end: {} dB",
+            db(late)
+        );
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    /// Cancelled half way down, the level comes back up over a second.
+    #[test]
+    fn cancelling_a_sleep_timer_mid_fade_brings_the_level_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, _) = wavs_playing(dir.path(), &["a"], 1.0);
+        player.process_command(PlayerCommand::SetSleepTimer(Some(SleepTimer::After {
+            minutes: 15,
+        })));
+        player.sleep.as_mut().unwrap().at =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(45));
+        player.update_playback_state();
+        assert!(fading_gain(&player).is_some());
+
+        player.process_command(PlayerCommand::SetSleepTimer(None));
+        let Some(sleep::SleepFade::Restoring { from, .. }) = player.sleep_fade else {
+            panic!("coming back up: {:?}", player.sleep_fade);
+        };
+        assert!((db(from) + 30.0).abs() < 1.0, "from where it had got to");
+        assert!(!player.shared_state.sleep_fading());
+        // A second on.
+        if let Some(sleep::SleepFade::Restoring { since, .. }) = player.sleep_fade.as_mut() {
+            *since -= std::time::Duration::from_secs(1);
+        }
+        player.update_playback_state();
+        assert!(player.sleep_fade.is_none(), "at full level, and left alone");
+        assert_eq!(session_run(&player), Some(Run::Playing));
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    /// A pause by hand during the fade is someone awake: the timer is off,
+    /// and playing again is at full level.
+    #[test]
+    fn pausing_during_the_fade_cancels_the_timer() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, _) = wavs_playing(dir.path(), &["a"], 1.0);
+        player.process_command(PlayerCommand::SetSleepTimer(Some(SleepTimer::After {
+            minutes: 15,
+        })));
+        player.sleep.as_mut().unwrap().at =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(45));
+        player.update_playback_state();
+        assert!(fading_gain(&player).is_some());
+
+        player.process_command(PlayerCommand::Pause);
+        assert_eq!(player.shared_state.sleep(), None, "cancelled");
+        assert!(player.sleep_fade.is_none());
+        assert!(player.sleep_snap_on_resume);
+        player.process_command(PlayerCommand::Resume);
+        assert!(!player.sleep_snap_on_resume, "full level taken on resuming");
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    /// The end of a track fades over its last minute, or all of it if it is
+    /// shorter, as these one-second tracks are; the end of a record only on
+    /// its last track.
+    #[test]
+    fn the_end_of_a_track_or_record_fades_into_the_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut player, _) = queued_wavs(dir.path(), &["a", "b"]);
+        player.process_command(PlayerCommand::SetSleepTimer(Some(SleepTimer::EndOfTrack)));
+        player.update_playback_state();
+        assert!(
+            fading_gain(&player).is_some(),
+            "a one-second track fades whole"
+        );
+
+        // Both tracks are on one record (none named), so the first is not
+        // its end.
+        player.process_command(PlayerCommand::SetSleepTimer(Some(SleepTimer::EndOfRecord)));
+        if let Some(sleep::SleepFade::Restoring { since, .. }) = player.sleep_fade.as_mut() {
+            *since -= std::time::Duration::from_secs(1);
+        }
+        player.update_playback_state();
+        assert_eq!(fading_gain(&player), None, "the record goes on");
         player.process_command(PlayerCommand::Stop);
     }
 
