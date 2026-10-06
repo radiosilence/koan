@@ -560,6 +560,10 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
     // Rows are keyed by the disk's spelling; a folder named the other way would forget nothing.
     let folder = &crate::index::spelling::on_disk(folder);
     let (lower, upper) = queries::folder_prefix_range(folder);
+    // A scan of it underway would index again what this forgets: stop it, and
+    // let it finish committing before anything goes.
+    crate::index::lane::cancel_under(folder);
+    let _lane = crate::index::lane::wait();
 
     let tx = crate::db::queries::write_transaction(&db.conn)?;
     let paths: Vec<String> = {
