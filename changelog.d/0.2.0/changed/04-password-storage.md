@@ -1,0 +1,1 @@
+- **Password storage** — stored in `config.local.toml` via `koan remote login`, not macOS Keychain

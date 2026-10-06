@@ -1,0 +1,1 @@
+- **FFT pipeline** — 2048-point real FFT via `realfft` crate. Hann window, dB magnitude scaling, Bark/Mel/Log/Linear frequency scales

@@ -1,0 +1,1 @@
+- **Spectrogram** — dedicated heat map colorscale (blue→yellow→red→white) with sqrt amplitude scaling for full dynamic range. No longer uses the palette system. ([#147](https://github.com/radiosilence/koan/pull/147))

@@ -1,0 +1,1 @@
+- **`updateConfig` refuses out-of-range numbers** instead of wrapping them — a port of 70000 was saved as 4464.

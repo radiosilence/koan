@@ -1,0 +1,1 @@
+- **`koan --headless` exits non-zero if its port is taken**, and the `[subsonic] port` from config is used on every path, not only the TUI.

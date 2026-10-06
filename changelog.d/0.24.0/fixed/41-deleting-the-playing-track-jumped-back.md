@@ -1,0 +1,1 @@
+- **Deleting the playing track jumped back to the top of the queue** — removing an item clears the cursor, and an unset cursor means "start from the beginning", so deleting track 25 of 40 resumed at track 1. The removed track's predecessor is now pinned before advancing, so playback continues at its successor. Reachable from the TUI, GraphQL and MCP.

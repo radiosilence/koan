@@ -1,0 +1,4 @@
+- **A rate something else changed now reaches the macOS app.** koan has watched the device's nominal sample rate since #323 and the watch fires -- the log has been saying so all along. What never moved was the app. The FFI announces a playback change only when its snapshot differs from the last one, and that comparison was a signature of named fields: playback state, cursor, and, since #359, how far the download had got. The output rate is none of them, so retuning the interface under a playing track left the badge claiming the rate the device held when the track started, until the next track happened to move the cursor.
+
+  The snapshot is compared whole now, with the position held out because it has an event of its own. A signature has to be remembered to be widened, and had already been widened twice. The same omission was swallowing a stream's duration correction, which lands after playback starts and moves nothing else.
+

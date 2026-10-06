@@ -1,0 +1,1 @@
+- **Qudelix PEQ presets import.** A preset exported from the Qudelix app was refused at its first line (`TYPE: PEQ`). Its `//` comments, type line and closing impedance and sensitivity lines are now read past, each channel keeps its own preamp and filters, and a preset of another type, such as a graphic EQ, is refused by name.

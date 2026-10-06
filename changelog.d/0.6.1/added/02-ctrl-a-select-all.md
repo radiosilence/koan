@@ -1,0 +1,1 @@
+- **Ctrl-A select all** — select entire playlist from normal mode (enters edit mode) or edit mode

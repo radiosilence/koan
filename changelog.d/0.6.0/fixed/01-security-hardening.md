@@ -1,0 +1,1 @@
+- **Security hardening** — credentials removed from stored remote URLs (reconstructed from config at playback time), config and DB files restricted to 0o600 on Unix, FTS5 and LIKE query inputs sanitized, HTTPS warning for non-localhost remotes, secure random salt via `getrandom`, PID-namespaced cover art temp files

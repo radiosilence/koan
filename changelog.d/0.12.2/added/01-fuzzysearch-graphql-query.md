@@ -1,0 +1,1 @@
+- **`fuzzySearch` GraphQL query** — nucleo-powered typo-tolerant fuzzy matching for tracks, albums, and artists. Same engine as the TUI picker (and Helix editor). Returns ranked results. `{ fuzzySearch(query: "aphx twn", kind: TRACK, limit: 10) { id name rank kind } }`

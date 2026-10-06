@@ -1,0 +1,1 @@
+- **Signing in to a different server or account keeps your playlists.** Each playlist's server id is now recorded against the account it came from. Playlists from another account become local ones and are pushed to the new server as new, where before the first sync read every one of them as deleted and removed it.

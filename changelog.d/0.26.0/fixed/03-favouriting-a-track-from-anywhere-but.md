@@ -1,0 +1,2 @@
+- **Favouriting a track from anywhere but the Favourites list appeared to do nothing.** The favourite was written and pushed to the server, but every view held its own copy of the track with the state baked in from when it was fetched, and only the Favourites list was reloaded — so the heart on the album page stayed empty on a track that was now a favourite. Removing one appeared to work because that is the one list that was refreshed. Favourite state now lives in one place and the row reflects it on the click rather than a round trip later.
+

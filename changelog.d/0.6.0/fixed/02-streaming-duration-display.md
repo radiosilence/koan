@@ -1,0 +1,1 @@
+- **Streaming duration display** — seek bar metrics now use the DB-sourced track duration instead of the probed partial-file duration, so elapsed/total and click-to-seek are correct during streaming playback

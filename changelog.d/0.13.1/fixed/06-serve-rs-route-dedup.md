@@ -1,0 +1,1 @@
+- **serve.rs route dedup** — extracted `register_subsonic_routes()`, test router no longer duplicates prod routes

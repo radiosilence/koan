@@ -1,0 +1,1 @@
+- **Plays made offline reach the server.** A scrobble the server did not take was dropped. It now waits on the device and is sent, dated to when the track started, once the server answers again, to Navidrome as well as kōan.

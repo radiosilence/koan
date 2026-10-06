@@ -1,0 +1,1 @@
+- **Files skipped by walkdir vanished silently** — permission-denied subtrees and symlink loops were discarded without a word. They are logged, counted in `ScanResult::unreadable`, and reported by `koan scan`.

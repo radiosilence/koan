@@ -1,0 +1,1 @@
+- **A reinstalled app's old entry no longer appears among the account's devices.** The server forgets a device, with its push token, once it has been unseen for 30 days. A phone in use gives its token again each time it links, so only entries nothing answers to are dropped.

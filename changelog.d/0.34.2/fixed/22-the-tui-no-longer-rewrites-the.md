@@ -1,0 +1,1 @@
+- **The TUI no longer rewrites the whole queue ten times a second while playing.** It saves the queue when it changes and the position about once a second.

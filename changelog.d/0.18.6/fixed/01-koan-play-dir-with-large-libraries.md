@@ -1,0 +1,1 @@
+- **`koan play /dir` with large libraries** — for >1000 files, uses a single `all_tracks_by_path` DB query instead of hundreds of batched `WHERE IN` queries. Directory walk + metadata resolution now runs on a background thread so the TUI starts immediately ([#128](https://github.com/radiosilence/koan/pull/128))

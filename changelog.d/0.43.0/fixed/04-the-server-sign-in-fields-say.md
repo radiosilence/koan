@@ -1,0 +1,1 @@
+- **The server sign-in fields say what they want on iOS** ([#571](https://github.com/radiosilence/koan/pull/571)). An iOS form shows a field's prompt and not its label, so the fields were labelled only by examples.

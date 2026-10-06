@@ -1,0 +1,2 @@
+- **The "Play on …" notification shows the album's cover.** The server puts a link to the cover in the notification, and a notification service extension in the iOS app fetches and attaches it before iOS shows it. The extension holds no sign-in, so the link authorises itself: an HMAC over one track and an expiry ten minutes out, keyed by a secret that lives only in the server's process, opening that one cover and nothing else. Needs `sharing.public_url`; without it the notification shows as before.
+

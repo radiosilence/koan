@@ -1,0 +1,1 @@
+- **`chacha20` moves off a yanked release.** 0.10.0 and 0.10.1 called an SSE4.1 intrinsic from inside the SSE2 backend, so on an x86 processor with SSE2 and not SSE4.1 the instruction is illegal and the process dies. Upstream yanked both and shipped 0.10.2. Not a weakness in the cipher — a crash, and only on hardware old enough to matter to the Linux builds.

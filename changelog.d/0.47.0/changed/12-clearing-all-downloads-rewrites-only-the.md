@@ -1,0 +1,1 @@
+- **Clearing all downloads rewrites only the tracks that had one**, rather than every row in the library.

@@ -1,0 +1,1 @@
+- Dropped confirmed-unused deps: `toml`, `chrono`, `rayon`, `owo-colors` from koan-tui; `walkdir` from koan-server; `core-foundation`, `crossbeam-channel` from koan-cli.

@@ -1,0 +1,1 @@
+- **`ApiServerOpts` struct** — replaces positional args on internal `run_api_blocking`, carries optional `VizSnapshot` for subscription support.

@@ -1,0 +1,2 @@
+- **A playlist's tile asked for its covers by track, so the placeholder never got caught.** Artwork is stored and cached per record, and the mosaic named a track off each album instead of the album. Every piece was a second fetch of a sleeve the grid already had, under a key of its own, held twice in memory and twice on disk -- and it sat outside the check that recognises Navidrome's stock blue vinyl, which only ever learns from album lookups. A playlist of records with no artwork drew four vinyls where the library drew four ensōs. It asks for albums now.
+

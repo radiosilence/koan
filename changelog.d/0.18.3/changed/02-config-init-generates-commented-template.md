@@ -1,0 +1,1 @@
+- **Config init generates commented template** — `config.toml` now contains all defaults as commented lines for reference. Uncomment what you want to customize. No more silent duplication of values across config files ([#120](https://github.com/radiosilence/koan/pull/120))

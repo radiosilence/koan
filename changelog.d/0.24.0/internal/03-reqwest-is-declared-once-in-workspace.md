@@ -1,0 +1,1 @@
+- **`reqwest` is declared once in `[workspace.dependencies]`** with the feature union the workspace already resolved to, replacing four declarations with four different feature sets.

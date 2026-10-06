@@ -1,0 +1,1 @@
+- **"Stay reachable when paused"** (non-App Store builds). It played silence to keep a paused phone running so its link to the server stayed up, which pushes now do without keeping the audio hardware awake.

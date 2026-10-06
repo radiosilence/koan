@@ -1,0 +1,1 @@
+- **The cache limit saves what you typed, not each keystroke.** Typing "50GB" wrote "5", "50", "50G" on the way. The discovery slider saves when you let go.

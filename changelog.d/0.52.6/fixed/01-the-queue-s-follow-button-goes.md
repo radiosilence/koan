@@ -1,0 +1,1 @@
+- **The queue's follow button goes plain when following stops on iOS.** A second tap stopped following but the button could stay lit. It is now drawn plain when off and sits on a tinted disc while following, on the Mac as well.

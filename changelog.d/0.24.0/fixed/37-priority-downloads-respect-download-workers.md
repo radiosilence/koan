@@ -1,0 +1,1 @@
+- **Priority downloads respect `download_workers`** — cursor movement spawned an unbounded thread per landing, so scrolling a large remote queue fired hundreds of concurrent requests at the server. Priority downloads now run on a two-permit lane, tracks already downloading are never started twice, and anything over the limit goes to the head of the worker queue.

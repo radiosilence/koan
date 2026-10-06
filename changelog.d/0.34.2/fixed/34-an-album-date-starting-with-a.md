@@ -1,0 +1,1 @@
+- **An album date starting with a non-ASCII character no longer crashes koan.** Years were cut out of dates by byte, which panics mid-character — full-width digits, a leading `〜`.

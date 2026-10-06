@@ -1,0 +1,1 @@
+- **One `SubsonicClient` per app, not per download** — the client was rebuilt inside `download_track`, re-reading config and redoing the TLS handshake for every track.

@@ -1,0 +1,2 @@
+- **Playing a track twice before it arrives fetches it once.** Downloads were deduplicated by queue entry rather than by track, and playing something again makes a new entry — so nothing matched and a second transfer started over the first. Both wrote the same file, and whichever finished renamed it out from under the other, which is where the failed downloads in the log came from. One transfer now, with every entry waiting on it told when it lands.
+

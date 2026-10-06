@@ -1,0 +1,1 @@
+- **Path components are length-capped** at the same 240 bytes as the rest of the codebase, so a long title is shortened rather than previewing cleanly and failing with `ENAMETOOLONG`.

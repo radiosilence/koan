@@ -1,0 +1,1 @@
+- **With several artists selected, the menu and double-click no longer act on one at random.**

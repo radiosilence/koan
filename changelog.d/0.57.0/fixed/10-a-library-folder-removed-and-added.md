@@ -1,0 +1,1 @@
+- **A library folder removed and added back left its server-held tracks without their files.** A track also on the server outlives its folder being forgotten, as the server's copy, and kept its file's scan cache entry, so a scan after re-adding the folder took the file as already read and never linked it again. Forgetting a folder now clears the folder's entries.

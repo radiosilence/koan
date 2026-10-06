@@ -1,0 +1,1 @@
+- **Recoverable passwords.** The server no longer keeps each account's password encrypted beside its hash, which let an admin read it back through an invite. Schema version 13 drops `users.sealed_password`; a database opened by this version is refused by older ones. The key they were encrypted with, `subsonic.key` in the auth directory, is deleted when the server starts.

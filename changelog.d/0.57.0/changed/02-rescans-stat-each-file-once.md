@@ -1,0 +1,1 @@
+- **Rescans stat each file once.** Removing tracks whose files are gone checked every row under the folder again after the walk had just found them; it now asks only about the rows the walk did not find, which still have to be confirmed missing before they go. Importing dropped files skips the ones already read, as a scan does.

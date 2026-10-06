@@ -1,0 +1,1 @@
+- **The seek bar's download mark moves smoothly.** It redrew a few times a second, when the download rate was sampled; it now follows the bytes at the display's rate, like the download rings, without re-running the transport bar.

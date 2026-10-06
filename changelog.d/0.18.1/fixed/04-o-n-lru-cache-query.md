@@ -1,0 +1,1 @@
+- **O(N) LRU cache query** — replaced correlated `SELECT MAX(played_at)` subquery per track with a single `LEFT JOIN` on pre-aggregated play_history ([#99](https://github.com/radiosilence/koan/issues/99))

@@ -1,0 +1,1 @@
+- **A koan server answers `download`.** It implemented only `stream`, and koan's download queue fetches through `download`, so every track from a koan server failed to load in the iOS and macOS apps (and in any Subsonic client that caches offline). `download` now serves the original file, as `stream` does.

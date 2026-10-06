@@ -1,0 +1,1 @@
+- **Scrollbar tracking with album headers** — scrollbar now accounts for album header lines in its position/size calculations, fixing drift when dragging and inability to scroll to the end

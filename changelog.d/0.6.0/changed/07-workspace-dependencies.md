@@ -1,0 +1,1 @@
+- **Workspace dependencies** — added `[workspace.dependencies]` for rusqlite and walkdir, centralizing version management

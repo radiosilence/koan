@@ -1,0 +1,1 @@
+- **N+1 query elimination** — genre and favourite filtering now use batch SQL queries instead of per-item DB calls. O(1) instead of O(n*m) on large libraries

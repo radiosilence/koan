@@ -1,0 +1,1 @@
+- **Unicode-aware string comparison** — `stricmp` format function uses `.to_lowercase()` instead of ASCII-only `eq_ignore_ascii_case()` ([#75](https://github.com/radiosilence/koan/pull/75))

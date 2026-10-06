@@ -1,0 +1,1 @@
+- **Track info modal keyed off a queue index** — removing a track shifted it onto a different track, or past the end, where the modal rendered nothing while still swallowing every keystroke. It now holds a `QueueItemId` and closes when that track leaves the queue.

@@ -1,0 +1,1 @@
+- **Previous on a track not yet downloaded goes to it.** The cursor moved and the old track kept playing, so the next track boundary replayed the same song.

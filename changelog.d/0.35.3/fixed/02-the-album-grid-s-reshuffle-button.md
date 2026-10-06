@@ -1,0 +1,1 @@
+- **The album grid's reshuffle button is a die.** It used the shuffle symbol, the same one as playing an artist or a record shuffled, for an action that plays nothing. ([#441](https://github.com/radiosilence/koan/pull/441))

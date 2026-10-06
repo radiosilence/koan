@@ -1,0 +1,1 @@
+- **CORS support** — API endpoints accept cross-origin requests for browser clients.

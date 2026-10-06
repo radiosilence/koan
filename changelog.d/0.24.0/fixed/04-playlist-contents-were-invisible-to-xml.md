@@ -1,0 +1,1 @@
+- **Playlist contents were invisible to XML clients.** `getPlaylist` emitted members as `<song>` where the schema says `<entry>`.

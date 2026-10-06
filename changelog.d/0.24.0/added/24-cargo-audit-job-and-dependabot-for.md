@@ -1,0 +1,1 @@
+- `cargo audit` job and Dependabot for both cargo and GitHub Actions.

@@ -1,0 +1,1 @@
+- **Playing a playlist over GraphQL keeps the queue following the playlist**, as it does in the app, and is one queue change rather than three.

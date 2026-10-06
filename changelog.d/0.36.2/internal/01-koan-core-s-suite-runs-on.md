@@ -1,0 +1,1 @@
+- **koan-core's suite runs on the iOS simulator.** It found `DestinationLedger` treating iOS as a case-sensitive filesystem. `case_only_rename_keeps_the_file` is macOS-only: the simulator's sandbox answers `stat` and `open(O_EXCL)` inconsistently for a case-only rename, so it cannot be detected there.

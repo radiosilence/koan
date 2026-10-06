@@ -1,0 +1,4 @@
+- **Everything but the TUI downloaded one track at a time.** `remote.download_workers` defaults to 5 and the macOS settings pane offers it, but the code path behind it ignored the value: the download queue — a worker pool, a permit-limited priority lane, and a watcher that reorders around the playback cursor — lived in the TUI crate, and `koan-ffi` cannot import `koan-tui`. What everything else got instead was a stand-in that spawned one thread per batch and walked it with a `for` loop. Queue an album from the macOS app and it fetched track after track, in submission order, ignoring where you actually were in the queue.
+
+  The queue moves to `koan-core`, where it should have been — it imported nothing but `koan-core` already. The macOS app, the GraphQL server and radio's auto-extend all reach it through the same helper they already called, so all three now download in parallel and promote what you jump to, and several tracks report progress at once instead of one.
+

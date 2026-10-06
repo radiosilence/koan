@@ -1,0 +1,1 @@
+- **Composite index** on `tracks(album_id, disc, track_number)` for faster album-ordered queries ([#99](https://github.com/radiosilence/koan/issues/99))

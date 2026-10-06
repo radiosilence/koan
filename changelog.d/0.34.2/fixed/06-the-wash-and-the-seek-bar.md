@@ -1,0 +1,1 @@
+- **The wash and the seek bar hold their place across page switches.** Each re-laid itself out from its last anchor on any layout pass, snapping the drift to its start and the bar backwards.

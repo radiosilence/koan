@@ -1,0 +1,1 @@
+- GraphQL handler requires AuthUser injection (no silent admin fallback).

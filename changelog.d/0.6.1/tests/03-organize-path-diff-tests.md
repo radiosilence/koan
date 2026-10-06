@@ -1,0 +1,1 @@
+- **Organize path diff tests** — coverage for `common_path_prefix`, `shared_prefix_len`, `truncate_path` helpers

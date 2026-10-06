@@ -1,0 +1,1 @@
+- **GraphQL client injection fix** — all query building converted from format!() string interpolation to proper GraphQL variables

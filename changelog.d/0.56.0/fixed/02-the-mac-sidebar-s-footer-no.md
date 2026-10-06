@@ -1,0 +1,1 @@
+- **The Mac sidebar's footer no longer draws over the last playlists.** In a window too short for every playlist, the rows scrolled under the library counts and both were unreadable. The footer now has the sidebar behind it and a line above it.

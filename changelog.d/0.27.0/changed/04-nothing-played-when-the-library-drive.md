@@ -1,0 +1,5 @@
+- **Nothing played when the library drive was offline, and nothing said why.** The log read `remote not configured` while the remote was configured perfectly well — what koan could not do was read the password, because macOS grants keychain access per binary and the app had never been granted it. `subsonic_client` returns nothing for four different reasons and every caller reported the same one, so "koan has no password" and "koan cannot read the password it has" printed identically, despite sending you to completely different places.
+
+  Tracks that cannot be fetched are marked failed with the reason now, instead of sitting as pending forever. The player waits for a track to become ready, so a download that was skipped left the queue silent until it ran off the end.
+
+  `koan remote status` asks the way koan asks. It read the config field directly and never consulted the credential store, so it reported `password: not set` for every keychain-backed sign-in — the arrangement `koan remote login` creates — and then skipped its own connectivity check because of that same flag. The one tool that should have diagnosed this was reporting the opposite of the truth.

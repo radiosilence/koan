@@ -1,0 +1,1 @@
+- **Album header dimming** — only dims when ALL tracks in group are played

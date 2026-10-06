@@ -1,0 +1,1 @@
+- **Quit from Control Center** — clean shutdown via atomic flag on SharedPlayerState

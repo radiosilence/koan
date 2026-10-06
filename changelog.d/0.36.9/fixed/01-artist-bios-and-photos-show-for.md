@@ -1,0 +1,1 @@
+- **Artist bios and photos show for artists synced from a server.** Syncs before 0.36.2 stored the server's empty `musicBrainzId` as an empty string, and artist info took that for an id: it looked "" up instead of finding the artist's real one, so Crass and 1,800 other artists showed nothing. Empty ids are cleared when the database opens, and artist info treats one as missing.

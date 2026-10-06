@@ -1,0 +1,1 @@
+- **Organize preview takes minutes on large libraries** — `preview_for_paths` now loads metadata from the DB (single query) instead of re-reading every file's tags from disk. Falls back to parallel disk reads (rayon) for files not in the DB. 48k-track library: ~5 minutes → ~3 seconds ([#128](https://github.com/radiosilence/koan/pull/128))

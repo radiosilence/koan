@@ -1,0 +1,1 @@
+- **`koan mcp`** — replaced by `koan --mcp` flag

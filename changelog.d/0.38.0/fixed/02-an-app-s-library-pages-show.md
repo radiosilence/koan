@@ -1,0 +1,1 @@
+- **An app's library pages show what a push brought in.** A pushed track the app had not synced yet triggered a sync, but the pages did not know to read again.

@@ -1,0 +1,2 @@
+- **The room changes colour by fading again, not by cutting.** The wash installs a two second dissolve when the record changes, and the drift installs itself by clearing every animation on the same layers first — which took the dissolve with it. The drift is reinstalled from `layout()`, which a page switch triggers, so the fade was wiped a frame or two after it started and the new cover snapped in. The drift is removed by name now, and leaves alone what it did not put there.
+

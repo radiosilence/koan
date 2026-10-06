@@ -1,0 +1,1 @@
+- **`koan play`** — `koan` IS play. All args moved to top-level

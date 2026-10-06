@@ -1,0 +1,1 @@
+- **Scroll step reduced** — mouse scroll wheel moves 1 line instead of 3

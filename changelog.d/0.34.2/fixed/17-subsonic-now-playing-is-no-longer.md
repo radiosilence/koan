@@ -1,0 +1,1 @@
+- **Subsonic "now playing" is no longer recorded as a play.** Clients scrobble with `submission=false` when a track starts and `true` when it ends; both were recorded, so every listen was two plays and a skip was one.

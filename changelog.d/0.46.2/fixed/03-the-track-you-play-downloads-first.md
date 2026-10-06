@@ -1,0 +1,1 @@
+- **The track you play downloads first, on its own.** Playing an album that was not downloaded started every track at once, each taking a share of the connection, so on a slow link the first track arrived no sooner than the rest. Other downloads now wait until the track under the cursor has arrived.

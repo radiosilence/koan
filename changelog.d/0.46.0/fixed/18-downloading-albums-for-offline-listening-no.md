@@ -1,0 +1,1 @@
+- **Downloading albums for offline listening no longer evicts them first.** Cache eviction ranked albums by last play, so ones fetched but not yet played were the first to go. A download now counts as a use.

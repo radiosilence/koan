@@ -1,0 +1,1 @@
+- **Human-readable quality labels** — `FLAC · CD quality` for 44.1kHz/16bit/stereo, `stereo`/`mono` instead of `2ch`/`1ch`, sample rates as `44.1kHz` not `44100Hz`. ([#155](https://github.com/radiosilence/koan/pull/155))

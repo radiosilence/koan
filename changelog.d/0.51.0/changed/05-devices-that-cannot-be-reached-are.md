@@ -1,0 +1,1 @@
+- **Devices that cannot be reached are no longer listed** under Play on. A phone that left the network, or another person's app that is not discoverable, showed as a row with only a reason.

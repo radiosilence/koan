@@ -1,0 +1,1 @@
+- **LIKE wildcard escaping** — `remove_stale_tracks` now escapes `%`, `_`, `` in path prefixes via `escape_like()` ([#79](https://github.com/radiosilence/koan/pull/79))

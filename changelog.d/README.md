@@ -1,0 +1,1 @@
+Each change adds one file under `unreleased/<section>/`, named for its pull request (`912-short-slug.md`), holding one `- **Lead.** Detail.` entry; sections are `added`, `security`, `changed`, `removed` and `fixed`. CHANGELOG.md is generated from these files by `scripts/changelog.py`, so pull requests never conflict in it; `--release X.Y.Z` turns `unreleased/` into that version.

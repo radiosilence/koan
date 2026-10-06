@@ -1,0 +1,1 @@
+- **"What the server offers" fills in as soon as you sign in.** Signed out, the link thread rests for a minute between checks, and signing in did not wake it, so Settings said "Not reached yet" and the link stayed down for up to a minute while the library synced.

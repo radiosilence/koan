@@ -1,0 +1,1 @@
+- **A linked app is a full remote.** Each app now reports what it is playing, where in the track, whether radio is on, and its queue; `clients` shows all of it, so "what's playing on my phone" has an answer. New mutations skip to a track (`jumpOnClient`, from the queue or slotted in), seek, play next, remove, clear, toggle radio and sync the app's library.

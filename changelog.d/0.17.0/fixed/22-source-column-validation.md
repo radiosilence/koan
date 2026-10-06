@@ -1,0 +1,1 @@
+- **Source column validation** — `CHECK (source IN ('local', 'remote', 'cached'))` constraint on tracks table ([#79](https://github.com/radiosilence/koan/pull/79))

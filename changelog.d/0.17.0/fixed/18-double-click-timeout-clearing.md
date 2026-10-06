@@ -1,0 +1,1 @@
+- **Double-click timeout clearing** — stale `last_click_time`/`last_click_idx` cleared after 1 second, preventing misinterpreted double-clicks ([#77](https://github.com/radiosilence/koan/pull/77))

@@ -1,0 +1,1 @@
+- **`getCoverArt?size=` was unbounded and upscaled** — `?size=65535` on a 1000×1000 cover asked for ~17GB, and `Vec`'s allocation failure aborts the process, which no panic handler can intercept. Clamped to 16–2048 and never larger than the source.

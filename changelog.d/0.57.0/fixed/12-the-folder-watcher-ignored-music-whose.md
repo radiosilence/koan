@@ -1,0 +1,1 @@
+- **The folder watcher ignored music whose name starts with a dot.** It skipped every name with a leading dot, so an album such as "...Baby One More Time" was indexed only by a full scan. It now skips only the names Syncthing, macOS and version control leave in folders.

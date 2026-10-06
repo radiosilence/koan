@@ -1,0 +1,1 @@
+- **A stream no longer stalls for thirty seconds when its download ends.** The reader was woken before the track was marked finished or failed, looked, saw a download still running, and went back to sleep with nothing left to wake it. It is woken after, now.

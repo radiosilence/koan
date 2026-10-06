@@ -1,0 +1,1 @@
+- **`parse_range` underflowed on a 0-byte track file** — panic in debug, `u64::MAX` in release. Guarded.

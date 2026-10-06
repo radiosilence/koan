@@ -1,0 +1,1 @@
+- **A Helm chart for the headless server**, published to `oci://ghcr.io/radiosilence/charts/koan` with each release at the app's version. What a koan server needs in a cluster is koan's own knowledge -- the Deployment, its init container, Services and NetworkPolicy -- not a copy of it kept in every deployment's own repository.

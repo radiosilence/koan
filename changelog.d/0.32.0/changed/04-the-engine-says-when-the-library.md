@@ -1,0 +1,2 @@
+- **The engine says when the library changed.** A new `LibraryChanged` event rides the same channel as `QueueChanged` and `DownloadsChanged`, raised by anything that writes library rows -- scan, sync, import, organize, forget, rebuild -- including the automatic sync and the watched-folder scan that nothing was announcing at all. A background scan finishing now reaches the browser the same way one you asked for does, and the app no longer refreshes itself by guessing from whatever it happened to start.
+

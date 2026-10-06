@@ -1,0 +1,1 @@
+- **`similarArtists` query** — returns scored similar artists (from ListenBrainz, MusicBrainz, Subsonic) with source and relationship type

@@ -1,0 +1,1 @@
+- **Sub-pixel scrollbar** — scrollbar thumb renders at 1/8th-cell resolution using Unicode block elements for smooth visual movement

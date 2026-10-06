@@ -1,0 +1,1 @@
+- **Lists longer than 32,766 ids work.** A queue, playlist or selection past SQLite's parameter limit came back empty, published without album ids, or gave radio nothing to pick from. Id lists are now bound as a single JSON array.

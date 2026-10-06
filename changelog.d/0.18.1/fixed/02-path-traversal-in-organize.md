@@ -1,0 +1,1 @@
+- **Path traversal in organize** — `sanitize_relative_path` now strips `..` and `.` components, and `plan_single_move` validates the destination stays under the base directory. Prevents malicious metadata from writing files outside the library ([#99](https://github.com/radiosilence/koan/issues/99))

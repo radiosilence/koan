@@ -1,0 +1,1 @@
+- **Hand-off from a nearby device stays on the network.** A device on the same network could make another kōan hand its music to a device on that kōan's account, sent through its server as that account. A hand-off asked for by a device on the network now goes over the network or not at all; "Move here" between devices on one network works as before.

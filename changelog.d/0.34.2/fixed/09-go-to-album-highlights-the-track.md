@@ -1,0 +1,1 @@
+- **Go to Album highlights the track** when the album is already open, or has as many tracks as the one before.

@@ -1,0 +1,4 @@
+- **A browse listing is only redrawn when it has actually changed.** Albums, artists, favourites and history are each read whole and handed to SwiftUI whole — 5,610 records and 7,138 artists on a large library — and assigning that array again is a mutation whether or not a single row moved, so the grid was diffed end to end, laid out and committed for it. It was assigned again on every library version bump, which is every download landing and every playlist edit, and on every return to a section already visited. The rows are now compared before they are published, and the same answer as last time is dropped. The favourite id sets get the same treatment, for the sharper version of the same problem: every cell and every row reads them to draw its heart.
+
+  Nothing about how a listing is read has changed. It still arrives whole, so the scrollbar still tells the truth about how long the library is and one flick still reaches the end of it.
+
