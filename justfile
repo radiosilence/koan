@@ -872,10 +872,10 @@ tv-walk library="": (tv-ffi "appletvsimulator") ios-project
     xcrun xcresulttool export attachments --path "$out/walk.xcresult" --output-path "$out"
     echo "screenshots in $out"
 
-# A throwaway koan for the simulator recipes: `library` served on a free port
-# from a configuration of its own, with an owner account whose password lands
-# in `out`/server.password. Prints the server's address. `_demo-server-stop`
-# ends it.
+# A throwaway koan for the simulator recipes: `library` (or nothing) served on
+# a free port from a configuration of its own, with an owner account whose
+# password lands in `out`/server.password. Prints the server's address.
+# `_demo-server-stop` ends it.
 _demo-server library out:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -883,9 +883,9 @@ _demo-server library out:
     dir=$(mktemp -d)
     port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
     password=demo-$RANDOM$RANDOM
-    printf '[library]\nfolders = ["%s"]\n' "$(cd "{{library}}" && pwd)" > "$dir/config.toml"
+    [ -z "{{library}}" ] || printf '[library]\nfolders = ["%s"]\n' "$(cd "{{library}}" && pwd)" > "$dir/config.toml"
     KOAN_CONFIG_DIR=$dir KOAN_USERNAME=owner KOAN_PASSWORD=$password target/debug/koan auth setup >/dev/null
-    KOAN_CONFIG_DIR=$dir target/debug/koan scan >/dev/null 2>&1
+    [ -z "{{library}}" ] || KOAN_CONFIG_DIR=$dir target/debug/koan scan >/dev/null 2>&1
     KOAN_CONFIG_DIR=$dir KOAN_SUBSONIC__ENABLED=true KOAN_GRAPHQL__AUTH_ENABLED=true \
         nohup target/debug/koan --headless --port "$port" >"{{out}}/server.log" 2>&1 &
     echo "$! $dir" > "{{out}}/server.pid"
