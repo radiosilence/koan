@@ -899,9 +899,9 @@ mod tests {
     #[test]
     fn an_import_does_not_wait_for_a_scan() {
         let dir = tempfile::tempdir().unwrap();
-        let drop = dir.path().join("rip");
-        std::fs::create_dir_all(&drop).unwrap();
-        test_utils::generate_wav(&drop.join("a.wav"), 8000, 1, 0.1, 16);
+        let rip = dir.path().join("rip");
+        std::fs::create_dir_all(&rip).unwrap();
+        test_utils::generate_wav(&rip.join("a.wav"), 8000, 1, 0.1, 16);
         let db_root = dir.path().to_path_buf();
 
         let mut opts = ScanOptions::default();
@@ -911,7 +911,7 @@ mod tests {
             let db = test_db(&db_root);
             done_tx
                 .send(
-                    import_paths(&db, std::slice::from_ref(&drop))
+                    import_paths(&db, std::slice::from_ref(&rip))
                         .track_ids
                         .len(),
                 )
