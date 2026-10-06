@@ -125,6 +125,27 @@ koan dsp target "Sennheiser HD 650 (AutoEQ, oratory1990)" --reset
 koan dsp add-target "My target.csv"
 ```
 
+### Layers
+
+A profile can play others first: a headphone's correction, then a bass shelf
+or a treble tilt on top, without editing the correction. On a profile's page,
+**Add a Layer** puts another profile in front of its own filters; layers play
+in the order listed, each switched on or off, and a layer switched off plays
+nothing. Each plays as it would alone, its own layers and target included.
+A stack is assigned to an output like any profile, and one whose layers are
+all off plays untouched if it has no filters of its own.
+
+Only EQ can be a layer: a profile with impulse responses plays them itself.
+A layer that is missing, or that would make a profile a layer of itself, is
+refused, and renaming a profile renames it in every stack; one a stack plays
+cannot be deleted until it is taken out.
+
+```bash
+koan dsp import shelf.txt --name "Bass +3"     # Filter 1: ON LSC Fc 105 Hz Gain 3 dB Q 0.71
+koan dsp stack Desk "Sennheiser HD 650 (AutoEQ, oratory1990)" "Bass +3"
+koan dsp layer Desk "Bass +3" off
+```
+
 A profile is named after what it came from; rename it on its page in Settings
 (or pass `--name`). Importing into a profile of the same name adds to it, so a
 room's responses and a headphone EQ can live in one profile.

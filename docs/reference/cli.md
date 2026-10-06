@@ -159,6 +159,8 @@ koan dsp autoeq search QUERY [--limit N] [--refresh]   # AutoEQ results by headp
 koan dsp autoeq install NUMBER|NAME [--source SOURCE] [--device NAME]
 koan dsp target NAME [--use TARGET | --reset]               # move an AutoEQ correction to another target
 koan dsp add-target FILE                                    # a target from a CSV or squig.link export
+koan dsp stack NAME LAYER...                                # play other profiles first, in order
+koan dsp layer STACK LAYER on|off
 koan dsp off | on                               # bypass every profile, or stop bypassing
 ```
 
