@@ -15,11 +15,8 @@ struct BrowseFilterButton: View {
             : "line.3.horizontal.decrease.circle"
         Button { open = true } label: {
             #if os(tvOS)
-            // The symbol alone: a television's toolbar draws a `Label`'s title
-            // as well, cut to a letter or two. The filled symbol says filters
-            // are on.
-            Image(systemName: symbol)
-                .accessibilityLabel(count > 0 ? "Filters, \(count) on" : "Filters")
+            // In a row above the listing, with room for the name.
+            Label(count > 0 ? "Filters (\(count))" : "Filters", systemImage: symbol)
             #else
             HStack(spacing: 3) {
                 Image(systemName: symbol)
@@ -31,7 +28,6 @@ struct BrowseFilterButton: View {
             #endif
         }
         .help(count > 0 ? "Filters — \(count) on" : "Filters")
-        .toolbarButton()
         #if os(macOS)
         .tint(.primary)
         .popover(isPresented: $open, arrowEdge: .bottom) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The Apple TV's filter and sort did nothing.** In the navigation bar they took focus, but tvOS never showed the sheet or menu they open. They are now a row of buttons above the album, artist and track listings, named in full.
+
 ## 0.55.0
 
 ### Added
