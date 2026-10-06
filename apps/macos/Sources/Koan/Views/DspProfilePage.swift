@@ -222,7 +222,6 @@ private struct GroupSection: View {
             Text("Group: pick one")
         } footer: {
             Text(detail.layers.contains(where: \.on)
-                .koanText(.fine, .muted)
                  ? "One member plays at a time. Pick another and it plays in place of the last. Each member is a profile of its own, with its own page."
                  : "None was picked, so the first plays. Pick one to change it.")
                 .font(.role(.fine, system: .caption))
