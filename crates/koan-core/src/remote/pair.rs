@@ -207,14 +207,17 @@ pub struct PairLink {
 impl PairLink {
     pub fn parse(link: &str) -> Option<Self> {
         let url = Url::parse(link.trim()).ok()?;
-        if url.scheme() != "https"
-            || url.host_str() != Some("koan.rocks")
-            || url.path().trim_end_matches('/') != "/pair"
-        {
-            return None;
-        }
+        let params = match (url.scheme(), url.host_str()) {
+            ("https", Some("koan.rocks")) if url.path().trim_end_matches('/') == "/pair" => {
+                url.fragment()?
+            }
+            // The same link through the app's own scheme, where the universal
+            // link cannot reach the app: a simulator, an unsigned build.
+            ("koan", Some("pair")) => url.fragment().or(url.query())?,
+            _ => return None,
+        };
         let (mut server, mut id) = (None, None);
-        for (k, v) in form_urlencoded::parse(url.fragment()?.as_bytes()) {
+        for (k, v) in form_urlencoded::parse(params.as_bytes()) {
             let v = Some(v.trim().to_owned()).filter(|v| !v.is_empty());
             match &*k {
                 "s" => server = v,
@@ -268,6 +271,26 @@ mod tests {
             })
         );
         assert!(PairLink::parse("https://koan.rocks/pair#s=https%3A%2F%2Fa.example&p=x").is_some());
+    }
+
+    #[test]
+    fn the_apps_own_scheme_carries_the_same_link() {
+        let expected = Some(PairLink {
+            server: "https://a.example".into(),
+            id: "x".into(),
+        });
+        assert_eq!(
+            PairLink::parse("koan://pair#s=https%3A%2F%2Fa.example&p=x"),
+            expected
+        );
+        assert_eq!(
+            PairLink::parse("koan://pair?s=https%3A%2F%2Fa.example&p=x"),
+            expected
+        );
+        assert_eq!(
+            PairLink::parse("koan://join?s=https%3A%2F%2Fa.example&p=x"),
+            None
+        );
     }
 
     #[test]

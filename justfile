@@ -833,22 +833,35 @@ tv-device config="Debug": (tv-ffi "appletvos")
     xcrun devicectl device process launch --device "$tv" {{bundle_id}}
 
 # Walk the television app with the remote on a simulator, screenshotting each
-# page. Signs in with the account in the environment: KOAN_REMOTE__URL,
-# KOAN_REMOTE__USERNAME and KOAN_REMOTE__API_KEY (or __PASSWORD). Screenshots
-# land in target/tv-walk.
-tv-walk: (tv-ffi "appletvsimulator") ios-project
+# page into target/tv-walk. Given a music folder, it serves that from a
+# throwaway koan on a free port and signs in as its owner; otherwise it signs in
+# with the account in the environment: KOAN_REMOTE__URL, KOAN_REMOTE__USERNAME
+# and KOAN_REMOTE__API_KEY (or __PASSWORD). The app is reinstalled first, so
+# nothing carries over from an earlier run.
+tv-walk library="": (tv-ffi "appletvsimulator") ios-project
     #!/usr/bin/env bash
     set -euo pipefail
     out=target/tv-walk
     rm -rf "$out" && mkdir -p "$out"
+    cleanup=()
+    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
+    if [ -n "{{library}}" ]; then
+        url=$(just _demo-server "{{library}}" "$out")
+        cleanup+=("just _demo-server-stop '$out'")
+        export KOAN_REMOTE__ENABLED=true KOAN_REMOTE__URL=$url KOAN_REMOTE__USERNAME=owner \
+            KOAN_REMOTE__PASSWORD=$(cat "$out/server.password")
+        unset KOAN_REMOTE__API_KEY
+        export KOAN_WALK_SEARCH=${KOAN_WALK_SEARCH:-Harbour}
+    fi
     sim=$(xcrun simctl list devices available -j \
         | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
     [ -n "$sim" ] || { echo "No Apple TV simulator." >&2; exit 1; }
     xcrun simctl boot "$sim" 2>/dev/null || true
     xcrun simctl bootstatus "$sim" -b >/dev/null
     # A booted simulator is a running copy of tvOS; leave none behind.
-    trap 'xcrun simctl shutdown "$sim"' EXIT
-    for v in KOAN_REMOTE__ENABLED KOAN_REMOTE__URL KOAN_REMOTE__USERNAME KOAN_REMOTE__API_KEY KOAN_REMOTE__PASSWORD KOAN_WALK_SETTLE; do
+    cleanup+=("xcrun simctl shutdown '$sim'")
+    xcrun simctl uninstall "$sim" {{bundle_id}} 2>/dev/null || true
+    for v in KOAN_REMOTE__ENABLED KOAN_REMOTE__URL KOAN_REMOTE__USERNAME KOAN_REMOTE__API_KEY KOAN_REMOTE__PASSWORD KOAN_WALK_SETTLE KOAN_WALK_SEARCH; do
         [ -n "${!v:-}" ] && export "TEST_RUNNER_$v=${!v}"
     done
     xcodebuild test -quiet \
@@ -867,22 +880,19 @@ tv-pair: (tv-ffi "appletvsimulator") ios-project
     set -euo pipefail
     out=target/tv-pair
     rm -rf "$out" && mkdir -p "$out"
-    cargo build -q -p koan-cli
-    dir=$(mktemp -d)
-    password=tv-pair-$RANDOM$RANDOM
-    KOAN_CONFIG_DIR=$dir KOAN_USERNAME=owner KOAN_PASSWORD=$password target/debug/koan auth setup >/dev/null
-    KOAN_CONFIG_DIR=$dir KOAN_SUBSONIC__ENABLED=true KOAN_GRAPHQL__AUTH_ENABLED=true \
-        target/debug/koan --headless --port 4799 >"$out/server.log" 2>&1 &
-    server=$!
-    trap 'kill $server 2>/dev/null; rm -rf "$dir"' EXIT
+    cleanup=()
+    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
+    url=$(just _demo-server "" "$out")
+    cleanup+=("just _demo-server-stop '$out'")
+    password=$(cat "$out/server.password")
     sim=$(xcrun simctl list devices available -j \
         | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
     xcrun simctl boot "$sim" 2>/dev/null || true
     xcrun simctl bootstatus "$sim" -b >/dev/null
-    trap 'kill $server 2>/dev/null; rm -rf "$dir"; xcrun simctl shutdown "$sim"' EXIT
+    cleanup+=("xcrun simctl shutdown '$sim'")
     # Signed out from the start: a fresh install holds no account.
     xcrun simctl uninstall "$sim" {{bundle_id}} 2>/dev/null || true
-    TEST_RUNNER_KOAN_PAIR_SERVER=http://127.0.0.1:4799 TEST_RUNNER_KOAN_PAIR_USER=owner \
+    TEST_RUNNER_KOAN_PAIR_SERVER=$url TEST_RUNNER_KOAN_PAIR_USER=owner \
     TEST_RUNNER_KOAN_PAIR_PASSWORD=$password xcodebuild test -quiet \
         -project apps/ios/Koan.xcodeproj -scheme KoanTV \
         -destination "id=$sim" -derivedDataPath target/tv-build \
@@ -890,6 +900,111 @@ tv-pair: (tv-ffi "appletvsimulator") ios-project
         -resultBundlePath "$out/pair.xcresult" || true
     xcrun xcresulttool export attachments --path "$out/pair.xcresult" --output-path "$out"
     echo "screenshots in $out"
+
+# Pair the way a person does: the television shows its QR code, a phone reads
+# it and its owner taps Allow. The code is read off the simulator's screen
+# (apps/ios/tools/qrdecode.swift), and the link opened on an iPhone simulator
+# signed in as the throwaway server's owner, through `koan://pair` since an
+# unsigned build is not given the universal link. Screenshots of both screens
+# land in target/tv-pair-qr. Two simulators, both shut down at the end.
+tv-pair-qr: (tv-ffi "appletvsimulator") (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/tv-pair-qr
+    rm -rf "$out" && mkdir -p "$out"
+    cleanup=()
+    trap 'for c in "${cleanup[@]}"; do eval "$c"; done' EXIT
+    pick() {
+        xcrun simctl list devices available -j | python3 -c 'import json,sys; want=sys.argv[1]; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if want+"-" in k for d in v if d["isAvailable"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))' "$1"
+    }
+    tv=$(pick tvOS)
+    phone=$(pick iOS)
+    [ -n "$tv" ] && [ -n "$phone" ] || { echo "Needs an Apple TV and an iPhone simulator." >&2; exit 1; }
+    # Both test bundles first: once the code is on screen it has ten minutes.
+    xcodebuild build-for-testing -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
+        -destination "id=$tv" -derivedDataPath target/tv-build
+    xcodebuild build-for-testing -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "id=$phone" -derivedDataPath target/ios-build
+    url=$(just _demo-server "" "$out")
+    cleanup+=("just _demo-server-stop '$out'")
+    password=$(cat "$out/server.password")
+    for sim in "$tv" "$phone"; do
+        xcrun simctl boot "$sim" 2>/dev/null || true
+        xcrun simctl bootstatus "$sim" -b >/dev/null
+        cleanup+=("xcrun simctl shutdown '$sim'")
+        xcrun simctl uninstall "$sim" {{bundle_id}} 2>/dev/null || true
+    done
+    # The television asks for a code and waits for someone to allow it.
+    TEST_RUNNER_KOAN_PAIR_SERVER=$url xcodebuild test-without-building -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV \
+        -destination "id=$tv" -derivedDataPath target/tv-build \
+        -only-testing:KoanTVUITests/TVPairTests \
+        -resultBundlePath "$out/tv.xcresult" >"$out/tv-test.log" 2>&1 &
+    tv_test=$!
+    link=""
+    for _ in $(seq 120); do
+        xcrun simctl io "$tv" screenshot "$out/tv-screen.png" >/dev/null 2>&1 || true
+        link=$(swift apps/ios/tools/qrdecode.swift "$out/tv-screen.png" 2>/dev/null | head -1 || true)
+        [ -n "$link" ] && break
+        sleep 3
+    done
+    [ -n "$link" ] || { echo "FAIL: no QR code on the television" >&2; exit 1; }
+    mv "$out/tv-screen.png" "$out/tv-qr.png"
+    echo "read from the television: $link"
+    case "$link" in https://koan.rocks/pair*'#'*) ;; *) echo "FAIL: not a pairing link" >&2; exit 1 ;; esac
+    TEST_RUNNER_KOAN_PAIR_LINK="koan://pair#${link#*#}" \
+    TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
+    TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__PASSWORD=$password \
+    xcodebuild test-without-building -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "id=$phone" -derivedDataPath target/ios-build \
+        -only-testing:KoanUITests/PairApproveTests \
+        -resultBundlePath "$out/phone.xcresult" >"$out/phone-test.log" 2>&1 || true
+    wait "$tv_test" || true
+    for r in tv phone; do
+        [ -d "$out/$r.xcresult" ] && xcrun xcresulttool export attachments \
+            --path "$out/$r.xcresult" --output-path "$out/$r" >/dev/null
+    done
+    grep -E "pair:|link:" "$out/server.log" || true
+    if xcrun xcresulttool get test-results summary --path "$out/tv.xcresult" 2>/dev/null \
+        | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("result") != "Passed")'; then
+        echo "paired: the television signed in from the phone's approval (screenshots in $out)"
+    else
+        echo "FAIL: the television did not sign in; see $out" >&2
+        exit 1
+    fi
+
+# A throwaway koan for the simulator recipes: `library` (or nothing) served on
+# a free port from a configuration of its own, with an owner account whose
+# password lands in `out`/server.password. Prints the server's address.
+# `_demo-server-stop` ends it.
+_demo-server library out:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -q -p koan-cli
+    dir=$(mktemp -d)
+    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    password=demo-$RANDOM$RANDOM
+    [ -z "{{library}}" ] || printf '[library]\nfolders = ["%s"]\n' "$(cd "{{library}}" && pwd)" > "$dir/config.toml"
+    KOAN_CONFIG_DIR=$dir KOAN_USERNAME=owner KOAN_PASSWORD=$password target/debug/koan auth setup >/dev/null
+    [ -z "{{library}}" ] || KOAN_CONFIG_DIR=$dir target/debug/koan scan >/dev/null 2>&1
+    KOAN_CONFIG_DIR=$dir KOAN_SUBSONIC__ENABLED=true KOAN_GRAPHQL__AUTH_ENABLED=true \
+        nohup target/debug/koan --headless --port "$port" >"{{out}}/server.log" 2>&1 &
+    echo "$! $dir" > "{{out}}/server.pid"
+    echo "$password" > "{{out}}/server.password"
+    for _ in $(seq 60); do
+        curl -sf "http://127.0.0.1:$port/rest/ping?f=json" >/dev/null && break
+        sleep 0.5
+    done
+    echo "http://127.0.0.1:$port"
+
+_demo-server-stop out:
+    #!/usr/bin/env bash
+    read -r pid dir < "{{out}}/server.pid" || exit 0
+    kill "$pid" 2>/dev/null || true
+    rm -rf "$dir" "{{out}}/server.pid" "{{out}}/server.password"
 
 # Clear the configuration as tvOS does when it runs short of space, and check
 # the television is still signed in. Plants a sign-in in the simulator's copy
@@ -909,20 +1024,22 @@ tv-kept: (tv-ffi "appletvsimulator") ios-project
         -destination "id=$sim" -derivedDataPath target/tv-build
     xcrun simctl uninstall "$sim" {{bundle_id}}
     xcrun simctl install "$sim" target/tv-build/Build/Products/Debug-appletvsimulator/koan.app
-    dir="$(xcrun simctl get_app_container "$sim" {{bundle_id}} data)/Library/Caches/koan-config"
+    data=$(xcrun simctl get_app_container "$sim" {{bundle_id}} data)
+    dir="$data/Library/Caches/koan-config"
+    prefs="$data/Library/Preferences/{{bundle_id}}.plist"
     mkdir -p "$dir"
     printf '[remote]\nenabled = true\nurl = "http://127.0.0.1:4812"\nusername = "kept"\napi_key = "kept-key"\n\n[devices]\nnearby = false\n' \
         > "$dir/config.local.toml"
     wait_for() { for _ in $(seq 40); do eval "$1" && return 0; sleep 0.5; done; return 1; }
     xcrun simctl launch "$sim" {{bundle_id}} >/dev/null
-    wait_for '[ -n "$(xcrun simctl spawn "$sim" defaults read {{bundle_id}} config.local.toml 2>/dev/null)" ]' \
+    wait_for 'plutil -p "$prefs" 2>/dev/null | grep -q "config.local.toml"' \
         || { echo "FAIL: the configuration was not mirrored into the preferences" >&2; exit 1; }
     xcrun simctl terminate "$sim" {{bundle_id}}
     rm -rf "$dir"
     xcrun simctl launch "$sim" {{bundle_id}} >/dev/null
     wait_for 'grep -q "username = \"kept\"" "$dir/config.local.toml" 2>/dev/null' \
         || { echo "FAIL: the configuration did not come back after Caches was cleared" >&2; exit 1; }
-    sleep 3
+    sleep 10
     xcrun simctl io "$sim" screenshot target/tv-kept.png >/dev/null
     echo "kept: signed in as kept after Caches was cleared (target/tv-kept.png)"
 
