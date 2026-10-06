@@ -107,7 +107,7 @@ Sign in with a kōan account (`koan auth create-user`). The session is the same 
 
 Besides playing, browsing and favourites, Subsonic clients get:
 
-- **Favourites on every listing.** A song, album or artist the account has favourited carries `starred`, the time it was favourited, wherever it appears (album and artist pages, search, album lists, playlists, random songs), so a client shows its hearts without reading `getStarred2` first.
+- **Favourites on every listing.** A song, album or artist the account has favourited carries `starred`, the time it was favourited, in the ID3 listings (album and artist pages, search, album lists, playlists, random songs) and on the tracks of a folder, so a client shows its hearts without reading `getStarred2` first. The folder browse (`getIndexes`, and the albums `getMusicDirectory` lists under an artist) does not carry it yet.
 - **Ratings.** `setRating` keeps a rating of one to five per account for songs, albums and artists, returned as `userRating`, and `getAlbumList2?type=highest` lists rated albums best first. kōan's own apps do not show ratings.
 - **Bookmarks.** `createBookmark`, `getBookmarks` and `deleteBookmark` keep one position and note per account and track, for clients that resume long tracks. kōan's own apps do not use them.
 - **Transcoding.** A client that asks `stream` for a lower `maxBitRate` than the file's, or for `format=opus`, `mp3` or `aac`, gets an encode made by `ffmpeg`, so a lossless library does not cost full bandwidth on mobile data. `format=raw` and `download` return the original. The limits, formats and fallbacks are in [Configuration](../reference/configuration.md#subsonic).

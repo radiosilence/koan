@@ -6525,6 +6525,16 @@ mod tests {
         assert!(v["album"]["song"][0]["starred"].is_null(), "{v}");
         let v = get(format!("getArtist?id={other_artist}")).await;
         assert!(v["artist"]["starred"].is_null(), "{v}");
+        let mate = json_of(
+            build_test_router(state.clone()),
+            &format!("/rest/getAlbum?id={album}&u=mate&p=hunter22&v=1.16.1&c=test&f=json"),
+        )
+        .await;
+        assert!(
+            mate["album"]["starred"].is_null(),
+            "another account's: {mate}"
+        );
+        assert!(mate["album"]["song"][0]["starred"].is_null(), "{mate}");
 
         let xml = |path: String| {
             let state = state.clone();
