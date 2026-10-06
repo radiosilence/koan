@@ -127,6 +127,17 @@ pub fn revoke_api_key_value(conn: &Connection, key: &str) -> Result<bool, rusqli
     Ok(owner.is_some())
 }
 
+/// The row id of the key `key`, if it is a live key: which of a user's keys a
+/// request signed in with.
+pub fn id_of(conn: &Connection, key: &str) -> Result<Option<i64>, rusqlite::Error> {
+    conn.query_row(
+        "SELECT id FROM api_keys WHERE key_hash = ?1",
+        params![auth::sha256_hex(key)],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
 /// Revoke every key a user has. Returns how many went.
 pub fn revoke_user_api_keys(conn: &Connection, user_id: i64) -> Result<usize, rusqlite::Error> {
     let n = conn.execute("DELETE FROM api_keys WHERE user_id = ?1", params![user_id])?;

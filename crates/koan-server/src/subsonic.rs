@@ -15,7 +15,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use koan_core::auth::Role;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
@@ -56,6 +56,8 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::PAIR, &[1]),
     (koan_core::remote::profile::HISTORY, &[1]),
     (koan_core::remote::profile::SIGN_IN, &[1]),
+    (koan_core::remote::profile::PASSWORDS, &[1]),
+    (koan_core::remote::profile::API_KEYS, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -90,6 +92,9 @@ struct AppState {
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
     /// `ffmpeg`, where transcoding is on and it was found at startup.
     transcoder: Option<crate::transcode::Transcoder>,
+    /// `sharing.public_url`, trimmed: where an assistant reaches `/mcp`.
+    /// Without it, MCP's sign-in cannot work, so none is offered.
+    public_url: Option<String>,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -3523,19 +3528,28 @@ async fn get_open_subsonic_extensions(
     } else {
         &[]
     };
+    let mcp: &[(&str, &[i64])] = if state.public_url.is_some() {
+        &[(koan_core::remote::profile::MCP, &[1])]
+    } else {
+        &[]
+    };
     SubsonicResponse::ok(params.wants_json())
         .list(
             "openSubsonicExtensions",
-            EXTENSIONS.iter().chain(transcode).map(|(name, versions)| {
-                XmlNode::new("openSubsonicExtensions")
-                    .attr("name", name)
-                    .list(
-                        "versions",
-                        versions
-                            .iter()
-                            .map(|v| XmlNode::scalar("versions", AttrValue::Int(*v))),
-                    )
-            }),
+            EXTENSIONS
+                .iter()
+                .chain(transcode)
+                .chain(mcp)
+                .map(|(name, versions)| {
+                    XmlNode::new("openSubsonicExtensions")
+                        .attr("name", name)
+                        .list(
+                            "versions",
+                            versions
+                                .iter()
+                                .map(|v| XmlNode::scalar("versions", AttrValue::Int(*v))),
+                        )
+                }),
         )
         .build()
 }
@@ -4277,6 +4291,208 @@ async fn koan_invite(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
     .await
 }
 
+/// Set an account's password: an admin any account's, anyone else their own,
+/// given the current one as `current`. The account's sessions, keys, app
+/// passwords and links all end, as with any password change. Changing one's
+/// own answers as `koanSignIn` does, with a new key named `name`: the key the
+/// request came with is among those revoked.
+///
+/// Signed with an API key or the account's own password only: an app password
+/// is a credential handed to one client, and the shared secret is no account's.
+///
+/// A wrong `current` counts against the account's sign-in budget, as a wrong
+/// password at sign-in does, and a spent budget refuses the check from every
+/// network, the account's own included: the sign-in throttle spares those, and
+/// a check that is not a sign-in must not be repeatable from one without limit.
+/// The request is usually signed with a key, which that throttle leaves alone,
+/// so the budget is checked here.
+///
+/// POST only, so the passwords never sit in a URL, where a proxy in front of
+/// the server would log them.
+async fn koan_set_user_password(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let username = params
+                .get("username")
+                .map_or(caller.username.as_str(), str::trim);
+            let own = username == caller.username;
+            if caller.role != Role::Admin {
+                if !own {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::NotAuthorized,
+                        "only an admin can set another account's password",
+                    ));
+                }
+                let current = params
+                    .get("current")
+                    .ok_or_else(|| SubsonicError::missing_param("current"))?;
+                if state.users.exhausted(username) {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::Generic,
+                        "Too many failed sign-ins for this account; try again in a minute",
+                    ));
+                }
+                use crate::auth::password::Refused;
+                match state.users.verify(username, current) {
+                    Ok(_) => {}
+                    Err(Refused::Busy) => return Err(SubsonicError::busy()),
+                    Err(Refused::Wrong) => {
+                        state.users.failed(username);
+                        // Not error 40, which an app reads as its own sign-in
+                        // failing.
+                        return Err(SubsonicError::new(
+                            SubsonicErrorCode::Generic,
+                            "the current password is wrong",
+                        ));
+                    }
+                }
+            }
+            let password = params
+                .get("password")
+                .ok_or_else(|| SubsonicError::missing_param("password"))?;
+            koan_core::invite::set_password(&db.conn, username, Some(password))
+                .map_err(account_error)?;
+            crate::clients::registry().disconnect(username);
+            if !own {
+                return Ok(b);
+            }
+            let name = koan_core::invite::device_name(params.get("name").unwrap_or_default());
+            let (_, api_key) = queries::api_keys::replace_api_key(&db.conn, caller.user_id, &name)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("join")
+                    .attr("username", &caller.username)
+                    .attr("apiKey", &api_key),
+            ))
+        })
+    })
+    .await
+}
+
+/// Where an assistant connects to this server (`/mcp`), and the page that says
+/// how (`/connect`). Signing in is MCP's own OAuth, through this server's web
+/// pages; this only says where.
+async fn koan_mcp(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    offload_response(move || {
+        respond_db_caller(&state, &params, Role::Readonly, |_, _, b| {
+            let base = state
+                .public_url
+                .as_deref()
+                .ok_or_else(|| SubsonicError::not_found("An address for assistants"))?;
+            Ok(b.child(
+                XmlNode::new("mcp")
+                    .attr("url", &format!("{base}/mcp"))
+                    .attr("connect", &format!("{base}/connect")),
+            ))
+        })
+    })
+    .await
+}
+
+/// The caller's API keys, with the one the request signed in with marked
+/// `current`. Never the keys: only their hashes are kept.
+async fn koan_api_keys(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let keys = queries::api_keys::list_api_keys(&db.conn, Some(caller.user_id))
+                .map_err(internal)?;
+            let current = match auth.api_key.as_deref() {
+                Some(key) => queries::api_keys::id_of(&db.conn, key).map_err(internal)?,
+                None => None,
+            };
+            Ok(b.child(XmlNode::new("apiKeys").list(
+                "apiKey",
+                keys.iter().map(|k| api_key_node(k, current == Some(k.id))),
+            )))
+        })
+    })
+    .await
+}
+
+fn api_key_node(key: &queries::api_keys::ApiKeyRow, current: bool) -> XmlNode {
+    XmlNode::new("apiKey")
+        .attr_int("id", key.id)
+        .attr("name", &key.name)
+        .attr("created", &iso(key.created_at))
+        .attr_opt("lastUsed", key.last_used_at.map(iso).as_deref())
+        .attr_bool("current", current)
+}
+
+/// Make an API key named `name` for the caller, for another Subsonic app. The
+/// answer carries the key, once.
+async fn koan_create_api_key(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let name = params
+                .get("name")
+                .map(koan_core::invite::device_name)
+                .ok_or_else(|| SubsonicError::missing_param("name"))?;
+            let (id, key) = queries::api_keys::create_api_key(&db.conn, caller.user_id, &name)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("apiKey")
+                    .attr_int("id", id)
+                    .attr("name", &name)
+                    .attr("key", &key),
+            ))
+        })
+    })
+    .await
+}
+
+/// Revoke one of the caller's API keys, by `id`. Not the one the request is
+/// signed in with: that is signing out, which the app does itself.
+async fn koan_revoke_api_key(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let id: i64 = params
+                .get("id")
+                .ok_or_else(|| SubsonicError::missing_param("id"))?
+                .parse()
+                .map_err(|_| SubsonicError::bad_param("id"))?;
+            if let Some(key) = auth.api_key.as_deref()
+                && queries::api_keys::id_of(&db.conn, key).map_err(internal)? == Some(id)
+            {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::Generic,
+                    "this device signs in with that key; sign out instead",
+                ));
+            }
+            if !queries::api_keys::revoke_api_key(&db.conn, id, Some(caller.user_id))
+                .map_err(internal)?
+            {
+                return Err(SubsonicError::not_found("API key"));
+            }
+            Ok(b)
+        })
+    })
+    .await
+}
+
 /// Revoke the API key the request is signed in with: for an app giving up a
 /// key it no longer holds, such as the one a join replaced.
 async fn koan_revoke_key(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
@@ -4792,6 +5008,11 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             get(koan_create_user).post(koan_create_user),
         )
         .route("/rest/koanInvite", get(koan_invite).post(koan_invite))
+        .route("/rest/koanApiKeys", get(koan_api_keys).post(koan_api_keys))
+        .route("/rest/koanMcp", get(koan_mcp).post(koan_mcp))
+        .route("/rest/koanCreateApiKey", post(koan_create_api_key))
+        .route("/rest/koanRevokeApiKey", post(koan_revoke_api_key))
+        .route("/rest/koanSetUserPassword", post(koan_set_user_password))
         .route("/rest/koanJoin", get(koan_join).post(koan_join))
         .route("/rest/koanSignIn", get(koan_sign_in).post(koan_sign_in))
         .route(
@@ -5094,6 +5315,12 @@ pub fn subsonic_router(
         covers,
         last_modified: Default::default(),
         transcoder,
+        public_url: cfg
+            .sharing
+            .public_url
+            .as_deref()
+            .map(|u| u.trim().trim_end_matches('/').to_owned())
+            .filter(|u| !u.is_empty()),
     });
 
     Some(subsonic_app(state))
@@ -5136,6 +5363,7 @@ mod tests {
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
             transcoder: None,
+            public_url: None,
         });
         (state, dir)
     }
@@ -6050,6 +6278,376 @@ mod tests {
         ))
         .await;
         assert!(body.contains("Den TV"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn passwords_are_set_by_admins_and_changed_by_their_owners() {
+        let (state, _dir) = test_state();
+        let set = |form: String| {
+            let state = state.clone();
+            async move {
+                let body =
+                    post_form(build_test_router(state), "/rest/koanSetUserPassword", &form).await;
+                serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"]
+                    .clone()
+            }
+        };
+        let ping = |query: String| {
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/ping?{query}&v=1.16.1&c=test"),
+                )
+                .await
+                .1
+            }
+        };
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let (_, key) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
+        let as_mate = format!("apiKey={key}&v=1.16.1&c=test&f=json");
+
+        // POST only: the passwords never sit in a URL.
+        let (status, _) = get_response(
+            build_test_router(state.clone()),
+            &format!(
+                "/rest/koanSetUserPassword?current=hunter22&password=correct%20horse&{as_mate}"
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+        // Only their own, and only with the current password.
+        let v = set(format!("username=owner&password=taken%20over&{as_mate}")).await;
+        assert_eq!(v["error"]["code"], 50, "{v}");
+        let v = set(format!("password=new%20enough&{as_mate}")).await;
+        assert_eq!(v["error"]["code"], 10, "{v}");
+        let v = set(format!("current=wrong&password=new%20enough&{as_mate}")).await;
+        assert_eq!(
+            v["error"]["code"], 0,
+            "not 40, which reads as the app signed out: {v}"
+        );
+        assert!(
+            ping(format!("apiKey={key}"))
+                .await
+                .contains("status=\"ok\"")
+        );
+
+        // Changed: every old credential ends, and the device gets a new key.
+        let v = set(format!(
+            "current=hunter22&password=correct%20horse&name=phone&{as_mate}"
+        ))
+        .await;
+        assert_eq!(v["join"]["username"], "mate", "{v}");
+        let fresh = v["join"]["apiKey"].as_str().unwrap().to_owned();
+        assert!(ping(format!("apiKey={key}")).await.contains("code=\"44\""));
+        assert!(
+            ping(format!("apiKey={fresh}"))
+                .await
+                .contains("status=\"ok\"")
+        );
+        assert!(
+            ping("u=mate&p=hunter22".into())
+                .await
+                .contains("code=\"40\"")
+        );
+        assert!(
+            ping("u=mate&p=correct%20horse".into())
+                .await
+                .contains("status=\"ok\"")
+        );
+
+        // An admin sets anyone's, without theirs, and says nothing back.
+        let owner = "u=owner&p=sesame&v=1.16.1&c=test&f=json";
+        let v = set(format!("username=mate&password=battery%20staple&{owner}")).await;
+        assert_eq!(v["status"], "ok", "{v}");
+        assert!(v.get("join").is_none(), "{v}");
+        assert!(
+            ping(format!("apiKey={fresh}"))
+                .await
+                .contains("code=\"44\"")
+        );
+        assert!(
+            ping("u=mate&p=battery%20staple".into())
+                .await
+                .contains("status=\"ok\"")
+        );
+        let v = set(format!("username=mate&password=short&{owner}")).await;
+        assert_eq!(v["error"]["code"], 0, "too short: {v}");
+    }
+
+    /// An app password is one client's credential and the shared secret is no
+    /// account's: neither may set a password, nor try current passwords.
+    #[tokio::test]
+    async fn only_a_key_or_the_password_itself_may_set_a_password() {
+        let (state, _dir) = test_state();
+        let set = |auth: String| {
+            let state = state.clone();
+            async move {
+                post_form(
+                    build_test_router(state),
+                    "/rest/koanSetUserPassword",
+                    &format!("current=hunter22&password=correct%20horse&{auth}&v=1.16.1&c=test"),
+                )
+                .await
+            }
+        };
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let app_password = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            mate.id,
+            "arpeggi",
+        )
+        .unwrap()
+        .1;
+        let salt = "c0ffee";
+        let token = format!("{:x}", md5::compute(format!("{app_password}{salt}")));
+
+        let body = set(format!("u=mate&p={app_password}")).await;
+        assert!(body.contains("code=\"50\""), "app password as p: {body}");
+        let body = set(format!("u=mate&t={token}&s={salt}")).await;
+        assert!(
+            body.contains("code=\"50\""),
+            "app password as a token: {body}"
+        );
+        let body = set(auth_query("")).await;
+        assert!(body.contains("code=\"50\""), "the shared secret: {body}");
+        assert!(
+            queries::auth::get_user_by_username(&db.conn, "mate")
+                .unwrap()
+                .is_some_and(
+                    |u| koan_core::auth::verify_password("hunter22", &u.password_hash).is_ok()
+                ),
+            "unchanged"
+        );
+    }
+
+    /// Checked in the handler, from every network: the request is signed with
+    /// a key, which the sign-in throttle leaves alone, and that throttle spares
+    /// networks the account signed in from, which must not make guessing here
+    /// free.
+    #[tokio::test]
+    async fn a_wrong_current_password_spends_the_sign_in_budget() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let (_, key) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
+        let change = |current: &str| {
+            let state = state.clone();
+            let form =
+                format!("current={current}&password=another%20one&apiKey={key}&v=1.16.1&c=test");
+            async move { post_form(build_test_router(state), "/rest/koanSetUserPassword", &form).await }
+        };
+        // Signing in by password makes this network one the account is known on.
+        let app = subsonic_app(state.clone());
+        let body = get_response(app, "/rest/ping?u=mate&p=hunter22&v=1.16.1&c=test")
+            .await
+            .1;
+        assert!(body.contains("status=\"ok\""), "{body}");
+
+        let body = change("wrong").await;
+        assert!(body.contains("the current password is wrong"), "{body}");
+        for _ in 1..crate::auth::password::FAILURES_PER_USERNAME_PER_MINUTE {
+            state.users.failed("mate");
+        }
+        let body = change("hunter22").await;
+        assert!(body.contains("Too many failed sign-ins"), "{body}");
+        let body = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(
+            body.contains("status=\"ok\""),
+            "the key still works: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_account_lists_makes_and_revokes_its_own_api_keys() {
+        let (state, _dir) = test_state();
+        let phone = api_key(&state, "mate");
+        let owners = api_key(&state, "owner");
+        let auth = format!("apiKey={phone}&v=1.16.1&c=test&f=json");
+        let json = |body: String| -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"].clone()
+        };
+        let post = |path: &str, form: String| {
+            let state = state.clone();
+            let path = path.to_owned();
+            async move { json(post_form(build_test_router(state), &path, &form).await) }
+        };
+        let list = || {
+            let state = state.clone();
+            let auth = auth.clone();
+            async move {
+                json(
+                    get_response(
+                        build_test_router(state),
+                        &format!("/rest/koanApiKeys?{auth}"),
+                    )
+                    .await
+                    .1,
+                )
+            }
+        };
+
+        let made = post("/rest/koanCreateApiKey", format!("name=Feishin&{auth}")).await;
+        let key = made["apiKey"]["key"].as_str().unwrap().to_owned();
+        let id = made["apiKey"]["id"].as_i64().unwrap();
+        assert_eq!(made["apiKey"]["name"], "Feishin", "{made}");
+        let pinged = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(pinged.contains("status=\"ok\""), "{pinged}");
+
+        // Only this account's, the request's own marked, and never a key.
+        let v = list().await;
+        let keys = v["apiKeys"]["apiKey"].as_array().unwrap();
+        assert_eq!(keys.len(), 2, "{v}");
+        assert_eq!(keys[0]["name"], "test");
+        assert_eq!(keys[0]["current"], true);
+        assert_eq!(keys[1]["current"], false);
+        assert!(keys[0]["created"].as_str().unwrap().ends_with('Z'), "{v}");
+        assert!(
+            !v.to_string().contains(&phone) && !v.to_string().contains(&key),
+            "{v}"
+        );
+
+        // Making and revoking take POST.
+        let (status, _) = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/koanCreateApiKey?name=x&{auth}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+        // Not this device's own key, and not another account's.
+        let db = state.open_db().unwrap();
+        let own = queries::api_keys::id_of(&db.conn, &phone).unwrap().unwrap();
+        let v = post("/rest/koanRevokeApiKey", format!("id={own}&{auth}")).await;
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("sign out"),
+            "{v}"
+        );
+        let theirs = queries::api_keys::id_of(&db.conn, &owners)
+            .unwrap()
+            .unwrap();
+        let v = post("/rest/koanRevokeApiKey", format!("id={theirs}&{auth}")).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
+
+        let v = post("/rest/koanRevokeApiKey", format!("id={id}&{auth}")).await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let pinged = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(pinged.contains("code=\"44\""), "{pinged}");
+        assert_eq!(
+            list().await["apiKeys"]["apiKey"].as_array().unwrap().len(),
+            1
+        );
+    }
+
+    /// Assistants are offered only where the server knows the address it is
+    /// reached at: MCP's sign-in goes through it.
+    #[tokio::test]
+    async fn assistants_are_offered_with_a_public_address() {
+        let extensions = |state: Arc<AppState>| async move {
+            get_response(
+                build_test_router(state),
+                "/rest/getOpenSubsonicExtensions?f=json",
+            )
+            .await
+            .1
+        };
+        let mcp = |state: Arc<AppState>, auth: &str| {
+            let path = format!("/rest/koanMcp?{auth}&v=1.16.1&c=test&f=json");
+            async move {
+                let body = get_response(build_test_router(state), &path).await.1;
+                serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"]
+                    .clone()
+            }
+        };
+        let mate = "u=mate&p=hunter22";
+
+        let (state, _dir) = test_state();
+        assert!(!extensions(state.clone()).await.contains("koanMcp"));
+        let v = mcp(state.clone(), mate).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
+
+        let (state, _dir) = test_state();
+        let mut inner = Arc::try_unwrap(state).ok().unwrap();
+        inner.public_url = Some("https://koan.example.com".into());
+        let state = Arc::new(inner);
+        assert!(extensions(state.clone()).await.contains("koanMcp"));
+        let v = mcp(state.clone(), mate).await;
+        assert_eq!(v["mcp"]["url"], "https://koan.example.com/mcp", "{v}");
+        assert_eq!(
+            v["mcp"]["connect"], "https://koan.example.com/connect",
+            "{v}"
+        );
+        let v = mcp(state, "u=mate&p=wrong").await;
+        assert_eq!(v["error"]["code"], 40, "signed in only: {v}");
+    }
+
+    /// An app password must not mint keys that outlive it, nor revoke the
+    /// account's devices; the shared secret is no account's.
+    #[tokio::test]
+    async fn only_a_key_or_the_password_itself_may_manage_api_keys() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let (phone, _) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
+        let app_password = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            mate.id,
+            "arpeggi",
+        )
+        .unwrap()
+        .1;
+        let salt = "c0ffee";
+        let token = format!("{:x}", md5::compute(format!("{app_password}{salt}")));
+        let callers = [
+            ("app password as p", format!("u=mate&p={app_password}")),
+            (
+                "app password as a token",
+                format!("u=mate&t={token}&s={salt}"),
+            ),
+            ("the shared secret", auth_query("")),
+        ];
+        for (who, auth) in &callers {
+            let auth = format!("{auth}&v=1.16.1&c=test");
+            for (path, form) in [
+                ("/rest/koanCreateApiKey", format!("name=x&{auth}")),
+                ("/rest/koanRevokeApiKey", format!("id={phone}&{auth}")),
+                ("/rest/koanApiKeys", auth.clone()),
+            ] {
+                let body = post_form(build_test_router(state.clone()), path, &form).await;
+                assert!(body.contains("code=\"50\""), "{who} on {path}: {body}");
+            }
+        }
+        let keys = queries::api_keys::list_api_keys(&db.conn, None).unwrap();
+        assert_eq!(keys.len(), 1, "none made, none revoked");
+        assert_eq!(keys[0].id, phone);
     }
 
     #[tokio::test]

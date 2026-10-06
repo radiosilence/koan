@@ -141,6 +141,12 @@ final class EngineMirror: Observable {
         return _connection
     }
 
+    /// Whether the signed-in server lists the OpenSubsonic extension `name`:
+    /// what decides which of koan's own features a page offers.
+    func offers(_ name: String) -> Bool {
+        connection?.extensions.contains { $0.name == name } ?? false
+    }
+
     /// The server refused the credential this device signs in with: a revoked
     /// key or a changed password. Until someone signs in again nothing more
     /// arrives from it, so an empty page says this rather than waiting.

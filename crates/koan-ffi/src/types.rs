@@ -1470,6 +1470,35 @@ impl AccountRole {
     }
 }
 
+/// Where assistants connect to the signed-in server.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct Assistants {
+    /// The server's MCP endpoint, to paste into an assistant.
+    pub mcp_url: String,
+    /// The server's page on connecting one.
+    pub connect_url: String,
+}
+
+/// One of the signed-in account's API keys. Never the key: only its hash is
+/// kept on the server.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct ApiKeyInfo {
+    pub id: i64,
+    pub name: String,
+    /// Unix seconds.
+    pub created: Option<i64>,
+    pub last_used: Option<i64>,
+    /// The key this device signs in with.
+    pub this_device: bool,
+}
+
+/// A key just made: the one time it is seen.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct NewApiKey {
+    pub name: String,
+    pub key: String,
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct ServerAccount {
     pub username: String,
