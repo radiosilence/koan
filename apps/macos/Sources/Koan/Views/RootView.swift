@@ -88,6 +88,7 @@ struct RootView: View {
                         }
                         .help("Lyrics panel (⌥⌘L)")
                     }
+                    .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
                 }
         }
         // The wash and the tint, both the colour of one record. Its own
@@ -120,15 +121,7 @@ struct RootView: View {
         // edge effect keeps rows legible as they pass under.
         // Restored at `bare`: the ground it paints is opaque, so nothing behind
         // it is sampled and a page switch does not redraw it.
-        #if os(macOS)
-        .toolbarBackgroundVisibility(
-            graphics.usesWindowGlass ? .hidden : .automatic, for: .windowToolbar
-        )
-        #else
-        .toolbarBackgroundVisibility(
-            graphics.usesWindowGlass ? .hidden : .automatic, for: .navigationBar
-        )
-        #endif
+        .koanToolbar(glass: graphics.usesWindowGlass)
         .onSubmit(of: .search) { search.submit() }
         // Backgrounding is the last dependable moment before termination. A
         // notification rather than `scenePhase`: reading that re-runs whatever
@@ -664,6 +657,7 @@ private struct PageToolbar: ToolbarContent {
             .disabled(!nav.canGoForward)
             .help("Forward (⌘])")
         }
+        .sharedBackgroundVisibility(KoanTheme.pane(.automatic))
 
         // Separate items with `ToolbarSpacer` between them, not one
         // `ToolbarItemGroup`: a group shares a single pane of glass, which
@@ -678,7 +672,7 @@ private struct PageToolbar: ToolbarContent {
                     .frame(width: 180)
             }
         }
-        .sharedBackgroundVisibility(nav.section?.filterPlaceholder == nil ? .hidden : .automatic)
+        .sharedBackgroundVisibility(KoanTheme.pane(nav.section?.filterPlaceholder == nil ? .hidden : .automatic))
 
         // Sort and filters belong next to what they narrow, so they only
         // appear there. Typing a name and picking from a menu are different
@@ -699,7 +693,7 @@ private struct PageToolbar: ToolbarContent {
                 }
             }
         }
-        .sharedBackgroundVisibility(nav.section?.isBrowser == true ? .automatic : .hidden)
+        .sharedBackgroundVisibility(KoanTheme.pane(nav.section?.isBrowser == true ? .automatic : .hidden))
 
         // Last, and apart from the filter: what you do with a pick is not part
         // of narrowing the grid, and next to the field the two read as one
@@ -711,7 +705,7 @@ private struct PageToolbar: ToolbarContent {
                 SelectionControls(selection: selection)
             }
         }
-        .sharedBackgroundVisibility(selection == nil ? .hidden : .automatic)
+        .sharedBackgroundVisibility(KoanTheme.pane(selection == nil ? .hidden : .automatic))
     }
 
     /// The pick the page on screen makes, if it makes one: the album grid, an

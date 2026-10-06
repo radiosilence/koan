@@ -181,7 +181,7 @@ struct EmptyState: View {
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 32, weight: .light))
+                .font(.role(.display, system: .system(size: 32, weight: .light)))
                 .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
             Text(title)
                 .font(.role(.titleSmall, system: .title3))

@@ -107,7 +107,7 @@ struct PlayableArtwork: View {
                             Image(systemName: "play.circle.fill")
                                 .font(.system(size: 34))
                                 .foregroundStyle(.white)
-                                .shadow(radius: 4)
+                                .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.33), radius: 4)
                         }
                     }
                     .transition(.opacity)

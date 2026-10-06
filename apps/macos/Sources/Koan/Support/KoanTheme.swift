@@ -586,6 +586,18 @@ extension View {
         modifier(KoanButtonRole(kind: kind))
     }
 
+    /// The theme's buttons of one kind for everything inside, leaving the
+    /// platform's look as it was: for groups whose buttons already have the
+    /// platform style they want.
+    @ViewBuilder
+    func koanButtons(_ kind: KoanButtonKind) -> some View {
+        if KoanTheme.isOn {
+            buttonStyle(KoanButtonStyle(kind: kind))
+        } else {
+            self
+        }
+    }
+
     /// A toggle as the theme draws it: a square box. The system's switch otherwise.
     func koanToggle() -> some View {
         modifier(KoanToggleRole())
@@ -639,6 +651,13 @@ extension View {
     /// theme's type rather than the accent. Unchanged in the platform's look.
     func koanControl() -> some View {
         modifier(KoanControlRole())
+    }
+
+    /// The window's toolbar, or a phone's navigation bar: flat `bg` in the
+    /// theme. Otherwise hidden over the wash where the window's glass is
+    /// affordable (`glass`), and the platform's own where it is not.
+    func koanToolbar(glass: Bool) -> some View {
+        modifier(KoanToolbarRole(glass: glass))
     }
 
     /// A sheet's chrome: `bg` beneath, no material, the theme's type for
@@ -1112,6 +1131,32 @@ struct KoanDivider: View {
             Divider()
         }
     }
+}
+
+#if !os(tvOS)
+private struct KoanToolbarRole: ViewModifier {
+    let glass: Bool
+
+    func body(content: Content) -> some View {
+        #if os(macOS)
+        let bar = ToolbarPlacement.windowToolbar
+        #else
+        let bar = ToolbarPlacement.navigationBar
+        #endif
+        if KoanTheme.isOn {
+            content
+                .toolbarBackground(Color.koanBg, for: bar)
+                .toolbarBackgroundVisibility(.visible, for: bar)
+        } else {
+            content.toolbarBackgroundVisibility(glass ? .hidden : .automatic, for: bar)
+        }
+    }
+}
+#endif
+
+extension KoanTheme {
+    /// Whether a toolbar item sits on a pane of glass: never in the theme.
+    static func pane(_ system: Visibility) -> Visibility { isOn ? .hidden : system }
 }
 
 private struct KoanSheetRole: ViewModifier {

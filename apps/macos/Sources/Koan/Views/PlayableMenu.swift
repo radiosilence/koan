@@ -446,15 +446,22 @@ struct PlayableHeaderButton: View {
             Label(loading ? "Loading" : "Play", systemImage: Icon.play)
             #else
             ZStack {
-                Circle()
-                    .fill(.tint)
-                    .frame(width: 44, height: 44)
+                // The theme's primary action: outlined in the accent, square.
+                if KoanTheme.isOn {
+                    Rectangle()
+                        .strokeBorder(.tint, lineWidth: KoanTheme.hairline)
+                        .frame(width: 44, height: 44)
+                } else {
+                    Circle()
+                        .fill(.tint)
+                        .frame(width: 44, height: 44)
+                }
                 if loading {
-                    ProgressView().controlSize(.small).tint(.white)
+                    ProgressView().controlSize(.small).tint(KoanTheme.isOn ? nil : .white)
                 } else {
                     Image(systemName: Icon.play)
                         .font(.system(size: 17))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(KoanTheme.style(.accent, system: .white))
                         .offset(x: 1)  // optical centring for a triangle
                 }
             }

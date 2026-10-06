@@ -62,7 +62,7 @@ struct NowPlayingSheet: View {
                 .transition(.opacity)
         } else if let source = player.currentArtwork {
             AlbumArtwork(source: source, size: .tile, cornerRadius: KoanTheme.radius(12))
-                .shadow(color: .black.opacity(0.25), radius: 24, y: 12)
+                .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.25), radius: 24, y: 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(.opacity)
         } else {

@@ -226,7 +226,7 @@ struct TrackListView: View {
         if let artwork {
             AlbumArtwork(source: artwork, cornerRadius: KoanTheme.radius(8))
                 .frame(width: Columns.sleeve, height: Columns.sleeve)
-                .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+                .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.3), radius: 10, y: 4)
                 .showsArtworkFullSize(
                     source: artwork,
                     title: title,
@@ -244,7 +244,8 @@ struct TrackListView: View {
                     }
                     #endif
                     Text(Format.title(title))
-                        .font(.system(size: Columns.title, weight: .semibold))
+                        .font(.role(.title, system: .system(size: Columns.title, weight: .semibold)))
+                        .foregroundStyle(KoanTheme.style(.strong, system: .primary))
                         .lineLimit(2)
                         // Beside the play button the row offers one line's
                         // height; asked for two, it has to be let grow.

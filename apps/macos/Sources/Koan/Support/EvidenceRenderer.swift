@@ -75,6 +75,9 @@ enum EvidenceRenderer {
         if let album = state.player.currentAlbumId {
             windows.append(("window-album", { nav.open(album: album) }))
         }
+        // The sidebar on its own as well: a split view's sidebar column is not
+        // drawn in a window that is never shown.
+        windows.append(("window-sidebar", { nav.show(.albums) }))
         if let only = ProcessInfo.processInfo.environment["KOAN_RENDER_PAGES"]?.split(separator: ",") {
             windows.removeAll { window in !only.contains { window.name.hasPrefix($0) } }
         }
@@ -82,9 +85,13 @@ enum EvidenceRenderer {
             window.go()
             for dark in [false, true] {
                 let file = dir.appending(path: "\(window.name)-\(dark ? "dark" : "light").png")
+                let sidebar = window.name == "window-sidebar"
                 await snapshot(
-                    AnyView(RootView(hotkeys: state.hotkeys).appEnvironment(state).environment(\.drawnOffscreen, true)),
-                    size: CGSize(width: 1440, height: 900), dark: dark, to: file
+                    sidebar
+                        ? AnyView(SidebarView().koanSurface().appEnvironment(state))
+                        : AnyView(RootView(hotkeys: state.hotkeys).appEnvironment(state).environment(\.drawnOffscreen, true)),
+                    size: sidebar ? CGSize(width: 240, height: 900) : CGSize(width: 1440, height: 900),
+                    dark: dark, to: file
                 )
             }
         }
