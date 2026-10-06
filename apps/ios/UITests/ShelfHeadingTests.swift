@@ -65,8 +65,8 @@ final class ShelfHeadingTests: XCTestCase {
 
     /// The shelf, from the Library tab's root.
     private func open(_ name: String) {
-        let bar = app.tabBars.buttons["Library"]
-        if bar.waitForExistence(timeout: 10) { bar.tap() } else { app.buttons["Library"].firstMatch.tap() }
+        let bar = app.tabBars.buttons[any: "Library"]
+        if bar.waitForExistence(timeout: 10) { bar.tap() } else { app.buttons[any: "Library"].firstMatch.tap() }
         // Tapping the selected tab again goes back to its root.
         if !app.buttons[name].waitForExistence(timeout: 2) { bar.tap() }
         app.buttons[name].firstMatch.tap()

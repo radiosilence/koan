@@ -20,20 +20,20 @@ final class SignInTests: XCTestCase {
         app.launch()
 
         tab(app, "Settings")
-        app.buttons["Server"].firstMatch.tap()
+        app.buttons[any: "Server"].firstMatch.tap()
 
-        if !app.buttons["Sign Out"].waitForExistence(timeout: 2) {
+        if !app.buttons[any: "Sign Out"].waitForExistence(timeout: 2) {
             // SwiftUI exposes a form's fields by their placeholder, not their label.
             fill(field(app.textFields, "Server URL"), url)
             fill(field(app.textFields, "Username"), user)
             fill(field(app.secureTextFields, "Password"), password)
-            app.buttons["Sign In"].tap()
+            app.buttons[any: "Sign In"].tap()
         }
-        XCTAssert(app.buttons["Sign Out"].waitForExistence(timeout: 30), "not signed in")
+        XCTAssert(app.buttons[any: "Sign Out"].waitForExistence(timeout: 30), "not signed in")
 
         // Signing in starts a sync; the albums are what the reviewer needs.
         tab(app, "Library")
-        app.buttons["Albums"].firstMatch.tap()
+        app.buttons[any: "Albums"].firstMatch.tap()
         XCTAssert(app.images.firstMatch.waitForExistence(timeout: 180), "no albums after sync")
     }
 

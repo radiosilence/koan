@@ -74,14 +74,14 @@ final class TVWalkTests: XCTestCase {
         snap("07-now-playing-up-next")
         start(at: .nowPlaying)
         press(.down)
-        if focus(app.buttons["lyrics"]) {
+        if focus(app.buttons[any: "lyrics"]) {
             press(.select)
             pause(3)
         }
         snap("08-lyrics")
         start(at: .nowPlaying)
         press(.down)
-        if focus(app.buttons["output"]) || focus(app.buttons["play-on"]) {
+        if focus(app.buttons[any: "output"]) || focus(app.buttons[any: "play-on"]) {
             snap("09-devices-focused")
             press(.select)
             pause(2)
@@ -110,8 +110,8 @@ final class TVWalkTests: XCTestCase {
                 press(.select)
                 pause(2)
                 snap("12b-control-opened")
-                let opened = app.switches["Favourites"].exists
-                    || app.buttons["Recently Added"].exists || app.buttons["Artist"].exists
+                let opened = app.switches[any: "Favourites"].exists
+                    || app.buttons[any: "Recently Added"].exists || app.buttons[any: "Artist"].exists
                 XCTAssertTrue(opened, "a browser control opens its filters or its sort")
                 press(.menu)
                 pause(1)

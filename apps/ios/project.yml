@@ -327,6 +327,8 @@ targets:
     platform: tvOS
     sources:
       - path: TVUITests
+      # The case-blind lookup the iPhone's UI tests use too.
+      - path: UITests/Labelled.swift
     dependencies:
       - target: KoanTV
     settings:

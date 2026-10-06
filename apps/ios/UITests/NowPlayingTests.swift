@@ -27,11 +27,11 @@ final class NowPlayingTests: XCTestCase {
         openNowPlaying()
         let play = onScreen(app.buttons.matching(NSPredicate(format: "label == %@", "Play")))
         if play.exists { play.tap() }
-        _ = app.buttons["Pause"].firstMatch.waitForExistence(timeout: 30)
+        _ = app.buttons[any: "Pause"].firstMatch.waitForExistence(timeout: 30)
         pause(3)
         snap("01-now-playing")
 
-        if open(labelled(beginningWith: "Sleep timer")), open(app.buttons["30 Minutes"]) {
+        if open(labelled(beginningWith: "Sleep timer")), open(app.buttons[any: "30 Minutes"]) {
             pause(2)
             snap("02-sleep-timer")
         }
@@ -63,7 +63,7 @@ final class NowPlayingTests: XCTestCase {
                 dismissSheet()
                 pause(2)
                 snap("06-controlling")
-                if open(labelled(beginningWith: "Sleep timer")), open(app.buttons["End of Record"]) {
+                if open(labelled(beginningWith: "Sleep timer")), open(app.buttons[any: "End of Record"]) {
                     pause(2)
                     snap("07-controlling-sleep")
                 }
@@ -72,7 +72,7 @@ final class NowPlayingTests: XCTestCase {
                     snap("08-controlled-output-sheet")
                     dismissSheet()
                 }
-                if open(labelled(beginningWith: "Sleep timer")), open(app.buttons["Cancel Sleep Timer"]) {
+                if open(labelled(beginningWith: "Sleep timer")), open(app.buttons[any: "Cancel Sleep Timer"]) {
                     pause(1)
                 }
                 controlThisPhone()
@@ -95,9 +95,9 @@ final class NowPlayingTests: XCTestCase {
     private func openNowPlaying() {
         let pad = UIDevice.current.userInterfaceIdiom == .pad
         // A tap while the app is busy can be lost; tried until the sheet is up.
-        for _ in 0..<3 where !app.buttons["Show lyrics"].exists {
+        for _ in 0..<3 where !app.buttons[any: "Show lyrics"].exists {
             app.coordinate(withNormalizedOffset: CGVector(dx: pad ? 0.2 : 0.35, dy: pad ? 0.965 : 0.86)).tap()
-            _ = app.buttons["Show lyrics"].waitForExistence(timeout: 5)
+            _ = app.buttons[any: "Show lyrics"].waitForExistence(timeout: 5)
         }
         pause(2)
     }

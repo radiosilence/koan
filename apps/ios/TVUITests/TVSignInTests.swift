@@ -32,7 +32,7 @@ final class TVSignInTests: XCTestCase {
         app.launchEnvironment["KOAN_PLAYBACK__MUTED"] = "true"
         app.launchEnvironment["KOAN_PLAYBACK__RENDERERS"] = "false"
         app.launch()
-        XCTAssertTrue(app.buttons["Get a Code"].waitForExistence(timeout: 30), "a fresh install starts signed out")
+        XCTAssertTrue(app.buttons[any: "Get a Code"].waitForExistence(timeout: 30), "a fresh install starts signed out")
         snap("\(route)-01-signed-out")
 
         switch route {
@@ -65,13 +65,13 @@ final class TVSignInTests: XCTestCase {
         // arrival, and Get a Code is disabled while it is empty.
         remote.press(.down)
         remote.press(.select)
-        XCTAssertTrue(app.buttons["Server"].firstMatch.waitForExistence(timeout: 10), "the account form's settings open")
+        XCTAssertTrue(app.buttons[any: "Server"].firstMatch.waitForExistence(timeout: 10), "the account form's settings open")
         remote.press(.select)
-        let address = app.textFields["server-url"]
+        let address = app.textFields[any: "server-url"]
         XCTAssertTrue(address.waitForExistence(timeout: 10), "on the Server page")
 
         type(server, into: address)
-        type(user, into: app.textFields["username"])
+        type(user, into: app.textFields[any: "username"])
         // Below the username: password or API key side by side, then the
         // secret, then Sign In.
         if apiKey {
@@ -80,17 +80,17 @@ final class TVSignInTests: XCTestCase {
             remote.press(.select)
             sleep(1)
             XCTAssertEqual(
-                app.secureTextFields["secret"].placeholderValue, "API key",
+                app.secureTextFields[any: "secret"].placeholderValue, "API key",
                 "the form asks for an API key"
             )
         }
-        type(secret, into: app.secureTextFields["secret"])
+        type(secret, into: app.secureTextFields[any: "secret"])
         snap("\(route)-02-form")
         remote.press(.down)
         remote.press(.select)
 
         if expectSuccess {
-            XCTAssertTrue(app.buttons["Library"].waitForExistence(timeout: 30), "signed in, the app is shown")
+            XCTAssertTrue(app.buttons[any: "Library"].waitForExistence(timeout: 30), "signed in, the app is shown")
             sleep(8)
             snap("\(route)-03-signed-in")
         } else {
@@ -99,14 +99,14 @@ final class TVSignInTests: XCTestCase {
             ).firstMatch
             XCTAssertTrue(refused.waitForExistence(timeout: 20), "the form says the password was refused")
             snap("\(route)-03-refused")
-            XCTAssertFalse(app.buttons["Library"].exists, "still signed out")
+            XCTAssertFalse(app.buttons[any: "Library"].exists, "still signed out")
             // The way back: the form is still there to correct, and Menu
             // returns to the sign-in page.
-            XCTAssertTrue(app.buttons["Sign In"].exists)
+            XCTAssertTrue(app.buttons[any: "Sign In"].exists)
             remote.press(.menu)
             sleep(1)
             remote.press(.menu)
-            XCTAssertTrue(app.buttons["Get a Code"].waitForExistence(timeout: 10), "back on the sign-in page")
+            XCTAssertTrue(app.buttons[any: "Get a Code"].waitForExistence(timeout: 10), "back on the sign-in page")
             snap("\(route)-04-back")
         }
     }
@@ -122,15 +122,15 @@ final class TVSignInTests: XCTestCase {
         sleep(2)
         remote.press(.down)
         remote.press(.select)
-        XCTAssertTrue(app.buttons["Sign Out"].waitForExistence(timeout: 10), "on the Server pane")
+        XCTAssertTrue(app.buttons[any: "Sign Out"].waitForExistence(timeout: 10), "on the Server pane")
         remote.press(.right)
         remote.press(.select)
         // The alert opens on the gentler choice, keeping the tracks.
-        let keep = app.buttons["Sign Out and Keep Its Tracks"]
+        let keep = app.buttons[any: "Sign Out and Keep Its Tracks"]
         XCTAssertTrue(keep.waitForExistence(timeout: 10), "sign-out asks what to keep")
         snap("\(route)-04-confirm")
         remote.press(.select)
-        XCTAssertTrue(app.buttons["Get a Code"].waitForExistence(timeout: 20), "signed out, the sign-in page is back")
+        XCTAssertTrue(app.buttons[any: "Get a Code"].waitForExistence(timeout: 20), "signed out, the sign-in page is back")
         snap("\(route)-05-signed-out")
     }
 
@@ -164,14 +164,14 @@ final class TVSignInTests: XCTestCase {
         let link = try XCTUnwrap(env["KOAN_SIGNIN_INVITE"])
         let fragment = try XCTUnwrap(URL(string: link)?.fragment)
         app.open(try XCTUnwrap(URL(string: "koan://join#\(fragment)")))
-        XCTAssertTrue(app.buttons["Library"].waitForExistence(timeout: 30), "joined, the app is shown")
+        XCTAssertTrue(app.buttons[any: "Library"].waitForExistence(timeout: 30), "joined, the app is shown")
         sleep(8)
         snap("\(route)-02-joined")
     }
 
     private func unreachable(route: String) {
-        type("http://koan-unreachable.invalid", into: app.textFields["pair-server"])
-        XCTAssertTrue(focus(app.buttons["Get a Code"]))
+        type("http://koan-unreachable.invalid", into: app.textFields[any: "pair-server"])
+        XCTAssertTrue(focus(app.buttons[any: "Get a Code"]))
         remote.press(.select)
         snap("\(route)-02-connecting")
         let problem = app.staticTexts.containing(
@@ -179,7 +179,7 @@ final class TVSignInTests: XCTestCase {
         ).firstMatch
         XCTAssertTrue(problem.waitForExistence(timeout: 90), "the page says the server could not be reached")
         XCTAssertFalse(problem.label.contains("password or API key"), "an unreachable server is not called one without pairing")
-        XCTAssertTrue(app.buttons["Get a Code"].exists, "and the button is back to try again")
+        XCTAssertTrue(app.buttons[any: "Get a Code"].exists, "and the button is back to try again")
         snap("\(route)-03-unreachable")
     }
 
@@ -188,8 +188,8 @@ final class TVSignInTests: XCTestCase {
         sleep(2)
         snap("\(route)-02-after-menu")
         app.activate()
-        XCTAssertTrue(app.buttons["Get a Code"].waitForExistence(timeout: 10), "the sign-in page is still there")
-        XCTAssertFalse(app.buttons["Library"].exists, "and not an empty app behind it")
+        XCTAssertTrue(app.buttons[any: "Get a Code"].waitForExistence(timeout: 10), "the sign-in page is still there")
+        XCTAssertFalse(app.buttons[any: "Library"].exists, "and not an empty app behind it")
         snap("\(route)-03-returned")
     }
 

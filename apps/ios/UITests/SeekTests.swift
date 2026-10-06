@@ -15,9 +15,9 @@ final class SeekTests: XCTestCase {
         app.launch()
         pause(3)
 
-        let library = app.tabBars.buttons["Library"]
-        if library.waitForExistence(timeout: 3) { library.tap() } else { app.buttons["Library"].firstMatch.tap() }
-        app.buttons["Albums"].firstMatch.tap()
+        let library = app.tabBars.buttons[any: "Library"]
+        if library.waitForExistence(timeout: 3) { library.tap() } else { app.buttons[any: "Library"].firstMatch.tap() }
+        app.buttons[any: "Albums"].firstMatch.tap()
         pause(3)
         // Further down the grid than the walks go, so likely not cached.
         app.swipeUp()

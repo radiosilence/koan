@@ -33,7 +33,7 @@ final class TVPairTests: XCTestCase {
         }
         app.launch()
 
-        let getCode = app.buttons["Get a Code"]
+        let getCode = app.buttons[any: "Get a Code"]
         XCTAssertTrue(getCode.waitForExistence(timeout: 20), "the sign-in page shows")
         snap("01-sign-in")
         if discover {
@@ -71,13 +71,13 @@ final class TVPairTests: XCTestCase {
             let problem = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", said)).firstMatch
             XCTAssertTrue(problem.waitForExistence(timeout: 120), "the page says the code was \(said)")
             XCTAssertFalse(problem.label.contains("password or API key"), "a \(said) code is not a server without pairing")
-            XCTAssertTrue(app.buttons["Get a Code"].exists, "and offers a code again")
+            XCTAssertTrue(app.buttons[any: "Get a Code"].exists, "and offers a code again")
             snap("03-\(said)")
             return
         }
 
         XCTAssertTrue(
-            app.buttons["Library"].waitForExistence(timeout: 240),
+            app.buttons[any: "Library"].waitForExistence(timeout: 240),
             "the app is shown once the pairing is approved"
         )
         sleep(3)
@@ -86,11 +86,11 @@ final class TVPairTests: XCTestCase {
         // Whose account it is: a TV approved by a read-only account is that
         // account, and nothing more.
         let remote = XCUIRemote.shared
-        XCTAssertTrue(focus(app.buttons["Settings"]))
+        XCTAssertTrue(focus(app.buttons[any: "Settings"]))
         remote.press(.select)
         sleep(1)
         remote.press(.down)
-        XCTAssertTrue(focus(app.buttons["Server"]))
+        XCTAssertTrue(focus(app.buttons[any: "Server"]))
         remote.press(.select)
         sleep(2)
         snap("04-account")

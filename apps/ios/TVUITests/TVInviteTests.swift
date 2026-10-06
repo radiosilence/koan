@@ -25,7 +25,7 @@ final class TVInviteTests: XCTestCase {
         app.open(url)
 
         // Joined, the library syncs; its first records are what shows it worked.
-        XCTAssertTrue(app.buttons["Library"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons[any: "Library"].waitForExistence(timeout: 30))
         sleep(20)
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         shot.lifetime = .keepAlways
