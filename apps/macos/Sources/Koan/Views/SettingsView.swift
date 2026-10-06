@@ -1307,17 +1307,22 @@ private struct AppearanceSettings: View {
     var body: some View {
         @Bindable var appearance = appearance
         Form {
-            // The theme is chosen in the configuration; while it is on, this
-            // is the one thing about it that is a matter of taste.
-            if KoanTheme.isOn {
-                Section {
+            Section {
+                KoanSegmentedPicker(
+                    options: [("kōan", true), ("System", false)],
+                    selection: $appearance.koan,
+                    title: "Theme"
+                )
+                // Follows the picker, not the theme drawn now: a change waits
+                // for the next launch, and the icons are its to set.
+                if appearance.koan {
                     Toggle("Show icons", isOn: $appearance.showIcons).koanToggle()
-                } header: {
-                    KoanSectionHeader("Theme")
-                } footer: {
-                    Text("Icons beside the labels in the sidebar, the tabs and the buttons. Off, every label is its words alone.")
-                        .koanText(.fine, .muted)
                 }
+            } header: {
+                KoanSectionHeader("Theme")
+            } footer: {
+                Text("kōan is the site's look; System, the platform's own. A change of theme takes effect the next time kōan opens. Show icons puts icons beside the labels in the sidebar, the tabs and the buttons.")
+                    .koanText(.fine, .muted)
             }
             Section {
                 // Positioned by where a step sits in the list, not by its raw

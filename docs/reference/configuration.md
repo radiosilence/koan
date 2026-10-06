@@ -192,14 +192,14 @@ change shows the next time it starts.
 
 ```toml
 [appearance]
-theme = "system"   # "system": the platform's own look; "koan": the site's look throughout
+theme = "koan"     # "koan": the site's look throughout (the default); "system": the platform's own
 theme_icons = true # in the kōan theme, icons beside labels; false for labels alone
 ```
 
-The kōan theme is a prototype, set here by hand to try it; its design is
-`docs/design/koan-theme.md`. While it is on, Settings → Appearance → **Show
-icons** sets `theme_icons` from the Mac app. The system look always draws its
-icons.
+Settings → Appearance → **Theme** chooses between them from the Mac app, and
+**Show icons**, shown while the kōan theme is chosen, sets `theme_icons`. The
+system look always draws its icons. The theme's design is
+`docs/design/koan-theme.md`.
 
 ## `[library]`
 
