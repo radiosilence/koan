@@ -924,7 +924,7 @@ tv-pair outcome="approve": (tv-ffi "appletvsimulator") ios-project
 # KOAN_SIGNIN_SERVER, with KOAN_SIGNIN_USER and its KOAN_SIGNIN_PASSWORD and
 # KOAN_SIGNIN_API_KEY, and an invite in KOAN_SIGNIN_INVITE. Screenshots land
 # in target/tv-signin/`route`.
-tv-signin routes="password apikey invite signout wrong-password unreachable menu": (tv-ffi "appletvsimulator") ios-project
+tv-signin routes="password apikey invite signout wrong-password unreachable menu revoked": (tv-ffi "appletvsimulator") ios-project
     #!/usr/bin/env bash
     set -euo pipefail
     out=target/tv-signin
@@ -939,12 +939,22 @@ tv-signin routes="password apikey invite signout wrong-password unreachable menu
     trap 'xcrun simctl shutdown "$sim"' EXIT
     failed=()
     for route in {{routes}}; do
+        server=${KOAN_SIGNIN_SERVER:-}
+        user=${KOAN_SIGNIN_USER:-}
         secret=${KOAN_SIGNIN_PASSWORD:-}
         [ "$route" = apikey ] && secret=${KOAN_SIGNIN_API_KEY:-}
+        # Revoking a key is done on a throwaway server, to a key of its own.
+        if [ "$route" = revoked ]; then
+            mkdir -p "$out/revoked"
+            server=$(just _demo-server "" "$out/revoked")
+            trap 'just _demo-server-stop "$out/revoked"; xcrun simctl shutdown "$sim"' EXIT
+            user=owner
+            secret=$(cat "$out/revoked/server.key")
+        fi
         xcrun simctl uninstall "$sim" {{bundle_id}} 2>/dev/null || true
         TEST_RUNNER_KOAN_SIGNIN_ROUTE=$route \
-        TEST_RUNNER_KOAN_SIGNIN_SERVER=${KOAN_SIGNIN_SERVER:-} \
-        TEST_RUNNER_KOAN_SIGNIN_USER=${KOAN_SIGNIN_USER:-} \
+        TEST_RUNNER_KOAN_SIGNIN_SERVER=$server \
+        TEST_RUNNER_KOAN_SIGNIN_USER=$user \
         TEST_RUNNER_KOAN_SIGNIN_SECRET=$secret \
         TEST_RUNNER_KOAN_SIGNIN_INVITE=${KOAN_SIGNIN_INVITE:-} \
         xcodebuild test-without-building -quiet \

@@ -7,6 +7,8 @@ import XCTest
 /// - `password`, `apikey`: the account form, typed with the remote's keyboard.
 /// - `invite`: an invite link handed to the app, as `koan://join`.
 /// - `signout`: signs in with a password, then out from Settings.
+/// - `revoked`: signs in with an API key, revokes it on the server and
+///   relaunches; the app must say the server refused its sign-in.
 /// - `wrong-password`: the form with a password the server refuses.
 /// - `unreachable`: asks an address nothing answers for a code.
 /// - `menu`: Menu on the sign-in page, then back into the app.
@@ -35,6 +37,9 @@ final class TVSignInTests: XCTestCase {
         case "signout":
             try signInWithForm(apiKey: false, expectSuccess: true, route: route)
             signOut(route: route)
+        case "revoked":
+            try signInWithForm(apiKey: true, expectSuccess: true, route: route)
+            try revokeAndRelaunch(route: route)
         case "invite": try joinInvite(route: route)
         case "unreachable": unreachable(route: route)
         case "menu": menu(route: route)
@@ -106,6 +111,32 @@ final class TVSignInTests: XCTestCase {
         remote.press(.select)
         XCTAssertTrue(app.buttons["Get a Code"].waitForExistence(timeout: 20), "signed out, the sign-in page is back")
         snap("\(route)-05-signed-out")
+    }
+
+    private func revokeAndRelaunch(route: String) throws {
+        let server = try XCTUnwrap(env["KOAN_SIGNIN_SERVER"])
+        let key = try XCTUnwrap(env["KOAN_SIGNIN_SECRET"])
+        var url = try XCTUnwrap(URLComponents(string: server + "/rest/koanRevokeKey"))
+        url.queryItems = [
+            .init(name: "apiKey", value: key), .init(name: "v", value: "1.16.1"),
+            .init(name: "c", value: "tv-signin-test"), .init(name: "f", value: "json"),
+        ]
+        let done = expectation(description: "revoked")
+        var body = ""
+        URLSession.shared.dataTask(with: try XCTUnwrap(url.url)) { data, _, _ in
+            body = data.map { String(decoding: $0, as: UTF8.self) } ?? ""
+            done.fulfill()
+        }.resume()
+        wait(for: [done], timeout: 10)
+        XCTAssertTrue(body.contains("\"status\":\"ok\""), "the key is revoked: \(body)")
+
+        app.terminate()
+        app.launch()
+        let refused = app.staticTexts.containing(
+            NSPredicate(format: "label CONTAINS %@", "refused kōan's sign-in")
+        ).firstMatch
+        XCTAssertTrue(refused.waitForExistence(timeout: 60), "the app says the server refused its sign-in")
+        snap("\(route)-04-refused")
     }
 
     private func joinInvite(route: String) throws {
