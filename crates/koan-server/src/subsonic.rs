@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Path as UrlPath, Query, RawQuery, Request, State};
+use axum::extract::{FromRequestParts, Path as UrlPath, Request, State};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -304,6 +305,64 @@ impl SubsonicParams {
     }
 }
 
+/// A `formPost` body, read by [`form_post`] and handed to the parameter
+/// extractors beside the URL's query string, which is left as it came. Not
+/// written into the URI: `http` refuses one past 64 KB, and a form is how a
+/// client sends what does not fit in a URL.
+#[derive(Clone)]
+struct FormBody(Arc<str>);
+
+/// The URL's query string, then the form body's, as one: what handlers read,
+/// and what the sign-in throttle must read too, or credentials sent in a form
+/// would pass it unseen.
+fn request_params(uri: &axum::http::Uri, extensions: &axum::http::Extensions) -> Option<String> {
+    let query = uri.query().filter(|q| !q.is_empty());
+    let form = extensions
+        .get::<FormBody>()
+        .map(|f| &*f.0)
+        .filter(|f| !f.is_empty());
+    match (query, form) {
+        (Some(q), Some(f)) => Some(format!("{q}&{f}")),
+        (q, f) => q.or(f).map(str::to_owned),
+    }
+}
+
+/// The request's parameters as one query string: the URL's first, then a
+/// `formPost` body's, so a parameter in the URL wins where a handler reads one
+/// value. In place of axum's `RawQuery`, which sees only the URL.
+struct RawQuery(Option<String>);
+
+impl<S: Send + Sync> FromRequestParts<S> for RawQuery {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(request_params(&parts.uri, &parts.extensions)))
+    }
+}
+
+/// axum's `Query` over the parameters [`RawQuery`] sees.
+struct Query<T>(T);
+
+impl<T: serde::de::DeserializeOwned, S: Send + Sync> FromRequestParts<S> for Query<T> {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        serde_urlencoded::from_str(
+            request_params(&parts.uri, &parts.extensions)
+                .as_deref()
+                .unwrap_or_default(),
+        )
+        .map(Query)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to deserialize query string: {e}"),
+            )
+                .into_response()
+        })
+    }
+}
+
 /// Query parameters kept as an ordered list of pairs.
 ///
 /// `serde_urlencoded`, which axum's `Query` uses, cannot deserialise a repeated
@@ -445,7 +504,7 @@ async fn throttle_auth(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let params = RawParams::parse(request.uri().query());
+    let params = RawParams::parse(request_params(request.uri(), request.extensions()).as_deref());
     let username = params.get("u").unwrap_or_default().to_owned();
     let unguessable = params.get("apiKey").is_some()
         || (params.get("t").is_some()
@@ -783,6 +842,21 @@ enum Via {
 }
 
 impl Caller {
+    /// Refuse a request about the account's own credentials, its password and
+    /// API keys, unless it is signed with one of them: an API key or the
+    /// account's password. An app password is a credential handed to one
+    /// client, which must not mint or revoke others; the shared secret is no
+    /// account's.
+    fn may_manage_credentials(&self) -> Result<(), SubsonicError> {
+        match self.via {
+            Via::ApiKey | Via::Password => Ok(()),
+            Via::AppPassword | Via::SharedSecret => Err(SubsonicError::new(
+                SubsonicErrorCode::NotAuthorized,
+                "sign in with the account's password or an API key to manage its credentials",
+            )),
+        }
+    }
+
     /// Whose shares the caller may list and change: their own, or everyone's
     /// for an admin.
     fn share_owner(&self) -> Option<i64> {
@@ -1286,6 +1360,10 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             "played",
             extras.played.get(&track.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt(
+            "starred",
+            extras.starred.get(&track.id).map(|&at| iso(at)).as_deref(),
+        )
         .attr_opt_int(
             "userRating",
             extras.rating.get(&track.id).map(|&r| r.into()),
@@ -1370,6 +1448,10 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
             "played",
             extras.played.get(&album.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt(
+            "starred",
+            extras.starred.get(&album.id).map(|&at| iso(at)).as_deref(),
+        )
         .attr_opt_int(
             "userRating",
             extras.rating.get(&album.id).map(|&r| r.into()),
@@ -1409,6 +1491,10 @@ fn artist_id3_node(id: i64, name: &str, extras: &ArtistExtras) -> XmlNode {
         .attr("musicBrainzId", mbid.unwrap_or_default())
         .attr("sortName", sort_name.unwrap_or_default())
         .attr_opt_int("userRating", extras.rating.get(&id).map(|&r| r.into()))
+        .attr_opt(
+            "starred",
+            extras.starred.get(&id).map(|&at| iso(at)).as_deref(),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -1454,6 +1540,8 @@ struct SongExtras {
     played: HashMap<i64, i64>,
     /// The caller's rating, 1 to 5.
     rating: HashMap<i64, u8>,
+    /// When the caller favourited it, seconds since the epoch.
+    starred: HashMap<i64, i64>,
 }
 
 /// The caller's own history: when someone else last played a track is theirs
@@ -1505,6 +1593,7 @@ fn song_extras<'a>(
             queries::RatingKind::Track,
             tracks.iter().map(|t| t.id),
         )?,
+        starred: starred(db, user, Favourite::Track, &ids)?,
     })
 }
 
@@ -1518,6 +1607,41 @@ fn rated(
     queries::ratings(&db.conn, user, kind, ids).map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
+enum Favourite {
+    Track,
+    Album,
+    Artist,
+}
+
+/// When the caller favourited these rows (`ids` as from [`json_ids`]), seconds
+/// since the epoch. `user` is already resolved.
+fn starred(
+    db: &Database,
+    user: i64,
+    kind: Favourite,
+    ids: &str,
+) -> Result<HashMap<i64, i64>, SubsonicError> {
+    let sql = match kind {
+        Favourite::Track => {
+            "SELECT track_id, COALESCE(unixepoch(created_at), 0) FROM favourites
+             WHERE track_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
+        }
+        Favourite::Album => {
+            "SELECT album_id, COALESCE(unixepoch(created_at), 0) FROM favourite_albums
+             WHERE album_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
+        }
+        Favourite::Artist => {
+            "SELECT artist_id, COALESCE(unixepoch(created_at), 0) FROM favourite_artists
+             WHERE artist_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
+        }
+    };
+    Ok(by_id(db, sql, rusqlite::params![ids, user], |r| {
+        Ok((r.get(0)?, r.get(1)?))
+    })?
+    .into_iter()
+    .collect())
+}
+
 /// What `AlbumID3` carries beyond `AlbumRow`.
 #[derive(Default)]
 struct AlbumExtras {
@@ -1528,6 +1652,7 @@ struct AlbumExtras {
     stats: HashMap<i64, queries::AlbumStats>,
     played: HashMap<i64, i64>,
     rating: HashMap<i64, u8>,
+    starred: HashMap<i64, i64>,
 }
 
 /// `tracks`, when the caller already read every track of these albums, is
@@ -1599,6 +1724,7 @@ fn album_extras<'a>(
             queries::RatingKind::Album,
             album_ids.iter().copied(),
         )?,
+        starred: starred(db, user, Favourite::Album, &ids)?,
     })
 }
 
@@ -1631,6 +1757,7 @@ struct ArtistExtras {
     /// MusicBrainz artist id and sort name.
     names: HashMap<i64, (Option<String>, Option<String>)>,
     rating: HashMap<i64, u8>,
+    starred: HashMap<i64, i64>,
 }
 
 fn artist_extras(
@@ -1639,13 +1766,15 @@ fn artist_extras(
     ids: impl IntoIterator<Item = i64>,
 ) -> Result<ArtistExtras, SubsonicError> {
     let ids: Vec<i64> = ids.into_iter().collect();
+    let json = json_ids(ids.iter().copied());
     Ok(ArtistExtras {
         uids: Uids::load(db, ids.iter().copied(), [], [])?,
         rating: rated(db, user, queries::RatingKind::Artist, ids.iter().copied())?,
+        starred: starred(db, history_user(db, user)?, Favourite::Artist, &json)?,
         names: by_id(
             db,
             "SELECT id, mbid, sort_name FROM artists WHERE id IN (SELECT value FROM json_each(?1))",
-            [json_ids(ids)],
+            [&json],
             |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))),
         )?
         .into_iter()
@@ -1653,8 +1782,10 @@ fn artist_extras(
     })
 }
 
-/// An album as a directory `child`, for the file-browse endpoints.
-fn album_child_node(album: &queries::AlbumRow, uids: &Uids) -> XmlNode {
+/// An album as a directory `child`, for the file-browse endpoints, with the
+/// caller's own marks on it as `AlbumID3` carries them.
+fn album_child_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode {
+    let uids = &extras.uids;
     XmlNode::new("child")
         .attr("id", &uids.album(album.id))
         .attr("parent", &uids.artist(album.artist_id))
@@ -1664,6 +1795,18 @@ fn album_child_node(album: &queries::AlbumRow, uids: &Uids) -> XmlNode {
         .attr("coverArt", &uids.album(album.id))
         .attr_opt_int("year", year_from_date(album.date.as_deref()))
         .attr_bool("isDir", true)
+        .attr_opt(
+            "played",
+            extras.played.get(&album.id).map(|&at| iso(at)).as_deref(),
+        )
+        .attr_opt(
+            "starred",
+            extras.starred.get(&album.id).map(|&at| iso(at)).as_deref(),
+        )
+        .attr_opt_int(
+            "userRating",
+            extras.rating.get(&album.id).map(|&r| r.into()),
+        )
 }
 
 /// Artists bucketed by first letter — the shape `getArtists` (ID3) and
@@ -1876,7 +2019,7 @@ async fn get_indexes(
     Query(indexes): Query<IndexesParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
+        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
             let last_modified = state.last_modified(db)?;
             // Nothing changed since the caller last looked: the timestamp
             // alone, which is all a client checking for changes reads.
@@ -1891,7 +2034,7 @@ async fn get_indexes(
                 ));
             }
             let index_map = artist_index(db)?;
-            let uids = Uids::load(db, index_map.values().flatten().map(|a| a.id), [], [])?;
+            let extras = artist_extras(db, user, index_map.values().flatten().map(|a| a.id))?;
 
             let mut indexes_node = XmlNode::new("indexes")
                 .attr_int("lastModified", last_modified)
@@ -1904,8 +2047,16 @@ async fn get_indexes(
                 for artist in group {
                     index_node = index_node.child(
                         XmlNode::new("artist")
-                            .attr("id", &uids.artist(artist.id))
-                            .attr("name", &artist.name),
+                            .attr("id", &extras.uids.artist(artist.id))
+                            .attr("name", &artist.name)
+                            .attr_opt(
+                                "starred",
+                                extras.starred.get(&artist.id).map(|&at| iso(at)).as_deref(),
+                            )
+                            .attr_opt_int(
+                                "userRating",
+                                extras.rating.get(&artist.id).map(|&r| r.into()),
+                            ),
                     );
                 }
                 indexes_node = indexes_node.child(index_node);
@@ -1937,13 +2088,14 @@ async fn get_music_directory(
                 if let Some(artist) = artist {
                     let albums = queries::albums_for_artist(&db.conn, id)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                    let uids = Uids::load(db, [artist.id], albums.iter().map(|a| a.id), [])?;
+                    let extras = album_extras(db, user, &albums, None)?;
+                    let uids = &extras.uids;
                     let mut dir = XmlNode::new("directory")
                         .attr("id", &uids.artist(artist.id))
                         .attr("name", &artist.name)
                         .array_of("child");
                     for album in &albums {
-                        dir = dir.child(album_child_node(album, &uids));
+                        dir = dir.child(album_child_node(album, &extras));
                     }
                     return Ok(b.child(dir));
                 }
@@ -4004,6 +4156,9 @@ fn respond_admin(
         if caller.role != Role::Admin {
             return Err(SubsonicError::not_authorized());
         }
+        // Accounts are made, invited, promoted and deleted here: an admin's
+        // app password must not turn into an account or a key of its own.
+        caller.may_manage_credentials()?;
         let db = state.open_db()?;
         f(&db, &caller, SubsonicResponse::ok(json))
     });
@@ -4284,6 +4439,11 @@ async fn koan_pair_approve(
                 .get("pair")
                 .ok_or_else(|| SubsonicError::missing_param("pair"))?;
             let decline = params.get("decline") == Some("true");
+            // Approving mints an API key for the device: not something an app
+            // password, one client's credential, may hand out.
+            if !decline {
+                caller.may_manage_credentials()?;
+            }
             if !decline && caller.user_id == queries::LOCAL_USER {
                 return Err(SubsonicError::new(
                     SubsonicErrorCode::Generic,
@@ -4303,10 +4463,11 @@ async fn koan_pair_approve(
 }
 
 /// OpenSubsonic `formPost`: the parameters of an
-/// `application/x-www-form-urlencoded` POST body are appended to the query
-/// string, so every handler reads one set of parameters however they were
-/// sent, repeated keys included. Query parameters come first, so they win
-/// where a handler reads a single value.
+/// `application/x-www-form-urlencoded` POST body are read here and kept as a
+/// [`FormBody`], which the parameter extractors read after the query string,
+/// so every handler sees one set of parameters however they were sent,
+/// repeated keys included. A body past [`MAX_FORM_BODY`], or not UTF-8, is
+/// refused with a Subsonic error.
 async fn form_post(req: Request, next: Next) -> Response {
     let is_form = req.method() == Method::POST
         && req
@@ -4323,28 +4484,20 @@ async fn form_post(req: Request, next: Next) -> Response {
     }
 
     let (mut parts, body) = req.into_parts();
+    let json = RawParams::parse(parts.uri.query()).auth().wants_json();
     let Ok(bytes) = axum::body::to_bytes(body, MAX_FORM_BODY).await else {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+        return SubsonicResponse::error(
+            json,
+            &SubsonicError::internal(format!(
+                "The form is larger than {} KB",
+                MAX_FORM_BODY >> 10
+            )),
+        );
     };
     let Ok(form) = std::str::from_utf8(&bytes) else {
-        return StatusCode::BAD_REQUEST.into_response();
+        return SubsonicResponse::error(json, &SubsonicError::internal("The form is not UTF-8"));
     };
-    let form = form.trim();
-    let query = match parts.uri.query().filter(|q| !q.is_empty()) {
-        Some(q) if !form.is_empty() => format!("{q}&{form}"),
-        Some(q) => q.to_owned(),
-        None => form.to_owned(),
-    };
-    let path_and_query = format!("{}?{query}", parts.uri.path());
-    let mut uri = parts.uri.into_parts();
-    uri.path_and_query = match path_and_query.parse() {
-        Ok(pq) => Some(pq),
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
-    parts.uri = match axum::http::Uri::from_parts(uri) {
-        Ok(u) => u,
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
+    parts.extensions.insert(FormBody(form.trim().into()));
     next.run(Request::from_parts(parts, axum::body::Body::empty()))
         .await
 }
@@ -4867,8 +5020,10 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
 }
 
 /// The Subsonic routes with their state and the layers every request passes.
-/// `form_post` is outermost, so the sign-in throttle sees credentials sent in
-/// a form body as well as in the query.
+/// `form_post` is outermost, so its [`FormBody`] is in place when the sign-in
+/// throttle reads the request's parameters, which it does through
+/// [`request_params`] as the handlers do: credentials sent in a form body are
+/// throttled, and an API key sent in one passes, as in the query.
 fn subsonic_app(state: Arc<AppState>) -> axum::Router {
     let throttle = Arc::new(AuthThrottle::new(
         state.password.is_some().then(|| state.username.clone()),
@@ -5806,6 +5961,97 @@ mod tests {
         );
     }
 
+    /// An app password is one client's credential and the shared secret is no
+    /// account's: neither may make an account, an invite or a key, change who
+    /// may do what, or sign a device in.
+    #[tokio::test]
+    async fn app_passwords_and_the_shared_secret_manage_no_credentials() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let app_password_for = |username: &str| {
+            let user = queries::auth::get_user_by_username(&db.conn, username)
+                .unwrap()
+                .unwrap();
+            queries::app_passwords::create_app_password(
+                &db.conn,
+                state.app_key.as_ref().unwrap(),
+                user.id,
+                "arpeggi",
+            )
+            .unwrap()
+            .1
+        };
+        let as_app_password = |username: &str| {
+            let password = app_password_for(username);
+            let salt = "c0ffee";
+            let token = format!("{:x}", md5::compute(format!("{password}{salt}")));
+            [
+                format!("u={username}&p={password}"),
+                format!("u={username}&t={token}&s={salt}"),
+            ]
+        };
+        let call = |path: String| {
+            let state = state.clone();
+            async move { get_response(build_test_router(state), &path).await.1 }
+        };
+
+        let mut admin = as_app_password("owner").to_vec();
+        admin.push(auth_query(""));
+        for auth in &admin {
+            for path in [
+                "koanUsers?",
+                "koanCreateUser?username=mallory&role=admin&",
+                "koanInvite?username=owner&",
+                "koanInvite?username=owner&reset=true&",
+                "koanSetUserRole?username=mate&role=admin&",
+                "koanDeleteUser?username=mate&",
+            ] {
+                let body = call(format!("/rest/{path}{auth}&v=1.16.1&c=test")).await;
+                assert!(body.contains("code=\"50\""), "{path} as {auth}: {body}");
+            }
+        }
+
+        let opened = crate::pair::pairings()
+            .open("Den TV", "198.51.100.7".parse().unwrap())
+            .unwrap();
+        let mut mate = as_app_password("mate").to_vec();
+        mate.push(auth_query(""));
+        for auth in &mate {
+            let body = call(format!(
+                "/rest/koanPairApprove?pair={}&{auth}&v=1.16.1&c=test",
+                opened.id
+            ))
+            .await;
+            assert!(body.contains("code=\"50\""), "approve as {auth}: {body}");
+        }
+
+        assert!(
+            queries::auth::get_user_by_username(&db.conn, "mallory")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            queries::auth::get_user_by_username(&db.conn, "mate")
+                .unwrap()
+                .unwrap()
+                .role,
+            Role::Readonly
+        );
+        assert!(
+            queries::api_keys::list_api_keys(&db.conn, None)
+                .unwrap()
+                .is_empty(),
+            "no key made"
+        );
+        // Still waiting for someone who may approve it.
+        let body = call(format!(
+            "/rest/koanPairApprove?pair={}&u=mate&p=hunter22&v=1.16.1&c=test",
+            opened.id
+        ))
+        .await;
+        assert!(body.contains("Den TV"), "{body}");
+    }
+
     #[tokio::test]
     async fn admins_manage_accounts_through_the_koan_endpoints() {
         let (state, _dir) = test_state();
@@ -6414,6 +6660,200 @@ mod tests {
 
         rate(gamma_album, "0").await;
         assert_eq!(album_list2(&state, "type=highest").await, ["Alpha"]);
+    }
+
+    #[tokio::test]
+    async fn favourites_carry_starred_in_json_and_xml() {
+        let (state, _dir) = test_state();
+        let [alpha, beta, _] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let uids = |track| {
+            let db = Database::open(state.pool.path()).unwrap();
+            let row = queries::get_track_row(&db.conn, track).unwrap().unwrap();
+            (
+                uid_of(&state, queries::UidKind::Track, track),
+                uid_of(&state, queries::UidKind::Album, row.album_id.unwrap()),
+                uid_of(&state, queries::UidKind::Artist, row.artist_id.unwrap()),
+            )
+        };
+        let (song, album, artist) = uids(alpha);
+        let (_, other_album, other_artist) = uids(beta);
+        json_of(
+            build_test_router(state.clone()),
+            &format!(
+                "/rest/star?{}&id={song}&albumId={album}&artistId={artist}",
+                auth_query("f=json")
+            ),
+        )
+        .await;
+        let get = |path: String| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("f=json")),
+                )
+                .await
+            }
+        };
+        let is_iso = |v: &serde_json::Value| {
+            v.as_str()
+                .is_some_and(|s| s.len() == 24 && s.contains('T') && s.ends_with('Z'))
+        };
+
+        let v = get(format!("getAlbum?id={album}")).await;
+        assert!(is_iso(&v["album"]["starred"]), "{v}");
+        assert!(is_iso(&v["album"]["song"][0]["starred"]), "{v}");
+        let v = get(format!("getArtist?id={artist}")).await;
+        assert!(is_iso(&v["artist"]["starred"]), "{v}");
+        assert!(is_iso(&v["artist"]["album"][0]["starred"]), "{v}");
+        let v = get("search3?query=Alpha".to_owned()).await;
+        assert!(is_iso(&v["searchResult3"]["song"][0]["starred"]), "{v}");
+
+        let v = get(format!("getAlbum?id={other_album}")).await;
+        assert!(v["album"]["starred"].is_null(), "{v}");
+        assert!(v["album"]["song"][0]["starred"].is_null(), "{v}");
+        let v = get(format!("getArtist?id={other_artist}")).await;
+        assert!(v["artist"]["starred"].is_null(), "{v}");
+        let mate = json_of(
+            build_test_router(state.clone()),
+            &format!("/rest/getAlbum?id={album}&u=mate&p=hunter22&v=1.16.1&c=test&f=json"),
+        )
+        .await;
+        assert!(
+            mate["album"]["starred"].is_null(),
+            "another account's: {mate}"
+        );
+        assert!(mate["album"]["song"][0]["starred"].is_null(), "{mate}");
+
+        let xml = |path: String| {
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("")),
+                )
+                .await
+                .1
+            }
+        };
+        let body = xml(format!("getAlbum?id={album}")).await;
+        assert_eq!(body.matches(" starred=\"").count(), 2, "{body}");
+        let body = xml(format!("getArtist?id={artist}")).await;
+        assert_eq!(body.matches(" starred=\"").count(), 2, "{body}");
+        let body = xml(format!("getAlbum?id={other_album}")).await;
+        assert!(!body.contains(" starred=\""), "{body}");
+    }
+
+    /// Folder-browse clients read artists from `getIndexes` and albums from
+    /// `getMusicDirectory`, and get the same marks as ID3 clients there.
+    #[tokio::test]
+    async fn folder_browse_carries_starred_and_ratings_in_json_and_xml() {
+        let (state, _dir) = test_state();
+        let [alpha, ..] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let other = {
+            let db = Database::open(state.pool.path()).unwrap();
+            let mut meta = track_meta("/music/other.flac", "Other", "Other", 1);
+            meta.artist = "Other Artist".into();
+            meta.album_artist = Some("Other Artist".into());
+            queries::upsert_track(&db.conn, &meta).unwrap()
+        };
+        let uids = |track| {
+            let db = Database::open(state.pool.path()).unwrap();
+            let row = queries::get_track_row(&db.conn, track).unwrap().unwrap();
+            (
+                uid_of(&state, queries::UidKind::Track, track),
+                uid_of(&state, queries::UidKind::Album, row.album_id.unwrap()),
+                uid_of(&state, queries::UidKind::Artist, row.artist_id.unwrap()),
+            )
+        };
+        let (song, album, artist) = uids(alpha);
+        let (_, _, other_artist) = uids(other);
+        assert_ne!(artist, other_artist);
+        let call = |path: String| {
+            let state = state.clone();
+            async move { json_of(build_test_router(state), &path).await }
+        };
+        call(format!(
+            "/rest/star?{}&id={song}&albumId={album}&artistId={artist}",
+            auth_query("f=json")
+        ))
+        .await;
+        call(format!(
+            "/rest/setRating?{}&id={album}&rating=4",
+            auth_query("f=json")
+        ))
+        .await;
+        call(format!(
+            "/rest/setRating?{}&id={artist}&rating=3",
+            auth_query("f=json")
+        ))
+        .await;
+        let get = |path: String| call(format!("/rest/{path}&{}", auth_query("f=json")));
+        let is_iso = |v: &serde_json::Value| {
+            v.as_str()
+                .is_some_and(|s| s.len() == 24 && s.contains('T') && s.ends_with('Z'))
+        };
+        let indexed = |v: &serde_json::Value, id: &str| {
+            v["indexes"]["index"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|i| i["artist"].as_array().unwrap().clone())
+                .find(|a| a["id"] == id)
+                .unwrap_or_else(|| panic!("{id} not indexed: {v}"))
+        };
+
+        let v = get("getIndexes?".to_owned()).await;
+        let starred = indexed(&v, &artist);
+        assert!(is_iso(&starred["starred"]), "{v}");
+        assert_eq!(starred["userRating"], 3, "{v}");
+        let other = indexed(&v, &other_artist);
+        assert!(
+            other["starred"].is_null() && other["userRating"].is_null(),
+            "{v}"
+        );
+
+        let v = get(format!("getMusicDirectory?id={artist}")).await;
+        let child = &v["directory"]["child"][0];
+        assert!(is_iso(&child["starred"]), "{v}");
+        assert_eq!(child["userRating"], 4, "{v}");
+        let v = get(format!("getMusicDirectory?id={album}")).await;
+        assert!(is_iso(&v["directory"]["child"][0]["starred"]), "{v}");
+
+        let mate = |path: &str| {
+            call(format!(
+                "/rest/{path}&u=mate&p=hunter22&v=1.16.1&c=test&f=json"
+            ))
+        };
+        let v = mate("getIndexes?").await;
+        assert!(
+            indexed(&v, &artist)["starred"].is_null(),
+            "another account's: {v}"
+        );
+        let v = mate(&format!("getMusicDirectory?id={artist}")).await;
+        assert!(v["directory"]["child"][0]["starred"].is_null(), "{v}");
+
+        let xml = |path: String| {
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("")),
+                )
+                .await
+                .1
+            }
+        };
+        let body = xml("getIndexes?".to_owned()).await;
+        assert_eq!(body.matches(" starred=\"").count(), 1, "{body}");
+        assert_eq!(body.matches(" userRating=\"3\"").count(), 1, "{body}");
+        let body = xml(format!("getMusicDirectory?id={artist}")).await;
+        assert_eq!(body.matches(" starred=\"").count(), 1, "{body}");
+        assert_eq!(body.matches(" userRating=\"4\"").count(), 1, "{body}");
     }
 
     #[tokio::test]
@@ -7823,6 +8263,181 @@ mod tests {
                 uid_of(&state, queries::UidKind::Track, first),
                 uid_of(&state, queries::UidKind::Track, second)
             ]
+        );
+    }
+
+    /// The router on a real socket, so requests go through hyper's own
+    /// parsing, URI limits included.
+    async fn serve(state: Arc<AppState>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        format!("http://{addr}")
+    }
+
+    /// The whole Subsonic app, throttle included, on a real socket that tells
+    /// the throttle where each request came from.
+    async fn serve_app(state: Arc<AppState>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = subsonic_app(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{addr}")
+    }
+
+    async fn post_text(http: &reqwest::Client, url: &str, form: &str) -> String {
+        http.post(url)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(form.to_owned())
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn passwords_sent_in_a_form_are_throttled_as_in_the_query() {
+        let (state, _dir) = test_state();
+        let base = serve_app(state).await;
+        let http = reqwest::Client::new();
+        let ping = format!("{base}/rest/ping");
+        for _ in 0..10 {
+            let body = post_text(&http, &ping, "u=mate&p=wrong&v=1.16.1&c=test").await;
+            assert!(body.contains("code=\"40\""), "{body}");
+        }
+        let body = post_text(&http, &ping, "u=mate&p=hunter22&v=1.16.1&c=test").await;
+        assert!(body.contains("Too many failed sign-ins"), "{body}");
+        // In the query, the same account is as spent.
+        let body = http
+            .get(format!("{ping}?u=mate&p=hunter22&v=1.16.1&c=test"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(body.contains("Too many failed sign-ins"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_api_key_or_the_shared_token_in_a_form_is_not_a_password_guess() {
+        let (state, _dir) = test_state();
+        let key = api_key(&state, "mate");
+        let base = serve_app(state).await;
+        let http = reqwest::Client::new();
+        let ping = format!("{base}/rest/ping");
+        // More wrong keys than the address may fail passwords: none counts.
+        for _ in 0..=AUTH_FAILURES_PER_ADDRESS_PER_MINUTE {
+            let body = post_text(&http, &ping, "apiKey=wrong&v=1.16.1&c=test").await;
+            assert!(body.contains("code=\"44\""), "{body}");
+        }
+        let body = post_text(&http, &ping, &format!("apiKey={key}&v=1.16.1&c=test")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = post_text(&http, &ping, &auth_query("")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = post_text(&http, &ping, "u=mate&p=hunter22&v=1.16.1&c=test").await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+    }
+
+    /// A form past the 64 KB `http` allows a URI: what `formPost` is for.
+    #[tokio::test]
+    async fn a_form_longer_than_any_url_reaches_the_handler() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let track = {
+            let db = Database::open(state.pool.path()).unwrap();
+            queries::track_id_by_path(&db.conn, "/music/test.flac")
+                .unwrap()
+                .unwrap()
+        };
+        let uid = uid_of(&state, queries::UidKind::Track, track);
+        let base = serve(state).await;
+        let http = reqwest::Client::new();
+        let songs = vec![format!("songId={uid}"); 2500].join("&");
+        assert!(songs.len() > 65_534);
+
+        let created: serde_json::Value = http
+            .post(format!(
+                "{base}/rest/createPlaylist?{}",
+                auth_query("f=json")
+            ))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(format!("name=long&{songs}"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let playlist = &created["subsonic-response"]["playlist"];
+        assert_eq!(playlist["songCount"], 2500, "{created}");
+
+        let id = playlist["id"].as_str().unwrap();
+        let added = vec![format!("songIdToAdd={uid}"); 2500].join("&");
+        let updated: serde_json::Value = http
+            .post(format!("{base}/rest/updatePlaylist"))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(format!("{}&playlistId={id}&{added}", auth_query("f=json")))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(updated["subsonic-response"]["status"], "ok", "{updated}");
+        let got: serde_json::Value = http
+            .get(format!(
+                "{base}/rest/getPlaylist?{}&id={id}",
+                auth_query("f=json")
+            ))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            got["subsonic-response"]["playlist"]["songCount"], 5000,
+            "{got}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_get_reads_its_query_and_an_oversized_form_is_refused() {
+        let (state, _dir) = test_state();
+        let base = serve(state).await;
+        let http = reqwest::Client::new();
+        let ping: serde_json::Value = http
+            .get(format!("{base}/rest/ping?{}", auth_query("f=json")))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(ping["subsonic-response"]["status"], "ok", "{ping}");
+
+        let padding = "x".repeat(MAX_FORM_BODY + 1);
+        let refused: serde_json::Value = http
+            .post(format!("{base}/rest/ping?f=json"))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(format!("{}&pad={padding}", auth_query("")))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let r = &refused["subsonic-response"];
+        assert_eq!(r["status"], "failed", "{refused}");
+        assert!(
+            r["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("larger than"),
+            "{refused}"
         );
     }
 
