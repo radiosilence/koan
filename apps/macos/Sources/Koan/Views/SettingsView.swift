@@ -883,6 +883,7 @@ private struct DevicesSettings: View {
     @Environment(EngineMirror.self) private var mirror
     #if os(macOS)
     @Environment(AppState.self) private var app
+    @Environment(\.openWindow) private var openWindow
     #endif
     @State private var address = ""
     @State private var grantee = ""
@@ -1086,6 +1087,12 @@ extension DevicesSettings {
                     set: { on in
                         model.edit { $0.devicesKeepRunning = on }
                         residency.keepRunning = on
+                        // Turned off from the menu bar, with the window
+                        // closed: closing Settings would otherwise quit kōan
+                        // and leave it to reopen with no window.
+                        if !on, !Residency.mainWindowShown {
+                            openWindow(id: MainWindow.id)
+                        }
                     }))
             Toggle(
                 "Open at login",

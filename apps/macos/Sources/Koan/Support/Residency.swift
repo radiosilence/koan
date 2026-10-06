@@ -21,7 +21,13 @@ final class Residency {
     /// settings window's model, which holds the rest of the settings and would
     /// otherwise write its own copy of this back over it.
     var keepRunning = false {
-        didSet { if !keepRunning { showInDock() } }
+        didSet {
+            // AppKit quits a windowless app on its own when it judges nobody
+            // will notice, which a menu bar app that other devices control is
+            // not.
+            ProcessInfo.processInfo.automaticTerminationSupportEnabled = !keepRunning
+            if !keepRunning { showInDock() }
+        }
     }
 
     /// Whether macOS will open kōan at login. Asked of the system, which owns
@@ -40,14 +46,20 @@ final class Residency {
         observers.append(
             centre.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) {
                 [weak self] note in
-                guard (note.object as? NSWindow)?.identifier?.rawValue == MainWindow.id else { return }
-                MainActor.assumeIsolated { self?.mainWindowClosed() }
+                let window = note.object as? NSWindow
+                MainActor.assumeIsolated {
+                    guard window?.identifier?.rawValue == MainWindow.id else { return }
+                    self?.mainWindowClosed()
+                }
             })
         observers.append(
             centre.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) {
                 [weak self] note in
-                guard (note.object as? NSWindow)?.identifier?.rawValue == MainWindow.id else { return }
-                MainActor.assumeIsolated { self?.showInDock() }
+                let window = note.object as? NSWindow
+                MainActor.assumeIsolated {
+                    guard window?.identifier?.rawValue == MainWindow.id else { return }
+                    self?.showInDock()
+                }
             })
     }
 
@@ -77,6 +89,10 @@ final class Residency {
         refreshLogin()
     }
 
+    static var mainWindowShown: Bool {
+        NSApp.windows.contains { $0.identifier?.rawValue == MainWindow.id && $0.isVisible }
+    }
+
     private func mainWindowClosed() {
         guard keepRunning else { return }
         log.info("window closed; staying in the menu bar")
@@ -90,13 +106,48 @@ final class Residency {
     }
 }
 
-/// Decides whether closing the last window quits kōan.
+/// Starts the engine at launch, and decides whether closing the last window
+/// quits kōan.
+///
+/// The engine is started here rather than by the main window because a window
+/// closed to the menu bar is restored closed: a kōan opened at login would
+/// otherwise have no engine, and so be out of reach, until someone opened it.
+@MainActor
+@Observable
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    @MainActor var residency: Residency?
+    private(set) var state: AppState?
+    private(set) var startupError: String?
+    /// A link opened before the engine was up, handled once it is.
+    @ObservationIgnored var pendingURL: URL?
 
-    @MainActor
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { await start() }
+    }
+
+    private func start() async {
+        do {
+            let created = try await AppState()
+            await created.start()
+            state = created
+            if let pendingURL {
+                created.open(url: pendingURL)
+                self.pendingURL = nil
+            }
+        } catch {
+            startupError = String(describing: error)
+        }
+        // Restored with the window closed: resident, kōan belongs in the
+        // menu bar only.
+        if state?.residency.keepRunning == true, !Residency.mainWindowShown {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// Not before the setting is read: AppKit asks at launch, when state
+    /// restoration has opened no window.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        !(residency?.keepRunning ?? false)
+        guard let state else { return false }
+        return !state.residency.keepRunning
     }
 }
 #endif

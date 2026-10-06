@@ -4,11 +4,9 @@ import SwiftUI
 @main
 struct KoanApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
-    @State private var state: AppState?
-
-    @State private var startupError: String?
-    /// A link opened before the engine was up, handled once it is.
-    @State private var pendingURL: URL?
+    /// Started by the delegate at launch rather than by the window, which a
+    /// kōan resident in the menu bar may never open.
+    private var state: AppState? { delegate.state }
 
     var body: some Scene {
         Window("kōan", id: MainWindow.id) {
@@ -33,7 +31,7 @@ struct KoanApp: App {
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
                         .tint(.koanAccent)
-                } else if let startupError {
+                } else if let startupError = delegate.startupError {
                     StartupErrorView(message: startupError)
                 } else {
                     ProgressView().controlSize(.small)
@@ -58,22 +56,7 @@ struct KoanApp: App {
             // window that jumps is worse than a window that is wide.
             .frame(minWidth: 1260, minHeight: 620)
             .onOpenURL { url in
-                if let state { state.open(url: url) } else { pendingURL = url }
-            }
-            .task {
-                guard state == nil, startupError == nil else { return }
-                do {
-                    let created = try await AppState()
-                    await created.start()
-                    delegate.residency = created.residency
-                    state = created
-                    if let pendingURL {
-                        created.open(url: pendingURL)
-                        self.pendingURL = nil
-                    }
-                } catch {
-                    startupError = String(describing: error)
-                }
+                if let state { state.open(url: url) } else { delegate.pendingURL = url }
             }
         }
         .windowToolbarStyle(.unified(showsTitle: false))
