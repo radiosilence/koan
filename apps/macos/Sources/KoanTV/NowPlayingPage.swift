@@ -61,7 +61,7 @@ struct NowPlayingPage: View {
 
     private var idle: some View {
         ContentUnavailableView {
-            Label("Nothing playing", systemImage: "music.note")
+            KoanLabel("Nothing playing", icon: Icon.track)
         } description: {
             if mirror.signInRefused {
                 Text(EngineMirror.signInRefusedDetail)
@@ -95,23 +95,20 @@ struct NowPlayingPage: View {
         VStack(alignment: .leading, spacing: 22) {
             if let controlled = player.controlled, player.isControllingAnother {
                 Text("Playing on \(controlled.name)")
-                    .font(.callout.weight(.semibold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.secondary)
+                    .koanText(.meta, .muted)
             }
             if let entry = player.currentEntry {
                 Text(entry.title)
-                    .font(.system(size: 56, weight: .bold))
+                    .koanText(.display, .strong)
                     .lineLimit(2)
                 Text(entry.album.isEmpty ? entry.artist : "\(entry.artist) — \(entry.album)")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .koanText(.titleSmall, .muted)
                     .lineLimit(1)
             }
             if let format = player.currentFormat {
                 Text(Format.quality(format))
-                    .font(.callout.monospaced())
-                    .foregroundStyle(.secondary)
+                    .koanText(.meta, .muted)
+                    .monospaced()
                     .padding(.horizontal, 12)
                     .padding(.vertical, 5)
                     .background(.quaternary, in: Capsule())
@@ -134,19 +131,23 @@ struct NowPlayingPage: View {
     private var controls: some View {
         HStack(spacing: 24) {
             Button { player.previous() } label: { Image(systemName: Icon.previous) }
+                .koanButton(.icon)
             Button { player.togglePlayPause() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
                     .contentTransition(.symbolEffect(.replace))
             }
+            .koanButton(.iconOutlined)
             .focused($focus, equals: .playPause)
             .prefersDefaultFocus(in: page)
             Button { player.next() } label: { Image(systemName: Icon.next) }
+                .koanButton(.icon)
             if let trackId = player.currentTrackId {
                 TrackHeart(trackId: trackId, size: .title3)
             }
             Button { ui.toggleLyrics() } label: {
                 Image(systemName: Icon.lyrics).symbolVariant(ui.showLyrics ? .fill : .none)
             }
+            .koanButton(.icon)
             .accessibilityLabel(ui.showLyrics ? "Show artwork" : "Show lyrics")
             .accessibilityIdentifier("lyrics")
             ShuffleButton()
@@ -166,13 +167,13 @@ struct NowPlayingPage: View {
                 if let route = app.dsp.route,
                    let presets = Presets(dsp: app.dsp, device: route, none: "Off") {
                     PresetMenu(presets: presets, title: route) {
-                        Label(presets.current ?? presets.none, systemImage: "slider.horizontal.3")
+                        KoanLabel(presets.current ?? presets.none, icon: "slider.horizontal.3")
                     }
                 }
             }
         }
         .focusSection()
-        .font(.title3)
+        .koanText(.titleSmall)
         .disabled(player.currentEntry == nil)
     }
 }
@@ -195,6 +196,7 @@ private struct Scrubber: View {
             )
             .scaleEffect(focused ? 1.02 : 1)
             .animation(.easeOut(duration: 0.15), value: focused)
+            .koanFocus()
             .onMoveCommand { direction in
                 switch direction {
                 case .left: player.seek(bySeconds: -10)
@@ -217,10 +219,7 @@ private struct UpNext: View {
             .prefix(12)
         if !upcoming.isEmpty {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Up next")
-                    .font(.callout.weight(.semibold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.secondary)
+                KoanSectionHeader("Up next")
                 ScrollView(.horizontal) {
                     LazyHStack(spacing: 32) {
                         ForEach(Array(upcoming), id: \.queueItemId) { item in
@@ -235,13 +234,13 @@ private struct UpNext: View {
                                     }
                                     .frame(width: 96, height: 96)
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(item.title).font(.callout.weight(.semibold)).lineLimit(1)
-                                        Text(item.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                        Text(item.title).koanText(.body, .strong).lineLimit(1)
+                                        Text(item.artist).koanText(.fine, .muted).lineLimit(1)
                                     }
                                     .frame(width: 240, alignment: .leading)
                                 }
                             }
-                            .buttonStyle(.card)
+                            .koanButton(.text)
                         }
                     }
                 }

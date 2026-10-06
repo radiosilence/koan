@@ -29,13 +29,12 @@ struct SignInPage: View {
     var body: some View {
         VStack(spacing: 48) {
             VStack(spacing: 16) {
-                Text("Sign in to kōan")
-                    .font(.system(size: 64, weight: .bold))
+                Text(KoanTheme.label("Sign in to kōan"))
+                    .koanText(.display, .strong)
                 Text(pairing == nil
                      ? "Open kōan on a device that is signed in to your server and on this network. Its server will appear here."
                      : "Scan with your phone's camera. It opens kōan if it is there, or \(host)'s own page if not.")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
+                    .koanText(.body, .muted)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 1400)
@@ -50,7 +49,7 @@ struct SignInPage: View {
 
             if let problem {
                 Text(problem)
-                    .foregroundStyle(.orange)
+                    .koanText(.body, .bad)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 1200)
             }
@@ -58,8 +57,10 @@ struct SignInPage: View {
             HStack(spacing: 32) {
                 if pairing != nil {
                     Button("Another Server") { cancel() }
+                        .koanButton(.secondary)
                 }
                 Button("Use a Password or API Key") { manual = true }
+                    .koanButton(.secondary)
             }
         }
         .padding(80)
@@ -102,31 +103,30 @@ struct SignInPage: View {
                 Button { choose(found.url) } label: {
                     VStack(spacing: 6) {
                         Text(Self.address(found.url))
-                            .font(.title2.weight(.semibold))
+                            .koanText(.titleSmall, .strong)
                         Text("On \(ListFormatter.localizedString(byJoining: found.devices))")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                            .koanText(.meta, .muted)
                     }
                     .frame(minWidth: 700)
                     .padding(.vertical, 8)
                 }
+                .koanButton(.secondary)
                 .disabled(connecting)
                 .accessibilityIdentifier("found-server")
             }
             if mirror.connection?.localNetworkBlocked == true {
                 Text("kōan can't see this network. Allow Local Network for kōan in \(LocalNetwork.settings) → Privacy & Security.")
-                    .foregroundStyle(.orange)
+                    .koanText(.body, .bad)
                     .multilineTextAlignment(.center)
             } else {
                 HStack(spacing: 16) {
                     ProgressView()
                     Text(servers.isEmpty ? "Looking for kōan on this network…" : "Still looking for others…")
-                        .foregroundStyle(.secondary)
+                        .koanText(.body, .muted)
                 }
             }
             Text(servers.isEmpty ? "Or enter your server's address" : "Or enter its address")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
+                .koanText(.meta, .muted)
                 .padding(.top, 16)
         }
     }
@@ -160,6 +160,7 @@ struct SignInPage: View {
                     .frame(width: 240)
             } else {
                 Button("Get a Code", action: start)
+                    .koanButton(.primary)
                     .disabled(server.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
@@ -177,18 +178,19 @@ struct SignInPage: View {
             }
             VStack(alignment: .leading, spacing: 20) {
                 Text(host)
-                    .font(.title2.weight(.semibold))
+                    .koanText(.titleSmall, .strong)
                 Text("Or enter this code under Settings → Server → Pair a device, or at \(host)/pair:")
-                    .foregroundStyle(.secondary)
+                    .koanText(.body, .muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 640, alignment: .leading)
                 Text(pairing.code)
-                    .font(.system(size: 72, weight: .semibold, design: .monospaced))
+                    .koanText(.display, .strong)
+                    .monospaced()
                     .tracking(8)
                 HStack(spacing: 16) {
                     ProgressView()
                     Text("Waiting for approval")
-                        .foregroundStyle(.secondary)
+                        .koanText(.body, .muted)
                 }
             }
         }
