@@ -282,7 +282,7 @@ Unknown options are rejected rather than ignored, so a stack carrying options a 
 
 Two koan processes can share one state directory on one node for the minutes an upgrade overlaps them: SQLite's WAL lets both read and write. The state directory must be on a local filesystem, which WAL needs anyway and the lock below relies on. Only one scans and watches the library, whichever holds `watch.lock` beside the database; the other serves and waits on the lock, taking over the moment the first exits, however it exits. A build older than the database refuses to start, naming the schema versions, rather than serving errors.
 
-What an overlap does not cover is a release that changes the schema. The new server migrates on start, and the old one keeps serving the migrated database until it stops. For those releases the old server must stop before the new one starts, as `Recreate` does, which is what the Pulumi package still uses. Devices linked to the outgoing server reconnect to the new one, as after any restart.
+A release that changes the schema is covered too. The new server migrates on start in one transaction, so the old one, mid-request, sees the old schema or the new one and never a mixture, and a migration that fails leaves the database as it was. From the moment it commits, the old server refuses every database connection it is asked for, drains as it would on SIGTERM and exits, so it never writes the old shape into the new schema; what fails is the requests it had in flight at that moment. Devices linked to the outgoing server reconnect to the new one, as after any restart.
 
 Once it is running, create the admin account in the pod:
 

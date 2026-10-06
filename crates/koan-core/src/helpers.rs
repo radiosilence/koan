@@ -138,6 +138,11 @@ pub fn spawn_library_watch(
                 let Ok(db) = Database::open_existing(&db_path) else {
                     return;
                 };
+                // A newer koan sharing the database has upgraded it: what
+                // this build would write is no longer its shape.
+                if crate::db::pool::understood(&db.conn).is_err() {
+                    return;
+                }
                 on_state(true);
                 let result = match dirs {
                     Some(dirs) => {

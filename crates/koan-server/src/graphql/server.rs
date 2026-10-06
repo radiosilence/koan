@@ -36,6 +36,7 @@ pub fn cmd_serve(
     }
     let db_path = koan_core::config::db_path();
     let pool = Arc::new(Pool::new(db_path.clone()));
+    koan_core::db::pool::on_outdated(|| OUTDATED.cancel());
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
@@ -622,9 +623,16 @@ fn is_graphql_content_type(request: &axum::extract::Request) -> bool {
     })
 }
 
-/// Resolves on SIGINT, or SIGTERM where there is one. SIGTERM is how a service
-/// manager stops a process, and as PID 1 in a container an unhandled one is
-/// dropped by the kernel, leaving the server running until it is killed.
+/// Cancelled when the database turns out to have been upgraded by a newer
+/// koan, as the one replacing this server does when it starts: this build
+/// can no longer serve it, so it drains and exits as on SIGTERM.
+static OUTDATED: std::sync::LazyLock<tokio_util::sync::CancellationToken> =
+    std::sync::LazyLock::new(tokio_util::sync::CancellationToken::new);
+
+/// Resolves on SIGINT, SIGTERM where there is one, or the database being
+/// upgraded past this build. SIGTERM is how a service manager stops a
+/// process, and as PID 1 in a container an unhandled one is dropped by the
+/// kernel, leaving the server running until it is killed.
 async fn shutdown_signal() {
     #[cfg(unix)]
     {
@@ -633,12 +641,14 @@ async fn shutdown_signal() {
         tokio::select! {
             r = tokio::signal::ctrl_c() => r.expect("failed to listen for ctrl+c"),
             _ = terminate.recv() => {}
+            _ = OUTDATED.cancelled() => {}
         }
     }
     #[cfg(not(unix))]
-    tokio::signal::ctrl_c()
-        .await
-        .expect("failed to listen for ctrl+c");
+    tokio::select! {
+        r = tokio::signal::ctrl_c() => r.expect("failed to listen for ctrl+c"),
+        _ = OUTDATED.cancelled() => {}
+    }
 }
 
 /// How long shutdown waits for open connections before giving up on them.

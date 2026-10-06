@@ -24,6 +24,10 @@
 
 - **One server scans a shared library at a time.** Servers sharing a state directory, as two do while one replaces the other, take turns: the one holding `watch.lock` beside the database scans and watches the library folders, and the other serves without scanning until it can take the lock. A server whose database a newer koan has migrated now exits with that reason instead of a panic.
 - **Rescans stat each file once.** Removing tracks whose files are gone checked every row under the folder again after the walk had just found them; it now asks only about the rows the walk did not find, which still have to be confirmed missing before they go. Importing dropped files skips the ones already read, as a scan does.
+### Changed
+
+- **A schema upgrade is one transaction, and stops an older server sharing the database.** A migration that fails part way leaves the database as it was, and another process reading meanwhile sees the old schema or the new one. A server whose database a newer koan has upgraded under it stops handing out connections, drains and exits, so it never writes to a schema it does not know.
+- **One server scans a shared library at a time.** Servers sharing a state directory, as two do while one replaces the other, take turns: the one holding `watch.lock` beside the database scans and watches the library folders, and the other serves without scanning until it can take the lock. A server whose database a newer koan has migrated now exits with that reason instead of a panic.
 
 ### Fixed
 
