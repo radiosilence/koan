@@ -115,6 +115,9 @@ impl Hit {
 /// A catalogue entry: brand, model, variant and file.
 type Entry = (String, String, String, String);
 
+/// Something kept for each site, by its base.
+type BySite<T> = Mutex<Option<HashMap<&'static str, T>>>;
+
 const FRESH_FOR: Duration = Duration::from_secs(24 * 60 * 60);
 /// The largest catalogue accepted. The largest is about 700 KB.
 const BOOK_CAP: u64 = 4 << 20;
@@ -122,7 +125,7 @@ const BOOK_CAP: u64 = 4 << 20;
 const MEASUREMENT_CAP: u64 = 512 << 10;
 
 /// Each site's catalogue as last read, and when.
-static READ: Mutex<Option<HashMap<&'static str, (SystemTime, Arc<Vec<Entry>>)>>> = Mutex::new(None);
+static READ: BySite<(SystemTime, Arc<Vec<Entry>>)> = Mutex::new(None);
 
 /// Every site's measurements whose name has each word of `query`, best
 /// first: the model named exactly, then the shortest names. A site that
@@ -243,9 +246,9 @@ fn data_url(site: &Site, name: &str) -> Result<url::Url, String> {
 
 /// A site being read, so a second search waits for the first rather than
 /// asking the site again.
-static READING: Mutex<Option<HashMap<&'static str, Arc<Mutex<()>>>>> = Mutex::new(None);
+static READING: BySite<Arc<Mutex<()>>> = Mutex::new(None);
 /// When a site last failed to answer, with no copy kept to fall back on.
-static FAILED: Mutex<Option<HashMap<&'static str, SystemTime>>> = Mutex::new(None);
+static FAILED: BySite<SystemTime> = Mutex::new(None);
 /// How long a site that did not answer is left alone.
 const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
 
