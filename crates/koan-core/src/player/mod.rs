@@ -2181,6 +2181,11 @@ impl Player {
                 self.paused_in_sleep_fade();
                 self.pause();
             }
+            // Every command before this one has been applied and published:
+            // commands are taken one at a time, each published as it ends.
+            PlayerCommand::Barrier(reply) => {
+                let _ = reply.send(());
+            }
             PlayerCommand::PauseAndReport(reply) => {
                 self.pause();
                 self.silence_waiters.push(reply);

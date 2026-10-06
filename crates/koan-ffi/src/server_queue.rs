@@ -28,8 +28,7 @@ const SETTLE: Duration = Duration::from_secs(1);
 /// making on every edit.
 pub(crate) const MAX_SENT: usize = 1500;
 
-/// How long a load or a restore may take to reach the player before the
-/// saver looks anyway.
+/// How long the player may take to apply a load or a restore.
 pub(crate) const LANDED: Duration = Duration::from_secs(5);
 
 /// The saver running now, told to stop through its flag.
@@ -118,20 +117,17 @@ impl KoanEngine {
             items.len(),
             queue.changed_by
         );
-        let content = self.state.content_version();
         self.send_local(PlayerCommand::ReplacePlaylist {
             start: start.min(items.len() - 1),
             items,
             position_ms: queue.position,
             play: false,
         })?;
-        koan_core::remote::devices::await_until(
-            || {
-                self.state.content_version() != content
-                    && self.state.playback_state() != PlaybackState::Playing
-            },
-            LANDED,
-        );
+        // Back only once the queue, its cursor and the paused state are all
+        // published, so the saver's next look starts from them.
+        if !self.applied(LANDED) {
+            log::warn!("server queue: the player did not take the loaded queue in time");
+        }
         Ok(())
     }
 
@@ -278,6 +274,31 @@ fn follow(engine: Weak<KoanEngine>, stop: &AtomicBool) {
 mod tests {
     use super::*;
     use koan_core::player::state::QueueItemId;
+
+    /// A load, or the restore at launch, is the saver's baseline only once
+    /// the player has published all of it. Taken then, nothing is saved until
+    /// an edit is made here. Taken while the content had moved but the cursor
+    /// and the paused state had not yet been published, which is what waiting
+    /// on the content counter alone allowed, the load would be saved straight
+    /// back: the barrier is what rules that ordering out.
+    #[test]
+    fn a_baseline_taken_once_a_load_has_landed_saves_nothing_until_an_edit() {
+        let loaded_entry = Some(QueueItemId(uuid::Uuid::now_v7()));
+        let before_load = (1, None, PlaybackState::Stopped);
+        let half_published = (2, None, PlaybackState::Stopped);
+        let landed = (2, loaded_entry, PlaybackState::Paused);
+
+        // Baseline after the barrier: the landed state looks unchanged.
+        assert_eq!(decide(&landed, &landed, None), (false, None));
+        // An edit afterwards is saved, once it settles.
+        let (save, pending) = decide(&landed, &(3, loaded_entry, PlaybackState::Paused), None);
+        assert!(!save && pending.is_some());
+
+        // The orderings the barrier rules out: a baseline taken before the
+        // load, or half way through its publishing, takes the load for news.
+        assert!(decide(&before_load, &landed, None).0);
+        assert!(decide(&half_published, &landed, None).0);
+    }
 
     #[test]
     fn edits_wait_to_settle_and_a_move_or_a_pause_saves_at_once() {

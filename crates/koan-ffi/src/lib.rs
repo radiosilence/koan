@@ -2090,8 +2090,7 @@ impl KoanEngine {
         // Once this device's own queue is back, the server's may take its
         // place: see `server_queue`.
         let engine = Arc::downgrade(&self);
-        let state = self.state.clone();
-        let content = state.content_version();
+        let restoring = self.clone();
         let restored = offload::sequenced(move || {
             let db = self.db()?;
             // Before the queue and whether there is one: the mode is the
@@ -2142,15 +2141,14 @@ impl KoanEngine {
         })
         .await;
         if Config::cached().remote.play_queue {
-            // Once the player has the restored queue, so the server's is
-            // weighed against it rather than against an empty one.
+            // Once the player has applied the restore, cue and all, so the
+            // server's queue is weighed against the restored one.
             offload::offload(move || {
-                if restored.as_ref().is_ok_and(|n| *n > 0) {
-                    koan_core::remote::devices::await_until(
-                        || state.content_version() != content,
-                        server_queue::LANDED,
-                    );
+                if !restoring.applied(server_queue::LANDED) {
+                    log::warn!("server queue: the restore did not land; not following");
+                    return restored;
                 }
+                drop(restoring);
                 server_queue::start(engine, true);
                 restored
             })
@@ -4424,6 +4422,7 @@ impl KoanEngine {
             // acted on locally by default while another device is controlled.
             local @ (PlayerCommand::Cue { .. }
             | PlayerCommand::PauseAndReport(_)
+            | PlayerCommand::Barrier(_)
             | PlayerCommand::UpdatePaths(_)
             | PlayerCommand::TrackReady(_)
             | PlayerCommand::TrackStreamReady(_)
@@ -4499,6 +4498,13 @@ impl KoanEngine {
         self.tx.send(cmd).map_err(|e| KoanError::Player {
             message: e.to_string(),
         })
+    }
+
+    /// Wait until the player has applied and published every command sent to
+    /// it so far, up to `within`. False when it has not answered by then.
+    fn applied(&self, within: std::time::Duration) -> bool {
+        let (reply, done) = crossbeam_channel::bounded(1);
+        self.send_local(PlayerCommand::Barrier(reply)).is_ok() && done.recv_timeout(within).is_ok()
     }
 
     /// Resolve track IDs into playlist items. Skips IDs that aren't in the
