@@ -5675,6 +5675,67 @@ mod tests {
         drop(writer);
     }
 
+    /// A long Ogg is opened before its last page has arrived, which is where
+    /// Ogg keeps its length, so the stream itself cannot say how long it is.
+    /// The library can: a nine-hour remote track showed no duration until
+    /// the whole file had downloaded.
+    #[test]
+    fn a_stream_opened_without_a_length_takes_the_librarys_duration() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = include_bytes!("testdata/thirty-seconds.opus");
+        let half = bytes.len() / 2;
+        let part = dir.path().join("long.opus.part");
+        std::fs::write(&part, &bytes[..half]).unwrap();
+        let feed = crate::remote::downloads::ByteFeed::new();
+        feed.set(half as u64);
+
+        let mut player = Player::new();
+        player.backend = Box::new(CaptureBackend {
+            consumers: Default::default(),
+        });
+        let item = PlaylistItem {
+            db_id: Some(9),
+            state: ItemState::Pending,
+            duration_ms: Some(32_523_781),
+            path: dir.path().join("long.opus"),
+            ..make_item("long")
+        };
+        let id = item.id;
+        player.shared_state.add_items(vec![item]);
+        player.shared_state.set_cursor(Some(id));
+
+        let lengthless = buffer::StreamInfo {
+            codec: "Opus".into(),
+            sample_rate: 48_000,
+            channels: 1,
+            bit_depth: None,
+            bitrate_kbps: None,
+            duration_ms: 0,
+        };
+        player
+            .try_open_session(
+                id,
+                Source::Stream(StreamSource {
+                    path: part,
+                    bytes_written: feed,
+                    total: bytes.len() as u64,
+                    mode: streaming::ProbeMode::Lengthless,
+                }),
+                Some(lengthless),
+                0,
+                Run::Playing,
+            )
+            .unwrap();
+        player.publish();
+
+        assert_eq!(player.shared_state.duration_ms(), 32_523_781);
+        assert_eq!(
+            player.shared_state.track_info().map(|t| t.duration_ms),
+            Some(32_523_781)
+        );
+        player.stop_engine();
+    }
+
     fn engine_format_for(source_rate: u32, channels: u16, device_rate: f64) -> (f64, u32) {
         let asked = Arc::new(std::sync::Mutex::new(None));
         let mut player = Player::new();
