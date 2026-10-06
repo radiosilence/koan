@@ -46,6 +46,18 @@ A stack made before kōan refused this still plays, and its page says what's wro
 
 The top of each profile's page says what the chain does, one line per role, each with its badge: "Correction: AFUL Performer 8S → Harman in-ear 2019 (from measurement)", then "Tuning: Warm bass". A baked preset reads "Baked: AFUL Performer 8S Lush (correction + tuning in one)".
 
+## Headphones, target, tuning: dynamic baking
+
+Each output's EQ is three choices, made on the EQ page under the output's name, and it reads as a sentence: "AFUL Performer 8S, corrected to Neutral (diffuse field), tuned with Lush".
+
+- **Headphones** is the correction for what's plugged in. Choosing it is all most people need.
+- **Target** belongs to the correction: what it makes neutral mean. Harman's targets add the bass and treble most listeners prefer; Neutral (diffuse field) adds nothing.
+- **Tuning** is optional, behind **Add a Tuning…**: your taste on top.
+
+kōan builds the chain itself, so no stack has to be made by hand: the correction, then the tuning. A tuning can say which target it was made against, on its own page under **Made against**. On headphones corrected to another target, kōan plays the difference between the two first, so the tuning sounds as it was made to whatever corrects the headphones. That is dynamic baking: what a preset like Qudelix's "Lush" bakes into one fixed EQ, worked out for each pair of headphones as it plays. A tuning whose target isn't known plays as it is.
+
+A baked preset has its tuning in it already, so no tuning goes on top; the EQ page says so. A group of tunings works as a quick switch between them. The tuning is this device's choice for that output, as the correction is, and the menu by the output in the transport offers it too.
+
 ## Which way for your headphones
 
 1. **Search for your headphones** in **Find in AutoEQ…** under EQ in Settings. If they are there, install them. You have a correction, and you can switch its target on the profile's page.

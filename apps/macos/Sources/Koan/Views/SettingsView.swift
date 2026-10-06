@@ -734,9 +734,18 @@ struct EqSettings: View {
     @State private var showing: String?
 
     private var active: String? { app.dsp.overview?.active }
+    /// The tuning on top, where one plays: none waits on a correction with
+    /// one baked in, or one the chain cannot hold.
+    private var tuning: String? {
+        guard let o = app.dsp.overview, o.tuningPlays else { return nil }
+        return o.tuning
+    }
 
     var body: some View {
         KoanForm {
+            if let o = app.dsp.overview, let device = o.device, !o.profiles.isEmpty {
+                OutputEqSection(dsp: app.dsp, overview: o, device: device)
+            }
             if let active, let detail, detail.group {
                 Section {
                     Picker("Playing", selection: Binding(
@@ -752,20 +761,26 @@ struct EqSettings: View {
             }
             if let active, let response, let detail {
                 Section {
-                    EqGraph(response: response, handles: BandTable.handles(detail.bands)) { index, hz, db in
+                    // With a tuning on top, the graph is the output's whole
+                    // chain, and the correction's handles would sit off it.
+                    EqGraph(response: response, handles: tuning == nil ? BandTable.handles(detail.bands) : []) { index, hz, db in
                         let b = detail.bands[index]
                         app.dsp.setBand(active, index, kind: b.kind, freq: hz, gain: db, q: b.q)
                     }
                 } header: {
-                    Text(active).koanText(.fine, .ink).textCase(nil)
+                    Text(tuning.map { "\(active) + \($0)" } ?? active).koanText(.fine, .ink).textCase(nil)
                 }
                 BandTable(dsp: app.dsp, profile: active, bands: detail.bands)
             }
             DspSettings(importing: $importing, finding: $finding, measuring: $measuring, showing: $showing)
         }
         .koanSheet()
-        .task(id: "\(active ?? "")\u{0}\(app.dsp.stamp)") {
-            response = if let active { await app.dsp.response(active) } else { nil }
+        .task(id: "\(active ?? "")\u{0}\(tuning ?? "")\u{0}\(app.dsp.stamp)") {
+            response = if let active {
+                tuning == nil ? await app.dsp.response(active) : await app.dsp.outputResponse()
+            } else {
+                nil
+            }
             detail = if let active { await app.dsp.detail(active) } else { nil }
         }
         .task(id: app.dsp.stamp) { app.dsp.reload() }
@@ -846,18 +861,6 @@ struct DspSettings: View {
                     get: { o.enabled },
                     set: { dsp.setEnabled($0) }
                 )).koanToggle()
-                if let device = o.device, !o.profiles.isEmpty {
-                    Picker("Profile for \(dsp.label(device))", selection: Binding(
-                        get: { o.active ?? "" },
-                        set: { dsp.use($0.isEmpty ? nil : $0) }
-                    )) {
-                        Text("None").tag("")
-                        ForEach(o.profiles, id: \.name) { p in
-                            Text(p.name).tag(p.name)
-                        }
-                    }.koanControl()
-                    .disabled(!o.enabled)
-                }
                 #if !os(tvOS)
                 if let offer = dsp.suggestion, o.device != nil {
                     AutoEqSuggestion(offer: offer, dsp: dsp) { query in

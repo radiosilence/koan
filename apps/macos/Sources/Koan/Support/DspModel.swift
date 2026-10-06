@@ -263,9 +263,24 @@ final class DspModel {
         act { try await $0.dspAssignDevice(device: device, profile: profile) }
     }
 
-    /// The profile `device` plays through, if any.
+    /// The profile `device` plays through, if any: its correction.
     func profile(for device: String) -> String? {
         overview?.profiles.first { $0.devices.contains(device) }?.name
+    }
+
+    /// The tuning `device` plays on top of its correction, if any.
+    func tuning(for device: String) -> String? {
+        overview?.tunings[device]
+    }
+
+    /// Play `tuning` on top of `device`'s correction, or none.
+    func setTuning(_ tuning: String?, for device: String) {
+        act { try await $0.dspSetTuning(device: device, tuning: tuning) }
+    }
+
+    /// The target the tuning `name` was made against, or nil for not known.
+    func setTunedFor(_ name: String, _ target: String?) {
+        act { try await $0.dspSetTunedFor(name: name, target: target) }
     }
 
     /// What to call a device: a renderer by its name rather than its UDN.
@@ -386,6 +401,11 @@ final class DspModel {
     /// What `name` does to the sound, at 48 kHz, for the graph.
     func response(_ name: String) async -> DspResponse? {
         await engine.dspResponse(name: name, rate: 48000)
+    }
+
+    /// What the output in use plays: its correction and the tuning on top.
+    func outputResponse() async -> DspResponse? {
+        await engine.dspOutputResponse(rate: 48000)
     }
 
     func detail(_ name: String) async -> DspProfileDetail? {
