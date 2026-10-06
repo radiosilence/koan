@@ -62,6 +62,8 @@ struct SettingsView: View {
                         .tabItem { Label("Server", systemImage: "server.rack") }
                     PlaybackSettings(model: model)
                         .tabItem { Label("Playback", systemImage: "hifispeaker") }
+                    EqSettings()
+                        .tabItem { Label("EQ", systemImage: "slider.vertical.3") }
                     DevicesSettings(model: model)
                         .tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
                     AppearanceSettings()
@@ -86,6 +88,10 @@ struct SettingsView: View {
                     }
                     pane("Playback", "hifispeaker") {
                         PlaybackSettings(model: model)
+                            .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                    }
+                    pane("EQ", "slider.vertical.3") {
+                        EqSettings()
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
                     pane("Devices", "laptopcomputer.and.iphone") {
@@ -597,8 +603,6 @@ private struct PlaybackSettings: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-
-            DspSettings()
         }
         .formStyle(.grouped)
     }
@@ -606,6 +610,33 @@ private struct PlaybackSettings: View {
 
 /// Correction for the output in use: a profile of bands, impulse responses or
 /// both, imported from what other tools write.
+/// EQ for the output in use: what its profile does to the sound, drawn,
+/// then the profiles and where they come from. A page of its own: the graph
+/// wants the room, and a correction is chosen, shaped and checked here.
+struct EqSettings: View {
+    @Environment(AppState.self) private var app
+    @State private var response: DspResponse?
+
+    private var active: String? { app.dsp.overview?.active }
+
+    var body: some View {
+        Form {
+            if let active, let response {
+                Section {
+                    EqGraph(response: response)
+                } header: {
+                    Text(active)
+                }
+            }
+            DspSettings()
+        }
+        .formStyle(.grouped)
+        .task(id: "\(active ?? "")\u{0}\(app.dsp.version)") {
+            response = if let active { await app.dsp.response(active) } else { nil }
+        }
+    }
+}
+
 struct DspSettings: View {
     @Environment(AppState.self) private var app
     @State private var importing = false

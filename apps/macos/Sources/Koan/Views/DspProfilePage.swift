@@ -10,6 +10,7 @@ struct DspProfilePage: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var detail: DspProfileDetail?
+    @State private var response: DspResponse?
     @State private var targets: DspTargets?
     @State private var addingTarget = false
     @State private var editingName = ""
@@ -23,6 +24,9 @@ struct DspProfilePage: View {
             }
 
             if let d = detail {
+                if let r = response {
+                    Section { EqGraph(response: r) }
+                }
                 if let problem = d.problem {
                     Section {
                         Label(problem, systemImage: "exclamationmark.triangle.fill")
@@ -128,6 +132,7 @@ struct DspProfilePage: View {
 
     private func load() async {
         detail = await dsp.detail(name)
+        response = await dsp.response(name)
         targets = await dsp.targets(name)
         editingName = name
     }

@@ -24,10 +24,8 @@ enum EvidenceRenderer {
         try? await Task.sleep(for: .seconds(2))
 
         var pages: [(name: String, size: CGSize, view: AnyView)] = [
-            ("dsp-settings", CGSize(width: 620, height: 330), AnyView(
-                Form { DspSettings() }
-                    .formStyle(.grouped)
-                    .environment(state)
+            ("eq", CGSize(width: 620, height: 760), AnyView(
+                EqSettings().environment(state)
             )),
         ]
         for profile in state.dsp.overview?.profiles ?? [] {

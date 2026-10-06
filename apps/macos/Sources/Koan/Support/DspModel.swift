@@ -242,6 +242,11 @@ final class DspModel {
         act { try await $0.dspSetLayers(name: name, layers: layers) }
     }
 
+    /// What `name` does to the sound, at 48 kHz, for the graph.
+    func response(_ name: String) async -> DspResponse? {
+        await engine.dspResponse(name: name, rate: 48000)
+    }
+
     func detail(_ name: String) async -> DspProfileDetail? {
         await engine.dspDetail(name: name)
     }

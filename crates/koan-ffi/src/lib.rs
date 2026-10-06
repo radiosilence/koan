@@ -2567,6 +2567,15 @@ impl KoanEngine {
         .await
     }
 
+    /// What `name` does to the sound at `rate`, for drawing. `None` for a
+    /// profile that is not there or would not play.
+    pub async fn dsp_response(self: Arc<Self>, name: String, rate: u32) -> Option<DspResponse> {
+        offload::offload(move || {
+            koan_core::audio::dsp::profiles::response(&name, rate).map(Into::into)
+        })
+        .await
+    }
+
     pub async fn dsp_detail(self: Arc<Self>, name: String) -> Option<DspProfileDetail> {
         offload::offload(move || koan_core::audio::dsp::profiles::detail(&name).map(Into::into))
             .await

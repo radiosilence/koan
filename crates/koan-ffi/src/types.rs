@@ -1177,6 +1177,61 @@ pub struct DspProfileSummary {
     pub problem: Option<String>,
 }
 
+/// A curve on `DspResponse.freqs`, in dB.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspCurve {
+    pub db: Vec<f64>,
+}
+
+/// A layer of a stack, as it plays alone.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspLayerCurve {
+    pub name: String,
+    pub on: bool,
+    pub db: Vec<f64>,
+}
+
+/// What a profile does to the sound, computed from the filters the DSP
+/// runs, for drawing.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspResponse {
+    pub freqs: Vec<f64>,
+    /// Everything it plays.
+    pub total: Vec<f64>,
+    /// Each of its own parametric bands alone.
+    pub bands: Vec<DspCurve>,
+    pub layers: Vec<DspLayerCurve>,
+    /// For an AutoEQ correction: the headphone as measured, its target, and
+    /// the measurement with everything applied.
+    pub measurement: Option<Vec<f64>>,
+    pub target: Option<Vec<f64>>,
+    pub predicted: Option<Vec<f64>>,
+    pub preamp_db: f64,
+}
+
+impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
+    fn from(r: koan_core::audio::dsp::profiles::Response) -> Self {
+        Self {
+            freqs: r.freqs,
+            total: r.total,
+            bands: r.bands.into_iter().map(|db| DspCurve { db }).collect(),
+            layers: r
+                .layers
+                .into_iter()
+                .map(|l| DspLayerCurve {
+                    name: l.name,
+                    on: l.on,
+                    db: l.db,
+                })
+                .collect(),
+            measurement: r.measurement,
+            target: r.target,
+            predicted: r.predicted,
+            preamp_db: r.preamp_db,
+        }
+    }
+}
+
 /// A profile played as part of a stack.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspLayerInfo {
