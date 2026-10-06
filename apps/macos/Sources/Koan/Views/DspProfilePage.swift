@@ -68,8 +68,11 @@ struct DspProfilePage: View {
                     }
                 }
 
-                RoleSection(dsp: dsp, detail: d, madeForChoices: madeForChoices,
-                            targets: targets, adding: $addingTarget)
+                // A stack with nothing of its own is what its layers are.
+                if d.layers.isEmpty || !d.bands.isEmpty || !d.impulses.isEmpty {
+                    RoleSection(dsp: dsp, detail: d, madeForChoices: madeForChoices,
+                                targets: targets, adding: $addingTarget)
+                }
                 if d.group {
                     GroupSection(dsp: dsp, detail: d)
                 } else {

@@ -23,6 +23,8 @@ pub struct Summary {
     /// Why the profile would not load, if it would not.
     pub problem: Option<String>,
     pub role: DspRole,
+    /// Built from a measurement.
+    pub measured: bool,
     /// For a group: its members, in order, and the one playing.
     pub members: Vec<String>,
     pub playing: Option<String>,
@@ -83,7 +85,8 @@ pub fn overview_for(device: Option<String>) -> Overview {
                     layers: p.layers.len(),
                     rates,
                     problem,
-                    role: role(p),
+                    role: shown_role(p, &cfg.dsp.profiles),
+                    measured: p.measurement.is_some(),
                     members: if p.group {
                         p.layers.iter().map(|l| l.profile.clone()).collect()
                     } else {
@@ -296,7 +299,7 @@ pub fn detail(name: &str) -> Option<Detail> {
         problem,
         everywhere: scope(profile, &cfg.dsp.profiles) == DspScope::Everywhere,
         scope_set: profile.scope.is_some(),
-        role: role(profile),
+        role: shown_role(profile, &cfg.dsp.profiles),
         role_set: profile.role.is_some(),
         corrects_twice: corrects_twice(profile, &cfg.dsp.profiles),
         corrects: chain_summary.correction,
@@ -1017,6 +1020,19 @@ pub fn role(profile: &DspProfile) -> DspRole {
     )
 }
 
+/// What `profile` is for, as shown: a stack with nothing of its own is what
+/// it plays, a correction where it holds one, as that correction is.
+pub fn shown_role(profile: &DspProfile, all: &[DspProfile]) -> DspRole {
+    let own = !profile.filters.is_empty() || !profile.impulses.is_empty();
+    if profile.role.is_some() || own || profile.layers.is_empty() {
+        return role(profile);
+    }
+    corrections_in(profile, all)
+        .first()
+        .and_then(|c| all.iter().find(|p| &p.name == c))
+        .map_or(DspRole::Tuning, role)
+}
+
 /// The corrections a chain plays, `profile` and its layers switched on, in
 /// the order they play.
 pub fn corrections_in(profile: &DspProfile, all: &[DspProfile]) -> Vec<String> {
@@ -1060,7 +1076,11 @@ fn correction_label(p: &DspProfile) -> String {
     } else {
         "correction"
     };
-    format!("{} ({kind})", p.name)
+    if p.name.to_lowercase().contains(&kind.to_lowercase()) {
+        p.name.clone()
+    } else {
+        format!("{} ({kind})", p.name)
+    }
 }
 
 /// What a chain correcting more than once says: each undoes the same
@@ -2314,6 +2334,11 @@ mod tests {
             "an AutoEQ install"
         );
         assert_eq!(role(named("Warm")), DspRole::Tuning, "anything else");
+        assert_eq!(
+            shown_role(named("Old"), &cfg.dsp.profiles),
+            DspRole::Correction,
+            "a stack is what it corrects with"
+        );
         assert_eq!(corrects_twice(named("Old"), &cfg.dsp.profiles), None);
 
         set_role("Performer 8S", DspRole::Baked).unwrap();

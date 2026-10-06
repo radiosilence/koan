@@ -1226,6 +1226,8 @@ pub struct DspProfileSummary {
     pub members: Vec<String>,
     pub playing: Option<String>,
     pub role: DspRole,
+    /// Built from a measurement.
+    pub measured: bool,
 }
 
 /// What a profile is for. A chain corrects a headphone once.
@@ -1554,6 +1556,7 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     layers: p.layers as u32,
                     rates: p.rates,
                     role: p.role.into(),
+                    measured: p.measured,
                     problem: p.problem,
                     members: p.members,
                     playing: p.playing,

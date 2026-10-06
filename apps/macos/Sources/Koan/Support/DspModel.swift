@@ -410,6 +410,7 @@ final class DspModel {
 
     static func describe(_ p: DspProfileSummary) -> String {
         var parts: [String] = []
+        if p.measured { parts.append("From a measurement") }
         if p.layers > 0 { parts.append("\(p.layers) \(p.layers == 1 ? "layer" : "layers")") }
         if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "filter" : "filters")") }
         if !p.rates.isEmpty {
