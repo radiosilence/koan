@@ -1533,13 +1533,13 @@ mod tests {
     }
 
     /// Folders go by the slug of a name: a profile from elsewhere whose name
-    /// maps to a folder of one kept here takes the name, and the one here is
-    /// renamed with its files, never overwritten or sent.
+    /// maps to a folder of one kept here is named for its device, and the
+    /// one here for this device, with its files: never overwritten or sent.
     #[test]
     fn a_folder_is_never_shared() {
         let _guard = lock();
         let server = Server::new();
-        let (a, b) = (Device::new(), Device::new());
+        let (a, b) = (Device::named("Mac"), Device::named("iPhone"));
         b.on();
         let room = crate::audio::dsp::profiles::dir("Room");
         std::fs::create_dir_all(&room).unwrap();
@@ -1566,14 +1566,14 @@ mod tests {
         .unwrap();
         a.sync(&server);
         b.sync(&server);
-        let renamed = b.profile("Room 2").expect("renamed, files and all");
+        let renamed = b.profile("Room (iPhone)").expect("renamed, files and all");
         assert_eq!(renamed.scope, Some(DspScope::Device));
         b.on();
         assert_eq!(
             std::fs::read(config::config_dir().join(&renamed.impulses[0])).unwrap(),
             b"kept here"
         );
-        assert!(b.profile("ROOM").is_some());
+        assert!(b.profile("ROOM (Mac)").is_some());
 
         // Two profiles here whose names share a folder: neither is sent.
         Config::persist(|c| {
