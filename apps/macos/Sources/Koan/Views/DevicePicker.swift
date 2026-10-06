@@ -40,7 +40,7 @@ enum DevicePicker {
         #endif
     }
 
-    static var deviceNoun: String {
+    @MainActor static var deviceNoun: String {
         #if os(iOS)
         UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
         #elseif os(tvOS)
