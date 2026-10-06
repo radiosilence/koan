@@ -2535,10 +2535,21 @@ impl KoanEngine {
         }
     }
 
-    /// List this device's audio devices again, when the system says they
-    /// changed or an output menu opens. The `Outputs` slice follows.
+    /// List the outputs of the device in view again, when the system says
+    /// they changed or an output menu opens: this device's own, or another's
+    /// when it is controlled, which lists its own and publishes what moved.
+    /// The `Outputs` slice follows.
     pub async fn refresh_outputs(self: Arc<Self>) {
-        offload::offload(koan_core::remote::outputs::refresh_devices).await
+        offload::offload(move || match koan_core::remote::devices::target() {
+            Some(to) => {
+                let cmd = koan_core::remote::link::LinkCommand::RefreshOutputs;
+                if let Err(e) = self.command_target(&to, cmd) {
+                    log::debug!("outputs: no refresh from {to}: {e}");
+                }
+            }
+            None => koan_core::remote::outputs::refresh_devices(),
+        })
+        .await
     }
 
     /// The volume of the renderer the device in view plays to, 0–100.
@@ -5270,6 +5281,11 @@ impl KoanEngine {
             LinkCommand::SetOutput { output } => {
                 koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
                     .map_err(|message| KoanError::Audio { message })
+            }
+            LinkCommand::RefreshOutputs => {
+                koan_core::remote::outputs::refresh_devices();
+                koan_core::upnp::discovery::search();
+                Ok(())
             }
             LinkCommand::SetRendererVolume { volume } => {
                 self.send_local(PlayerCommand::SetRendererVolume(volume))

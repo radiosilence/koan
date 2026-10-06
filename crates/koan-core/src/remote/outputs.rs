@@ -249,10 +249,23 @@ mod tests {
                 device: "Speakers".into(),
                 profile: None,
             },
+            LinkCommand::RefreshOutputs,
         ] {
             assert!(!cmd.allowed_nearby(), "{cmd:?}");
         }
         assert!(LinkCommand::Pause.allowed_nearby());
+    }
+
+    /// An output menu opened on a controller asks the controlled device to
+    /// list its outputs again: a command one device gives another, relayed by
+    /// the server, and run under Full control.
+    #[test]
+    fn a_controller_can_ask_for_the_outputs_again() {
+        let cmd = LinkCommand::RefreshOutputs;
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert_eq!(serde_json::from_str::<LinkCommand>(&json).unwrap(), cmd);
+        assert!(cmd.relayable());
+        assert!(cmd.allowed_playback());
     }
 
     /// A device switch reaches the player as the device's own menu sends it.
