@@ -1,0 +1,1 @@
+- **The last rows of a long page are reachable on iPhone.** In the kōan theme an album, artist, queue or other long list could stop scrolling with its last rows under the mini player and the tab bar. Each page now makes room for the bar itself.

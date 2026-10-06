@@ -344,12 +344,10 @@ private struct Transport: ViewModifier {
             // The theme's own bar in place of the platform's glass: the mini
             // player as a row with the playhead along its top, the tabs flat
             // beneath it. Laid over the content and kept behind the keyboard,
-            // as the platform's tab bar is; the content makes room for it with
-            // an inset of its height, which still gives way to the keyboard.
+            // as the platform's tab bar is. Each page makes room for it itself,
+            // from its height (`koanHidesSystemTabBar`).
             content
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Color.clear.frame(height: barHeight)
-                }
+                .environment(\.koanBarHeight, barHeight)
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 0) {
                         player
@@ -360,6 +358,9 @@ private struct Transport: ViewModifier {
                             .koanRule(.top)
                     }
                     .koanSurface()
+                    // What a test measures a page's last row against.
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("koan-bar")
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
                     .ignoresSafeArea(.keyboard, edges: .bottom)
                 }
@@ -384,9 +385,10 @@ private struct Transport: ViewModifier {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.top, 10)
-        .padding(.bottom, 4)
-        .frame(minHeight: 64, alignment: .top)
+        // The platform's bar's height, the items centred in it as its are.
+        // Below it, the home indicator's strip takes the bar's ground and
+        // nothing else.
+        .frame(minHeight: 49)
         // Capped, as the platform's bar is, with the large content viewer
         // past the cap.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
