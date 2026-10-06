@@ -85,6 +85,7 @@ struct SignInPage: View {
     private var addressForm: some View {
         HStack(spacing: 24) {
             TextField("https://music.example.com", text: $server)
+                .accessibilityIdentifier("pair-server")
                 .keyboardType(.URL)
                 .textContentType(.URL)
                 .autocorrectionDisabled()

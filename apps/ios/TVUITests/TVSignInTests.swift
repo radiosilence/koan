@@ -59,8 +59,8 @@ final class TVSignInTests: XCTestCase {
         XCTAssertTrue(focus(app.buttons["Server"]), "the account form's settings open")
         remote.press(.select)
 
-        type(server, into: app.textFields["Server URL"])
-        type(user, into: app.textFields["Username"])
+        type(server, into: app.textFields["server-url"])
+        type(user, into: app.textFields["username"])
         if apiKey {
             let picker = app.buttons["Sign in with"]
             XCTAssertTrue(focus(picker))
@@ -69,7 +69,7 @@ final class TVSignInTests: XCTestCase {
             remote.press(.select)
             sleep(1)
         }
-        type(secret, into: app.secureTextFields.firstMatch)
+        type(secret, into: app.secureTextFields["secret"])
         snap("\(route)-02-form")
         XCTAssertTrue(focus(app.buttons["Sign In"]))
         remote.press(.select)
@@ -149,7 +149,7 @@ final class TVSignInTests: XCTestCase {
     }
 
     private func unreachable(route: String) {
-        type("http://koan-unreachable.invalid", into: app.textFields.firstMatch)
+        type("http://koan-unreachable.invalid", into: app.textFields["pair-server"])
         XCTAssertTrue(focus(app.buttons["Get a Code"]))
         remote.press(.select)
         snap("\(route)-02-connecting")
