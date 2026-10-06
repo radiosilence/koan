@@ -287,6 +287,19 @@ impl AudioEngineHandle for CpalEngineHandle {
         self.fade.fade_out();
     }
 
+    fn fade_out_quickly(&self) {
+        self.fade.fade_out_quickly();
+    }
+
+    fn fade_in_quickly(&self) -> Result<(), BackendError> {
+        if self.is_running() {
+            self.fade.fade_in_quickly(false);
+            return Ok(());
+        }
+        self.fade.fade_in_quickly(true);
+        self.start()
+    }
+
     fn set_sleep_gain(&self, gain: f32, snap: bool) {
         self.fade.set_sleep_gain(gain, snap);
     }

@@ -41,6 +41,12 @@ const BOUNDARY_SLACK: std::time::Duration = std::time::Duration::from_millis(5);
 /// How often to look at a fading pause, for the few checks it takes to reach
 /// silence.
 const FADE_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
+/// How often to look for a DSP change's quick fade having reached silence:
+/// the restart waits on it, and the dip should last no longer than the fade.
+const QUICK_FADE_CHECK: std::time::Duration = std::time::Duration::from_millis(5);
+/// How long a DSP change waits for its fade before restarting regardless: an
+/// output that has stopped calling back never reports silence.
+const QUICK_FADE_LIMIT: std::time::Duration = std::time::Duration::from_millis(100);
 
 #[derive(Debug, Error)]
 pub enum PlayerError {
@@ -143,6 +149,13 @@ pub struct Player {
     /// The DSP setup last loaded, and the config and device it was loaded
     /// for. Reading impulse responses off disk on every seek would be wasted.
     dsp: Option<DspCache>,
+    /// A DSP change fading the old processing out, since when: the session
+    /// restarts with the new one once that reaches silence. Changes made
+    /// meanwhile ride the same restart, which loads whatever is current.
+    dsp_restart: Option<std::time::Instant>,
+    /// Open the next session's output with a quick fade in: it follows a DSP
+    /// change's quick fade out.
+    quick_start: bool,
     /// The UPnP renderer chosen as the output, when one is: every session
     /// opened while it is set plays there. Not a transport of its own.
     renderer: Option<renderer::RendererLink>,
@@ -346,6 +359,8 @@ impl Player {
             transport: Transport::Idle,
             lead_in_ends: None,
             dsp: None,
+            dsp_restart: None,
+            quick_start: false,
             session: 0,
             silence_waiters: Vec::new(),
             renderer: None,
@@ -583,8 +598,30 @@ impl Player {
             None => now.is_some(),
         };
         if changed {
-            self.restart_on_current_track();
+            self.restart_for_dsp();
         }
+    }
+
+    /// Restart where playback is, for a DSP change. Playing here, the old
+    /// processing fades out quickly first and the new one fades in, so the
+    /// change is a dip of a few milliseconds rather than a cut mid-waveform;
+    /// `update_playback_state` restarts once the fade is silent. A change made
+    /// while one is fading joins it. The restart opens at the same rate unless
+    /// the new setup plays at another, which only a convolution can ask.
+    fn restart_for_dsp(&mut self) {
+        if self.dsp_restart.is_some() {
+            return;
+        }
+        if let Some(session) = self.session()
+            && session.run == Run::Playing
+            && let Output::Local(local) = &session.output
+            && local.engine.is_running()
+        {
+            local.engine.fade_out_quickly();
+            self.dsp_restart = Some(std::time::Instant::now());
+            return;
+        }
+        self.restart_on_current_track();
     }
 
     /// ReplayGain and DSP for a session on the output device.
@@ -1065,7 +1102,11 @@ impl Player {
         // A session opened paused leaves the unit stopped: starting it and
         // stopping it again lets a moment of the track out.
         if start == Run::Playing {
-            engine.start()?;
+            if std::mem::take(&mut self.quick_start) {
+                engine.fade_in_quickly()?;
+            } else {
+                engine.start()?;
+            }
         }
         self.transport = Transport::Loaded(Session {
             track,
@@ -1532,6 +1573,8 @@ impl Player {
             }
         };
         self.session += 1;
+        // A session ending some other way ends the DSP change's wait with it.
+        self.dsp_restart = None;
         self.bank_listening();
         let local = match playback.output {
             Output::Local(local) => local,
@@ -1838,6 +1881,19 @@ impl Player {
                 log::error!("stopping after fade failed: {}", e);
             }
             self.answer_silence();
+        }
+
+        if let Some(since) = self.dsp_restart {
+            let faded = self
+                .session()
+                .and_then(Session::engine)
+                .is_none_or(|e| e.is_silent());
+            if faded || since.elapsed() >= QUICK_FADE_LIMIT {
+                self.dsp_restart = None;
+                self.quick_start = true;
+                self.restart_on_current_track();
+                self.quick_start = false;
+            }
         }
 
         self.follow_playhead();
@@ -2600,6 +2656,9 @@ impl Player {
                 (a, b) => a.or(b),
             };
         };
+        if self.dsp_restart.is_some() {
+            return Some(now + QUICK_FADE_CHECK);
+        }
         match session.run {
             Run::Playing => {
                 let next_track = self
@@ -4442,6 +4501,76 @@ mod tests {
             }
             player.process_command(PlayerCommand::Stop);
         }
+    }
+
+    /// A DSP change while playing fades the output out quickly and restarts
+    /// only once that is silent; changes made meanwhile join it, so a run of
+    /// them is one dip and one restart.
+    #[test]
+    fn a_dsp_change_restarts_after_a_quick_fade_and_coalesces() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize};
+
+        struct QuickEngine {
+            silent: Arc<AtomicBool>,
+            quick_outs: Arc<AtomicUsize>,
+            outs: Arc<AtomicUsize>,
+        }
+        impl AudioEngineHandle for QuickEngine {
+            fn start(&self) -> Result<(), BackendError> {
+                Ok(())
+            }
+            fn stop(&self) -> Result<(), BackendError> {
+                Ok(())
+            }
+            fn is_running(&self) -> bool {
+                true
+            }
+            fn fade_out(&self) {
+                self.outs.fetch_add(1, Ordering::Relaxed);
+            }
+            fn fade_out_quickly(&self) {
+                self.quick_outs.fetch_add(1, Ordering::Relaxed);
+            }
+            fn fade_in(&self) -> Result<(), BackendError> {
+                Ok(())
+            }
+            fn is_silent(&self) -> bool {
+                self.silent.load(Ordering::Relaxed)
+            }
+        }
+
+        let silent = Arc::new(AtomicBool::new(false));
+        let quick_outs = Arc::new(AtomicUsize::new(0));
+        let outs = Arc::new(AtomicUsize::new(0));
+        let mut player = Player::new();
+        player.transport = Transport::Loaded(test_session(
+            QueueItemId::new(),
+            Box::new(QuickEngine {
+                silent: silent.clone(),
+                quick_outs: quick_outs.clone(),
+                outs: outs.clone(),
+            }),
+        ));
+
+        player.restart_for_dsp();
+        assert_eq!(quick_outs.load(Ordering::Relaxed), 1);
+        assert_eq!(outs.load(Ordering::Relaxed), 0, "not the pause's fade");
+        let woken = player.next_event().expect("a wake to look for silence");
+        assert!(woken <= std::time::Instant::now() + QUICK_FADE_CHECK);
+
+        // Another change mid-fade: the same dip.
+        player.restart_for_dsp();
+        assert_eq!(quick_outs.load(Ordering::Relaxed), 1);
+        player.update_playback_state();
+        assert!(player.dsp_restart.is_some(), "not restarted while audible");
+
+        silent.store(true, Ordering::Relaxed);
+        player.update_playback_state();
+        assert!(player.dsp_restart.is_none(), "restarted once silent");
+        assert!(
+            !player.quick_start,
+            "the quick start is the restart's alone"
+        );
     }
 
     #[test]

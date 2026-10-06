@@ -124,6 +124,14 @@ pub trait AudioEngineHandle: Send {
     fn set_sleep_gain(&self, _gain: f32, _snap: bool) {}
     /// Ramp back to full volume, starting the unit if it was stopped.
     fn fade_in(&self) -> Result<(), BackendError>;
+    /// `fade_out` and `fade_in` over a few milliseconds: the dip a DSP change
+    /// plays through. As the ordinary ones where the output has no fader.
+    fn fade_out_quickly(&self) {
+        self.fade_out()
+    }
+    fn fade_in_quickly(&self) -> Result<(), BackendError> {
+        self.fade_in()
+    }
     fn is_silent(&self) -> bool;
     /// Play `frames` of silence before anything from the ring, without
     /// counting them as played. A device that has just changed rate is

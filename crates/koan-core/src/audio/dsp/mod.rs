@@ -22,6 +22,8 @@ pub mod camilla;
 pub mod convolver;
 pub mod import;
 pub mod impulse;
+#[cfg(test)]
+mod null;
 pub mod profiles;
 pub mod raw;
 mod steps;
@@ -800,6 +802,98 @@ mod tests {
             secs as f64 / took.as_secs_f64(),
             100.0 * took.as_secs_f64() / secs as f64
         );
+    }
+
+    /// What a typical profile costs per second of audio, stage by stage and
+    /// together: a ten-band AutoEQ correction, a target change (a graphic
+    /// curve, so a minimum-phase FIR), and a room convolution of 65,536 taps,
+    /// stereo at 48 kHz. Run it in release:
+    /// `cargo test --release -p koan-core --lib bench_typical_profile -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_typical_profile() {
+        use crate::config::{EqFilter, EqFilterKind, GraphicEq};
+        let (rate, secs) = (48000u32, 20usize);
+        let band = |kind, freq, gain_db, q| {
+            DspFilter::Band(EqFilter {
+                kind,
+                freq,
+                gain_db,
+                q,
+                channels: vec![],
+            })
+        };
+        let bands: Vec<DspFilter> = [
+            (EqFilterKind::LowShelf, 105.0, 5.5, 0.7),
+            (EqFilterKind::Peaking, 180.0, -2.8, 0.9),
+            (EqFilterKind::Peaking, 650.0, 1.2, 1.1),
+            (EqFilterKind::Peaking, 1400.0, 2.1, 1.4),
+            (EqFilterKind::Peaking, 2600.0, -1.6, 3.0),
+            (EqFilterKind::Peaking, 3200.0, -4.0, 2.2),
+            (EqFilterKind::Peaking, 4800.0, 2.4, 4.0),
+            (EqFilterKind::Peaking, 6100.0, 3.4, 3.0),
+            (EqFilterKind::Peaking, 9000.0, -3.1, 5.0),
+            (EqFilterKind::HighShelf, 10000.0, -2.5, 0.7),
+        ]
+        .into_iter()
+        .map(|(k, f, g, q)| band(k, f, g, q))
+        .collect();
+        let target = DspFilter::Graphic(GraphicEq {
+            points: vec![
+                (20.0, 4.0),
+                (120.0, 3.0),
+                (1000.0, 0.0),
+                (3000.0, -1.0),
+                (10000.0, -3.0),
+                (20000.0, -6.0),
+            ],
+            channels: vec![],
+        });
+        let mut seed = 11;
+        let room: Vec<Vec<f32>> = (0..2)
+            .map(|_| {
+                let mut ir: Vec<f32> = (0..65536)
+                    .map(|i| (noise(&mut seed) * 0.2 * (-(i as f64) / 6000.0).exp()) as f32)
+                    .collect();
+                ir[0] = 1.0;
+                ir
+            })
+            .collect();
+        let input: Vec<f32> = (0..rate as usize * secs * 2)
+            .map(|_| (noise(&mut seed) * 0.25) as f32)
+            .collect();
+
+        let cases: [(&str, Vec<DspFilter>, Vec<Impulse>); 4] = [
+            ("ten bands", bands.clone(), vec![]),
+            ("target FIR", vec![target.clone()], vec![]),
+            (
+                "65,536-tap convolution",
+                vec![],
+                vec![Impulse::from_channels(rate, room.clone())],
+            ),
+            (
+                "all three",
+                [bands, vec![target]].concat(),
+                vec![Impulse::from_channels(rate, room)],
+            ),
+        ];
+        for (name, filters, impulses) in cases {
+            let setup = Setup::new(filters, impulses);
+            let started = std::time::Instant::now();
+            let mut chain = Chain::new(&setup, rate, 2);
+            let built = started.elapsed();
+            let started = std::time::Instant::now();
+            for p in input.chunks(4096 * 2) {
+                chain.process(p);
+            }
+            let took = started.elapsed();
+            eprintln!(
+                "{name}: built in {built:.1?}; {:.2} ms a second of audio, {:.0}x real time, {:.2}% of one core",
+                1000.0 * took.as_secs_f64() / secs as f64,
+                secs as f64 / took.as_secs_f64(),
+                100.0 * took.as_secs_f64() / secs as f64
+            );
+        }
     }
 
     #[test]
