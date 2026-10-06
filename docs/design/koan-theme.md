@@ -99,7 +99,7 @@ Each is described by its parts and states, so it can be built on any platform.
 
 ### Toggle
 
-A square box, 14 × 14 within a 44-point hit area. Off: a 1-point `muted` outline. On: filled `accent` with a `bg`-coloured check. The label sits to its trailing side in `body`.
+A square box, 14 × 14 within a 44-point hit area. Off: a 1-point `muted` outline. On: filled `accent` with a `bg`-coloured check. The label leads, in `body`, and the box sits at the row's trailing edge, where a switch would.
 
 ### Segmented control
 

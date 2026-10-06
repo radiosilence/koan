@@ -221,7 +221,7 @@ private struct LibrarySettings: View {
                 }
                 // Adding a folder starts a scan, so it waits for the one running.
                 Button("Add Folder…") { choosingFolder = true }
-                    .koanButton(.secondary)
+                    .koanButton(.standard)
                     .disabled(activity.conflicts(with: .localLibrary))
             } header: {
                 KoanSectionHeader("Folders")
@@ -233,9 +233,9 @@ private struct LibrarySettings: View {
             Section {
                 HStack {
                     Button("Scan") { model.scan() }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                     Button("Rescan Everything") { model.scan(force: true) }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                         .help("Re-read every file's tags, ignoring the scan cache")
                 }
                 .rowButtons()
@@ -257,7 +257,7 @@ private struct LibrarySettings: View {
                 Button("Clear Library Index…", role: .destructive) {
                     confirmingRebuild = true
                 }
-                .koanButton(.secondary)
+                .koanButton(.standard)
                 .disabled(activity.conflicts(with: .wholeLibrary))
             } header: {
                 KoanSectionHeader("Rebuild")
@@ -340,6 +340,26 @@ private struct RemoteSettings: View {
         Task { await state.offer(invite) }
     }
 
+    /// Only the syncs wait on the database writer. Signing out is a config
+    /// write, and greying it out while a sync runs strands you on a server you
+    /// are trying to leave.
+    @ViewBuilder private var accountButtons: some View {
+        Button("Sync") { model.syncNow() }
+            .koanButton(.standard)
+            .disabled(activity.conflicts(with: [.remoteTracks]))
+        #if !os(tvOS)
+        if mirror.offers(PasswordChange.extensionName) {
+            Button("Change Password…") { changingPassword = true }
+                .koanButton(.compact)
+        }
+        #endif
+    }
+
+    private var signOutButton: some View {
+        Button("Sign Out", role: .destructive) { confirmingSignOut = true }
+            .koanButton(.compact)
+    }
+
     var body: some View {
         KoanForm {
             if model.settings.remoteSignedIn {
@@ -367,29 +387,24 @@ private struct RemoteSettings: View {
                     LabeledContent("User", value: model.settings.remoteUsername)
                     LabeledContent(
                         "Tracks",
-                        value: Format.count(Int64(model.settings.remoteTracks), "track")
+                        value: model.settings.remoteTracks.formatted(.number)
                     )
                     if mirror.signInRefused {
                         KoanLabel(EngineMirror.signInRefusedDetail, icon: "exclamationmark.triangle")
                             .koanText(.meta, .bad)
                     }
-                    HStack {
-                        // Only the syncs wait on the database writer. Signing
-                        // out is a config write, and greying it out while a
-                        // sync runs strands you on a server you are trying to
-                        // leave.
-                        Button("Sync") { model.syncNow() }
-                            .koanButton(.secondary)
-                            .disabled(activity.conflicts(with: [.remoteTracks]))
-                        #if !os(tvOS)
-                        if mirror.offers(PasswordChange.extensionName) {
-                            Button("Change Password…") { changingPassword = true }
-                                .koanButton(.secondary)
+                    // In a row where they fit, and one under another where they
+                    // do not: a button is one line, never two.
+                    ViewThatFits(in: .horizontal) {
+                        HStack {
+                            accountButtons
+                            Spacer()
+                            signOutButton
                         }
-                        #endif
-                        Spacer()
-                        Button("Sign Out", role: .destructive) { confirmingSignOut = true }
-                            .koanButton(.secondary)
+                        VStack(alignment: .leading) {
+                            accountButtons
+                            signOutButton
+                        }
                     }
                     .rowButtons()
                 } header: {
@@ -463,7 +478,7 @@ private struct RemoteSettings: View {
                     }
                     HStack {
                         Button("Sign In") { model.signIn(url: url, username: username) }
-                            .koanButton(.primary)
+                            .koanButton(.prominent)
                             .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                         Spacer()
                         #if !os(tvOS)
@@ -876,11 +891,11 @@ struct DspSettings: View {
             // imported on another device, and the TV picks them by output.
             #if !os(tvOS)
             Button("Import…") { importing = true }
-                .koanButton(.secondary)
+                .koanButton(.standard)
             Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
-                .koanButton(.secondary)
+                .koanButton(.standard)
             Button("Use a Measurement…") { measuring = true }
-                .koanButton(.secondary)
+                .koanButton(.standard)
             #endif
             if let summary = dsp.importSummary {
                 Text(summary)
@@ -917,14 +932,14 @@ private struct AutoEqSuggestion: View {
                     .koanText(.body, .muted)
                 HStack {
                     Button("Use") { dsp.installAutoEq(entry) }
-                        .koanButton(.primary)
+                        .koanButton(.prominent)
                     dismiss
                     Spacer()
                 }
             case let .search(query):
                 HStack {
                     Button("Find \(query) in AutoEQ…") { find(query) }
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                     dismiss
                     Spacer()
                 }
@@ -1152,7 +1167,7 @@ private struct PairDevice: View {
                         .onSubmit(approve)
                         .koanField()
                     Button("Approve", action: approve)
-                        .koanButton(.primary)
+                        .koanButton(.prominent)
                         .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             } header: {
@@ -1400,7 +1415,7 @@ private struct DevicesSettings: View {
                         .onSubmit(add)
                         .koanField()
                     Button("Add", action: add)
-                        .koanButton(.secondary)
+                        .koanButton(.standard)
                         .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             } header: {
@@ -1433,7 +1448,7 @@ private struct DevicesSettings: View {
                             .onSubmit { share(grantee, allow: true) }
                             .koanField()
                         Button("Share") { share(grantee, allow: true) }
-                            .koanButton(.secondary)
+                            .koanButton(.standard)
                             .disabled(grantee.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
                     #if !os(macOS)

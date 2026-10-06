@@ -12,7 +12,7 @@ import SwiftUI
 /// `appearance.theme = "koan"`. The tokens and components are set down in
 /// `docs/design/koan-theme.md`; this is their Swift form.
 ///
-/// Views name roles — `.koanText(.title)`, `.koanSurface()`, `.koanButton(.primary)`,
+/// Views name roles — `.koanText(.title)`, `.koanSurface()`, `.koanButton(.prominent)`,
 /// `KoanLabel` — and never a colour or a font. Each role draws the theme when it
 /// is on and the platform's nearest equivalent when it is off, so a converted
 /// view carries no styling of its own in either.
@@ -833,11 +833,18 @@ extension View {
 
 enum KoanSurface { case bg, surface }
 
+/// How much a control matters on its screen, as headings do for type: one
+/// prominent action per screen or group, the rest standard, and the small
+/// actions beside a row compact.
 enum KoanButtonKind {
-    /// The accent, outlined in it.
-    case primary
-    /// Ink, outlined in `muted`.
-    case secondary
+    /// The main thing done here: larger, in the accent, in a square outline.
+    /// One per screen or group.
+    case prominent
+    /// Text and its icon in ink, no outline; the default.
+    case standard
+    /// Smaller and tighter, for actions beside a row or a title: favourite,
+    /// ⋯, revoke, a sheet's lesser actions.
+    case compact
     /// `muted`, no outline; ink on hover. Bars' actions ("clear", "sleep").
     case text
     /// A glyph alone, with a 44-point hit area.
@@ -853,8 +860,17 @@ enum KoanButtonKind {
     /// gives them, and cards their own.
     fileprivate var setsType: Bool {
         switch self {
-        case .primary, .secondary, .text: true
+        case .prominent, .standard, .compact, .text: true
         case .icon, .iconOutlined, .card: false
+        }
+    }
+
+    /// The label's type role.
+    fileprivate var type: KoanType {
+        switch self {
+        case .prominent: .body
+        case .compact: .meta
+        default: .control
         }
     }
 }
@@ -1000,9 +1016,12 @@ private struct KoanButtonBody: View {
         if kind == .card {
             configuration.label
         } else if kind.setsType {
+            // One line, always: buttons in a row stand at one height.
             configuration.label
-                .font(.koan(.control))
+                .font(.koan(kind.type))
                 .textCase(.lowercase)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
                 .foregroundStyle(foreground(configuration))
         } else {
             configuration.label
@@ -1019,26 +1038,29 @@ private struct KoanButtonBody: View {
     }
 
     private func foreground(_ configuration: ButtonStyleConfiguration) -> AnyShapeStyle {
-        switch kind {
-        case .primary:
+        // A destructive action reads as one, whatever its kind.
+        if configuration.role == .destructive, kind != .card { return AnyShapeStyle(Color.koanBad) }
+        return switch kind {
+        case .prominent:
             accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
-        case .secondary, .icon, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
+        case .standard, .compact, .icon, .iconOutlined, .card: AnyShapeStyle(Color.koanInk)
         case .text: AnyShapeStyle(configuration.isPressed ? Color.koanInk : Color.koanMuted)
         }
     }
 
     private var outline: AnyShapeStyle? {
         switch kind {
-        case .primary: AnyShapeStyle(.tint)
-        case .secondary: AnyShapeStyle(Color.koanMuted)
+        case .prominent: AnyShapeStyle(.tint)
         case .iconOutlined: AnyShapeStyle(Color.koanInk)
-        case .text, .icon, .card: nil
+        case .standard, .compact, .text, .icon, .card: nil
         }
     }
 
     private var padding: EdgeInsets {
         switch kind {
-        case .primary, .secondary: EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16)
+        case .prominent: EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20)
+        case .standard: EdgeInsets(top: 8, leading: 4, bottom: 8, trailing: 4)
+        case .compact: EdgeInsets(top: 4, leading: 2, bottom: 4, trailing: 2)
         case .text: EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0)
         case .icon, .card: EdgeInsets()
         case .iconOutlined: EdgeInsets(top: 7, leading: 7, bottom: 7, trailing: 7)
@@ -1105,7 +1127,12 @@ struct KoanToggleStyle: ToggleStyle {
         Button {
             configuration.isOn.toggle()
         } label: {
+            // The label leading and the box trailing, where a switch sits.
             HStack(spacing: KoanTheme.Space.m) {
+                configuration.label
+                    .font(.koan(.body))
+                    .foregroundStyle(Color.koanInk)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 ZStack {
                     if configuration.isOn {
                         Rectangle().fill(.tint)
@@ -1117,10 +1144,6 @@ struct KoanToggleStyle: ToggleStyle {
                     }
                 }
                 .frame(width: 14, height: 14)
-                configuration.label
-                    .font(.koan(.body))
-                    .foregroundStyle(Color.koanInk)
-                Spacer(minLength: 0)
             }
             .frame(minHeight: Self.hit)
             .contentShape(Rectangle())

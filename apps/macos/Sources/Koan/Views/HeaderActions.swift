@@ -53,6 +53,6 @@ struct HeaderActions: View {
             }
         }
         // The theme's secondary buttons; the platform's own otherwise.
-        .koanButtons(.secondary)
+        .koanButtons(.standard)
     }
 }
