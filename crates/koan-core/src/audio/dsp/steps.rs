@@ -248,8 +248,16 @@ pub(super) fn gain_matrix(plan: &[Planned], channels: usize, w: f64, rate: u32) 
     m
 }
 
+/// The curve's points in order of frequency, past any that are not numbers:
+/// a curve from a config edited by hand, or a file, makes no response that is
+/// not a number either.
 fn sorted(g: &GraphicEq) -> Vec<(f64, f64)> {
-    let mut points: Vec<(f64, f64)> = g.points.iter().copied().filter(|p| p.0 > 0.0).collect();
+    let mut points: Vec<(f64, f64)> = g
+        .points
+        .iter()
+        .copied()
+        .filter(|(f, d)| *f > 0.0 && f.is_finite() && d.is_finite())
+        .collect();
     points.sort_by(|a, b| a.0.total_cmp(&b.0));
     points
 }
