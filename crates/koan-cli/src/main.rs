@@ -335,6 +335,18 @@ enum DspCommands {
         #[arg(long)]
         target: String,
     },
+    /// Split a baked EQ into a correction from the headphones' measurement
+    /// and a tuning holding the rest; the outputs that played it play both
+    Split {
+        name: String,
+        /// The headphones' measurement, a squig.link or REW CSV
+        path: PathBuf,
+        #[arg(long, value_parser = ["in", "over"])]
+        ear: String,
+        /// The target that counts as neutral, as `koan dsp target` lists them
+        #[arg(long)]
+        target: String,
+    },
     /// Say what a profile is for: a neutral headphone correction, a tuning
     /// on top of one, or a correction with a tuning baked in. A stack holds
     /// one correction, and a baked one counts
@@ -654,6 +666,12 @@ fn main() {
                 ear,
                 target,
             } => commands::cmd_dsp_measure(&path, &name, ear == "in", &target),
+            DspCommands::Split {
+                name,
+                path,
+                ear,
+                target,
+            } => commands::cmd_dsp_split(&name, &path, ear == "in", &target),
             DspCommands::Role { name, role } => commands::cmd_dsp_role(&name, &role),
             DspCommands::MadeFor { name, target } => {
                 commands::cmd_dsp_made_for(&name, Some(target.as_str()).filter(|t| *t != "unknown"))

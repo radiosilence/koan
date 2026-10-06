@@ -10,6 +10,8 @@ struct OutputEqSection: View {
     let dsp: DspModel
     let overview: DspOverview
     let device: String
+    /// Take a baked EQ apart, presented by the page.
+    var split: ((String) -> Void)?
     @State private var targets: DspTargets?
 
     private var correction: DspProfileSummary? {
@@ -71,6 +73,11 @@ struct OutputEqSection: View {
                 // Greyed with its reason, never silently missing.
                 Label("\(name) already has a tuning baked in. Split it to swap tunings.", systemImage: "info.circle")
                     .koanText(.meta, .muted)
+                #if !os(tvOS)
+                if let split, correction?.rates.isEmpty == true {
+                    Button("Split into Correction + Tuning…") { split(name) }
+                }
+                #endif
             } else if let tuning {
                 Picker("Tuning", selection: Binding(
                     get: { tuning.name },

@@ -56,7 +56,9 @@ Each output's EQ is three choices, made on the EQ page under the output's name, 
 
 kōan builds the chain itself, so no stack has to be made by hand: the correction, then the tuning. A tuning can say which target it was made against, on its own page under **Made against**. On headphones corrected to another target, kōan plays the difference between the two first, so the tuning sounds as it was made to whatever corrects the headphones. That is dynamic baking: what a preset like Qudelix's "Lush" bakes into one fixed EQ, worked out for each pair of headphones as it plays. A tuning whose target isn't known plays as it is.
 
-A baked preset has its tuning in it already, so no tuning goes on top; the EQ page says so. A group of tunings works as a quick switch between them. The tuning is this device's choice for that output, as the correction is, and the menu by the output in the transport offers it too.
+A baked preset has its tuning in it already, so no tuning goes on top; the EQ page says so, and offers to split it.
+
+**Split into Correction + Tuning…**, on a baked preset's page or the EQ page, takes it apart with a measurement of the headphones and the target the preset counts as neutral (Harman, usually). The correction is the target minus the measurement; the tuning is everything the preset does beyond it, saved as a profile of its own, made against that target. A preview draws the two and their sum against the preset before anything is saved. The outputs that played the preset then play the correction with the tuning on top, and the tuning works on any other headphones too. The preset itself is kept. A group of tunings works as a quick switch between them. The tuning is this device's choice for that output, as the correction is, and the menu by the output in the transport offers it too.
 
 ## Which way for your headphones
 
