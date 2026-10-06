@@ -58,7 +58,7 @@ One face, Geist Mono (variable, weights 100–900), bundled with the app. Sizes 
 - **Rules** are 1 px (one device pixel on a 2× display is too faint at `rule`'s contrast; use 1 point). A selected navigation row is marked by a 2-point `accent` rule on its leading edge.
 - **Corners** are square: controls, covers, sheets and the transport. The window's own corners are the system's.
 - **No materials.** No blur, glass, vibrancy or shadows. A region is told apart by a rule, or rarely by `surface`. The [wash](#wash) is the one thing under the ground that is not flat.
-- **Motion.** None of its own: selection, hover and pressed states change at once. System transitions (navigation pushes, sheets) stay as the platform draws them.
+- **Motion.** Fast and direct: a quick-out curve, a snappy start and a decisive stop, with no tail, delay, stagger or overshoot, and no springs, scale pops or glass morphs. States (pressed, hover, selection, toggles) take 80 ms (`Motion.fast`); a marker moving between places, a tab's underline, goes straight to its target in 120 ms (`Motion.normal`); the accent arriving with a record eases over 250 ms (`Motion.settle`) and never draws the eye. A tab switch swaps the page at once. With Reduce Motion all of it is instant. Components take these tokens through `.koanAnimation`, never their own `.animation`. System transitions (navigation pushes, sheets) stay as the platform draws them.
 
 ### Accent
 

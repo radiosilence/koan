@@ -228,6 +228,7 @@ struct RecordRoom: ViewModifier {
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(\.drawnOffscreen) private var offscreen
     @Environment(AppearanceModel.self) private var appearance
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The colour of a record the cache could not already answer for, and which
     /// record it was worked out for. Only consulted when the cache cannot.
@@ -248,11 +249,11 @@ struct RecordRoom: ViewModifier {
     /// twenty renders of the whole window, each one a commit, and each commit a
     /// synchronous round trip to the render server.
     ///
-    /// The kōan theme eases for a third of a second: its accent is the colour
-    /// of every selection and indicator, and a two-second drift there reads as
-    /// something wrong rather than a room changing.
+    /// The kōan theme eases for a quarter of a second (`Motion.settle`): its
+    /// accent is the colour of every selection and indicator, and a two-second
+    /// drift there reads as something wrong rather than a room changing.
     @MainActor private static var tintEase: Animation {
-        .easeInOut(duration: KoanTheme.isOn ? 0.35 : 2)
+        KoanTheme.isOn ? KoanTheme.Motion.settle : .easeInOut(duration: 2)
     }
 
     /// Read straight through the cache on every pass, the way `AlbumArtwork`
@@ -361,7 +362,7 @@ struct RecordRoom: ViewModifier {
                 try? await Task.sleep(for: .milliseconds(150))
                 let colour = await art.dominantColour(for: colourSource)
                 guard !Task.isCancelled else { return }
-                withAnimation(Self.tintEase) { fetchedTint = (colourSource, colour) }
+                withAnimation(reduceMotion ? nil : Self.tintEase) { fetchedTint = (colourSource, colour) }
             }
             // Overrides the app-wide tint for everything below, which is every
             // control koan draws itself. What AppKit draws — list selection,
