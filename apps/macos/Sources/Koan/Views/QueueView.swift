@@ -863,7 +863,7 @@ private struct JumpToPlayingButton: View {
             // On a disc of the tint while following, so the state reads by
             // shape as well as colour.
             Image(systemName: Icon.jumpToPlaying)
-                .foregroundStyle(following ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                .foregroundStyle(following ? AnyShapeStyle(.tint) : KoanTheme.style(.ink, system: .primary))
                 .padding(4)
                 .background(
                     following ? AnyShapeStyle(.tint.opacity(0.18)) : AnyShapeStyle(.clear),

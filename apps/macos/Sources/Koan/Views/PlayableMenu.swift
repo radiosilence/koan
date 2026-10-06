@@ -403,7 +403,7 @@ struct FavouriteHeaderButton: View {
     var body: some View {
         Button { library.toggleFavourite(playable) } label: {
             Label(isOn ? "Favourited" : "Favourite", systemImage: isOn ? Icon.favourited : Icon.favourite)
-                .foregroundStyle(isOn ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+                .foregroundStyle(isOn ? KoanTheme.style(.bad, system: .red) : KoanTheme.style(.ink, system: .primary))
         }
         .help(isOn ? "Remove from favourites" : "Add to favourites")
     }

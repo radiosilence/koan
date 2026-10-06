@@ -335,7 +335,7 @@ struct TrackRow: View {
                     .foregroundStyle(
                         isCurrent && !isSelected
                             ? AnyShapeStyle(.tint)
-                            : AnyShapeStyle(.primary)
+                            : KoanTheme.style(.ink, system: .primary)
                     )
                 HStack(spacing: 5) {
                     LinkText(

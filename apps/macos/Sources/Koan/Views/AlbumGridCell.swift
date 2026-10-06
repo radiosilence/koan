@@ -194,7 +194,7 @@ struct SelectionTick: View {
     var body: some View {
         let selected = selection.contains(key)
         Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-            .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+            .foregroundStyle(selected ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .tertiary))
     }
 }
 

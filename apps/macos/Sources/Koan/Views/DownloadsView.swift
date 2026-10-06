@@ -202,7 +202,7 @@ private struct DownloadRow: View {
                 Text(subtitle)
                     .lineLimit(1)
                     .foregroundStyle(
-                        transfer.state == .failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
+                        transfer.state == .failed ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.muted, system: .secondary)
                     )
                 Spacer(minLength: 8)
                 // No hover on a phone: a link that waits for one never shows.

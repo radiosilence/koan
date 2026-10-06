@@ -36,6 +36,14 @@ enum EvidenceRenderer {
                 NavigationStack { DspProfilePage(dsp: state.dsp, name: profile.name) }
             )))
         }
+        // The transport's popovers, as their content: a popover is not drawn in
+        // a window that is never shown.
+        pages.append(("popover-output", CGSize(width: 340, height: 420), AnyView(
+            OutputPicker().koanSurface().appEnvironment(state)
+        )))
+        pages.append(("popover-control", CGSize(width: 340, height: 320), AnyView(
+            ControlPicker().koanSurface().appEnvironment(state)
+        )))
         if KoanTheme.isOn {
             let warm = KoanAccent(record: Color(red: 0.94, green: 0.54, blue: 0.36)) // theme: raw — a sleeve's colour, as input
             let navy = KoanAccent(record: Color(red: 0.04, green: 0.10, blue: 0.23)) // theme: raw — a sleeve's colour, as input
@@ -76,6 +84,7 @@ enum EvidenceRenderer {
             ("window-recent", { nav.show(.recentlyPlayed) }),
             ("window-history", { nav.show(.playHistory) }),
             ("window-downloads", { nav.show(.downloads) }),
+            ("window-lyrics", { nav.show(.queue); state.ui.showLyrics = true }),
         ]
         if let album = state.player.currentAlbumId {
             windows.append(("window-album", { nav.open(album: album) }))

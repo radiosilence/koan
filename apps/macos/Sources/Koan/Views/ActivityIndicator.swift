@@ -74,7 +74,7 @@ private struct ActivityRow: View {
                             .font(.role(.fine, system: .caption2))
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(hovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                    .foregroundStyle(hovering ? KoanTheme.style(.muted, system: .secondary) : KoanTheme.style(.muted, system: .tertiary))
                     .help("Stop — what it has already done is kept")
                 }
             }

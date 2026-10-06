@@ -467,7 +467,7 @@ private struct DeviceChoiceRow: View {
                     Image(systemName: icon)
                         .font(.role(.titleSmall, system: .title3))
                         .frame(width: 28)
-                        .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(selected ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .secondary))
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 5) {
                             Text(name)
@@ -486,7 +486,7 @@ private struct DeviceChoiceRow: View {
                             Text(detail)
                                 .font(.role(.fine, system: .caption))
                                 .foregroundStyle(
-                                    unreachable || warning ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
+                                    unreachable || warning ? KoanTheme.style(.bad, system: .orange) : KoanTheme.style(.muted, system: .secondary)
                                 )
                                 .lineLimit(2)
                         }
@@ -514,7 +514,7 @@ private struct DeviceChoiceRow: View {
                 PresetMenu(presets: presets) {
                     Image(systemName: "slider.horizontal.3")
                         .font(.role(.fine, system: .caption))
-                        .foregroundStyle(presets.current == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(presets.current == nil ? KoanTheme.style(.muted, system: .tertiary) : KoanTheme.style(.muted, system: .secondary))
                 }
                 #if os(macOS)
                 .menuStyle(.borderlessButton)
@@ -597,7 +597,7 @@ struct ControlButton: View {
             HStack(spacing: 5) {
                 Image(systemName: Action.control.glyph)
                     .font(iconSize.map { .system(size: $0) })
-                    .foregroundStyle(player.isControllingAnother ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                    .foregroundStyle(player.isControllingAnother ? AnyShapeStyle(.tint) : KoanTheme.style(.ink, system: .primary))
                 if labelled, let name = controlled {
                     Text(name)
                         .lineLimit(1)
@@ -639,7 +639,7 @@ struct OutputButton: View {
             HStack(spacing: 5) {
                 Image(systemName: "hifispeaker")
                     .font(iconSize.map { .system(size: $0) })
-                    .foregroundStyle(elsewhere != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                    .foregroundStyle(elsewhere != nil ? AnyShapeStyle(.tint) : KoanTheme.style(.ink, system: .primary))
                     .overlay(alignment: .topTrailing) {
                         if processing != nil {
                             Circle()

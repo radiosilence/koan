@@ -261,7 +261,7 @@ private struct Pill: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: systemImage)
-                .foregroundStyle(KoanTheme.style(tinted ? .accent : .muted, system: tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary)))
+                .foregroundStyle(KoanTheme.style(tinted ? .accent : .muted, system: tinted ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .secondary)))
             Text(text)
                 .lineLimit(1)
                 .foregroundStyle(KoanTheme.style(.ink, system: .primary))
