@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Your own devices are yours on the local network too.** Devices signed in to the same kōan server prove to each other that they share an account, with keys the server publishes and signatures over fresh nonces, and a proven device has the account's powers instead of a nearby device's: handing your phone music it has not synced yet now syncs it rather than dropping it. Commands from a proven device are signed, so none can be replayed or slipped into the connection. Devices that prove nothing are trusted as before.
 - **Servers keep and publish device keys (`koanDeviceKeys`).** A device that links with an API key may register a public key, kept on that key, so revoking it drops the device's key too; the account's devices are sent each other's keys, and those of devices shared with them. The groundwork for a device proving on the local network that it is yours.
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 

@@ -80,6 +80,25 @@ Within that, how much it may do depends on how it reaches this device.
 A share is between accounts on one server, recorded by the server. The device
 that is shared is the only one that can share or stop sharing it.
 
+Your own devices are not limited by any of this. On the network, two devices
+signed in to the same kōan server with an API key (an invite, pairing, or a
+password sign-in on a server that trades it for a key) prove to each other
+that they belong to the same account, and a proven device has the account's
+powers, as if it had come through the server: handing it music it has not
+synced yet syncs it. A device shared with you proves itself the same way and
+gets what a share allows. Each device holds a keypair, made when it signs in,
+dropped when it signs out, and kept with its credentials in
+`config.local.toml`; the server keeps each public key on the API key that
+signed the device in and sends the account's devices each other's, so the
+proof holds while the server is out of reach. A list not refreshed from the
+server for thirty days is no longer trusted. The two ends sign each other's
+fresh nonces when they connect, and every command after is signed for that
+connection: the network is not encrypted, so a recorded proof, a replayed
+command, or one slipped into the connection is refused. What is playing can
+still be seen by anyone on the network, as before. A device that proves
+nothing, because it is older, signed in with a password, or on another
+server, is trusted by the setting above.
+
 A device that is found but cannot be reached is not listed: there is nothing
 to do with it. On iOS, finding anything on the network needs **Local Network**
 allowed for kōan (Settings → Privacy & Security); the picker says so when it
