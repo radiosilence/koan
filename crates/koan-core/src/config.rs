@@ -665,13 +665,15 @@ pub mod dsp_bounds {
     /// time at.
     pub const CHAIN_DELAY_MS: f64 = 2_000.0;
     /// Graphic curves on any one channel: each is a minimum-phase FIR of up
-    /// to a second of taps at the output rate.
-    pub const CHAIN_GRAPHICS: usize = 4;
+    /// to a second of taps at the output rate. Two is a target step and a
+    /// curve of the user's own.
+    pub const CHAIN_GRAPHICS: usize = 2;
     /// Mixes in a chain.
     pub const CHAIN_MIXES: usize = 8;
-    /// Taps of an impulse response, per route: 2^19, eleven seconds at
-    /// 48 kHz, longer than any room's decay.
-    pub const IMPULSE_TAPS: usize = 1 << 19;
+    /// Taps of an impulse response, per route: the longest a shipped room
+    /// correction is known to need, Harman's 780 pack at 192 kHz, which is
+    /// over five seconds at 48 kHz, longer than any room's decay.
+    pub const IMPULSE_TAPS: usize = 262_145;
 }
 
 /// Bring a whole chain within the `dsp_bounds` budgets, saying what was

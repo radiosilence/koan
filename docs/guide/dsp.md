@@ -254,6 +254,16 @@ past a bound is clamped to it, one that is not a number is dropped with its
 filter, and the profile's page says what was adjusted. The config keeps what
 was written; profiles synced from another device arrive already adjusted.
 
+The whole chain a profile plays, its layers and a moved target included, has
+budgets of its own: two seconds of delay on a channel in all, two graphic
+curves on a channel, eight mixes, and impulse responses of at most 262,145 taps
+(Harman's 780 pack at 192 kHz, the longest known to ship). The largest chain
+these allow runs about 30 times faster than real time at 48 kHz and five
+times at 192 kHz on an M-series Mac. A preamp set by hand that leaves the
+filters' peak above full scale is lowered to the headroom they need, and
+whatever the chain puts out is held within full scale, with anything that is
+not a number turned to silence, before it reaches the device.
+
 ## Sample rates
 
 An impulse response is only correct at the rate it was designed for. When a

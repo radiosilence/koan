@@ -782,6 +782,8 @@ mod tests {
             .collect();
         let mut setup = Setup::new(vec![], vec![Impulse::from_channels(rate, vec![ir.clone()])]);
         setup.preamp_db = Some(0.0);
+        // Lowered for the response's peak, which the reference applies too.
+        let preamp = 10f64.powf(setup.preamp_db(rate, 2) / 20.0);
         let mut chain = Chain::new(&setup, rate, 2);
         let (out, _) = run_all(&mut chain, &input, 1152);
         assert_eq!(out.len(), input.len());
@@ -794,7 +796,8 @@ mod tests {
                 let y: f64 = (0..taps)
                     .filter(|&k| k <= m && m - k < frames)
                     .map(|k| ir[k] as f64 * input[(m - k) * 2 + c] as f64)
-                    .sum();
+                    .sum::<f64>()
+                    * preamp;
                 err += (out[n * 2 + c] as f64 - y).powi(2);
                 sig += y.powi(2);
             }
@@ -973,7 +976,7 @@ mod tests {
     }
 
     /// Graphic curves and mixes are counted across the whole chain, layers
-    /// and all: 32 layers of four curves each still play four a channel.
+    /// and all: 32 layers of many curves each still play the budget's few.
     #[test]
     fn graphic_curves_are_budgeted_across_layers() {
         let curve = DspFilter::Graphic(crate::config::GraphicEq {
@@ -1035,7 +1038,7 @@ mod tests {
                 .collect(),
             channels: vec![],
         });
-        let mut filters = vec![curve; 4];
+        let mut filters = vec![curve; crate::config::dsp_bounds::CHAIN_GRAPHICS];
         filters.extend((0..64).map(|i| {
             DspFilter::Band(crate::config::EqFilter {
                 kind: crate::config::EqFilterKind::Peaking,
@@ -1166,7 +1169,8 @@ mod tests {
 
     #[test]
     fn a_route_can_feed_one_channel_into_the_other() {
-        // Left passes; right is left at half, plus right.
+        // Left passes; right is half left and half right, so no output can
+        // pass full scale and the preamp stays at 0 dB.
         let impulse = Impulse {
             rate: 48000,
             channels: Some(2),
@@ -1178,7 +1182,7 @@ mod tests {
                 },
                 Route {
                     ir: vec![1.0],
-                    inputs: vec![(0, 0.5), (1, 1.0)],
+                    inputs: vec![(0, 0.5), (1, 0.5)],
                     outputs: vec![(1, 1.0)],
                 },
             ],
@@ -1190,7 +1194,7 @@ mod tests {
         let mut chain = Chain::new(&setup, 48000, 2);
         let (out, _) = run_all(&mut chain, &[0.4, 0.2, 0.0, 0.0], 4);
         // The right output is a frame late, by its delay.
-        assert_eq!(out, vec![0.4, 0.0, 0.0, 0.4]);
+        assert_eq!(out, vec![0.4, 0.0, 0.0, 0.3]);
     }
 
     #[test]
