@@ -4367,6 +4367,7 @@ async fn koan_link(
     let mark = koan_core::auth::account_mark();
     let caller = {
         let auth = params.auth();
+        let state = state.clone();
         match tokio::task::spawn_blocking(move || validate_auth(&auth, &state)).await {
             Ok(Ok(caller)) => caller,
             Ok(Err(e)) => return SubsonicResponse::error(json, &e),
@@ -4390,11 +4391,10 @@ async fn koan_link(
         if !koan_core::remote::link::valid_device_key(public) {
             log::warn!("link: {device} sent a device key that is not one; ignored");
         } else if let Some(raw) = params.auth().api_key {
-            let (state, device, public) = (state.clone(), device.clone(), public.clone());
+            let (st, dev, public) = (state.clone(), device.clone(), public.clone());
             let kept = tokio::task::spawn_blocking(move || {
-                let db = state.open_db().ok()?;
-                koan_core::db::queries::api_keys::set_device_key(&db.conn, &raw, &device, &public)
-                    .ok()
+                let db = st.open_db().ok()?;
+                koan_core::db::queries::api_keys::set_device_key(&db.conn, &raw, &dev, &public).ok()
             })
             .await;
             if !matches!(kept, Ok(Some(true))) {
@@ -4516,6 +4516,7 @@ async fn link_session(
             platform.clone(),
             device.clone(),
         );
+        let pool = pool.clone();
         let registered = tokio::task::spawn_blocking(move || {
             let id = registry.register(&username, &name, &platform, &device, tx, wants_devices);
             // After `register`, which records the device the address is kept on.
