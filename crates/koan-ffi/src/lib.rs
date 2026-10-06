@@ -35,6 +35,7 @@ use uuid::Uuid;
 use koan_core::db::queries::RECENT_LIMIT;
 
 mod offload;
+mod server_queue;
 mod state;
 mod types;
 pub use state::*;
@@ -2023,6 +2024,60 @@ impl KoanEngine {
         offload::offload(move || self.write_position(&*self.db()?)).await
     }
 
+    /// Whether this device keeps its queue in the account's play queue on the
+    /// server, and what the server holds now, for asking before turning it on:
+    /// turning it on replaces this device's queue with that one.
+    pub async fn server_queue(self: Arc<Self>) -> Result<ServerQueue, KoanError> {
+        offload::offload(move || {
+            let saved = server_queue::saved()?;
+            Ok(ServerQueue {
+                on: Config::cached().remote.play_queue,
+                saved_tracks: saved.as_ref().map_or(0, |q| q.entry.len() as u32),
+                saved_by: saved.map(|q| saved_by(&q.changed_by)).unwrap_or_default(),
+            })
+        })
+        .await
+    }
+
+    /// Keep this device's queue in the account's play queue on the server, or
+    /// stop. On, the server's queue replaces this device's, or this device's
+    /// is saved there when the server has none; off leaves both as they are.
+    pub async fn set_server_queue(self: Arc<Self>, on: bool) -> Result<(), KoanError> {
+        offload::offload(move || {
+            if on {
+                match server_queue::saved()? {
+                    Some(queue) => self.load_server_queue(&queue, None)?,
+                    None => self.save_server_queue()?,
+                }
+            }
+            Config::persist(|cfg| cfg.remote.play_queue = on).map_err(|e| {
+                KoanError::BadArgument {
+                    message: e.to_string(),
+                }
+            })?;
+            if on {
+                server_queue::start(Arc::downgrade(&self), false);
+            } else {
+                server_queue::stop();
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Save the queue and playhead to the server now, if this device keeps
+    /// them there: the app is going to the background or quitting.
+    pub async fn save_server_queue_now(self: Arc<Self>) {
+        offload::offload(move || {
+            if Config::cached().remote.play_queue
+                && let Err(e) = self.save_server_queue()
+            {
+                log::info!("server queue: not saved: {e}");
+            }
+        })
+        .await
+    }
+
     /// Restore the queue saved by `save_session`, cursor and position included.
     ///
     /// Resumes only if playback was running when the session was saved: closing
@@ -2032,7 +2087,11 @@ impl KoanEngine {
     ///
     /// Returns the number of items restored.
     pub async fn restore_session(self: Arc<Self>) -> Result<u32, KoanError> {
-        offload::sequenced(move || {
+        // Once this device's own queue is back, the server's may take its
+        // place: see `server_queue`.
+        let engine = Arc::downgrade(&self);
+        let restoring = self.clone();
+        let restored = offload::sequenced(move || {
             let db = self.db()?;
             // Before the queue and whether there is one: the mode is the
             // player's, and a queue added under it would be shuffled again.
@@ -2080,7 +2139,23 @@ impl KoanEngine {
 
             Ok(count)
         })
-        .await
+        .await;
+        if Config::cached().remote.play_queue {
+            // Once the player has applied the restore, cue and all, so the
+            // server's queue is weighed against the restored one.
+            offload::offload(move || {
+                if !restoring.applied(server_queue::LANDED) {
+                    log::warn!("server queue: the restore did not land; not following");
+                    return restored;
+                }
+                drop(restoring);
+                server_queue::start(engine, true);
+                restored
+            })
+            .await
+        } else {
+            restored
+        }
     }
 
     // --- Output device -----------------------------------------------------
@@ -2566,6 +2641,7 @@ impl KoanEngine {
                 cache_bytes,
                 auto_sync: cfg.remote.auto_sync,
                 auto_sync_interval_mins: cfg.remote.auto_sync_interval_mins,
+                play_queue: cfg.remote.play_queue,
 
                 replaygain: match cfg.playback.replaygain {
                     config::ReplayGainMode::Off => "off".into(),
@@ -4451,6 +4527,7 @@ impl KoanEngine {
             // acted on locally by default while another device is controlled.
             local @ (PlayerCommand::Cue { .. }
             | PlayerCommand::PauseAndReport(_)
+            | PlayerCommand::Barrier(_)
             | PlayerCommand::UpdatePaths(_)
             | PlayerCommand::TrackReady(_)
             | PlayerCommand::TrackStreamReady(_)
@@ -4526,6 +4603,13 @@ impl KoanEngine {
         self.tx.send(cmd).map_err(|e| KoanError::Player {
             message: e.to_string(),
         })
+    }
+
+    /// Wait until the player has applied and published every command sent to
+    /// it so far, up to `within`. False when it has not answered by then.
+    fn applied(&self, within: std::time::Duration) -> bool {
+        let (reply, done) = crossbeam_channel::bounded(1);
+        self.send_local(PlayerCommand::Barrier(reply)).is_ok() && done.recv_timeout(within).is_ok()
     }
 
     /// Resolve track IDs into playlist items. Skips IDs that aren't in the
@@ -5272,6 +5356,22 @@ fn connection_info() -> ConnectionInfo {
             .into_iter()
             .map(|(url, devices)| NearbyServer { url, devices })
             .collect(),
+    }
+}
+
+/// Who saved the server's play queue, as a person would name it: a kōan
+/// device by its name, another client by what it calls itself.
+fn saved_by(changed_by: &str) -> String {
+    match changed_by.strip_prefix("koan ") {
+        Some(id) if koan_core::remote::devices::this_id().as_deref() == Some(id) => {
+            "this device".to_owned()
+        }
+        Some(id) => koan_core::remote::devices::list()
+            .into_iter()
+            .find(|d| d.id == id)
+            .map_or_else(|| "another kōan device".to_owned(), |d| d.name),
+        None if changed_by == "koan" => "a kōan device".to_owned(),
+        None => changed_by.to_owned(),
     }
 }
 

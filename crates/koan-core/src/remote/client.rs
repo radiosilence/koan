@@ -928,6 +928,73 @@ impl SubsonicClient {
         Ok(())
     }
 
+    /// The account's saved play queue, `None` when there is none. `by_index`
+    /// for a server listing `indexBasedQueue`.
+    pub fn get_play_queue(&self, by_index: bool) -> Result<Option<SavedPlayQueue>, SubsonicError> {
+        let resp = self.get(if by_index {
+            "getPlayQueueByIndex"
+        } else {
+            "getPlayQueue"
+        })?;
+        Ok(resp.play_queue_by_index.or(resp.play_queue))
+    }
+
+    /// Replace the account's saved play queue with `song_ids`, `position_ms`
+    /// into the entry at `current`, as the client `client`: what a later
+    /// `get_play_queue` reports as `changedBy`. `form` posts it as a form, for
+    /// a server listing `formPost`, since a long queue does not fit in a URL;
+    /// otherwise it goes in the query. `by_index` for a server listing
+    /// `indexBasedQueue`; otherwise the current entry goes by its song's id,
+    /// which is ambiguous for a song queued twice.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_play_queue(
+        &self,
+        song_ids: &[String],
+        current: Option<usize>,
+        position_ms: u64,
+        by_index: bool,
+        form: bool,
+        client: &str,
+    ) -> Result<(), SubsonicError> {
+        let endpoint = if by_index {
+            "savePlayQueueByIndex"
+        } else {
+            "savePlayQueue"
+        };
+        let url = format!("{}/rest/{endpoint}", self.auth.base_url);
+        let mut params = self.auth_params()?;
+        params.insert("c".into(), client.to_string());
+        let mut form_pairs: Vec<(String, String)> = params.into_iter().collect();
+        form_pairs.extend(song_ids.iter().map(|id| ("id".to_string(), id.clone())));
+        // With songs, a current one is required by index; the first will do
+        // when none is known.
+        if !song_ids.is_empty() {
+            let at = current.filter(|at| *at < song_ids.len()).unwrap_or(0);
+            form_pairs.push(if by_index {
+                ("currentIndex".into(), at.to_string())
+            } else {
+                ("current".into(), song_ids[at].clone())
+            });
+            form_pairs.push(("position".into(), position_ms.to_string()));
+        }
+        let request = if form {
+            let body = url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(&form_pairs)
+                .finish();
+            self.http
+                .post(&url)
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(body)
+        } else {
+            self.http.get(&url).query(&form_pairs)
+        };
+        let resp: SubsonicResponseWrapper = request.send()?.json()?;
+        resp.subsonic_response.ok().map(|_| ())
+    }
+
     pub fn auth(&self) -> &SubsonicAuth {
         &self.auth
     }
@@ -978,6 +1045,37 @@ struct SubsonicResponse {
     join: Option<KoanJoined>,
     pair: Option<KoanPair>,
     koan_history: Option<KoanHistoryPage>,
+    play_queue: Option<SavedPlayQueue>,
+    play_queue_by_index: Option<SavedPlayQueue>,
+}
+
+/// The play queue the account saved on the server: `getPlayQueue` names the
+/// current song by id, `getPlayQueueByIndex` by its place.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedPlayQueue {
+    #[serde(default)]
+    pub entry: Vec<SubsonicSong>,
+    pub current: Option<String>,
+    pub current_index: Option<usize>,
+    #[serde(default)]
+    pub position: u64,
+    #[serde(default)]
+    pub changed_by: String,
+    pub changed: Option<String>,
+}
+
+impl SavedPlayQueue {
+    /// The current entry's place, by index when the server gave one, else
+    /// the first entry with the current song's id.
+    pub fn current_at(&self) -> Option<usize> {
+        self.current_index
+            .filter(|at| *at < self.entry.len())
+            .or_else(|| {
+                let current = self.current.as_deref()?;
+                self.entry.iter().position(|e| e.id == current)
+            })
+    }
 }
 
 /// A page of a koan server's play history (`koanHistory`).
@@ -1420,6 +1518,35 @@ fn random_salt() -> Result<String, getrandom::Error> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_saved_play_queue_reads_by_index_or_by_id() {
+        let parse = |json: &str| {
+            serde_json::from_str::<SubsonicResponseWrapper>(json)
+                .unwrap()
+                .subsonic_response
+        };
+        let entries = r#"[{"id":"a","title":"A"},{"id":"b","title":"B"},{"id":"a","title":"A"}]"#;
+        let by_index = parse(&format!(
+            r#"{{"subsonic-response":{{"status":"ok","playQueueByIndex":{{"entry":{entries},"currentIndex":2,"position":1500,"changedBy":"koan d1"}}}}}}"#
+        ));
+        let q = by_index.play_queue_by_index.unwrap();
+        assert_eq!(
+            (q.current_at(), q.position, q.changed_by.as_str()),
+            (Some(2), 1500, "koan d1")
+        );
+
+        // By id, the first entry with that song; a song not queued is none.
+        let by_id = parse(&format!(
+            r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"entry":{entries},"current":"a"}}}}}}"#
+        ));
+        assert_eq!(by_id.play_queue.unwrap().current_at(), Some(0));
+        let gone = parse(&format!(
+            r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"entry":{entries},"current":"z"}}}}}}"#
+        ));
+        assert_eq!(gone.play_queue.unwrap().current_at(), None);
+    }
+
     use super::*;
 
     fn response(json: &str) -> SubsonicResponse {

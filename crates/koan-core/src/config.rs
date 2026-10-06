@@ -182,6 +182,12 @@ pub struct RemoteConfig {
     pub auto_sync: bool,
     /// Minutes between automatic syncs. 0 runs one at startup and no more.
     pub auto_sync_interval_mins: u64,
+    /// Keep this device's queue in the account's play queue on the server,
+    /// where Subsonic clients save theirs, so a queue can be picked up in
+    /// another client or on another kōan device after a restart. Off by
+    /// default: between kōan devices the queue already moves live over the
+    /// link. Per device.
+    pub play_queue: bool,
 }
 
 impl Default for LibraryConfig {
@@ -281,6 +287,7 @@ impl Default for RemoteConfig {
             cache_limit: None,
             auto_sync: true,
             auto_sync_interval_mins: 60,
+            play_queue: false,
         }
     }
 }
@@ -769,6 +776,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "remote.username"
         | "remote.cache_dir"
         | "remote.cache_limit"
+        // Whether this device follows the account's saved play queue.
+        | "remote.play_queue"
         // This machine's hardware.
         | "playback.output_device"
         | "playback.renderer"

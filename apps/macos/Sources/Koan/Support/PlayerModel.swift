@@ -690,6 +690,13 @@ final class PlayerModel {
         savedQueueVersion = queueVersion
     }
 
+    /// The app is going to the background or quitting: the session here, and
+    /// the queue on the server when this device keeps it there.
+    func saveOnLeaving() async {
+        await saveSession()
+        await engine.saveServerQueueNow()
+    }
+
     /// Persist often enough that a crash costs a second, not the session.
     ///
     /// Position goes every second and is four columns; the queue is a JSON blob
