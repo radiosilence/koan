@@ -1338,7 +1338,7 @@ fn reach_absent(
                 .and_then(|t| pusher.cover_link(t)),
         },
         None => {
-            outbox::queue_envelope_for(&target.device, &target.username, &envelope);
+            outbox::queue_for(&target.device, &target.username, &envelope);
             crate::push::Push::Wake
         }
     };
@@ -1742,22 +1742,10 @@ mod outbox {
         pub last_seen: i64,
     }
 
-    /// Queue `cmd` for one device, to go down its next link.
-    pub fn queue_for(device: &str, username: &str, cmd: &LinkCommand) {
-        queue_envelope_for(
-            device,
-            username,
-            &koan_core::remote::acks::Envelope::from(cmd.clone()),
-        );
-    }
-
-    /// `queue_for`, keeping the id the command was sent under, so a device
-    /// that also got it over its link acts on it once.
-    pub fn queue_envelope_for(
-        device: &str,
-        username: &str,
-        envelope: &koan_core::remote::acks::Envelope,
-    ) {
+    /// Keep a command for `device` until it next links, under the id it was
+    /// sent with, if any, so a device that also got it over its link acts on
+    /// it once.
+    pub fn queue_for(device: &str, username: &str, envelope: &koan_core::remote::acks::Envelope) {
         let (Some(db), Ok(text)) = (db(), serde_json::to_string(envelope)) else {
             return;
         };
