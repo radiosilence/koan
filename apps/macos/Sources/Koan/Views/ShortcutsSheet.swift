@@ -59,19 +59,21 @@ struct ShortcutsSheet: View {
         var id: String { label }
     }
 
-    /// The groups side by side, skipping the ones this table has nothing in.
+    /// The groups side by side, skipping the ones this table has nothing in,
+    /// as many to a line as fit: a wider face takes fewer, and a label is
+    /// never broken mid-word to squeeze in another.
     private func columns(_ rows: @escaping (Hotkey.Group) -> [Row]) -> some View {
-        HStack(alignment: .top, spacing: 30) {
-            ForEach(Hotkey.Group.allCases, id: \.self) { group in
-                let entries = rows(group)
-                if !entries.isEmpty {
-                    VStack(alignment: .leading, spacing: 7) {
-                        KoanSectionHeader(group.rawValue)
-                        ForEach(entries) { row(keys: $0.keys, label: $0.label) }
-                    }
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 210), spacing: 30, alignment: .topLeading)],
+            alignment: .leading,
+            spacing: 20
+        ) {
+            ForEach(Hotkey.Group.allCases.filter { !rows($0).isEmpty }, id: \.self) { group in
+                VStack(alignment: .leading, spacing: 7) {
+                    KoanSectionHeader(group.rawValue)
+                    ForEach(rows(group)) { row(keys: $0.keys, label: $0.label) }
                 }
             }
-            Spacer(minLength: 0)
         }
     }
 
