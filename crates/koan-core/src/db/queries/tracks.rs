@@ -359,6 +359,21 @@ pub fn remove_stale_tracks(
     folder: &Path,
     force_remove: bool,
 ) -> Result<Vec<String>, DbError> {
+    remove_stale_tracks_walked(conn, folder, force_remove, None)
+}
+
+/// [`remove_stale_tracks`], after a walk of `folder` that found `walked`: a
+/// row at one of those paths is there, and only the rest are asked of the
+/// filesystem. A walk sees everything a stat would, so on a network mount
+/// this saves a round trip per file in the library; what the walk did not
+/// find is still confirmed missing before it goes, so an unmounted share is
+/// still kept.
+pub fn remove_stale_tracks_walked(
+    conn: &Connection,
+    folder: &Path,
+    force_remove: bool,
+    walked: Option<&std::collections::HashSet<String>>,
+) -> Result<Vec<String>, DbError> {
     let (lower, upper) = super::folder_prefix_range(folder);
 
     // Files, and the tracks a rebuilt index has not yet re-read: a track
@@ -375,6 +390,7 @@ pub fn remove_stale_tracks(
     let total = paths.len() as i64;
     let stale: Vec<String> = paths
         .into_iter()
+        .filter(|path| !walked.is_some_and(|w| w.contains(path)))
         // A permission error, an ailing mount or a symlink whose target has
         // gone away is "cannot tell", not "deleted".
         .filter(|path| crate::index::known_missing(Path::new(path)))
@@ -421,6 +437,7 @@ pub fn adopt_moved_files(
     conn: &Connection,
     folder: &Path,
     arrived: &[i64],
+    walked: Option<&std::collections::HashSet<String>>,
 ) -> Result<usize, DbError> {
     if arrived.is_empty() {
         return Ok(0);
@@ -431,7 +448,11 @@ pub fn adopt_moved_files(
         .query_map(params![lower, upper], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let mut adopted = 0;
-    for path in paths {
+    // A file the walk found has not moved.
+    for path in paths
+        .into_iter()
+        .filter(|path| !walked.is_some_and(|w| w.contains(path)))
+    {
         if crate::index::known_missing(Path::new(&path))
             && sources::adopt_moved(conn, &path, arrived)?
         {
@@ -2326,6 +2347,42 @@ mod tests {
         );
         assert_eq!(count("SELECT COUNT(*) FROM tracks"), 1);
         assert_eq!(count("SELECT COUNT(*) FROM albums"), 1);
+    }
+
+    /// What a walk found is there without a stat; what it did not is still
+    /// confirmed missing before it goes.
+    #[test]
+    fn stale_removal_trusts_the_walk_and_confirms_the_rest() {
+        let db = test_db();
+        let tmp = tempfile::tempdir().unwrap();
+        let row = |name: &str| {
+            let path = tmp.path().join(name).to_string_lossy().into_owned();
+            let mut meta = sample_meta(name, "Artist", "Album");
+            meta.path = Some(path.clone());
+            upsert_track(&db.conn, &meta).unwrap();
+            path
+        };
+        // Walked, then gone before removal ran: the walk is believed.
+        let walked = row("walked.flac");
+        // Not walked and not there: gone.
+        let gone = row("gone.flac");
+        // Not walked but there, such as a name the walk skips: kept.
+        let present = row(".stversions-copy.flac");
+        std::fs::write(&present, b"x").unwrap();
+        let seen: std::collections::HashSet<String> = [walked.clone()].into();
+
+        let removed = remove_stale_tracks_walked(&db.conn, tmp.path(), true, Some(&seen)).unwrap();
+        assert_eq!(removed, [gone]);
+        let paths: Vec<String> = db
+            .conn
+            .prepare("SELECT path FROM local_files ORDER BY path")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&walked) && paths.contains(&present));
     }
 
     #[test]

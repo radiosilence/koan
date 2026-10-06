@@ -2648,6 +2648,8 @@ impl KoanEngine {
     pub fn cancel_library_task(&self) {
         self.cancel_library_task
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        // The folder watcher's scans, which this app did not start.
+        koan_core::index::lane::cancel_all();
     }
 
     /// Sign in to a Subsonic/Navidrome server.

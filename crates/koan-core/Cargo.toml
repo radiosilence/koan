@@ -35,6 +35,7 @@ getrandom = "0.4"
 md5 = "0.8"
 url = "2"
 # Async/threading
+nucleo = "0.5"
 parking_lot = "0.12"
 # Only `sync`: `watch` is the analyser telling its subscribers a frame is
 # ready. No runtime, no reactor — koan-core stays threads and channels.
