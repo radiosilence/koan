@@ -78,10 +78,17 @@ final class WalkTests: XCTestCase {
             snap("09b-server-end")
             back()
         }
-        if open(app.buttons.matching(NSPredicate(format: "label ==[c] %@", "Appearance")).firstMatch) {
-            pause(1)
-            snap("09c-appearance")
-            back()
+        // The server's sections, where the server and the account have them.
+        for (name, shot) in [
+            ("Account", "09d-account"), ("People", "09e-people"),
+            ("Devices", "09f-devices"), ("Integrations", "09g-integrations"),
+            ("Appearance", "09c-appearance"),
+        ] {
+            if open(app.buttons.matching(NSPredicate(format: "label ==[c] %@", name)).firstMatch) {
+                pause(1)
+                snap(shot)
+                back()
+            }
         }
 
         tab("Queue")
