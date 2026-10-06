@@ -51,8 +51,6 @@ final class TVWalkTests: XCTestCase {
         press(.select)
         pause(4)
         press(.select)
-        // Paused at once: the simulator plays through the Mac's speakers.
-        press(.playPause)
         pause(8)
 
         start(at: .queue)

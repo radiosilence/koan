@@ -6,6 +6,8 @@ menu. It is mostly something your phone or Mac plays to, through
 [Control](devices.md), and it plays gaplessly from your server through HDMI.
 It needs tvOS 26.
 
+![Now Playing on the TV: the sleeve, the track, its controls, and what comes next](../../site/public/screens/tv-now-playing.webp)
+
 ## Signing in
 
 A television has no keyboard worth typing a password on, so it is signed in
@@ -33,17 +35,36 @@ from a device that is already signed in.
 
 4. **It is signed in.** The TV hears the answer at once, signs in with a key of
    its own on your account, and loads your library. The key can be revoked from
-   the server like any other.
+   the server like any other. Until something is played to it, Now Playing
+   says how.
 
-   ![Now Playing on the TV](../../site/public/screens/tv-now-playing.webp)
+   ![The TV just signed in, on an empty Now Playing](../../site/public/screens/tv-signin-done.webp)
 
 Pairing needs a kōan server from 0.54.0 on. For any other OpenSubsonic server,
 "Use a Password or API Key" signs in with an account's password, an API key, or
 a kōan invite link pasted from a phone.
 
+![The TV's form for signing in with an address, a username and a password or API key](../../site/public/screens/tv-signin-form.webp)
+
 The QR code's link goes through koan.rocks only so that a scan opens kōan on
 the phone. The server's address and the pairing are in the part of the link
 after the `#`, which a browser does not send, so koan.rocks never sees them.
+
+## Finding music
+
+The Library tab lists albums, artists, tracks, favourites, playlists, recently
+played, what is downloaded and the history. On the album, artist and track
+listings, the filters and the sort sit in a row above the listing; move up from
+the first row to reach them.
+
+![The album grid, with the filter and sort buttons above it](../../site/public/screens/tv-albums.webp)
+![The album filters, open over the grid](../../site/public/screens/tv-filters.webp)
+![An album page](../../site/public/screens/tv-album.webp)
+![An artist page](../../site/public/screens/tv-artist.webp)
+
+Search takes the on-screen keyboard and finds artists, albums and tracks.
+
+![Search, with matching artists and records](../../site/public/screens/tv-search.webp)
 
 ## What it leaves out
 

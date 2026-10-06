@@ -162,9 +162,9 @@
 }
 
 /*
- * The iPhone screenshots under the introduction drift past on their own. The track holds the set twice and moves by
- * one set's width, so the loop is seamless. It pauses under the pointer, and stands still, scrollable, for anyone who
- * has asked for reduced motion.
+ * The iPhone screenshots under the introduction, and the Apple TV ones in its section, drift past on their own. The
+ * track holds the set twice and moves by one set's width, so the loop is seamless. It pauses under the pointer, and
+ * stands still, scrollable, for anyone who has asked for reduced motion.
  */
 @layer components {
   .marquee {
