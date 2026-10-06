@@ -34,6 +34,22 @@ kōan from Files or Mail, or choose kōan in the share sheet — a zip sent in a
 chat, or EQ text pasted into a message. A share is saved for the app and
 imported when kōan next comes to the front.
 
+Several whole presets chosen together, such as Equalizer APO, AutoEQ or
+Qudelix files or CamillaDSP YAML, become a **group**: a
+profile from each, named after its file, and a group holding them, named for
+what their names share. A group plays one member at a time. Pick which on its
+page ("Group: pick one"), on the EQ page, or in an output's preset menu. Any
+stack of two or more layers can be made a group, and a group a stack again.
+A group can be a stack's layer, such as a group of corrections with a tuning
+on top.
+
+Files that are parts of one profile, such as an impulse response or a Convolver
+`.cfg` a file per channel or rate, a folder, a zip, or REW's file for each
+side, still combine into one. Before importing several files the app says which will happen and
+lets you name the result. A name already taken gets a number, AutoEQ's
+`FixedBandEQ` file is left out beside its `ParametricEQ` twin, and a file that
+cannot be read is named with why, without stopping the rest.
+
 From the command line:
 
 ```bash
@@ -206,6 +222,69 @@ and heard straight away. Frequency is held to 10 Hz–22 kHz, gain to ±30 dB an
 Q to 0.1–20. Delays, mixes and graphic curves are shown but not edited here,
 and a correction's measurement is not changed by editing its bands, so the
 Headphone view shows the effect of each edit on it.
+
+## On every device
+
+Signed in to a kōan server, a profile can be kept on every device of the
+account. Each profile is kept either **On every device** or **On this device**,
+chosen on its page. One kept on every device is synced through the server:
+filters, preamp, target, layers and the files in its folder (impulse responses,
+a routing `.cfg`, AutoEQ's measurement). Which output plays it is not synced,
+since the headphones on a Mac's DAC are not the AirPods on a phone; each device
+assigns it to its own outputs.
+
+Where it is kept follows from what it is until chosen. A correction installed
+from AutoEQ, a profile of bands made by hand, and a stack whose layers are all
+kept everywhere go everywhere: headphones move between devices. A profile with
+impulse responses, a room or speaker correction, stays on its device, as does
+one assigned to a built-in output or a network amplifier. The first time a
+device syncs, the profiles it already had stay on it unless they came from
+AutoEQ, so nothing leaves a device that was not made to travel or chosen to.
+
+A stack kept everywhere cannot have a layer kept on one device, since the other
+devices would not have it: adding one is refused, as is moving a layer of such
+a stack to one device. A stack kept on one device may layer profiles kept
+everywhere, such as a speaker correction with a shared bass shelf on top.
+
+Each profile carries an id of its own, so a rename reaches every device. When
+two devices change one profile, the later change wins, counted from when it
+was made, so a change made offline keeps its time. A deletion reaches every
+device; so does moving a profile to one device, which removes it from the
+others. A stack elsewhere that layered it reports the missing layer. The same
+profile made on two devices before either synced, such as one headphone
+installed from AutoEQ on both, becomes one profile. "The same" is what they
+play, not how they are written: bands in another order, or a gain a few
+hundredths of a decibel apart, are the same profile. Two profiles of one name
+that would sound different are both kept, each renamed for the device it came
+from ("Lush (Mac Studio)", "Lush (iPhone)"), and each profile's page says
+why. Stacks that play them follow the new names.
+
+A file may be up to 32 MB, and an account's files up to 256 MB together. A
+profile past either stays on its device, and its page says it could not be
+kept. Turning down AutoEQ's suggestion for an output holds on every device.
+
+The server keeps the profiles in its database, per account, and offers them as
+the `koanDspProfiles` extension. Against a server without it, profiles stay on
+each device as before.
+
+## Bounds
+
+Whatever a profile says, it plays within bounds: gains and the preamp within
+±30 dB, a delay at most two seconds, Q from 0.01 to 100 and frequencies from
+1 Hz to 48 kHz, at most 64 bands on a channel and 256 filters in all. A value
+past a bound is clamped to it, one that is not a number is dropped with its
+filter, and the profile's page says what was adjusted. The config keeps what
+was written; profiles synced from another device arrive already adjusted.
+
+The whole chain a profile plays, its layers and a moved target included, has
+budgets of its own: two seconds of delay on a channel in all, two graphic
+curves on a channel, eight mixes, and impulse responses of at most 262,145 taps
+(Harman's 780 pack at 192 kHz, the longest known to ship). The largest chain
+these allow runs about 30 times faster than real time at 48 kHz and five
+times at 192 kHz on an M-series Mac. A preamp set by hand that leaves the
+filters' peak above full scale is lowered to the headroom they need, and
+whatever the chain puts out is held within full scale, with anything that is
+not a number turned to silence, before it reaches the device.
 
 ## Sample rates
 

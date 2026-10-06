@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::import::Imported;
 use super::{Setup, convolver, raw};
-use crate::config::{self, Config, DspProfile};
+use crate::config::{self, Config, DspProfile, DspScope};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Summary {
@@ -22,6 +22,9 @@ pub struct Summary {
     pub rates: Vec<u32>,
     /// Why the profile would not load, if it would not.
     pub problem: Option<String>,
+    /// For a group: its members, in order, and the one playing.
+    pub members: Vec<String>,
+    pub playing: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,6 +82,15 @@ pub fn overview_for(device: Option<String>) -> Overview {
                     layers: p.layers.len(),
                     rates,
                     problem,
+                    members: if p.group {
+                        p.layers.iter().map(|l| l.profile.clone()).collect()
+                    } else {
+                        Vec::new()
+                    },
+                    playing: p
+                        .group
+                        .then(|| p.layers.iter().find(|l| l.on).map(|l| l.profile.clone()))
+                        .flatten(),
                 }
             })
             .collect(),
@@ -189,6 +201,12 @@ pub struct Detail {
     pub problem: Option<String>,
     /// Profiles it plays first, for a stack.
     pub layers: Vec<crate::config::DspLayer>,
+    /// A group: one of `layers` plays, the one switched on.
+    pub group: bool,
+    /// Kept on every device of the account, rather than this one alone.
+    pub everywhere: bool,
+    /// Where it is kept was chosen, rather than following from what it is.
+    pub scope_set: bool,
 }
 
 /// Everything in the profile `name`.
@@ -225,13 +243,29 @@ pub fn detail(name: &str) -> Option<Detail> {
         .find(|&r| r == 48000)
         .or(impulses.first().map(|i| i.rate))
         .unwrap_or(48000);
-    if let Err(e) = super::chain(profile, &cfg.dsp.profiles, &mut Vec::new()) {
-        problem = Some(e.to_string());
+    // What it plays is adjusted to stay within bounds: say how.
+    let mut adjusted = profile.clone().sanitize();
+    match super::chain_noted(profile, &cfg.dsp.profiles, &mut Vec::new()) {
+        Ok((_, notes)) => {
+            for n in notes {
+                if !adjusted.contains(&n) {
+                    adjusted.push(n);
+                }
+            }
+        }
+        Err(e) => problem = Some(e.to_string()),
     }
-    let preamp_db = Setup::load(profile, &cfg.dsp.profiles, &base)
+    let setup = Setup::load(profile, &cfg.dsp.profiles, &base)
         .ok()
-        .flatten()
-        .map_or(0.0, |s| s.preamp_db(preamp_rate, 2));
+        .flatten();
+    if let Some(cut) = setup.as_ref().and_then(|s| s.headroom_cut(preamp_rate, 2)) {
+        adjusted.push(format!("preamp −{cut:.1} dB for headroom"));
+    }
+    if !adjusted.is_empty() {
+        let note = format!("Adjusted: {}", adjusted.join("; "));
+        problem = Some(problem.map_or(note.clone(), |p| format!("{p}. {note}")));
+    }
+    let preamp_db = setup.map_or(0.0, |s| s.preamp_db(preamp_rate, 2));
     Some(Detail {
         name: profile.name.clone(),
         devices: profile.devices.clone(),
@@ -242,7 +276,10 @@ pub fn detail(name: &str) -> Option<Detail> {
         preamp_rate,
         preamp_set: profile.preamp_db.is_some(),
         layers: profile.layers.clone(),
+        group: profile.group,
         problem,
+        everywhere: scope(profile, &cfg.dsp.profiles) == DspScope::Everywhere,
+        scope_set: profile.scope.is_some(),
     })
 }
 
@@ -303,11 +340,10 @@ pub fn rename(old: &str, new: &str) -> Result<(), String> {
 /// Write the profiles, and say so: what each output plays through is shown
 /// on every device that can choose it, here and on the devices controlling
 /// this one.
-fn persist(
-    mutate: impl FnOnce(&mut crate::config::Config),
-) -> Result<(), crate::config::ConfigError> {
-    Config::persist(mutate)?;
+fn persist(mutate: impl FnOnce(&mut crate::config::Config)) -> Result<(), String> {
+    Config::persist(mutate).map_err(|e| e.to_string())?;
     crate::signal::engine_changed().bump();
+    crate::remote::dsp_sync::changed();
     Ok(())
 }
 
@@ -639,9 +675,215 @@ fn stacks_of(cfg: &Config, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// Play `member` of the group `group`, and none of the others.
+pub fn select(group: &str, member: &str) -> Result<(), String> {
+    let cfg = Config::cached();
+    let g = cfg
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name == group)
+        .ok_or_else(|| format!("No profile called {group}"))?;
+    if !g.group {
+        return Err(format!("{group} is not a group"));
+    }
+    if !g.layers.iter().any(|l| l.profile == member) {
+        return Err(format!("{member} is not in {group}"));
+    }
+    persist(|cfg| {
+        if let Some(g) = cfg.dsp.profiles.iter_mut().find(|p| p.name == group) {
+            for l in &mut g.layers {
+                l.on = l.profile == member;
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// Make `name` a group, where one of its layers plays, or a stack, where
+/// each is switched on or off. Made a group, the first layer switched on
+/// is the one that plays.
+pub fn set_group(name: &str, group: bool) -> Result<(), String> {
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.group = group;
+            if group {
+                let first = p.layers.iter().position(|l| l.on).unwrap_or(0);
+                for (i, l) in p.layers.iter_mut().enumerate() {
+                    l.on = i == first;
+                }
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// `name`, or numbered where it or the folder its files would go in is
+/// taken, so nothing already here is written over.
+pub fn free_name(name: &str) -> String {
+    let cfg = Config::cached();
+    let taken = |n: &str| {
+        let folder = dir(n);
+        cfg.dsp
+            .profiles
+            .iter()
+            .any(|p| p.name == n || dir(&p.name) == folder)
+            || folder.exists()
+    };
+    std::iter::once(name.to_owned())
+        .chain((2..).map(|n| format!("{name} {n}")))
+        .find(|n| !taken(n))
+        .expect("some number is free")
+}
+
+/// Make `name` a group of `members`, in order, the first playing. Refused
+/// over a profile of that name.
+pub fn make_group(name: &str, members: &[String]) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A group needs a name".into());
+    }
+    if Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Err(format!("There is already a profile called {name}"));
+    }
+    let group = DspProfile {
+        name: name.to_owned(),
+        layers: members
+            .iter()
+            .enumerate()
+            .map(|(i, m)| crate::config::DspLayer {
+                profile: m.clone(),
+                on: i == 0,
+            })
+            .collect(),
+        group: true,
+        ..Default::default()
+    };
+    // Each member as it would play, so a group that cannot is never kept.
+    let mut all = Config::cached().dsp.profiles.clone();
+    all.push(group.clone());
+    for m in members {
+        let mut check = group.clone();
+        for l in &mut check.layers {
+            l.on = &l.profile == m;
+        }
+        super::chain(&check, &all, &mut Vec::new()).map_err(|e| e.to_string())?;
+    }
+    persist(|cfg| cfg.dsp.profiles.push(group)).map_err(|e| e.to_string())
+}
+
+/// Where `profile` is kept: as set, or as follows from what it is. A room
+/// or speaker correction, with impulse responses, or one for an output that
+/// stays put (built in, or an amplifier on the network) is this device's; a
+/// headphone correction from AutoEQ is the account's, since headphones move
+/// between devices; a stack is the account's when every layer is.
+pub fn scope(profile: &DspProfile, all: &[DspProfile]) -> DspScope {
+    scope_in(profile, all, &mut Vec::new())
+}
+
+fn scope_in(profile: &DspProfile, all: &[DspProfile], seen: &mut Vec<String>) -> DspScope {
+    if let Some(scope) = profile.scope {
+        return scope;
+    }
+    if !profile.impulses.is_empty() {
+        return DspScope::Device;
+    }
+    if profile.target.is_some() {
+        return DspScope::Everywhere;
+    }
+    if !profile.layers.is_empty() {
+        if seen.contains(&profile.name) {
+            return DspScope::Device;
+        }
+        seen.push(profile.name.clone());
+        let everywhere = profile.layers.iter().all(|l| {
+            all.iter()
+                .find(|p| p.name == l.profile)
+                .is_some_and(|p| scope_in(p, all, seen) == DspScope::Everywhere)
+        });
+        return if everywhere {
+            DspScope::Everywhere
+        } else {
+            DspScope::Device
+        };
+    }
+    if profile.devices.iter().any(|d| stays_put(d)) {
+        return DspScope::Device;
+    }
+    DspScope::Everywhere
+}
+
+/// An output that does not travel: built in, an amplifier on the network
+/// (named by its UDN), or a phone's own speaker.
+fn stays_put(device: &str) -> bool {
+    device.starts_with("uuid:")
+        || device == "Speaker"
+        || crate::audio::list_output_devices().is_ok_and(|devices| {
+            devices
+                .iter()
+                .any(|d| d.name == device && d.kind == crate::audio::backend::OutputKind::BuiltIn)
+        })
+}
+
+/// The first of `layers` kept on this device alone, which a stack kept
+/// everywhere cannot play on the account's other devices.
+fn local_layer<'a>(layers: &'a [crate::config::DspLayer], all: &[DspProfile]) -> Option<&'a str> {
+    layers
+        .iter()
+        .find(|l| {
+            all.iter()
+                .find(|p| p.name == l.profile)
+                .is_some_and(|p| scope(p, all) == DspScope::Device)
+        })
+        .map(|l| l.profile.as_str())
+}
+
+fn kept_here(stack: &str, layer: &str) -> String {
+    format!(
+        "{layer} is kept on this device, so {stack}, which is kept everywhere, \
+         could not play it on your other devices. Keep {layer} everywhere, or {stack} on this device"
+    )
+}
+
+/// Keep `name` everywhere or on this device alone. A stack kept everywhere
+/// cannot have a layer kept here: refused either way round.
+pub fn set_scope(name: &str, to: DspScope) -> Result<(), String> {
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let profile = all
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("No profile called {name}"))?;
+    match to {
+        DspScope::Everywhere => {
+            if let Some(layer) = local_layer(&profile.layers, all) {
+                return Err(kept_here(name, layer));
+            }
+        }
+        DspScope::Device => {
+            if let Some(stack) = all.iter().find(|p| {
+                p.layers.iter().any(|l| l.profile == name) && scope(p, all) == DspScope::Everywhere
+            }) {
+                return Err(format!(
+                    "{name} is a layer of {}, which is kept everywhere and would lose it on \
+                     your other devices. Keep {} on this device first",
+                    stack.name, stack.name
+                ));
+            }
+        }
+    }
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.scope = Some(to);
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
 /// Refused where it could not play: a layer missing, a layer of itself, one
-/// with impulse responses.
+/// with impulse responses, one kept on this device under a stack kept
+/// everywhere.
 pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() {
@@ -665,8 +907,23 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
         l.on = true;
     }
     super::chain(&check, &all, &mut Vec::new()).map_err(|e| e.to_string())?;
-    persist(|cfg| profile_mut(&mut cfg.dsp.profiles, name).layers = layers)
-        .map_err(|e| e.to_string())
+    if everywhere_by_choice(&all, name)
+        && let Some(layer) = local_layer(&layers, &all)
+    {
+        return Err(kept_here(name, layer));
+    }
+    persist(|cfg| {
+        let p = profile_mut(&mut cfg.dsp.profiles, name);
+        p.layers = layers;
+        // A group plays one: the first switched on, or the first of all.
+        if p.group {
+            let first = p.layers.iter().position(|l| l.on).unwrap_or(0);
+            for (i, l) in p.layers.iter_mut().enumerate() {
+                l.on = i == first;
+            }
+        }
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Delete a profile, and the responses koan keeps for it. Refused while a
@@ -679,13 +936,29 @@ pub fn remove(name: &str) -> Result<(), String> {
             stacks.join(", ")
         ));
     }
+    let shared = Config::cached()
+        .dsp
+        .profiles
+        .iter()
+        .any(|p| p.name != name && slug(&p.name) == slug(name));
     persist(|cfg| cfg.dsp.profiles.retain(|p| p.name != name)).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_dir_all(config::config_dir().join("dsp").join(slug(name)));
+    // Another profile's name may map to the same folder: its files stay.
+    if !shared {
+        let _ = std::fs::remove_dir_all(dir(name));
+    }
     Ok(())
 }
 
 pub fn set_enabled(enabled: bool) -> Result<(), String> {
     persist(|cfg| cfg.dsp.enabled = enabled).map_err(|e| e.to_string())
+}
+
+/// Whether `name` is kept everywhere by choice: a stack kept so only because
+/// its layers are follows them instead.
+fn everywhere_by_choice(all: &[DspProfile], name: &str) -> bool {
+    all.iter()
+        .find(|p| p.name == name)
+        .is_some_and(|p| p.scope == Some(DspScope::Everywhere))
 }
 
 fn profile_mut<'a>(profiles: &'a mut Vec<DspProfile>, name: &str) -> &'a mut DspProfile {
@@ -1102,5 +1375,270 @@ mod tests {
         assert_eq!(filters().len(), 1);
         assert!(remove_filter("Mine", 3).is_err());
         assert!(add_band("Nobody").is_err());
+    }
+
+    /// A group plays one member, chosen like a radio button; a stack plays
+    /// each layer switched on. A group can itself be a stack's layer.
+    #[test]
+    fn a_group_plays_one_member() {
+        use crate::config::{DspFilter, DspLayer};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            for (name, hz) in [
+                ("Warm", 100.0),
+                ("Bright", 8000.0),
+                ("Flat", 1000.0),
+                ("Bass", 60.0),
+            ] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(hz)],
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        let names = ["Warm", "Bright", "Flat"].map(String::from);
+        make_group("Presets", &names).unwrap();
+        assert!(make_group("Presets", &names).is_err());
+        let freqs = |name: &str| -> Vec<f64> {
+            let cfg = Config::cached();
+            let p = cfg
+                .dsp
+                .profiles
+                .iter()
+                .find(|p| p.name == name)
+                .unwrap()
+                .clone();
+            super::super::chain(&p, &cfg.dsp.profiles, &mut Vec::new())
+                .unwrap()
+                .into_iter()
+                .map(|f| match f {
+                    DspFilter::Band(b) => b.freq,
+                    other => panic!("{other:?}"),
+                })
+                .collect()
+        };
+        assert_eq!(freqs("Presets"), [100.0], "the first plays");
+        select("Presets", "Bright").unwrap();
+        assert_eq!(freqs("Presets"), [8000.0]);
+        assert!(select("Presets", "Bass").is_err(), "not a member");
+
+        // Switching two on in a group leaves the first of them on.
+        let layer = |p: &str, on: bool| DspLayer {
+            profile: p.into(),
+            on,
+        };
+        set_layers(
+            "Presets",
+            vec![
+                layer("Warm", false),
+                layer("Bright", true),
+                layer("Flat", true),
+            ],
+        )
+        .unwrap();
+        assert_eq!(freqs("Presets"), [8000.0]);
+        assert_eq!(
+            detail("Presets")
+                .unwrap()
+                .layers
+                .iter()
+                .filter(|l| l.on)
+                .count(),
+            1
+        );
+
+        // A group as a stack's layer: its chosen member, then the tuning.
+        set_layers("Desk", vec![layer("Presets", true), layer("Bass", true)]).unwrap();
+        assert_eq!(freqs("Desk"), [8000.0, 60.0]);
+
+        // A stack again: each layer switched on plays.
+        set_group("Presets", false).unwrap();
+        set_layers(
+            "Presets",
+            vec![
+                layer("Warm", true),
+                layer("Bright", true),
+                layer("Flat", false),
+            ],
+        )
+        .unwrap();
+        assert_eq!(freqs("Presets"), [100.0, 8000.0]);
+        set_group("Presets", true).unwrap();
+        assert_eq!(
+            freqs("Presets"),
+            [100.0],
+            "the first switched on keeps playing"
+        );
+
+        // None on, as a hand edit can leave it: the first plays.
+        persist(|c| {
+            let p = c.dsp.profiles.iter_mut().find(|p| p.name == "Presets");
+            for l in &mut p.unwrap().layers {
+                l.on = false;
+            }
+        })
+        .unwrap();
+        assert_eq!(freqs("Presets"), [100.0]);
+    }
+
+    /// A group of room corrections plays the chosen one's responses, since
+    /// only one plays; a stack cannot layer such a group, as it cannot a
+    /// response.
+    #[test]
+    fn a_group_plays_its_members_responses() {
+        use crate::config::DspLayer;
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        let mut paths = Vec::new();
+        for rate in [44100, 48000] {
+            let path = dir.path().join(format!("{rate}.wav"));
+            super::super::raw::write_wav(&path, rate, &[vec![1.0, 0.0]]).unwrap();
+            paths.push(path);
+        }
+        persist(|c| {
+            for (name, path) in [("Room 44", &paths[0]), ("Room 48", &paths[1])] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    impulses: vec![path.clone()],
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+        make_group("Room", &["Room 44".into(), "Room 48".into()]).unwrap();
+        let rates = || {
+            let cfg = Config::cached();
+            let p = cfg.dsp.profiles.iter().find(|p| p.name == "Room").unwrap();
+            super::super::Setup::load(p, &cfg.dsp.profiles, dir.path())
+                .unwrap()
+                .unwrap()
+                .rates()
+        };
+        assert_eq!(rates(), [44100]);
+        select("Room", "Room 48").unwrap();
+        assert_eq!(rates(), [48000]);
+        let refused = set_layers(
+            "Desk",
+            vec![DspLayer {
+                profile: "Room".into(),
+                on: true,
+            }],
+        )
+        .unwrap_err();
+        assert!(refused.contains("only EQ can be a layer"), "{refused}");
+    }
+
+    /// A name already taken, or one whose files would go in a folder that is,
+    /// is numbered: nothing is written over.
+    #[test]
+    fn a_free_name_takes_nothing() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        assert_eq!(free_name("Room"), "Room");
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Room".into(),
+                filters: vec![band(100.0)],
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        assert_eq!(free_name("Room"), "Room 2");
+        assert_eq!(free_name("room!"), "room! 2", "the same folder as Room's");
+    }
+
+    /// A headphone correction travels and a room correction stays; a stack
+    /// follows its layers unless set; a stack kept everywhere cannot have a
+    /// layer kept here, either way round.
+    #[test]
+    fn where_a_profile_is_kept() {
+        use crate::config::{DspLayer, DspTarget};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 650".into(),
+                filters: vec![band(1000.0)],
+                target: Some(DspTarget {
+                    made_for: "harman-over-ear-2018".into(),
+                    chosen: None,
+                }),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Room".into(),
+                impulses: vec!["dsp/room/48000.wav".into()],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Bass".into(),
+                filters: vec![band(80.0)],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Amp".into(),
+                filters: vec![band(80.0)],
+                devices: vec!["uuid:5f9ec1b3-ed59-79bb-4530-745e2b1d1b10".into()],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let kept = |name: &str| {
+            let cfg = Config::cached();
+            let p = cfg
+                .dsp
+                .profiles
+                .iter()
+                .find(|p| p.name == name)
+                .unwrap()
+                .clone();
+            scope(&p, &cfg.dsp.profiles)
+        };
+        assert_eq!(kept("HD 650"), DspScope::Everywhere);
+        assert_eq!(kept("Room"), DspScope::Device);
+        assert_eq!(kept("Bass"), DspScope::Everywhere);
+        assert_eq!(
+            kept("Amp"),
+            DspScope::Device,
+            "an amplifier stays where it is"
+        );
+
+        let layer = |p: &str| DspLayer {
+            profile: p.into(),
+            on: true,
+        };
+        set_layers("Desk", vec![layer("HD 650"), layer("Bass")]).unwrap();
+        assert_eq!(kept("Desk"), DspScope::Everywhere);
+        set_layers("Speakers", vec![layer("Amp"), layer("Bass")]).unwrap();
+        assert_eq!(
+            kept("Speakers"),
+            DspScope::Device,
+            "a stack here may use shared layers"
+        );
+
+        set_scope("Desk", DspScope::Everywhere).unwrap();
+        let refused = set_layers("Desk", vec![layer("HD 650"), layer("Amp")]).unwrap_err();
+        assert!(refused.contains("Amp is kept on this device"), "{refused}");
+        let refused = set_scope("Bass", DspScope::Device).unwrap_err();
+        assert!(refused.contains("Bass is a layer of Desk"), "{refused}");
+        set_scope("Speakers", DspScope::Everywhere).unwrap_err();
+        set_scope("Desk", DspScope::Device).unwrap();
+        set_scope("Bass", DspScope::Device).unwrap();
+        assert_eq!(kept("Bass"), DspScope::Device);
     }
 }

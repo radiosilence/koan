@@ -96,8 +96,20 @@ pub fn chain(
     all: &[DspProfile],
     stack: &mut Vec<String>,
 ) -> Result<Vec<DspFilter>, DspError> {
+    Ok(chain_noted(profile, all, stack)?.0)
+}
+
+/// [`chain`], and what keeping it within `config::dsp_bounds`' budgets
+/// changed: each layer is within bounds alone, and together they may not be.
+pub fn chain_noted(
+    profile: &DspProfile,
+    all: &[DspProfile],
+    stack: &mut Vec<String>,
+) -> Result<(Vec<DspFilter>, Vec<String>), DspError> {
     let mut visits = 0;
-    resolve(profile, all, stack, &mut visits)
+    let mut filters = resolve(profile, all, stack, &mut visits)?;
+    let notes = crate::config::budget(&mut filters);
+    Ok((filters, notes))
 }
 
 fn resolve(
@@ -134,7 +146,20 @@ fn resolve(
             stack[0]
         ))
     };
-    for layer in profile.layers.iter().filter(|l| l.on) {
+    // A group plays one member: the first switched on, or with none on, the
+    // first of all. A stack plays each layer switched on.
+    let playing: Vec<&crate::config::DspLayer> = if profile.group {
+        profile
+            .layers
+            .iter()
+            .find(|l| l.on)
+            .or(profile.layers.first())
+            .into_iter()
+            .collect()
+    } else {
+        profile.layers.iter().filter(|l| l.on).collect()
+    };
+    for layer in playing {
         let p = all
             .iter()
             .find(|p| p.name == layer.profile)
@@ -144,7 +169,9 @@ fn resolve(
                     profile.name, layer.profile
                 ))
             })?;
-        if !p.impulses.is_empty() {
+        // A stack's layers play together, and only one response can: a
+        // group's member plays alone, its responses as the group's own.
+        if !profile.group && !responses(p, all).is_empty() {
             return Err(DspError::Layer(format!(
                 "{} has impulse responses, and only EQ can be a layer",
                 p.name
@@ -155,7 +182,8 @@ fn resolve(
             return Err(too_many(stack));
         }
     }
-    out.extend(profile.filters.iter().cloned());
+    // As played: within `config::dsp_bounds`, whatever the config says.
+    out.extend(profile.sanitized().filters);
     // Another target than the one the correction was made for: their
     // difference, after the correction.
     if let Some(t) = &profile.target
@@ -170,6 +198,34 @@ fn resolve(
     }
     stack.pop();
     Ok(out)
+}
+
+/// The member of the group `profile` that plays: the first switched on, or
+/// with none on, the first.
+pub fn playing<'a>(profile: &DspProfile, all: &'a [DspProfile]) -> Option<&'a DspProfile> {
+    let layer = profile
+        .layers
+        .iter()
+        .find(|l| l.on)
+        .or(profile.layers.first())?;
+    all.iter().find(|p| p.name == layer.profile)
+}
+
+/// The impulse responses `profile` plays: its own, and for a group, those
+/// of the member playing.
+pub fn responses(profile: &DspProfile, all: &[DspProfile]) -> Vec<PathBuf> {
+    fn walk(p: &DspProfile, all: &[DspProfile], depth: usize, out: &mut Vec<PathBuf>) {
+        out.extend(p.impulses.iter().cloned());
+        if p.group
+            && depth < MAX_LAYER_DEPTH
+            && let Some(m) = playing(p, all)
+        {
+            walk(m, all, depth + 1, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(profile, all, 0, &mut out);
+    out
 }
 
 /// What is being done to the audio, for the format badge.
@@ -205,8 +261,13 @@ impl Setup {
         base: &Path,
     ) -> Result<Option<Self>, DspError> {
         let mut impulses: BTreeMap<u32, Vec<Impulse>> = BTreeMap::new();
-        for path in &profile.impulses {
-            for impulse in load_impulses(path, base)? {
+        for path in &responses(profile, all) {
+            for mut impulse in load_impulses(path, base)? {
+                // Past this a response is past any room's decay, and costs
+                // the decode thread more than it can keep up with.
+                for route in &mut impulse.routes {
+                    route.ir.truncate(crate::config::dsp_bounds::IMPULSE_TAPS);
+                }
                 impulses.entry(impulse.rate).or_default().push(impulse);
             }
         }
@@ -216,7 +277,7 @@ impl Setup {
         }
         Ok(Some(Self {
             name: profile.name.clone(),
-            preamp_db: profile.preamp_db,
+            preamp_db: profile.sanitized().preamp_db,
             filters,
             impulses,
         }))
@@ -229,10 +290,19 @@ impl Setup {
             .impulses
             .get(&rate)
             .and_then(|at_rate| at_rate.iter().find(|i| i.fits(channels)));
-        self.preamp_db.unwrap_or_else(|| {
-            let plan = plan(&self.filters, rate, channels);
-            -20.0 * peak_gain(&plan, impulse, channels, rate).log10().max(0.0)
-        })
+        let plan = plan(&self.filters, rate, channels);
+        let headroom = -20.0 * peak_gain(&plan, impulse, channels, rate).log10().max(0.0);
+        // A preamp set by hand that leaves the peak above full scale is
+        // lowered to the headroom the filters need: no profile overloads.
+        self.preamp_db.map_or(headroom, |set| set.min(headroom))
+    }
+
+    /// How far the preamp set by hand was lowered for headroom at `rate`, in
+    /// dB, if it was.
+    pub fn headroom_cut(&self, rate: u32, channels: usize) -> Option<f64> {
+        let set = self.preamp_db?;
+        let used = self.preamp_db(rate, channels);
+        (used < set - 0.05).then_some(set - used)
     }
 
     /// What the profile does at each of `freqs`, in dB, on the first of two
@@ -492,9 +562,19 @@ impl Chain {
     }
 
     /// `self.work` as the ring buffer takes it.
+    /// The chain's output, as the ring buffer takes it. The last line of
+    /// defence: a sample that is not a number is silence and none passes
+    /// full scale, whatever a profile did, so nothing reaches the device as
+    /// noise or an overload.
     fn emit(&mut self) -> &[f32] {
         self.out.clear();
-        self.out.extend(self.work.iter().map(|&s| s as f32));
+        self.out.extend(self.work.iter().map(|&s| {
+            if s.is_finite() {
+                s.clamp(-1.0, 1.0) as f32
+            } else {
+                0.0
+            }
+        }));
         &self.out
     }
 }
@@ -747,6 +827,8 @@ mod tests {
             .collect();
         let mut setup = Setup::new(vec![], vec![Impulse::from_channels(rate, vec![ir.clone()])]);
         setup.preamp_db = Some(0.0);
+        // Lowered for the response's peak, which the reference applies too.
+        let preamp = 10f64.powf(setup.preamp_db(rate, 2) / 20.0);
         let mut chain = Chain::new(&setup, rate, 2);
         let (out, _) = run_all(&mut chain, &input, 1152);
         assert_eq!(out.len(), input.len());
@@ -759,7 +841,8 @@ mod tests {
                 let y: f64 = (0..taps)
                     .filter(|&k| k <= m && m - k < frames)
                     .map(|k| ir[k] as f64 * input[(m - k) * 2 + c] as f64)
-                    .sum();
+                    .sum::<f64>()
+                    * preamp;
                 err += (out[n * 2 + c] as f64 - y).powi(2);
                 sig += y.powi(2);
             }
@@ -967,6 +1050,164 @@ mod tests {
         assert!((db[1] + 3.02).abs() < 0.1, "{db:?}");
     }
 
+    fn loaded(profile: DspProfile, all: &[DspProfile]) -> Setup {
+        Setup::load(&profile, all, Path::new("/nonexistent"))
+            .unwrap()
+            .unwrap()
+    }
+
+    fn gain_band(db: f64) -> DspFilter {
+        DspFilter::Band(crate::config::EqFilter {
+            kind: crate::config::EqFilterKind::Gain,
+            freq: 1000.0,
+            gain_db: db,
+            q: 1.0,
+            channels: vec![],
+        })
+    }
+
+    /// 256 delays at their own limit add up to two seconds on a channel,
+    /// not eight minutes of buffers.
+    #[test]
+    fn delays_add_up_to_two_seconds_at_most() {
+        let delay = DspFilter::Delay(crate::config::Delay {
+            ms: 2000.0,
+            samples: 768_000.0,
+            ..Default::default()
+        });
+        let profile = DspProfile {
+            name: "Echo".into(),
+            filters: vec![delay; 256],
+            ..Default::default()
+        };
+        let setup = loaded(profile, &[]);
+        let total: f64 = setup
+            .filters
+            .iter()
+            .map(|f| match f {
+                DspFilter::Delay(d) => d.ms + d.samples / 44.1,
+                _ => 0.0,
+            })
+            .sum();
+        assert!(total <= 2000.0 + 1e-6, "{total} ms");
+        // What the chain holds for them: two seconds a channel at 384 kHz.
+        let chain = Chain::new(&setup, 384_000, 2);
+        drop(chain);
+    }
+
+    /// 64 bands of +30 dB with the preamp set to 0 dB: the preamp is lowered
+    /// for headroom, and what comes out is finite and within full scale.
+    #[test]
+    fn stacked_boost_never_overloads() {
+        let profile = DspProfile {
+            name: "Loud".into(),
+            preamp_db: Some(0.0),
+            filters: vec![gain_band(30.0); 64],
+            ..Default::default()
+        };
+        let setup = loaded(profile, &[]);
+        assert!(setup.headroom_cut(48000, 2).unwrap() > 1900.0);
+        let mut chain = Chain::new(&setup, 48000, 2);
+        let (out, _) = run_all(&mut chain, &sine(48000, 1000.0, 48000, 2, 1.0), 4096);
+        assert!(out.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+    }
+
+    /// Graphic curves and mixes are counted across the whole chain, layers
+    /// and all: 32 layers of many curves each still play the budget's few.
+    #[test]
+    fn graphic_curves_are_budgeted_across_layers() {
+        let curve = DspFilter::Graphic(crate::config::GraphicEq {
+            points: (1..2048)
+                .map(|i| (i as f64 * 10.0, if i % 2 == 0 { 30.0 } else { -30.0 }))
+                .collect(),
+            channels: vec![],
+        });
+        let mut all: Vec<DspProfile> = (0..32)
+            .map(|i| DspProfile {
+                name: format!("Layer {i}"),
+                filters: vec![curve.clone(); 256],
+                ..Default::default()
+            })
+            .collect();
+        let stack = DspProfile {
+            name: "Stack".into(),
+            layers: all
+                .iter()
+                .map(|p| crate::config::DspLayer {
+                    profile: p.name.clone(),
+                    on: true,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        all.push(stack.clone());
+        let (filters, notes) = chain_noted(&stack, &all, &mut Vec::new()).unwrap();
+        let graphics = filters
+            .iter()
+            .filter(|f| matches!(f, DspFilter::Graphic(_)))
+            .count();
+        assert_eq!(graphics, crate::config::dsp_bounds::CHAIN_GRAPHICS);
+        assert!(
+            notes.iter().any(|n| n.starts_with("graphic EQs past")),
+            "{notes:?}"
+        );
+    }
+
+    /// Whatever reaches the end of the chain, a sample that is not a number
+    /// leaves as silence and none leaves past full scale.
+    #[test]
+    fn the_output_is_finite_and_within_full_scale() {
+        let setup = Setup::new(vec![gain_band(0.0)], vec![]).with_preamp(0.0);
+        let mut chain = Chain::new(&setup, 48000, 2);
+        let (out, _) = run_all(&mut chain, &[1.5, -3.0, f32::NAN, f32::INFINITY], 4);
+        assert_eq!(out, vec![1.0, -1.0, 0.0, 0.0]);
+    }
+
+    /// How long the largest chain the budgets allow takes to run, against
+    /// the audio it makes: `cargo test --release -- --ignored budget_runs
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn budget_runs_in_real_time() {
+        let curve = DspFilter::Graphic(crate::config::GraphicEq {
+            points: (1..2048)
+                .map(|i| (i as f64 * 10.0, if i % 2 == 0 { 6.0 } else { -6.0 }))
+                .collect(),
+            channels: vec![],
+        });
+        let mut filters = vec![curve; crate::config::dsp_bounds::CHAIN_GRAPHICS];
+        filters.extend((0..64).map(|i| {
+            DspFilter::Band(crate::config::EqFilter {
+                kind: crate::config::EqFilterKind::Peaking,
+                freq: 20.0 * 1.1f64.powi(i),
+                gain_db: 1.0,
+                q: 2.0,
+                channels: vec![],
+            })
+        }));
+        filters.push(DspFilter::Delay(crate::config::Delay {
+            ms: 2000.0,
+            ..Default::default()
+        }));
+        let ir: Vec<f32> = (0..crate::config::dsp_bounds::IMPULSE_TAPS)
+            .map(|i| (-(i as f32) / 20000.0).exp() * if i % 2 == 0 { 0.01 } else { -0.01 })
+            .collect();
+        for rate in [48_000u32, 192_000] {
+            let impulse = Impulse::from_channels(rate, vec![ir.clone()]);
+            let setup = Setup::new(filters.clone(), vec![impulse]);
+            let mut chain = Chain::new(&setup, rate, 2);
+            let seconds = 10;
+            let input = sine(rate, 440.0, rate as usize * seconds, 2, 0.5);
+            let start = std::time::Instant::now();
+            run_all(&mut chain, &input, 4096);
+            let took = start.elapsed().as_secs_f64();
+            println!(
+                "{rate} Hz: {seconds} s of stereo in {took:.2} s, {:.1}x real time",
+                seconds as f64 / took
+            );
+        }
+    }
+
     #[test]
     fn convolution_delay_is_trimmed_and_the_tail_flushed() {
         let setup = Setup::new(vec![], vec![delayed_impulse(48000, 300)]);
@@ -1065,7 +1306,8 @@ mod tests {
 
     #[test]
     fn a_route_can_feed_one_channel_into_the_other() {
-        // Left passes; right is left at half, plus right.
+        // Left passes; right is half left and half right, so no output can
+        // pass full scale and the preamp stays at 0 dB.
         let impulse = Impulse {
             rate: 48000,
             channels: Some(2),
@@ -1077,7 +1319,7 @@ mod tests {
                 },
                 Route {
                     ir: vec![1.0],
-                    inputs: vec![(0, 0.5), (1, 1.0)],
+                    inputs: vec![(0, 0.5), (1, 0.5)],
                     outputs: vec![(1, 1.0)],
                 },
             ],
@@ -1089,7 +1331,7 @@ mod tests {
         let mut chain = Chain::new(&setup, 48000, 2);
         let (out, _) = run_all(&mut chain, &[0.4, 0.2, 0.0, 0.0], 4);
         // The right output is a frame late, by its delay.
-        assert_eq!(out, vec![0.4, 0.0, 0.0, 0.4]);
+        assert_eq!(out, vec![0.4, 0.0, 0.0, 0.3]);
     }
 
     #[test]

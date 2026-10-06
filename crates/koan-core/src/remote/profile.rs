@@ -64,6 +64,13 @@ pub const DEVICE_KEYS: &str = "koanDeviceKeys";
 /// reports it, `/rest/koanScrobblingConnect` checks and stores a ListenBrainz
 /// token, `/rest/koanScrobblingDisconnect` removes it. See `remote::scrobbling`.
 pub const SCROBBLING: &str = "koanScrobbling";
+/// The account's EQ profiles kept everywhere: `/rest/koanDspProfiles` reads
+/// what changed after a cursor, `/rest/koanDspProfileSave` and
+/// `/rest/koanDspProfileDelete` change one, `/rest/koanDspFile` moves the
+/// files a profile names, and `/rest/koanDspDismiss` turns an AutoEQ
+/// suggestion down everywhere. `LinkCommand::DspProfilesChanged` says when
+/// they moved. See `remote::dsp_sync`.
+pub const DSP_PROFILES: &str = "koanDspProfiles";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {

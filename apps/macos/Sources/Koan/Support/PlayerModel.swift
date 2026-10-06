@@ -563,6 +563,13 @@ final class PlayerModel {
         engine.searchRenderers()
     }
 
+    /// Ask the device being controlled to list its outputs again; its link
+    /// state brings back whatever moved.
+    func refreshControlledOutputs() {
+        let engine = self.engine
+        Task { await engine.refreshControlledOutputs() }
+    }
+
     /// Send what the controlled device is playing to `id` (this device with
     /// `nil`), and control it there.
     func moveMusic(to id: String?) {
