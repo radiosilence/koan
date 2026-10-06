@@ -5,14 +5,18 @@ import SwiftUI
 ///
 /// The TV opens a pairing on the server and shows it as a code and a QR code;
 /// someone signed in on a phone or a Mac approves it, and the server hands
-/// this TV a key of its own on their account. Typing the server's address is
-/// the only typing, and the phone's keyboard can do that. A server that is not
-/// koan cannot pair, so the account form stays a click away for those.
+/// this TV a key of its own on their account. The server is usually found
+/// rather than typed: kōan on a phone or Mac on the same network announces the
+/// server it is signed in to, and the page offers each one it hears of for as
+/// long as it is open. Typing the address is the fallback, and the phone's
+/// keyboard can do that. A server that is not koan cannot pair, so the account
+/// form stays a click away for those.
 struct SignInPage: View {
     let signedIn: () -> Void
 
     @Environment(AppState.self) private var state
     @Environment(ActivityModel.self) private var activity
+    @Environment(EngineMirror.self) private var mirror
     @State private var server = ""
     /// A pairing being opened: the server can take a minute to answer, and a
     /// second press meanwhile would race the first for the engine's one slot.
@@ -28,8 +32,8 @@ struct SignInPage: View {
                 Text("Sign in to kōan")
                     .font(.system(size: 64, weight: .bold))
                 Text(pairing == nil
-                     ? "Enter your server's address. The keyboard on your phone can type it."
-                     : "Scan with a phone signed in to \(host), or approve it in kōan on a Mac.")
+                     ? "Open kōan on a device that is signed in to your server and on this network. Its server will appear here."
+                     : "Scan with your phone's camera. It opens kōan if it is there, or \(host)'s own page if not.")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -40,6 +44,7 @@ struct SignInPage: View {
             if let pairing {
                 waitingCard(pairing)
             } else {
+                found
                 addressForm
             }
 
@@ -86,6 +91,58 @@ struct SignInPage: View {
         // The form's sign-in runs as an activity, and can finish after the
         // cover has been closed.
         .onChange(of: activity.tasks.count) { recheck() }
+    }
+
+    /// The servers found so far, each a press away from a code, and the search
+    /// that goes on finding them.
+    private var found: some View {
+        let servers = mirror.connection?.nearbyServers ?? []
+        return VStack(spacing: 24) {
+            ForEach(servers, id: \.url) { found in
+                Button { choose(found.url) } label: {
+                    VStack(spacing: 6) {
+                        Text(Self.address(found.url))
+                            .font(.title2.weight(.semibold))
+                        Text("On \(ListFormatter.localizedString(byJoining: found.devices))")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(minWidth: 700)
+                    .padding(.vertical, 8)
+                }
+                .disabled(connecting)
+                .accessibilityIdentifier("found-server")
+            }
+            if mirror.connection?.localNetworkBlocked == true {
+                Text("kōan can't see this network. Allow Local Network for kōan in \(LocalNetwork.settings) → Privacy & Security.")
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+            } else {
+                HStack(spacing: 16) {
+                    ProgressView()
+                    Text(servers.isEmpty ? "Looking for kōan on this network…" : "Still looking for others…")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text(servers.isEmpty ? "Or enter your server's address" : "Or enter its address")
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+                .padding(.top, 16)
+        }
+    }
+
+    /// An address as a person reads it: without the scheme, or a slash at the end.
+    private static func address(_ url: String) -> String {
+        var s = url
+        for scheme in ["https://", "http://"] where s.hasPrefix(scheme) {
+            s.removeFirst(scheme.count)
+        }
+        return s.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    private func choose(_ url: String) {
+        server = url
+        start()
     }
 
     private var addressForm: some View {

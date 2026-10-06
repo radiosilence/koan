@@ -427,7 +427,7 @@ reach each other through the server whatever this says. See
 # config.local.toml -- whether a machine is open to its network is its own business
 [devices]
 nearby = true                       # take part in the local network at all; false reaches others only through the server
-discoverable = true                 # listen, and announce this device over Bonjour
+discoverable = true                 # listen, and announce this device (and its server's address) over Bonjour
 port = 5626                         # fixed, so a typed address keeps working
 addresses = ["mac-mini:5626"]       # dialled directly: for a tailnet, which carries no Bonjour
 nearby_control = "full"             # "full" or "playback": what devices on the network may do here

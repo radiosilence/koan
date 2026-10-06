@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **An Apple TV finds its server on its own.** kōan on a phone or Mac announces the server it is signed in to on the local network, without the account, and a signed-out TV lists each server it hears of on its sign-in page, a press away from a pairing code. It keeps looking while the page is open and asks for kōan to be opened on a signed-in device; typing the address stays as the fallback. A device that is not discoverable announces nothing.
+
 ### Changed
 
 - **Tapping the server's address in Settings → Server copies it,** in the Mac and iOS apps, for signing another app or device in to the same server. The row reads *Copied* for a moment.
