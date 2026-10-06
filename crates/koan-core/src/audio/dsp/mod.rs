@@ -132,12 +132,19 @@ fn resolve(
             stack[0]
         ))
     };
-    // A group plays one member: the first switched on.
-    let playing = profile
-        .layers
-        .iter()
-        .filter(|l| l.on)
-        .take(if profile.group { 1 } else { usize::MAX });
+    // A group plays one member: the first switched on, or with none on, the
+    // first of all. A stack plays each layer switched on.
+    let playing: Vec<&crate::config::DspLayer> = if profile.group {
+        profile
+            .layers
+            .iter()
+            .find(|l| l.on)
+            .or(profile.layers.first())
+            .into_iter()
+            .collect()
+    } else {
+        profile.layers.iter().filter(|l| l.on).collect()
+    };
     for layer in playing {
         let p = all
             .iter()
@@ -148,7 +155,9 @@ fn resolve(
                     profile.name, layer.profile
                 ))
             })?;
-        if !p.impulses.is_empty() {
+        // A stack's layers play together, and only one response can: a
+        // group's member plays alone, its responses as the group's own.
+        if !profile.group && !responses(p, all).is_empty() {
             return Err(DspError::Layer(format!(
                 "{} has impulse responses, and only EQ can be a layer",
                 p.name
@@ -174,6 +183,34 @@ fn resolve(
     }
     stack.pop();
     Ok(out)
+}
+
+/// The member of the group `profile` that plays: the first switched on, or
+/// with none on, the first.
+pub fn playing<'a>(profile: &DspProfile, all: &'a [DspProfile]) -> Option<&'a DspProfile> {
+    let layer = profile
+        .layers
+        .iter()
+        .find(|l| l.on)
+        .or(profile.layers.first())?;
+    all.iter().find(|p| p.name == layer.profile)
+}
+
+/// The impulse responses `profile` plays: its own, and for a group, those
+/// of the member playing.
+pub fn responses(profile: &DspProfile, all: &[DspProfile]) -> Vec<PathBuf> {
+    fn walk(p: &DspProfile, all: &[DspProfile], depth: usize, out: &mut Vec<PathBuf>) {
+        out.extend(p.impulses.iter().cloned());
+        if p.group
+            && depth < MAX_LAYER_DEPTH
+            && let Some(m) = playing(p, all)
+        {
+            walk(m, all, depth + 1, out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(profile, all, 0, &mut out);
+    out
 }
 
 /// What is being done to the audio, for the format badge.
@@ -209,7 +246,7 @@ impl Setup {
         base: &Path,
     ) -> Result<Option<Self>, DspError> {
         let mut impulses: BTreeMap<u32, Vec<Impulse>> = BTreeMap::new();
-        for path in &profile.impulses {
+        for path in &responses(profile, all) {
             for impulse in load_impulses(path, base)? {
                 impulses.entry(impulse.rate).or_default().push(impulse);
             }

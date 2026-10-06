@@ -2668,7 +2668,19 @@ impl KoanEngine {
                 group: None,
             };
             match batch {
-                Batch::One(imported) => summary.imported.push(self.save_dsp(imported, name)?),
+                Batch::One(imported) => {
+                    // Never written over: a name already taken is numbered.
+                    let wanted = name
+                        .filter(|n| !n.trim().is_empty())
+                        .unwrap_or_else(|| imported.name.clone());
+                    let free = profiles::free_name(&wanted);
+                    if free != wanted {
+                        summary
+                            .notes
+                            .push(format!("{wanted} is taken; imported as {free}"));
+                    }
+                    summary.imported.push(self.save_dsp(imported, Some(free))?)
+                }
                 Batch::Group(each) => {
                     for item in each {
                         let file = item.file;
@@ -2695,11 +2707,7 @@ impl KoanEngine {
                         let wanted = name
                             .filter(|n| !n.trim().is_empty())
                             .unwrap_or_else(|| import::group_name(&summary.imported));
-                        let all = koan_core::config::Config::cached();
-                        let group = std::iter::once(wanted.clone())
-                            .chain((2..).map(|n| format!("{wanted} {n}")))
-                            .find(|n| all.dsp.profiles.iter().all(|p| &p.name != n))
-                            .expect("some number is free");
+                        let group = profiles::free_name(&wanted);
                         if group != wanted {
                             summary
                                 .notes

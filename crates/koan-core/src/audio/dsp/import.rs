@@ -154,7 +154,13 @@ pub fn import_batch(
             Err(e) => Outcome::Refused(e),
             Ok(mut imported) => {
                 let wanted = imported.name.clone();
-                let free = |n: &str| !names.iter().any(|t| t == n);
+                // Taken by name, or by the folder a name's files go in.
+                let free = |n: &str| {
+                    let folder = crate::audio::dsp::profiles::dir(n);
+                    !names
+                        .iter()
+                        .any(|t| t == n || crate::audio::dsp::profiles::dir(t) == folder)
+                };
                 let name = std::iter::once(wanted.clone())
                     .chain(std::iter::once(stem.clone()))
                     .chain((2..).map(|n| format!("{wanted} {n}")))
@@ -571,7 +577,6 @@ impl Drop for Scratch {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use crate::audio::dsp::raw::write_wav;
     use std::io::Write as _;

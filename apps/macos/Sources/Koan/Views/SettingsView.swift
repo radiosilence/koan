@@ -699,7 +699,7 @@ struct EqSettings: View {
             if let active, let detail, detail.group {
                 Section {
                     Picker("Playing", selection: Binding(
-                        get: { detail.layers.first(where: \.on)?.profile ?? "" },
+                        get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
                         set: { app.dsp.select(active, $0) }
                     )) {
                         ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }

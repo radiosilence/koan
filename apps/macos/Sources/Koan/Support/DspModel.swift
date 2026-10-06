@@ -2,12 +2,6 @@ import Foundation
 import KoanFFI
 import Observation
 
-/// EQ and convolution profiles, and importing them.
-///
-/// What Settings shows, and what a file opened in or shared to the app goes
-/// through: one import flow wherever it starts, asking for a sample rate only
-/// for coefficients that carry none, and offering the new profile for the
-/// output in use once it is in.
 /// Files chosen together, and what importing them will do.
 struct PendingImport: Identifiable {
     let id = UUID()
@@ -16,6 +10,12 @@ struct PendingImport: Identifiable {
     let rate: UInt32?
 }
 
+/// EQ and convolution profiles, and importing them.
+///
+/// What Settings shows, and what a file opened in or shared to the app goes
+/// through: one import flow wherever it starts, asking for a sample rate only
+/// for coefficients that carry none, and offering the new profile for the
+/// output in use once it is in.
 @MainActor
 @Observable
 final class DspModel {

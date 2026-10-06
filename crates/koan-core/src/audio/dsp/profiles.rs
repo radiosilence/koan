@@ -697,6 +697,24 @@ pub fn set_group(name: &str, group: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// `name`, or numbered where it or the folder its files would go in is
+/// taken, so nothing already here is written over.
+pub fn free_name(name: &str) -> String {
+    let cfg = Config::cached();
+    let taken = |n: &str| {
+        let folder = dir(n);
+        cfg.dsp
+            .profiles
+            .iter()
+            .any(|p| p.name == n || dir(&p.name) == folder)
+            || folder.exists()
+    };
+    std::iter::once(name.to_owned())
+        .chain((2..).map(|n| format!("{name} {n}")))
+        .find(|n| !taken(n))
+        .expect("some number is free")
+}
+
 /// Make `name` a group of `members`, in order, the first playing. Refused
 /// over a profile of that name.
 pub fn make_group(name: &str, members: &[String]) -> Result<(), String> {
@@ -707,23 +725,30 @@ pub fn make_group(name: &str, members: &[String]) -> Result<(), String> {
     if Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
         return Err(format!("There is already a profile called {name}"));
     }
-    let layers = members
-        .iter()
-        .enumerate()
-        .map(|(i, m)| crate::config::DspLayer {
-            profile: m.clone(),
-            on: i == 0,
-        })
-        .collect();
-    persist(|cfg| {
-        cfg.dsp.profiles.push(DspProfile {
-            name: name.to_owned(),
-            layers,
-            group: true,
-            ..Default::default()
-        })
-    })
-    .map_err(|e| e.to_string())
+    let group = DspProfile {
+        name: name.to_owned(),
+        layers: members
+            .iter()
+            .enumerate()
+            .map(|(i, m)| crate::config::DspLayer {
+                profile: m.clone(),
+                on: i == 0,
+            })
+            .collect(),
+        group: true,
+        ..Default::default()
+    };
+    // Each member as it would play, so a group that cannot is never kept.
+    let mut all = Config::cached().dsp.profiles.clone();
+    all.push(group.clone());
+    for m in members {
+        let mut check = group.clone();
+        for l in &mut check.layers {
+            l.on = &l.profile == m;
+        }
+        super::chain(&check, &all, &mut Vec::new()).map_err(|e| e.to_string())?;
+    }
+    persist(|cfg| cfg.dsp.profiles.push(group)).map_err(|e| e.to_string())
 }
 
 /// Make `name` a stack of `layers`, in order, creating it if there is none.

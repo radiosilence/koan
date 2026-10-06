@@ -156,9 +156,6 @@ struct DspProfilePage: View {
     }
 }
 
-/// The profiles a stack plays first, in order, each switched on or off: a
-/// headphone's correction, then taste on top of it. Any profile can become a
-/// stack; one with impulse responses cannot be a layer.
 /// A group's members, one playing, chosen as a radio button is.
 private struct GroupSection: View {
     let dsp: DspModel
@@ -167,7 +164,7 @@ private struct GroupSection: View {
     var body: some View {
         Section {
             Picker("Playing", selection: Binding(
-                get: { detail.layers.first(where: \.on)?.profile ?? "" },
+                get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
                 set: { dsp.select(detail.name, $0) }
             )) {
                 ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
@@ -180,13 +177,18 @@ private struct GroupSection: View {
         } header: {
             Text("Group: pick one")
         } footer: {
-            Text("One member plays at a time. Pick another and it plays in place of the last. Each member is a profile of its own, with its own page.")
+            Text(detail.layers.contains(where: \.on)
+                 ? "One member plays at a time. Pick another and it plays in place of the last. Each member is a profile of its own, with its own page."
+                 : "None was picked, so the first plays. Pick one to change it.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
     }
 }
 
+/// The profiles a stack plays first, in order, each switched on or off: a
+/// headphone's correction, then taste on top of it. Any profile can become a
+/// stack; one with impulse responses cannot be a layer.
 private struct LayersSection: View {
     let dsp: DspModel
     let detail: DspProfileDetail
