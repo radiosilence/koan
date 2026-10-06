@@ -859,6 +859,41 @@ tv-walk: (tv-ffi "appletvsimulator") ios-project
     xcrun xcresulttool export attachments --path "$out/walk.xcresult" --output-path "$out"
     echo "screenshots in $out"
 
+# Clear the configuration as tvOS does when it runs short of space, and check
+# the television is still signed in. Plants a sign-in in the simulator's copy
+# of the app, launches it so the configuration is mirrored into its
+# preferences, deletes `Library/Caches/koan-config`, and launches it again.
+tv-kept: (tv-ffi "appletvsimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sim=$(xcrun simctl list devices available -j \
+        | python3 -c 'import json,sys; ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "tvOS-" in k for d in v if d["isAvailable"] and "Apple TV" in d["name"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"] if ds else ""))')
+    [ -n "$sim" ] || { echo "No Apple TV simulator." >&2; exit 1; }
+    xcrun simctl boot "$sim" 2>/dev/null || true
+    xcrun simctl bootstatus "$sim" -b >/dev/null
+    trap 'xcrun simctl shutdown "$sim"' EXIT
+    xcodebuild build -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme KoanTV -configuration Debug \
+        -destination "id=$sim" -derivedDataPath target/tv-build
+    xcrun simctl uninstall "$sim" {{bundle_id}}
+    xcrun simctl install "$sim" target/tv-build/Build/Products/Debug-appletvsimulator/koan.app
+    dir="$(xcrun simctl get_app_container "$sim" {{bundle_id}} data)/Library/Caches/koan-config"
+    mkdir -p "$dir"
+    printf '[remote]\nenabled = true\nurl = "http://127.0.0.1:4812"\nusername = "kept"\napi_key = "kept-key"\n\n[devices]\nnearby = false\n' \
+        > "$dir/config.local.toml"
+    wait_for() { for _ in $(seq 40); do eval "$1" && return 0; sleep 0.5; done; return 1; }
+    xcrun simctl launch "$sim" {{bundle_id}} >/dev/null
+    wait_for '[ -n "$(xcrun simctl spawn "$sim" defaults read {{bundle_id}} config.local.toml 2>/dev/null)" ]' \
+        || { echo "FAIL: the configuration was not mirrored into the preferences" >&2; exit 1; }
+    xcrun simctl terminate "$sim" {{bundle_id}}
+    rm -rf "$dir"
+    xcrun simctl launch "$sim" {{bundle_id}} >/dev/null
+    wait_for 'grep -q "username = \"kept\"" "$dir/config.local.toml" 2>/dev/null' \
+        || { echo "FAIL: the configuration did not come back after Caches was cleared" >&2; exit 1; }
+    sleep 3
+    xcrun simctl io "$sim" screenshot target/tv-kept.png >/dev/null
+    echo "kept: signed in as kept after Caches was cleared (target/tv-kept.png)"
+
 # Sign a television in through an invite: the simulator by default, or
 # `device=tv` for the Apple TV paired with Xcode (signed as `tv-device` is).
 tv-join link device="sim": ios-project
