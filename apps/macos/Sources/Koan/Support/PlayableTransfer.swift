@@ -93,7 +93,7 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         case .artist:
             return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
         case .playlist:
-            return (try? await engine.playlistTracks(playlistId: id))?.map(\.id) ?? []
+            return (try? await engine.playlistTracks(playlistId: id))?.map(\.track.id) ?? []
         case .file:
             return (try? await engine.importFiles(paths: [name]))?.trackIds ?? []
         }

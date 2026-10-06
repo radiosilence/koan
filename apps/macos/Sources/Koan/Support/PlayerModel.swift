@@ -41,6 +41,12 @@ final class PlayerModel {
     private(set) var pendingMutations = 0
     var isBusy: Bool { pendingMutations > 0 }
 
+    /// What a play still finding its tracks is for, from the tap until the
+    /// engine holds the new queue: the transport names it, loading, at once,
+    /// rather than the paused track it is about to replace. Play and pause
+    /// are ignored meanwhile, so that track cannot be resumed under it.
+    private(set) var resolving: String?
+
     /// Set by `AppState`. Queue mutations register here alongside every other
     /// slow thing rather than tracking their own spinner.
     weak var activity: ActivityModel?
@@ -118,7 +124,7 @@ final class PlayerModel {
     /// screen to say so reads as a tap that did nothing. A wait paused by hand
     /// reads as paused, since it will open paused.
     var isWaitingForTrack: Bool {
-        mirror.playback.waiting && mirror.playback.state == .stopped
+        resolving != nil || (mirror.playback.waiting && mirror.playback.state == .stopped)
     }
     var currentTrackId: Int64? { mirror.playback.entry?.trackId }
     var currentItemId: String? { mirror.playback.queueItemId }
@@ -220,9 +226,15 @@ final class PlayerModel {
 
     // MARK: - Transport
 
-    func togglePlayPause() { attempt { try await self.engine.togglePlayPause() } }
+    func togglePlayPause() {
+        guard resolving == nil else { return }
+        attempt { try await self.engine.togglePlayPause() }
+    }
     func pause() { attempt { try await self.engine.pause() } }
-    func resume() { attempt { try await self.engine.resume() } }
+    func resume() {
+        guard resolving == nil else { return }
+        attempt { try await self.engine.resume() }
+    }
     func next() { attempt { try await self.engine.next() } }
     func previous() { attempt { try await self.engine.previous() } }
     func stop() { attempt { try await self.engine.stop() } }
@@ -338,6 +350,28 @@ final class PlayerModel {
     /// The index goes with the command rather than following it as a separate
     /// `play`. Two commands meant the first track started before the cursor
     /// jumped, which showed as track one flashing as playing.
+    /// Replace the queue with what `resolve` finds, named `name` until it
+    /// lands: a record, an artist or a playlist, whose tracks are a database
+    /// read away.
+    @discardableResult
+    func playNow(resolving name: String, _ resolve: @escaping () async -> [Int64]) -> Task<Void, Never> {
+        resolving = name
+        let engine = self.engine
+        pendingMutations += 1
+        return Task {
+            let ids = await resolve()
+            if !ids.isEmpty {
+                do {
+                    _ = try await engine.replaceQueue(trackIds: ids, startAt: 0)
+                } catch {
+                    self.lastError = String(describing: error)
+                }
+            }
+            self.resolving = nil
+            self.pendingMutations -= 1
+        }
+    }
+
     func playNow(trackIds: [Int64], startingAt index: Int = 0) {
         guard !trackIds.isEmpty else { return }
         let start = trackIds.indices.contains(index) ? index : 0
