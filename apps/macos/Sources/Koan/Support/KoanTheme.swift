@@ -32,10 +32,25 @@ enum KoanTheme {
         guard isOn else { return }
         registerFace()
         #if os(iOS)
-        // Navigation titles are UIKit's, drawn from its appearance proxies.
+        // Navigation titles and subtitles are UIKit's, drawn from the bar's
+        // appearances: the system's own two, at rest and at the scroll edge,
+        // with the theme's type.
+        func themed(_ look: UINavigationBarAppearance) -> UINavigationBarAppearance {
+            look.largeTitleTextAttributes = [.font: UIFont.koan(.display), .foregroundColor: UIColor.koanStrong]
+            look.titleTextAttributes = [.font: UIFont.koan(.control), .foregroundColor: UIColor.koanStrong]
+            look.largeSubtitleTextAttributes = [.font: UIFont.koan(.fine), .foregroundColor: UIColor.koanMuted]
+            look.subtitleTextAttributes = [.font: UIFont.koan(.fine), .foregroundColor: UIColor.koanMuted]
+            return look
+        }
+        let rest = UINavigationBarAppearance()
+        rest.configureWithDefaultBackground()
+        let edge = UINavigationBarAppearance()
+        edge.configureWithTransparentBackground()
         let bar = UINavigationBar.appearance()
-        bar.largeTitleTextAttributes = [.font: UIFont.koan(.display), .foregroundColor: UIColor.koanStrong]
-        bar.titleTextAttributes = [.font: UIFont.koan(.control), .foregroundColor: UIColor.koanStrong]
+        bar.standardAppearance = themed(rest)
+        bar.compactAppearance = themed(rest.copy())
+        bar.scrollEdgeAppearance = themed(edge)
+        bar.compactScrollEdgeAppearance = themed(edge.copy())
         #endif
     }
 
@@ -1385,10 +1400,8 @@ private struct KoanFormRole: ViewModifier {
             // A television's form has no ground or separators to take over.
             content
             #else
-            content
-                .scrollContentBackground(.hidden)
-                .listRowBackground(Color.clear)
-                .listRowSeparatorTint(Color.koanRule)
+            // Rows give up their ground through `washedRow`, on the content.
+            content.scrollContentBackground(.hidden)
             #endif
         } else {
             content.formStyle(.grouped)
@@ -1402,10 +1415,10 @@ private struct KoanListRole: ViewModifier {
             #if os(tvOS)
             content
             #else
+            // Rows give up their ground through `washedRow`, on the content.
             content
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .listRowBackground(Color.clear)
                 .listRowSeparatorTint(Color.koanRule)
                 .font(.koan(.body))
             #endif
@@ -1574,8 +1587,9 @@ extension View {
 /// A form. In the platform's look, a grouped `Form`. In the theme, its
 /// sections stacked on the ground, header, rows and footer, with no cards:
 /// AppKit's grouped form draws a rounded card behind each section whatever it
-/// is told, so the theme does not use one there. iOS and tvOS forms take
-/// `.koanForm()` instead, which reaches their rows.
+/// is told, so the theme does not use one there. On iOS the theme's form is a
+/// grouped list: sections full width and square, rows on the ground, rules at
+/// one inset. tvOS forms take `.koanForm()`.
 struct KoanForm<Content: View>: View {
     @ViewBuilder let content: Content
 
@@ -1597,6 +1611,14 @@ struct KoanForm<Content: View>: View {
             .labeledContentStyle(KoanLabeledContentStyle())
         } else {
             Form { content }.formStyle(.grouped)
+        }
+        #elseif os(iOS)
+        if KoanTheme.isOn {
+            List { Group { content }.washedRow() }
+                .listStyle(.grouped)
+                .koanForm()
+        } else {
+            Form { content }.koanForm()
         }
         #else
         Form { content }.koanForm()

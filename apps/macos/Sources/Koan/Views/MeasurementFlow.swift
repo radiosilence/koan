@@ -62,7 +62,7 @@ struct MeasurementFlow: View {
                     }
                 }
             }
-            .navigationTitle(step.title)
+            .navigationTitle(KoanTheme.label(step.title))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

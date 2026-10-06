@@ -91,6 +91,15 @@ lays out everything mounted in it. Two things follow:
 ends quickly followed by a hang on the main thread is the page being laid out,
 not read.
 
+### Designing a screen
+
+The apps' look is set down in [docs/design/koan-theme.md](docs/design/koan-theme.md),
+and its [rules](docs/design/koan-theme.md#rules) apply to every new screen: one
+prominent action, shared edges and one spacing scale, no system chrome in the
+kōan look, and dense views for technical data. Views name roles from
+`Support/KoanTheme.swift` rather than colours, fonts or materials;
+`just theme-leaks` finds the ones that do not.
+
 ## Submitting a PR
 
 1. Fork the repo and create a feature branch.

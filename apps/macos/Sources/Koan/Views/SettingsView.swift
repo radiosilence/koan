@@ -29,7 +29,7 @@ struct SettingsView: View {
     ) -> some View {
         NavigationLink {
             content()
-                .navigationTitle(title)
+                .navigationTitle(KoanTheme.label(title))
                 #if os(tvOS)
                 .roomBackground()
                 #endif
@@ -107,6 +107,7 @@ struct SettingsView: View {
                             .frame(maxWidth: .infinity)
                     }
                 }
+                .koanList()
                 .navigationTitle(KoanTheme.label("Settings"))
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                 #endif
@@ -756,7 +757,7 @@ struct EqSettings: View {
                         app.dsp.setBand(active, index, kind: b.kind, freq: hz, gain: db, q: b.q)
                     }
                 } header: {
-                    Text(active)
+                    Text(active).koanText(.fine, .ink).textCase(nil)
                 }
                 BandTable(dsp: app.dsp, profile: active, bands: detail.bands)
             }

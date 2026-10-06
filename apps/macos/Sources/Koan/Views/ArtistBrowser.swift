@@ -85,6 +85,7 @@ struct ArtistBrowser: View {
                 }
                 .onAppear { library.artistsShown.insert(artist.id) }
                 .onDisappear { library.artistsShown.remove(artist.id) }
+                .washedRow()
         }
         // Rebuilt on each visit rather than kept mounted behind other pages
         // (see `StageView`). A `List` takes no scroll position, but it does go
