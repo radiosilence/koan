@@ -136,6 +136,9 @@ struct KoanIOSApp: App {
                         }
                     }
                     state = built
+                    #if os(tvOS)
+                    IntentTarget.set(built)
+                    #endif
                     if let pendingURL {
                         open(pendingURL, in: built)
                         self.pendingURL = nil

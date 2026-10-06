@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Siri on Apple TV: play, pause and play a record.** "Play a record in kōan" asks which, and finds it in the library as the search page does. "Play kōan" and "Pause kōan" act on the queue. They start audio with the app in the background, and wait for the engine if Siri launched the app.
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
 ### Fixed

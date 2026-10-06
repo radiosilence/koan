@@ -66,6 +66,13 @@ Search takes the on-screen keyboard and finds artists, albums and tracks.
 
 ![Search, with matching artists and records](../../site/public/screens/tv-search.webp)
 
+## Siri
+
+Hold the remote's Siri button and say "Play a record in kōan": Siri asks which
+record and finds it in your library by name, then plays it from the first
+track. "Play kōan" carries on with the queue and "Pause kōan" pauses it. They
+work with kōan in the background, and with it closed, which Siri opens first.
+
 ## What it leaves out
 
 It is a device to play on rather than to curate: playlists are made on a phone
