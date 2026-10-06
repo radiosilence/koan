@@ -1754,11 +1754,11 @@ async fn the_proxy_signs_in_the_account_it_names() {
     )
     .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
-    assert_eq!(r.location(), "/auth/proxy?next=%2Fartists");
+    assert_eq!(r.location(), "/ui/resume?next=%2Fartists");
 
     let r = send(
         &f.app,
-        from_peer(get("/auth/proxy?next=/artists"), "10.0.0.1")
+        from_peer(get("/ui/resume?next=/artists"), "10.0.0.1")
             .header("remote-user", "alice")
             .body(Body::empty())
             .unwrap(),
@@ -1780,15 +1780,12 @@ async fn page_loads_behind_the_proxy_resume_through_it() {
     )
     .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
-    assert_eq!(
-        r.location(),
-        "/auth/proxy?next=%2Foauth%2Fauthorize%3Fx%3Dy"
-    );
+    assert_eq!(r.location(), "/ui/resume?next=%2Foauth%2Fauthorize%3Fx%3Dy");
 
     // Without the header it falls back to the refresh cookie.
     let r = send(
         &f.app,
-        get("/auth/proxy?next=/queue").body(Body::empty()).unwrap(),
+        get("/ui/resume?next=/queue").body(Body::empty()).unwrap(),
     )
     .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
@@ -1799,11 +1796,11 @@ async fn page_loads_behind_the_proxy_resume_through_it() {
 #[tokio::test]
 async fn the_header_counts_only_from_the_proxy_with_one_value() {
     let f = setup_behind_proxy();
-    let stranger = from_peer(get("/auth/proxy"), "203.0.113.9")
+    let stranger = from_peer(get("/ui/resume"), "203.0.113.9")
         .header("remote-user", "alice")
         .body(Body::empty())
         .unwrap();
-    let unknown_peer = get("/auth/proxy")
+    let unknown_peer = get("/ui/resume")
         .header("remote-user", "alice")
         .body(Body::empty())
         .unwrap();
@@ -1816,7 +1813,7 @@ async fn the_header_counts_only_from_the_proxy_with_one_value() {
     // From the proxy, a header naming no one account signs in no one, and
     // ends the browser's own session rather than falling back to it.
     for req in unusable_headers() {
-        let r = send(&f.app, req.uri("/auth/proxy").body(Body::empty()).unwrap()).await;
+        let r = send(&f.app, req.uri("/ui/resume").body(Body::empty()).unwrap()).await;
         assert_eq!(r.status, StatusCode::FORBIDDEN);
         assert_signed_out(&r);
     }
@@ -1937,7 +1934,7 @@ async fn an_account_the_server_lacks_is_refused() {
     let f = setup_behind_proxy();
     let r = send(
         &f.app,
-        from_peer(get("/auth/proxy"), "10.0.0.1")
+        from_peer(get("/ui/resume"), "10.0.0.1")
             .header("remote-user", "bob")
             .body(Body::empty())
             .unwrap(),
@@ -1956,7 +1953,7 @@ async fn an_account_named_in_utf8_signs_in() {
     }
     let r = send(
         &f.app,
-        from_peer(get("/auth/proxy"), "10.0.0.1")
+        from_peer(get("/ui/resume"), "10.0.0.1")
             .header(
                 "remote-user",
                 axum::http::HeaderValue::from_bytes("josé".as_bytes()).unwrap(),
@@ -1986,8 +1983,21 @@ async fn a_header_from_the_proxy_naming_no_one_lets_no_session_through() {
                 .unwrap(),
         )
         .await;
-        assert_ne!(r.status, StatusCode::OK, "{:?}", r.headers);
-        assert_eq!(r.location(), "/auth/proxy?next=%2Falbums");
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+        assert_signed_out(&r);
+    }
+    for req in unusable_headers() {
+        let r = send(
+            &f.app,
+            req.method("POST")
+                .uri("/auth/renew")
+                .header(header::ORIGIN, ORIGIN)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN);
+        assert_signed_out(&r);
     }
 }
 
@@ -2031,7 +2041,7 @@ async fn a_session_for_another_account_than_the_proxy_names_is_resumed() {
     )
     .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
-    assert_eq!(r.location(), "/auth/proxy?next=%2Falbums");
+    assert_eq!(r.location(), "/ui/resume?next=%2Falbums");
 
     let r = send(
         &f.app,
@@ -2044,84 +2054,107 @@ async fn a_session_for_another_account_than_the_proxy_names_is_resumed() {
     assert_eq!(r.status, StatusCode::OK);
 }
 
-/// A browser sends `koan_refresh` only under its path, as these requests do.
-/// The hand-over must see it there to revoke it.
-#[test]
-fn the_proxy_resume_receives_the_refresh_cookie() {
-    let path = crate::auth::routes::REFRESH_COOKIE_PATH;
-    assert!(
-        super::session::PROXY_RESUME.starts_with(&format!("{path}/")),
-        "{} is outside {path}",
-        super::session::PROXY_RESUME
-    );
+/// Every way a browser through the proxy gets a session.
+fn proxied_requests(user: &str) -> Vec<Request<Body>> {
+    let from_proxy = |req: axum::http::request::Builder| {
+        from_peer(req, "10.0.0.1")
+            .header(header::HOST, HOST)
+            .header(header::ORIGIN, ORIGIN)
+            .header("remote-user", user)
+    };
+    vec![
+        from_proxy(Request::get("/ui/resume?next=%2Falbums"))
+            .body(Body::empty())
+            .unwrap(),
+        from_proxy(Request::get("/login"))
+            .body(Body::empty())
+            .unwrap(),
+        from_proxy(Request::post("/login"))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(Body::from("username=alice&password=hunter2"))
+            .unwrap(),
+        from_proxy(Request::post("/auth/renew"))
+            .body(Body::empty())
+            .unwrap(),
+    ]
 }
 
-/// `/auth/refresh` and `/auth/resume` sit outside the proxy, so a session the
-/// proxy replaced, by another account or by no one, must not be refreshable
-/// there.
+fn refresh_tokens(f: &Fixture) -> i64 {
+    let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
+    db.conn
+        .query_row("SELECT COUNT(*) FROM refresh_tokens", [], |r| r.get(0))
+        .unwrap()
+}
+
+/// A session through the proxy is an access token alone, derived again from
+/// the header on each page load: nothing outlives what the proxy says.
 #[tokio::test]
-async fn a_session_the_proxy_replaces_cannot_be_refreshed() {
+async fn no_refresh_cookie_is_issued_through_the_proxy() {
+    let f = setup_behind_proxy();
+    for req in proxied_requests("alice") {
+        let uri = req.uri().clone();
+        let r = send(&f.app, req).await;
+        assert!(
+            !r.cookies()
+                .iter()
+                .any(|c| c.starts_with("koan_refresh=") && !c.starts_with("koan_refresh=;")),
+            "{uri} set a refresh cookie: {:?}",
+            r.cookies()
+        );
+    }
+    assert_eq!(refresh_tokens(&f), 0, "no refresh token stored");
+}
+
+/// The proxy switching the browser from alice to bob ends alice's access
+/// within one access token's lifetime: her session is the access token the
+/// proxy's say-so minted, and nothing renews it once the proxy names bob.
+#[tokio::test]
+async fn a_switch_at_the_proxy_ends_the_previous_account_within_one_access_ttl() {
     let f = setup_behind_proxy();
     {
         let db = Database::open(&f.dir.path().join("koan.db")).unwrap();
-        queries::auth::create_user(&db.conn, "carol", "pw", Role::User).unwrap();
+        queries::auth::create_user(&db.conn, "bob", "pw", Role::User).unwrap();
     }
-    let app = f
-        .app
-        .clone()
-        .merge(crate::auth::routes::auth_router(f.state.clone()));
-    // As a browser's jar sends it: the refresh cookie under its path only.
-    let browser = |uri: &str, refresh: &str| {
-        let req = from_peer(get(uri), "10.0.0.1");
-        if uri.starts_with(crate::auth::routes::REFRESH_COOKIE_PATH) {
-            req.header(header::COOKIE, format!("koan_refresh={refresh}"))
-        } else {
-            req
-        }
+    let resume = |user: &str| {
+        from_peer(get("/ui/resume?next=%2Falbums"), "10.0.0.1")
+            .header("remote-user", user)
+            .body(Body::empty())
+            .unwrap()
     };
-    let refreshes = |refresh: String| {
-        let app = app.clone();
-        async move {
-            let r = send(
-                &app,
-                Request::post("/auth/refresh")
-                    .header(header::HOST, HOST)
-                    .header(header::ORIGIN, ORIGIN)
-                    .header(header::COOKIE, format!("koan_refresh={refresh}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await;
-            r.status == StatusCode::OK
-        }
-    };
+    let alice = send(&f.app, resume("alice")).await.cookie("koan_access");
+    let claims = auth::validate_access_token(&f.state.public_pem, &alice).unwrap();
+    assert!(claims.exp - claims.iat <= f.state.access_ttl_secs);
 
-    for (next_user, status) in [
-        ("carol", StatusCode::SEE_OTHER),
-        ("mallory", StatusCode::FORBIDDEN),
-    ] {
-        let signed_in = send(&app, form("/login", "username=alice&password=hunter2")).await;
-        let refresh = signed_in.cookie("koan_refresh");
-        assert!(refreshes(refresh.clone()).await, "a live session refreshes");
-        let refresh = {
-            let again = send(&app, form("/login", "username=alice&password=hunter2")).await;
-            again.cookie("koan_refresh")
-        };
-
-        let r = send(
-            &app,
-            browser("/auth/proxy?next=%2Falbums", &refresh)
-                .header("remote-user", next_user)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
-        assert_eq!(r.status, status, "{next_user}");
-        assert!(
-            !refreshes(refresh).await,
-            "alice's session outlived {next_user}"
-        );
+    // Alice's cookie, the proxy now naming bob: a page load hands over, and
+    // neither it nor a renewal gives alice anything more.
+    let page = send(
+        &f.app,
+        from_peer(get("/albums"), "10.0.0.1")
+            .header(header::COOKIE, format!("koan_access={alice}"))
+            .header("remote-user", "bob")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(page.location(), "/ui/resume?next=%2Falbums");
+    for req in [resume("bob")]
+        .into_iter()
+        .chain(proxied_requests("bob").into_iter().skip(3))
+    {
+        let r = send(&f.app, req).await;
+        let access = r.cookie("koan_access");
+        let claims = auth::validate_access_token(&f.state.public_pem, &access).unwrap();
+        assert_eq!(claims.username, "bob");
     }
+    assert_eq!(refresh_tokens(&f), 0, "nothing to renew alice with");
+}
+
+/// Off the proxy, a password sign-in keeps its refresh cookie.
+#[tokio::test]
+async fn a_password_sign_in_off_the_proxy_still_refreshes() {
+    let f = setup_behind_proxy();
+    let r = send(&f.app, form("/login", "username=alice&password=hunter2")).await;
+    assert!(!r.cookie("koan_refresh").is_empty());
 }
 
 #[test]

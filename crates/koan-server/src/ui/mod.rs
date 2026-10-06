@@ -289,6 +289,9 @@ fn is_navigation(req: &Request) -> bool {
 async fn gate(State(s): State<UiState>, mut req: Request, next: Next) -> Response {
     let user = if s.auth_enabled {
         let vouched = session::vouched(&s, req.headers(), req.extensions());
+        if vouched == session::Vouch::Unusable {
+            return session::unusable_header(&s);
+        }
         let claims = cookie(req.headers(), "koan_access")
             .and_then(|t| auth::validate_access_token(&s.auth.public_pem, t).ok());
         match (claims, vouched) {

@@ -13,7 +13,7 @@ use serde::Deserialize;
 use koan_core::db::queries::auth as auth_queries;
 
 use super::{UiState, encode, html, pages, see_other};
-use crate::auth::routes::{ClientIp, authenticate, refresh_token_from, rotate, session_for};
+use crate::auth::routes::{ClientIp, authenticate, proxied_access, refresh_token_from, rotate};
 
 /// An authenticating reverse proxy in front of the web UI, whose header names
 /// the account signed in to it.
@@ -209,12 +209,17 @@ pub(super) async fn login(
     State(s): State<UiState>,
     ClientIp(from): ClientIp,
     headers: HeaderMap,
+    ext: Extensions,
     Form(f): Form<LoginForm>,
 ) -> Response {
     if !same_origin(&headers) {
         return cross_site();
     }
     let next = local_path(&f.next);
+    // Through the proxy, the proxy says who is signed in, not a password.
+    if vouched(&s, &headers, &ext) != Vouch::Absent {
+        return see_other(&format!("{PROXY_RESUME}?next={}", encode(next)));
+    }
     match authenticate(&s.auth, &f.username, &f.password, from).await {
         Ok((_, access, refresh)) => (
             StatusCode::SEE_OTHER,
@@ -237,15 +242,13 @@ pub(super) async fn login(
 }
 
 /// Where a page load goes for a session when an authenticating proxy is
-/// trusted. Under the refresh cookie's path, so the browser sends the cookie
-/// it is replacing, and not one of the exact paths operators exempt from the
-/// proxy (`/auth/login`, `/auth/refresh`, `/auth/logout`), so the proxy covers
-/// it.
-pub(super) const PROXY_RESUME: &str = "/auth/proxy";
+/// trusted. A UI path, so the proxy covers it: the paths operators exempt
+/// from the proxy (`/auth/login`, `/oauth/token`…) never read the header, and
+/// a client's own header reaching them through an exemption signs in no one.
+pub(super) const PROXY_RESUME: &str = "/ui/resume";
 
-/// Sign in the account the proxy names, with a fresh session even over a
-/// refresh cookie, which may be another account's. Without the header, on to
-/// the refresh cookie as usual.
+/// Sign in the account the proxy names, over whatever session the browser
+/// held. Without the header, on to the refresh cookie as usual.
 pub(super) async fn proxy_resume(
     State(s): State<UiState>,
     Query(q): Query<NextParam>,
@@ -260,36 +263,35 @@ pub(super) async fn proxy_resume(
     if vouch == Vouch::Absent {
         return see_other(&format!("/auth/resume?next={}", encode(&next)));
     }
-    // Whatever session the browser held is replaced by the one the proxy
-    // names, or by none. Its refresh token is revoked rather than only
-    // overwritten, since `/auth/refresh` sits outside the proxy and would
-    // otherwise keep it alive.
-    revoke_refresh(&s, &headers).await;
-    let Vouch::Named(name) = vouch else {
-        log::warn!("web UI: the sign-in proxy sent a header that names no one account");
-        return refused_by_proxy(
-            &s,
-            "Your sign-in proxy did not name one account. Ask an admin to check its configuration.",
-        );
-    };
-    match session_for(&s.auth, name).await {
-        Some((access, refresh)) => (
+    match proxied(&s, vouch).await {
+        Ok(access) => (
             StatusCode::SEE_OTHER,
             [
                 (header::LOCATION, next),
                 (header::CACHE_CONTROL, "no-store".to_owned()),
             ],
-            s.auth.session_cookies(&access, &refresh),
+            s.auth.proxied_cookies(&access),
         )
             .into_response(),
-        None => {
-            log::info!("web UI: the sign-in proxy named {name:?}, who has no account");
-            refused_by_proxy(
-                &s,
-                "Your sign-in proxy names an account this server does not have. Ask an admin to create it.",
-            )
-        }
+        Err(refused) => refused,
     }
+}
+
+/// An access token for the account the proxy names, or a refusal that signs
+/// the browser out. Never a refresh token: the session is derived again from
+/// the header on the next page load, so it cannot outlast the proxy's say-so,
+/// and a switch of account at the proxy needs nothing revoked.
+async fn proxied(s: &UiState, vouch: Vouch<'_>) -> Result<String, Response> {
+    let Vouch::Named(name) = vouch else {
+        return Err(unusable_header(s));
+    };
+    proxied_access(&s.auth, name).await.ok_or_else(|| {
+        log::info!("web UI: the sign-in proxy named {name:?}, who has no account");
+        refused_by_proxy(
+            s,
+            "Your sign-in proxy names an account this server does not have. Ask an admin to create it.",
+        )
+    })
 }
 
 /// Spend the refresh cookie for a new session. A page load lands here when its
@@ -325,12 +327,20 @@ pub(super) async fn renew(
     State(s): State<UiState>,
     ClientIp(from): ClientIp,
     headers: HeaderMap,
+    ext: Extensions,
 ) -> Response {
     if !same_origin(&headers) {
         return cross_site();
     }
     if !s.auth_enabled {
         return StatusCode::NO_CONTENT.into_response();
+    }
+    let vouch = vouched(&s, &headers, &ext);
+    if vouch != Vouch::Absent {
+        return match proxied(&s, vouch).await {
+            Ok(access) => (StatusCode::NO_CONTENT, s.auth.proxied_cookies(&access)).into_response(),
+            Err(refused) => refused,
+        };
     }
     match rotate_from(&s, &headers, from).await {
         Some((access, refresh)) => (
@@ -340,6 +350,15 @@ pub(super) async fn renew(
             .into_response(),
         None => StatusCode::UNAUTHORIZED.into_response(),
     }
+}
+
+/// The proxy sent its header but named no one account in it.
+pub(super) fn unusable_header(s: &UiState) -> Response {
+    log::warn!("web UI: the sign-in proxy sent a header that names no one account");
+    refused_by_proxy(
+        s,
+        "Your sign-in proxy did not name one account. Ask an admin to check its configuration.",
+    )
 }
 
 /// The proxy signed in no one this server has an account for: a name it does
@@ -364,19 +383,6 @@ async fn rotate_from(s: &UiState, headers: &HeaderMap, from: IpAddr) -> Option<(
         .flatten()
 }
 
-/// Revoke the refresh token the browser presents, if any.
-async fn revoke_refresh(s: &UiState, headers: &HeaderMap) {
-    let Some(token) = refresh_token_from(None, headers) else {
-        return;
-    };
-    let pool = s.pool.clone();
-    let _ = tokio::task::spawn_blocking(move || {
-        let db = super::open(&pool)?;
-        auth_queries::revoke_refresh_token(&db.conn, &token).ok()
-    })
-    .await;
-}
-
 pub(super) async fn signout(
     State(s): State<UiState>,
     headers: HeaderMap,
@@ -385,7 +391,14 @@ pub(super) async fn signout(
     if !same_origin(&headers) {
         return cross_site();
     }
-    revoke_refresh(&s, &headers).await;
+    if let Some(token) = refresh_token_from(None, &headers) {
+        let pool = s.pool.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            let db = super::open(&pool)?;
+            auth_queries::revoke_refresh_token(&db.conn, &token).ok()
+        })
+        .await;
+    }
     // Back to sign in, and then to where the user was: the consent page signs
     // out to let another account approve.
     let to = match local_path(&q.next) {
