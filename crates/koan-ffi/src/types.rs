@@ -1302,6 +1302,15 @@ pub struct DspProfileDetail {
     pub layers: Vec<DspLayerInfo>,
     /// A group: one of `layers` plays, the one switched on.
     pub group: bool,
+    /// Kept on every device of the account through its kōan server, rather
+    /// than this one alone.
+    pub everywhere: bool,
+    /// Where it is kept was chosen, rather than following from what it is.
+    pub scope_set: bool,
+    /// Why the server would not keep it, while it would not.
+    pub sync_problem: Option<String>,
+    /// What syncing did to it: a rename, and why.
+    pub sync_note: Option<String>,
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1445,6 +1454,10 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
                 })
                 .collect(),
             group: d.group,
+            everywhere: d.everywhere,
+            scope_set: d.scope_set,
+            sync_problem: None,
+            sync_note: None,
         }
     }
 }

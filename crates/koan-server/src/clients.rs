@@ -1383,6 +1383,9 @@ fn reach_absent(
     cmd: &LinkCommand,
     ack: Option<u64>,
 ) -> Option<Result<ClientInfo, String>> {
+    if cmd.live_only() {
+        return None;
+    }
     let envelope = Envelope {
         command: cmd.clone(),
         ack,

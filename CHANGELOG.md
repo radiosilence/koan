@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.59.0
+
+The library database moves from schema 20 to 21. The upgrade only adds tables: the EQ profiles a server keeps for its accounts, and a device's record of what it synced. Every existing row is kept as it was, and the upgrade runs in one transaction. Builds older than this one refuse a schema-21 database, so going back means restoring a copy taken before upgrading.
+
+### Added
+
+- **EQ profiles on every device.** Signed in to a kōan server, a profile kept On every device is synced to the account's other devices: filters, preamp, target, layers and its files, but not which output plays it. AutoEQ corrections and profiles of bands go everywhere until chosen otherwise; room and speaker corrections stay on their device, as does everything a device had before it first synced, unless it came from AutoEQ. The later change to a profile wins, deletions reach every device, and a stack kept everywhere cannot layer a profile kept on one device. The server offers this as `koanDspProfiles`, reached only with the account's password or an API key.
+
+### Changed
+
+- **EQ profiles play within fixed bounds, and DSP output never passes full scale.** A preamp set by hand is lowered when the profile's filters or impulse response would push the peak above full scale, so a profile with a 0 dB preamp over a boost, or a room correction whose response peaks above 0 dB, plays quieter after upgrading; its page shows "preamp −X dB for headroom". Every profile is held within the bounds in [Bounds](docs/guide/dsp.md#bounds): values clamped, and at most two seconds of delay and two graphic curves a channel, eight mixes, and impulse responses of 262,145 taps. A moved target counts as a graphic curve and is the one dropped past the count. Each profile's page says what was adjusted. Whatever the chain puts out is held within full scale, with anything that is not a number turned to silence.
+- **Opening the Output menu while controlling another device asks it for its outputs again.** The menu showed whatever that device last published; it now lists its outputs and presets afresh each time the menu opens, as this device's own menu always has.
+
+### Fixed
+
+- **A maker AutoEQ files under two names is one maker.** AFUL and AFUL Acoustics, HEDD and HEDD Audio, JQ and JQ Audio, OLLO and Ollo Audio, and Sivga and Sivga Audio were each listed twice under Find in AutoEQ, with their models split between the two; they are one now, in browsing, searching and offering a headphone's correction, and each result keeps the name AutoEQ gives it. Alpha Design Labs, Ambient Dynamics, Sound Intone and Sound Linear are no longer listed under their first word.
+- **Qudelix PEQ presets import.** A preset exported from the Qudelix app was refused at its first line (`TYPE: PEQ`). Its `//` comments, type line and closing impedance and sensitivity lines are now read past, each channel keeps its own preamp and filters, and a preset of another type, such as a graphic EQ, is refused by name.
+- **A phone controlled from another device shows its real output.** The output menu named the phone's route "System Output" with no preset, because the phone listed its outputs once, before it knew the route. It now publishes the route by its port name ("Qudelix-5K", "AirPods Pro") with the preset that route plays through, and again whenever the route changes.
+
 ## 0.58.0
 
 The library database moves from schema 19 to 20 (new tables for Subsonic saved play queues; every existing row is kept). Upgrades now run in one transaction and roll back whole if any step fails, and a server finding the database newer than it knows drains and exits. Builds older than 0.58.0 refuse a schema-20 database, so going back means restoring a copy taken before upgrading.

@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 20;
+pub const SCHEMA_VERSION: i64 = 21;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
@@ -482,6 +482,54 @@ fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         -- Listening services an account forwards its plays to, with the
         -- credential each takes. `error` is set when the service refuses the
         -- credential; nothing is sent for the account until it connects again.
+        -- An account's EQ profiles kept everywhere, as its devices last sent
+        -- them: the profile as JSON, or NULL once deleted. `rev` counts the
+        -- account's changes, profiles and dismissals together, so a device
+        -- reads what came after the last it saw.
+        CREATE TABLE IF NOT EXISTS dsp_profiles (
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            uid        TEXT NOT NULL,
+            rev        INTEGER NOT NULL,
+            edited_at  INTEGER NOT NULL,
+            doc        TEXT,
+            PRIMARY KEY (user_id, uid)
+        );
+        -- Impulse responses and the like, by content, once per account.
+        CREATE TABLE IF NOT EXISTS dsp_files (
+            user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            sha256   TEXT NOT NULL,
+            data     BLOB NOT NULL,
+            PRIMARY KEY (user_id, sha256)
+        );
+        -- Outputs whose AutoEQ suggestion the account turned down.
+        CREATE TABLE IF NOT EXISTS dsp_dismissed (
+            user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            output   TEXT NOT NULL,
+            rev      INTEGER NOT NULL,
+            PRIMARY KEY (user_id, output)
+        );
+        -- A device's side: how far it has read each server's profiles, the
+        -- revision and content of each profile as last synced, and when each
+        -- was last changed here.
+        CREATE TABLE IF NOT EXISTS dsp_sync_cursor (
+            url     TEXT PRIMARY KEY,
+            cursor  INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS dsp_synced (
+            url   TEXT NOT NULL,
+            uid   TEXT NOT NULL,
+            rev   INTEGER NOT NULL,
+            hash  TEXT NOT NULL,
+            PRIMARY KEY (url, uid)
+        );
+        CREATE TABLE IF NOT EXISTS dsp_local (
+            uid        TEXT PRIMARY KEY,
+            hash       TEXT NOT NULL,
+            edited_at  INTEGER NOT NULL,
+            refused    TEXT,
+            note       TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS scrobble_services (
             user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             service       TEXT NOT NULL,

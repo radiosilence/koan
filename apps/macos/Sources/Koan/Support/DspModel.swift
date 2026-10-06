@@ -24,6 +24,12 @@ final class DspModel {
     private(set) var overview: DspOverview?
     /// Moves on every change, for pages showing a profile's detail to follow.
     private(set) var version = 0
+    /// What tells this model profiles changed elsewhere: synced from another
+    /// device, which the engine reports as a library change.
+    weak var mirror: EngineMirror?
+    /// Moves on every change made here or synced from elsewhere: what a page
+    /// showing profiles reloads on.
+    var stamp: String { "\(version).\(mirror?.libraryVersion ?? 0)" }
     /// The last import, to offer for the output in use.
     var imported: String?
     /// The port iOS is routing audio to, which profiles are chosen by on a
@@ -309,6 +315,11 @@ final class DspModel {
     /// Make `name` a stack of `layers`, in order; creates it if there is none.
     func setLayers(_ name: String, _ layers: [DspLayerInfo]) {
         act { try await $0.dspSetLayers(name: name, layers: layers) }
+    }
+
+    /// Keep `name` on every device of the account, or on this one alone.
+    func setScope(_ name: String, everywhere: Bool) {
+        act { try await $0.dspSetScope(name: name, everywhere: everywhere) }
     }
 
     /// Set band `index` of `name`.
