@@ -35,7 +35,7 @@ struct EqGraph: View {
 
     enum Shown: String, CaseIterable, Identifiable {
         case eq = "EQ"
-        case headphone = "Headphone"
+        case headphone = "Device"
         var id: Self { self }
     }
 
@@ -139,7 +139,7 @@ struct EqGraph: View {
             }
         }
         #endif
-        .accessibilityLabel(showingEq ? "EQ response" : "Headphone response")
+        .accessibilityLabel(showingEq ? "EQ response" : "Device response")
     }
 
     private struct Curve {
