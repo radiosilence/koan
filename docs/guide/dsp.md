@@ -40,6 +40,112 @@ From the command line:
 koan dsp import "Harman 780.zip" --device "Topping E30"
 ```
 
+### From AutoEQ
+
+AutoEQ's corrections can be found by headphone name instead of downloaded by
+hand. In the Mac and iOS apps, **Find in AutoEQ…** under EQ and convolution
+searches as you type, or, before anything is typed, lists the makers and
+under each its models, for a headphone whose name does not come to mind;
+choosing a result installs it and plays the output in use through it.
+
+When the output's own name ends with a headphone's whole name as AutoEQ
+gives it, maker included ("Jo's Sony WH-1000XM4"), the same section offers
+AutoEQ's profile for it. The rule is strict because a wrong correction is
+worse than none: a name with a generation the index lacks ("Apple AirPods
+Pro 3") is offered nothing, and so are audio interfaces and DACs whose model
+happens to share a headphone's ("MOTU M2", "Hugo 2"). A short list of models
+that name their own generation may leave the maker out, as their Bluetooth
+names do: Sony's WH-1000X and WF-1000X lines and LinkBuds, AirPods Max, and
+Samsung's Galaxy Buds2 and Buds3. Plain "AirPods" and "AirPods Pro" are not on
+it, since every generation calls itself that, nor "AirPods 4", which is sold
+with and without noise cancelling under the one name. For those, and any name that
+says roughly which headphone it is without naming the entry, the offer is
+**Find <model> in AutoEQ…** instead: the search opens on the model, with its
+generations and variants listed to pick from. Find in AutoEQ… covers the rest. Nothing is
+applied until you choose to, and turning the offer down for a device is
+remembered in `config.local.toml` (`dsp.autoeq_dismissed`). An output with a
+profile of its own is not offered one.
+
+From the command line, `koan dsp autoeq search` matches names fuzzily against AutoEQ's index and
+lists each result with who measured it; `install` takes a result's number, or
+its exact name, and saves its parametric EQ as a profile named
+`<model> (AutoEQ, <source>)`:
+
+```bash
+koan dsp autoeq search hd650
+koan dsp autoeq install 6258 --device "Topping E30"
+koan dsp autoeq install "Sennheiser HD 650" --source crinacle
+```
+
+Where several sources measured the same headphone, a name alone installs the
+one AutoEQ lists first, which is the one it recommends. The index (about
+850 KB) is kept in the config directory under `autoeq/` and fetched again at
+most once a day, by ETag, so an unchanged index costs one empty response;
+`search --refresh` asks regardless. When GitHub cannot be reached, the copy
+kept is used. Numbers refer to that copy, so `install` never refreshes it.
+
+### Targets
+
+An AutoEQ correction brings a headphone to one target, usually Harman's. A
+profile installed from AutoEQ keeps the result's measurement and the target it
+was made for beside it, and its page in Settings (or `koan dsp target NAME`)
+offers others for the same kind of headphone:
+
+| Target | Character |
+|---|---|
+| Harman over-ear 2018 | What most listeners in Harman's research preferred: a warm bass shelf, a forward upper midrange, a soft top end |
+| Harman over-ear 2018, no bass shelf | The same with a flat low end |
+| oratory1990 over-ear | oratory1990's target, close to Harman's |
+| Diffuse field | Even sound from every direction: no bass shelf, brighter than Harman |
+| Harman in-ear 2019 | Harman's in-ear target: a bigger bass shelf and more treble than over-ear |
+| Harman in-ear 2019, no bass shelf | The same with a flat low end |
+| AutoEQ in-ear | AutoEQ's own in-ear target |
+| oratory1990 in-ear | oratory1990's target for in-ears |
+
+Another target plays as the difference between the two, after the
+correction. Both curves come from the same reference set, so whatever AutoEQ
+compensated for the rig the headphone was measured on is common to both and
+cancels; a result whose own target matches none of the set offers no others,
+since a difference across rigs would correct the rig rather than the sound.
+The difference is levelled at 1 kHz, smoothed over a twelfth of an octave and
+held within ±12 dB, and runs as a minimum-phase filter; the preamp lowers the
+level for any boost it adds. The targets are AutoEQ's, under its MIT licence;
+`crates/koan-core/src/audio/dsp/targets/SOURCES.md` records where each came
+from.
+
+**Add a Target…** (or `koan dsp add-target FILE`) takes a CSV of frequency and
+level, or a squig.link export, for a target koan does not ship: a community
+one, or your own. It is offered for every correction, whatever kind of
+headphone, so choose one meant for yours.
+
+```bash
+koan dsp target "Sennheiser HD 650 (AutoEQ, oratory1990)"              # what it was made for, and the others
+koan dsp target "Sennheiser HD 650 (AutoEQ, oratory1990)" --use diffuse-field-gras-kemar
+koan dsp target "Sennheiser HD 650 (AutoEQ, oratory1990)" --reset
+koan dsp add-target "My target.csv"
+```
+
+### Layers
+
+A profile can play others first: a headphone's correction, then a bass shelf
+or a treble tilt on top, without editing the correction. On a profile's page,
+**Add a Layer** puts another profile in front of its own filters; layers play
+in the order listed, each switched on or off, and a layer switched off plays
+nothing. Each plays as it would alone, its own layers and target included.
+A stack is assigned to an output like any profile, and one whose layers are
+all off plays untouched if it has no filters of its own.
+
+Only EQ can be a layer: a profile with impulse responses plays them itself.
+A layer that is missing, or that would make a profile a layer of itself, is
+refused, and renaming a profile renames it in every stack; one a stack plays
+cannot be deleted until it is taken out.
+
+```bash
+koan dsp import shelf.txt --name "Bass +3"     # Filter 1: ON LSC Fc 105 Hz Gain 3 dB Q 0.71
+koan dsp stack Desk "Sennheiser HD 650 (AutoEQ, oratory1990)" "Bass +3"
+koan dsp layer Desk "Bass +3" off
+```
+
 A profile is named after what it came from; rename it on its page in Settings
 (or pass `--name`). Importing into a profile of the same name adds to it, so a
 room's responses and a headphone EQ can live in one profile.
@@ -78,6 +184,26 @@ coefficients.
 kōan keeps what it imported under `dsp/<profile>/` beside the config, as one
 32-bit float WAV per rate, with a `.cfg` where the routes mix or delay channels.
 The originals are not needed again.
+
+## The EQ page
+
+The apps' EQ settings draw what the profile playing on the output in use does
+to the sound, and each profile's page draws its own. The curve is computed by
+the core from the same filters and impulse responses the DSP runs, at 48 kHz,
+so it shows what plays rather than what the filters were meant to do, layers
+and a moved target included. The preamp is shown beside the curve rather than
+in it, so the curve lines up with the bands' own gains. The curve is the left
+channel's; a band on the right channel alone draws nothing there and has no
+handle. Each parametric band is drawn faintly behind the total. For a
+correction from AutoEQ, the Headphone view draws the headphone as measured, the
+target it plays to, and the measurement with the profile applied.
+
+A profile's parametric bands are edited in the table below the graph, or by
+dragging a peak or shelf on the graph itself; an edit is saved to the profile
+and heard straight away. Frequency is held to 10 Hz–22 kHz, gain to ±30 dB and
+Q to 0.1–20. Delays, mixes and graphic curves are shown but not edited here,
+and a correction's measurement is not changed by editing its bands, so the
+Headphone view shows the effect of each edit on it.
 
 ## Sample rates
 

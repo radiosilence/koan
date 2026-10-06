@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Path as UrlPath, Query, RawQuery, Request, State};
+use axum::extract::{FromRequestParts, Path as UrlPath, Request, State};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -47,6 +48,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     ("apiKeyAuthentication", &[1]),
     ("formPost", &[1]),
     ("songLyrics", &[1]),
+    ("indexBasedQueue", &[1]),
     // koan's own. See `koan_core::remote::profile`.
     (koan_core::remote::profile::LINK, &[1]),
     (koan_core::remote::profile::DEVICES, &[1]),
@@ -55,6 +57,10 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::PAIR, &[1]),
     (koan_core::remote::profile::HISTORY, &[1]),
     (koan_core::remote::profile::SIGN_IN, &[1]),
+    (koan_core::remote::profile::PASSWORDS, &[1]),
+    (koan_core::remote::profile::API_KEYS, &[1]),
+    (koan_core::remote::profile::ACK, &[1]),
+    (koan_core::remote::profile::DEVICE_KEYS, &[1]),
     (koan_core::remote::profile::SCROBBLING, &[1]),
 ];
 
@@ -90,6 +96,9 @@ struct AppState {
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
     /// `ffmpeg`, where transcoding is on and it was found at startup.
     transcoder: Option<crate::transcode::Transcoder>,
+    /// `sharing.public_url`, trimmed: where an assistant reaches `/mcp`.
+    /// Without it, MCP's sign-in cannot work, so none is offered.
+    public_url: Option<String>,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -305,6 +314,64 @@ impl SubsonicParams {
     }
 }
 
+/// A `formPost` body, read by [`form_post`] and handed to the parameter
+/// extractors beside the URL's query string, which is left as it came. Not
+/// written into the URI: `http` refuses one past 64 KB, and a form is how a
+/// client sends what does not fit in a URL.
+#[derive(Clone)]
+struct FormBody(Arc<str>);
+
+/// The URL's query string, then the form body's, as one: what handlers read,
+/// and what the sign-in throttle must read too, or credentials sent in a form
+/// would pass it unseen.
+fn request_params(uri: &axum::http::Uri, extensions: &axum::http::Extensions) -> Option<String> {
+    let query = uri.query().filter(|q| !q.is_empty());
+    let form = extensions
+        .get::<FormBody>()
+        .map(|f| &*f.0)
+        .filter(|f| !f.is_empty());
+    match (query, form) {
+        (Some(q), Some(f)) => Some(format!("{q}&{f}")),
+        (q, f) => q.or(f).map(str::to_owned),
+    }
+}
+
+/// The request's parameters as one query string: the URL's first, then a
+/// `formPost` body's, so a parameter in the URL wins where a handler reads one
+/// value. In place of axum's `RawQuery`, which sees only the URL.
+struct RawQuery(Option<String>);
+
+impl<S: Send + Sync> FromRequestParts<S> for RawQuery {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(request_params(&parts.uri, &parts.extensions)))
+    }
+}
+
+/// axum's `Query` over the parameters [`RawQuery`] sees.
+struct Query<T>(T);
+
+impl<T: serde::de::DeserializeOwned, S: Send + Sync> FromRequestParts<S> for Query<T> {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        serde_urlencoded::from_str(
+            request_params(&parts.uri, &parts.extensions)
+                .as_deref()
+                .unwrap_or_default(),
+        )
+        .map(Query)
+        .map_err(|e| {
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to deserialize query string: {e}"),
+            )
+                .into_response()
+        })
+    }
+}
+
 /// Query parameters kept as an ordered list of pairs.
 ///
 /// `serde_urlencoded`, which axum's `Query` uses, cannot deserialise a repeated
@@ -446,7 +513,7 @@ async fn throttle_auth(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let params = RawParams::parse(request.uri().query());
+    let params = RawParams::parse(request_params(request.uri(), request.extensions()).as_deref());
     let username = params.get("u").unwrap_or_default().to_owned();
     let unguessable = params.get("apiKey").is_some()
         || (params.get("t").is_some()
@@ -784,6 +851,21 @@ enum Via {
 }
 
 impl Caller {
+    /// Refuse a request about the account's own credentials, its password and
+    /// API keys, unless it is signed with one of them: an API key or the
+    /// account's password. An app password is a credential handed to one
+    /// client, which must not mint or revoke others; the shared secret is no
+    /// account's.
+    fn may_manage_credentials(&self) -> Result<(), SubsonicError> {
+        match self.via {
+            Via::ApiKey | Via::Password => Ok(()),
+            Via::AppPassword | Via::SharedSecret => Err(SubsonicError::new(
+                SubsonicErrorCode::NotAuthorized,
+                "sign in with the account's password or an API key to manage its credentials",
+            )),
+        }
+    }
+
     /// Whose shares the caller may list and change: their own, or everyone's
     /// for an admin.
     fn share_owner(&self) -> Option<i64> {
@@ -1287,6 +1369,10 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             "played",
             extras.played.get(&track.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt(
+            "starred",
+            extras.starred.get(&track.id).map(|&at| iso(at)).as_deref(),
+        )
         .attr_opt_int(
             "userRating",
             extras.rating.get(&track.id).map(|&r| r.into()),
@@ -1371,6 +1457,10 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
             "played",
             extras.played.get(&album.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt(
+            "starred",
+            extras.starred.get(&album.id).map(|&at| iso(at)).as_deref(),
+        )
         .attr_opt_int(
             "userRating",
             extras.rating.get(&album.id).map(|&r| r.into()),
@@ -1410,6 +1500,10 @@ fn artist_id3_node(id: i64, name: &str, extras: &ArtistExtras) -> XmlNode {
         .attr("musicBrainzId", mbid.unwrap_or_default())
         .attr("sortName", sort_name.unwrap_or_default())
         .attr_opt_int("userRating", extras.rating.get(&id).map(|&r| r.into()))
+        .attr_opt(
+            "starred",
+            extras.starred.get(&id).map(|&at| iso(at)).as_deref(),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -1455,6 +1549,8 @@ struct SongExtras {
     played: HashMap<i64, i64>,
     /// The caller's rating, 1 to 5.
     rating: HashMap<i64, u8>,
+    /// When the caller favourited it, seconds since the epoch.
+    starred: HashMap<i64, i64>,
 }
 
 /// The caller's own history: when someone else last played a track is theirs
@@ -1506,6 +1602,7 @@ fn song_extras<'a>(
             queries::RatingKind::Track,
             tracks.iter().map(|t| t.id),
         )?,
+        starred: starred(db, user, Favourite::Track, &ids)?,
     })
 }
 
@@ -1519,6 +1616,41 @@ fn rated(
     queries::ratings(&db.conn, user, kind, ids).map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
+enum Favourite {
+    Track,
+    Album,
+    Artist,
+}
+
+/// When the caller favourited these rows (`ids` as from [`json_ids`]), seconds
+/// since the epoch. `user` is already resolved.
+fn starred(
+    db: &Database,
+    user: i64,
+    kind: Favourite,
+    ids: &str,
+) -> Result<HashMap<i64, i64>, SubsonicError> {
+    let sql = match kind {
+        Favourite::Track => {
+            "SELECT track_id, COALESCE(unixepoch(created_at), 0) FROM favourites
+             WHERE track_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
+        }
+        Favourite::Album => {
+            "SELECT album_id, COALESCE(unixepoch(created_at), 0) FROM favourite_albums
+             WHERE album_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
+        }
+        Favourite::Artist => {
+            "SELECT artist_id, COALESCE(unixepoch(created_at), 0) FROM favourite_artists
+             WHERE artist_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
+        }
+    };
+    Ok(by_id(db, sql, rusqlite::params![ids, user], |r| {
+        Ok((r.get(0)?, r.get(1)?))
+    })?
+    .into_iter()
+    .collect())
+}
+
 /// What `AlbumID3` carries beyond `AlbumRow`.
 #[derive(Default)]
 struct AlbumExtras {
@@ -1529,6 +1661,7 @@ struct AlbumExtras {
     stats: HashMap<i64, queries::AlbumStats>,
     played: HashMap<i64, i64>,
     rating: HashMap<i64, u8>,
+    starred: HashMap<i64, i64>,
 }
 
 /// `tracks`, when the caller already read every track of these albums, is
@@ -1600,6 +1733,7 @@ fn album_extras<'a>(
             queries::RatingKind::Album,
             album_ids.iter().copied(),
         )?,
+        starred: starred(db, user, Favourite::Album, &ids)?,
     })
 }
 
@@ -1632,6 +1766,7 @@ struct ArtistExtras {
     /// MusicBrainz artist id and sort name.
     names: HashMap<i64, (Option<String>, Option<String>)>,
     rating: HashMap<i64, u8>,
+    starred: HashMap<i64, i64>,
 }
 
 fn artist_extras(
@@ -1640,13 +1775,15 @@ fn artist_extras(
     ids: impl IntoIterator<Item = i64>,
 ) -> Result<ArtistExtras, SubsonicError> {
     let ids: Vec<i64> = ids.into_iter().collect();
+    let json = json_ids(ids.iter().copied());
     Ok(ArtistExtras {
         uids: Uids::load(db, ids.iter().copied(), [], [])?,
         rating: rated(db, user, queries::RatingKind::Artist, ids.iter().copied())?,
+        starred: starred(db, history_user(db, user)?, Favourite::Artist, &json)?,
         names: by_id(
             db,
             "SELECT id, mbid, sort_name FROM artists WHERE id IN (SELECT value FROM json_each(?1))",
-            [json_ids(ids)],
+            [&json],
             |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))),
         )?
         .into_iter()
@@ -1654,8 +1791,10 @@ fn artist_extras(
     })
 }
 
-/// An album as a directory `child`, for the file-browse endpoints.
-fn album_child_node(album: &queries::AlbumRow, uids: &Uids) -> XmlNode {
+/// An album as a directory `child`, for the file-browse endpoints, with the
+/// caller's own marks on it as `AlbumID3` carries them.
+fn album_child_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode {
+    let uids = &extras.uids;
     XmlNode::new("child")
         .attr("id", &uids.album(album.id))
         .attr("parent", &uids.artist(album.artist_id))
@@ -1665,6 +1804,18 @@ fn album_child_node(album: &queries::AlbumRow, uids: &Uids) -> XmlNode {
         .attr("coverArt", &uids.album(album.id))
         .attr_opt_int("year", year_from_date(album.date.as_deref()))
         .attr_bool("isDir", true)
+        .attr_opt(
+            "played",
+            extras.played.get(&album.id).map(|&at| iso(at)).as_deref(),
+        )
+        .attr_opt(
+            "starred",
+            extras.starred.get(&album.id).map(|&at| iso(at)).as_deref(),
+        )
+        .attr_opt_int(
+            "userRating",
+            extras.rating.get(&album.id).map(|&r| r.into()),
+        )
 }
 
 /// Artists bucketed by first letter — the shape `getArtists` (ID3) and
@@ -1877,7 +2028,7 @@ async fn get_indexes(
     Query(indexes): Query<IndexesParams>,
 ) -> Response {
     offload_response(move || {
-        respond_db(&state, &params, |db, b| {
+        respond_db_user(&state, &params, Role::Readonly, |db, user, b| {
             let last_modified = state.last_modified(db)?;
             // Nothing changed since the caller last looked: the timestamp
             // alone, which is all a client checking for changes reads.
@@ -1892,7 +2043,7 @@ async fn get_indexes(
                 ));
             }
             let index_map = artist_index(db)?;
-            let uids = Uids::load(db, index_map.values().flatten().map(|a| a.id), [], [])?;
+            let extras = artist_extras(db, user, index_map.values().flatten().map(|a| a.id))?;
 
             let mut indexes_node = XmlNode::new("indexes")
                 .attr_int("lastModified", last_modified)
@@ -1905,8 +2056,16 @@ async fn get_indexes(
                 for artist in group {
                     index_node = index_node.child(
                         XmlNode::new("artist")
-                            .attr("id", &uids.artist(artist.id))
-                            .attr("name", &artist.name),
+                            .attr("id", &extras.uids.artist(artist.id))
+                            .attr("name", &artist.name)
+                            .attr_opt(
+                                "starred",
+                                extras.starred.get(&artist.id).map(|&at| iso(at)).as_deref(),
+                            )
+                            .attr_opt_int(
+                                "userRating",
+                                extras.rating.get(&artist.id).map(|&r| r.into()),
+                            ),
                     );
                 }
                 indexes_node = indexes_node.child(index_node);
@@ -1938,13 +2097,14 @@ async fn get_music_directory(
                 if let Some(artist) = artist {
                     let albums = queries::albums_for_artist(&db.conn, id)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                    let uids = Uids::load(db, [artist.id], albums.iter().map(|a| a.id), [])?;
+                    let extras = album_extras(db, user, &albums, None)?;
+                    let uids = &extras.uids;
                     let mut dir = XmlNode::new("directory")
                         .attr("id", &uids.artist(artist.id))
                         .attr("name", &artist.name)
                         .array_of("child");
                     for album in &albums {
-                        dir = dir.child(album_child_node(album, &uids));
+                        dir = dir.child(album_child_node(album, &extras));
                     }
                     return Ok(b.child(dir));
                 }
@@ -2199,6 +2359,11 @@ async fn get_bookmarks(
 /// client never reads back something other than what it saved.
 const MAX_BOOKMARK_COMMENT: usize = 1024;
 
+/// The most songs a saved play queue holds. Longer is refused rather than cut,
+/// so a client never reads back something other than what it saved; each song
+/// is a lookup and a row written in one transaction.
+const MAX_PLAY_QUEUE: usize = 5000;
+
 /// `createBookmark`: save where the caller is in the song `id` names, as
 /// `position` milliseconds and an optional `comment`. One per song; a second
 /// replaces the first.
@@ -2242,6 +2407,175 @@ async fn delete_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b)
         })
+    })
+    .await
+}
+
+/// A saved play queue belongs to an account; the shared secret is no
+/// account's, and every client signed in with it would share the one queue.
+fn queue_owner(caller: &Caller) -> Result<i64, SubsonicError> {
+    if caller.via == Via::SharedSecret {
+        return Err(SubsonicError::new(
+            SubsonicErrorCode::NotAuthorized,
+            "sign in with an account to save a play queue",
+        ));
+    }
+    Ok(caller.user_id)
+}
+
+/// `getPlayQueue` and `getPlayQueueByIndex`: the queue a client saved for the
+/// caller, as far as its tracks are still in the library. Nothing saved
+/// answers with no `playQueue`, as Navidrome does. `by_index` names the
+/// current entry by its place, so a track queued twice is unambiguous.
+fn play_queue_response(state: &AppState, params: &RawParams, by_index: bool) -> Response {
+    respond_db_caller(state, &params.auth(), Role::Readonly, |db, caller, b| {
+        let user = queue_owner(caller)?;
+        let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+        let Some(queue) = queries::play_queue(&db.conn, user).map_err(internal)? else {
+            return Ok(b);
+        };
+        let rows: HashMap<i64, queries::TrackRow> =
+            queries::tracks_by_ids(&db.conn, &queue.track_ids)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .into_iter()
+                .map(|t| (t.id, t))
+                .collect();
+        let extras = song_extras(db, user, rows.values())?;
+        let tag = if by_index {
+            "playQueueByIndex"
+        } else {
+            "playQueue"
+        };
+        let mut node = XmlNode::new(tag)
+            .attr_int("position", queue.position_ms)
+            .attr("username", &caller.username)
+            .attr("changed", &iso(queue.changed_at))
+            .attr("changedBy", &queue.changed_by);
+        node = if by_index {
+            node.attr_int("currentIndex", queue.current as i64)
+        } else {
+            node.attr(
+                "current",
+                &extras.uids.track(queue.track_ids[queue.current]),
+            )
+        };
+        Ok(b.child(
+            node.list(
+                "entry",
+                queue
+                    .track_ids
+                    .iter()
+                    .filter_map(|id| rows.get(id))
+                    .map(|track| track_node(track, "entry", &extras)),
+            ),
+        ))
+    })
+}
+
+async fn get_play_queue(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || play_queue_response(&state, &RawParams::parse(raw.as_deref()), false))
+        .await
+}
+
+async fn get_play_queue_by_index(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || play_queue_response(&state, &RawParams::parse(raw.as_deref()), true))
+        .await
+}
+
+/// `savePlayQueue` and `savePlayQueueByIndex`: replace the caller's saved
+/// queue with the songs `id` names, in order, `position` milliseconds into the
+/// current one. The current one is `current`, a song id (its first place in
+/// the queue), or with `by_index` `currentIndex`, its place. No `id` clears
+/// the queue. A song the library does not have is left out, and the current
+/// place follows the songs that stay.
+fn save_play_queue_response(state: &AppState, params: &RawParams, by_index: bool) -> Response {
+    respond_db_caller(state, &params.auth(), Role::User, |db, caller, b| {
+        let user = queue_owner(caller)?;
+        if params.all("id").count() > MAX_PLAY_QUEUE {
+            return Err(SubsonicError::new(
+                SubsonicErrorCode::MissingParameter,
+                format!("a play queue holds at most {MAX_PLAY_QUEUE} songs"),
+            ));
+        }
+        let asked: Vec<Option<i64>> = params
+            .all("id")
+            .map(|raw| resolve_as(db, raw, EntityKind::Song, "id").ok())
+            .collect();
+        let known: std::collections::HashSet<i64> = queries::tracks_by_ids(
+            &db.conn,
+            &asked.iter().flatten().copied().collect::<Vec<_>>(),
+        )
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+        // Each kept song with its place in the queue as asked.
+        let kept: Vec<(usize, i64)> = asked
+            .iter()
+            .enumerate()
+            .filter_map(|(at, id)| id.filter(|id| known.contains(id)).map(|id| (at, id)))
+            .collect();
+        let current = if by_index {
+            match params.get("currentIndex").filter(|raw| !raw.is_empty()) {
+                Some(raw) => {
+                    let at = raw
+                        .parse::<usize>()
+                        .map_err(|_| SubsonicError::bad_param("currentIndex"))?;
+                    if at >= asked.len() && !asked.is_empty() {
+                        return Err(SubsonicError::bad_param("currentIndex"));
+                    }
+                    // The first kept song from the one named on: a song left
+                    // out leaves the place to the next that stays.
+                    kept.iter().position(|(asked_at, _)| *asked_at >= at)
+                }
+                None if asked.is_empty() => None,
+                None => return Err(SubsonicError::missing_param("currentIndex")),
+            }
+        } else {
+            params
+                .get("current")
+                .and_then(|raw| resolve_as(db, raw, EntityKind::Song, "current").ok())
+                .and_then(|current| kept.iter().position(|(_, id)| *id == current))
+        };
+        // An empty position is the start, as OpenSubsonic says.
+        let position = match params.get("position").filter(|raw| !raw.is_empty()) {
+            Some(raw) => raw
+                .parse::<i64>()
+                .ok()
+                .filter(|p| *p >= 0)
+                .ok_or_else(|| SubsonicError::bad_param("position"))?,
+            None => 0,
+        };
+        let ids: Vec<i64> = kept.into_iter().map(|(_, id)| id).collect();
+        queries::save_play_queue(
+            &db.conn,
+            user,
+            &ids,
+            current,
+            position,
+            params.get("c").unwrap_or_default(),
+        )
+        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        Ok(b)
+    })
+}
+
+async fn save_play_queue(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        save_play_queue_response(&state, &RawParams::parse(raw.as_deref()), false)
+    })
+    .await
+}
+
+async fn save_play_queue_by_index(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        save_play_queue_response(&state, &RawParams::parse(raw.as_deref()), true)
     })
     .await
 }
@@ -3324,11 +3658,11 @@ async fn koan_scrobbling(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
 
 /// Connect the caller's ListenBrainz account with `token`, checked with
 /// ListenBrainz first, as the web UI's Scrobbling page does. Answers as
-/// `koanScrobbling`. Only a form POST is taken, with the token in its body:
-/// a query string is logged by proxies.
+/// `koanScrobbling`. The token is read from a form POST's body only, never
+/// the query string, which proxies log.
 async fn koan_scrobbling_connect(
     State(state): State<Arc<AppState>>,
-    url: Option<axum::Extension<UrlQuery>>,
+    form: Option<axum::Extension<FormBody>>,
     RawQuery(raw): RawQuery,
 ) -> Response {
     offload_response(move || {
@@ -3337,16 +3671,8 @@ async fn koan_scrobbling_connect(
         // No connection is held while ListenBrainz answers.
         respond(&state, &auth, |caller, b| {
             let user = scrobbling_account(caller)?;
-            let in_url = url.is_none_or(|axum::Extension(UrlQuery(q))| {
-                RawParams::parse(Some(&q)).get("token").is_some()
-            });
-            if in_url {
-                return Err(SubsonicError::new(
-                    SubsonicErrorCode::Generic,
-                    "Send the token in a form POST body, not the URL",
-                ));
-            }
-            let pasted = params
+            let form = RawParams::parse(form.as_ref().map(|f| &*f.0.0));
+            let pasted = form
                 .get("token")
                 .ok_or_else(|| SubsonicError::missing_param("token"))?;
             let refused =
@@ -3478,19 +3804,28 @@ async fn get_open_subsonic_extensions(
     } else {
         &[]
     };
+    let mcp: &[(&str, &[i64])] = if state.public_url.is_some() {
+        &[(koan_core::remote::profile::MCP, &[1])]
+    } else {
+        &[]
+    };
     SubsonicResponse::ok(params.wants_json())
         .list(
             "openSubsonicExtensions",
-            EXTENSIONS.iter().chain(transcode).map(|(name, versions)| {
-                XmlNode::new("openSubsonicExtensions")
-                    .attr("name", name)
-                    .list(
-                        "versions",
-                        versions
-                            .iter()
-                            .map(|v| XmlNode::scalar("versions", AttrValue::Int(*v))),
-                    )
-            }),
+            EXTENSIONS
+                .iter()
+                .chain(transcode)
+                .chain(mcp)
+                .map(|(name, versions)| {
+                    XmlNode::new("openSubsonicExtensions")
+                        .attr("name", name)
+                        .list(
+                            "versions",
+                            versions
+                                .iter()
+                                .map(|v| XmlNode::scalar("versions", AttrValue::Int(*v))),
+                        )
+                }),
         )
         .build()
 }
@@ -4111,6 +4446,9 @@ fn respond_admin(
         if caller.role != Role::Admin {
             return Err(SubsonicError::not_authorized());
         }
+        // Accounts are made, invited, promoted and deleted here: an admin's
+        // app password must not turn into an account or a key of its own.
+        caller.may_manage_credentials()?;
         let db = state.open_db()?;
         f(&db, &caller, SubsonicResponse::ok(json))
     });
@@ -4224,6 +4562,208 @@ async fn koan_invite(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
                 username,
                 password.as_deref(),
             )?))
+        })
+    })
+    .await
+}
+
+/// Set an account's password: an admin any account's, anyone else their own,
+/// given the current one as `current`. The account's sessions, keys, app
+/// passwords and links all end, as with any password change. Changing one's
+/// own answers as `koanSignIn` does, with a new key named `name`: the key the
+/// request came with is among those revoked.
+///
+/// Signed with an API key or the account's own password only: an app password
+/// is a credential handed to one client, and the shared secret is no account's.
+///
+/// A wrong `current` counts against the account's sign-in budget, as a wrong
+/// password at sign-in does, and a spent budget refuses the check from every
+/// network, the account's own included: the sign-in throttle spares those, and
+/// a check that is not a sign-in must not be repeatable from one without limit.
+/// The request is usually signed with a key, which that throttle leaves alone,
+/// so the budget is checked here.
+///
+/// POST only, so the passwords never sit in a URL, where a proxy in front of
+/// the server would log them.
+async fn koan_set_user_password(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let username = params
+                .get("username")
+                .map_or(caller.username.as_str(), str::trim);
+            let own = username == caller.username;
+            if caller.role != Role::Admin {
+                if !own {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::NotAuthorized,
+                        "only an admin can set another account's password",
+                    ));
+                }
+                let current = params
+                    .get("current")
+                    .ok_or_else(|| SubsonicError::missing_param("current"))?;
+                if state.users.exhausted(username) {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::Generic,
+                        "Too many failed sign-ins for this account; try again in a minute",
+                    ));
+                }
+                use crate::auth::password::Refused;
+                match state.users.verify(username, current) {
+                    Ok(_) => {}
+                    Err(Refused::Busy) => return Err(SubsonicError::busy()),
+                    Err(Refused::Wrong) => {
+                        state.users.failed(username);
+                        // Not error 40, which an app reads as its own sign-in
+                        // failing.
+                        return Err(SubsonicError::new(
+                            SubsonicErrorCode::Generic,
+                            "the current password is wrong",
+                        ));
+                    }
+                }
+            }
+            let password = params
+                .get("password")
+                .ok_or_else(|| SubsonicError::missing_param("password"))?;
+            koan_core::invite::set_password(&db.conn, username, Some(password))
+                .map_err(account_error)?;
+            crate::clients::registry().disconnect(username);
+            if !own {
+                return Ok(b);
+            }
+            let name = koan_core::invite::device_name(params.get("name").unwrap_or_default());
+            let (_, api_key) = queries::api_keys::replace_api_key(&db.conn, caller.user_id, &name)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("join")
+                    .attr("username", &caller.username)
+                    .attr("apiKey", &api_key),
+            ))
+        })
+    })
+    .await
+}
+
+/// Where an assistant connects to this server (`/mcp`), and the page that says
+/// how (`/connect`). Signing in is MCP's own OAuth, through this server's web
+/// pages; this only says where.
+async fn koan_mcp(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    offload_response(move || {
+        respond_db_caller(&state, &params, Role::Readonly, |_, _, b| {
+            let base = state
+                .public_url
+                .as_deref()
+                .ok_or_else(|| SubsonicError::not_found("An address for assistants"))?;
+            Ok(b.child(
+                XmlNode::new("mcp")
+                    .attr("url", &format!("{base}/mcp"))
+                    .attr("connect", &format!("{base}/connect")),
+            ))
+        })
+    })
+    .await
+}
+
+/// The caller's API keys, with the one the request signed in with marked
+/// `current`. Never the keys: only their hashes are kept.
+async fn koan_api_keys(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let keys = queries::api_keys::list_api_keys(&db.conn, Some(caller.user_id))
+                .map_err(internal)?;
+            let current = match auth.api_key.as_deref() {
+                Some(key) => queries::api_keys::id_of(&db.conn, key).map_err(internal)?,
+                None => None,
+            };
+            Ok(b.child(XmlNode::new("apiKeys").list(
+                "apiKey",
+                keys.iter().map(|k| api_key_node(k, current == Some(k.id))),
+            )))
+        })
+    })
+    .await
+}
+
+fn api_key_node(key: &queries::api_keys::ApiKeyRow, current: bool) -> XmlNode {
+    XmlNode::new("apiKey")
+        .attr_int("id", key.id)
+        .attr("name", &key.name)
+        .attr("created", &iso(key.created_at))
+        .attr_opt("lastUsed", key.last_used_at.map(iso).as_deref())
+        .attr_bool("current", current)
+}
+
+/// Make an API key named `name` for the caller, for another Subsonic app. The
+/// answer carries the key, once.
+async fn koan_create_api_key(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let name = params
+                .get("name")
+                .map(koan_core::invite::device_name)
+                .ok_or_else(|| SubsonicError::missing_param("name"))?;
+            let (id, key) = queries::api_keys::create_api_key(&db.conn, caller.user_id, &name)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("apiKey")
+                    .attr_int("id", id)
+                    .attr("name", &name)
+                    .attr("key", &key),
+            ))
+        })
+    })
+    .await
+}
+
+/// Revoke one of the caller's API keys, by `id`. Not the one the request is
+/// signed in with: that is signing out, which the app does itself.
+async fn koan_revoke_api_key(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let id: i64 = params
+                .get("id")
+                .ok_or_else(|| SubsonicError::missing_param("id"))?
+                .parse()
+                .map_err(|_| SubsonicError::bad_param("id"))?;
+            if let Some(key) = auth.api_key.as_deref()
+                && queries::api_keys::id_of(&db.conn, key).map_err(internal)? == Some(id)
+            {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::Generic,
+                    "this device signs in with that key; sign out instead",
+                ));
+            }
+            if !queries::api_keys::revoke_api_key(&db.conn, id, Some(caller.user_id))
+                .map_err(internal)?
+            {
+                return Err(SubsonicError::not_found("API key"));
+            }
+            Ok(b)
         })
     })
     .await
@@ -4391,6 +4931,11 @@ async fn koan_pair_approve(
                 .get("pair")
                 .ok_or_else(|| SubsonicError::missing_param("pair"))?;
             let decline = params.get("decline") == Some("true");
+            // Approving mints an API key for the device: not something an app
+            // password, one client's credential, may hand out.
+            if !decline {
+                caller.may_manage_credentials()?;
+            }
             if !decline && caller.user_id == queries::LOCAL_USER {
                 return Err(SubsonicError::new(
                     SubsonicErrorCode::Generic,
@@ -4409,16 +4954,12 @@ async fn koan_pair_approve(
     .await
 }
 
-/// The query string a `formPost` request arrived with, before its body was
-/// appended: what an endpoint that takes a secret checks the secret is not in.
-#[derive(Clone)]
-struct UrlQuery(String);
-
 /// OpenSubsonic `formPost`: the parameters of an
-/// `application/x-www-form-urlencoded` POST body are appended to the query
-/// string, so every handler reads one set of parameters however they were
-/// sent, repeated keys included. Query parameters come first, so they win
-/// where a handler reads a single value.
+/// `application/x-www-form-urlencoded` POST body are read here and kept as a
+/// [`FormBody`], which the parameter extractors read after the query string,
+/// so every handler sees one set of parameters however they were sent,
+/// repeated keys included. A body past [`MAX_FORM_BODY`], or not UTF-8, is
+/// refused with a Subsonic error.
 async fn form_post(req: Request, next: Next) -> Response {
     let is_form = req.method() == Method::POST
         && req
@@ -4435,31 +4976,20 @@ async fn form_post(req: Request, next: Next) -> Response {
     }
 
     let (mut parts, body) = req.into_parts();
-    parts
-        .extensions
-        .insert(UrlQuery(parts.uri.query().unwrap_or_default().to_owned()));
+    let json = RawParams::parse(parts.uri.query()).auth().wants_json();
     let Ok(bytes) = axum::body::to_bytes(body, MAX_FORM_BODY).await else {
-        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+        return SubsonicResponse::error(
+            json,
+            &SubsonicError::internal(format!(
+                "The form is larger than {} KB",
+                MAX_FORM_BODY >> 10
+            )),
+        );
     };
     let Ok(form) = std::str::from_utf8(&bytes) else {
-        return StatusCode::BAD_REQUEST.into_response();
+        return SubsonicResponse::error(json, &SubsonicError::internal("The form is not UTF-8"));
     };
-    let form = form.trim();
-    let query = match parts.uri.query().filter(|q| !q.is_empty()) {
-        Some(q) if !form.is_empty() => format!("{q}&{form}"),
-        Some(q) => q.to_owned(),
-        None => form.to_owned(),
-    };
-    let path_and_query = format!("{}?{query}", parts.uri.path());
-    let mut uri = parts.uri.into_parts();
-    uri.path_and_query = match path_and_query.parse() {
-        Ok(pq) => Some(pq),
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
-    parts.uri = match axum::http::Uri::from_parts(uri) {
-        Ok(u) => u,
-        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
-    };
+    parts.extensions.insert(FormBody(form.trim().into()));
     next.run(Request::from_parts(parts, axum::body::Body::empty()))
         .await
 }
@@ -4481,6 +5011,7 @@ async fn koan_link(
     let mark = koan_core::auth::account_mark();
     let caller = {
         let auth = params.auth();
+        let state = state.clone();
         match tokio::task::spawn_blocking(move || validate_auth(&auth, &state)).await {
             Ok(Ok(caller)) => caller,
             Ok(Err(e)) => return SubsonicResponse::error(json, &e),
@@ -4495,6 +5026,29 @@ async fn koan_link(
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let wants_devices = params.get("devices") == Some("1");
+    // It answers commands sent with an id: see `koan_core::remote::acks`.
+    let acks = params.get("acks") == Some("1");
+    // The public key the device proves itself with on the local network,
+    // kept on the API key that signed it in, so revoking the key drops it.
+    // A link signed with a password or the shared secret has no key row to
+    // keep it on, and stays unproven there.
+    let device_key = params.get("deviceKey").map(str::to_owned);
+    if let Some(public) = &device_key {
+        if !koan_core::remote::link::valid_device_key(public) {
+            log::warn!("link: {device} sent a device key that is not one; ignored");
+        } else if let Some(raw) = params.auth().api_key {
+            let (st, dev, public) = (state.clone(), device.clone(), public.clone());
+            let kept = tokio::task::spawn_blocking(move || {
+                let db = st.open_db().ok()?;
+                koan_core::db::queries::api_keys::set_device_key(&db.conn, &raw, &dev, &public).ok()
+            })
+            .await;
+            if !matches!(kept, Ok(Some(true))) {
+                log::warn!("link: could not keep the device key for {device}");
+            }
+        }
+    }
+    let pool = state.pool.clone();
     let lease = crate::auth::Lease {
         user_id: caller.user_id,
         mark,
@@ -4510,8 +5064,11 @@ async fn koan_link(
                 platform,
                 device,
                 wants_devices,
+                acks,
+                wants_keys: device_key.is_some(),
                 addr,
             },
+            pool,
         )
     })
 }
@@ -4522,8 +5079,61 @@ struct LinkPeer {
     platform: String,
     device: String,
     wants_devices: bool,
+    acks: bool,
+    /// It sent a device key, so it understands `LinkCommand::DeviceKeys`.
+    wants_keys: bool,
     /// The client's address, through a trusted proxy if there is one.
     addr: std::net::IpAddr,
+}
+
+/// Keep every keyed link's list current as accounts change. A revoked key,
+/// a signed-out device or a deleted account takes its public key with it,
+/// and the accounts it was shared with are linked on their own, so nothing
+/// else would tell them. Account changes are rare, and each sends every
+/// keyed account its list again.
+fn spawn_key_publisher(pool: Arc<Pool>) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        let mut mark = koan_core::auth::account_mark();
+        loop {
+            mark = koan_core::auth::any_account_changed_since(mark).await;
+            let pool = pool.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                for username in crate::clients::registry().keyed_accounts() {
+                    publish_device_keys(&pool, &username);
+                }
+            })
+            .await;
+        }
+    });
+}
+
+/// Send `username`'s links that asked for them the device keys they check
+/// the network against: the account's own, and devices shared with it.
+/// Nothing for an account this database does not have: the registry is the
+/// process's, and a link may be another database's.
+fn publish_device_keys(pool: &Pool, username: &str) {
+    let Ok(db) = pool.get() else { return };
+    if !matches!(
+        queries::auth::get_user_by_username(&db.conn, username),
+        Ok(Some(_))
+    ) {
+        return;
+    }
+    let Ok(keys) = queries::api_keys::device_keys(&db.conn, username) else {
+        return;
+    };
+    let keys = keys
+        .into_iter()
+        .map(|k| koan_core::remote::link::LinkDeviceKey {
+            id: k.device,
+            key: k.key,
+            owner: k.owner,
+        })
+        .collect();
+    crate::clients::registry().publish_keys(username, keys);
 }
 
 /// Hand a link command to another of the caller's devices, in one request:
@@ -4542,13 +5152,80 @@ async fn koan_command(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
                 .get("command")
                 .and_then(|c| koan_core::remote::link::parse_command(c).ok())
                 .ok_or_else(|| SubsonicError::bad_param("command"))?;
+            // The client's id when it sent one, so a device the command
+            // reaches by another way too acts on it once.
+            let ack = params
+                .get("ack")
+                .and_then(|a| a.parse::<u64>().ok())
+                .unwrap_or_else(koan_core::remote::acks::next_id);
+            let (tx, answer) = crossbeam_channel::bounded(1);
             crate::clients::registry()
-                .relay(&caller.username, to, command)
+                .relay_acked(
+                    &caller.username,
+                    None,
+                    to,
+                    command,
+                    Some(crate::clients::Acking {
+                        id: ack,
+                        reply: Box::new(move |outcome| {
+                            let _ = tx.send(outcome);
+                        }),
+                    }),
+                )
                 .map_err(|e| SubsonicError::not_found(&e))?;
-            Ok(b)
+            // A device that gives no answers, or none in time, gets no
+            // `koanCommand`: sent, as a server before answers said.
+            Ok(match answer.recv_timeout(COMMAND_ANSWER).ok().flatten() {
+                Some(outcome) => b.child(ack_node(&outcome)),
+                None => b,
+            })
         })
     })
     .await
+}
+
+/// How long `koanCommand` waits for the device's answer: its first look, and
+/// a push to wake it if its link has gone quiet.
+const COMMAND_ANSWER: Duration = Duration::from_secs(4);
+
+/// An answer as `koanCommand` gives it, the same shape as the link's.
+fn ack_node(outcome: &koan_core::remote::acks::AckOutcome) -> XmlNode {
+    use koan_core::remote::acks::AckOutcome;
+    let node = XmlNode::new("koanCommand");
+    match outcome {
+        AckOutcome::Done => node.attr("result", "done"),
+        AckOutcome::Queued => node.attr("result", "queued"),
+        AckOutcome::Refused { reason } => node.attr("result", "refused").attr("reason", reason),
+        AckOutcome::Failed { error } => node.attr("result", "failed").attr("error", error),
+    }
+}
+
+/// Hand `to`'s answer to the command `device` sent under `ack` back to
+/// `device`, as `Acked`: the first answer only, however many ways it comes.
+fn answer_once(
+    username: &str,
+    device: &str,
+    to: &str,
+    ack: u64,
+) -> std::sync::Arc<dyn Fn(koan_core::remote::acks::AckOutcome) + Send + Sync> {
+    let (username, device, to) = (username.to_owned(), device.to_owned(), to.to_owned());
+    let answered = std::sync::atomic::AtomicBool::new(false);
+    std::sync::Arc::new(move |outcome| {
+        if answered.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return;
+        }
+        // News, like levels: to the asker's link if it is still there, and
+        // never a push to wake it for.
+        crate::clients::registry().send_live(
+            &username,
+            &device,
+            koan_core::remote::link::LinkCommand::Acked {
+                from: to.clone(),
+                ack,
+                outcome,
+            },
+        );
+    })
 }
 
 const LINK_CHECK: Duration = Duration::from_secs(15);
@@ -4563,6 +5240,7 @@ async fn link_session(
     username: String,
     lease: crate::auth::Lease,
     peer: LinkPeer,
+    pool: Arc<Pool>,
 ) {
     use axum::extract::ws::{CloseFrame, Message, close_code};
     let LinkPeer {
@@ -4570,6 +5248,8 @@ async fn link_session(
         platform,
         device,
         wants_devices,
+        acks,
+        wants_keys,
         addr,
     } = peer;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -4584,10 +5264,28 @@ async fn link_session(
             platform.clone(),
             device.clone(),
         );
+        let pool = pool.clone();
         let registered = tokio::task::spawn_blocking(move || {
-            let id = registry.register(&username, &name, &platform, &device, tx, wants_devices);
+            let id = registry.register(
+                &username,
+                &name,
+                &platform,
+                &device,
+                tx,
+                wants_devices,
+                acks,
+            );
             // After `register`, which records the device the address is kept on.
             registry.seen_at(&device, &username, addr);
+            if wants_keys {
+                registry.wants_keys(&id);
+            }
+            // Its key may be new: the account hears it, and so does every
+            // account this device is shared with.
+            publish_device_keys(&pool, &username);
+            for grantee in registry.grantees_of(&username, &device) {
+                publish_device_keys(&pool, &grantee);
+            }
             id
         })
         .await;
@@ -4651,6 +5349,7 @@ async fn link_session(
                             Ok(LinkReport::Command {
                                 to,
                                 command: koan_core::remote::link::LinkCommand::WatchLevels { on },
+                                ..
                             }) => {
                                 registry.watch_levels(&username, &device, &to, on);
                             }
@@ -4659,13 +5358,36 @@ async fn link_session(
                             Ok(LinkReport::Levels { f }) => {
                                 registry.levels(&username, &device, f);
                             }
-                            Ok(LinkReport::Command { to, command }) => {
+                            Ok(LinkReport::Command { to, command, ack }) => {
                                 // Relaying may push to a phone, which blocks.
                                 let (username, device) = (username.clone(), device.clone());
                                 tokio::task::spawn_blocking(move || {
-                                    if let Err(e) = registry.relay_from(&username, Some(&device), &to, command) {
+                                    // The answer goes back to this device as `Acked`,
+                                    // once, however the relay ends.
+                                    let reply = ack.map(|ack| answer_once(&username, &device, &to, ack));
+                                    let acking = reply.clone().map(|reply| crate::clients::Acking {
+                                        id: ack.unwrap_or_default(),
+                                        reply: Box::new(move |outcome| {
+                                            if let Some(outcome) = outcome {
+                                                reply(outcome);
+                                            }
+                                        }),
+                                    });
+                                    if let Err(e) = registry.relay_acked(&username, Some(&device), &to, command, acking) {
                                         log::info!("link: relay to {to}: {e}");
+                                        if let Some(reply) = reply {
+                                            reply(koan_core::remote::acks::AckOutcome::Refused { reason: e });
+                                        }
                                     }
+                                });
+                            }
+                            Ok(LinkReport::Received { ack }) => {
+                                registry.received(&device, ack);
+                            }
+                            Ok(LinkReport::Ack { ack, outcome }) => {
+                                let device = device.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    registry.answered(&device, ack, outcome);
                                 });
                             }
                             Ok(LinkReport::Activity { token, device: shown, sandbox }) => {
@@ -4685,6 +5407,7 @@ async fn link_session(
                                 // Only ever about the device sending it: an
                                 // owner shares a device from that device.
                                 let (username, device) = (username.clone(), device.clone());
+                                let pool = pool.clone();
                                 tokio::task::spawn_blocking(move || {
                                     let known = koan_core::db::pool::shared()
                                         .get()
@@ -4707,7 +5430,10 @@ async fn link_session(
                                     if let Err(e) = registry.share(&username, &device, &grantee, allow) {
                                         log::info!("share: {e}");
                                         registry.send_shares(&username, &device, Some(e));
+                                        return;
                                     }
+                                    // The grantee now checks this device's key, or no longer does.
+                                    publish_device_keys(&pool, &grantee);
                                 });
                             }
                             Ok(LinkReport::Forget { device: forgotten }) => {
@@ -4754,6 +5480,11 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             get(koan_create_user).post(koan_create_user),
         )
         .route("/rest/koanInvite", get(koan_invite).post(koan_invite))
+        .route("/rest/koanApiKeys", get(koan_api_keys).post(koan_api_keys))
+        .route("/rest/koanMcp", get(koan_mcp).post(koan_mcp))
+        .route("/rest/koanCreateApiKey", post(koan_create_api_key))
+        .route("/rest/koanRevokeApiKey", post(koan_revoke_api_key))
+        .route("/rest/koanSetUserPassword", post(koan_set_user_password))
         .route("/rest/koanJoin", get(koan_join).post(koan_join))
         .route("/rest/koanSignIn", get(koan_sign_in).post(koan_sign_in))
         .route(
@@ -4894,6 +5625,38 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             "/rest/getStarred2.view",
             get(get_starred2).post(get_starred2),
         )
+        .route(
+            "/rest/getPlayQueue",
+            get(get_play_queue).post(get_play_queue),
+        )
+        .route(
+            "/rest/getPlayQueue.view",
+            get(get_play_queue).post(get_play_queue),
+        )
+        .route(
+            "/rest/savePlayQueue",
+            get(save_play_queue).post(save_play_queue),
+        )
+        .route(
+            "/rest/savePlayQueue.view",
+            get(save_play_queue).post(save_play_queue),
+        )
+        .route(
+            "/rest/getPlayQueueByIndex",
+            get(get_play_queue_by_index).post(get_play_queue_by_index),
+        )
+        .route(
+            "/rest/getPlayQueueByIndex.view",
+            get(get_play_queue_by_index).post(get_play_queue_by_index),
+        )
+        .route(
+            "/rest/savePlayQueueByIndex",
+            get(save_play_queue_by_index).post(save_play_queue_by_index),
+        )
+        .route(
+            "/rest/savePlayQueueByIndex.view",
+            get(save_play_queue_by_index).post(save_play_queue_by_index),
+        )
         .route("/rest/getBookmarks", get(get_bookmarks).post(get_bookmarks))
         .route(
             "/rest/getBookmarks.view",
@@ -4991,8 +5754,10 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
 }
 
 /// The Subsonic routes with their state and the layers every request passes.
-/// `form_post` is outermost, so the sign-in throttle sees credentials sent in
-/// a form body as well as in the query.
+/// `form_post` is outermost, so its [`FormBody`] is in place when the sign-in
+/// throttle reads the request's parameters, which it does through
+/// [`request_params`] as the handlers do: credentials sent in a form body are
+/// throttled, and an API key sent in one passes, as in the query.
 fn subsonic_app(state: Arc<AppState>) -> axum::Router {
     let throttle = Arc::new(AuthThrottle::new(
         state.password.is_some().then(|| state.username.clone()),
@@ -5063,7 +5828,16 @@ pub fn subsonic_router(
         covers,
         last_modified: Default::default(),
         transcoder,
+        public_url: cfg
+            .sharing
+            .public_url
+            .as_deref()
+            .map(|u| u.trim().trim_end_matches('/').to_owned())
+            .filter(|u| !u.is_empty()),
     });
+    // Once per process, though the router may be built for two ports.
+    static KEYS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    KEYS.get_or_init(|| spawn_key_publisher(state.pool.clone()));
 
     Some(subsonic_app(state))
 }
@@ -5105,6 +5879,7 @@ mod tests {
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
             transcoder: None,
+            public_url: None,
         });
         (state, dir)
     }
@@ -5297,6 +6072,215 @@ mod tests {
             .await
             .unwrap();
         assert!(String::from_utf8_lossy(&bytes).contains("from this address"));
+    }
+
+    /// Link `device` at `url` and read until the server sends device keys.
+    fn keys_sent(url: String) -> Vec<koan_core::remote::link::LinkDeviceKey> {
+        let (mut socket, _) = tungstenite::connect(url.as_str()).unwrap();
+        if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = socket.get_ref() {
+            tcp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        }
+        loop {
+            let tungstenite::Message::Text(text) = socket.read().unwrap() else {
+                continue;
+            };
+            if let Ok(koan_core::remote::link::LinkCommand::DeviceKeys { keys }) =
+                serde_json::from_str(&text)
+            {
+                return keys;
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_device_key_is_kept_on_its_api_key_and_published_to_the_account() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let (state, _dir) = test_state();
+        // Not `mate`: account changes are announced by user id process-wide,
+        // and another test changes `mate`'s while its link is open.
+        let key = api_key(&state, "owner");
+        let pool = state.pool.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        let public = b64.encode([1u8; 32]);
+        let link = |auth: &str, device: &str, public: &str| {
+            let public = public
+                .replace('+', "%2B")
+                .replace('/', "%2F")
+                .replace('=', "%3D");
+            format!(
+                "ws://{addr}/rest/koanLink?{auth}&v=1.16.1&c=test&device={device}&deviceKey={public}"
+            )
+        };
+
+        // Signed in with its key: kept, and the device hears its own.
+        let url = link(&format!("apiKey={key}"), "dev-keyed", &public);
+        let keys = tokio::task::spawn_blocking(move || keys_sent(url))
+            .await
+            .unwrap();
+        assert!(
+            keys.iter()
+                .any(|k| k.id == "dev-keyed" && k.key == public && k.owner.is_none()),
+            "{keys:?}"
+        );
+
+        // Signed in with the password, or sending what is not a key: nothing
+        // is kept, though the link still hears the account's keys.
+        let other = b64.encode([2u8; 32]);
+        let url = link("u=owner&p=sesame", "dev-password", &other);
+        let keys = tokio::task::spawn_blocking(move || keys_sent(url))
+            .await
+            .unwrap();
+        assert!(keys.iter().all(|k| k.id != "dev-password"), "{keys:?}");
+        let url = link(&format!("apiKey={key}"), "dev-bad", "not-a-key");
+        let keys = tokio::task::spawn_blocking(move || keys_sent(url))
+            .await
+            .unwrap();
+        assert!(keys.iter().all(|k| k.key != "not-a-key"), "{keys:?}");
+
+        // Revoking the API key takes the public key with it.
+        let db = pool.get().unwrap();
+        db.conn.execute("DELETE FROM api_keys", []).unwrap();
+        assert!(
+            queries::api_keys::device_keys(&db.conn, "owner")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// jo's phone, shared with kim, is revoked while kim's device is linked:
+    /// kim's device is sent a list without it, though neither the phone nor
+    /// any device of kim's links again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_revoked_shared_device_leaves_its_grantees_list() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let (state, _dir) = test_state();
+        let pool = state.pool.clone();
+        // Accounts of this test's own: account changes are announced by user
+        // id process-wide.
+        let raw = {
+            let db = pool.get().unwrap();
+            queries::auth::create_user(&db.conn, "keyowner", "pw-owner", Role::User).unwrap();
+            queries::auth::create_user(&db.conn, "keygrantee", "pw-grantee", Role::User).unwrap();
+            db.conn
+                .execute(
+                    "INSERT INTO link_grants (device, owner, grantee, created_at)
+                     VALUES ('kdev-phone', 'keyowner', 'keygrantee', 0)",
+                    [],
+                )
+                .unwrap();
+            let owner = queries::auth::get_user_by_username(&db.conn, "keyowner")
+                .unwrap()
+                .unwrap();
+            queries::api_keys::create_api_key(&db.conn, owner.id, "phone")
+                .unwrap()
+                .1
+        };
+        crate::clients::registry()
+            .share("keyowner", "kdev-phone", "keygrantee", true)
+            .unwrap();
+        spawn_key_publisher(pool.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        let encode = |k: String| {
+            k.replace('+', "%2B")
+                .replace('/', "%2F")
+                .replace('=', "%3D")
+        };
+        let phone_key = b64.encode([3u8; 32]);
+        let url = format!(
+            "ws://{addr}/rest/koanLink?apiKey={raw}&v=1.16.1&c=test&device=kdev-phone&deviceKey={}",
+            encode(phone_key.clone())
+        );
+        tokio::task::spawn_blocking(move || keys_sent(url))
+            .await
+            .unwrap();
+
+        let url = format!(
+            "ws://{addr}/rest/koanLink?u=keygrantee&p=pw-grantee&v=1.16.1&c=test&device=kdev-grantee&deviceKey={}",
+            encode(b64.encode([4u8; 32]))
+        );
+        let (revoke_tx, revoke_rx) = std::sync::mpsc::channel::<()>();
+        let grantee = tokio::task::spawn_blocking(move || {
+            let (mut socket, _) = tungstenite::connect(url.as_str()).unwrap();
+            if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = socket.get_ref() {
+                tcp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            }
+            let mut saw_phone = false;
+            loop {
+                let tungstenite::Message::Text(text) = socket.read().unwrap() else {
+                    continue;
+                };
+                let Ok(koan_core::remote::link::LinkCommand::DeviceKeys { keys }) =
+                    serde_json::from_str(&text)
+                else {
+                    continue;
+                };
+                let has_phone = keys
+                    .iter()
+                    .any(|k| k.id == "kdev-phone" && k.owner.as_deref() == Some("keyowner"));
+                if !saw_phone {
+                    assert!(has_phone, "shared before the revocation: {keys:?}");
+                    saw_phone = true;
+                    revoke_tx.send(()).unwrap();
+                } else if !has_phone {
+                    return true;
+                }
+            }
+        });
+        tokio::task::spawn_blocking(move || {
+            revoke_rx.recv().unwrap();
+            let db = pool.get().unwrap();
+            assert!(queries::api_keys::revoke_api_key_value(&db.conn, &raw).unwrap());
+        })
+        .await
+        .unwrap();
+        assert!(grantee.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn device_keys_are_never_relayed() {
+        let reg = crate::clients::registry();
+        let forged = koan_core::remote::link::LinkCommand::DeviceKeys {
+            keys: vec![koan_core::remote::link::LinkDeviceKey {
+                id: "evil".into(),
+                key: "AAAA".into(),
+                owner: None,
+            }],
+        };
+        assert!(
+            reg.relay_from("relay-jo", Some("dev-a"), "dev-b", forged.clone())
+                .is_err()
+        );
+        assert!(reg.relay("relay-jo", "dev-b", forged).is_err());
+
+        // And over HTTP, as any credential for the account could send it.
+        let (state, _dir) = test_state();
+        let command = r#"{"type":"deviceKeys","keys":[{"id":"evil","key":"AAAA"}]}"#;
+        let command: String = form_urlencoded::byte_serialize(command.as_bytes()).collect();
+        let (_, body) = get_response(
+            build_test_router(state),
+            &format!(
+                "/rest/koanCommand?u=mate&p=hunter22&v=1.16.1&c=test&f=json&to=dev-b&command={command}"
+            ),
+        )
+        .await;
+        assert!(body.contains("\"failed\""), "{body}");
+    }
+
+    #[tokio::test]
+    async fn the_server_lists_device_keys() {
+        let (state, _dir) = test_state();
+        let (_, body) = get_response(
+            build_test_router(state),
+            "/rest/getOpenSubsonicExtensions?f=json",
+        )
+        .await;
+        assert!(body.contains("koanDeviceKeys"), "{body}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -5930,6 +6914,467 @@ mod tests {
         );
     }
 
+    /// An app password is one client's credential and the shared secret is no
+    /// account's: neither may make an account, an invite or a key, change who
+    /// may do what, or sign a device in.
+    #[tokio::test]
+    async fn app_passwords_and_the_shared_secret_manage_no_credentials() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let app_password_for = |username: &str| {
+            let user = queries::auth::get_user_by_username(&db.conn, username)
+                .unwrap()
+                .unwrap();
+            queries::app_passwords::create_app_password(
+                &db.conn,
+                state.app_key.as_ref().unwrap(),
+                user.id,
+                "arpeggi",
+            )
+            .unwrap()
+            .1
+        };
+        let as_app_password = |username: &str| {
+            let password = app_password_for(username);
+            let salt = "c0ffee";
+            let token = format!("{:x}", md5::compute(format!("{password}{salt}")));
+            [
+                format!("u={username}&p={password}"),
+                format!("u={username}&t={token}&s={salt}"),
+            ]
+        };
+        let call = |path: String| {
+            let state = state.clone();
+            async move { get_response(build_test_router(state), &path).await.1 }
+        };
+
+        let mut admin = as_app_password("owner").to_vec();
+        admin.push(auth_query(""));
+        for auth in &admin {
+            for path in [
+                "koanUsers?",
+                "koanCreateUser?username=mallory&role=admin&",
+                "koanInvite?username=owner&",
+                "koanInvite?username=owner&reset=true&",
+                "koanSetUserRole?username=mate&role=admin&",
+                "koanDeleteUser?username=mate&",
+            ] {
+                let body = call(format!("/rest/{path}{auth}&v=1.16.1&c=test")).await;
+                assert!(body.contains("code=\"50\""), "{path} as {auth}: {body}");
+            }
+        }
+
+        let opened = crate::pair::pairings()
+            .open("Den TV", "198.51.100.7".parse().unwrap())
+            .unwrap();
+        let mut mate = as_app_password("mate").to_vec();
+        mate.push(auth_query(""));
+        for auth in &mate {
+            let body = call(format!(
+                "/rest/koanPairApprove?pair={}&{auth}&v=1.16.1&c=test",
+                opened.id
+            ))
+            .await;
+            assert!(body.contains("code=\"50\""), "approve as {auth}: {body}");
+        }
+
+        assert!(
+            queries::auth::get_user_by_username(&db.conn, "mallory")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            queries::auth::get_user_by_username(&db.conn, "mate")
+                .unwrap()
+                .unwrap()
+                .role,
+            Role::Readonly
+        );
+        assert!(
+            queries::api_keys::list_api_keys(&db.conn, None)
+                .unwrap()
+                .is_empty(),
+            "no key made"
+        );
+        // Still waiting for someone who may approve it.
+        let body = call(format!(
+            "/rest/koanPairApprove?pair={}&u=mate&p=hunter22&v=1.16.1&c=test",
+            opened.id
+        ))
+        .await;
+        assert!(body.contains("Den TV"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn passwords_are_set_by_admins_and_changed_by_their_owners() {
+        let (state, _dir) = test_state();
+        let set = |form: String| {
+            let state = state.clone();
+            async move {
+                let body =
+                    post_form(build_test_router(state), "/rest/koanSetUserPassword", &form).await;
+                serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"]
+                    .clone()
+            }
+        };
+        let ping = |query: String| {
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/ping?{query}&v=1.16.1&c=test"),
+                )
+                .await
+                .1
+            }
+        };
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let (_, key) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
+        let as_mate = format!("apiKey={key}&v=1.16.1&c=test&f=json");
+
+        // POST only: the passwords never sit in a URL.
+        let (status, _) = get_response(
+            build_test_router(state.clone()),
+            &format!(
+                "/rest/koanSetUserPassword?current=hunter22&password=correct%20horse&{as_mate}"
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+        // Only their own, and only with the current password.
+        let v = set(format!("username=owner&password=taken%20over&{as_mate}")).await;
+        assert_eq!(v["error"]["code"], 50, "{v}");
+        let v = set(format!("password=new%20enough&{as_mate}")).await;
+        assert_eq!(v["error"]["code"], 10, "{v}");
+        let v = set(format!("current=wrong&password=new%20enough&{as_mate}")).await;
+        assert_eq!(
+            v["error"]["code"], 0,
+            "not 40, which reads as the app signed out: {v}"
+        );
+        assert!(
+            ping(format!("apiKey={key}"))
+                .await
+                .contains("status=\"ok\"")
+        );
+
+        // Changed: every old credential ends, and the device gets a new key.
+        let v = set(format!(
+            "current=hunter22&password=correct%20horse&name=phone&{as_mate}"
+        ))
+        .await;
+        assert_eq!(v["join"]["username"], "mate", "{v}");
+        let fresh = v["join"]["apiKey"].as_str().unwrap().to_owned();
+        assert!(ping(format!("apiKey={key}")).await.contains("code=\"44\""));
+        assert!(
+            ping(format!("apiKey={fresh}"))
+                .await
+                .contains("status=\"ok\"")
+        );
+        assert!(
+            ping("u=mate&p=hunter22".into())
+                .await
+                .contains("code=\"40\"")
+        );
+        assert!(
+            ping("u=mate&p=correct%20horse".into())
+                .await
+                .contains("status=\"ok\"")
+        );
+
+        // An admin sets anyone's, without theirs, and says nothing back.
+        let owner = "u=owner&p=sesame&v=1.16.1&c=test&f=json";
+        let v = set(format!("username=mate&password=battery%20staple&{owner}")).await;
+        assert_eq!(v["status"], "ok", "{v}");
+        assert!(v.get("join").is_none(), "{v}");
+        assert!(
+            ping(format!("apiKey={fresh}"))
+                .await
+                .contains("code=\"44\"")
+        );
+        assert!(
+            ping("u=mate&p=battery%20staple".into())
+                .await
+                .contains("status=\"ok\"")
+        );
+        let v = set(format!("username=mate&password=short&{owner}")).await;
+        assert_eq!(v["error"]["code"], 0, "too short: {v}");
+    }
+
+    /// An app password is one client's credential and the shared secret is no
+    /// account's: neither may set a password, nor try current passwords.
+    #[tokio::test]
+    async fn only_a_key_or_the_password_itself_may_set_a_password() {
+        let (state, _dir) = test_state();
+        let set = |auth: String| {
+            let state = state.clone();
+            async move {
+                post_form(
+                    build_test_router(state),
+                    "/rest/koanSetUserPassword",
+                    &format!("current=hunter22&password=correct%20horse&{auth}&v=1.16.1&c=test"),
+                )
+                .await
+            }
+        };
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let app_password = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            mate.id,
+            "arpeggi",
+        )
+        .unwrap()
+        .1;
+        let salt = "c0ffee";
+        let token = format!("{:x}", md5::compute(format!("{app_password}{salt}")));
+
+        let body = set(format!("u=mate&p={app_password}")).await;
+        assert!(body.contains("code=\"50\""), "app password as p: {body}");
+        let body = set(format!("u=mate&t={token}&s={salt}")).await;
+        assert!(
+            body.contains("code=\"50\""),
+            "app password as a token: {body}"
+        );
+        let body = set(auth_query("")).await;
+        assert!(body.contains("code=\"50\""), "the shared secret: {body}");
+        assert!(
+            queries::auth::get_user_by_username(&db.conn, "mate")
+                .unwrap()
+                .is_some_and(
+                    |u| koan_core::auth::verify_password("hunter22", &u.password_hash).is_ok()
+                ),
+            "unchanged"
+        );
+    }
+
+    /// Checked in the handler, from every network: the request is signed with
+    /// a key, which the sign-in throttle leaves alone, and that throttle spares
+    /// networks the account signed in from, which must not make guessing here
+    /// free.
+    #[tokio::test]
+    async fn a_wrong_current_password_spends_the_sign_in_budget() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let (_, key) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
+        let change = |current: &str| {
+            let state = state.clone();
+            let form =
+                format!("current={current}&password=another%20one&apiKey={key}&v=1.16.1&c=test");
+            async move { post_form(build_test_router(state), "/rest/koanSetUserPassword", &form).await }
+        };
+        // Signing in by password makes this network one the account is known on.
+        let app = subsonic_app(state.clone());
+        let body = get_response(app, "/rest/ping?u=mate&p=hunter22&v=1.16.1&c=test")
+            .await
+            .1;
+        assert!(body.contains("status=\"ok\""), "{body}");
+
+        let body = change("wrong").await;
+        assert!(body.contains("the current password is wrong"), "{body}");
+        for _ in 1..crate::auth::password::FAILURES_PER_USERNAME_PER_MINUTE {
+            state.users.failed("mate");
+        }
+        let body = change("hunter22").await;
+        assert!(body.contains("Too many failed sign-ins"), "{body}");
+        let body = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(
+            body.contains("status=\"ok\""),
+            "the key still works: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_account_lists_makes_and_revokes_its_own_api_keys() {
+        let (state, _dir) = test_state();
+        let phone = api_key(&state, "mate");
+        let owners = api_key(&state, "owner");
+        let auth = format!("apiKey={phone}&v=1.16.1&c=test&f=json");
+        let json = |body: String| -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"].clone()
+        };
+        let post = |path: &str, form: String| {
+            let state = state.clone();
+            let path = path.to_owned();
+            async move { json(post_form(build_test_router(state), &path, &form).await) }
+        };
+        let list = || {
+            let state = state.clone();
+            let auth = auth.clone();
+            async move {
+                json(
+                    get_response(
+                        build_test_router(state),
+                        &format!("/rest/koanApiKeys?{auth}"),
+                    )
+                    .await
+                    .1,
+                )
+            }
+        };
+
+        let made = post("/rest/koanCreateApiKey", format!("name=Feishin&{auth}")).await;
+        let key = made["apiKey"]["key"].as_str().unwrap().to_owned();
+        let id = made["apiKey"]["id"].as_i64().unwrap();
+        assert_eq!(made["apiKey"]["name"], "Feishin", "{made}");
+        let pinged = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(pinged.contains("status=\"ok\""), "{pinged}");
+
+        // Only this account's, the request's own marked, and never a key.
+        let v = list().await;
+        let keys = v["apiKeys"]["apiKey"].as_array().unwrap();
+        assert_eq!(keys.len(), 2, "{v}");
+        assert_eq!(keys[0]["name"], "test");
+        assert_eq!(keys[0]["current"], true);
+        assert_eq!(keys[1]["current"], false);
+        assert!(keys[0]["created"].as_str().unwrap().ends_with('Z'), "{v}");
+        assert!(
+            !v.to_string().contains(&phone) && !v.to_string().contains(&key),
+            "{v}"
+        );
+
+        // Making and revoking take POST.
+        let (status, _) = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/koanCreateApiKey?name=x&{auth}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+        // Not this device's own key, and not another account's.
+        let db = state.open_db().unwrap();
+        let own = queries::api_keys::id_of(&db.conn, &phone).unwrap().unwrap();
+        let v = post("/rest/koanRevokeApiKey", format!("id={own}&{auth}")).await;
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("sign out"),
+            "{v}"
+        );
+        let theirs = queries::api_keys::id_of(&db.conn, &owners)
+            .unwrap()
+            .unwrap();
+        let v = post("/rest/koanRevokeApiKey", format!("id={theirs}&{auth}")).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
+
+        let v = post("/rest/koanRevokeApiKey", format!("id={id}&{auth}")).await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let pinged = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(pinged.contains("code=\"44\""), "{pinged}");
+        assert_eq!(
+            list().await["apiKeys"]["apiKey"].as_array().unwrap().len(),
+            1
+        );
+    }
+
+    /// Assistants are offered only where the server knows the address it is
+    /// reached at: MCP's sign-in goes through it.
+    #[tokio::test]
+    async fn assistants_are_offered_with_a_public_address() {
+        let extensions = |state: Arc<AppState>| async move {
+            get_response(
+                build_test_router(state),
+                "/rest/getOpenSubsonicExtensions?f=json",
+            )
+            .await
+            .1
+        };
+        let mcp = |state: Arc<AppState>, auth: &str| {
+            let path = format!("/rest/koanMcp?{auth}&v=1.16.1&c=test&f=json");
+            async move {
+                let body = get_response(build_test_router(state), &path).await.1;
+                serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"]
+                    .clone()
+            }
+        };
+        let mate = "u=mate&p=hunter22";
+
+        let (state, _dir) = test_state();
+        assert!(!extensions(state.clone()).await.contains("koanMcp"));
+        let v = mcp(state.clone(), mate).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
+
+        let (state, _dir) = test_state();
+        let mut inner = Arc::try_unwrap(state).ok().unwrap();
+        inner.public_url = Some("https://koan.example.com".into());
+        let state = Arc::new(inner);
+        assert!(extensions(state.clone()).await.contains("koanMcp"));
+        let v = mcp(state.clone(), mate).await;
+        assert_eq!(v["mcp"]["url"], "https://koan.example.com/mcp", "{v}");
+        assert_eq!(
+            v["mcp"]["connect"], "https://koan.example.com/connect",
+            "{v}"
+        );
+        let v = mcp(state, "u=mate&p=wrong").await;
+        assert_eq!(v["error"]["code"], 40, "signed in only: {v}");
+    }
+
+    /// An app password must not mint keys that outlive it, nor revoke the
+    /// account's devices; the shared secret is no account's.
+    #[tokio::test]
+    async fn only_a_key_or_the_password_itself_may_manage_api_keys() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let (phone, _) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
+        let app_password = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            mate.id,
+            "arpeggi",
+        )
+        .unwrap()
+        .1;
+        let salt = "c0ffee";
+        let token = format!("{:x}", md5::compute(format!("{app_password}{salt}")));
+        let callers = [
+            ("app password as p", format!("u=mate&p={app_password}")),
+            (
+                "app password as a token",
+                format!("u=mate&t={token}&s={salt}"),
+            ),
+            ("the shared secret", auth_query("")),
+        ];
+        for (who, auth) in &callers {
+            let auth = format!("{auth}&v=1.16.1&c=test");
+            for (path, form) in [
+                ("/rest/koanCreateApiKey", format!("name=x&{auth}")),
+                ("/rest/koanRevokeApiKey", format!("id={phone}&{auth}")),
+                ("/rest/koanApiKeys", auth.clone()),
+            ] {
+                let body = post_form(build_test_router(state.clone()), path, &form).await;
+                assert!(body.contains("code=\"50\""), "{who} on {path}: {body}");
+            }
+        }
+        let keys = queries::api_keys::list_api_keys(&db.conn, None).unwrap();
+        assert_eq!(keys.len(), 1, "none made, none revoked");
+        assert_eq!(keys[0].id, phone);
+    }
+
     #[tokio::test]
     async fn admins_manage_accounts_through_the_koan_endpoints() {
         let (state, _dir) = test_state();
@@ -6538,6 +7983,363 @@ mod tests {
 
         rate(gamma_album, "0").await;
         assert_eq!(album_list2(&state, "type=highest").await, ["Alpha"]);
+    }
+
+    #[tokio::test]
+    async fn favourites_carry_starred_in_json_and_xml() {
+        let (state, _dir) = test_state();
+        let [alpha, _, _] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        // Not favourited, and by another artist: every shelf track is Test
+        // Artist's, the artist the test stars.
+        let elsewhere = {
+            let db = Database::open(state.pool.path()).unwrap();
+            let mut meta = track_meta("/music/elsewhere.flac", "Away", "Elsewhere", 1);
+            meta.artist = "Other Artist".into();
+            meta.album_artist = Some("Other Artist".into());
+            queries::upsert_track(&db.conn, &meta).unwrap()
+        };
+        let uids = |track| {
+            let db = Database::open(state.pool.path()).unwrap();
+            let row = queries::get_track_row(&db.conn, track).unwrap().unwrap();
+            (
+                uid_of(&state, queries::UidKind::Track, track),
+                uid_of(&state, queries::UidKind::Album, row.album_id.unwrap()),
+                uid_of(&state, queries::UidKind::Artist, row.artist_id.unwrap()),
+            )
+        };
+        let (song, album, artist) = uids(alpha);
+        let (_, other_album, other_artist) = uids(elsewhere);
+        json_of(
+            build_test_router(state.clone()),
+            &format!(
+                "/rest/star?{}&id={song}&albumId={album}&artistId={artist}",
+                auth_query("f=json")
+            ),
+        )
+        .await;
+        let get = |path: String| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("f=json")),
+                )
+                .await
+            }
+        };
+        let is_iso = |v: &serde_json::Value| {
+            v.as_str()
+                .is_some_and(|s| s.len() == 24 && s.contains('T') && s.ends_with('Z'))
+        };
+
+        let v = get(format!("getAlbum?id={album}")).await;
+        assert!(is_iso(&v["album"]["starred"]), "{v}");
+        assert!(is_iso(&v["album"]["song"][0]["starred"]), "{v}");
+        let v = get(format!("getArtist?id={artist}")).await;
+        assert!(is_iso(&v["artist"]["starred"]), "{v}");
+        assert!(is_iso(&v["artist"]["album"][0]["starred"]), "{v}");
+        let v = get("search3?query=Alpha".to_owned()).await;
+        assert!(is_iso(&v["searchResult3"]["song"][0]["starred"]), "{v}");
+
+        let v = get(format!("getAlbum?id={other_album}")).await;
+        assert!(v["album"]["starred"].is_null(), "{v}");
+        assert!(v["album"]["song"][0]["starred"].is_null(), "{v}");
+        let v = get(format!("getArtist?id={other_artist}")).await;
+        assert!(v["artist"]["starred"].is_null(), "{v}");
+        let mate = json_of(
+            build_test_router(state.clone()),
+            &format!("/rest/getAlbum?id={album}&u=mate&p=hunter22&v=1.16.1&c=test&f=json"),
+        )
+        .await;
+        assert!(
+            mate["album"]["starred"].is_null(),
+            "another account's: {mate}"
+        );
+        assert!(mate["album"]["song"][0]["starred"].is_null(), "{mate}");
+
+        let xml = |path: String| {
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("")),
+                )
+                .await
+                .1
+            }
+        };
+        let body = xml(format!("getAlbum?id={album}")).await;
+        assert_eq!(body.matches(" starred=\"").count(), 2, "{body}");
+        let body = xml(format!("getArtist?id={artist}")).await;
+        assert_eq!(body.matches(" starred=\"").count(), 2, "{body}");
+        let body = xml(format!("getAlbum?id={other_album}")).await;
+        assert!(!body.contains(" starred=\""), "{body}");
+    }
+
+    /// Folder-browse clients read artists from `getIndexes` and albums from
+    /// `getMusicDirectory`, and get the same marks as ID3 clients there.
+    #[tokio::test]
+    async fn folder_browse_carries_starred_and_ratings_in_json_and_xml() {
+        let (state, _dir) = test_state();
+        let [alpha, ..] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let other = {
+            let db = Database::open(state.pool.path()).unwrap();
+            let mut meta = track_meta("/music/other.flac", "Other", "Other", 1);
+            meta.artist = "Other Artist".into();
+            meta.album_artist = Some("Other Artist".into());
+            queries::upsert_track(&db.conn, &meta).unwrap()
+        };
+        let uids = |track| {
+            let db = Database::open(state.pool.path()).unwrap();
+            let row = queries::get_track_row(&db.conn, track).unwrap().unwrap();
+            (
+                uid_of(&state, queries::UidKind::Track, track),
+                uid_of(&state, queries::UidKind::Album, row.album_id.unwrap()),
+                uid_of(&state, queries::UidKind::Artist, row.artist_id.unwrap()),
+            )
+        };
+        let (song, album, artist) = uids(alpha);
+        let (_, _, other_artist) = uids(other);
+        assert_ne!(artist, other_artist);
+        let call = |path: String| {
+            let state = state.clone();
+            async move { json_of(build_test_router(state), &path).await }
+        };
+        call(format!(
+            "/rest/star?{}&id={song}&albumId={album}&artistId={artist}",
+            auth_query("f=json")
+        ))
+        .await;
+        call(format!(
+            "/rest/setRating?{}&id={album}&rating=4",
+            auth_query("f=json")
+        ))
+        .await;
+        call(format!(
+            "/rest/setRating?{}&id={artist}&rating=3",
+            auth_query("f=json")
+        ))
+        .await;
+        let get = |path: String| call(format!("/rest/{path}&{}", auth_query("f=json")));
+        let is_iso = |v: &serde_json::Value| {
+            v.as_str()
+                .is_some_and(|s| s.len() == 24 && s.contains('T') && s.ends_with('Z'))
+        };
+        let indexed = |v: &serde_json::Value, id: &str| {
+            v["indexes"]["index"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|i| i["artist"].as_array().unwrap().clone())
+                .find(|a| a["id"] == id)
+                .unwrap_or_else(|| panic!("{id} not indexed: {v}"))
+        };
+
+        let v = get("getIndexes?".to_owned()).await;
+        let starred = indexed(&v, &artist);
+        assert!(is_iso(&starred["starred"]), "{v}");
+        assert_eq!(starred["userRating"], 3, "{v}");
+        let other = indexed(&v, &other_artist);
+        assert!(
+            other["starred"].is_null() && other["userRating"].is_null(),
+            "{v}"
+        );
+
+        let v = get(format!("getMusicDirectory?id={artist}")).await;
+        let child = &v["directory"]["child"][0];
+        assert!(is_iso(&child["starred"]), "{v}");
+        assert_eq!(child["userRating"], 4, "{v}");
+        let v = get(format!("getMusicDirectory?id={album}")).await;
+        assert!(is_iso(&v["directory"]["child"][0]["starred"]), "{v}");
+
+        let mate = |path: &str| {
+            call(format!(
+                "/rest/{path}&u=mate&p=hunter22&v=1.16.1&c=test&f=json"
+            ))
+        };
+        let v = mate("getIndexes?").await;
+        assert!(
+            indexed(&v, &artist)["starred"].is_null(),
+            "another account's: {v}"
+        );
+        let v = mate(&format!("getMusicDirectory?id={artist}")).await;
+        assert!(v["directory"]["child"][0]["starred"].is_null(), "{v}");
+
+        let xml = |path: String| {
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("")),
+                )
+                .await
+                .1
+            }
+        };
+        let body = xml("getIndexes?".to_owned()).await;
+        assert_eq!(body.matches(" starred=\"").count(), 1, "{body}");
+        assert_eq!(body.matches(" userRating=\"3\"").count(), 1, "{body}");
+        let body = xml(format!("getMusicDirectory?id={artist}")).await;
+        assert_eq!(body.matches(" starred=\"").count(), 1, "{body}");
+        assert_eq!(body.matches(" userRating=\"4\"").count(), 1, "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_saved_play_queue_reads_back_by_id_and_by_index() {
+        let (state, _dir) = test_state();
+        let [ra, rb, rc] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let [a, b, c] = [ra, rb, rc].map(|t| uid_of(&state, queries::UidKind::Track, t));
+        let call = |as_who: &str, path: String| {
+            let state = state.clone();
+            let auth = format!("{as_who}&v=1.16.1&c=Feishin&f=json");
+            async move { json_of(build_test_router(state), &format!("/rest/{path}&{auth}")).await }
+        };
+        let owner = "u=owner&p=sesame";
+        let ids = |list: &serde_json::Value| -> Vec<String> {
+            list.as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["id"].as_str().unwrap().to_owned())
+                .collect()
+        };
+
+        // By index: the same track twice, the second current.
+        let v = call(
+            owner,
+            format!("savePlayQueueByIndex.view?id={a}&id={b}&id={a}&currentIndex=2&position=1500"),
+        )
+        .await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        let q = &v["playQueueByIndex"];
+        assert_eq!(
+            ids(&q["entry"]),
+            [a.as_str(), b.as_str(), a.as_str()],
+            "{v}"
+        );
+        assert_eq!(q["currentIndex"], 2, "{v}");
+        assert_eq!(q["position"], 1500);
+        assert_eq!(q["username"], "owner");
+        assert_eq!(q["changedBy"], "Feishin");
+        assert!(
+            q["changed"].as_str().is_some_and(|s| s.ends_with('Z')),
+            "{v}"
+        );
+        let v = call(owner, "getPlayQueue?".into()).await;
+        assert_eq!(v["playQueue"]["current"], a, "{v}");
+
+        // By id: an unknown song is left out, and the current one follows.
+        let v = call(
+            owner,
+            format!("savePlayQueue?id={a}&id=999999&id={c}&current={c}&position=7"),
+        )
+        .await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(
+            ids(&v["playQueueByIndex"]["entry"]),
+            [a.as_str(), c.as_str()],
+            "{v}"
+        );
+        assert_eq!(v["playQueueByIndex"]["currentIndex"], 1, "{v}");
+
+        // A song gone from the library since is dropped on reading.
+        {
+            let db = Database::open(state.pool.path()).unwrap();
+            db.conn
+                .execute("DELETE FROM tracks WHERE id = ?1", [rc])
+                .unwrap();
+        }
+        let v = call(owner, "getPlayQueue?".into()).await;
+        assert_eq!(ids(&v["playQueue"]["entry"]), [a.as_str()], "{v}");
+        assert_eq!(
+            v["playQueue"]["current"], a,
+            "a current entry while there are any: {v}"
+        );
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(v["playQueueByIndex"]["currentIndex"], 0, "{v}");
+
+        // By index the current place is required with songs; an empty
+        // position is the start.
+        let v = call(owner, format!("savePlayQueueByIndex?id={a}")).await;
+        assert_eq!(v["error"]["code"], 10, "{v}");
+        let v = call(
+            owner,
+            format!("savePlayQueueByIndex?id={a}&id={b}&currentIndex=1&position="),
+        )
+        .await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(
+            (
+                v["playQueueByIndex"]["currentIndex"].clone(),
+                v["playQueueByIndex"]["position"].clone()
+            ),
+            (1.into(), 0.into()),
+            "{v}"
+        );
+
+        // Past the limit, refused whole. Asked of the handler directly: a
+        // request this long is past what a URI holds, and a form is turned
+        // into one before any endpoint sees it.
+        let query = format!(
+            "u=owner&p=sesame&v=1.16.1&c=x&f=json&{}",
+            std::iter::repeat_n(format!("id={a}"), MAX_PLAY_QUEUE + 1)
+                .collect::<Vec<_>>()
+                .join("&")
+        );
+        let resp = save_play_queue_response(&state, &RawParams::parse(Some(&query)), false);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("\"code\":10"), "{body}");
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(
+            v["playQueueByIndex"]["entry"].as_array().unwrap().len(),
+            2,
+            "unchanged: {v}"
+        );
+
+        // Another account has none; the shared secret is refused.
+        let v = call("u=mate&p=hunter22", "getPlayQueue?".into()).await;
+        assert_eq!(v["status"], "ok", "{v}");
+        assert!(v.get("playQueue").is_none(), "{v}");
+        let v = json_of(
+            build_test_router(state.clone()),
+            &format!("/rest/getPlayQueue?{}", auth_query("f=json")),
+        )
+        .await;
+        assert_eq!(v["error"]["code"], 50, "{v}");
+
+        // No songs clears it.
+        call(owner, "savePlayQueue?".into()).await;
+        let v = call(owner, "getPlayQueue?".into()).await;
+        assert!(v.get("playQueue").is_none(), "{v}");
+
+        // XML carries the same.
+        call(owner, format!("savePlayQueue?id={b}&current={b}")).await;
+        let body = get_response(
+            build_test_router(state.clone()),
+            "/rest/getPlayQueue?u=owner&p=sesame&v=1.16.1&c=x",
+        )
+        .await
+        .1;
+        assert!(body.contains(&format!(" current=\"{b}\"")), "{body}");
+        assert_eq!(body.matches("<entry ").count(), 1, "{body}");
+
+        let v = json_of(
+            build_test_router(state.clone()),
+            "/rest/getOpenSubsonicExtensions?f=json",
+        )
+        .await;
+        assert!(v.to_string().contains("indexBasedQueue"), "{v}");
     }
 
     #[tokio::test]
@@ -7950,6 +9752,181 @@ mod tests {
         );
     }
 
+    /// The router on a real socket, so requests go through hyper's own
+    /// parsing, URI limits included.
+    async fn serve(state: Arc<AppState>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        format!("http://{addr}")
+    }
+
+    /// The whole Subsonic app, throttle included, on a real socket that tells
+    /// the throttle where each request came from.
+    async fn serve_app(state: Arc<AppState>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = subsonic_app(state).into_make_service_with_connect_info::<std::net::SocketAddr>();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        format!("http://{addr}")
+    }
+
+    async fn post_text(http: &reqwest::Client, url: &str, form: &str) -> String {
+        http.post(url)
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(form.to_owned())
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn passwords_sent_in_a_form_are_throttled_as_in_the_query() {
+        let (state, _dir) = test_state();
+        let base = serve_app(state).await;
+        let http = reqwest::Client::new();
+        let ping = format!("{base}/rest/ping");
+        for _ in 0..10 {
+            let body = post_text(&http, &ping, "u=mate&p=wrong&v=1.16.1&c=test").await;
+            assert!(body.contains("code=\"40\""), "{body}");
+        }
+        let body = post_text(&http, &ping, "u=mate&p=hunter22&v=1.16.1&c=test").await;
+        assert!(body.contains("Too many failed sign-ins"), "{body}");
+        // In the query, the same account is as spent.
+        let body = http
+            .get(format!("{ping}?u=mate&p=hunter22&v=1.16.1&c=test"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert!(body.contains("Too many failed sign-ins"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_api_key_or_the_shared_token_in_a_form_is_not_a_password_guess() {
+        let (state, _dir) = test_state();
+        let key = api_key(&state, "mate");
+        let base = serve_app(state).await;
+        let http = reqwest::Client::new();
+        let ping = format!("{base}/rest/ping");
+        // More wrong keys than the address may fail passwords: none counts.
+        for _ in 0..=AUTH_FAILURES_PER_ADDRESS_PER_MINUTE {
+            let body = post_text(&http, &ping, "apiKey=wrong&v=1.16.1&c=test").await;
+            assert!(body.contains("code=\"44\""), "{body}");
+        }
+        let body = post_text(&http, &ping, &format!("apiKey={key}&v=1.16.1&c=test")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = post_text(&http, &ping, &auth_query("")).await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+        let body = post_text(&http, &ping, "u=mate&p=hunter22&v=1.16.1&c=test").await;
+        assert!(body.contains("status=\"ok\""), "{body}");
+    }
+
+    /// A form past the 64 KB `http` allows a URI: what `formPost` is for.
+    #[tokio::test]
+    async fn a_form_longer_than_any_url_reaches_the_handler() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let track = {
+            let db = Database::open(state.pool.path()).unwrap();
+            queries::track_id_by_path(&db.conn, "/music/test.flac")
+                .unwrap()
+                .unwrap()
+        };
+        let uid = uid_of(&state, queries::UidKind::Track, track);
+        let base = serve(state).await;
+        let http = reqwest::Client::new();
+        let songs = vec![format!("songId={uid}"); 2500].join("&");
+        assert!(songs.len() > 65_534);
+
+        let created: serde_json::Value = http
+            .post(format!(
+                "{base}/rest/createPlaylist?{}",
+                auth_query("f=json")
+            ))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(format!("name=long&{songs}"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let playlist = &created["subsonic-response"]["playlist"];
+        assert_eq!(playlist["songCount"], 2500, "{created}");
+
+        let id = playlist["id"].as_str().unwrap();
+        let added = vec![format!("songIdToAdd={uid}"); 2500].join("&");
+        let updated: serde_json::Value = http
+            .post(format!("{base}/rest/updatePlaylist"))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(format!("{}&playlistId={id}&{added}", auth_query("f=json")))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(updated["subsonic-response"]["status"], "ok", "{updated}");
+        let got: serde_json::Value = http
+            .get(format!(
+                "{base}/rest/getPlaylist?{}&id={id}",
+                auth_query("f=json")
+            ))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            got["subsonic-response"]["playlist"]["songCount"], 5000,
+            "{got}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_get_reads_its_query_and_an_oversized_form_is_refused() {
+        let (state, _dir) = test_state();
+        let base = serve(state).await;
+        let http = reqwest::Client::new();
+        let ping: serde_json::Value = http
+            .get(format!("{base}/rest/ping?{}", auth_query("f=json")))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(ping["subsonic-response"]["status"], "ok", "{ping}");
+
+        let padding = "x".repeat(MAX_FORM_BODY + 1);
+        let refused: serde_json::Value = http
+            .post(format!("{base}/rest/ping?f=json"))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(format!("{}&pad={padding}", auth_query("")))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let r = &refused["subsonic-response"];
+        assert_eq!(r["status"], "failed", "{refused}");
+        assert!(
+            r["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("larger than"),
+            "{refused}"
+        );
+    }
+
     #[tokio::test]
     async fn test_api_key_auth() {
         let (state, _dir) = test_state();
@@ -8237,21 +10214,41 @@ mod tests {
     async fn a_scrobbling_token_is_taken_only_from_a_form_body() {
         fake_listenbrainz();
         let (state, _dir) = test_state();
-        let app = build_test_router(state);
-        let (status, _) = get_response(
-            app.clone(),
-            &format!("/rest/koanScrobblingConnect?{MATE}&token=good-token"),
+        let base = serve(state).await;
+        let http = reqwest::Client::new();
+        let connect = format!("{base}/rest/koanScrobblingConnect");
+        let connected = || async {
+            let status = http
+                .get(format!("{base}/rest/koanScrobbling?{MATE}"))
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            status.contains("lbuser")
+        };
+
+        let get = http
+            .get(format!("{connect}?{MATE}&token=good-token"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(get.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        // A token in the query is not read, even on a form POST.
+        let body = post_text(
+            &http,
+            &format!("{connect}?{MATE}&token=good-token"),
+            "c=test",
         )
         .await;
-        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
-        let body = post_form(
-            app.clone(),
-            &format!("/rest/koanScrobblingConnect?{MATE}&token=good-token"),
-            "",
-        )
-        .await;
-        assert!(body.contains("not the URL"), "{body}");
-        let (_, body) = get_response(app, &format!("/rest/koanScrobbling?{MATE}")).await;
+        assert!(body.contains("'token' is missing"), "{body}");
         assert!(!body.contains("lbuser"), "{body}");
+        assert!(!connected().await);
+
+        let body = post_text(&http, &format!("{connect}?{MATE}"), "token=good-token").await;
+        assert!(body.contains("lbuser"), "{body}");
+        assert!(connected().await);
     }
 }

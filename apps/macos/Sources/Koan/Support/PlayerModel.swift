@@ -566,14 +566,42 @@ final class PlayerModel {
     /// Send what the controlled device is playing to `id` (this device with
     /// `nil`), and control it there.
     func moveMusic(to id: String?) {
+        let name = id.flatMap { id in mirror.devices.first { $0.id == id }?.name } ?? "This device"
+        // Moved here, the answer is the controlled device's, which was asked to
+        // send the music on: name it, not the device in hand. Read before the
+        // move, which makes this device the one controlled.
+        let source = mirror.devices.first { $0.id == mirror.target }?.name ?? "The other device"
         attempt {
-            let left = try await self.engine.moveMusic(to: id)
-            if left > 0 {
+            let moved = try await self.engine.moveMusic(to: id)
+            let left = moved.leftOut
+            if let error = moved.error {
+                // Refused: the music plays on where it was, if it was playing.
+                self.lastNotice = id == nil
+                    ? "\(source) did not send the music here: \(error)"
+                    : "\(name) did not take the music: \(error)"
+            } else if moved.queued {
+                self.lastNotice = id == nil
+                    ? "\(source) is asleep. It sends the music here when it wakes."
+                    : "\(name) is asleep. It takes the music when it wakes; until then the music is paused where it was."
+            } else if !moved.started {
+                // Sent, not known to have arrived. The controls follow it there, since a
+                // device asleep takes it on waking; meanwhile it is paused where it was.
+                self.lastNotice = "Sent to \(name), which has not started it yet. It may when it wakes; until then the music is paused where it was."
+            } else if left > 0 {
                 self.lastNotice = left == 1
                     ? "1 track only on this device stayed behind"
                     : "\(left) tracks only on this device stayed behind"
             }
         }
+    }
+
+    /// Say what became of a command to another device that did not simply
+    /// arrive: its state on screen cannot show a command that never got there.
+    func show(_ notice: CommandNotice?) {
+        guard let notice else { return }
+        lastNotice = notice.queued
+            ? "Waiting for \(notice.device) to wake"
+            : "Couldn't reach \(notice.device): \(notice.detail)"
     }
 
     /// Whether `destination` (this device for `nil`) can take the music the
@@ -682,6 +710,13 @@ final class PlayerModel {
     func saveSession() async {
         try? await engine.saveSession()
         savedQueueVersion = queueVersion
+    }
+
+    /// The app is going to the background or quitting: the session here, and
+    /// the queue on the server when this device keeps it there.
+    func saveOnLeaving() async {
+        await saveSession()
+        await engine.saveServerQueueNow()
     }
 
     /// Persist often enough that a crash costs a second, not the session.

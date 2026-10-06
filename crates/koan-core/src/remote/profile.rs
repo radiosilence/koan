@@ -37,6 +37,28 @@ pub const HISTORY: &str = "koanHistory";
 /// with the account's own password, makes a key for the device, which keeps
 /// the key and not the password. See `helpers::set_remote_credentials`.
 pub const SIGN_IN: &str = "koanSignIn";
+/// Setting passwords: `/rest/koanSetUserPassword`, for an admin any account's
+/// and for anyone their own, given the current one.
+pub const PASSWORDS: &str = "koanPasswords";
+/// The account's own API keys: `/rest/koanApiKeys` lists them (never the
+/// keys themselves), `/rest/koanCreateApiKey` and `/rest/koanRevokeApiKey`
+/// make and revoke one.
+pub const API_KEYS: &str = "koanApiKeys";
+/// Assistants connect to this server's `/mcp`: `/rest/koanMcp` gives its
+/// address and the page explaining how. Listed only where the server knows
+/// the address it is reached at (`sharing.public_url`), which MCP's sign-in
+/// needs.
+pub const MCP: &str = "koanMcp";
+
+/// The server relays devices' answers to commands sent with an id, and
+/// answers `koanCommand` with how it went: see `remote::acks`.
+pub const ACK: &str = "koanAck";
+
+/// Devices proving to each other on the local network that they belong to
+/// the same account: a linking device registers its public key with
+/// `deviceKey`, and links that did are sent the account's keys as
+/// `LinkCommand::DeviceKeys`.
+pub const DEVICE_KEYS: &str = "koanDeviceKeys";
 
 /// The account's scrobbling, set up from an app: `/rest/koanScrobbling`
 /// reports it, `/rest/koanScrobblingConnect` checks and stores a ListenBrainz

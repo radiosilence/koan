@@ -35,6 +35,7 @@ use uuid::Uuid;
 use koan_core::db::queries::RECENT_LIMIT;
 
 mod offload;
+mod server_queue;
 mod state;
 mod types;
 pub use state::*;
@@ -305,6 +306,136 @@ const SEEKABLE_TOLERANCE_MS: u64 = 200;
 /// one reload per track is a reload per few seconds for the length of it.
 const LANDING_COALESCE: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Music sent to another device, not yet known to have arrived.
+struct HandedOff {
+    left_out: u32,
+    /// Where it went; `None` for this device.
+    to: Option<String>,
+    /// The server's id for the track it should now be on, when known.
+    track: Option<String>,
+    /// What `to` last reported before the music was sent.
+    before: Option<koan_core::remote::link::LinkState>,
+    /// For music moved here: the queue entry under this device's cursor
+    /// before it was sent.
+    cursor_before: Option<QueueItemId>,
+    /// The answer to the command that moved it, when it went by a way that
+    /// brings one: `None` through the channel when it did not.
+    answer: Option<crossbeam_channel::Receiver<Option<koan_core::remote::acks::AckOutcome>>>,
+    /// `answer` is the destination's own, to the Play it was sent: done means
+    /// the music is there. Otherwise it is from the device asked to send it
+    /// on, and only says whether that device did.
+    answer_is_arrival: bool,
+    /// The source was playing, and plays on if the music was refused.
+    was_playing: bool,
+}
+
+/// A channel for a command's outcome, and what `send_then` hands it to.
+fn outcome_channel() -> (
+    koan_core::remote::devices::Then,
+    crossbeam_channel::Receiver<Option<koan_core::remote::acks::AckOutcome>>,
+) {
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    (
+        Box::new(move |outcome| {
+            let _ = tx.send(outcome);
+        }),
+        rx,
+    )
+}
+
+impl HandedOff {
+    /// Wait for the destination to say it has the music. Sent is not taken:
+    /// until it does, the source stays paused with its queue, and the caller
+    /// is told the music has not started rather than that it has.
+    /// `here` is the entry under this device's cursor and the server's id for
+    /// its track, for music moved to this device.
+    /// `resume` plays on here when the music was refused.
+    fn result(
+        &self,
+        here: impl Fn() -> Option<(QueueItemId, Option<String>)>,
+        resume: impl Fn(),
+    ) -> MoveResult {
+        use koan_core::remote::acks::AckOutcome;
+        use koan_core::remote::devices;
+        let not_started = |queued, error| MoveResult {
+            left_out: self.left_out,
+            started: false,
+            queued,
+            error,
+        };
+        if let Some(answer) = &self.answer {
+            match answer.recv_timeout(HAND_OFF_ANSWER) {
+                Ok(Some(AckOutcome::Done)) if self.answer_is_arrival => {
+                    return MoveResult {
+                        left_out: self.left_out,
+                        started: true,
+                        queued: false,
+                        error: None,
+                    };
+                }
+                Ok(Some(AckOutcome::Queued)) => return not_started(true, None),
+                Ok(Some(
+                    AckOutcome::Refused { reason: why } | AckOutcome::Failed { error: why },
+                )) => {
+                    log::warn!("devices: {:?} did not take the music: {why}", self.to);
+                    if self.was_playing {
+                        resume();
+                    }
+                    return not_started(false, Some(why));
+                }
+                // Asked to send it on, and did: whether it arrived is the
+                // destination's to say, below.
+                Ok(Some(AckOutcome::Done)) => {}
+                // Sent by a way that brings no answer: watch for it instead.
+                Ok(None) => {}
+                Err(_) if self.answer_is_arrival => return not_started(false, None),
+                Err(_) => {}
+            }
+        }
+        let started = self.track.as_deref().is_some_and(|track| match &self.to {
+            Some(to) => devices::await_current(to, track, self.before.as_ref(), HAND_OFF_TAKEN),
+            None => devices::await_until(
+                || arrived_here(self.cursor_before, here(), track),
+                HAND_OFF_TAKEN,
+            ),
+        });
+        if !started {
+            log::warn!(
+                "devices: {:?} has not said it has the music sent to it",
+                self.to
+            );
+        }
+        MoveResult {
+            left_out: self.left_out,
+            started,
+            queued: false,
+            error: None,
+        }
+    }
+}
+
+/// Whether music moved here has arrived: the cursor is on `track` in an entry
+/// that was not under it before. The queue it arrives in is new, so its
+/// entries are; a cursor already on that track, in the queue this device kept
+/// when it last handed the music on, is not it arriving.
+fn arrived_here(
+    before: Option<QueueItemId>,
+    now: Option<(QueueItemId, Option<String>)>,
+    track: &str,
+) -> bool {
+    now.is_some_and(|(entry, remote)| Some(entry) != before && remote.as_deref() == Some(track))
+}
+
+/// How long moving the music waits for the answer to the command that moved
+/// it: long enough for every way through (the network, the link, then the
+/// server's own wait), so a late answer is still the one acted on.
+const HAND_OFF_ANSWER: std::time::Duration = std::time::Duration::from_secs(12);
+
+/// How long moving the music waits for the destination to say it has it.
+/// Long enough for a device that needs to sync a track first; a device asleep
+/// takes longer, and is reported as not started yet.
+const HAND_OFF_TAKEN: std::time::Duration = std::time::Duration::from_secs(8);
+
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
@@ -386,12 +517,22 @@ impl KoanEngine {
     /// every transport call waits on only resolves what is already here.
     pub async fn run_pushed_command(self: Arc<Self>, command: String) -> Result<(), KoanError> {
         koan_core::remote::link::nudge();
-        let cmd = match koan_core::remote::link::parse_command(&command) {
-            Ok(cmd) => cmd,
+        let envelope = match koan_core::remote::acks::Envelope::parse(&command) {
+            Ok(envelope) => envelope,
             Err(e) => {
                 log::warn!("push: not a command ({e}): {command}");
                 return Ok(());
             }
+        };
+        // Under the id it was sent with: a copy that also came down the link
+        // is acted on once, and the answer goes up the link when there is one.
+        let Some((cmd, pending)) = koan_core::remote::acks::take(envelope, |ack, outcome| {
+            koan_core::remote::link::report(koan_core::remote::link::LinkReport::Ack {
+                ack,
+                outcome,
+            });
+        }) else {
+            return Ok(());
         };
         let ids = cmd.track_ids().to_vec();
         if !ids.is_empty() {
@@ -412,13 +553,21 @@ impl KoanEngine {
                 | koan_core::remote::link::LinkCommand::HistoryChanged
         ) {
             return offload::offload(move || {
-                self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
+                self.handle_link(
+                    cmd,
+                    koan_core::remote::link::CommandSource::Account,
+                    pending,
+                );
                 Ok(())
             })
             .await;
         }
         offload::sequenced(move || {
-            self.handle_link(cmd, koan_core::remote::link::CommandSource::Account);
+            self.handle_link(
+                cmd,
+                koan_core::remote::link::CommandSource::Account,
+                pending,
+            );
             Ok(())
         })
         .await
@@ -1964,6 +2113,60 @@ impl KoanEngine {
         offload::offload(move || self.write_position(&*self.db()?)).await
     }
 
+    /// Whether this device keeps its queue in the account's play queue on the
+    /// server, and what the server holds now, for asking before turning it on:
+    /// turning it on replaces this device's queue with that one.
+    pub async fn server_queue(self: Arc<Self>) -> Result<ServerQueue, KoanError> {
+        offload::offload(move || {
+            let saved = server_queue::saved()?;
+            Ok(ServerQueue {
+                on: Config::cached().remote.play_queue,
+                saved_tracks: saved.as_ref().map_or(0, |q| q.entry.len() as u32),
+                saved_by: saved.map(|q| saved_by(&q.changed_by)).unwrap_or_default(),
+            })
+        })
+        .await
+    }
+
+    /// Keep this device's queue in the account's play queue on the server, or
+    /// stop. On, the server's queue replaces this device's, or this device's
+    /// is saved there when the server has none; off leaves both as they are.
+    pub async fn set_server_queue(self: Arc<Self>, on: bool) -> Result<(), KoanError> {
+        offload::offload(move || {
+            if on {
+                match server_queue::saved()? {
+                    Some(queue) => self.load_server_queue(&queue, None)?,
+                    None => self.save_server_queue()?,
+                }
+            }
+            Config::persist(|cfg| cfg.remote.play_queue = on).map_err(|e| {
+                KoanError::BadArgument {
+                    message: e.to_string(),
+                }
+            })?;
+            if on {
+                server_queue::start(Arc::downgrade(&self), false);
+            } else {
+                server_queue::stop();
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// Save the queue and playhead to the server now, if this device keeps
+    /// them there: the app is going to the background or quitting.
+    pub async fn save_server_queue_now(self: Arc<Self>) {
+        offload::offload(move || {
+            if Config::cached().remote.play_queue
+                && let Err(e) = self.save_server_queue()
+            {
+                log::info!("server queue: not saved: {e}");
+            }
+        })
+        .await
+    }
+
     /// Restore the queue saved by `save_session`, cursor and position included.
     ///
     /// Resumes only if playback was running when the session was saved: closing
@@ -1973,7 +2176,11 @@ impl KoanEngine {
     ///
     /// Returns the number of items restored.
     pub async fn restore_session(self: Arc<Self>) -> Result<u32, KoanError> {
-        offload::sequenced(move || {
+        // Once this device's own queue is back, the server's may take its
+        // place: see `server_queue`.
+        let engine = Arc::downgrade(&self);
+        let restoring = self.clone();
+        let restored = offload::sequenced(move || {
             let db = self.db()?;
             // Before the queue and whether there is one: the mode is the
             // player's, and a queue added under it would be shuffled again.
@@ -2021,7 +2228,23 @@ impl KoanEngine {
 
             Ok(count)
         })
-        .await
+        .await;
+        if Config::cached().remote.play_queue {
+            // Once the player has applied the restore, cue and all, so the
+            // server's queue is weighed against the restored one.
+            offload::offload(move || {
+                if !restoring.applied(server_queue::LANDED) {
+                    log::warn!("server queue: the restore did not land; not following");
+                    return restored;
+                }
+                drop(restoring);
+                server_queue::start(engine, true);
+                restored
+            })
+            .await
+        } else {
+            restored
+        }
     }
 
     // --- Output device -----------------------------------------------------
@@ -2137,41 +2360,77 @@ impl KoanEngine {
 
     /// Move the music of the device being controlled to `to` (this device
     /// with `None`): its queue and playhead go there, it pauses, and `to` is
-    /// controlled from then on. Returns how many tracks were left out because
-    /// the server does not have them, which only this device can say.
-    pub async fn move_music(self: Arc<Self>, to: Option<String>) -> Result<u32, KoanError> {
+    /// controlled from then on. Says how many tracks were left out because
+    /// the server does not have them, which only this device can say, and
+    /// whether `to` has said it has the music.
+    pub async fn move_music(self: Arc<Self>, to: Option<String>) -> Result<MoveResult, KoanError> {
         use koan_core::remote::{devices, link::LinkCommand};
-        offload::sequenced(move || {
+        let engine = self.clone();
+        // Sent on the lane, in order with every other command; waited for off
+        // it, so the transport does not stall behind a device that is slow to
+        // answer.
+        let sent = offload::sequenced(move || {
             let from = devices::target();
             if from == to {
-                return Ok(0);
+                return Ok(None);
             }
-            let dropped = match (&from, &to) {
-                (None, Some(to)) => {
-                    self.hand_off_blocking(to, koan_core::remote::link::CommandSource::Account)?
-                }
+            let sent = match (&from, &to) {
+                (None, Some(to)) => Some(
+                    engine
+                        .hand_off_blocking(to, koan_core::remote::link::CommandSource::Account)?,
+                ),
                 (Some(from), to) => {
-                    let to = match to {
+                    let track = devices::current_track(from);
+                    let to_id = match to {
                         Some(to) => to.clone(),
                         None => devices::this_id().ok_or_else(|| KoanError::Remote {
                             message: "this device is not set up to be reached".into(),
                         })?,
                     };
-                    devices::send(from, LinkCommand::HandOff { to })
+                    let before = to.as_deref().and_then(devices::last_report);
+                    let cursor_before = engine.state.cursor();
+                    let (then, answer) = outcome_channel();
+                    devices::send_then(from, LinkCommand::HandOff { to: to_id }, Some(then))
                         .map_err(|message| KoanError::Remote { message })?;
-                    0
+                    Some(HandedOff {
+                        left_out: 0,
+                        to: to.clone(),
+                        track,
+                        before,
+                        cursor_before,
+                        answer: Some(answer),
+                        answer_is_arrival: false,
+                        was_playing: false,
+                    })
                 }
-                (None, None) => 0,
+                (None, None) => None,
             };
             devices::set_target(to);
-            Ok(dropped)
+            Ok(sent)
         })
-        .await
+        .await?;
+        let Some(sent) = sent else {
+            return Ok(MoveResult {
+                left_out: 0,
+                started: true,
+                queued: false,
+                error: None,
+            });
+        };
+        Ok(offload::offload(move || {
+            sent.result(
+                || self.under_cursor(),
+                || {
+                    let _ = self.send_local(PlayerCommand::Resume);
+                },
+            )
+        })
+        .await)
     }
 
     /// Send a link command, as JSON, to the device `id`. For a Live
     /// Activity's buttons, which run while iOS keeps the app's link down: it
-    /// falls back to one request to the server.
+    /// goes by the server first, which knows whether the device is linked.
     pub async fn command_device(
         self: Arc<Self>,
         id: String,
@@ -2180,7 +2439,7 @@ impl KoanEngine {
         offload::offload(move || {
             let cmd = koan_core::remote::link::parse_command(&command)
                 .map_err(|message| KoanError::BadArgument { message })?;
-            koan_core::remote::devices::send(&id, cmd)
+            koan_core::remote::devices::send_by_server_first(&id, cmd)
                 .map_err(|message| KoanError::Remote { message })
         })
         .await
@@ -2376,6 +2635,257 @@ impl KoanEngine {
         .await
     }
 
+    /// AutoEQ's results whose names match `query`, best first. The first
+    /// search of the day may fetch the index.
+    pub async fn autoeq_search(
+        self: Arc<Self>,
+        query: String,
+        limit: u32,
+    ) -> Result<Vec<AutoEqEntry>, KoanError> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Daily)
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(autoeq::search(&entries, &query, limit as usize)
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// The makers in AutoEQ's index, alphabetically, with how many results
+    /// each has.
+    pub async fn autoeq_makers(self: Arc<Self>) -> Result<Vec<AutoEqMaker>, KoanError> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Daily)
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(autoeq::makers(&entries)
+                .into_iter()
+                .map(|(name, results)| AutoEqMaker {
+                    name,
+                    results: results as u32,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// `maker`'s results, by model, AutoEQ's preferred source first within
+    /// each.
+    pub async fn autoeq_models(
+        self: Arc<Self>,
+        maker: String,
+    ) -> Result<Vec<AutoEqEntry>, KoanError> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Daily)
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(autoeq::models(&entries, &maker)
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// Install the AutoEQ result `name`, measured by `measured_by`, as a
+    /// profile, and play `device` through it if given. Answers with the
+    /// profile's name.
+    pub async fn autoeq_install(
+        self: Arc<Self>,
+        name: String,
+        measured_by: String,
+        device: Option<String>,
+    ) -> Result<String, KoanError> {
+        // The download can take as long as GitHub does, so it stays off the
+        // lane transport commands queue on; only the assignment goes there.
+        let profile = offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Kept)
+                .map_err(|message| KoanError::Remote { message })?;
+            let entry = autoeq::find(&entries, &name, Some(&measured_by)).ok_or_else(|| {
+                KoanError::NotFound {
+                    message: format!("{name} is no longer in AutoEQ's index"),
+                }
+            })?;
+            autoeq::install(entry).map_err(|message| KoanError::Remote { message })
+        })
+        .await?;
+        offload::sequenced(move || {
+            match device {
+                Some(device) => self.assign_dsp(Some(profile.clone()), &device)?,
+                None => self.send_local(PlayerCommand::ReloadDsp)?,
+            }
+            Ok(profile)
+        })
+        .await
+    }
+
+    /// The AutoEQ result the output in use is, by its name, while it has no
+    /// profile and the suggestion has not been turned down. `None` for a
+    /// renderer, whose name is the user's to choose.
+    pub async fn autoeq_suggestion(self: Arc<Self>) -> Option<AutoEqOffer> {
+        use koan_core::audio::dsp::autoeq::{self, Offer};
+        offload::offload(move || {
+            if self.state.renderer().is_some() {
+                return None;
+            }
+            let device = koan_core::audio::dsp::profiles::current_device()?;
+            Some(match autoeq::suggestion(&device).ok().flatten()? {
+                Offer::Profile(e) => AutoEqOffer::Profile { entry: (&e).into() },
+                Offer::Search(query) => AutoEqOffer::Search { query },
+            })
+        })
+        .await
+    }
+
+    /// Stop suggesting an AutoEQ profile for the output in use.
+    pub async fn autoeq_dismiss(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            let device = self.dsp_device().ok_or(KoanError::Audio {
+                message: "no output device".into(),
+            })?;
+            koan_core::audio::dsp::autoeq::dismiss(&device)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// The targets `name`'s correction can be moved to, for one installed
+    /// from AutoEQ whose target is known.
+    pub async fn dsp_targets(self: Arc<Self>, name: String) -> Option<DspTargets> {
+        offload::offload(move || {
+            let t = koan_core::audio::dsp::profiles::target_choices(&name)?;
+            Some(DspTargets {
+                made_for: DspTargetOption {
+                    id: t.made_for.id.into(),
+                    name: t.made_for.name.into(),
+                    character: t.made_for.character.into(),
+                },
+                chosen: t.chosen,
+                choices: t.choices.into_iter().map(Into::into).collect(),
+            })
+        })
+        .await
+    }
+
+    /// Move `name`'s correction to the target `id`, or with `None` back to the
+    /// one it was made for.
+    pub async fn dsp_choose_target(
+        self: Arc<Self>,
+        name: String,
+        id: Option<String>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::choose_target(&name, id.as_deref())
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Add a target from a CSV of frequency and level, or a squig.link
+    /// export, to choose from for every correction of its kind.
+    pub async fn dsp_add_target(
+        self: Arc<Self>,
+        path: String,
+    ) -> Result<DspTargetOption, KoanError> {
+        offload::offload(move || {
+            let added = koan_core::audio::dsp::targets::add(std::path::Path::new(&path))
+                .map_err(|message| KoanError::BadArgument { message })?;
+            Ok(DspTargetOption {
+                id: added.id,
+                name: added.name,
+                character: String::new(),
+            })
+        })
+        .await
+    }
+
+    /// Make `name` a stack of `layers`, in order, creating it if there is
+    /// none. Refused where it could not play.
+    pub async fn dsp_set_layers(
+        self: Arc<Self>,
+        name: String,
+        layers: Vec<DspLayerInfo>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            let layers = layers
+                .into_iter()
+                .map(|l| koan_core::config::DspLayer {
+                    profile: l.profile,
+                    on: l.on,
+                })
+                .collect();
+            koan_core::audio::dsp::profiles::set_layers(&name, layers)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Set filter `index` of `name`, a parametric band, to `kind` at `freq`,
+    /// `gain_db` and `q`, held within the ranges a band may have.
+    pub async fn dsp_set_band(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        kind: String,
+        freq: f64,
+        gain_db: f64,
+        q: f64,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_band(
+                &name,
+                index as usize,
+                &kind,
+                freq,
+                gain_db,
+                q,
+            )
+            .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Add a flat band at 1 kHz to `name`; its index among the filters.
+    pub async fn dsp_add_band(self: Arc<Self>, name: String) -> Result<u32, KoanError> {
+        offload::sequenced(move || {
+            let index = koan_core::audio::dsp::profiles::add_band(&name)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)?;
+            Ok(index as u32)
+        })
+        .await
+    }
+
+    /// Take filter `index` out of `name`.
+    pub async fn dsp_remove_filter(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::remove_filter(&name, index as usize)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// What `name` does to the sound at `rate`, for drawing. `None` for a
+    /// profile that is not there or would not play.
+    pub async fn dsp_response(self: Arc<Self>, name: String, rate: u32) -> Option<DspResponse> {
+        offload::offload(move || {
+            koan_core::audio::dsp::profiles::response(&name, rate).map(Into::into)
+        })
+        .await
+    }
+
     pub async fn dsp_detail(self: Arc<Self>, name: String) -> Option<DspProfileDetail> {
         offload::offload(move || koan_core::audio::dsp::profiles::detail(&name).map(Into::into))
             .await
@@ -2485,6 +2995,7 @@ impl KoanEngine {
                 cache_bytes,
                 auto_sync: cfg.remote.auto_sync,
                 auto_sync_interval_mins: cfg.remote.auto_sync_interval_mins,
+                play_queue: cfg.remote.play_queue,
 
                 replaygain: match cfg.playback.replaygain {
                     config::ReplayGainMode::Off => "off".into(),
@@ -2499,6 +3010,7 @@ impl KoanEngine {
                     config::NearbyControl::Full => "full".into(),
                     config::NearbyControl::Playback => "playback".into(),
                 },
+                devices_keep_running: cfg.devices.keep_running,
             }
         })
         .await
@@ -2541,6 +3053,7 @@ impl KoanEngine {
                     "playback" => config::NearbyControl::Playback,
                     _ => config::NearbyControl::Full,
                 };
+                cfg.devices.keep_running = s.devices_keep_running;
                 cfg.devices.addresses = s
                     .devices_addresses
                     .iter()
@@ -2567,6 +3080,8 @@ impl KoanEngine {
     pub fn cancel_library_task(&self) {
         self.cancel_library_task
             .store(true, std::sync::atomic::Ordering::Relaxed);
+        // The folder watcher's scans, which this app did not start.
+        koan_core::index::lane::cancel_all();
     }
 
     /// Sign in to a Subsonic/Navidrome server.
@@ -2823,6 +3338,109 @@ impl KoanEngine {
         .await
     }
 
+    /// Where an assistant connects to the signed-in server.
+    pub async fn assistants(self: Arc<Self>) -> Result<Assistants, KoanError> {
+        offload::offload(move || {
+            let client = account_client()?;
+            let offers = koan_core::remote::profile::for_auth(client.auth())
+                .is_some_and(|p| p.offers(koan_core::remote::profile::MCP));
+            if !offers {
+                return Err(KoanError::NotFound {
+                    message: "this server does not offer assistants".into(),
+                });
+            }
+            let mcp = client.koan_mcp().map_err(remote_error)?;
+            Ok(Assistants {
+                mcp_url: mcp.url,
+                connect_url: mcp.connect,
+            })
+        })
+        .await
+    }
+
+    /// The signed-in account's API keys.
+    pub async fn api_keys(self: Arc<Self>) -> Result<Vec<ApiKeyInfo>, KoanError> {
+        offload::offload(move || {
+            let seconds = |iso: Option<String>| {
+                iso.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+                    .map(|t| t.timestamp())
+            };
+            Ok(api_keys_client()?
+                .koan_api_keys()
+                .map_err(remote_error)?
+                .into_iter()
+                .map(|k| ApiKeyInfo {
+                    id: k.id,
+                    name: k.name,
+                    created: seconds(k.created),
+                    last_used: seconds(k.last_used),
+                    this_device: k.current,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// Make an API key for another app. The key is in the answer and nowhere
+    /// else, ever.
+    pub async fn create_api_key(self: Arc<Self>, name: String) -> Result<NewApiKey, KoanError> {
+        offload::offload(move || {
+            let made = api_keys_client()?
+                .koan_create_api_key(&name)
+                .map_err(remote_error)?;
+            Ok(NewApiKey {
+                name: made.name,
+                key: made.key.ok_or(KoanError::BadArgument {
+                    message: "the server made the key but did not send it".into(),
+                })?,
+            })
+        })
+        .await
+    }
+
+    /// Revoke one of the account's keys. Not this device's own: that is
+    /// signing out.
+    pub async fn revoke_api_key(self: Arc<Self>, id: i64) -> Result<(), KoanError> {
+        offload::offload(move || {
+            api_keys_client()?
+                .koan_revoke_api_key(id)
+                .map_err(remote_error)
+        })
+        .await
+    }
+
+    /// Give another account a password. Its devices sign out.
+    pub async fn set_server_account_password(
+        self: Arc<Self>,
+        username: String,
+        password: String,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            passwords_client()?
+                .koan_set_user_password(&username, &password)
+                .map_err(remote_error)
+        })
+        .await
+    }
+
+    /// Change the signed-in account's own password. This device stays signed
+    /// in, with a new key; the account's other devices sign out.
+    pub async fn change_own_password(
+        self: Arc<Self>,
+        current: String,
+        password: String,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            passwords_client()?;
+            koan_core::helpers::change_own_password(&current, &password).map_err(|e| {
+                KoanError::BadArgument {
+                    message: e.to_string(),
+                }
+            })
+        })
+        .await
+    }
+
     pub async fn delete_server_account(self: Arc<Self>, username: String) -> Result<(), KoanError> {
         offload::offload(move || {
             account_client()?
@@ -2841,10 +3459,13 @@ impl KoanEngine {
                 cfg.remote.enabled = false;
                 cfg.remote.password = String::new();
                 cfg.remote.api_key = String::new();
+                cfg.remote.device_key = String::new();
             })
             .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })?;
+            koan_core::remote::proof::forget();
+            koan_core::remote::link::relink();
             koan_core::remote::nearby::readvertise();
             Ok(())
         })
@@ -3689,7 +4310,7 @@ impl KoanEngine {
                     album: st.album.clone(),
                     track_id: row.map(|r| r.id),
                     album_id: row.and_then(|r| r.album_id),
-                    position_ms: st.position_ms,
+                    position_ms: d.position_ms(),
                     duration_ms: st.duration_ms,
                     problem: d.problem.clone(),
                 }
@@ -4097,10 +4718,13 @@ impl KoanEngine {
             identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
             // What a command may cost, and where it may go, depends on who
             // sent it: see `handle_link`.
-            on_command: Arc::new(move |cmd, source| {
-                if let Some(engine) = weak.upgrade() {
-                    engine.handle_link(cmd, source);
-                }
+            on_command: Arc::new(move |cmd, source, pending| {
+                let weak = weak.clone();
+                offload::from_another_device(move || {
+                    if let Some(engine) = weak.upgrade() {
+                        engine.handle_link(cmd, source, pending);
+                    }
+                });
             }),
             // The queue is read again only when it has changed: this runs on
             // every change to the engine, and naming its tracks is a query.
@@ -4291,7 +4915,32 @@ impl KoanEngine {
             PlayerCommand::ReorderPlaylist(_)
             | PlayerCommand::BeginUndoBatch
             | PlayerCommand::EndUndoBatch => return Ok(()),
-            other => return self.send_local(other),
+            // This device's own: its output, its renderer and its DSP, and
+            // the player's own events. Named rather than caught by a wildcard,
+            // so a command added later is placed here or mapped above, never
+            // acted on locally by default while another device is controlled.
+            local @ (PlayerCommand::Cue { .. }
+            | PlayerCommand::PauseAndReport(_)
+            | PlayerCommand::Barrier(_)
+            | PlayerCommand::UpdatePaths(_)
+            | PlayerCommand::TrackReady(_)
+            | PlayerCommand::TrackStreamReady(_)
+            | PlayerCommand::StreamProbed { .. }
+            | PlayerCommand::TrackFailed(_)
+            | PlayerCommand::CacheTracks(_)
+            | PlayerCommand::DecodeFinished(_)
+            | PlayerCommand::TrackQueued
+            | PlayerCommand::SetOutputDevice(_)
+            | PlayerCommand::ClearOutputDevice
+            | PlayerCommand::ReloadDsp
+            | PlayerCommand::RestartOutput
+            | PlayerCommand::UseRenderer(_)
+            | PlayerCommand::ResumeRenderer(_)
+            | PlayerCommand::ResumeRendererMissed
+            | PlayerCommand::ReleaseRenderer(_)
+            | PlayerCommand::SetRendererVolume(_)
+            | PlayerCommand::RestorePlayMode(_)
+            | PlayerCommand::Renderer { .. }) => return self.send_local(local),
         };
         koan_core::remote::devices::send(to, link).map_err(|message| KoanError::Remote { message })
     }
@@ -4348,6 +4997,13 @@ impl KoanEngine {
         self.tx.send(cmd).map_err(|e| KoanError::Player {
             message: e.to_string(),
         })
+    }
+
+    /// Wait until the player has applied and published every command sent to
+    /// it so far, up to `within`. False when it has not answered by then.
+    fn applied(&self, within: std::time::Duration) -> bool {
+        let (reply, done) = crossbeam_channel::bounded(1);
+        self.send_local(PlayerCommand::Barrier(reply)).is_ok() && done.recv_timeout(within).is_ok()
     }
 
     /// Resolve track IDs into playlist items. Skips IDs that aren't in the
@@ -4483,7 +5139,28 @@ impl KoanEngine {
         &self,
         cmd: koan_core::remote::link::LinkCommand,
         source: koan_core::remote::link::CommandSource,
+        pending: Option<koan_core::remote::acks::Pending>,
     ) {
+        use koan_core::remote::acks::AckOutcome;
+        let outcome = match self.run_link_command(cmd, source) {
+            Ok(()) => AckOutcome::Done,
+            Err(e) => {
+                log::warn!("link: {e}");
+                AckOutcome::Failed {
+                    error: e.to_string(),
+                }
+            }
+        };
+        if let Some(pending) = pending {
+            pending.finish(outcome);
+        }
+    }
+
+    fn run_link_command(
+        &self,
+        cmd: koan_core::remote::link::LinkCommand,
+        source: koan_core::remote::link::CommandSource,
+    ) -> Result<(), KoanError> {
         use koan_core::remote::link::{CommandSource, LinkCommand};
         // Only the account may cost a sync: anyone on the network can send a
         // track id this library has never heard of.
@@ -4497,7 +5174,7 @@ impl KoanEngine {
             }
             found
         };
-        let result = match cmd {
+        match cmd {
             LinkCommand::Play {
                 track_ids,
                 start_at,
@@ -4557,22 +5234,39 @@ impl KoanEngine {
             }),
             LinkCommand::Undo => self.send_local(PlayerCommand::Undo),
             LinkCommand::Redo => self.send_local(PlayerCommand::Redo),
-            LinkCommand::HandOff { to } => self.hand_off_blocking(&to, source).map(|_| ()),
+            // Asked for by another device, which learns the outcome from
+            // what the destination reports; here it is only logged, off the
+            // lane, so later commands do not wait on it.
+            LinkCommand::HandOff { to } => self.hand_off_blocking(&to, source).map(|sent| {
+                let player = self.tx.clone();
+                let _ = std::thread::Builder::new()
+                    .name("koan-hand-off".into())
+                    .spawn(move || {
+                        sent.result(
+                            || None,
+                            || {
+                                let _ = player.send(PlayerCommand::Resume);
+                            },
+                        )
+                    });
+            }),
             // Taken off the link before it gets here.
             // From a notification tapped or an outbox: the link's own
             // check, made again.
             LinkCommand::Shared { command } => {
                 if command.allowed_playback() {
-                    self.handle_link(*command, CommandSource::Shared);
+                    self.run_link_command(*command, CommandSource::Shared)?;
                 }
                 Ok(())
             }
             // Answered by the link session itself, which holds the watch.
             LinkCommand::Devices { .. }
+            | LinkCommand::DeviceKeys { .. }
             | LinkCommand::Shares { .. }
             | LinkCommand::Forgotten { .. }
             | LinkCommand::WatchLevels { .. }
-            | LinkCommand::Levels { .. } => Ok(()),
+            | LinkCommand::Levels { .. }
+            | LinkCommand::Acked { .. } => Ok(()),
             LinkCommand::SetOutput { output } => {
                 koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
                     .map_err(|message| KoanError::Audio { message })
@@ -4684,9 +5378,6 @@ impl KoanEngine {
             LinkCommand::SleepTimer { timer } => {
                 self.send_local(PlayerCommand::SetSleepTimer(timer))
             }
-        };
-        if let Err(e) = result {
-            log::warn!("link: {e}");
         }
     }
 
@@ -4700,7 +5391,7 @@ impl KoanEngine {
         &self,
         to: &str,
         source: koan_core::remote::link::CommandSource,
-    ) -> Result<u32, KoanError> {
+    ) -> Result<HandedOff, KoanError> {
         use koan_core::remote::link::LinkCommand;
         let (items, cursor) = self.state.snapshot_playlist();
         let remote = self.remote_ids(&items.iter().filter_map(|i| i.db_id).collect::<Vec<_>>());
@@ -4738,6 +5429,8 @@ impl KoanEngine {
             0
         };
         let dropped = (items.len() - kept.len()) as u32;
+        let first = kept[start_at].1.clone();
+        let before = koan_core::remote::devices::last_report(to);
         let play = LinkCommand::Play {
             track_ids: kept.into_iter().map(|(_, r)| r).collect(),
             start_at: start_at as u32,
@@ -4745,15 +5438,37 @@ impl KoanEngine {
             paused,
             handoff: true,
         };
-        let sent = koan_core::remote::devices::send_for(source, to, play);
+        let (then, answer) = outcome_channel();
+        let sent = koan_core::remote::devices::send_for_then(source, to, play, Some(then));
         if let Err(message) = sent {
             if !paused {
                 self.send_local(PlayerCommand::Resume)?;
             }
             return Err(KoanError::Remote { message });
         }
-        log::info!("devices: handed the queue to {to}, {dropped} left out");
-        Ok(dropped)
+        log::info!("devices: sent the queue to {to}, {dropped} left out");
+        Ok(HandedOff {
+            left_out: dropped,
+            to: Some(to.to_owned()),
+            track: Some(first),
+            before,
+            cursor_before: None,
+            answer: Some(answer),
+            answer_is_arrival: true,
+            was_playing: !paused,
+        })
+    }
+
+    /// The queue entry under this device's cursor, and the server's id for
+    /// its track.
+    fn under_cursor(&self) -> Option<(QueueItemId, Option<String>)> {
+        let cursor = self.state.cursor()?;
+        let remote = self
+            .state
+            .get_item(cursor)
+            .and_then(|item| item.db_id)
+            .and_then(|id| self.remote_ids(&[id]).remove(&id));
+        Some((cursor, remote))
     }
 
     /// Rows arrived by some route the UI did not start; have its pages read
@@ -5068,6 +5783,35 @@ fn connection_info() -> ConnectionInfo {
             .into_iter()
             .map(|(url, devices)| NearbyServer { url, devices })
             .collect(),
+        command_notice: devices::notice().map(|n| {
+            use koan_core::remote::acks::AckOutcome;
+            CommandNotice {
+                seq: n.seq,
+                device: n.device,
+                queued: n.outcome == AckOutcome::Queued,
+                detail: match n.outcome {
+                    AckOutcome::Refused { reason } => reason,
+                    AckOutcome::Failed { error } => error,
+                    AckOutcome::Done | AckOutcome::Queued => String::new(),
+                },
+            }
+        }),
+    }
+}
+
+/// Who saved the server's play queue, as a person would name it: a kōan
+/// device by its name, another client by what it calls itself.
+fn saved_by(changed_by: &str) -> String {
+    match changed_by.strip_prefix("koan ") {
+        Some(id) if koan_core::remote::devices::this_id().as_deref() == Some(id) => {
+            "this device".to_owned()
+        }
+        Some(id) => koan_core::remote::devices::list()
+            .into_iter()
+            .find(|d| d.id == id)
+            .map_or_else(|| "another kōan device".to_owned(), |d| d.name),
+        None if changed_by == "koan" => "a kōan device".to_owned(),
+        None => changed_by.to_owned(),
     }
 }
 
@@ -5118,6 +5862,33 @@ fn invite_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, Koa
     if !offers {
         return Err(KoanError::BadArgument {
             message: "this server is older than this app: update it to invite people".into(),
+        });
+    }
+    Ok(client)
+}
+
+/// The signed-in server's client, when it lists and makes API keys.
+fn api_keys_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    let client = account_client()?;
+    let offers = koan_core::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| p.offers(koan_core::remote::profile::API_KEYS));
+    if !offers {
+        return Err(KoanError::BadArgument {
+            message: "this server is older than this app: update it to manage API keys here".into(),
+        });
+    }
+    Ok(client)
+}
+
+/// The signed-in server's client, when it sets passwords.
+fn passwords_client() -> Result<Arc<koan_core::remote::client::SubsonicClient>, KoanError> {
+    let client = account_client()?;
+    let offers = koan_core::remote::profile::for_auth(client.auth())
+        .is_some_and(|p| p.offers(koan_core::remote::profile::PASSWORDS));
+    if !offers {
+        return Err(KoanError::BadArgument {
+            message: "this server is older than this app: update it to change passwords here"
+                .into(),
         });
     }
     Ok(client)
@@ -5191,6 +5962,75 @@ fn remote_error(e: SubsonicError) -> KoanError {
         e => KoanError::Remote {
             message: e.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod hand_off_tests {
+    use super::*;
+
+    fn handed(answer: Option<koan_core::remote::acks::AckOutcome>, is_arrival: bool) -> HandedOff {
+        let (then, rx) = outcome_channel();
+        then(answer);
+        HandedOff {
+            left_out: 0,
+            to: Some("phone".into()),
+            track: None,
+            before: None,
+            cursor_before: None,
+            answer: Some(rx),
+            answer_is_arrival: is_arrival,
+            was_playing: true,
+        }
+    }
+
+    /// The Play's own answer says how a hand-off went: there, waiting for a
+    /// device asleep, or refused, when the music plays on here.
+    #[test]
+    fn a_hand_off_goes_by_the_plays_answer() {
+        use koan_core::remote::acks::AckOutcome;
+        let resumed = std::cell::Cell::new(0);
+        let resume = || resumed.set(resumed.get() + 1);
+
+        let there = handed(Some(AckOutcome::Done), true).result(|| None, resume);
+        assert!(there.started && !there.queued && there.error.is_none());
+
+        let asleep = handed(Some(AckOutcome::Queued), true).result(|| None, resume);
+        assert!(!asleep.started && asleep.queued);
+        assert_eq!(resumed.get(), 0, "paused, for the device to take on waking");
+
+        let refused = handed(
+            Some(AckOutcome::Refused {
+                reason: "not allowed".into(),
+            }),
+            true,
+        )
+        .result(|| None, resume);
+        assert_eq!(refused.error.as_deref(), Some("not allowed"));
+        assert_eq!(resumed.get(), 1, "plays on here");
+
+        // A device that sent it on said only that it did: not that it arrived.
+        let sent_on = handed(Some(AckOutcome::Done), false).result(|| None, resume);
+        assert!(!sent_on.started);
+    }
+
+    /// "Move here" after this device handed the music on: its own queue is
+    /// still there, cursor on the track it would be sent back. That is not
+    /// the music arriving; a new entry for the track is.
+    #[test]
+    fn music_moved_here_arrives_only_in_a_new_entry() {
+        let kept = QueueItemId(uuid::Uuid::now_v7());
+        let arrived = QueueItemId(uuid::Uuid::now_v7());
+        let t = Some("t".to_string());
+        assert!(!arrived_here(Some(kept), Some((kept, t.clone())), "t"));
+        assert!(!arrived_here(Some(kept), None, "t"));
+        assert!(!arrived_here(
+            Some(kept),
+            Some((arrived, Some("u".into()))),
+            "t"
+        ));
+        assert!(arrived_here(Some(kept), Some((arrived, t.clone())), "t"));
+        assert!(arrived_here(None, Some((arrived, t)), "t"));
     }
 }
 

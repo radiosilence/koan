@@ -238,6 +238,7 @@ fn command_loop(client: GraphQLClient, rx: Receiver<PlayerCommand>) {
             | PlayerCommand::StreamProbed { .. }
             | PlayerCommand::Cue { .. }
             | PlayerCommand::PauseAndReport(_)
+            | PlayerCommand::Barrier(_)
             | PlayerCommand::TrackFailed(_)
             | PlayerCommand::CacheTracks(_)
             | PlayerCommand::BeginUndoBatch

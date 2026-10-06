@@ -80,6 +80,25 @@ Within that, how much it may do depends on how it reaches this device.
 A share is between accounts on one server, recorded by the server. The device
 that is shared is the only one that can share or stop sharing it.
 
+Your own devices are not limited by any of this. On the network, two devices
+signed in to the same kōan server with an API key (an invite, pairing, or a
+password sign-in on a server that trades it for a key) prove to each other
+that they belong to the same account, and a proven device has the account's
+powers, as if it had come through the server: handing it music it has not
+synced yet syncs it. A device shared with you proves itself the same way and
+gets what a share allows. Each device holds a keypair, made when it signs in,
+dropped when it signs out, and kept with its credentials in
+`config.local.toml`; the server keeps each public key on the API key that
+signed the device in and sends the account's devices each other's, so the
+proof holds while the server is out of reach. A list not refreshed from the
+server for thirty days is no longer trusted. The two ends sign each other's
+fresh nonces when they connect, and every command after is signed for that
+connection: the network is not encrypted, so a recorded proof, a replayed
+command, or one slipped into the connection is refused. What is playing can
+still be seen by anyone on the network, as before. A device that proves
+nothing, because it is older, signed in with a password, or on another
+server, is trusted by the setting above.
+
 A device that is found but cannot be reached is not listed: there is nothing
 to do with it. On iOS, finding anything on the network needs **Local Network**
 allowed for kōan (Settings → Privacy & Security); the picker says so when it
@@ -101,8 +120,22 @@ if it can be woken.
   can be chosen, and choosing it wakes it. That takes a push key on the
   server; without one, the phone is listed but cannot be woken.
 - **One that cannot be woken from here**, such as a stranger's phone on the
-  network or a Mac that has gone to sleep, is shown asleep and cannot be
-  chosen.
+  network, is shown asleep and cannot be chosen. A Mac is one of these: macOS
+  does not open a quit app for a push, so a Mac whose kōan was quit, or that is
+  off or asleep, is shown as not running until someone opens kōan there.
+
+### Keeping a Mac reachable
+
+A Mac can be controlled from your other devices only while kōan is running on
+it. With **Keep running in the menu bar** (Settings ▸ Devices ▸ In the
+background), closing the window leaves kōan running: it stays signed in to the
+server and listening on the network, leaves the Dock and ⌘-Tab, and keeps an
+item in the menu bar with what is playing, play and pause, next, **Open kōan**
+and **Quit kōan**. Opening the window puts it back in the Dock. Quitting it
+from the menu bar takes the Mac out of reach. **Open at login** has macOS open
+kōan when you log in, so the Mac is reachable again after a restart; it is
+listed, and can be turned off, in System Settings ▸ General ▸ Login Items. The
+setting is off by default, and with it off, closing the window quits kōan.
 
 An asleep device you have used stays listed until you forget it: right-click it in the
 Control menu on the Mac, or press and hold it on iOS, and choose **Forget**.
@@ -255,6 +288,8 @@ uses one only where the server lists it:
 | `koanLink` | The app's standing WebSocket at `/rest/koanLink`: the server can command it, and it reports what it is playing. |
 | `koanShares` | Sharing a device with other accounts on the server: the grant from the device, the server's accounts to choose from, and shared devices in each grantee's list, relayed with their outputs for the playback set. |
 | `koanHistory` | The account's play history as every device's: `/rest/koanHistory` pages the plays and forgettings after a cursor, `/rest/koanForgetPlays` forgets plays for every device, and the link says when the history moved. See [Play history](remote-servers.md#play-history). |
+| `koanAck` | Commands answered: a device says once it has acted on a command sent with an id, and the server relays the answer to the sender, answers for a device that is away (queued, once woken), and drops a link that has gone quiet since the command and wakes the device instead. `/rest/koanCommand` waits a moment for the answer and returns it. Without it, commands are sent as before and taken as sent. |
+| `koanDeviceKeys` | Each device's public key, for proving on the local network that it is the account's own (or shared with it) without the server in the room. A device registers it as `deviceKey` when it links with an API key; it is kept on that key's row, so revoking the key or signing out drops it. Links that registered one are sent the account's keys, and those of devices shared with it, as `DeviceKeys`. The local network never may send them. |
 | `koanDevices` | The account's devices sent down each link, commands relayed between them, handoff, Live Activity pushes, and `/rest/koanCommand` for a device whose link is down. Each device's outputs travel with its state; a server older than the apps drops them, so the Output menu for another device needs the server updated too. |
 
 Settings → Server shows what the server said it is and the extensions it

@@ -308,10 +308,64 @@ enum DspCommands {
     },
     /// Delete a profile
     Remove { name: String },
+    /// Move an AutoEQ correction to another target, or back to its own
+    Target {
+        /// The profile
+        name: String,
+        /// The target to use: an id from the list this prints without it
+        #[arg(long = "use")]
+        target: Option<String>,
+        /// Play it as it was made, for the target it was made for
+        #[arg(long, conflicts_with = "target")]
+        reset: bool,
+    },
+    /// Add a target to choose from: a CSV of frequency and level, or a
+    /// squig.link export
+    AddTarget { path: PathBuf },
+    /// Make a profile a stack of others, played in the order given: a
+    /// headphone's correction, then taste on top. Creates it if need be
+    Stack { name: String, layers: Vec<String> },
+    /// Switch one of a stack's layers on or off
+    Layer {
+        stack: String,
+        layer: String,
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+    },
+    /// Find a headphone's correction in AutoEQ's results and install it
+    Autoeq {
+        #[command(subcommand)]
+        command: AutoeqCommands,
+    },
     /// Bypass every profile
     Off,
     /// Stop bypassing
     On,
+}
+
+#[derive(Subcommand)]
+enum AutoeqCommands {
+    /// Search AutoEQ's index by headphone name; numbers are what install takes
+    Search {
+        query: String,
+        /// How many matches to show
+        #[arg(long, default_value_t = 15)]
+        limit: usize,
+        /// Fetch the index again even if the copy kept is recent
+        #[arg(long)]
+        refresh: bool,
+    },
+    /// Install a result as a profile: its number from search, or its name
+    Install {
+        entry: String,
+        /// Who measured it, where several sources have the same headphone
+        /// (AutoEQ's preferred one by default)
+        #[arg(long)]
+        source: Option<String>,
+        /// Also play this output device through it
+        #[arg(long, alias = "output")]
+        device: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -554,6 +608,30 @@ fn main() {
             DspCommands::Use { name, device } => commands::cmd_dsp_use(&name, device),
             DspCommands::Clear { device } => commands::cmd_dsp_clear(device),
             DspCommands::Remove { name } => commands::cmd_dsp_remove(&name),
+            DspCommands::Target {
+                name,
+                target,
+                reset,
+            } => commands::cmd_dsp_target(&name, target.as_deref(), reset),
+            DspCommands::AddTarget { path } => commands::cmd_dsp_add_target(&path),
+            DspCommands::Stack { name, layers } => commands::cmd_dsp_stack(&name, &layers),
+            DspCommands::Layer {
+                stack,
+                layer,
+                state,
+            } => commands::cmd_dsp_layer(&stack, &layer, state == "on"),
+            DspCommands::Autoeq { command } => match command {
+                AutoeqCommands::Search {
+                    query,
+                    limit,
+                    refresh,
+                } => commands::cmd_dsp_autoeq_search(&query, limit, refresh),
+                AutoeqCommands::Install {
+                    entry,
+                    source,
+                    device,
+                } => commands::cmd_dsp_autoeq_install(&entry, source.as_deref(), device),
+            },
             DspCommands::Off => commands::cmd_dsp_enable(false),
             DspCommands::On => commands::cmd_dsp_enable(true),
         },

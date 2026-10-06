@@ -202,6 +202,24 @@ impl AuthRouteState {
         ])
     }
 
+    /// The one cookie a session vouched for by an authenticating proxy has:
+    /// an access token, and any refresh cookie the browser held cleared. Such
+    /// a session is derived again from the proxy's header on each page load,
+    /// so it never outlives what the proxy says.
+    pub(crate) fn proxied_cookies(
+        &self,
+        access_token: &str,
+    ) -> AppendHeaders<[(axum::http::HeaderName, String); 3]> {
+        AppendHeaders([
+            (SET_COOKIE, self.access_cookie(access_token)),
+            (
+                SET_COOKIE,
+                self.cookie(REFRESH_COOKIE, "", REFRESH_COOKIE_PATH, 0),
+            ),
+            (SET_COOKIE, self.stale_refresh_cookie()),
+        ])
+    }
+
     /// Clears the access cookie and both refresh cookies: what signing out sets.
     pub(crate) fn cleared_cookies(&self) -> AppendHeaders<[(axum::http::HeaderName, String); 3]> {
         AppendHeaders([
@@ -499,6 +517,31 @@ fn authenticate_blocking(
     let _ = auth_queries::cleanup_expired_tokens(&db.conn);
 
     Ok((user, access_token, refresh_token_id))
+}
+
+/// An access token for the account an authenticating proxy names, and no
+/// refresh token: see `proxied_cookies`. No password is checked; the caller
+/// has established that the request came through that proxy. `None` for a
+/// name the server has no account for.
+pub(crate) async fn proxied_access(state: &AuthRouteState, username: &str) -> Option<String> {
+    let state = state.clone();
+    let username = username.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let db = state.open_db().ok()?;
+        let user = auth_queries::get_user_by_username(&db.conn, &username).ok()??;
+        auth::mint_access_token(
+            &state.private_pem,
+            user.id,
+            &user.username,
+            user.role,
+            state.access_ttl_secs,
+        )
+        .map_err(|e| log::error!("auth mint token error: {e}"))
+        .ok()
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn login(

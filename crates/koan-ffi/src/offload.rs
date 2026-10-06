@@ -98,11 +98,71 @@ static LANE: LazyLock<Sender<Job>> = LazyLock::new(|| {
     tx
 });
 
+/// Run `f` on the lane for commands from other devices, in arrival order,
+/// without waiting for it. The link's and the network's socket threads hand
+/// their commands here and go back to their sockets: one that syncs the
+/// library first would otherwise leave its socket unread and unpinged for as
+/// long as the sync took, and the server drops a link silent for 100 s. Its
+/// own lane, apart from [`sequenced`], so the app's own commands do not wait
+/// behind such a sync either. A panic in `f` is logged and the lane goes on.
+pub fn from_another_device<F>(f: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    REMOTE_LANE
+        .send(Box::new(move || {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err() {
+                log::error!("a command from another device panicked");
+            }
+        }))
+        .expect("the remote command lane outlives the engine");
+}
+
+static REMOTE_LANE: LazyLock<Sender<Job>> = LazyLock::new(|| {
+    let (tx, rx) = crossbeam_channel::unbounded::<Job>();
+    std::thread::Builder::new()
+        .name("koan-remote-commands".into())
+        .spawn(move || {
+            for job in rx {
+                job();
+            }
+        })
+        .expect("the remote command lane needs one thread");
+    tx
+});
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn commands_from_another_device_return_at_once_and_run_in_order() {
+        let seen = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let (done, finished) = crossbeam_channel::bounded(1);
+        let started = std::time::Instant::now();
+        for i in 0..8 {
+            let seen = seen.clone();
+            let done = done.clone();
+            from_another_device(move || {
+                // The first is a long sync: the caller must not wait for it,
+                // and the rest must not overtake it.
+                if i == 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                seen.lock().push(i);
+                if i == 7 {
+                    let _ = done.send(());
+                }
+            });
+        }
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+        finished
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(*seen.lock(), (0..8).collect::<Vec<_>>());
+    }
 
     #[tokio::test]
     async fn offloaded_work_runs_off_the_caller() {

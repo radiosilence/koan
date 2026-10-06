@@ -62,6 +62,8 @@ struct SettingsView: View {
                         .tabItem { Label("Server", systemImage: "server.rack") }
                     PlaybackSettings(model: model)
                         .tabItem { Label("Playback", systemImage: "hifispeaker") }
+                    EqSettings()
+                        .tabItem { Label("EQ", systemImage: "slider.vertical.3") }
                     DevicesSettings(model: model)
                         .tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
                     AppearanceSettings()
@@ -86,6 +88,10 @@ struct SettingsView: View {
                     }
                     pane("Playback", "hifispeaker") {
                         PlaybackSettings(model: model)
+                            .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                    }
+                    pane("EQ", "slider.vertical.3") {
+                        EqSettings()
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
                     pane("Devices", "laptopcomputer.and.iphone") {
@@ -310,6 +316,11 @@ private struct RemoteSettings: View {
     @State private var username = ""
     @State private var confirmingSignOut = false
     @State private var copiedServer = false
+    @State private var changingPassword = false
+    @State private var currentPassword = ""
+    @State private var newPassword = ""
+    /// What the server holds, while asking before it replaces this queue.
+    @State private var replacingQueue: ServerQueue?
     /// The cache limit as typed, committed whole: "5" on the way to "50GB" is
     /// not a limit anyone set.
     @State private var cacheLimit: String?
@@ -364,10 +375,39 @@ private struct RemoteSettings: View {
                         // leave.
                         Button("Sync") { model.syncNow() }
                             .disabled(activity.conflicts(with: [.remoteTracks]))
+                        #if !os(tvOS)
+                        if mirror.offers(PasswordChange.extensionName) {
+                            Button("Change Password…") { changingPassword = true }
+                        }
+                        #endif
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                     }
                     .rowButtons()
+                }
+                #if !os(tvOS)
+                .alert("Change your password", isPresented: $changingPassword) {
+                    SecureField("Current password", text: $currentPassword)
+                    SecureField("New password", text: $newPassword)
+                    Button("Change") {
+                        let (current, new) = (currentPassword, newPassword)
+                        currentPassword = ""
+                        newPassword = ""
+                        Task { _ = await model.changePassword(current: current, new: new) }
+                    }
+                    Button("Cancel", role: .cancel) {
+                        currentPassword = ""
+                        newPassword = ""
+                    }
+                } message: {
+                    Text("This device stays signed in. Your other devices, and other apps using this account, will have to sign in again.")
+                }
+                #endif
+                if mirror.offers(ApiKeysSettings.extensionName) {
+                    ApiKeysSettings()
+                }
+                if mirror.offers(AssistantsSettings.extensionName) {
+                    AssistantsSettings()
                 }
                 // Accounts and pairings are managed from a device with a keyboard.
                 #if !os(tvOS)
@@ -465,6 +505,31 @@ private struct RemoteSettings: View {
                     .foregroundStyle(.tertiary)
             }
 
+            if model.settings.remoteSignedIn {
+            Section {
+                Toggle("Keep the queue on the server", isOn: Binding(
+                    get: { model.settings.playQueue },
+                    set: { on in
+                        Task {
+                            // Turning it on takes the server's queue in place of
+                            // this one, so say so first when there is one.
+                            if on, let saved = await model.serverQueue(), saved.savedTracks > 0 {
+                                replacingQueue = saved
+                            } else {
+                                await model.setServerQueue(on)
+                            }
+                        }
+                    }
+                ))
+            } header: {
+                Text("Play queue")
+            } footer: {
+                Text("Saves this device's queue to your account on the server, where other apps can pick it up, and picks up a queue another app saved there when kōan starts. Moving music between kōan devices does not need it.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            }
+
             Section("Downloads") {
                 #if os(tvOS)
                 // tvOS has no stepper.
@@ -523,6 +588,22 @@ private struct RemoteSettings: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Tracks you also have as local files are kept either way. Keeping the rest leaves records in the library that cannot be played until you sign in again.")
+        }
+        .confirmationDialog(
+            "Replace this queue?",
+            isPresented: Binding(
+                get: { replacingQueue != nil },
+                set: { if !$0 { replacingQueue = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: replacingQueue
+        ) { _ in
+            Button("Replace With the Server's Queue", role: .destructive) {
+                Task { await model.setServerQueue(true) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { saved in
+            Text("Your server has a queue of \(saved.savedTracks) \(saved.savedTracks == 1 ? "track" : "tracks") saved by \(saved.savedBy). Keeping the queue on the server replaces the one on this device with it.")
         }
     }
 
@@ -598,18 +679,53 @@ private struct PlaybackSettings: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-
-            DspSettings()
         }
         .formStyle(.grouped)
     }
 }
 
+/// EQ for the output in use: what its profile does to the sound, drawn,
+/// then the profiles and where they come from. A page of its own: the graph
+/// wants the room, and a correction is chosen, shaped and checked here.
+struct EqSettings: View {
+    @Environment(AppState.self) private var app
+    @State private var response: DspResponse?
+    @State private var detail: DspProfileDetail?
+
+    private var active: String? { app.dsp.overview?.active }
+
+    var body: some View {
+        Form {
+            if let active, let response, let detail {
+                Section {
+                    EqGraph(response: response, handles: BandTable.handles(detail.bands)) { index, hz, db in
+                        let b = detail.bands[index]
+                        app.dsp.setBand(active, index, kind: b.kind, freq: hz, gain: db, q: b.q)
+                    }
+                } header: {
+                    Text(active)
+                }
+                BandTable(dsp: app.dsp, profile: active, bands: detail.bands)
+            }
+            DspSettings()
+        }
+        .formStyle(.grouped)
+        .task(id: "\(active ?? "")\u{0}\(app.dsp.version)") {
+            response = if let active { await app.dsp.response(active) } else { nil }
+            detail = if let active { await app.dsp.detail(active) } else { nil }
+        }
+    }
+}
+
 /// Correction for the output in use: a profile of bands, impulse responses or
 /// both, imported from what other tools write.
-private struct DspSettings: View {
+struct DspSettings: View {
     @Environment(AppState.self) private var app
     @State private var importing = false
+    @State private var findingAutoEq = false
+    /// What Find in AutoEQ opens searching for: empty from its button, a
+    /// model from an offer for the output in use.
+    @State private var findQuery = ""
     /// The profile whose page is open, on the Mac, where settings has no
     /// navigation stack to push it onto.
     @State private var showing: String?
@@ -634,6 +750,14 @@ private struct DspSettings: View {
                     }
                     .disabled(!o.enabled)
                 }
+                #if !os(tvOS)
+                if let offer = dsp.suggestion, o.device != nil {
+                    AutoEqSuggestion(offer: offer, dsp: dsp) { query in
+                        findQuery = query
+                        findingAutoEq = true
+                    }
+                }
+                #endif
                 ForEach(o.profiles, id: \.name) { p in
                     #if os(iOS)
                     NavigationLink {
@@ -661,6 +785,10 @@ private struct DspSettings: View {
             // imported on another device, and the TV picks them by output.
             #if !os(tvOS)
             Button("Import…") { importing = true }
+            Button("Find in AutoEQ…") {
+                findQuery = ""
+                findingAutoEq = true
+            }
             #endif
             if let error = dsp.lastError {
                 Text(error)
@@ -670,7 +798,7 @@ private struct DspSettings: View {
         } header: {
             Text("EQ and convolution")
         } footer: {
-            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs. Importing into a profile of the same name adds to it. An output without a profile plays untouched.")
+            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs, or a headphone found in AutoEQ by name. Importing into a profile of the same name adds to it. An output without a profile plays untouched.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -684,6 +812,11 @@ private struct DspSettings: View {
             }
         }
         .task { dsp.reload() }
+        #if !os(tvOS)
+        .sheet(isPresented: $findingAutoEq) {
+            AutoEqSearch(dsp: dsp, query: findQuery)
+        }
+        #endif
         #if os(macOS)
         .sheet(item: Binding(
             get: { showing.map(ShownProfile.init) },
@@ -702,6 +835,146 @@ private struct DspSettings: View {
         #endif
     }
 }
+
+#if !os(tvOS)
+/// The output in use, recognised by its name as a headphone AutoEQ has
+/// measured, or roughly so: its profile, or a search for its model to pick
+/// the right one from. Offered once, quietly; nothing is applied until asked.
+private struct AutoEqSuggestion: View {
+    let offer: AutoEqOffer
+    let dsp: DspModel
+    let find: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch offer {
+            case let .profile(entry):
+                Text("AutoEQ has a profile for \(entry.name). Use it?")
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("Use") { dsp.installAutoEq(entry) }
+                    dismiss
+                    Spacer()
+                }
+            case let .search(query):
+                HStack {
+                    Button("Find \(query) in AutoEQ…") { find(query) }
+                    dismiss
+                    Spacer()
+                }
+            }
+        }
+        .buttonStyle(.borderless)
+        .font(.callout)
+    }
+
+    private var dismiss: some View {
+        Button("Not for This Device") { dsp.dismissSuggestion() }
+            .foregroundStyle(.secondary)
+    }
+}
+
+/// AutoEQ's results by headphone name. Choosing one installs it and plays the
+/// output in use through it.
+private struct AutoEqSearch: View {
+    let dsp: DspModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var query: String
+
+    init(dsp: DspModel, query: String = "") {
+        self.dsp = dsp
+        _query = State(initialValue: query)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if query.isEmpty {
+                    // Nothing typed: the makers, each opening its models.
+                    List(dsp.autoEqMakers, id: \.name) { maker in
+                        NavigationLink {
+                            AutoEqModels(dsp: dsp, maker: maker.name) { dismiss() }
+                        } label: {
+                            LabeledContent(maker.name, value: "\(maker.results)")
+                        }
+                    }
+                    .task { await dsp.loadAutoEqMakers() }
+                } else {
+                    List(dsp.autoEqResults, id: \.profileName) { entry in
+                        AutoEqRow(entry: entry) {
+                            dsp.installAutoEq(entry)
+                            dismiss()
+                        }
+                    }
+                    .overlay {
+                        if dsp.autoEqResults.isEmpty {
+                            ContentUnavailableView.search(text: query)
+                        }
+                    }
+                }
+            }
+            .searchable(text: $query, prompt: "Headphone")
+            .navigationTitle("AutoEQ")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            // Debounced: a search runs once typing pauses, not per keystroke.
+            .task(id: query) {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                await dsp.searchAutoEq(query)
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 420, minHeight: 460)
+        #endif
+    }
+}
+#endif
+
+#if !os(tvOS)
+/// One AutoEQ result: the headphone, and who measured it.
+private struct AutoEqRow: View {
+    let entry: AutoEqEntry
+    let choose: () -> Void
+
+    var body: some View {
+        Button(action: choose) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.name)
+                Text(entry.measuredBy)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A maker's results, by model; where several people measured one, the one
+/// AutoEQ recommends comes first. Choosing one installs it and closes the
+/// search.
+private struct AutoEqModels: View {
+    let dsp: DspModel
+    let maker: String
+    let done: () -> Void
+    @State private var models: [AutoEqEntry] = []
+
+    var body: some View {
+        List(models, id: \.profileName) { entry in
+            AutoEqRow(entry: entry) {
+                dsp.installAutoEq(entry)
+                done()
+            }
+        }
+        .navigationTitle(maker)
+        .task { models = await dsp.autoEqModels(maker) }
+    }
+}
+#endif
 
 private struct ShownProfile: Identifiable {
     let name: String
@@ -995,6 +1268,10 @@ private struct ServerOffers: View {
 private struct DevicesSettings: View {
     @Bindable var model: SettingsModel
     @Environment(EngineMirror.self) private var mirror
+    #if os(macOS)
+    @Environment(AppState.self) private var app
+    @Environment(\.openWindow) private var openWindow
+    #endif
     @State private var address = ""
     @State private var grantee = ""
     @State private var shareError: String?
@@ -1022,6 +1299,10 @@ private struct DevicesSettings: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+
+            #if os(macOS)
+            background
+            #endif
 
             Section {
                 ForEach(model.settings.devicesAddresses, id: \.self) { addr in
@@ -1178,3 +1459,51 @@ private struct AppearanceSettings: View {
         .formStyle(.grouped)
     }
 }
+
+#if os(macOS)
+extension DevicesSettings {
+    /// Staying reachable with the window closed. The setting is written
+    /// through the model, which would otherwise write its own copy back.
+    private var background: some View {
+        let residency = app.residency
+        return Section {
+            Toggle(
+                "Keep running in the menu bar",
+                isOn: Binding(
+                    get: { model.settings.devicesKeepRunning },
+                    set: { on in
+                        model.edit { $0.devicesKeepRunning = on }
+                        residency.keepRunning = on
+                        // Turned off from the menu bar, with the window
+                        // closed: closing Settings would otherwise quit kōan
+                        // and leave it to reopen with no window.
+                        if !on, !Residency.mainWindowShown {
+                            openWindow(id: MainWindow.id)
+                        }
+                    }))
+            Toggle(
+                "Open at login",
+                isOn: Binding(
+                    get: { residency.opensAtLogin || residency.loginNeedsApproval },
+                    set: { residency.setOpensAtLogin($0) }))
+            if residency.loginNeedsApproval {
+                Text("Allow kōan in System Settings ▸ General ▸ Login Items.")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+            if let error = residency.loginError {
+                Text(error)
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+        } header: {
+            Text("In the background")
+        } footer: {
+            Text("With its window closed, kōan stays in the menu bar, signed in to your server and listening on this network, so your other devices can see and control this Mac. A Mac cannot be woken from another device: once kōan is quit, it is out of reach until kōan is opened again.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .onAppear { residency.refreshLogin() }
+    }
+}
+#endif

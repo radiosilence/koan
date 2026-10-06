@@ -37,6 +37,12 @@ final class PeopleModel {
         }
     }
 
+    func setPassword(_ username: String, _ password: String) async {
+        _ = await attempt {
+            try await self.engine.setServerAccountPassword(username: username, password: password)
+        }
+    }
+
     func setRole(_ username: String, _ role: AccountRole) async {
         _ = await attempt { try await self.engine.setServerAccountRole(username: username, role: role) }
     }
@@ -79,6 +85,9 @@ struct PeopleSettings: View {
     @State private var newUsername = ""
     @State private var newRole = AccountRole.readonly
     @State private var deleting: String?
+    @State private var settingPassword: String?
+    @State private var password = ""
+    @Environment(EngineMirror.self) private var mirror
 
     var body: some View {
         Group {
@@ -132,6 +141,25 @@ struct PeopleSettings: View {
                 } message: {
                     Text("The invite carries the new password. Their devices will have to sign in again.")
                 }
+                .alert(
+                    "Set a password for \(settingPassword ?? "")",
+                    isPresented: Binding(
+                        get: { settingPassword != nil },
+                        set: { if !$0 { settingPassword = nil } }
+                    )
+                ) {
+                    SecureField("New password", text: $password)
+                    Button("Set") {
+                        if let name = settingPassword {
+                            let chosen = password
+                            Task { await model.setPassword(name, chosen) }
+                        }
+                        password = ""
+                    }
+                    Button("Cancel", role: .cancel) { password = "" }
+                } message: {
+                    Text("Their devices will have to sign in again with it.")
+                }
                 .confirmationDialog(
                     "Delete \(deleting ?? "")?",
                     isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
@@ -170,6 +198,9 @@ struct PeopleSettings: View {
                 Button("Invite") { Task { await model.invite(account.username) } }
                 // Not for this account: a new password signs this app out too.
                 if account.username != signedInAs {
+                    if mirror.offers(PasswordChange.extensionName) {
+                        Button("Set Password…") { settingPassword = account.username }
+                    }
                     Button("New Password and Invite…") { model.resetting = account.username }
                     Button("Delete", role: .destructive) { deleting = account.username }
                 }
@@ -253,4 +284,9 @@ struct InviteSheet: View {
         .frame(minWidth: 460, minHeight: 440)
         #endif
     }
+}
+
+/// Setting passwords from the app, where the server lists it.
+enum PasswordChange {
+    static let extensionName = "koanPasswords"
 }

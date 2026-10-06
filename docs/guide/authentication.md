@@ -106,9 +106,18 @@ the request signs in with.
 Creating an account generates its password, and the email carries it once, for
 the web UI and other Subsonic apps. Inviting an existing account sends only the
 link. To give an account a new password, invite it with a reset (generated,
-shown in the invite) or set one on the Users page or with `setUserPassword`.
-Either signs every device out, invited ones included, since a password change
-revokes the account's sessions and API keys.
+shown in the invite) or set one on the Users page, with **Set Password…** on
+the account in the apps' Settings, or with `setUserPassword`. Any of them signs
+every device out, invited ones included, since a password change revokes the
+account's sessions and API keys.
+
+Anyone can change their own password from the apps' Settings → Server, with
+**Change Password…**, giving the current one. The device changing it stays
+signed in: the server answers with a new key for it, as signing in does, and
+the account's other devices sign out. Both go through
+`/rest/koanSetUserPassword`, listed as the `koanPasswords` extension. A wrong
+current password counts against the account's sign-in budget (see below), even
+from an app signed in with a key.
 
 A device whose key was revoked, or whose password no longer works, finds out
 the next time it syncs or asks the server what it offers (Subsonic errors 40,
@@ -287,7 +296,7 @@ refresh_token_ttl = "30d" # refresh token lifetime
 
 The TUI runs in the same process as the player and bypasses auth entirely. `koan mcp` does too, but executes at `user` role rather than admin — its transport carries no credential, so anything it can reach is reachable by whoever can talk to the MCP process. A server's `/mcp` acts as the signed-in account, with an admin account capped the same way. That leaves out the mutations that move files (`organize*`), rewrite config, trigger scans, or change the output device. Set `KOAN_MCP_ADMIN=1` to opt back in.
 
-Auth otherwise applies to HTTP API clients (GraphQL, web UI). The Subsonic REST API is separate — see below.
+Auth otherwise applies to HTTP API clients (GraphQL, web UI). The web UI can also take the account from an authenticating reverse proxy; see [Behind an authenticating proxy](headless-server.md#behind-an-authenticating-proxy). The Subsonic REST API is separate — see below.
 
 ## Cookies
 
@@ -335,7 +344,14 @@ koan subsonic status
 koan subsonic disable
 ```
 
-Signed-in users manage their own keys in the web UI under **API keys**.
+Signed-in users manage their own keys in the web UI under **API keys**, and in
+the apps under Settings → Server → API keys, where the server lists the
+`koanApiKeys` extension (`/rest/koanApiKeys`, and `koanCreateApiKey` and
+`koanRevokeApiKey` by POST), signed with an API key or the account's own password: an app password cannot make or revoke keys, so one that leaks cannot outlive its revocation. Both list each key's name, when it was made and
+when it was last used, never the key itself. A new key is shown once. Each
+device signed in to kōan has a key of its own, so revoking one is how a lost
+phone is cut off; the apps mark their own key and leave revoking it to
+**Sign Out**.
 
 A koan app that joined by invite keeps its key as `remote.api_key` in `config.local.toml`, and signs in with it ahead of any password, `KOAN_REMOTE__PASSWORD` included. Sign out to go back to a password. `readonly` accounts, and their keys, get error 50 from every endpoint that writes.
 

@@ -156,8 +156,11 @@ struct TabShell: View {
         // Offline narrows every listing to what can play here; going online
         // widens it again.
         .onChange(of: mirror.connection?.offline ?? false) { _, _ in library.libraryChanged() }
+        .onChange(of: mirror.connection?.commandNotice?.seq) { _, _ in
+            player.show(mirror.connection?.commandNotice)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
-            Task { await player.saveSession() }
+            Task { await player.saveOnLeaving() }
         }
         // One alert for both, as the Mac has one toast slot: a failure
         // outranks a notice, and only a failure is titled as one.
