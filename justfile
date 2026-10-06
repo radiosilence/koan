@@ -411,8 +411,9 @@ tv_deployment_target := "26.0"
 # simulator signed in to `just _demo-server` serving the same library, its
 # 1320x2868 screenshots halved), the Apple TV set (`just tv-walk <library>`,
 # scaled by 0.625 to 2400x1350), `hero` (site/src/hero.html, its command in the
-# file), `tui` and `organize` (the TUI in a terminal), and `web-*` (the
-# server's web UI in headless Chrome, against the demo server).
+# file), `tui` and `organize` (the TUI in a terminal), and `tv-signin-web`
+# (the pairing page, which needs a television waiting to pair). The web UI's
+# `web-*` are made here, from a throwaway server on the same library.
 site-screens: macos-bundle
     #!/usr/bin/env bash
     set -euo pipefail
@@ -430,6 +431,7 @@ site-screens: macos-bundle
         --env KOAN_RENDER_PAGES=site-mac,popover --env KOAN_RENDER_SCHEMES=dark \
         --env KOAN_RENDER_FRAMED=1200x750 "{{app_dir}}/.build/pkg/kōan.app" --args -ApplePersistenceIgnoreState YES
     python3 scripts/site-screens/compose.py "$work/renders" site/public/screens
+    scripts/site-screens/web.sh "$work/config" site/public/screens
 
 # Styling that bypasses the kōan theme: a raw font, colour, label style or
 # corner in the apps' views rather than a role from `Support/KoanTheme.swift`.
