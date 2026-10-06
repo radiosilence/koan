@@ -165,7 +165,7 @@ mod tests {
         conn.execute("DELETE FROM tracks WHERE id = 3", []).unwrap();
         let q = play_queue(conn, ALICE).unwrap().unwrap();
         assert_eq!((q.track_ids.as_slice(), q.current), ([1, 1].as_slice(), 1));
-        save_play_queue(conn, ALICE, &[1, 2], None, 0, "x").unwrap();
+        save_play_queue(conn, ALICE, &[1, 1], None, 0, "x").unwrap();
         assert_eq!(play_queue(conn, ALICE).unwrap().unwrap().current, 0);
     }
 }
