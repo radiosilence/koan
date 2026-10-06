@@ -29,7 +29,7 @@ from a device that is already signed in.
    the phone, it asks whether to sign the TV in, and says where the request came
    from. Without kōan, the link opens your server's own page in the browser:
    sign in there and approve it. The code can also be typed under Settings →
-   Server → Pair a device on a phone or Mac, or at your server's `/pair` page.
+   Devices → Pair a device on a phone or Mac, or at your server's `/pair` page.
 
    ![The server's web page asking whether to sign the TV in](../../site/public/screens/tv-signin-web.webp)
 

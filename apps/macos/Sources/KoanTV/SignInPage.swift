@@ -181,7 +181,7 @@ struct SignInPage: View {
             VStack(alignment: .leading, spacing: 20) {
                 Text(host)
                     .koanText(.titleSmall, .strong)
-                Text("Or enter this code under Settings → Server → Pair a device, or at \(host)/pair:")
+                Text("Or enter this code under Settings → Devices → Pair a device, or at \(host)/pair:")
                     .koanText(.body, .muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 640, alignment: .leading)
