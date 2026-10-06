@@ -1034,6 +1034,9 @@ private struct KoanFormRole: ViewModifier {
             content
                 .formStyle(.columns)
                 .scrollContentBackground(.hidden)
+            #elseif os(tvOS)
+            // A television's form has no ground or separators to take over.
+            content
             #else
             content
                 .scrollContentBackground(.hidden)
@@ -1077,10 +1080,13 @@ private struct KoanSheetRole: ViewModifier {
                 .foregroundStyle(Color.koanInk)
                 #if os(macOS)
                 .background(Color.koanBg)
+                .scrollContentBackground(.hidden)
+                #elseif os(tvOS)
+                .background(Color.koanBg)
                 #else
                 .presentationBackground(Color.koanBg)
-                #endif
                 .scrollContentBackground(.hidden)
+                #endif
         } else {
             content
         }
