@@ -77,9 +77,21 @@ struct SettingsView: View {
                     // an index to clear — all of it about music sitting on a
                     // disk koan can walk. Inside the iOS sandbox there is no
                     // such disk, and koan is a Subsonic client and nothing else.
-                    pane("Server", "server.rack") { RemoteSettings(model: model) }
-                    pane("Playback", "hifispeaker") { PlaybackSettings(model: model) }
-                    pane("Devices", "laptopcomputer.and.iphone") { DevicesSettings(model: model) }
+                    // Each pane carries the status line too: a pane pushed
+                    // over the list hides the list's, and with it the reason a
+                    // sign-in failed.
+                    pane("Server", "server.rack") {
+                        RemoteSettings(model: model)
+                            .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                    }
+                    pane("Playback", "hifispeaker") {
+                        PlaybackSettings(model: model)
+                            .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                    }
+                    pane("Devices", "laptopcomputer.and.iphone") {
+                        DevicesSettings(model: model)
+                            .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                    }
                     Section {} footer: {
                         Text(AppVersion.text)
                             .font(.caption)
@@ -484,7 +496,7 @@ private struct RemoteSettings: View {
             Button("Sign Out and Forget Its Tracks", role: .destructive) {
                 model.signOut(forgetTracks: true)
             }
-            Button("Sign Out, Keep Them in the Library") {
+            Button("Sign Out and Keep Its Tracks") {
                 model.signOut(forgetTracks: false)
             }
             Button("Cancel", role: .cancel) {}
