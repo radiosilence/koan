@@ -38,7 +38,7 @@ struct BrowseFilterButton: View {
         .sheet(isPresented: $open) {
             NavigationStack {
                 BrowseFilterForm()
-                    .navigationTitle("Filter")
+                    .navigationTitle(KoanTheme.label("Filter"))
                     #if !os(tvOS)
                     .navigationBarTitleDisplayMode(.inline)
                     #endif

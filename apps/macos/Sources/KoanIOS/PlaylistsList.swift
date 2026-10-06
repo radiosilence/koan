@@ -33,7 +33,7 @@ struct PlaylistsList: View {
                 }
             }
         }
-        .navigationTitle("Playlists")
+        .navigationTitle(KoanTheme.label("Playlists"))
         #if !os(tvOS)
         // Playlists are made and edited on a phone or a computer; a television
         // plays them.

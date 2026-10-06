@@ -26,7 +26,14 @@ enum KoanTheme {
 
     static func apply(_ appearance: Appearance) {
         isOn = appearance.koan
-        if isOn { registerFace() }
+        guard isOn else { return }
+        registerFace()
+        #if os(iOS)
+        // Navigation titles are UIKit's, drawn from its appearance proxies.
+        let bar = UINavigationBar.appearance()
+        bar.largeTitleTextAttributes = [.font: UIFont.koan(.display), .foregroundColor: UIColor.koanStrong]
+        bar.titleTextAttributes = [.font: UIFont.koan(.control), .foregroundColor: UIColor.koanStrong]
+        #endif
     }
 
     /// Geist Mono, bundled beside the app: the site's own file, which Core
@@ -257,6 +264,7 @@ extension UIColor {
 
     /// The tokens layer-drawn views read, as on the Mac.
     static let koanInk = koan(dark: 0xCCCCCC, light: 0x333333)
+    static let koanStrong = koan(dark: 0xFFFFFF, light: 0x111111)
     static let koanRule = koan(dark: 0x383838, light: 0xE0E0E0)
     static let koanMuted = koan(dark: 0x919191, light: 0x666666)
     @MainActor static var koanQuaternaryLabel: UIColor { KoanTheme.isOn ? koanRule : .quaternaryLabel }
@@ -540,6 +548,36 @@ extension KoanTheme {
     }
 }
 
+#if os(iOS) || os(tvOS)
+extension UIFont {
+    /// A role of the theme's type scale, for UIKit's own drawing (navigation
+    /// titles), scaled with Dynamic Type as the role's text style is.
+    static func koan(_ role: KoanType) -> UIFont {
+        let weight: UIFont.Weight = switch role.weight {
+        case .ultraLight: .ultraLight
+        case .light: .light
+        default: .regular
+        }
+        let base = UIFont(name: "Geist Mono", size: role.size)
+            ?? .monospacedSystemFont(ofSize: role.size, weight: weight)
+        let face = UIFont(
+            descriptor: base.fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: weight]]),
+            size: role.size
+        )
+        let style: UIFont.TextStyle = switch role.scalesWith {
+        case .largeTitle: .largeTitle
+        case .title: .title1
+        case .title2: .title2
+        case .callout: .callout
+        case .subheadline: .subheadline
+        case .footnote: .footnote
+        default: .body
+        }
+        return UIFontMetrics(forTextStyle: style).scaledFont(for: face)
+    }
+}
+#endif
+
 #if canImport(AppKit)
 extension NSFont {
     /// A role of the theme's type scale, for AppKit's own views. Falls back to
@@ -662,6 +700,12 @@ extension View {
     /// theme's type rather than the accent. Unchanged in the platform's look.
     func koanControl() -> some View {
         modifier(KoanControlRole())
+    }
+
+    /// A list as the theme lays one out: rows on the ground with rules between
+    /// them, no inset cards. The platform's list otherwise.
+    func koanList() -> some View {
+        modifier(KoanListRole())
     }
 
     /// The window's toolbar, or a phone's navigation bar: flat `bg` in the
@@ -1121,6 +1165,25 @@ private struct KoanFormRole: ViewModifier {
     }
 }
 
+private struct KoanListRole: ViewModifier {
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            #if os(tvOS)
+            content
+            #else
+            content
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .listRowBackground(Color.clear)
+                .listRowSeparatorTint(Color.koanRule)
+                .font(.koan(.body))
+            #endif
+        } else {
+            content
+        }
+    }
+}
+
 private struct KoanControlRole: ViewModifier {
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
@@ -1188,6 +1251,46 @@ private struct KoanSheetRole: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// One tab of the theme's tab bar: the label in `fine`, lowercase, with its
+/// glyph above it when icons are on; the accent and an underline when chosen.
+struct KoanTabItem: View {
+    let title: String
+    let icon: String
+    let selected: Bool
+    @Environment(\.koanIcons) private var icons
+
+    var body: some View {
+        VStack(spacing: 4) {
+            if icons {
+                KoanIcon(icon).font(.system(size: 19))
+            }
+            Text(KoanTheme.label(title))
+                .font(.koan(.fine))
+                .padding(.bottom, 3)
+                .overlay(alignment: .bottom) {
+                    if selected { Rectangle().fill(.tint).frame(height: KoanTheme.hairline) }
+                }
+        }
+        .foregroundStyle(KoanTheme.style(selected ? .accent : .muted))
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+extension View {
+    /// Hides the platform's tab bar where the theme draws its own (iOS).
+    func koanHidesSystemTabBar() -> some View {
+        #if os(iOS)
+        toolbar(KoanTheme.isOn ? .hidden : .automatic, for: .tabBar)
+        #else
+        self
+        #endif
     }
 }
 

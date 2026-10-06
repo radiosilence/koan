@@ -104,7 +104,7 @@ struct SettingsView: View {
                             .frame(maxWidth: .infinity)
                     }
                 }
-                .navigationTitle("Settings")
+                .navigationTitle(KoanTheme.label("Settings"))
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                 #endif
             } else {
@@ -919,7 +919,7 @@ private struct AutoEqSearch: View {
                 }
             }
             .searchable(text: $query, prompt: "Headphone")
-            .navigationTitle("AutoEQ")
+            .navigationTitle(KoanTheme.label("AutoEQ"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }

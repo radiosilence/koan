@@ -99,7 +99,11 @@ struct TabShell: View {
         .tabViewStyle(.sidebarAdaptable)
         #endif
         .toggleStyle(SystemSwitch())
-        .modifier(Transport(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices))
+        .modifier(Transport(
+            showingNowPlaying: $showingNowPlaying,
+            showingDevices: $showingDevices,
+            selection: tab
+        ))
         #if os(tvOS)
         // The remote's Play/Pause, wherever focus is.
         .onPlayPauseCommand { player.togglePlayPause() }
@@ -204,11 +208,13 @@ struct TabShell: View {
         let showing = tab == selection
         return NavigationStack(path: path(tab)) {
             root()
+                .koanHidesSystemTabBar()
                 .environment(\.onStage, showing && routes.isEmpty)
                 .washedGround()
                 .roomBackground()
                 .navigationDestination(for: Route.self) { route in
                     RouteView(route: route)
+                        .koanHidesSystemTabBar()
                         .environment(\.onStage, showing && route == routes.last)
                 }
         }
@@ -319,17 +325,76 @@ struct TabShell: View {
 private struct Transport: ViewModifier {
     @Binding var showingNowPlaying: Bool
     @Binding var showingDevices: Bool
+    @Binding var selection: TabShell.TabID
 
     func body(content: Content) -> some View {
         #if os(tvOS)
         // Now Playing is a tab of its own there.
         content
         #else
-        content.tabViewBottomAccessory { player }
+        if KoanTheme.isOn {
+            // The theme's own bar in place of the platform's glass: the mini
+            // player as a row with the playhead along its top, the tabs flat
+            // beneath it.
+            content.safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    player
+                        .padding(.vertical, 8)
+                        .overlay(alignment: .top) { MiniPlayhead() }
+                        .koanRule(.top)
+                    tabs
+                        .koanRule(.top)
+                }
+                .koanSurface()
+            }
+        } else {
+            content.tabViewBottomAccessory { player }
+        }
         #endif
     }
+
+    #if !os(tvOS)
+    private var tabs: some View {
+        HStack(spacing: 0) {
+            ForEach(Self.items, id: \.id) { item in
+                Button { selection = item.id } label: {
+                    KoanTabItem(title: item.title, icon: item.icon, selected: selection == item.id)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 10)
+        .frame(height: 64, alignment: .top)
+    }
+
+    private static let items: [(id: TabShell.TabID, title: String, icon: String)] = [
+        (.queue, "Queue", Icon.queueSection),
+        (.library, "Library", "music.note.house"),
+        (.settings, "Settings", "gearshape"),
+        (.search, "Search", Icon.search),
+    ]
+    #endif
 
     private var player: some View {
         MiniPlayer(showingNowPlaying: $showingNowPlaying, showingDevices: $showingDevices)
     }
 }
+
+#if !os(tvOS)
+/// The playhead along the top of the theme's mini player: two points of the
+/// accent, handed to the render server as the seek bar's is.
+private struct MiniPlayhead: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        SeekProgress(fraction: player.progress, remaining: runway, thickness: 2)
+            .frame(height: 2)
+            .allowsHitTesting(false)
+    }
+
+    private var runway: TimeInterval {
+        guard player.scrubbing == nil, player.playhead.playing, player.durationMs > 0 else { return 0 }
+        return Double(player.durationMs - player.playhead.at(within: player.durationMs)) / 1000
+    }
+}
+#endif

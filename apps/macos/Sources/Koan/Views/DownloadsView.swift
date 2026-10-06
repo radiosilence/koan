@@ -43,7 +43,7 @@ struct DownloadsView: View {
                 #endif
             }
         }
-        .navigationTitle("Downloads")
+        .navigationTitle(KoanTheme.label("Downloads"))
         .toolbar {
             if mirror.hasSettledTransfers {
                 Button { app.engine.clearSettledDownloads() } label: {
