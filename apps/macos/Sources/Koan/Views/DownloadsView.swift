@@ -207,7 +207,7 @@ private struct DownloadRow: View {
                 Spacer(minLength: 8)
                 // No hover on a phone: a link that waits for one never shows.
                 if hovering || width == .compact {
-                    Button(KoanTheme.label("Show in Library")) { showInLibrary() }
+                    Button("Show in Library") { showInLibrary() }
                         .linkButton()
                         .font(.role(.fine, system: .caption))
                 }

@@ -180,7 +180,7 @@ struct TabShell: View {
                 }
             ),
             actions: {
-                Button(KoanTheme.label("OK")) {
+                Button("OK") {
                     player.lastError = nil
                     player.lastNotice = nil
                 }

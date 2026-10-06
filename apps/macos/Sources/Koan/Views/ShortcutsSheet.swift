@@ -15,7 +15,7 @@ struct ShortcutsSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text(KoanTheme.label("Keyboard Shortcuts"))
+            Text("Keyboard Shortcuts").koanCase()
                 .koanText(.titleSmall, .strong)
 
             ScrollView {
@@ -42,7 +42,7 @@ struct ShortcutsSheet: View {
 
             HStack {
                 Spacer()
-                Button(KoanTheme.label("Done")) { dismiss() }
+                Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
                     .koanButton(.secondary)
             }

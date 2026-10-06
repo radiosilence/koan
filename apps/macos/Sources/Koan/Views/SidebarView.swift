@@ -118,8 +118,8 @@ struct SidebarView: View {
             set: { if !$0 { renaming = nil } }
         )) {
             TextField("Name", text: $renameTo)
-            Button(KoanTheme.label("Cancel"), role: .cancel) { renaming = nil }
-            Button(KoanTheme.label("Rename")) {
+            Button("Cancel", role: .cancel) { renaming = nil }
+            Button("Rename") {
                 if let renaming { playlists.rename(id: renaming.id, to: renameTo) }
                 renaming = nil
             }
@@ -221,19 +221,19 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func menu(for playlist: Playlist) -> some View {
-        Button(KoanTheme.label("Play")) { play(playlist) }
-        Button(KoanTheme.label("Shuffle")) { play(playlist, shuffled: true) }
+        Button("Play") { play(playlist) }
+        Button("Shuffle") { play(playlist, shuffled: true) }
         Divider()
-        Button(KoanTheme.label("Rename…")) {
+        Button("Rename…") {
             renameTo = playlist.name
             renaming = playlist
         }
         .disabled(playlist.fromFile)
         #if os(macOS)
-        Button(KoanTheme.label("Export as M3U8…")) { export(playlist) }
+        Button("Export as M3U8…") { export(playlist) }
         #endif
         Divider()
-        Button(KoanTheme.label("Delete"), role: .destructive) {
+        Button("Delete", role: .destructive) {
             playlists.delete(id: playlist.id)
             // A deleted playlist is not somewhere Back can return to.
             nav.forget(.playlist(playlist.id))

@@ -50,7 +50,7 @@ struct LibraryTab: View {
                 .font(.role(.fine, system: .caption))
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             if manual {
-                Button(KoanTheme.label("Go Online")) { library.engine.setOffline(on: false) }
+                Button("Go Online") { library.engine.setOffline(on: false) }
             }
         }
     }

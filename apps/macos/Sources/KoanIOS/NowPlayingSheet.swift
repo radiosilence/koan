@@ -86,7 +86,7 @@ struct NowPlayingSheet: View {
                     .foregroundStyle(KoanTheme.style(.strong, system: .primary))
                     .lineLimit(1)
                 if player.resolving != nil {
-                    Text(KoanTheme.label("Loading…"))
+                    Text("Loading…").koanCase()
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 } else if let entry = player.currentEntry {
                     LinkText(

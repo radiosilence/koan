@@ -105,7 +105,7 @@ struct PeopleSettings: View {
                         }.koanControl()
                         .labelsHidden()
                         .fixedSize()
-                        Button(KoanTheme.label("Add")) {
+                        Button("Add") {
                             Task {
                                 if await model.create(username: newUsername, role: newRole) {
                                     newUsername = ""
@@ -135,10 +135,10 @@ struct PeopleSettings: View {
                         set: { if !$0 { model.resetting = nil } }
                     )
                 ) {
-                    Button(KoanTheme.label("New Password")) {
+                    Button("New Password") {
                         if let name = model.resetting { Task { await model.invite(name, reset: true) } }
                     }
-                    Button(KoanTheme.label("Cancel"), role: .cancel) {}
+                    Button("Cancel", role: .cancel) {}
                 } message: {
                     Text("The invite carries the new password. Their devices will have to sign in again.")
                 }
@@ -150,14 +150,14 @@ struct PeopleSettings: View {
                     )
                 ) {
                     SecureField("New password", text: $password)
-                    Button(KoanTheme.label("Set")) {
+                    Button("Set") {
                         if let name = settingPassword {
                             let chosen = password
                             Task { await model.setPassword(name, chosen) }
                         }
                         password = ""
                     }
-                    Button(KoanTheme.label("Cancel"), role: .cancel) { password = "" }
+                    Button("Cancel", role: .cancel) { password = "" }
                 } message: {
                     Text("Their devices will have to sign in again with it.")
                 }
@@ -165,7 +165,7 @@ struct PeopleSettings: View {
                     "Delete \(deleting ?? "")?",
                     isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
                 ) {
-                    Button(KoanTheme.label("Delete"), role: .destructive) {
+                    Button("Delete", role: .destructive) {
                         if let name = deleting { Task { await model.delete(name) } }
                     }
                 } message: {
@@ -196,14 +196,14 @@ struct PeopleSettings: View {
             .labelsHidden()
             .fixedSize()
             Menu {
-                Button(KoanTheme.label("Invite")) { Task { await model.invite(account.username) } }
+                Button("Invite") { Task { await model.invite(account.username) } }
                 // Not for this account: a new password signs this app out too.
                 if account.username != signedInAs {
                     if mirror.offers(PasswordChange.extensionName) {
-                        Button(KoanTheme.label("Set Password…")) { settingPassword = account.username }
+                        Button("Set Password…") { settingPassword = account.username }
                     }
-                    Button(KoanTheme.label("New Password and Invite…")) { model.resetting = account.username }
-                    Button(KoanTheme.label("Delete"), role: .destructive) { deleting = account.username }
+                    Button("New Password and Invite…") { model.resetting = account.username }
+                    Button("Delete", role: .destructive) { deleting = account.username }
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -281,7 +281,7 @@ struct InviteSheet: View {
             .navigationTitle(KoanTheme.label("Invite"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(KoanTheme.label("Done")) { dismiss() }
+                    Button("Done") { dismiss() }
                 }
             }
         }

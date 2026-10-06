@@ -428,7 +428,7 @@ private struct SelectionControls: View {
                 }
                 .disabled(count == 0)
                 .help("Add the selection to the end of the queue")
-                Button(KoanTheme.label("Done")) { selection.end() }
+                Button("Done") { selection.end() }
                     .help("Stop selecting (Esc)")
             }
         } else {

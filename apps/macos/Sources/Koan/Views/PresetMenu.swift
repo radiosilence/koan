@@ -60,7 +60,7 @@ struct PresetMenu<Label: View>: View {
             if !presets.enabled {
                 Section {
                     if let enable = presets.enable {
-                        Button(KoanTheme.label("Turn On Processing"), action: enable)
+                        Button("Turn On Processing", action: enable)
                     } else {
                         Text("Turn it on in that device's Settings")
                     }

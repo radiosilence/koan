@@ -402,42 +402,6 @@ macos-test: macos-ffi
 ios_deployment_target := "26.0"
 tv_deployment_target := "26.0"
 
-# The website's screenshots (site/public/screens), from a demo library: twelve
-# records with gradient sleeves, one cued part-way in, with lyrics and
-# favourites seeded. The Mac's are drawn by the app itself, off every screen
-# (KOAN_RENDER_FRAMED), so nothing is captured from the display.
-#
-# Not covered here, and made by hand: the iPhone set (`just ios-walk` on one
-# simulator signed in to `just _demo-server` serving the same library, its
-# 1320x2868 screenshots halved), the Apple TV set (`just tv-walk <library>`,
-# scaled by 0.625 to 2400x1350), `hero` (site/src/hero.html, its command in the
-# file), `tui` and `organize` (the TUI in a terminal), and `tv-signin-web`
-# (the pairing page, which needs a television waiting to pair). The web UI's
-# `web-*` are made here, from a throwaway server on the same library.
-site-screens: macos-bundle
-    #!/usr/bin/env bash
-    set -euo pipefail
-    work="$PWD/target/site-screens"
-    rm -rf "$work" && mkdir -p "$work/config" "$work/renders"
-    cargo build --release -q -p koan-cli
-    python3 scripts/site-screens/library.py "$work/library"
-    printf '[library]\nfolders = ["%s"]\n\n[appearance]\ntheme = "koan"\n' "$work/library" > "$work/config/config.toml"
-    # A test instance: silent, alone on the network, on a port of its own.
-    printf '[playback]\nmuted = true\nrenderers = false\n\n[devices]\nnearby = false\nport = 47917\n' \
-        > "$work/config/config.local.toml"
-    KOAN_CONFIG_DIR="$work/config" target/release/koan scan >/dev/null
-    python3 scripts/site-screens/seed.py "$work/config"
-    # Three stand-in devices on a throwaway server, for the control menu; the
-    # instance drawing the screenshots signs in to the same account.
-    trap 'scripts/site-screens/devices.sh stop "$work/devices"' EXIT
-    scripts/site-screens/devices.sh start "$work/library" "$work/devices" "$work/config"
-    open -n -g -W --env KOAN_CONFIG_DIR="$work/config" --env KOAN_RENDER_EVIDENCE="$work/renders" \
-        --env KOAN_RENDER_PAGES=site-mac,popover --env KOAN_RENDER_SCHEMES=dark \
-        --env KOAN_RENDER_FRAMED=1200x750 "{{app_dir}}/.build/pkg/kōan.app" --args -ApplePersistenceIgnoreState YES
-    scripts/site-screens/devices.sh stop "$work/devices"
-    python3 scripts/site-screens/compose.py "$work/renders" site/public/screens
-    scripts/site-screens/web.sh "$work/config" site/public/screens
-
 # Styling that bypasses the kōan theme: a raw font, colour, label style or
 # corner in the apps' views rather than a role from `Support/KoanTheme.swift`.
 # The theme is the default, so each of these is a place it does not reach.

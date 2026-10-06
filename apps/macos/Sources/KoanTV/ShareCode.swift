@@ -21,7 +21,7 @@ struct ShareCode: View {
                     .background(.white, in: .rect(cornerRadius: KoanTheme.radius(24))) // theme: raw — a QR code needs a white ground to scan
             }
             VStack(alignment: .leading, spacing: 24) {
-                Text(KoanTheme.label("Scan to open"))
+                Text("Scan to open").koanCase()
                     .koanText(.titleSmall, .strong)
                 Text("Anyone with the link can listen, in a browser or in kōan.")
                     .koanText(.body, .muted)
@@ -29,7 +29,7 @@ struct ShareCode: View {
                     .koanText(.meta, .muted)
                     .monospaced()
                     .lineLimit(2)
-                Button(KoanTheme.label("Done")) { dismiss() }
+                Button("Done") { dismiss() }
                     .koanButton(.secondary)
                     .padding(.top, 24)
             }

@@ -364,7 +364,7 @@ private struct ArtistBio: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(KoanTheme.label("About"))
+            Text("About").koanCase()
                 .font(.role(.body, system: .headline))
             // The extract separates paragraphs with a single newline.
             Text(bio.replacingOccurrences(of: "\n", with: "\n\n"))

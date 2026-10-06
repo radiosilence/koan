@@ -50,9 +50,9 @@ struct DspProfilePage: View {
                     ForEach(d.devices, id: \.self) { Text(dsp.label($0)) }
                     if let device = dsp.overview?.device {
                         if d.devices.contains(device) {
-                            Button(KoanTheme.label("Stop using for") + " " + dsp.label(device)) { dsp.use(nil) }
+                            Button("Stop using for" + " " + dsp.label(device)) { dsp.use(nil) }
                         } else {
-                            Button(KoanTheme.label("Use for") + " " + dsp.label(device)) { dsp.use(d.name) }
+                            Button("Use for" + " " + dsp.label(device)) { dsp.use(d.name) }
                         }
                     }
                 } header: {
@@ -100,7 +100,7 @@ struct DspProfilePage: View {
                 }
 
                 Section {
-                    Button(KoanTheme.label("Delete Profile"), role: .destructive) { confirmingDelete = true }
+                    Button("Delete Profile", role: .destructive) { confirmingDelete = true }
                 }
             } else {
                 ProgressView()
@@ -125,7 +125,7 @@ struct DspProfilePage: View {
             isPresented: $confirmingDelete,
             titleVisibility: .visible
         ) {
-            Button(KoanTheme.label("Delete"), role: .destructive) {
+            Button("Delete", role: .destructive) {
                 dsp.remove(name)
                 dismiss()
             }
@@ -191,11 +191,11 @@ private struct LayersSection: View {
                 }.koanToggle()
                 #if !os(tvOS)
                 .contextMenu {
-                    Button(KoanTheme.label("Move Up")) { move(index, by: -1) }
+                    Button("Move Up") { move(index, by: -1) }
                         .disabled(index == 0)
-                    Button(KoanTheme.label("Move Down")) { move(index, by: 1) }
+                    Button("Move Down") { move(index, by: 1) }
                         .disabled(index == layers.count - 1)
-                    Button(KoanTheme.label("Remove from Stack"), role: .destructive) { remove(index) }
+                    Button("Remove from Stack", role: .destructive) { remove(index) }
                 }
                 #endif
             }
@@ -268,7 +268,7 @@ private struct TargetSection: View {
                     .koanText(.meta, .muted)
             }
             #if !os(tvOS)
-            Button(KoanTheme.label("Add a Target…")) { adding = true }
+            Button("Add a Target…") { adding = true }
             #endif
         } header: {
             KoanSectionHeader("Target")

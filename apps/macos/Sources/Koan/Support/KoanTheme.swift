@@ -48,9 +48,12 @@ enum KoanTheme {
         CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
     }
 
-    /// Text the app writes for itself (navigation, headings, buttons) as the
-    /// theme sets it: lowercase. Text from the library keeps its own case.
-    static func label(_ text: String) -> String {
+    /// A title the app writes, lowercased in the theme, for the few places
+    /// that take a bare string — navigation titles, AppKit labels. Everywhere
+    /// else the case changes only on screen (`.koanCase()`, and the theme's
+    /// button and label styles), so accessibility labels, and the UI tests
+    /// that find things by them, keep the words as written.
+    nonisolated static func label(_ text: String) -> String {
         isOn ? text.lowercased() : text
     }
 
@@ -173,7 +176,7 @@ struct KoanLabel: View {
     var body: some View {
         if KoanTheme.isOn {
             Label {
-                Text(KoanTheme.label(title))
+                Text(title).koanCase()
             } icon: {
                 KoanIcon(icon)
             }
@@ -917,6 +920,7 @@ struct KoanButtonStyle: ButtonStyle {
         } else if kind.setsType {
             configuration.label
                 .font(.koan(.control))
+                .textCase(.lowercase)
                 .foregroundStyle(foreground(configuration))
         } else {
             configuration.label
@@ -1064,8 +1068,9 @@ struct KoanSegmentedPicker<Value: Hashable>: View {
                     Button {
                         selection = option.value
                     } label: {
-                        Text(KoanTheme.label(option.label))
+                        Text(option.label)
                             .font(.koan(.control))
+                            .textCase(.lowercase)
                             .foregroundStyle(chosen ? Color.koanInk : Color.koanMuted)
                             .padding(.bottom, 5)
                             .overlay(alignment: .bottom) {
@@ -1399,8 +1404,9 @@ struct KoanTabItem: View {
             if icons {
                 KoanIcon(icon).font(.system(size: 19))
             }
-            Text(KoanTheme.label(title))
+            Text(title)
                 .font(.koan(.fine))
+                .textCase(.lowercase)
                 .padding(.bottom, 3)
                 .overlay(alignment: .bottom) {
                     if selected { Rectangle().fill(.tint).frame(height: KoanTheme.hairline) }
@@ -1448,6 +1454,7 @@ struct KoanForm<Content: View>: View {
             .foregroundStyle(Color.koanInk)
             .toggleStyle(KoanToggleStyle())
             .textFieldStyle(.plain)
+            .koanButtons(.text)
             .labeledContentStyle(KoanLabeledContentStyle())
         } else {
             Form { content }.formStyle(.grouped)
@@ -1477,8 +1484,9 @@ struct KoanUnavailable: View {
                 KoanIcon(icon)
                     .font(.system(size: 28))
                     .foregroundStyle(Color.koanMuted)
-                Text(KoanTheme.label(title))
+                Text(title)
                     .font(.koan(.body))
+                    .textCase(.lowercase)
                     .foregroundStyle(Color.koanInk)
                 Text(detail)
                     .font(.koan(.meta))
@@ -1503,10 +1511,10 @@ struct KoanSectionHeader: View {
 
     var body: some View {
         if KoanTheme.isOn {
-            Text(KoanTheme.label(title))
+            Text(title)
                 .font(.koan(.fine))
                 .foregroundStyle(Color.koanInk)
-                .textCase(nil)
+                .textCase(.lowercase)
                 .padding(.top, KoanTheme.Space.l)
                 .accessibilityAddTraits(.isHeader)
         } else {
@@ -1516,6 +1524,12 @@ struct KoanSectionHeader: View {
 }
 
 extension View {
+    /// Lowercase on screen in the theme, as the app's own titles are; the
+    /// string, and what VoiceOver and the UI tests read, keep their case.
+    func koanCase() -> some View {
+        textCase(KoanTheme.isOn ? .lowercase : nil)
+    }
+
     /// What every scene's root carries for the theme: whether icons are drawn,
     /// and the appearance model itself for Settings. A scene inherits nothing
     /// from another, so each root calls this.

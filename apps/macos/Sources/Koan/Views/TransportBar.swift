@@ -132,7 +132,7 @@ struct TransportBar: View {
                     Text(name)
                         .koanText(.meta, .strong)
                         .lineLimit(1)
-                    Text(KoanTheme.label("Loading…"))
+                    Text("Loading…").koanCase()
                         .koanText(.fine, .muted)
                 } else if let entry = player.currentEntry {
                     Text(entry.title)
@@ -159,7 +159,7 @@ struct TransportBar: View {
                     }
                     .lineLimit(1)
                 } else {
-                    Text(KoanTheme.label("Nothing playing"))
+                    Text("Nothing playing").koanCase()
                         .koanText(.meta, .muted)
                 }
             }
@@ -589,23 +589,23 @@ struct SleepButton: View {
                 Button("\(minutes) Minutes") { player.setSleepTimer(.after(minutes: UInt32(minutes))) }
             }
             Divider()
-            Button(KoanTheme.label("End of Track")) { player.setSleepTimer(.endOfTrack) }
-            Button(KoanTheme.label("End of Record")) { player.setSleepTimer(.endOfRecord) }
+            Button("End of Track") { player.setSleepTimer(.endOfTrack) }
+            Button("End of Record") { player.setSleepTimer(.endOfRecord) }
             if sleep != nil {
                 Divider()
-                Button(KoanTheme.label("Cancel Sleep Timer"), role: .destructive) { player.cancelSleepTimer() }
+                Button("Cancel Sleep Timer", role: .destructive) { player.cancelSleepTimer() }
             }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: sleep == nil ? "moon" : "moon.zzz.fill")
                 switch sleep {
-                case _ where player.sleepFading: Text(KoanTheme.label("Fading"))
+                case _ where player.sleepFading: Text("Fading").koanCase()
                 case .at(let unixMs):
                     let now = Date.now
                     Text(timerInterval: now...max(now, Self.date(unixMs)), countsDown: true)
                         .monospacedDigit()
-                case .endOfTrack: Text(KoanTheme.label("Track"))
-                case .endOfRecord: Text(KoanTheme.label("Record"))
+                case .endOfTrack: Text("Track").koanCase()
+                case .endOfRecord: Text("Record").koanCase()
                 case nil: EmptyView()
                 }
             }

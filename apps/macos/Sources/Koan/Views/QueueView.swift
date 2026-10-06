@@ -299,7 +299,7 @@ struct QueueView: View {
                         .lineLimit(1)
                     #endif
                 } else {
-                    Text(KoanTheme.label("Queue"))
+                    Text("Queue").koanCase()
                         .font(.role(.body, system: .headline))
                 }
                 Text(summary)
@@ -314,7 +314,7 @@ struct QueueView: View {
 
             #if os(iOS)
             if editMode.isEditing {
-                Button(KoanTheme.label("Done")) { editMode = .inactive }
+                Button("Done") { editMode = .inactive }
                     .fixedSize()
             }
             #endif

@@ -65,7 +65,7 @@ struct TrackBrowser: View {
     #if os(macOS)
     private var header: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(KoanTheme.label("Tracks"))
+            Text("Tracks").koanCase()
                 .font(.role(.titleSmall, system: .title2.weight(.semibold)))
             Text(count)
                 .font(.role(.fine, system: .caption))

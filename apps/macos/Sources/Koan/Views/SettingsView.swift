@@ -220,7 +220,7 @@ private struct LibrarySettings: View {
                     }
                 }
                 // Adding a folder starts a scan, so it waits for the one running.
-                Button(KoanTheme.label("Add Folder…")) { choosingFolder = true }
+                Button("Add Folder…") { choosingFolder = true }
                     .koanButton(.secondary)
                     .disabled(activity.conflicts(with: .localLibrary))
             } header: {
@@ -232,9 +232,9 @@ private struct LibrarySettings: View {
 
             Section {
                 HStack {
-                    Button(KoanTheme.label("Scan")) { model.scan() }
+                    Button("Scan") { model.scan() }
                         .koanButton(.secondary)
-                    Button(KoanTheme.label("Rescan Everything")) { model.scan(force: true) }
+                    Button("Rescan Everything") { model.scan(force: true) }
                         .koanButton(.secondary)
                         .help("Re-read every file's tags, ignoring the scan cache")
                 }
@@ -254,7 +254,7 @@ private struct LibrarySettings: View {
 
             Section {
                 // Empties every table, so it waits for everything.
-                Button(KoanTheme.label("Clear Library Index…"), role: .destructive) {
+                Button("Clear Library Index…", role: .destructive) {
                     confirmingRebuild = true
                 }
                 .koanButton(.secondary)
@@ -277,8 +277,8 @@ private struct LibrarySettings: View {
             isPresented: $confirmingRebuild,
             titleVisibility: .visible
         ) {
-            Button(KoanTheme.label("Clear Index"), role: .destructive) { model.rebuildIndex() }
-            Button(KoanTheme.label("Cancel"), role: .cancel) {}
+            Button("Clear Index", role: .destructive) { model.rebuildIndex() }
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text("Play counts, lyrics and audio analysis are lost. Favourites are kept. Your music files are not touched.")
         }
@@ -287,15 +287,15 @@ private struct LibrarySettings: View {
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
             titleVisibility: .visible
         ) {
-            Button(KoanTheme.label("Remove and Forget Its Tracks"), role: .destructive) {
+            Button("Remove and Forget Its Tracks", role: .destructive) {
                 if let folder = removing { model.removeFolder(folder.path, forgetTracks: true) }
                 removing = nil
             }
-            Button(KoanTheme.label("Remove, Keep Them in the Library")) {
+            Button("Remove, Keep Them in the Library") {
                 if let folder = removing { model.removeFolder(folder.path, forgetTracks: false) }
                 removing = nil
             }
-            Button(KoanTheme.label("Cancel"), role: .cancel) { removing = nil }
+            Button("Cancel", role: .cancel) { removing = nil }
         } message: {
             Text("Your files are not touched either way. Keeping them leaves records in the library that kōan will not scan again.")
         }
@@ -378,17 +378,17 @@ private struct RemoteSettings: View {
                         // out is a config write, and greying it out while a
                         // sync runs strands you on a server you are trying to
                         // leave.
-                        Button(KoanTheme.label("Sync")) { model.syncNow() }
+                        Button("Sync") { model.syncNow() }
                             .koanButton(.secondary)
                             .disabled(activity.conflicts(with: [.remoteTracks]))
                         #if !os(tvOS)
                         if mirror.offers(PasswordChange.extensionName) {
-                            Button(KoanTheme.label("Change Password…")) { changingPassword = true }
+                            Button("Change Password…") { changingPassword = true }
                                 .koanButton(.secondary)
                         }
                         #endif
                         Spacer()
-                        Button(KoanTheme.label("Sign Out"), role: .destructive) { confirmingSignOut = true }
+                        Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                             .koanButton(.secondary)
                     }
                     .rowButtons()
@@ -399,13 +399,13 @@ private struct RemoteSettings: View {
                 .alert("Change your password", isPresented: $changingPassword) {
                     SecureField("Current password", text: $currentPassword)
                     SecureField("New password", text: $newPassword)
-                    Button(KoanTheme.label("Change")) {
+                    Button("Change") {
                         let (current, new) = (currentPassword, newPassword)
                         currentPassword = ""
                         newPassword = ""
                         Task { _ = await model.changePassword(current: current, new: new) }
                     }
-                    Button(KoanTheme.label("Cancel"), role: .cancel) {
+                    Button("Cancel", role: .cancel) {
                         currentPassword = ""
                         newPassword = ""
                     }
@@ -461,7 +461,7 @@ private struct RemoteSettings: View {
                         .koanField()
                     }
                     HStack {
-                        Button(KoanTheme.label("Sign In")) { model.signIn(url: url, username: username) }
+                        Button("Sign In") { model.signIn(url: url, username: username) }
                             .koanButton(.primary)
                             .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                         Spacer()
@@ -580,7 +580,7 @@ private struct RemoteSettings: View {
                 LabeledContent("Using") {
                     HStack {
                         Text(Format.bytes(Int64(model.settings.cacheBytes)))
-                        Button(KoanTheme.label("Clear")) { model.clearCache() }
+                        Button("Clear") { model.clearCache() }
                             .koanButton(.text)
                             .disabled(activity.conflicts(with: [.downloads]))
                     }
@@ -599,13 +599,13 @@ private struct RemoteSettings: View {
             isPresented: $confirmingSignOut,
             titleVisibility: .visible
         ) {
-            Button(KoanTheme.label("Sign Out and Forget Its Tracks"), role: .destructive) {
+            Button("Sign Out and Forget Its Tracks", role: .destructive) {
                 model.signOut(forgetTracks: true)
             }
-            Button(KoanTheme.label("Sign Out and Keep Its Tracks")) {
+            Button("Sign Out and Keep Its Tracks") {
                 model.signOut(forgetTracks: false)
             }
-            Button(KoanTheme.label("Cancel"), role: .cancel) {}
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text("Tracks you also have as local files are kept either way. Keeping the rest leaves records in the library that cannot be played until you sign in again.")
         }
@@ -618,10 +618,10 @@ private struct RemoteSettings: View {
             titleVisibility: .visible,
             presenting: replacingQueue
         ) { _ in
-            Button(KoanTheme.label("Replace With the Server's Queue"), role: .destructive) {
+            Button("Replace With the Server's Queue", role: .destructive) {
                 Task { await model.setServerQueue(true) }
             }
-            Button(KoanTheme.label("Cancel"), role: .cancel) {}
+            Button("Cancel", role: .cancel) {}
         } message: { saved in
             Text("Your server has a queue of \(saved.savedTracks) \(saved.savedTracks == 1 ? "track" : "tracks") saved by \(saved.savedBy). Keeping the queue on the server replaces the one on this device with it.")
         }
@@ -783,7 +783,7 @@ struct DspSettings: View {
                         ProfileRow(profile: p, active: o.active == p.name)
                     }
                     .swipeActions {
-                        Button(KoanTheme.label("Delete"), role: .destructive) { dsp.remove(p.name) }
+                        Button("Delete", role: .destructive) { dsp.remove(p.name) }
                     }
                     #else
                     Button {
@@ -793,7 +793,7 @@ struct DspSettings: View {
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
-                        Button(KoanTheme.label("Delete"), role: .destructive) { dsp.remove(p.name) }
+                        Button("Delete", role: .destructive) { dsp.remove(p.name) }
                     }
                     #endif
                 }
@@ -801,9 +801,9 @@ struct DspSettings: View {
             // Profiles come in as files, and a television has none: they are
             // imported on another device, and the TV picks them by output.
             #if !os(tvOS)
-            Button(KoanTheme.label("Import…")) { importing = true }
+            Button("Import…") { importing = true }
                 .koanButton(.secondary)
-            Button(KoanTheme.label("Find in AutoEQ…")) {
+            Button("Find in AutoEQ…") {
                 findQuery = ""
                 findingAutoEq = true
             }
@@ -843,7 +843,7 @@ struct DspSettings: View {
                 DspProfilePage(dsp: dsp, name: shown.name)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
-                            Button(KoanTheme.label("Done")) { showing = nil }
+                            Button("Done") { showing = nil }
                         }
                     }
             }
@@ -869,14 +869,14 @@ private struct AutoEqSuggestion: View {
                 Text("AutoEQ has a profile for \(entry.name). Use it?")
                     .koanText(.body, .muted)
                 HStack {
-                    Button(KoanTheme.label("Use")) { dsp.installAutoEq(entry) }
+                    Button("Use") { dsp.installAutoEq(entry) }
                         .koanButton(.primary)
                     dismiss
                     Spacer()
                 }
             case let .search(query):
                 HStack {
-                    Button(KoanTheme.label("Find") + " \(query) " + KoanTheme.label("in AutoEQ…")) { find(query) }
+                    Button("Find \(query) in AutoEQ…") { find(query) }
                         .koanButton(.secondary)
                     dismiss
                     Spacer()
@@ -888,7 +888,7 @@ private struct AutoEqSuggestion: View {
     }
 
     private var dismiss: some View {
-        Button(KoanTheme.label("Not for This Device")) { dsp.dismissSuggestion() }
+        Button("Not for This Device") { dsp.dismissSuggestion() }
             .koanButton(.text)
     }
 }
@@ -936,7 +936,7 @@ private struct AutoEqSearch: View {
             .navigationTitle(KoanTheme.label("AutoEQ"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(KoanTheme.label("Cancel")) { dismiss() }
+                    Button("Cancel") { dismiss() }
                 }
             }
             // Debounced: a search runs once typing pauses, not per keystroke.
@@ -1047,7 +1047,7 @@ struct DspImportPrompts: ViewModifier {
                 ForEach(DspModel.rates, id: \.self) { rate in
                     Button("\(DspModel.khz(rate)) kHz") { dsp.retry(rate: rate) }
                 }
-                Button(KoanTheme.label("Cancel"), role: .cancel) { dsp.needsRate = nil }
+                Button("Cancel", role: .cancel) { dsp.needsRate = nil }
             } message: {
                 Text("These coefficients carry no rate of their own. Use the one the filter was designed at.")
             }
@@ -1060,9 +1060,9 @@ struct DspImportPrompts: ViewModifier {
                 presenting: dsp.imported
             ) { name in
                 if let device = dsp.overview?.device, dsp.overview?.active != name {
-                    Button(KoanTheme.label("Use for") + " \(device)") { dsp.use(name) }
+                    Button("Use for" + " \(device)") { dsp.use(name) }
                 }
-                Button(KoanTheme.label("Done"), role: .cancel) {}
+                Button("Done", role: .cancel) {}
             } message: { _ in
                 if let device = dsp.overview?.device, dsp.overview?.active == nil {
                     Text("\(device) plays untouched until it has a profile.")
@@ -1086,7 +1086,7 @@ private struct PairDevice: View {
                         .verbatimEntry()
                         .onSubmit(approve)
                         .koanField()
-                    Button(KoanTheme.label("Approve"), action: approve)
+                    Button("Approve", action: approve)
                         .koanButton(.primary)
                         .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -1210,7 +1210,7 @@ private struct DevicesSettings: View {
                     HStack {
                         Text(addr).koanText(.meta).monospaced()
                         Spacer()
-                        Button(KoanTheme.label("Remove"), role: .destructive) {
+                        Button("Remove", role: .destructive) {
                             model.edit { $0.devicesAddresses.removeAll { $0 == addr } }
                         }
                         .koanButton(.text)
@@ -1221,7 +1221,7 @@ private struct DevicesSettings: View {
                         .verbatimEntry(.url)
                         .onSubmit(add)
                         .koanField()
-                    Button(KoanTheme.label("Add"), action: add)
+                    Button("Add", action: add)
                         .koanButton(.secondary)
                         .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -1238,7 +1238,7 @@ private struct DevicesSettings: View {
                         HStack {
                             Text(account)
                             Spacer()
-                            Button(KoanTheme.label("Stop sharing"), role: .destructive) { share(account, allow: false) }
+                            Button("Stop sharing", role: .destructive) { share(account, allow: false) }
                                 .koanButton(.text)
                         }
                     }
@@ -1254,7 +1254,7 @@ private struct DevicesSettings: View {
                             #endif
                             .onSubmit { share(grantee, allow: true) }
                             .koanField()
-                        Button(KoanTheme.label("Share")) { share(grantee, allow: true) }
+                        Button("Share") { share(grantee, allow: true) }
                             .koanButton(.secondary)
                             .disabled(grantee.trimmingCharacters(in: .whitespaces).isEmpty)
                     }

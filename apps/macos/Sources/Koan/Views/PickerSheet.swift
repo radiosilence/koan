@@ -136,7 +136,7 @@ struct PickerSheet: View {
             } else {
                 Text("\(picked.count) selected")
                     .koanText(.fine, .muted)
-                Button(KoanTheme.label("Clear")) { picked = [] }
+                Button("Clear") { picked = [] }
                     .koanButton(.text)
             }
 
@@ -146,13 +146,13 @@ struct PickerSheet: View {
                 ProgressView().controlSize(.small)
             }
 
-            Button(KoanTheme.label("Replace Queue")) { commit(.replace) }
+            Button("Replace Queue") { commit(.replace) }
                 .shortcut(.return, modifiers: [.command, .shift])
                 .koanButton(.secondary)
-            Button(KoanTheme.label("Add")) { commit(.append) }
+            Button("Add") { commit(.append) }
                 .shortcut(.return, modifiers: [])
                 .koanButton(.secondary)
-            Button(KoanTheme.label("Add & Play")) { commit(.appendAndPlay) }
+            Button("Add & Play") { commit(.appendAndPlay) }
                 .shortcut(.return, modifiers: .command)
                 .koanButton(.primary)
         }

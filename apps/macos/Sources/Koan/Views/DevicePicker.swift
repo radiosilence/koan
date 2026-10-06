@@ -84,7 +84,7 @@ private struct DeviceRow: View {
         // for what can be done to a row beyond choosing it.
         .contextMenu {
             if !device.awake {
-                Button(KoanTheme.label("Forget"), systemImage: "trash", role: .destructive) {
+                Button("Forget", systemImage: "trash", role: .destructive) {
                     player.forget(device.id)
                 }
             }
@@ -148,7 +148,7 @@ struct ControlPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text(KoanTheme.label("Control"))
+            Text("Control").koanCase()
                 .font(.role(.body, system: .headline))
                 .padding(.horizontal, 14)
                 .padding(.top, 12)
@@ -203,7 +203,7 @@ struct OutputPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(KoanTheme.label("Output"))
+                Text("Output").koanCase()
                     .font(.role(.body, system: .headline))
                 if let owner = player.outputs?.owner {
                     Text("On \(owner)")
@@ -326,13 +326,13 @@ private struct RendererVolume: View {
                     #if os(tvOS)
                     // No slider on tvOS: a step either way, as a remote's own
                     // volume buttons do.
-                    Button(KoanTheme.label("Quieter"), systemImage: "speaker.fill") {
+                    Button("Quieter", systemImage: "speaker.fill") {
                         player.setOutputVolume(UInt8(max(0, Int(volume) - 5)))
                     }
                     Text("\(volume)")
                         .monospacedDigit()
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    Button(KoanTheme.label("Louder"), systemImage: "speaker.wave.3.fill") {
+                    Button("Louder", systemImage: "speaker.wave.3.fill") {
                         player.setOutputVolume(UInt8(min(100, Int(volume) + 5)))
                     }
                     #else
@@ -427,7 +427,7 @@ private struct SectionHeading: View {
             }
             Spacer(minLength: 0)
             if let move {
-                Button(KoanTheme.label("Move here"), action: move)
+                Button("Move here", action: move)
                     .font(.role(.fine, system: .caption))
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -525,7 +525,7 @@ private struct DeviceChoiceRow: View {
             }
 
             if canMove {
-                Button(KoanTheme.label("Move here"), action: onMove)
+                Button("Move here", action: onMove)
                     .font(.role(.fine, system: .caption))
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -561,7 +561,7 @@ private struct LocalNetworkBlocked: View {
                 .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .fixedSize(horizontal: false, vertical: true)
             #if os(iOS)
-            Button(KoanTheme.label("Open Settings")) {
+            Button("Open Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }

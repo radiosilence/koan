@@ -38,13 +38,6 @@ enum EvidenceRenderer {
         }
         // The transport's popovers, as their content: a popover is not drawn in
         // a window that is never shown.
-        // A signed-in run lists the account's other devices once the link has
-        // them: up to fifteen seconds, then whatever there is.
-        if await state.engine.settings().remoteSignedIn {
-            for _ in 0..<30 where !state.player.hasOtherDevices {
-                try? await Task.sleep(for: .milliseconds(500))
-            }
-        }
         // In the room's accent, as they open over the transport.
         var sleeve: Color?
         if let source = state.player.currentArtwork { sleeve = await state.art.dominantColour(for: source) }
@@ -103,18 +96,6 @@ enum EvidenceRenderer {
         if let album = state.player.currentAlbumId {
             windows.append(("window-album", { nav.open(album: album) }))
         }
-        // The website's Mac screenshots (`just site-screens`), with the record
-        // the scratch library has cued.
-        let ui = state.ui, search = state.search, player = state.player
-        let plain = { ui.showLyrics = false; search.query = "" }
-        windows += [
-            ("site-mac-queue", { plain(); nav.show(.queue) }),
-            ("site-mac-album", { plain(); if let id = player.currentAlbumId { nav.open(album: id) } }),
-            ("site-mac-artist", { plain(); if let id = player.currentArtistId { nav.open(artist: id) } }),
-            ("site-mac-favourites", { plain(); nav.show(.favourites) }),
-            ("site-mac-lyrics", { plain(); ui.showLyrics = true; nav.show(.queue) }),
-            ("site-mac-search", { plain(); search.query = "low"; nav.show(.searchResults) }),
-        ]
         // The sidebar on its own as well: a split view's sidebar column is not
         // drawn in a window that is never shown.
         windows.append(("window-sidebar", { nav.show(.albums) }))
@@ -123,7 +104,7 @@ enum EvidenceRenderer {
         }
         // `KOAN_RENDER_FRAMED`: the window as a window — titlebar, toolbar,
         // sidebar column and all — at the size given (points, `1200x750` by
-        // default), for the website's screenshots.
+        // default): what pages look like in the window people see.
         let framed = ProcessInfo.processInfo.environment["KOAN_RENDER_FRAMED"].map { spec -> CGSize in
             let parts = spec.split(separator: "x").compactMap { Double($0) }
             return parts.count == 2 ? CGSize(width: parts[0], height: parts[1]) : CGSize(width: 1200, height: 750)

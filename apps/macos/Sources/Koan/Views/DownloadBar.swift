@@ -115,6 +115,9 @@ struct DownloadedBar: UIViewRepresentable {
             isUserInteractionEnabled = false
             isAccessibilityElement = false
             layer.addSublayer(bar)
+            registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: BarView, _) in
+                view.restyle()
+            }
         }
 
         required init?(coder: NSCoder) { fatalError("not decoded") }
@@ -127,11 +130,6 @@ struct DownloadedBar: UIViewRepresentable {
 
         override func tintColorDidChange() {
             super.tintColorDidChange()
-            restyle()
-        }
-
-        override func traitCollectionDidChange(_ previous: UITraitCollection?) {
-            super.traitCollectionDidChange(previous)
             restyle()
         }
 

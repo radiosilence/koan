@@ -29,7 +29,7 @@ struct SignInPage: View {
     var body: some View {
         VStack(spacing: 48) {
             VStack(spacing: 16) {
-                Text(KoanTheme.label("Sign in to kōan"))
+                Text("Sign in to kōan").koanCase()
                     .koanText(.display, .strong)
                 Text(pairing == nil
                      ? "Open kōan on a device that is signed in to your server and on this network. Its server will appear here."
@@ -56,10 +56,10 @@ struct SignInPage: View {
 
             HStack(spacing: 32) {
                 if pairing != nil {
-                    Button(KoanTheme.label("Another Server")) { cancel() }
+                    Button("Another Server") { cancel() }
                         .koanButton(.secondary)
                 }
-                Button(KoanTheme.label("Use a Password or API Key")) { manual = true }
+                Button("Use a Password or API Key") { manual = true }
                     .koanButton(.secondary)
             }
         }
@@ -160,7 +160,7 @@ struct SignInPage: View {
                 ProgressView()
                     .frame(width: 240)
             } else {
-                Button(KoanTheme.label("Get a Code"), action: start)
+                Button("Get a Code", action: start)
                     .koanButton(.primary)
                     .disabled(server.trimmingCharacters(in: .whitespaces).isEmpty)
             }

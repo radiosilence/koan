@@ -189,7 +189,7 @@ struct ShelfView: View {
         VStack(alignment: .leading, spacing: 1) {
             // A television's navigation title already names the page, above.
             #if !os(tvOS)
-            Text(KoanTheme.label(title))
+            Text(title).koanCase()
                 .font(.role(.titleSmall, system: .title2.weight(.semibold)))
             #endif
             Text(counts)
@@ -221,7 +221,7 @@ struct ShelfView: View {
     private func sectionHead(_ title: String, total: UInt64, list: LibraryModel.ShelfList) -> some View {
         Button { open(list) } label: {
             HStack(spacing: 6) {
-                Text(KoanTheme.label(title))
+                Text(title).koanCase()
                 Text("\(total)")
                     .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     .monospacedDigit()
@@ -327,12 +327,12 @@ struct ShelfView: View {
         if chosen.count == 1, let track = chosen.first {
             PlayableMenu(playable: .track(track))
         } else if !chosen.isEmpty {
-            Button(KoanTheme.label("Play")) {
+            Button("Play") {
                 player.playNow(trackIds: chosen.map(\.id))
                 nav.showQueueWhenReady(watching: player)
             }
-            Button(KoanTheme.label("Play Next")) { player.playNext(trackIds: chosen.map(\.id)) }
-            Button(KoanTheme.label("Add to Queue")) { player.enqueue(trackIds: chosen.map(\.id)) }
+            Button("Play Next") { player.playNext(trackIds: chosen.map(\.id)) }
+            Button("Add to Queue") { player.enqueue(trackIds: chosen.map(\.id)) }
         }
     }
 }

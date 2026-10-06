@@ -57,7 +57,7 @@ struct BandTable: View {
                 }
                 #if !os(tvOS)
                 .contextMenu {
-                    Button(KoanTheme.label("Remove"), role: .destructive) { dsp.removeFilter(profile, index) }
+                    Button("Remove", role: .destructive) { dsp.removeFilter(profile, index) }
                 }
                 #endif
             }
@@ -68,7 +68,7 @@ struct BandTable: View {
             }
             #endif
             #if !os(tvOS)
-            Button(KoanTheme.label("Add a Band")) { dsp.addBand(profile) }
+            Button("Add a Band") { dsp.addBand(profile) }
                 .koanButton(.secondary)
             #endif
         } header: {
@@ -117,7 +117,7 @@ private struct BandEditor: View {
             if focused != nil {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
-                    Button(KoanTheme.label("Done")) { focused = nil }
+                    Button("Done") { focused = nil }
                 }
             }
         }

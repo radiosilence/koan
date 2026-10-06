@@ -22,8 +22,8 @@ struct NewPlaylistAlert: ViewModifier {
             )
         ) {
             TextField("Name", text: $name)
-            Button(KoanTheme.label("Cancel"), role: .cancel) { name = "" }
-            Button(KoanTheme.label("Create")) { create() }
+            Button("Cancel", role: .cancel) { name = "" }
+            Button("Create") { create() }
         } message: {
             Text(message)
         }

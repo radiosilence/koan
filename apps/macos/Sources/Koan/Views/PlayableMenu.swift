@@ -538,7 +538,7 @@ struct AddToPlaylistMenu: View {
         // A television plays playlists; they are made and filled elsewhere.
         #if !os(tvOS)
         Menu("Add to Playlist") {
-            Button(KoanTheme.label("New Playlist…")) { resolve { playlists.naming = $0 } }
+            Button("New Playlist…") { resolve { playlists.naming = $0 } }
             let fillable = playlists.playlists.filter { !$0.readonly }
             if !fillable.isEmpty {
                 Divider()

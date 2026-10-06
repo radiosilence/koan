@@ -65,7 +65,7 @@ struct ApiKeysSettings: View {
                     TextField("Name", text: $name, prompt: Text("The app it is for"))
                         .verbatimEntry()
                         .koanField()
-                    Button(KoanTheme.label("New Key")) {
+                    Button("New Key") {
                         Task {
                             if await model.create(name: name.trimmingCharacters(in: .whitespaces)) {
                                 name = ""
@@ -95,7 +95,7 @@ struct ApiKeysSettings: View {
             "Revoke \u{201C}\(revoking?.name ?? "")\u{201D}?",
             isPresented: Binding(get: { revoking != nil }, set: { if !$0 { revoking = nil } })
         ) {
-            Button(KoanTheme.label("Revoke"), role: .destructive) {
+            Button("Revoke", role: .destructive) {
                 if let key = revoking { Task { await model?.revoke(key) } }
             }
         } message: {
@@ -122,7 +122,7 @@ struct ApiKeysSettings: View {
                     .koanText(.body, .muted)
                     .help("To stop using it, sign out")
             } else {
-                Button(KoanTheme.label("Revoke"), role: .destructive) { revoking = key }
+                Button("Revoke", role: .destructive) { revoking = key }
                     .koanButton(.text)
             }
         }
@@ -175,7 +175,7 @@ private struct NewKeySheet: View {
             .navigationTitle(KoanTheme.label("New Key"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(KoanTheme.label("Done")) { dismiss() }
+                    Button("Done") { dismiss() }
                 }
             }
         }

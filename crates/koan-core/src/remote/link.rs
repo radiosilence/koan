@@ -702,17 +702,12 @@ impl LinkIdentity {
         } else {
             ("linux", "Linux")
         };
-        // A stand-in device for screenshots — a throwaway instance on a scratch
-        // configuration — says what it stands in for.
-        let name = std::env::var("KOAN_DEVICE_NAME").ok().or(name);
-        let platform =
-            std::env::var("KOAN_DEVICE_PLATFORM").unwrap_or_else(|_| platform.to_string());
         Self {
             name: name
                 .filter(|n| !n.trim().is_empty())
                 .or_else(hostname)
                 .unwrap_or_else(|| label.to_string()),
-            platform,
+            platform: platform.to_string(),
             device_id: device_id(&config::config_dir()),
         }
     }
