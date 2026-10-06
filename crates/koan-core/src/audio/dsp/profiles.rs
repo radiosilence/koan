@@ -515,7 +515,9 @@ pub fn remove_filter(name: &str, index: usize) -> Result<(), String> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Response {
     pub freqs: Vec<f64>,
-    /// Everything it plays, layers and target step included.
+    /// Everything it plays, layers, target step and impulse responses
+    /// included, on the first channel. The preamp is left out, so the
+    /// curve lines up with the bands' own gains; it is `preamp_db`.
     pub total: Vec<f64>,
     /// Each of its own parametric bands alone, in order.
     pub bands: Vec<Vec<f64>>,
@@ -547,8 +549,10 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
     let profile = all.iter().find(|p| p.name == name)?;
     let freqs = targets::grid();
     let curve = |filters: &[crate::config::DspFilter]| super::response(filters, &freqs, rate);
-    let chain = super::chain(profile, all, &mut Vec::new()).ok()?;
-    let total = curve(&chain);
+    let setup = Setup::load(profile, all, &config::config_dir()).ok()?;
+    let total = setup
+        .as_ref()
+        .map_or_else(|| vec![0.0; freqs.len()], |s| s.response(&freqs, rate));
     let bands = profile
         .filters
         .iter()
@@ -612,10 +616,7 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
         }
         None => (None, None, None),
     };
-    let preamp_db = Setup::load(profile, all, &config::config_dir())
-        .ok()
-        .flatten()
-        .map_or(0.0, |s| s.preamp_db(rate, 2));
+    let preamp_db = setup.map_or(0.0, |s| s.preamp_db(s.output_rate(rate), 2));
     Some(Response {
         freqs,
         total,

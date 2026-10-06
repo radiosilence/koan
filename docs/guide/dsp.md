@@ -189,9 +189,12 @@ The originals are not needed again.
 
 The apps' EQ settings draw what the profile playing on the output in use does
 to the sound, and each profile's page draws its own. The curve is computed by
-the core from the same filters the DSP runs, at 48 kHz, so it shows what plays
-rather than what the filters were meant to do: layers, a moved target and the
-preamp included. Each parametric band is drawn faintly behind the total. For a
+the core from the same filters and impulse responses the DSP runs, at 48 kHz,
+so it shows what plays rather than what the filters were meant to do, layers
+and a moved target included. The preamp is shown beside the curve rather than
+in it, so the curve lines up with the bands' own gains. The curve is the left
+channel's; a band on the right channel alone draws nothing there and has no
+handle. Each parametric band is drawn faintly behind the total. For a
 correction from AutoEQ, the Headphone view draws the headphone as measured, the
 target it plays to, and the measurement with the profile applied.
 

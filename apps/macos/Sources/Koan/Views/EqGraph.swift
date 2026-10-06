@@ -28,6 +28,8 @@ struct EqGraph: View {
     @State private var view: Shown = .eq
     /// The handle being dragged, and where it is now.
     @State private var dragging: Handle?
+    /// Whether a drag is under way, as against one let go and not yet drawn.
+    @State private var grabbed = false
 
     enum Shown: String, CaseIterable, Identifiable {
         case eq = "EQ"
@@ -74,7 +76,7 @@ struct EqGraph: View {
                 lines(curves: [Curve(name: "EQ", db: response.total)], color: Self.accent, width: 2)
                 ForEach(shownHandles) { h in
                     PointMark(x: .value("Hz", h.hz), y: .value("dB", h.db))
-                        .symbolSize(h.index == dragging?.index ? 120 : 60)
+                        .symbolSize(grabbed && h.index == dragging?.index ? 120 : 60)
                         .foregroundStyle(Self.accent)
                 }
             } else {
@@ -105,6 +107,7 @@ struct EqGraph: View {
             }
         }
         .chartLegend(.hidden)
+        .onChange(of: handles) { _, _ in dragging = nil }
         #if !os(tvOS)
         .chartOverlay { proxy in
             if showingEq, onDrag != nil {
@@ -151,7 +154,8 @@ struct EqGraph: View {
                 guard let plot = proxy.plotFrame else { return }
                 let origin = geo[plot].origin
                 let at = CGPoint(x: g.location.x - origin.x, y: g.location.y - origin.y)
-                if dragging == nil {
+                if !grabbed {
+                    grabbed = true
                     let start = CGPoint(x: g.startLocation.x - origin.x, y: g.startLocation.y - origin.y)
                     dragging = nearest(to: start, proxy)
                 }
@@ -166,8 +170,9 @@ struct EqGraph: View {
                 )
             }
             .onEnded { _ in
+                // Held where it was let go until the edited profile is drawn.
+                grabbed = false
                 if let held = dragging { onDrag?(held.index, held.hz, held.db) }
-                dragging = nil
             }
     }
     #endif

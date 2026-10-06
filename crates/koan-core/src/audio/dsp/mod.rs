@@ -233,6 +233,71 @@ impl Setup {
         })
     }
 
+    /// What the profile does at each of `freqs`, in dB, on the first of two
+    /// channels, for a source at `rate`: its filters, then its impulse
+    /// response at the rate it plays at. Routes add by magnitude, as for the
+    /// derived preamp; the preamp itself is not included.
+    pub fn response(&self, freqs: &[f64], rate: u32) -> Vec<f64> {
+        let rate = self.output_rate(rate);
+        let Some(impulse) = self
+            .impulses
+            .get(&rate)
+            .and_then(|at_rate| at_rate.iter().find(|i| i.fits(2)))
+        else {
+            return response(&self.filters, freqs, rate);
+        };
+        let plan = plan(&self.filters, rate, 2);
+        let routes = impulse.routes_for(2);
+        let size = impulse.taps().next_power_of_two().max(8192);
+        let fft = RealFftPlanner::<f64>::new().plan_fft_forward(size);
+        let magnitudes: Vec<Vec<f64>> = routes
+            .iter()
+            .map(|r| {
+                let mut input = fft.make_input_vec();
+                for (d, &s) in input.iter_mut().zip(&r.ir) {
+                    *d = s as f64;
+                }
+                let mut spectrum = fft.make_output_vec();
+                if fft.process(&mut input, &mut spectrum).is_err() {
+                    return vec![0.0; spectrum.len()];
+                }
+                spectrum.iter().map(|b| b.norm()).collect()
+            })
+            .collect();
+        freqs
+            .iter()
+            .map(|&hz| {
+                let w = std::f64::consts::TAU * hz / rate as f64;
+                let gains: Vec<f64> = gain_matrix(&plan, 2, w, rate)
+                    .iter()
+                    .map(|row| row.iter().sum())
+                    .collect();
+                // Between the two bins either side of `hz`.
+                let k = hz * size as f64 / rate as f64;
+                let gain: f64 = routes
+                    .iter()
+                    .zip(&magnitudes)
+                    .map(|(r, m)| {
+                        let i = (k.floor() as usize).min(m.len() - 1);
+                        let next = m[(i + 1).min(m.len() - 1)];
+                        let at = m[i] + (next - m[i]) * (k - i as f64).clamp(0.0, 1.0);
+                        let fed: f64 = r
+                            .inputs
+                            .iter()
+                            .map(|&(c, g)| g.abs() as f64 * gains.get(c).copied().unwrap_or(1.0))
+                            .sum();
+                        r.outputs
+                            .iter()
+                            .filter(|&&(o, _)| o == 0)
+                            .map(|&(_, g)| at * fed * g.abs() as f64)
+                            .sum::<f64>()
+                    })
+                    .sum();
+                20.0 * gain.max(1e-6).log10()
+            })
+            .collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn with_preamp(mut self, db: f64) -> Self {
         self.preamp_db = Some(db);
@@ -789,6 +854,23 @@ mod tests {
         let mut ir = vec![0.0; delay * 2 + 1];
         ir[delay] = 1.0;
         Impulse::from_channels(rate, vec![ir])
+    }
+
+    /// The drawn response carries the impulse response, after the filters.
+    #[test]
+    fn a_response_includes_the_impulse() {
+        let half = Impulse::from_channels(48000, vec![vec![0.5]]);
+        let peak = DspFilter::Band(crate::config::EqFilter {
+            kind: crate::config::EqFilterKind::Peaking,
+            freq: 1000.0,
+            gain_db: 3.0,
+            q: 1.0,
+            channels: vec![],
+        });
+        let setup = Setup::new(vec![peak], vec![half]);
+        let db = setup.response(&[20.0, 1000.0], 48000);
+        assert!((db[0] + 6.02).abs() < 0.05, "{db:?}");
+        assert!((db[1] + 3.02).abs() < 0.1, "{db:?}");
     }
 
     #[test]

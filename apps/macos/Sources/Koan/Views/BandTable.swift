@@ -25,10 +25,11 @@ struct BandTable: View {
         kinds.contains { $0.id == kind }
     }
 
-    /// The bands the graph draws a handle for: the ones with a gain to drag.
+    /// The bands the graph draws a handle for: the ones with a gain to drag,
+    /// on the left channel the graph draws.
     static func handles(_ bands: [DspBand]) -> [EqGraph.Handle] {
         bands.enumerated().compactMap { i, b in
-            ["peaking", "low_shelf", "high_shelf"].contains(b.kind)
+            ["peaking", "low_shelf", "high_shelf"].contains(b.kind) && (b.channels.isEmpty || b.channels.contains(0))
                 ? EqGraph.Handle(index: i, hz: b.freq, db: b.gainDb)
                 : nil
         }
@@ -91,6 +92,9 @@ private struct BandEditor: View {
     @State private var freq = 0.0
     @State private var gain = 0.0
     @State private var q = 0.0
+    @FocusState private var focused: Field?
+
+    enum Field { case freq, gain, q }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -103,10 +107,22 @@ private struct BandEditor: View {
             }
             .labelsHidden()
             .frame(maxWidth: .infinity, alignment: .leading)
-            field($freq, width: 72, digits: 0)
-            field($gain, width: 56, digits: 1)
-            field($q, width: 50, digits: 2)
+            field($freq, .freq, width: 72, digits: 0)
+            field($gain, .gain, width: 56, digits: 1)
+            field($q, .q, width: 50, digits: 2)
         }
+        .onChange(of: focused) { was, _ in if was != nil { commit() } }
+        #if os(iOS)
+        // The decimal pad has no return key.
+        .toolbar {
+            if focused != nil {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focused = nil }
+                }
+            }
+        }
+        #endif
         .onAppear(perform: read)
         .onChange(of: band.freq) { _, _ in read() }
         .onChange(of: band.gainDb) { _, _ in read() }
@@ -114,8 +130,9 @@ private struct BandEditor: View {
         .onChange(of: band.kind) { _, _ in read() }
     }
 
-    private func field(_ value: Binding<Double>, width: CGFloat, digits: Int) -> some View {
+    private func field(_ value: Binding<Double>, _ name: Field, width: CGFloat, digits: Int) -> some View {
         TextField("", value: value, format: .number.precision(.fractionLength(0 ... digits)))
+            .focused($focused, equals: name)
             .multilineTextAlignment(.trailing)
             .monospacedDigit()
             .frame(width: width)

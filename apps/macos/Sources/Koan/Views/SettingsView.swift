@@ -608,8 +608,6 @@ private struct PlaybackSettings: View {
     }
 }
 
-/// Correction for the output in use: a profile of bands, impulse responses or
-/// both, imported from what other tools write.
 /// EQ for the output in use: what its profile does to the sound, drawn,
 /// then the profiles and where they come from. A page of its own: the graph
 /// wants the room, and a correction is chosen, shaped and checked here.
@@ -643,6 +641,8 @@ struct EqSettings: View {
     }
 }
 
+/// Correction for the output in use: a profile of bands, impulse responses or
+/// both, imported from what other tools write.
 struct DspSettings: View {
     @Environment(AppState.self) private var app
     @State private var importing = false
