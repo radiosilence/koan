@@ -314,11 +314,16 @@ fn fetch_index(etag: Option<&str>) -> Result<Fetched, String> {
 /// The words of a name, lowercased: runs of letters and digits, and `+` on
 /// its own, so "Buds+" is not "Buds". `WH-1000XM4` → `wh`, `1000xm4`.
 fn words(name: &str) -> Vec<String> {
+    tokens(name).into_iter().map(|w| w.to_lowercase()).collect()
+}
+
+/// `words`, as the name spells them.
+fn tokens(name: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut word = String::new();
     for c in name.chars() {
         if c.is_alphanumeric() {
-            word.extend(c.to_lowercase());
+            word.push(c);
             continue;
         }
         if !word.is_empty() {
@@ -338,12 +343,12 @@ fn words(name: &str) -> Vec<String> {
 /// is, as their own Bluetooth names give it: "WH-1000XM4", "Jo's AirPods Max".
 /// Each model is one AutoEQ entry, under exactly this name, and names its
 /// generation; a model AutoEQ lists only by its modes (the AirPods Pro 2's
-/// ANC and transparency) is not one. Left out on
+/// ANC and transparency) is not one, nor is one sold in versions that call
+/// themselves alike (AirPods 4, with and without ANC). Left out on
 /// purpose: plain "AirPods" and "AirPods Pro", which every generation calls
 /// itself, so the name cannot say which correction fits; and models whose
 /// devices go by an abbreviation the index does not use ("Bose QC45").
 const MAKERLESS: &[&str] = &[
-    "Apple AirPods 4",
     "Apple AirPods Max",
     "Samsung Galaxy Buds2",
     "Samsung Galaxy Buds2 Pro",
@@ -393,28 +398,129 @@ pub fn suggest<'a>(entries: &'a [Entry], device: &str) -> Option<&'a Entry> {
     best.map(|(_, e)| e)
 }
 
-/// Makers whose names are more than one word, as the index spells them.
-/// Every other maker is a name's first word.
-const MULTIWORD_MAKERS: &[&str] = &[
-    "64 Audio",
-    "Bang & Olufsen",
-    "Campfire Audio",
-    "Dan Clark Audio",
-    "Final Audio",
-    "Master & Dynamic",
-    "Tin HiFi",
+/// Words in an output's name that say it is not headphones, whatever else
+/// the name has in it.
+const NOT_HEADPHONE_WORDS: &[&str] = &[
+    "airplay",
+    "dac",
+    "display",
+    "displayport",
+    "hdmi",
+    "interface",
+    "monitor",
+    "monitors",
+    "output",
+    "speaker",
+    "speakers",
+    "tv",
+    "usb",
 ];
 
-/// The maker an entry's name begins with.
-pub fn maker_of(name: &str) -> &str {
-    MULTIWORD_MAKERS
+/// What to search AutoEQ for, for an output whose name says roughly which
+/// headphone it is but not which entry: "AirPods Pro" for "Jo's AirPods Pro",
+/// whose generations AutoEQ lists apart, or "Bose" for "Bose QC45", which the
+/// index spells another way. Offered where `suggest` offers nothing, so the
+/// person picks the variant themselves.
+///
+/// The end of the name, up to four words, that begins some entry's model, the
+/// longest that does; it must hold a word of four letters or more, so "M2"
+/// or "4i4" alone never count. Failing that, one of `MAKER_SEARCHES` the
+/// name begins with. A
+/// name with a word like "speakers", "display" or "USB" in it is not
+/// headphones and gets nothing.
+pub fn search_for(entries: &[Entry], device: &str) -> Option<String> {
+    let spelt = tokens(device);
+    let device: Vec<String> = spelt.iter().map(|w| w.to_lowercase()).collect();
+    if device
         .iter()
-        .find(|m| {
-            name.strip_prefix(**m)
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+        .any(|w| NOT_HEADPHONE_WORDS.contains(&w.as_str()))
+    {
+        return None;
+    }
+    let models: Vec<Vec<String>> = entries
+        .iter()
+        .map(|e| {
+            let maker = words(maker_of(&e.name)).len();
+            words(&e.name).split_off(maker)
         })
-        .copied()
-        .unwrap_or_else(|| name.split_whitespace().next().unwrap_or(name))
+        .collect();
+    let lettered = |run: &[String]| {
+        run.iter()
+            .any(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 4)
+    };
+    for len in (1..=device.len().min(4)).rev() {
+        let run = &device[device.len() - len..];
+        if lettered(run) && models.iter().any(|m| m.starts_with(run)) {
+            return Some(spelt[spelt.len() - len..].join(" "));
+        }
+    }
+    let first = device.first()?;
+    MAKER_SEARCHES
+        .iter()
+        .find(|m| m.eq_ignore_ascii_case(first))
+        .map(|m| (*m).to_owned())
+}
+
+/// Makers whose headphones name themselves in a way the index does not
+/// spell ("Bose QC45" for the QuietComfort 45), so the maker alone is the
+/// search. Only makers of headphones alone: one that also makes DACs and
+/// interfaces would be offered for those too.
+const MAKER_SEARCHES: &[&str] = &["Bose"];
+
+/// Makers whose names are more than one word, as the index spells them, and
+/// that neither rule in `maker_of` finds.
+const MULTIWORD_MAKERS: &[&str] = &[
+    "Alpha Omega",
+    "Audio Genetic",
+    "Audio Zenith",
+    "Custom Art",
+    "Dan Clark Audio",
+    "NF ACOUS",
+    "Queen of Audio",
+    "Sound Rhyme",
+    "Tansio Mirai",
+    "Turtle Beach",
+    "Unique Melody",
+];
+
+/// Second words that make a maker's name two words: "Final Audio", "Kiwi
+/// Ears", "LZ Hi-Fi".
+const MAKER_SUFFIXES: &[&str] = &[
+    "Acoustics",
+    "Audio",
+    "Ears",
+    "Electronics",
+    "Hi-Fi",
+    "HiFi",
+    "Lab",
+    "Technology",
+];
+
+/// The maker an entry's name begins with: one listed in `MULTIWORD_MAKERS`;
+/// otherwise three words around an ampersand ("Bowers & Wilkins"), two where
+/// the second is a company word ("Simgot Audio"), or else the first word.
+pub fn maker_of(name: &str) -> &str {
+    let listed = MULTIWORD_MAKERS.iter().find(|m| {
+        name.strip_prefix(**m)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+    });
+    if let Some(m) = listed {
+        return m;
+    }
+    let words: Vec<&str> = name.split_whitespace().collect();
+    let take = match words.as_slice() {
+        [_, "&", _, ..] => 3,
+        [_, second, ..] if MAKER_SUFFIXES.contains(second) => 2,
+        _ => 1,
+    };
+    // The name's own text, up to the end of the last word taken.
+    let end = name
+        .split_whitespace()
+        .take(take)
+        .last()
+        .map(|w| w.as_ptr() as usize - name.as_ptr() as usize + w.len())
+        .unwrap_or(name.len());
+    &name[..end]
 }
 
 /// The makers in the index, each with how many results it has, in
@@ -449,7 +555,17 @@ pub fn models<'a>(entries: &'a [Entry], maker: &str) -> Vec<&'a Entry> {
 
 /// The AutoEQ entry to offer for `device`: none once it has a profile, or
 /// once its suggestion was turned down.
-pub fn suggestion(device: &str) -> Result<Option<Entry>, String> {
+/// What to offer an output about AutoEQ: its profile, when its name says
+/// which it is, or a search to pick one from, when it says only roughly.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Offer {
+    Profile(Entry),
+    Search(String),
+}
+
+/// What to offer `device`: nothing once it has a profile, or once the offer
+/// was turned down.
+pub fn suggestion(device: &str) -> Result<Option<Offer>, String> {
     let dsp = &Config::cached().dsp;
     if dsp.autoeq_dismissed.iter().any(|d| d == device)
         || dsp
@@ -459,7 +575,11 @@ pub fn suggestion(device: &str) -> Result<Option<Entry>, String> {
     {
         return Ok(None);
     }
-    Ok(suggest(&index(Freshness::Daily)?, device).cloned())
+    let entries = index(Freshness::Daily)?;
+    Ok(match suggest(&entries, device) {
+        Some(e) => Some(Offer::Profile(e.clone())),
+        None => search_for(&entries, device).map(Offer::Search),
+    })
 }
 
 /// Stop offering AutoEQ's profile for `device`. Kept with the machine's
@@ -597,12 +717,47 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         );
     }
 
+    /// A name that says roughly which headphone, and nothing more exact,
+    /// opens a search for the model, or failing that the maker.
+    #[test]
+    fn a_rough_name_gets_a_search_for_its_model() {
+        let entries = parse_index(
+            "- [Apple AirPods (2nd generation)](./a/in-ear/Apple%20AirPods%20(2nd%20generation)) by a
+- [Apple AirPods Pro](./a/in-ear/Apple%20AirPods%20Pro) by a
+- [Apple AirPods Pro 2 (ANC mode)](./a/in-ear/Apple%20AirPods%20Pro%202%20(ANC%20mode)) by a
+- [Apple AirPods 4 (ANC on)](./a/in-ear/Apple%20AirPods%204%20(ANC%20on)) by a
+- [Bose QuietComfort 45](./b/over-ear/Bose%20QuietComfort%2045) by b
+- [Brainwavz M2](./d/in-ear/Brainwavz%20M2) by d
+- [LG Tone Free](./d/in-ear/LG%20Tone%20Free) by d
+- [FiiO FH5](./d/in-ear/FiiO%20FH5) by d
+",
+        );
+        let search = |device: &str| search_for(&entries, device);
+        assert_eq!(search("Jo's AirPods Pro").as_deref(), Some("AirPods Pro"));
+        assert_eq!(search("AirPods").as_deref(), Some("AirPods"));
+        assert_eq!(search("Jo’s AirPods 4").as_deref(), Some("AirPods 4"));
+        assert_eq!(search("Bose QC45").as_deref(), Some("Bose"));
+        assert_eq!(search("MOTU M2"), None, "a short model is not enough");
+        assert_eq!(search("Scarlett 4i4 USB"), None);
+        assert_eq!(search("LG UltraFine Display Audio"), None);
+        assert_eq!(search("MacBook Pro Speakers"), None);
+        assert_eq!(search("FiiO K3"), None, "a maker of DACs too is no search");
+    }
+
     #[test]
     fn makers_and_their_models_come_from_the_names() {
         assert_eq!(maker_of("Sennheiser HD 650"), "Sennheiser");
         assert_eq!(maker_of("64 Audio A12t"), "64 Audio");
         assert_eq!(maker_of("Bang & Olufsen Beoplay H9"), "Bang & Olufsen");
         assert_eq!(maker_of("Final Audio E3000"), "Final Audio");
+        assert_eq!(maker_of("Bowers & Wilkins PX7"), "Bowers & Wilkins");
+        assert_eq!(maker_of("Simgot Audio EA500"), "Simgot Audio");
+        assert_eq!(maker_of("Kiwi Ears Orchestra Lite"), "Kiwi Ears");
+        assert_eq!(maker_of("LZ Hi-Fi A7"), "LZ Hi-Fi");
+        assert_eq!(maker_of("Dan Clark Audio Aeon 2 Closed"), "Dan Clark Audio");
+        assert_eq!(maker_of("Audio Zenith PMx2"), "Audio Zenith");
+        assert_eq!(maker_of("Audio-Technica ATH-M50x"), "Audio-Technica");
+        assert_eq!(maker_of("Sennheiser HD 650"), "Sennheiser");
         assert_eq!(
             maker_of("Finalist X"),
             "Finalist",
@@ -730,6 +885,7 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         "Zen Air DAC",
         "Schiit Modi",
         "AirPods",
+        "AirPods 4",
         "AirPods Pro",
         "AirPods Pro 3",
         "Jo's AirPods Pro",
@@ -792,7 +948,9 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
         assert_eq!(named("Jo's AirPods Max"), Some(("Apple AirPods Max", "a")));
         // Not on the list: AutoEQ has only its modes, never the plain model.
         assert_eq!(named("AirPods Pro 2"), None);
-        // Every generation calls itself these.
+        // Every generation calls itself these, and both AirPods 4 models
+        // the one name.
+        assert_eq!(named("AirPods 4"), None);
         assert_eq!(named("Jo's AirPods Pro"), None);
         assert_eq!(named("AirPods"), None);
         assert_eq!(named("AirPods Pro 3"), None);
@@ -828,11 +986,50 @@ Filter 3: ON PK Fc 118 Hz Gain -3.1 dB Q 0.50
             ("WH-1000XM4", "Sony WH-1000XM4"),
             ("WF-1000XM5", "Sony WF-1000XM5"),
             ("Jo's AirPods Max", "Apple AirPods Max"),
-            ("AirPods 4", "Apple AirPods 4"),
             ("Galaxy Buds2 Pro", "Samsung Galaxy Buds2 Pro"),
         ] {
             assert_eq!(found(device).as_deref(), Some(entry), "{device}");
         }
+        // Outputs that are not headphones get no search either.
+        let searched: Vec<String> = [
+            "MacBook Pro Speakers",
+            "Studio Display Speakers",
+            "LG UltraFine Display Audio",
+            "Built-in Output",
+            "BlackHole 2ch",
+            "Scarlett 2i2 USB",
+            "Focusrite Scarlett Solo",
+            "Volt 2",
+            "Universal Audio Volt 276",
+            "MOTU M2",
+            "MOTU M4",
+            "Arturia MiniFuse 2",
+            "Apogee Duet",
+            "RME ADI-2 DAC",
+            "Zoom H6",
+            "Mojo 2",
+            "Chord Hugo 2",
+            "Hugo 2",
+            "Topping E30",
+            "Topping DX3 Pro+",
+            "SMSL SU-1",
+            "SMSL M200",
+            "FiiO K3",
+            "FiiO K5 Pro",
+            "iFi ZEN DAC V2",
+            "Zen Air DAC",
+            "Schiit Modi",
+        ]
+        .iter()
+        .filter_map(|d| search_for(&entries, d).map(|q| format!("{d} → {q}")))
+        .collect();
+        assert!(searched.is_empty(), "{searched:#?}");
+        // Rough names get a search for their model.
+        assert_eq!(
+            search_for(&entries, "Jo's AirPods Pro").as_deref(),
+            Some("AirPods Pro")
+        );
+        assert_eq!(search_for(&entries, "Bose QC45").as_deref(), Some("Bose"));
         // Every entry in the curated list is one the index has.
         for name in MAKERLESS {
             assert!(

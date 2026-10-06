@@ -1083,6 +1083,15 @@ pub enum KoanError {
     NeedsSampleRate { message: String },
 }
 
+/// What to offer the output in use about AutoEQ.
+#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
+pub enum AutoEqOffer {
+    /// Its profile: the name says which headphone it is.
+    Profile { entry: AutoEqEntry },
+    /// A search to pick from: the name says only roughly.
+    Search { query: String },
+}
+
 /// A maker in AutoEQ's index.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct AutoEqMaker {

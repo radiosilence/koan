@@ -33,7 +33,7 @@ final class DspModel {
     private var autoEqSearch = 0
     /// AutoEQ's profile for the output in use, by its name, while the output
     /// has none and the offer has not been turned down.
-    private(set) var suggestion: AutoEqEntry?
+    private(set) var suggestion: AutoEqOffer?
 
     enum Pending {
         case files([URL], name: String?)
@@ -131,8 +131,8 @@ final class DspModel {
         }
     }
 
-    /// The makers to browse. Read once per sheet; the index changes daily
-    /// at most.
+    /// The makers to browse, read once and kept for as long as the model:
+    /// the index changes daily at most.
     func loadAutoEqMakers() async {
         guard autoEqMakers.isEmpty else { return }
         do {

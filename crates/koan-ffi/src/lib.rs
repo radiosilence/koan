@@ -2467,16 +2467,17 @@ impl KoanEngine {
     /// The AutoEQ result the output in use is, by its name, while it has no
     /// profile and the suggestion has not been turned down. `None` for a
     /// renderer, whose name is the user's to choose.
-    pub async fn autoeq_suggestion(self: Arc<Self>) -> Option<AutoEqEntry> {
+    pub async fn autoeq_suggestion(self: Arc<Self>) -> Option<AutoEqOffer> {
+        use koan_core::audio::dsp::autoeq::{self, Offer};
         offload::offload(move || {
             if self.state.renderer().is_some() {
                 return None;
             }
             let device = koan_core::audio::dsp::profiles::current_device()?;
-            koan_core::audio::dsp::autoeq::suggestion(&device)
-                .ok()
-                .flatten()
-                .map(|e| (&e).into())
+            Some(match autoeq::suggestion(&device).ok().flatten()? {
+                Offer::Profile(e) => AutoEqOffer::Profile { entry: (&e).into() },
+                Offer::Search(query) => AutoEqOffer::Search { query },
+            })
         })
         .await
     }

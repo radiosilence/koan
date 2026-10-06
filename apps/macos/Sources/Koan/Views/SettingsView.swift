@@ -610,6 +610,9 @@ private struct DspSettings: View {
     @Environment(AppState.self) private var app
     @State private var importing = false
     @State private var findingAutoEq = false
+    /// What Find in AutoEQ opens searching for: empty from its button, a
+    /// model from an offer for the output in use.
+    @State private var findQuery = ""
     /// The profile whose page is open, on the Mac, where settings has no
     /// navigation stack to push it onto.
     @State private var showing: String?
@@ -635,8 +638,11 @@ private struct DspSettings: View {
                     .disabled(!o.enabled)
                 }
                 #if !os(tvOS)
-                if let s = dsp.suggestion, o.device != nil {
-                    AutoEqSuggestion(entry: s, dsp: dsp)
+                if let offer = dsp.suggestion, o.device != nil {
+                    AutoEqSuggestion(offer: offer, dsp: dsp) { query in
+                        findQuery = query
+                        findingAutoEq = true
+                    }
                 }
                 #endif
                 ForEach(o.profiles, id: \.name) { p in
@@ -666,7 +672,10 @@ private struct DspSettings: View {
             // imported on another device, and the TV picks them by output.
             #if !os(tvOS)
             Button("Import…") { importing = true }
-            Button("Find in AutoEQ…") { findingAutoEq = true }
+            Button("Find in AutoEQ…") {
+                findQuery = ""
+                findingAutoEq = true
+            }
             #endif
             if let error = dsp.lastError {
                 Text(error)
@@ -692,7 +701,7 @@ private struct DspSettings: View {
         .task { dsp.reload() }
         #if !os(tvOS)
         .sheet(isPresented: $findingAutoEq) {
-            AutoEqSearch(dsp: dsp)
+            AutoEqSearch(dsp: dsp, query: findQuery)
         }
         #endif
         #if os(macOS)
@@ -716,24 +725,39 @@ private struct DspSettings: View {
 
 #if !os(tvOS)
 /// The output in use, recognised by its name as a headphone AutoEQ has
-/// measured. Offered once, quietly; nothing is applied until asked.
+/// measured, or roughly so: its profile, or a search for its model to pick
+/// the right one from. Offered once, quietly; nothing is applied until asked.
 private struct AutoEqSuggestion: View {
-    let entry: AutoEqEntry
+    let offer: AutoEqOffer
     let dsp: DspModel
+    let find: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("AutoEQ has a profile for \(entry.name). Use it?")
-                .foregroundStyle(.secondary)
-            HStack {
-                Button("Use") { dsp.installAutoEq(entry) }
-                Button("Not for This Device") { dsp.dismissSuggestion() }
+            switch offer {
+            case let .profile(entry):
+                Text("AutoEQ has a profile for \(entry.name). Use it?")
                     .foregroundStyle(.secondary)
-                Spacer()
+                HStack {
+                    Button("Use") { dsp.installAutoEq(entry) }
+                    dismiss
+                    Spacer()
+                }
+            case let .search(query):
+                HStack {
+                    Button("Find \(query) in AutoEQ…") { find(query) }
+                    dismiss
+                    Spacer()
+                }
             }
-            .buttonStyle(.borderless)
         }
+        .buttonStyle(.borderless)
         .font(.callout)
+    }
+
+    private var dismiss: some View {
+        Button("Not for This Device") { dsp.dismissSuggestion() }
+            .foregroundStyle(.secondary)
     }
 }
 
@@ -742,7 +766,12 @@ private struct AutoEqSuggestion: View {
 private struct AutoEqSearch: View {
     let dsp: DspModel
     @Environment(\.dismiss) private var dismiss
-    @State private var query = ""
+    @State private var query: String
+
+    init(dsp: DspModel, query: String = "") {
+        self.dsp = dsp
+        _query = State(initialValue: query)
+    }
 
     var body: some View {
         NavigationStack {
