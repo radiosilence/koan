@@ -28,6 +28,10 @@ const SETTLE: Duration = Duration::from_secs(1);
 /// making on every edit.
 pub(crate) const MAX_SENT: usize = 1500;
 
+/// How long a load or a restore may take to reach the player before the
+/// saver looks anyway.
+pub(crate) const LANDED: Duration = Duration::from_secs(5);
+
 /// The saver running now, told to stop through its flag.
 static RUNNING: parking_lot::Mutex<Option<Arc<AtomicBool>>> = parking_lot::Mutex::new(None);
 
@@ -43,10 +47,14 @@ fn client() -> Option<Arc<SubsonicClient>> {
     koan_core::helpers::subsonic_client(&Config::load().unwrap_or_default())
 }
 
+fn offers(extension: &str) -> bool {
+    koan_core::remote::profile::current().is_some_and(|p| p.offers(extension))
+}
+
 /// Whether the server takes the queue by index, which a track queued twice
 /// needs.
 fn by_index() -> bool {
-    koan_core::remote::profile::current().is_some_and(|p| p.offers("indexBasedQueue"))
+    offers("indexBasedQueue")
 }
 
 fn remote(e: impl std::fmt::Display) -> KoanError {
@@ -65,8 +73,16 @@ pub(crate) fn saved() -> Result<Option<SavedPlayQueue>, KoanError> {
 }
 
 impl KoanEngine {
-    /// Replace this device's queue with `queue`, paused where it was.
-    pub(crate) fn load_server_queue(&self, queue: &SavedPlayQueue) -> Result<(), KoanError> {
+    /// Replace this device's queue with `queue`, paused where it was, and
+    /// return once the player has it, so whatever looks next sees the loaded
+    /// queue and does not take it for an edit to save back. With `unless`,
+    /// the queue as it stood when the load was decided: if the person has
+    /// changed it or started something since, the load is skipped.
+    pub(crate) fn load_server_queue(
+        &self,
+        queue: &SavedPlayQueue,
+        unless: Option<&Seen>,
+    ) -> Result<(), KoanError> {
         let db = self.db()?;
         let ids: Vec<String> = queue.entry.iter().map(|e| e.id.clone()).collect();
         // Fetches anything the library has not synced yet, then names each
@@ -91,17 +107,32 @@ impl KoanEngine {
         if items.is_empty() {
             return Ok(());
         }
+        if let Some(before) = unless
+            && seen(self) != *before
+        {
+            log::info!("server queue: the queue changed here while the server's was read; kept");
+            return Ok(());
+        }
         log::info!(
             "server queue: loaded {} tracks saved by {}",
             items.len(),
             queue.changed_by
         );
+        let content = self.state.content_version();
         self.send_local(PlayerCommand::ReplacePlaylist {
             start: start.min(items.len() - 1),
             items,
             position_ms: queue.position,
             play: false,
-        })
+        })?;
+        koan_core::remote::devices::await_until(
+            || {
+                self.state.content_version() != content
+                    && self.state.playback_state() != PlaybackState::Playing
+            },
+            LANDED,
+        );
+        Ok(())
     }
 
     /// Save this device's queue as it stands to the server.
@@ -134,6 +165,7 @@ impl KoanEngine {
                 current,
                 self.state.position_ms(),
                 by_index(),
+                offers("formPost"),
                 &client_name(),
             )
             .map_err(remote)
@@ -151,9 +183,12 @@ pub(crate) fn start(engine: Weak<KoanEngine>, reconcile: bool) {
         .name("koan-server-queue".into())
         .spawn(move || {
             if reconcile && let Some(engine) = engine.upgrade() {
+                // The queue as restored: the server's replaces it only if
+                // nobody touches it while that is read and resolved.
+                let restored = seen(&engine);
                 match saved() {
                     Ok(Some(queue)) if queue.changed_by != client_name() => {
-                        if let Err(e) = engine.load_server_queue(&queue) {
+                        if let Err(e) = engine.load_server_queue(&queue, Some(&restored)) {
                             log::warn!("server queue: loading failed: {e}");
                         }
                     }
@@ -173,13 +208,22 @@ pub(crate) fn stop() {
     }
 }
 
-/// What the saver watches: the queue's version, the entry under the cursor,
-/// and whether it is playing.
-type Seen = (
+/// What the saver watches: what the queue holds (`content_version`, which a
+/// download's progress does not move), the entry under the cursor, and
+/// whether it is playing.
+pub(crate) type Seen = (
     u64,
     Option<koan_core::player::state::QueueItemId>,
     PlaybackState,
 );
+
+pub(crate) fn seen(engine: &KoanEngine) -> Seen {
+    (
+        engine.state.content_version(),
+        engine.state.cursor(),
+        engine.state.playback_state(),
+    )
+}
 
 /// Whether to save now, given what was seen before and now, and the last
 /// queue edit not yet saved; and that edit afterwards. A change of track or a
@@ -204,14 +248,7 @@ fn decide(before: &Seen, now: &Seen, pending: Option<Instant>) -> (bool, Option<
 /// Save on each settled queue edit, each change of track and each pause.
 fn follow(engine: Weak<KoanEngine>, stop: &AtomicBool) {
     let signal = koan_core::signal::engine_changed();
-    let snapshot = |engine: &KoanEngine| -> Seen {
-        (
-            engine.state.playlist_version(),
-            engine.state.cursor(),
-            engine.state.playback_state(),
-        )
-    };
-    let Some(mut seen) = engine.upgrade().map(|e| snapshot(&e)) else {
+    let Some(mut before) = engine.upgrade().map(|e| seen(&e)) else {
         return;
     };
     let mut generation = signal.generation();
@@ -227,10 +264,10 @@ fn follow(engine: Weak<KoanEngine>, stop: &AtomicBool) {
         let Some(engine) = engine.upgrade() else {
             return;
         };
-        let now = snapshot(&engine);
-        let (save, next) = decide(&seen, &now, pending);
+        let now = seen(&engine);
+        let (save, next) = decide(&before, &now, pending);
         pending = next;
-        seen = now;
+        before = now;
         if save && let Err(e) = engine.save_server_queue() {
             log::info!("server queue: not saved: {e}");
         }

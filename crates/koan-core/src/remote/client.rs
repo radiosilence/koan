@@ -861,16 +861,19 @@ impl SubsonicClient {
 
     /// Replace the account's saved play queue with `song_ids`, `position_ms`
     /// into the entry at `current`, as the client `client`: what a later
-    /// `get_play_queue` reports as `changedBy`. Posted as a form, since a
-    /// long queue does not fit in a URL. `by_index` for a server listing
+    /// `get_play_queue` reports as `changedBy`. `form` posts it as a form, for
+    /// a server listing `formPost`, since a long queue does not fit in a URL;
+    /// otherwise it goes in the query. `by_index` for a server listing
     /// `indexBasedQueue`; otherwise the current entry goes by its song's id,
     /// which is ambiguous for a song queued twice.
+    #[allow(clippy::too_many_arguments)]
     pub fn save_play_queue(
         &self,
         song_ids: &[String],
         current: Option<usize>,
         position_ms: u64,
         by_index: bool,
+        form: bool,
         client: &str,
     ) -> Result<(), SubsonicError> {
         let endpoint = if by_index {
@@ -881,32 +884,34 @@ impl SubsonicClient {
         let url = format!("{}/rest/{endpoint}", self.auth.base_url);
         let mut params = self.auth_params()?;
         params.insert("c".into(), client.to_string());
-        let mut form: Vec<(String, String)> = params.into_iter().collect();
-        form.extend(song_ids.iter().map(|id| ("id".to_string(), id.clone())));
+        let mut form_pairs: Vec<(String, String)> = params.into_iter().collect();
+        form_pairs.extend(song_ids.iter().map(|id| ("id".to_string(), id.clone())));
         // With songs, a current one is required by index; the first will do
         // when none is known.
         if !song_ids.is_empty() {
             let at = current.filter(|at| *at < song_ids.len()).unwrap_or(0);
-            form.push(if by_index {
+            form_pairs.push(if by_index {
                 ("currentIndex".into(), at.to_string())
             } else {
                 ("current".into(), song_ids[at].clone())
             });
-            form.push(("position".into(), position_ms.to_string()));
+            form_pairs.push(("position".into(), position_ms.to_string()));
         }
-        let body = url::form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(&form)
-            .finish();
-        let resp: SubsonicResponseWrapper = self
-            .http
-            .post(&url)
-            .header(
-                reqwest::header::CONTENT_TYPE,
-                "application/x-www-form-urlencoded",
-            )
-            .body(body)
-            .send()?
-            .json()?;
+        let request = if form {
+            let body = url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(&form_pairs)
+                .finish();
+            self.http
+                .post(&url)
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(body)
+        } else {
+            self.http.get(&url).query(&form_pairs)
+        };
+        let resp: SubsonicResponseWrapper = request.send()?.json()?;
         resp.subsonic_response.ok().map(|_| ())
     }
 

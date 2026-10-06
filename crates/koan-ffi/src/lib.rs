@@ -1987,7 +1987,7 @@ impl KoanEngine {
         offload::offload(move || {
             if on {
                 match server_queue::saved()? {
-                    Some(queue) => self.load_server_queue(&queue)?,
+                    Some(queue) => self.load_server_queue(&queue, None)?,
                     None => self.save_server_queue()?,
                 }
             }
@@ -2031,6 +2031,8 @@ impl KoanEngine {
         // Once this device's own queue is back, the server's may take its
         // place: see `server_queue`.
         let engine = Arc::downgrade(&self);
+        let state = self.state.clone();
+        let content = state.content_version();
         let restored = offload::sequenced(move || {
             let db = self.db()?;
             // Before the queue and whether there is one: the mode is the
@@ -2081,9 +2083,22 @@ impl KoanEngine {
         })
         .await;
         if Config::cached().remote.play_queue {
-            server_queue::start(engine, true);
+            // Once the player has the restored queue, so the server's is
+            // weighed against it rather than against an empty one.
+            offload::offload(move || {
+                if restored.as_ref().is_ok_and(|n| *n > 0) {
+                    koan_core::remote::devices::await_until(
+                        || state.content_version() != content,
+                        server_queue::LANDED,
+                    );
+                }
+                server_queue::start(engine, true);
+                restored
+            })
+            .await
+        } else {
+            restored
         }
-        restored
     }
 
     // --- Output device -----------------------------------------------------
@@ -5098,12 +5113,13 @@ fn connection_info() -> ConnectionInfo {
     }
 }
 
-/// The queue as the server is told it, with each track's id on the server. At
-/// most `LINK_QUEUE_MAX` entries, from a few before the current one.
 /// Who saved the server's play queue, as a person would name it: a kōan
 /// device by its name, another client by what it calls itself.
 fn saved_by(changed_by: &str) -> String {
     match changed_by.strip_prefix("koan ") {
+        Some(id) if koan_core::remote::devices::this_id().as_deref() == Some(id) => {
+            "this device".to_owned()
+        }
         Some(id) => koan_core::remote::devices::list()
             .into_iter()
             .find(|d| d.id == id)
@@ -5113,6 +5129,8 @@ fn saved_by(changed_by: &str) -> String {
     }
 }
 
+/// The queue as the server is told it, with each track's id on the server. At
+/// most `LINK_QUEUE_MAX` entries, from a few before the current one.
 fn link_queue(state: &SharedPlayerState) -> Vec<koan_core::remote::link::LinkQueueEntry> {
     const LINK_QUEUE_MAX: usize = 300;
     let (items, cursor) = state.snapshot_playlist();
