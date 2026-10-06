@@ -1257,10 +1257,11 @@ impl SharedPlayerState {
         duration_ms: Option<u64>,
     ) {
         let mut pl = self.playlist.write();
-        let mut changed = false;
+        let mut retagged = false;
+        let mut retimed = false;
         if let Some(item) = pl.items.iter_mut().find(|item| item.id == id) {
             if item.db_id.is_none() {
-                changed = item.title != title
+                retagged = item.title != title
                     || item.artist != artist
                     || item.album_artist != album_artist
                     || item.album != album;
@@ -1273,16 +1274,20 @@ impl SharedPlayerState {
                 && item.duration_ms != Some(dur)
             {
                 item.duration_ms = Some(dur);
-                changed = true;
+                retimed = true;
             }
         }
         drop(pl);
-        // Every download landing comes through here, and for a library track
-        // its tags usually say what the queue already held. A content change
-        // rewrites the saved queue and has every client read the queue again,
-        // which on a long queue is not something to do per track for nothing.
-        if changed {
+        // Every download landing comes through here. A content change rewrites
+        // the saved queue and has every client read the whole queue again,
+        // which on a long queue is not something to do per track: so only new
+        // tags are one. A duration is corrected on nearly every streamed track
+        // — a server gives whole seconds, the file milliseconds — and goes to
+        // clients as a change to that row alone.
+        if retagged {
             self.bump_content();
+        } else if retimed {
+            self.bump_version();
         }
     }
 
@@ -2693,34 +2698,52 @@ mod tests {
 
     /// A download landing with tags that say what the queue already held is
     /// not an edit: nothing is saved again and no client reads the queue again.
+    /// Nor is one that only corrects the duration — a server's whole seconds
+    /// against the file's milliseconds — which clients take as a change to that
+    /// row's reading.
     #[test]
-    fn test_update_item_metadata_that_changes_nothing_is_not_an_edit() {
+    fn test_update_item_metadata_is_an_edit_only_for_new_tags() {
         let state = SharedPlayerState::new();
         let mut item = make_album_item("A1", "Nite Versions", "Soulwax");
         item.db_id = Some(1);
         let id = item.id;
         state.add_items(vec![item]);
-        let before = (state.content_version(), state.playlist_version());
+        let content = state.content_version();
+        let version = state.playlist_version();
 
+        let land = |duration_ms| {
+            state.update_item_metadata(
+                id,
+                "A1".into(),
+                "Soulwax".into(),
+                "Soulwax".into(),
+                "Nite Versions".into(),
+                Some(duration_ms),
+            )
+        };
+        land(200_000);
+        assert_eq!(state.content_version(), content);
+        assert_eq!(state.playlist_version(), version);
+
+        land(200_417);
+        assert_eq!(state.content_version(), content);
+        assert_ne!(state.playlist_version(), version);
+        assert_eq!(state.queue_readings()[0].duration_ms, Some(200_417));
+
+        let mut untagged = make_album_item("", "", "");
+        let untagged_id = untagged.id;
+        untagged.db_id = None;
+        state.add_items(vec![untagged]);
+        let content = state.content_version();
         state.update_item_metadata(
-            id,
-            "A1".into(),
+            untagged_id,
+            "Teachers".into(),
             "Soulwax".into(),
             "Soulwax".into(),
             "Nite Versions".into(),
-            Some(200_000),
+            None,
         );
-        assert_eq!((state.content_version(), state.playlist_version()), before);
-
-        state.update_item_metadata(
-            id,
-            "A1".into(),
-            "Soulwax".into(),
-            "Soulwax".into(),
-            "Nite Versions".into(),
-            Some(201_000),
-        );
-        assert_ne!(state.content_version(), before.0);
+        assert_ne!(state.content_version(), content);
     }
 
     // --- move_item_to ---

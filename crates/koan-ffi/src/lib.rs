@@ -4540,10 +4540,8 @@ impl KoanEngine {
                     last_queue = queue_version;
                     last_library = library;
                     if (queue_moved || library_moved) && target.is_none() {
-                        let slices =
-                            queue.update(&engine.state, queue_version, library_moved, |ids| {
-                                engine.queue_joins(ids)
-                            });
+                        let slices = queue
+                            .update(&engine.state, library_moved, |ids| engine.queue_joins(ids));
                         for slice in slices {
                             out.publish(slice);
                         }

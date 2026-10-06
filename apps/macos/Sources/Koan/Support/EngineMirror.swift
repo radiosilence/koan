@@ -204,10 +204,11 @@ final class EngineMirror: Observable {
         return _outputs
     }
 
-    /// Bumped by every queue mutation. Observed as `queue`: it arrives with the
-    /// rows and means the same thing.
+    /// Moves whenever the queue is sent whole: on every edit, and not on a
+    /// track change or a download. Observed as `queueRows`, which it arrives
+    /// with and means the same thing.
     var queueVersion: UInt64 {
-        access(\.queue)
+        access(\.queueRows)
         return _queueVersion
     }
 

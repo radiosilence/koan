@@ -38,6 +38,10 @@ pub(crate) struct Joins {
 #[derive(Default)]
 pub(crate) struct QueueSender {
     base: Option<Base>,
+    /// The last base's version. Owned here rather than taken from the
+    /// playlist, which does not move when the library does: two bases with one
+    /// version would let a client apply the older one's patch to the newer.
+    sent: u64,
 }
 
 struct Base {
@@ -87,7 +91,6 @@ impl QueueSender {
     pub(crate) fn update(
         &mut self,
         state: &SharedPlayerState,
-        version: u64,
         library_moved: bool,
         joins: impl FnOnce(&[i64]) -> Joins,
     ) -> Vec<StateSlice> {
@@ -95,14 +98,14 @@ impl QueueSender {
         // and the next update sends the queue whole once more.
         let content = state.content_version();
         let Some(base) = self.base.as_mut().filter(|b| b.content == content) else {
-            return self.rebuild(state, version, content, joins);
+            return self.rebuild(state, content, joins);
         };
 
         let readings = state.queue_readings();
         let same_rows = readings.len() == base.ids.len()
             && readings.iter().zip(&base.ids).all(|(r, id)| r.id == *id);
         if !same_rows {
-            return self.rebuild(state, version, content, joins);
+            return self.rebuild(state, content, joins);
         }
         if library_moved {
             let track_ids: Vec<i64> = readings.iter().filter_map(|r| r.db_id).collect();
@@ -139,16 +142,17 @@ impl QueueSender {
                 .filter_map(|(r, l)| Some((r.db_id?, (l.on_server, l.on_disk))))
                 .collect(),
         };
-        self.rebuild(state, version, content, |_| held)
+        self.rebuild(state, content, |_| held)
     }
 
     fn rebuild(
         &mut self,
         state: &SharedPlayerState,
-        version: u64,
         content: u64,
         joins: impl FnOnce(&[i64]) -> Joins,
     ) -> Vec<StateSlice> {
+        self.sent += 1;
+        let version = self.sent;
         let entries = state.derive_visible_queue().entries;
         let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
         let joins = joins(&track_ids);
@@ -297,7 +301,23 @@ mod tests {
         }
     }
 
+    /// The same library once every track has landed, and the first record
+    /// has been split off into an album of its own.
+    fn landed(ids: &[i64]) -> Joins {
+        Joins {
+            album_ids: ids
+                .iter()
+                .map(|&id| (id, if id < 12 { 1_000 } else { id / 12 }))
+                .collect(),
+            sources: ids.iter().map(|&id| (id, (true, true))).collect(),
+        }
+    }
+
     fn whole(state: &SharedPlayerState) -> Vec<QueueItem> {
+        whole_with(state, joins)
+    }
+
+    fn whole_with(state: &SharedPlayerState, joins: fn(&[i64]) -> Joins) -> Vec<QueueItem> {
         let entries = state.derive_visible_queue().entries;
         let ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
         let j = joins(&ids);
@@ -319,13 +339,11 @@ mod tests {
         let (state, ids) = queue(40);
         let mut sender = QueueSender::default();
         let mut client = Client::default();
-        let v = state.playlist_version();
-        client.apply(sender.update(&state, v, false, joins));
+        client.apply(sender.update(&state, false, joins));
         assert_eq!(client.rows, whole(&state));
 
         state.set_cursor(Some(ids[3]));
-        let v = state.playlist_version();
-        let slices = sender.update(&state, v, false, joins);
+        let slices = sender.update(&state, false, joins);
         assert!(matches!(slices[..], [StateSlice::QueuePatch { .. }]));
         client.apply(slices);
         assert_eq!(client.rows, whole(&state));
@@ -333,15 +351,43 @@ mod tests {
         // A track failing, and the cursor moving on past it: the later patch
         // still carries the earlier change, since both differ from the base.
         state.update_item_state(ids[4], ItemState::Failed("gone".into()));
-        let _missed = sender.update(&state, state.playlist_version(), false, joins);
+        let _missed = sender.update(&state, false, joins);
         state.set_cursor(Some(ids[5]));
-        client.apply(sender.update(&state, state.playlist_version(), false, joins));
+        client.apply(sender.update(&state, false, joins));
         assert_eq!(client.rows, whole(&state));
 
         // Moving back puts the rows the last patch changed back as they were.
         state.set_cursor(Some(ids[0]));
         state.update_item_state(ids[4], ItemState::Pending);
-        client.apply(sender.update(&state, state.playlist_version(), false, joins));
+        client.apply(sender.update(&state, false, joins));
+        assert_eq!(client.rows, whole(&state));
+    }
+
+    /// The library saying something new about the queue's tracks reaches a
+    /// client as a patch of the rows it changed; and a patch for a base the
+    /// client no longer holds changes nothing there.
+    #[test]
+    fn a_library_move_reaches_the_rows_it_changed() {
+        let (state, _) = queue(40);
+        let mut sender = QueueSender::default();
+        let mut client = Client::default();
+        client.apply(sender.update(&state, false, joins));
+
+        let moved = sender.update(&state, true, landed);
+        assert!(
+            matches!(&moved[..], [StateSlice::QueuePatch { items, .. }] if items.len() == 26),
+            "{moved:?}"
+        );
+        client.apply(moved.clone());
+        assert_eq!(client.rows, whole_with(&state, landed));
+
+        // Forgotten, as on a change of the device in view: sent whole again.
+        sender.reset();
+        let again = sender.update(&state, false, joins);
+        assert!(matches!(again[0], StateSlice::Queue { .. }));
+        client.apply(again);
+        assert_eq!(client.rows, whole(&state));
+        client.apply(moved);
         assert_eq!(client.rows, whole(&state));
     }
 
@@ -349,9 +395,9 @@ mod tests {
     fn an_edit_sends_the_queue_whole() {
         let (state, _) = queue(10);
         let mut sender = QueueSender::default();
-        sender.update(&state, state.playlist_version(), false, joins);
+        sender.update(&state, false, joins);
         state.add_items(vec![item(10, ItemState::Pending)]);
-        let slices = sender.update(&state, state.playlist_version(), false, joins);
+        let slices = sender.update(&state, false, joins);
         assert!(matches!(
             &slices[..],
             [StateSlice::Queue { items, .. }, StateSlice::QueuePatch { .. }] if items.len() == 11
@@ -363,9 +409,9 @@ mod tests {
         // Ready, so every row the cursor passes reads as played.
         let (state, ids) = queue_of(PATCH_MAX * 3, ItemState::Ready);
         let mut sender = QueueSender::default();
-        sender.update(&state, state.playlist_version(), false, joins);
+        sender.update(&state, false, joins);
         state.set_cursor(Some(ids[PATCH_MAX * 2]));
-        let slices = sender.update(&state, state.playlist_version(), false, joins);
+        let slices = sender.update(&state, false, joins);
         assert!(matches!(slices[0], StateSlice::Queue { .. }));
     }
 
@@ -390,7 +436,7 @@ mod tests {
 
         // The whole queue: what every change cost before, and an edit now.
         let start = Instant::now();
-        let slices = sender.update(&state, state.playlist_version(), true, joins);
+        let slices = sender.update(&state, true, joins);
         let built = start.elapsed();
         let start = Instant::now();
         for slice in slices {
@@ -411,7 +457,7 @@ mod tests {
         // A track change.
         state.set_cursor(Some(ids[1]));
         let start = Instant::now();
-        let slices = sender.update(&state, state.playlist_version(), false, joins);
+        let slices = sender.update(&state, false, joins);
         let patched = start.elapsed();
         for slice in slices {
             out.publish(slice);
@@ -427,7 +473,7 @@ mod tests {
         // The playing track's download landing, which moves the library too.
         state.update_item_state(ids[1], ItemState::Ready);
         let start = Instant::now();
-        let slices = sender.update(&state, state.playlist_version(), true, joins);
+        let slices = sender.update(&state, true, joins);
         let landed = start.elapsed();
         for slice in slices {
             out.publish(slice);

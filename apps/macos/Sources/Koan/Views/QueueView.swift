@@ -236,15 +236,9 @@ struct QueueView: View {
                         jump(to: ui.queueJumpTarget, using: scroll)
                     }
                     // Following: the playing track kept in view as it moves
-                    // on, until the person scrolls.
-                    .onChange(of: player.currentItemId) { _, _ in
-                        followPlaying(using: scroll)
-                    }
-                    // The playing item and the rows arrive separately: a track
-                    // played from a new queue is scrolled to once it is listed.
-                    .onChange(of: rows.map(\.id)) { _, _ in
-                        followPlaying(using: scroll)
-                    }
+                    // on, until the person scrolls. A view of its own, so
+                    // what is playing is never read by this body.
+                    .background { FollowPlaying(scroll: scroll) }
                     .onScrollPhaseChange { _, phase in
                         if phase == .interacting, ui.followingQueue {
                             ui.followingQueue = false
@@ -316,7 +310,7 @@ struct QueueView: View {
                     Text("Queue").koanCase()
                         .font(.role(.body, system: .headline))
                 }
-                Text(summary)
+                QueueSummary()
                     .font(.role(.fine, system: .caption))
                     .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .lineLimit(1)
@@ -409,12 +403,6 @@ struct QueueView: View {
         case .album(let album): album.title
         case nil: nil
         }
-    }
-
-    private var summary: String {
-        let total = listed.compactMap(\.durationMs).reduce(0, +)
-        let count = Format.count(Int64(listed.count), "track")
-        return total > 0 ? "\(count) · \(Format.duration(total))" : count
     }
 
     /// Extracted because the type checker gives up on a switch this size
@@ -577,14 +565,6 @@ struct QueueView: View {
     /// The playing row is centred rather than put at the top: what is playing
     /// is read against what comes after it, and a row at the top edge has no
     /// after.
-    /// While following, bring the playing row into view, if it is listed.
-    private func followPlaying(using scroll: ScrollViewProxy) {
-        guard ui.followingQueue, let id = player.currentItemId,
-              rows.contains(where: { $0.id == id }) else { return }
-        withAnimation(.easeInOut(duration: 0.3)) {
-            scroll.scrollTo(id, anchor: .center)
-        }
-    }
 
     private func jump(to target: UIState.Jump, using scroll: ScrollViewProxy) {
         let row: String? = switch target {
@@ -611,7 +591,8 @@ struct QueueView: View {
         if ids.count == 1, let row = rows.first(where: { ids.contains($0.id) }) {
             switch row {
             case .album(_, let group): albumMenu(group)
-            case .track(let item), .single(let item): trackMenu(item)
+            // As it reads now: whether it is on disk moves without an edit.
+            case .track(let item), .single(let item): trackMenu(mirror.queueItem(item.queueItemId) ?? item)
             }
         } else {
             Button { player.remove(itemIds: itemIds(in: ids)) } label: {
@@ -888,6 +869,45 @@ private struct JumpToPlayingButton: View {
         }
         .help(ui.followingQueue ? "Following what's playing; click to stop" : "Scroll to what's playing and follow it")
         .accessibilityAddTraits(following ? .isSelected : [])
+    }
+}
+
+/// The playing row kept in view while following. Reads what is playing so the
+/// queue's own body does not, which on a long queue would regroup and diff
+/// every row on each change to it.
+private struct FollowPlaying: View {
+    let scroll: ScrollViewProxy
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        Color.clear
+            .onChange(of: player.currentItemId) { _, _ in follow() }
+            // The playing item and the rows arrive separately: a track played
+            // from a new queue is scrolled to once it is listed.
+            .onChange(of: mirror.queueVersion) { _, _ in follow() }
+    }
+
+    private func follow() {
+        guard ui.followingQueue, let id = player.currentItemId, mirror.queueItem(id) != nil else { return }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            scroll.scrollTo(id, anchor: .center)
+        }
+    }
+}
+
+/// "1,204 tracks · 3 days 2:10:05", as the queue reads now. Its own view, so a
+/// patch re-runs this line and not the list.
+private struct QueueSummary: View {
+    @Environment(EngineMirror.self) private var mirror
+
+    var body: some View {
+        let queue = mirror.queue
+        let total = queue.compactMap(\.durationMs).reduce(0, +)
+        let count = Format.count(Int64(queue.count), "track")
+        Text(total > 0 ? "\(count) · \(Format.duration(total))" : count)
     }
 }
 
