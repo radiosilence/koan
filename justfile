@@ -1038,7 +1038,7 @@ tv-pair-qr: (tv-ffi "appletvsimulator") (ios-ffi "iphonesimulator") ios-project
     case "$link" in https://koan.rocks/pair*'#'*) ;; *) echo "FAIL: not a pairing link" >&2; exit 1 ;; esac
     TEST_RUNNER_KOAN_PAIR_LINK="koan://pair#${link#*#}" \
     TEST_RUNNER_KOAN_REMOTE__ENABLED=true TEST_RUNNER_KOAN_REMOTE__URL=$url \
-    TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__PASSWORD=$password \
+    TEST_RUNNER_KOAN_REMOTE__USERNAME=owner TEST_RUNNER_KOAN_REMOTE__API_KEY="$(cat "$out/server.key")" \
     xcodebuild test-without-building -quiet \
         -project apps/ios/Koan.xcodeproj -scheme Koan \
         -destination "id=$phone" -derivedDataPath target/ios-build \

@@ -33,6 +33,8 @@ struct SignInPage: View {
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 1400)
             }
 
             if let pairing {

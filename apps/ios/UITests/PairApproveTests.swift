@@ -15,7 +15,7 @@ final class PairApproveTests: XCTestCase {
         else { throw XCTSkip("no pairing link given") }
 
         let app = XCUIApplication()
-        for key in ["KOAN_REMOTE__ENABLED", "KOAN_REMOTE__URL", "KOAN_REMOTE__USERNAME", "KOAN_REMOTE__PASSWORD"] {
+        for key in ["KOAN_REMOTE__ENABLED", "KOAN_REMOTE__URL", "KOAN_REMOTE__USERNAME", "KOAN_REMOTE__API_KEY"] {
             if let value = env[key] { app.launchEnvironment[key] = value }
         }
         app.launchEnvironment["KOAN_DEVICES__NEARBY"] = "false"
