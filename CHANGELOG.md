@@ -7,15 +7,19 @@
 - **AutoEQ search from the command line.** `koan dsp autoeq search` finds a headphone in AutoEQ's index by name, and `koan dsp autoeq install` saves its parametric EQ as a profile, optionally for an output device. The index is kept beside the config and refreshed at most daily.
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
+### Security
+
+- **An app password could make accounts, invites and keys.** The account endpoints kōan's apps use (`koanUsers`, `koanCreateUser`, `koanInvite`, `koanSetUserRole`, `koanDeleteUser`) and approving a device's pairing (`koanPairApprove`) accepted any Subsonic credential. Someone holding an app password, or a captured `t`/`s` token for one, could sign a device in as the account and keep its API key after the app password was revoked; an admin's could also create an admin account, invite or reset its own account, and change roles. These now need an API key or the account's own password. The shared secret is refused too.
+
 ### Changed
 
 - **One server scans a shared library at a time.** Servers sharing a state directory, as two do while one replaces the other, take turns: the one holding `watch.lock` beside the database scans and watches the library folders, and the other serves without scanning until it can take the lock. A server whose database a newer koan has migrated now exits with that reason instead of a panic.
+- **Rescans stat each file once.** Removing tracks whose files are gone checked every row under the folder again after the walk had just found them; it now asks only about the rows the walk did not find, which still have to be confirmed missing before they go. Importing dropped files skips the ones already read, as a scan does.
 
 ### Fixed
 
 - **Cancelling a library scan stops the folder watcher's too.** The watcher's scans had no way to be stopped, so the apps' Cancel did nothing to the scan the activity row was showing. Forgetting a library folder now also stops a scan of it, rather than leaving it to index again what was just forgotten.
 - **Scans no longer run over each other.** A full scan and the folder watcher's rescans now take turns, instead of reading the same files twice and pruning what another was about to index. An import of dropped files does not wait for them: it only adds, and it is for playing now.
-
 - **Moving the music to another device says when it has not arrived.** A hand-off paused the music here and counted it as delivered once the command was queued, which it was even on a link that had died unnoticed or for a device asleep. The Mac and iOS apps now wait for the other device to report the track, and otherwise say it has not picked the music up yet; the music stays paused where it was.
 - **The Live Activity's buttons go by the server first.** iOS runs them without waking the app, whose link is then most likely dead, and a command put into it was lost. The server knows whether the device is linked and wakes it if not; a device only on the local network is still reached directly.
 - **A command from another device no longer holds up the link.** One that needed a library sync first ran on the link's own thread, which left the socket unread for as long as the sync took. Commands from other devices now run on their own lane, in order.
@@ -23,10 +27,6 @@
 - **A library folder removed and added back left its server-held tracks without their files.** A track also on the server outlives its folder being forgotten, as the server's copy, and kept its file's scan cache entry, so a scan after re-adding the folder took the file as already read and never linked it again. Forgetting a folder now clears the folder's entries.
 - **Full scans indexed what the folder watcher ignores.** Syncthing's `.stversions` copies, macOS's `._` AppleDouble files and the like were indexed by a full scan and by a rescan of a directory, though the watcher skips them. Both now skip the same names. Tracks already indexed from such paths stay until their files go.
 - **The folder watcher ignored music whose name starts with a dot.** It skipped every name with a leading dot, so an album such as "...Baby One More Time" was indexed only by a full scan. It now skips only the names Syncthing, macOS and version control leave in folders.
-
-### Changed
-
-- **Rescans stat each file once.** Removing tracks whose files are gone checked every row under the folder again after the walk had just found them; it now asks only about the rows the walk did not find, which still have to be confirmed missing before they go. Importing dropped files skips the ones already read, as a scan does.
 
 ## 0.56.0
 
