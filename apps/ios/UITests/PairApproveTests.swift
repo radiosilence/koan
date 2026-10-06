@@ -36,23 +36,6 @@ final class PairApproveTests: XCTestCase {
         snap("phone-03-allowed")
     }
 
-    /// Keeps kōan open on the phone, signed in, for `KOAN_ANNOUNCE_SECONDS`:
-    /// the device a television finds its server through, in `just tv-discover`.
-    func testAnnounceServer() throws {
-        let env = ProcessInfo.processInfo.environment
-        guard let seconds = env["KOAN_ANNOUNCE_SECONDS"].flatMap(UInt32.init)
-        else { throw XCTSkip("no announcement asked for") }
-
-        let app = XCUIApplication()
-        for key in ["KOAN_REMOTE__ENABLED", "KOAN_REMOTE__URL", "KOAN_REMOTE__USERNAME", "KOAN_REMOTE__API_KEY"] {
-            if let value = env[key] { app.launchEnvironment[key] = value }
-        }
-        app.launch()
-        sleep(5)
-        snap("phone-announcing")
-        sleep(seconds)
-    }
-
     private func snap(_ name: String) {
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         shot.name = name
