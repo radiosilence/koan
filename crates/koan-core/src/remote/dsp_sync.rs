@@ -1577,16 +1577,18 @@ mod tests {
 
         // Two profiles here whose names share a folder: neither is sent.
         Config::persist(|c| {
-            c.dsp.profiles.push(DspProfile {
-                name: "room!".into(),
-                filters: vec![band(1.0)],
-                scope: Some(DspScope::Everywhere),
-                ..Default::default()
-            })
+            for name in ["Desk", "desk!"] {
+                c.dsp.profiles.push(DspProfile {
+                    name: name.into(),
+                    filters: vec![band(1.0)],
+                    scope: Some(DspScope::Everywhere),
+                    ..Default::default()
+                });
+            }
         })
         .unwrap();
         let cfg = Config::cached();
-        let shared = cfg.dsp.profiles.iter().find(|p| p.name == "room!").unwrap();
+        let shared = cfg.dsp.profiles.iter().find(|p| p.name == "desk!").unwrap();
         assert!(doc_of(shared).unwrap_err().contains("shares its folder"));
     }
 }
