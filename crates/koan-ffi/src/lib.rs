@@ -2542,6 +2542,20 @@ impl KoanEngine {
         offload::offload(koan_core::remote::outputs::refresh_devices).await
     }
 
+    /// Ask the device being controlled to list its outputs again: its output
+    /// menu was opened here. Over a route that is up now or not at all, since
+    /// a device that is away has nothing new to say and is not worth waking.
+    /// Its link state brings back whatever moved.
+    pub async fn refresh_controlled_outputs(self: Arc<Self>) {
+        offload::offload(|| {
+            if let Some(to) = koan_core::remote::devices::target() {
+                let cmd = koan_core::remote::link::LinkCommand::RefreshOutputs;
+                koan_core::remote::devices::send_live(&to, cmd);
+            }
+        })
+        .await
+    }
+
     /// The volume of the renderer the device in view plays to, 0–100.
     pub async fn set_output_volume(self: Arc<Self>, volume: u8) -> Result<(), KoanError> {
         offload::sequenced(move || match koan_core::remote::devices::target() {
@@ -5302,6 +5316,10 @@ impl KoanEngine {
             LinkCommand::SetOutput { output } => {
                 koan_core::remote::outputs::set(output, koan_core::upnp::choose(), &self.tx)
                     .map_err(|message| KoanError::Audio { message })
+            }
+            LinkCommand::RefreshOutputs => {
+                koan_core::remote::outputs::refresh_for_controller();
+                Ok(())
             }
             LinkCommand::SetRendererVolume { volume } => {
                 self.send_local(PlayerCommand::SetRendererVolume(volume))

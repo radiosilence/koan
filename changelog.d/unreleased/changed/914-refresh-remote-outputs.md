@@ -1,0 +1,1 @@
+- **Opening the Output menu while controlling another device asks it for its outputs again.** The menu showed whatever that device last published; it now lists its outputs and presets afresh each time the menu opens, as this device's own menu always has.

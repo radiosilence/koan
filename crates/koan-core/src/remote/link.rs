@@ -181,6 +181,9 @@ pub enum LinkCommand {
     SetOutput {
         output: OutputChoice,
     },
+    /// List the outputs again, and publish them if they moved: a controller
+    /// has opened its output menu. Cheap, and answered by the link state.
+    RefreshOutputs,
     /// The volume of the renderer the device plays to, 0–100.
     SetRendererVolume {
         volume: u8,
@@ -251,6 +254,7 @@ impl LinkCommand {
             | Self::SleepTimer { .. }
             | Self::HandOff { .. }
             | Self::SetOutput { .. }
+            | Self::RefreshOutputs
             | Self::SetRendererVolume { .. }
             | Self::SetPreset { .. }
             | Self::WatchLevels { .. } => true,
@@ -312,6 +316,7 @@ impl LinkCommand {
             | Self::SleepTimer { .. }
             | Self::HandOff { .. }
             | Self::SetOutput { .. }
+            | Self::RefreshOutputs
             | Self::SetRendererVolume { .. }
             | Self::SetPreset { .. } => true,
             Self::Devices { .. }
@@ -324,6 +329,16 @@ impl LinkCommand {
             | Self::DspProfilesChanged
             | Self::WatchLevels { .. }
             | Self::Levels { .. } => false,
+        }
+    }
+
+    /// Only worth saying to a device that is there to hear it: sent over a
+    /// live route or not at all, never queued for an absent device and never
+    /// a push to wake one.
+    pub fn live_only(&self) -> bool {
+        match self {
+            Self::Shared { command } => command.live_only(),
+            cmd => matches!(cmd, Self::WatchLevels { .. } | Self::RefreshOutputs),
         }
     }
 
@@ -346,6 +361,7 @@ impl LinkCommand {
                 | Self::Levels { .. }
                 | Self::Acked { .. }
                 | Self::SetOutput { .. }
+                | Self::RefreshOutputs
                 | Self::SetRendererVolume { .. }
                 | Self::SetPreset { .. }
                 | Self::Shares { .. }
@@ -473,6 +489,7 @@ impl LinkCommand {
             | Self::Levels { .. }
             | Self::Acked { .. }
             | Self::SetOutput { .. }
+            | Self::RefreshOutputs
             | Self::SetRendererVolume { .. }
             | Self::SetPreset { .. }
             | Self::Clear
