@@ -578,7 +578,12 @@ fn first_sync(db: &Database) -> Result<(), Failed> {
         .dsp
         .profiles
         .iter()
-        .filter(|p| p.scope.is_none() && p.target.is_none() && p.layers.is_empty())
+        .filter(|p| {
+            p.scope.is_none()
+                && p.target.is_none()
+                && p.measurement.is_none()
+                && p.layers.is_empty()
+        })
         .map(|p| p.name.clone())
         .collect();
     if !pin.is_empty() {
