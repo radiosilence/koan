@@ -136,6 +136,17 @@ pub fn services(conn: &Connection, user: i64) -> rusqlite::Result<Vec<ScrobbleSe
     .collect()
 }
 
+/// `user`'s connection to `service`, if there is one.
+pub fn service(
+    conn: &Connection,
+    user: i64,
+    service: &str,
+) -> rusqlite::Result<Option<ScrobbleService>> {
+    Ok(services(conn, user)?
+        .into_iter()
+        .find(|s| s.service == service))
+}
+
 /// The credential to submit to `service` for `user`, while it is accepted.
 pub fn target(conn: &Connection, user: i64, service: &str) -> rusqlite::Result<Option<String>> {
     conn.query_row(

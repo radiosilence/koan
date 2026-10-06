@@ -1566,6 +1566,18 @@ pub struct PairingCode {
     pub link: String,
 }
 
+/// The account's ListenBrainz connection, as its koan server reports it.
+/// The token stays on the server.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct ScrobblingConnection {
+    /// The ListenBrainz account the plays go to.
+    pub account: String,
+    /// Plays ListenBrainz has not accepted yet.
+    pub pending: i64,
+    /// Why ListenBrainz stopped accepting the token, while it does.
+    pub error: Option<String>,
+}
+
 /// A device waiting to be signed in, as the server describes it to an
 /// approver.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
@@ -1897,6 +1909,9 @@ pub struct ConnectionInfo {
     /// The server can sign a device without a keyboard in, once someone here
     /// approves it.
     pub pairing: bool,
+    /// The account's scrobbling can be set up from here
+    /// (`koanScrobbling`).
+    pub scrobbling: bool,
     /// The server refused the stored credential (a revoked API key, a changed
     /// password) when it was last used, and has not accepted it since.
     pub sign_in_refused: bool,

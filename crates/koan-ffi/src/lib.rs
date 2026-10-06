@@ -3230,6 +3230,41 @@ impl KoanEngine {
         .await
     }
 
+    /// The account's ListenBrainz connection on the signed-in koan server.
+    /// `None` while it has none.
+    pub async fn scrobbling_status(
+        self: Arc<Self>,
+    ) -> Result<Option<ScrobblingConnection>, KoanError> {
+        offload::offload(move || {
+            koan_core::remote::scrobbling::status()
+                .map(|s| s.map(scrobbling_connection))
+                .map_err(scrobbling_error)
+        })
+        .await
+    }
+
+    /// Connect the account's ListenBrainz with its user token. The server
+    /// checks it with ListenBrainz; a refusal is a `BadArgument` whose
+    /// message can be shown as it is.
+    pub async fn connect_scrobbling(
+        self: Arc<Self>,
+        token: String,
+    ) -> Result<Option<ScrobblingConnection>, KoanError> {
+        offload::offload(move || {
+            koan_core::remote::scrobbling::connect(&token)
+                .map(|s| s.map(scrobbling_connection))
+                .map_err(scrobbling_error)
+        })
+        .await
+    }
+
+    pub async fn disconnect_scrobbling(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::offload(move || {
+            koan_core::remote::scrobbling::disconnect().map_err(scrobbling_error)
+        })
+        .await
+    }
+
     /// Read a pairing link (`koan.rocks/pair/#s=…&p=…`). `None` for anything
     /// else.
     pub fn parse_pairing_link(&self, link: String) -> Option<PairingLink> {
@@ -5737,6 +5772,7 @@ fn connection_info() -> ConnectionInfo {
             .unwrap_or_default(),
         sharing: p.as_ref().is_some_and(|p| p.offers(profile::SHARES)),
         pairing: p.as_ref().is_some_and(|p| p.offers(profile::PAIR)),
+        scrobbling: p.as_ref().is_some_and(|p| p.offers(profile::SCROBBLING)),
         shared_with: devices::shares(),
         share_error: devices::share_error(),
         share_accounts: devices::accounts(),
@@ -5893,6 +5929,26 @@ fn pair_error(e: koan_core::remote::pair::PairError) -> KoanError {
             message: e.to_string(),
         },
         e => KoanError::BadArgument {
+            message: e.to_string(),
+        },
+    }
+}
+
+fn scrobbling_connection(
+    s: koan_core::remote::client::KoanScrobbleService,
+) -> ScrobblingConnection {
+    ScrobblingConnection {
+        account: s.account,
+        pending: s.pending,
+        error: s.error,
+    }
+}
+
+fn scrobbling_error(e: koan_core::remote::scrobbling::ScrobblingError) -> KoanError {
+    use koan_core::remote::scrobbling::ScrobblingError;
+    match e {
+        ScrobblingError::Remote(e) => remote_error(e),
+        e @ ScrobblingError::NotSignedIn => KoanError::BadArgument {
             message: e.to_string(),
         },
     }
