@@ -14,16 +14,21 @@
   // --- Session ---------------------------------------------------------------
   // The access cookie lasts minutes. Renewing spends the refresh cookie, which
   // only /auth routes receive, for fresh ones; no token is ever visible here.
-  // Behind an authenticating proxy there is no refresh cookie, and /ui/renew
-  // takes the account from the proxy's header instead.
+  // Behind an authenticating proxy there is no refresh cookie: /ui/renew takes
+  // the account from the proxy's header, and goes first, so a refresh cookie
+  // left from before the proxy cannot keep a session the proxy did not vouch
+  // for.
   const rawFetch = window.fetch.bind(window);
   let renewing = null;
   let renewedAt = Date.now();
   const post = (path) =>
     rawFetch(path, { method: "POST", credentials: "same-origin" }).then((r) => r.ok);
+  const [first, then] = "proxied" in document.body.dataset
+    ? ["/ui/renew", "/auth/renew"]
+    : ["/auth/renew", "/ui/renew"];
   function renew() {
-    renewing ??= post("/auth/renew")
-      .then((ok) => ok || post("/ui/renew"))
+    renewing ??= post(first)
+      .then((ok) => ok || post(then))
       .then((ok) => { if (ok) renewedAt = Date.now(); return ok; })
       .catch(() => false)
       .finally(() => { renewing = null; });

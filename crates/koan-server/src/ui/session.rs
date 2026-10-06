@@ -273,7 +273,7 @@ pub(super) async fn proxy_resume(
             s.auth.proxied_cookies(&access),
         )
             .into_response(),
-        Err(refused) => refused,
+        Err(refused) => *refused,
     }
 }
 
@@ -281,16 +281,16 @@ pub(super) async fn proxy_resume(
 /// the browser out. Never a refresh token: the session is derived again from
 /// the header on the next page load, so it cannot outlast the proxy's say-so,
 /// and a switch of account at the proxy needs nothing revoked.
-async fn proxied(s: &UiState, vouch: Vouch<'_>) -> Result<String, Response> {
+async fn proxied(s: &UiState, vouch: Vouch<'_>) -> Result<String, Box<Response>> {
     let Vouch::Named(name) = vouch else {
-        return Err(unusable_header(s));
+        return Err(Box::new(unusable_header(s)));
     };
     proxied_access(&s.auth, name).await.ok_or_else(|| {
         log::info!("web UI: the sign-in proxy named {name:?}, who has no account");
-        refused_by_proxy(
+        Box::new(refused_by_proxy(
             s,
             "Your sign-in proxy names an account this server does not have. Ask an admin to create it.",
-        )
+        ))
     })
 }
 
@@ -360,7 +360,7 @@ pub(super) async fn proxy_renew(
         Vouch::Absent => StatusCode::UNAUTHORIZED.into_response(),
         vouch => match proxied(&s, vouch).await {
             Ok(access) => (StatusCode::NO_CONTENT, s.auth.proxied_cookies(&access)).into_response(),
-            Err(refused) => refused,
+            Err(refused) => *refused,
         },
     }
 }

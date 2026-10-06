@@ -2149,6 +2149,46 @@ async fn a_switch_at_the_proxy_ends_the_previous_account_within_one_access_ttl()
     assert_eq!(refresh_tokens(&f), 0, "nothing to renew alice with");
 }
 
+#[tokio::test]
+async fn a_cross_site_renewal_through_the_proxy_is_refused() {
+    let f = setup_behind_proxy();
+    let r = send(
+        &f.app,
+        from_peer(Request::post("/ui/renew"), "10.0.0.1")
+            .header(header::HOST, HOST)
+            .header(header::ORIGIN, "https://evil.example")
+            .header("remote-user", "alice")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    assert!(r.cookies().is_empty());
+}
+
+/// Pages behind the proxy tell the script to renew from the proxy first, so a
+/// refresh cookie from before proxy mode cannot keep a session going.
+#[tokio::test]
+async fn pages_say_when_the_proxy_renews_them() {
+    let page = |f: Fixture| async move {
+        send(
+            &f.app,
+            from_peer(authed(&f.state, "/albums"), "10.0.0.1")
+                .header("remote-user", "alice")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .body
+    };
+    assert!(
+        page(setup_behind_proxy())
+            .await
+            .contains("<body data-proxied>")
+    );
+    assert!(!page(setup(true)).await.contains("data-proxied"));
+}
+
 /// Off the proxy, a password sign-in keeps its refresh cookie.
 #[tokio::test]
 async fn a_password_sign_in_off_the_proxy_still_refreshes() {
