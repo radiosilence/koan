@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A maker AutoEQ files under two names is one maker.** AFUL and AFUL Acoustics, HEDD and HEDD Audio, JQ and JQ Audio, OLLO and Ollo Audio, and Sivga and Sivga Audio were each listed twice under Find in AutoEQ, with their models split between the two; they are one now, in browsing, searching and offering a headphone's correction, and each result keeps the name AutoEQ gives it. Alpha Design Labs, Ambient Dynamics, Sound Intone and Sound Linear are no longer listed under their first word.
+
 ## 0.58.0
 
 The library database moves from schema 19 to 20 (new tables for Subsonic saved play queues; every existing row is kept). Upgrades now run in one transaction and roll back whole if any step fails, and a server finding the database newer than it knows drains and exits. Builds older than 0.58.0 refuse a schema-20 database, so going back means restoring a copy taken before upgrading.
