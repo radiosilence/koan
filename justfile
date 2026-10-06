@@ -952,7 +952,16 @@ tv-signin routes="password apikey invite signout wrong-password unreachable menu
             -destination "id=$sim" -derivedDataPath target/tv-build \
             -only-testing:KoanTVUITests/TVSignInTests \
             -resultBundlePath "$out/$route.xcresult" >"$out/$route.log" 2>&1 || true
+        mkdir -p "$out/$route"
         xcrun xcresulttool export attachments --path "$out/$route.xcresult" --output-path "$out/$route" >/dev/null 2>&1 || true
+        # Which credential the television ended up holding, the secret masked:
+        # a password sign-in to a koan server is traded for an API key.
+        local_toml="$(xcrun simctl get_app_container "$sim" {{bundle_id}} data 2>/dev/null)/Library/Caches/koan-config/config.local.toml"
+        if [ -f "$local_toml" ]; then
+            grep -E '^[[:space:]]*(url|username|password|api_key)[[:space:]]*=' "$local_toml" \
+                | sed -E 's/^([[:space:]]*(password|api_key)[[:space:]]*=).*/\1 <set>/' > "$out/$route/credential.txt" || true
+            echo "$route holds: $(tr '\n' ' ' < "$out/$route/credential.txt")"
+        fi
         if xcrun xcresulttool get test-results summary --path "$out/$route.xcresult" 2>/dev/null \
             | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("result") != "Passed")'; then
             echo "$route: passed"
