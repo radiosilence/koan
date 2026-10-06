@@ -29,7 +29,7 @@ final class WalkTests: XCTestCase {
 
         tab("Library")
         snap("02-library")
-        if open(app.buttons["Albums"]) {
+        if open(app.buttons[any: "Albums"]) {
             pause(3)
             snap("03-albums")
             // The first sleeve in the grid, by where it sits: tiles are images
@@ -41,7 +41,7 @@ final class WalkTests: XCTestCase {
             back()
             back()
         }
-        if open(app.buttons["Artists"]) {
+        if open(app.buttons[any: "Artists"]) {
             pause(3)
             snap("05-artists")
             back()
@@ -49,20 +49,20 @@ final class WalkTests: XCTestCase {
 
         // Play whatever the queue holds, then open Now Playing from the mini
         // player that sits over the tab bar.
-        let play = app.buttons["play.fill"].firstMatch
+        let play = app.buttons[any: "play.fill"].firstMatch
         if play.waitForExistence(timeout: 3) { play.tap() }
         pause(4)
         // The mini player: above the tab bar on a phone, at the foot on an iPad.
         let pad = UIDevice.current.userInterfaceIdiom == .pad
         app.coordinate(withNormalizedOffset: CGVector(dx: pad ? 0.2 : 0.35, dy: pad ? 0.965 : 0.868)).tap()
-        let lyrics = app.buttons["Show lyrics"]
+        let lyrics = app.buttons[any: "Show lyrics"]
         if lyrics.waitForExistence(timeout: 5) {
             pause(2)
             snap("06-now-playing")
             lyrics.tap()
             pause(4)
             snap("07-lyrics")
-            app.buttons["Show artwork"].tap()
+            app.buttons[any: "Show artwork"].tap()
             app.swipeDown(velocity: .fast)
             pause(1)
         }
@@ -70,12 +70,17 @@ final class WalkTests: XCTestCase {
         tab("Settings")
         pause(1)
         snap("09-settings")
-        if open(app.buttons["Server"]) {
+        if open(app.buttons.matching(NSPredicate(format: "label ==[c] %@", "Server")).firstMatch) {
             pause(1)
             app.swipeUp(velocity: .fast)
             app.swipeUp(velocity: .fast)
             pause(1)
             snap("09b-server-end")
+            back()
+        }
+        if open(app.buttons.matching(NSPredicate(format: "label ==[c] %@", "Appearance")).firstMatch) {
+            pause(1)
+            snap("09c-appearance")
             back()
         }
 
@@ -97,8 +102,8 @@ final class WalkTests: XCTestCase {
     }
 
     private func tab(_ name: String) {
-        let button = app.tabBars.buttons[name]
-        if button.waitForExistence(timeout: 3) { button.tap() } else { app.buttons[name].firstMatch.tap() }
+        let button = app.tabBars.buttons[any: name]
+        if button.waitForExistence(timeout: 3) { button.tap() } else { app.buttons[any: name].firstMatch.tap() }
         pause(1)
     }
 

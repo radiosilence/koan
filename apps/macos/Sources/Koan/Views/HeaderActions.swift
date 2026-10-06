@@ -29,7 +29,7 @@ struct HeaderActions: View {
                         PlayableMenu(playable: playable)
                     } label: {
                         Image(systemName: "ellipsis")
-                            .font(.body)
+                            .font(.role(.body, system: .body))
                     }
                     .menuStyle(.borderlessButton)
                     .fixedSize()
@@ -52,5 +52,7 @@ struct HeaderActions: View {
                 }
             }
         }
+        // The theme's secondary buttons; the platform's own otherwise.
+        .koanButtons(.secondary)
     }
 }

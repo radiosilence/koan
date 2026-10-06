@@ -567,7 +567,7 @@ struct TelevisionButton: ButtonStyle {
 
         var body: some View {
             label
-                .foregroundStyle(.primary)
+                .foregroundStyle(KoanTheme.style(.ink, system: .primary))
                 .environment(\.colorScheme, focused ? .light : .dark)
                 .padding(.horizontal, 28)
                 .padding(.vertical, 14)
@@ -604,12 +604,12 @@ struct TelevisionRow: ButtonStyle {
         var body: some View {
             label
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(.primary)
+                .foregroundStyle(KoanTheme.style(.ink, system: .primary))
                 .environment(\.colorScheme, focused ? .light : .dark)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 14)
+                    RoundedRectangle(cornerRadius: KoanTheme.radius(14))
                         .fill(.white.opacity(focused ? 1 : resting))
                         .shadow(color: .black.opacity(focused ? 0.35 : 0), radius: 18, y: 8)
                 )

@@ -35,15 +35,15 @@ struct SourceBadges: View {
             } else if onServer {
                 // Visible enough to be read at a glance down a list.
                 Image(systemName: onDisk ? "cloud.fill" : "cloud")
-                    .foregroundStyle(onDisk ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                    .foregroundStyle(onDisk ? KoanTheme.style(.muted, system: .secondary) : KoanTheme.style(.muted, system: .tertiary))
                     .help(onDisk ? "On your server, downloaded" : "On your server — downloads on play")
             } else if onDisk {
                 Image(systemName: "internaldrive")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .help("Local file")
             }
         }
-        .font(.caption2)
+        .font(.role(.fine, system: .caption2))
         .imageScale(.small)
         // Fixed, so a row does not shift as the mark changes under it — every
         // state has to occupy the same space as every other.

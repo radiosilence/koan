@@ -224,9 +224,9 @@ struct TrackListView: View {
 
     @ViewBuilder private var sleeve: some View {
         if let artwork {
-            AlbumArtwork(source: artwork, cornerRadius: 8)
+            AlbumArtwork(source: artwork, cornerRadius: KoanTheme.radius(8))
                 .frame(width: Columns.sleeve, height: Columns.sleeve)
-                .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+                .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.3), radius: 10, y: 4)
                 .showsArtworkFullSize(
                     source: artwork,
                     title: title,
@@ -244,7 +244,8 @@ struct TrackListView: View {
                     }
                     #endif
                     Text(Format.title(title))
-                        .font(.system(size: Columns.title, weight: .semibold))
+                        .font(.role(.title, system: .system(size: Columns.title, weight: .semibold)))
+                        .foregroundStyle(KoanTheme.style(.strong, system: .primary))
                         .lineLimit(2)
                         // Beside the play button the row offers one line's
                         // height; asked for two, it has to be let grow.
@@ -255,14 +256,14 @@ struct TrackListView: View {
                         LinkText(text: subtitleArtist, target: .artist(artistLink))
                         if !subtitleRest.isEmpty {
                             Text(subtitleRest)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
+                                .font(.role(.control, system: .callout))
+                                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         }
                     }
                 } else if !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .font(.role(.control, system: .callout))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 }
 
                 HeaderActions(playable: playable)
@@ -313,10 +314,10 @@ struct TrackRow: View {
                     PlayingIndicator(isPlaying: player.isPlaying)
                 } else {
                     Text("\(position)")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }
-            .font(.caption.monospacedDigit())
+            .font(.role(.fine, system: .caption.monospacedDigit()))
             .frame(width: 22, alignment: .trailing)
 
             if showsAlbum {
@@ -334,22 +335,22 @@ struct TrackRow: View {
                     .foregroundStyle(
                         isCurrent && !isSelected
                             ? AnyShapeStyle(.tint)
-                            : AnyShapeStyle(.primary)
+                            : KoanTheme.style(.ink, system: .primary)
                     )
                 HStack(spacing: 5) {
                     LinkText(
                         text: track.artistName,
                         target: track.artistId.map { .artist($0) },
-                        font: .caption
+                        font: .role(.fine, system: .caption)
                     )
                     if showsAlbum {
                         Text("·")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                            .font(.role(.fine, system: .caption))
+                            .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                         LinkText(
                             text: track.albumTitle,
                             target: track.albumId.map { .album($0) },
-                            font: .caption
+                            font: .role(.fine, system: .caption)
                         )
                     }
                 }
@@ -368,14 +369,14 @@ struct TrackRow: View {
             // record's header and in the transport either way.
             if width != .compact, let quality = Format.quality(track) {
                 Text(quality)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
+                    .font(.role(.fine, system: .caption2.monospaced()))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                     .frame(width: Columns.quality, alignment: .trailing)
             }
 
             Text(Format.duration(track.durationMs))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption.monospacedDigit()))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 .frame(width: Columns.duration, alignment: .trailing)
         }
         #if os(iOS) || os(tvOS)
@@ -397,11 +398,11 @@ struct TrackSleeve: View {
 
     var body: some View {
         if let albumId {
-            AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: 3)
+            AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: KoanTheme.radius(3))
         } else {
             Image(systemName: "music.note")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
     }
 }
@@ -428,7 +429,7 @@ private struct TrackAvailability: View {
                 SourceBadges(track: track, queued: mirror.queuedByTrack[track.id])
             }
         }
-        .font(.caption)
+        .font(.role(.fine, system: .caption))
         .frame(width: 30, height: 16, alignment: .trailing)
     }
 
@@ -446,7 +447,7 @@ private struct TrackAvailability: View {
                 .help("Queued for download")
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                 .help(item.failureReason ?? "Couldn't be fetched")
         default:
             EmptyView()

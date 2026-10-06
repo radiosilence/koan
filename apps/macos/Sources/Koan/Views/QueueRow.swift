@@ -114,11 +114,11 @@ struct QueueRow: View {
             // resolved one, or the titles would step in and out down the page.
             HStack(spacing: artwork ? 10 : 6) {
                 statusIcon
-                    .font(.caption)
+                    .font(.role(.fine, system: .caption))
                     .frame(width: 16, alignment: .trailing)
 
                 if artwork, let sleeve = item.sleeve {
-                    AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 3)
+                    AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: KoanTheme.radius(3))
                         .frame(width: RowMetrics.sleeve, height: RowMetrics.sleeve)
                         // The one thing a foreground style cannot dim. A leaf
                         // image has nothing under it to flatten, so its own
@@ -129,7 +129,7 @@ struct QueueRow: View {
                     // number would otherwise shift the title left and break the
                     // alignment down the list.
                     Text(item.number.map(String.init) ?? "")
-                        .font(.caption.monospacedDigit())
+                        .font(.role(.fine, system: .caption.monospacedDigit()))
                         .foregroundStyle(played ? .quaternary : .tertiary)
                         .frame(width: artwork ? 34 : 20, alignment: .trailing)
                 }
@@ -145,7 +145,7 @@ struct QueueRow: View {
                     Text(artwork && !item.album.isEmpty
                         ? "\(item.artist) — \(item.album)"
                         : item.artist)
-                        .font(.caption)
+                        .font(.role(.fine, system: .caption))
                         .foregroundStyle(played ? .tertiary : .secondary)
                         .lineLimit(1)
                 }
@@ -178,7 +178,7 @@ struct QueueRow: View {
             #if !os(iOS)
             if let codec = item.codec {
                 Text(codec.uppercased())
-                    .font(.caption2.monospaced())
+                    .font(.role(.fine, system: .caption2.monospaced()))
                     .foregroundStyle(played ? .quaternary : .tertiary)
             }
             #endif
@@ -187,7 +187,7 @@ struct QueueRow: View {
                 // At least the width of "59:59", so durations line up down the
                 // queue, and wider on one line for anything an hour or more.
                 Text(Format.duration(ms))
-                    .font(.caption.monospacedDigit())
+                    .font(.role(.fine, system: .caption.monospacedDigit()))
                     .foregroundStyle(played ? .tertiary : .secondary)
                     .lineLimit(1)
                     .frame(minWidth: 44, alignment: .trailing)
@@ -247,7 +247,7 @@ struct QueueRow: View {
         // reason this track cannot play now is that it is not here.
         if unplayable, item.status != .playing {
             Image(systemName: "icloud.slash")
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 .help("Not on this device")
         } else {
             statusSymbol
@@ -273,17 +273,17 @@ struct QueueRow: View {
                 .help("Queued for download")
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                 .help(item.failureReason ?? "Couldn't be fetched")
         case .played:
-            Image(systemName: "checkmark").foregroundStyle(.tertiary)
+            Image(systemName: "checkmark").foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         case .queued:
             // On a desktop or a phone, where rows are picked out; a television
             // has no selection for the mark to belong to.
             #if os(tvOS)
             Color.clear
             #else
-            Image(systemName: "circle.dotted").foregroundStyle(.quaternary)
+            Image(systemName: "circle.dotted").foregroundStyle(KoanTheme.style(.rule, system: .quaternary))
             #endif
         }
     }

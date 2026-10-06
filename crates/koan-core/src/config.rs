@@ -38,6 +38,33 @@ pub struct Config {
     pub push: PushConfig,
     pub devices: DevicesConfig,
     pub dsp: DspConfig,
+    pub appearance: AppearanceConfig,
+}
+
+/// How the apps are drawn: Settings → Appearance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AppearanceConfig {
+    /// `"koan"`, the site's look throughout (see `docs/design/koan-theme.md`),
+    /// or `"system"`, the platform's own look in koan's colours. Read at launch.
+    pub theme: String,
+    /// In the kōan theme, draw the app's icons beside navigation, tabs and
+    /// controls; off, labels alone.
+    pub theme_icons: bool,
+    /// Take colour from the record playing: the wash behind the window and
+    /// the accent. Off, there is no wash and the accent is koan's mint, in
+    /// either theme.
+    pub record_colours: bool,
+}
+
+impl Default for AppearanceConfig {
+    fn default() -> Self {
+        Self {
+            theme: "koan".into(),
+            theme_icons: true,
+            record_colours: true,
+        }
+    }
 }
 
 /// Share links this koan serves itself.

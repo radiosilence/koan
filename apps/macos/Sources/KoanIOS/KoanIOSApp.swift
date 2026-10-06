@@ -40,6 +40,7 @@ struct KoanIOSApp: App {
                         .environment(state.meter)
                         .environment(state.ui)
                         .environment(state.mirror)
+                        .koanTheme(state.appearance)
                         .environment(\.powerSaving, powerSaving)
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))
@@ -56,11 +57,7 @@ struct KoanIOSApp: App {
                         .preferredColorScheme(.dark)
                         #endif
                 } else if let startupError {
-                    ContentUnavailableView(
-                        "kōan could not start",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(startupError)
-                    )
+                    KoanUnavailable("kōan could not start", icon: "exclamationmark.triangle", detail: startupError)
                 } else {
                     Splash()
                 }
@@ -190,8 +187,8 @@ private struct Splash: View {
             // so cannot say it: the ensō stays put, and this arrives under it.
             .overlay(alignment: .bottom) {
                 Text(AppVersion.text)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .padding(.bottom, 24)
             }
     }

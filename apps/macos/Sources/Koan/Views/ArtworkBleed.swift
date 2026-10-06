@@ -52,6 +52,10 @@ struct ArtworkBleed: View {
     }
 
     @Environment(\.powerSaving) private var powerSaving
+    @Environment(\.colorScheme) private var scheme
+    /// Optional: the window's background is built outside the environment
+    /// the app hands its views, and is given this explicitly.
+    @Environment(AppearanceModel.self) private var appearance: AppearanceModel?
     /// Whether the wash is moving: something to breathe to, a setting that
     /// allows it, and a system that has not asked for less motion.
     private var breathes: Bool { drifts && graphics.drifts && !reduceMotion && !powerSaving }
@@ -59,7 +63,8 @@ struct ArtworkBleed: View {
     var body: some View {
         // Below `reduced` this is nothing at all rather than a transparent
         // wash: no cover fetched, no blur, no mirrored copy under the glass.
-        if graphics.showsWash {
+        // And nothing when colours from the record are off.
+        if graphics.showsWash, appearance?.recordColours != false {
             bleed
         }
     }
@@ -69,19 +74,35 @@ struct ArtworkBleed: View {
     /// this view is animated: the drift, the blur and the dissolve between
     /// records belong to the compositor, and this view's body runs when a
     /// record changes and at no other time.
+    @ViewBuilder
     private var bleed: some View {
-        DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes)
-            .opacity(0.5)
-            .mask(
-                LinearGradient(
-                    colors: [.black, .black, .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
+        if KoanTheme.isOn {
+            // The kōan theme's wash: toned so no text over it loses contrast,
+            // at the theme's strength, the whole height of the bare ground.
+            // Flat surfaces cover the rest; nothing glass extends it under them.
+            DriftingWash(
+                image: answered ?? nil,
+                pending: answered == nil,
+                drifts: breathes,
+                tone: scheme == .dark ? .dark : .light
             )
-            .backgroundExtensionEffect()
+            .opacity(KoanTheme.wash)
             .allowsHitTesting(false)
             .task(id: source) { await load() }
+        } else {
+            DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes)
+                .opacity(0.5)
+                .mask(
+                    LinearGradient(
+                        colors: [.black, .black, .clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .backgroundExtensionEffect()
+                .allowsHitTesting(false)
+                .task(id: source) { await load() }
+        }
     }
 
     /// Only for a cover the cache could not already answer for. The usual path
@@ -108,7 +129,9 @@ extension View {
         // A tvOS list paints no ground of its own.
         self
         #else
+        // And in the theme, the theme's list: rows on the ground, ruled.
         scrollContentBackground(.hidden)
+            .koanList()
         #endif
     }
 }

@@ -15,9 +15,9 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
     static let identifier = NSUserInterfaceItemIdentifier("DownloadTableRow")
     static let height: CGFloat = 60
 
-    private static let titleFont = NSFont.preferredFont(forTextStyle: .body)
-    private static let captionFont = NSFont.preferredFont(forTextStyle: .caption1)
-    private static let figureFont = NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular)
+    private static let titleFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
+    private static let captionFont = NSFont.role(.meta, system: NSFont.preferredFont(forTextStyle: .caption1))
+    private static let figureFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular))
 
     private let sleeve = CALayer()
     private let track = CALayer()
@@ -37,11 +37,11 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
         super.init(frame: .zero)
         wantsLayer = true
         for layer in [sleeve, track, filled] { self.layer?.addSublayer(layer) }
-        sleeve.cornerRadius = 3
+        sleeve.cornerRadius = KoanTheme.radius(3)
         sleeve.masksToBounds = true
         sleeve.contentsGravity = .resizeAspectFill
-        track.cornerRadius = 2
-        filled.cornerRadius = 2
+        track.cornerRadius = KoanTheme.radius(2)
+        filled.cornerRadius = KoanTheme.radius(2)
         for label in [title, figure, subtitle, link] {
             label.lineBreakMode = .byTruncatingTail
             label.maximumNumberOfLines = 1
@@ -149,9 +149,9 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
         guard let transfer else { return }
         let selected = backgroundStyle == .emphasized
         let onAccent: NSColor = .alternateSelectedControlTextColor
-        title.textColor = selected ? onAccent : .labelColor
-        figure.textColor = selected ? onAccent : .secondaryLabelColor
-        subtitle.textColor = selected ? onAccent : (transfer.state == .failed ? .systemOrange : .secondaryLabelColor)
+        title.textColor = selected ? onAccent : .koanLabel
+        figure.textColor = selected ? onAccent : .koanSecondaryLabel
+        subtitle.textColor = selected ? onAccent : (transfer.state == .failed ? NSColor.koanBad(.systemOrange) : .koanSecondaryLabel)
         link.isHidden = !hovered
         var attributes: [NSAttributedString.Key: Any] = [
             .font: Self.captionFont, .foregroundColor: selected ? onAccent : NSColor.linkColor,
@@ -163,8 +163,8 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
             CATransaction.setDisableActions(true)
             // The quiet end is what has not arrived, the same way round as the
             // seek bar, so a finished transfer reads as full.
-            track.backgroundColor = NSColor.quaternaryLabelColor.cgColor
-            filled.backgroundColor = (selected ? NSColor.white : NSColor.labelColor).cgColor
+            track.backgroundColor = NSColor.koanQuaternaryLabel.cgColor
+            filled.backgroundColor = (selected ? NSColor.white : NSColor.koanLabel).cgColor
             CATransaction.commit()
         }
         needsLayout = true

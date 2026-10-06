@@ -28,10 +28,10 @@ final class PairApproveTests: XCTestCase {
 
         app.open(url)
         // A custom scheme opened from outside the app asks first.
-        let open = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Open"]
+        let open = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons[any: "Open"]
         if open.waitForExistence(timeout: 5) { open.tap() }
 
-        let allow = app.alerts.buttons["Allow"]
+        let allow = app.alerts.buttons[any: "Allow"]
         XCTAssertTrue(allow.waitForExistence(timeout: 20), "the phone asks whether to sign the device in")
         snap("phone-02-asked")
         allow.tap()

@@ -37,13 +37,16 @@ struct DriftingWash: PlatformViewRepresentable {
     var pending = false
     /// Whether the room is breathing. False settles it where it stands.
     let drifts: Bool
+    /// The kōan theme's luminance limit for the appearance it is drawn in;
+    /// `nil` draws the sleeve as it is.
+    var tone: WashTone?
 
     typealias PlatformViewType = WashView
 
     func makeView(context: Context) -> WashView { WashView(frame: .zero) }
 
     func updateView(_ view: WashView, context: Context) {
-        if !(pending && image == nil) { view.show(image) }
+        if !(pending && image == nil) { view.show(image, tone: tone) }
         view.drift(drifts)
     }
 }
@@ -79,6 +82,7 @@ final class WashView: LayerView {
     private let current = CALayer()
     private let previous = CALayer()
     private var shown: PlatformImage?
+    private var shownTone: WashTone?
     private var drifting = false
 
     override init(frame: CGRect) {
@@ -123,16 +127,17 @@ final class WashView: LayerView {
 
     /// Bake a new cover off the main thread, then dissolve to it — see
     /// `install(_:)`.
-    func show(_ image: PlatformImage?) {
-        guard image !== shown else { return }
+    func show(_ image: PlatformImage?, tone: WashTone? = nil) {
+        guard image !== shown || tone != shownTone else { return }
         shown = image
+        shownTone = tone
         generation &+= 1
         let mine = generation
         guard let image else { return install(nil) }
         Task { [weak self] in
             // Off the main thread and off the cooperative pool: this is a
             // Gaussian blur over a whole sleeve, once per record.
-            let baked = await ImageWork.onCPU { Self.bake(image) }
+            let baked = await ImageWork.onCPU { Self.bake(image).map { tone?.apply(to: $0) ?? $0 } }
             guard let self, self.generation == mine else { return }
             self.install(baked)
         }
@@ -305,5 +310,66 @@ private extension CALayer {
     /// Take the drift off, and leave everything else — see `WashView.driftKeys`.
     nonisolated func removeDrift() {
         for key in WashView.driftKeys { removeAnimation(forKey: key) }
+    }
+}
+
+/// The kōan theme's hold on the wash: every sample of the baked sleeve kept on
+/// the side of a luminance limit where `muted` text over it still reads at
+/// 4.6:1 — no brighter in dark mode, no darker in light. The hue survives; the
+/// brightness that would cost contrast does not. Run once per record and
+/// appearance, on the baked texture, which is small.
+enum WashTone: Sendable, Equatable {
+    case dark, light
+
+    /// Dark: no brighter than `muted` (`#919191`) at 4.6:1 allows. Light: no
+    /// darker than keeps the wash, drawn at `KoanTheme.wash` over white, at
+    /// least as light as `surface` (Y 0.888) — so anything that reads on
+    /// `surface`, the accent and `bad` included, reads over the wash.
+    private var limit: Double {
+        switch self {
+        case .dark: (0.2831 + 0.05) / 4.6 - 0.05
+        case .light: 0.86
+        }
+    }
+
+    nonisolated func apply(to image: CGImage) -> CGImage? {
+        let width = image.width, height = image.height
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ),
+              let data = context.data
+        else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let pixels = data.bindMemory(to: UInt8.self, capacity: width * height * 4)
+        let decode = (0..<256).map { v -> Double in
+            let c = Double(v) / 255
+            return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        func encode(_ v: Double) -> UInt8 {
+            let c = min(max(v, 0), 1)
+            let g = c <= 0.0031308 ? 12.92 * c : 1.055 * pow(c, 1 / 2.4) - 0.055
+            return UInt8((g * 255).rounded())
+        }
+        let limit = limit
+        for i in stride(from: 0, to: width * height * 4, by: 4) {
+            var r = decode[Int(pixels[i])], g = decode[Int(pixels[i + 1])], b = decode[Int(pixels[i + 2])]
+            let y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            switch self {
+            case .dark where y > limit:
+                let k = limit / y
+                r *= k; g *= k; b *= k
+            case .light where y < limit:
+                let t = (limit - y) / (1 - y)
+                r += (1 - r) * t; g += (1 - g) * t; b += (1 - b) * t
+            default:
+                continue
+            }
+            pixels[i] = encode(r)
+            pixels[i + 1] = encode(g)
+            pixels[i + 2] = encode(b)
+        }
+        return context.makeImage()
     }
 }

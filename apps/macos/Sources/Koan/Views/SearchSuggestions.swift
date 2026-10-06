@@ -66,10 +66,10 @@ private struct SuggestionRow: View {
         HStack(spacing: 9) {
             Group {
                 if let albumId {
-                    AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: 3)
+                    AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: KoanTheme.radius(3))
                 } else {
                     Image(systemName: icon)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 }
             }
             // Two lines tall, so the title gets the row to itself and the
@@ -85,8 +85,8 @@ private struct SuggestionRow: View {
                     .truncationMode(.tail)
                 if let subtitle {
                     Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.role(.fine, system: .caption))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }

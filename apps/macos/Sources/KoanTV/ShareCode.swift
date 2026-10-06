@@ -18,23 +18,25 @@ struct ShareCode: View {
                     .resizable()
                     .frame(width: 440, height: 440)
                     .padding(28)
-                    .background(.white, in: .rect(cornerRadius: 24))
+                    .background(.white, in: .rect(cornerRadius: KoanTheme.radius(24))) // theme: raw — a QR code needs a white ground to scan
             }
             VStack(alignment: .leading, spacing: 24) {
-                Text("Scan to open")
-                    .font(.title2.weight(.semibold))
+                Text("Scan to open").koanCase()
+                    .koanText(.titleSmall, .strong)
                 Text("Anyone with the link can listen, in a browser or in kōan.")
-                    .foregroundStyle(.secondary)
+                    .koanText(.body, .muted)
                 Text(link)
-                    .font(.callout.monospaced())
-                    .foregroundStyle(.secondary)
+                    .koanText(.meta, .muted)
+                    .monospaced()
                     .lineLimit(2)
                 Button("Done") { dismiss() }
+                    .koanButton(.secondary)
                     .padding(.top, 24)
             }
             .frame(maxWidth: 640, alignment: .leading)
         }
         .padding(80)
+        .koanSheet()
     }
 
 }

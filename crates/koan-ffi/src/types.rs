@@ -1570,6 +1570,17 @@ pub(crate) fn year_of(date: &str) -> Option<i32> {
     date.get(..4).and_then(|s| s.parse().ok())
 }
 
+/// How the app is drawn: see `docs/design/koan-theme.md`.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct Appearance {
+    /// The kōan theme, rather than the platform's look.
+    pub koan: bool,
+    /// In the kōan theme, icons beside labels.
+    pub icons: bool,
+    /// The wash and the accent take their colour from the record playing.
+    pub record_colours: bool,
+}
+
 /// Everything the settings window reads and writes.
 ///
 /// One record rather than a getter per field: the window shows the whole

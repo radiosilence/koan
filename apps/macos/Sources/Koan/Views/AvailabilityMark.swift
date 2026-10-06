@@ -57,15 +57,15 @@ final class AvailabilityMark: CALayer {
         defer { CATransaction.commit() }
         ring.isHidden = true
         badge.isHidden = false
-        let quiet: NSColor = selected ? .white : .tertiaryLabelColor
-        let plain: NSColor = selected ? .white : .secondaryLabelColor
+        let quiet: NSColor = selected ? .white : .koanTertiaryLabel
+        let plain: NSColor = selected ? .white : .koanSecondaryLabel
         switch state {
         case .nothing:
             badgeImage = nil
         case .pending:
             badgeImage = Symbol.image("arrow.down.circle", size: 11, colours: [selected ? .white : tint], appearance: appearance)
         case .failed:
-            badgeImage = Symbol.image("exclamationmark.triangle.fill", size: 11, colours: [.systemOrange], appearance: appearance)
+            badgeImage = Symbol.image("exclamationmark.triangle.fill", size: 11, colours: [NSColor.koanBad(.systemOrange)], appearance: appearance)
         case .notHere:
             badgeImage = Symbol.image("icloud.slash", size: 10, colours: [quiet], appearance: appearance)
         case .transferring(let fraction):

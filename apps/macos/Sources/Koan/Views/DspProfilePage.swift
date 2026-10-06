@@ -22,13 +22,13 @@ struct DspProfilePage: View {
     @State private var showingMore = false
 
     var body: some View {
-        Form {
+        KoanForm {
             if let d = detail {
                 Section {
                     ChainSummaryCard(corrects: d.corrects, baked: d.correctsBaked, tunings: d.tunings)
                     if let twice = d.correctsTwice {
                         Label(twice, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                     }
                 }
             }
@@ -49,14 +49,14 @@ struct DspProfilePage: View {
                 if let problem = d.problem {
                     Section {
                         Label(problem, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(KoanTheme.style(.bad, system: .orange))
                     }
                 }
 
                 Section("Used for") {
                     if d.devices.isEmpty {
                         Text("No output yet")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     }
                     ForEach(d.devices, id: \.self) { Text(dsp.label($0)) }
                     if let device = dsp.overview?.device {
@@ -91,7 +91,7 @@ struct DspProfilePage: View {
                                 Spacer()
                                 Image(systemName: "chevron.right")
                                     .rotationEffect(.degrees(showingMore ? 90 : 0))
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                             }
                             .contentShape(Rectangle())
                         }
@@ -109,7 +109,6 @@ struct DspProfilePage: View {
                 ProgressView()
             }
         }
-        .formStyle(.grouped)
         .navigationTitle(name)
         .task(id: dsp.stamp) { await load() }
         #if !os(tvOS)
@@ -149,8 +148,8 @@ struct DspProfilePage: View {
                 Text("Impulse responses")
             } footer: {
                 Text("A track at a rate with no response of its own is resampled to the nearest one here.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
             }
         }
 
@@ -164,13 +163,13 @@ struct DspProfilePage: View {
             Text(d.preampSet
                  ? "Set in the profile."
                  : "Derived at \(DspModel.khz(d.preampRate)) kHz from the largest gain the filters apply, so nothing they boost can clip.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
 
         if !d.source.isEmpty {
             Section("Imported from") {
-                ForEach(d.source, id: \.self) { Text($0).foregroundStyle(.secondary) }
+                ForEach(d.source, id: \.self) { Text($0).foregroundStyle(KoanTheme.style(.muted, system: .secondary)) }
             }
         }
     }
@@ -225,8 +224,8 @@ private struct GroupSection: View {
             Text(detail.layers.contains(where: \.on)
                  ? "One member plays at a time. Pick another and it plays in place of the last. Each member is a profile of its own, with its own page."
                  : "None was picked, so the first plays. Pick one to change it.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
     }
 }
@@ -328,8 +327,8 @@ private struct LayersSection: View {
             Text("Layers")
         } footer: {
             Text("Played in order, before this profile's own filters: a correction, then tunings on top. A layer switched off plays nothing.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
     }
 
@@ -393,11 +392,13 @@ enum ProfileRole {
         }
     }
 
-    var color: Color {
+    /// The role's colour: the accent for a correction, and in the theme ink
+    /// and muted for the others, so the accent stays the curve that corrects.
+    var color: AnyShapeStyle {
         switch self {
-        case .correction: .koanAccent
-        case .tuning: .orange
-        case .baked: .purple
+        case .correction: AnyShapeStyle(.tint)
+        case .tuning: KoanTheme.style(.ink, system: Color.orange)
+        case .baked: KoanTheme.style(.muted, system: Color.purple)
         }
     }
 }
@@ -423,7 +424,7 @@ struct RoleTag: View {
 
     var body: some View {
         Text(role.label)
-            .font(.caption2.weight(.semibold))
+            .font(.role(.fine, system: .caption2.weight(.semibold)))
             .foregroundStyle(role.color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -449,8 +450,8 @@ struct TargetRow: View {
             Text(target.name)
             if !target.does.isEmpty {
                 Text(target.does)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
         }
         #endif
@@ -497,8 +498,8 @@ private struct RoleSection: View {
                     #endif
                     if let c = targets.choices.first(where: { $0.id == current }), !c.character.isEmpty {
                         Text(c.character)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                            .font(.role(.control, system: .callout))
+                            .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     }
                     #if !os(tvOS)
                     Button("Add a Target…") { adding = true }
@@ -523,8 +524,8 @@ private struct RoleSection: View {
             Text("What it's for")
         } footer: {
             Text(footer)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
     }
 
@@ -556,14 +557,14 @@ private struct ImpulseRow: View {
                 Text("\(DspModel.khz(ir.rate)) kHz")
                 Spacer()
                 Text(channels)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
             Text(shape)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             Text(ir.file)
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
     }
 
@@ -605,12 +606,12 @@ private struct ScopeSection: View {
             }
             if let problem = detail.syncProblem {
                 Label(problem, systemImage: "exclamationmark.icloud")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(KoanTheme.style(.bad, system: .orange))
             }
             if let note = detail.syncNote {
                 Label(note, systemImage: "arrow.triangle.2.circlepath")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.control, system: .callout))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
             }
         } header: {
             Text("Sync")
@@ -618,8 +619,8 @@ private struct ScopeSection: View {
             Text(detail.everywhere
                  ? "Everywhere: kept on every device signed in to your kōan server, and an edit on one reaches the rest. Which output plays it stays each device's own. Headphone corrections sync by default, since headphones move between devices."
                  : "This device: never leaves it. Room and speaker corrections stay by default, since they belong to where they were measured. Moving a profile here from everywhere removes it from your other devices.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.role(.fine, system: .caption))
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
     }
 }
@@ -633,7 +634,7 @@ struct BandRow: View {
             Spacer()
             Text(values)
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
         }
     }
 

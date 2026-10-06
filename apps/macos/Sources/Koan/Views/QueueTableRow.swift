@@ -64,16 +64,16 @@ final class QueueTableRow: NSTableCellView, TableRow {
         }
     }
 
-    private static let titleFont = NSFont.preferredFont(forTextStyle: .body)
-    private static let captionFont = NSFont.preferredFont(forTextStyle: .caption1)
-    private static let numberFont = NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular)
-    private static let codecFont = NSFont.monospacedSystemFont(
+    private static let titleFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
+    private static let captionFont = NSFont.role(.meta, system: NSFont.preferredFont(forTextStyle: .caption1))
+    private static let numberFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(ofSize: captionFont.pointSize, weight: .regular))
+    private static let codecFont = NSFont.role(.fine, system: NSFont.monospacedSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
-    )
-    private static let headingFont = NSFont.systemFont(ofSize: 14, weight: .semibold)
-    private static let detailFont = NSFont.monospacedDigitSystemFont(
+    ))
+    private static let headingFont = NSFont.role(.body, system: NSFont.systemFont(ofSize: 14, weight: .semibold))
+    private static let detailFont = NSFont.role(.fine, system: NSFont.monospacedDigitSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption2).pointSize, weight: .regular
-    )
+    ))
 
     private let status = CALayer()
     private var bars: PlayingBarsView?
@@ -187,9 +187,9 @@ final class QueueTableRow: NSTableCellView, TableRow {
             heart.isHidden = true
             sleeve.opacity = 1
             CATransaction.commit()
-            title.textColor = selected ? onAccent : .labelColor
-            artist.textColor = selected ? onAccent : .secondaryLabelColor
-            detail.textColor = selected ? onAccent : .tertiaryLabelColor
+            title.textColor = selected ? onAccent : .koanLabel
+            artist.textColor = selected ? onAccent : .koanSecondaryLabel
+            detail.textColor = selected ? onAccent : .koanTertiaryLabel
             needsLayout = true
             return
         }
@@ -207,11 +207,11 @@ final class QueueTableRow: NSTableCellView, TableRow {
         case .priorityPending:
             statusImage = Symbol.image("arrow.down.circle", size: 10, colours: [selected ? .white : context.tint], appearance: appearance)
         case .failed:
-            statusImage = Symbol.image("exclamationmark.triangle.fill", size: 10, colours: [.systemOrange], appearance: appearance)
+            statusImage = Symbol.image("exclamationmark.triangle.fill", size: 10, colours: [NSColor.koanBad(.systemOrange)], appearance: appearance)
         case .played:
-            statusImage = Symbol.image("checkmark", size: 10, colours: [selected ? .white : .tertiaryLabelColor], appearance: appearance)
+            statusImage = Symbol.image("checkmark", size: 10, colours: [selected ? .white : .koanTertiaryLabel], appearance: appearance)
         case .queued:
-            statusImage = Symbol.image("circle.dotted", size: 10, colours: [selected ? .white : .quaternaryLabelColor], appearance: appearance)
+            statusImage = Symbol.image("circle.dotted", size: 10, colours: [selected ? .white : .koanQuaternaryLabel], appearance: appearance)
         default:
             statusImage = nil
         }
@@ -227,15 +227,15 @@ final class QueueTableRow: NSTableCellView, TableRow {
         heart.isHidden = content.trackId == nil || !(favourite || hovered)
         heartImage = Symbol.image(
             favourite ? "heart.fill" : "heart", size: 10,
-            colours: [favourite ? .systemRed : (selected ? .white : .tertiaryLabelColor)], appearance: appearance
+            colours: [favourite ? NSColor.koanBad(.systemRed) : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
         )
         CATransaction.commit()
 
-        title.textColor = isCurrent && !selected ? context.tint : (selected ? onAccent : (dimmed ? .secondaryLabelColor : .labelColor))
-        artist.textColor = selected ? onAccent : (dimmed ? .tertiaryLabelColor : .secondaryLabelColor)
-        number.textColor = selected ? onAccent : (dimmed ? .quaternaryLabelColor : .tertiaryLabelColor)
-        codec.textColor = selected ? onAccent : (dimmed ? .quaternaryLabelColor : .tertiaryLabelColor)
-        duration.textColor = selected ? onAccent : (dimmed ? .tertiaryLabelColor : .secondaryLabelColor)
+        title.textColor = isCurrent && !selected ? context.tint : (selected ? onAccent : (dimmed ? .koanSecondaryLabel : .koanLabel))
+        artist.textColor = selected ? onAccent : (dimmed ? .koanTertiaryLabel : .koanSecondaryLabel)
+        number.textColor = selected ? onAccent : (dimmed ? .koanQuaternaryLabel : .koanTertiaryLabel)
+        codec.textColor = selected ? onAccent : (dimmed ? .koanQuaternaryLabel : .koanTertiaryLabel)
+        duration.textColor = selected ? onAccent : (dimmed ? .koanTertiaryLabel : .koanSecondaryLabel)
         toolTip = notHere ? AvailabilityMark.help(.notHere, failure: nil)
             : content.status == .failed ? content.failureReason ?? "Couldn't be fetched"
             : (content.status == .priorityPending ? "Queued for download" : nil)
@@ -266,7 +266,7 @@ final class QueueTableRow: NSTableCellView, TableRow {
     }
 
     private func showSleeve(_ source: AlbumArtwork.Source?, art: CoverArtCache, corner: CGFloat) {
-        sleeve.cornerRadius = corner
+        sleeve.cornerRadius = KoanTheme.radius(corner)
         guard source != shownSleeve || sleeve.contents == nil else { return }
         shownSleeve = source
         sleeveLoad?.cancel()
@@ -274,7 +274,7 @@ final class QueueTableRow: NSTableCellView, TableRow {
         shade.isHidden = source == nil || line?.isTrack == true
         guard let source else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            sleeve.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+            sleeve.backgroundColor = NSColor.koanQuaternaryLabel.cgColor
         }
         if let held = art.cached(source, size: .thumb) {
             sleeve.contents = held.bitmap

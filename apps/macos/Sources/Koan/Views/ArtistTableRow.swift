@@ -17,10 +17,10 @@ final class ArtistTableRow: NSTableCellView, TableRow {
     static let identifier = NSUserInterfaceItemIdentifier("ArtistTableRow")
     static let height = RowMetrics.line + 2 * RowMetrics.padding
 
-    private static let nameFont = NSFont.preferredFont(forTextStyle: .body)
-    private static let countFont = NSFont.monospacedDigitSystemFont(
+    private static let nameFont = NSFont.role(.body, system: NSFont.preferredFont(forTextStyle: .body))
+    private static let countFont = NSFont.role(.meta, system: NSFont.monospacedDigitSystemFont(
         ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular
-    )
+    ))
     private static let countWidth: CGFloat = 78
 
     private enum Part { case mark, name, heart, elsewhere }
@@ -118,25 +118,25 @@ final class ArtistTableRow: NSTableCellView, TableRow {
             )
         } else {
             markImage = Symbol.image(
-                "music.mic", size: 10, colours: [selected ? .white : .tertiaryLabelColor], appearance: appearance
+                "music.mic", size: 10, colours: [selected ? .white : .koanTertiaryLabel], appearance: appearance
             )
         }
         heart.isHidden = !(favourite || hovered != nil)
         heartImage = Symbol.image(
             favourite ? "heart.fill" : "heart", size: 10,
-            colours: [favourite ? .systemRed : (selected ? .white : .tertiaryLabelColor)], appearance: appearance
+            colours: [favourite ? NSColor.koanBad(.systemRed) : (selected ? .white : .koanTertiaryLabel)], appearance: appearance
         )
         CATransaction.commit()
 
         let linked = hovered == .name
         var attributes: [NSAttributedString.Key: Any] = [
             .font: Self.nameFont,
-            .foregroundColor: selected ? NSColor.alternateSelectedControlTextColor : NSColor.labelColor,
+            .foregroundColor: selected ? NSColor.alternateSelectedControlTextColor : NSColor.koanLabel,
         ]
         if linked { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
         name.attributedStringValue = NSAttributedString(string: artist.name, attributes: attributes)
-        albums.textColor = selected ? .alternateSelectedControlTextColor : .secondaryLabelColor
-        tracks.textColor = selected ? .alternateSelectedControlTextColor : .tertiaryLabelColor
+        albums.textColor = selected ? .alternateSelectedControlTextColor : .koanSecondaryLabel
+        tracks.textColor = selected ? .alternateSelectedControlTextColor : .koanTertiaryLabel
         needsLayout = true
     }
 

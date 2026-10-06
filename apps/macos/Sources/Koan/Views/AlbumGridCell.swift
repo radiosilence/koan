@@ -32,20 +32,20 @@ struct AlbumGridCell: View {
     private var television: some View {
         VStack(alignment: .leading, spacing: 14) {
             Button { nav.open(album: album.id) } label: {
-                AlbumArtwork(source: .album(album.id), size: .tile, cornerRadius: 10)
+                AlbumArtwork(source: .album(album.id), size: .tile, cornerRadius: KoanTheme.radius(10))
             }
             .buttonStyle(.card)
             .contextMenu { PlayableMenu(playable: .album(album)) }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(album.title)
-                    .font(.callout.weight(.medium))
+                    .font(.role(.control, system: .callout.weight(.medium)))
                     .lineLimit(1)
                 Text([showArtist ? album.artistName : nil, album.year.map { String($0) }]
                     .compactMap { $0 }
                     .joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .lineLimit(1)
             }
         }
@@ -56,7 +56,7 @@ struct AlbumGridCell: View {
     private var tile: some View {
         VStack(alignment: .leading, spacing: 7) {
             PlayableArtwork(albumId: album.id)
-                .shadow(color: .black.opacity(0.28), radius: 7, y: 3)
+                .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.28), radius: 7, y: 3)
                 .overlay {
                     if selecting, let selection {
                         SelectionMark(key: Playable.album(album).key, selection: selection)
@@ -68,8 +68,8 @@ struct AlbumGridCell: View {
                         // unreadable and it's the codec that tells you whether
                         // this is the good copy.
                         Text(codec.uppercased())
-                            .font(.system(size: 9, weight: .semibold).monospaced())
-                            .foregroundStyle(.white)
+                            .font(.role(.fine, system: .system(size: 9, weight: .semibold).monospaced()))
+                            .foregroundStyle(KoanTheme.style(.ink, system: .white))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                             // Clear glass, not a black scrim: over artwork the
@@ -91,7 +91,7 @@ struct AlbumGridCell: View {
                 }
 
             Text(album.title)
-                .font(.callout.weight(.medium))
+                .font(.role(.control, system: .callout.weight(.medium)))
                 .underline(titleHovering)
                 .lineLimit(1)
                 .contentShape(.rect)
@@ -100,12 +100,12 @@ struct AlbumGridCell: View {
 
             HStack(spacing: 4) {
                 if showArtist {
-                    LinkText(text: album.artistName, target: .artist(album.artistId), font: .caption)
+                    LinkText(text: album.artistName, target: .artist(album.artistId), font: .role(.fine, system: .caption))
                 }
                 if let year = album.year {
                     Text(showArtist ? "· \(String(year))" : String(year))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.role(.fine, system: .caption))
+                        .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 }
             }
         }
@@ -172,14 +172,14 @@ private struct SelectionMark: View {
 
     var body: some View {
         let selected = selection.contains(key)
-        RoundedRectangle(cornerRadius: 6)
+        RoundedRectangle(cornerRadius: KoanTheme.radius(6))
             .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), lineWidth: 3)
             .overlay(alignment: .topLeading) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 20))
                     .symbolRenderingMode(.palette)
                     .foregroundStyle(.white, selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.black.opacity(0.25)))
-                    .shadow(color: .black.opacity(0.35), radius: 2)
+                    .shadow(color: .black.opacity(KoanTheme.isOn ? 0 : 0.35), radius: 2)
                     .padding(7)
             }
     }
@@ -194,7 +194,7 @@ struct SelectionTick: View {
     var body: some View {
         let selected = selection.contains(key)
         Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-            .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+            .foregroundStyle(selected ? AnyShapeStyle(.tint) : KoanTheme.style(.muted, system: .tertiary))
     }
 }
 

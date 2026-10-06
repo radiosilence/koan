@@ -3230,6 +3230,42 @@ impl KoanEngine {
 
     // --- Settings ----------------------------------------------------------
 
+    /// The kōan theme, or the platform's look. Saved at once; it takes effect
+    /// on the next launch, since every view is drawn in the theme read at start.
+    pub fn set_theme(&self, koan: bool) {
+        let theme = if koan { "koan" } else { "system" };
+        if let Err(e) = Config::persist(|cfg| cfg.appearance.theme = theme.into()) {
+            log::warn!("appearance: theme not saved: {e}");
+        }
+    }
+
+    /// Colours from the record, or koan's own. Saved at once; the app redraws
+    /// from its own copy.
+    pub fn set_record_colours(&self, on: bool) {
+        if let Err(e) = Config::persist(|cfg| cfg.appearance.record_colours = on) {
+            log::warn!("appearance: record_colours not saved: {e}");
+        }
+    }
+
+    /// Show icons beside labels in the kōan theme, or not. Saved at once;
+    /// the app redraws from its own copy.
+    pub fn set_theme_icons(&self, on: bool) {
+        if let Err(e) = Config::persist(|cfg| cfg.appearance.theme_icons = on) {
+            log::warn!("appearance: theme_icons not saved: {e}");
+        }
+    }
+
+    /// How the app is drawn, from `[appearance]`. Read once, as the app opens:
+    /// a change takes effect on the next launch.
+    pub fn appearance(&self) -> Appearance {
+        let cfg = Config::cached();
+        Appearance {
+            koan: cfg.appearance.theme == "koan",
+            icons: cfg.appearance.theme_icons,
+            record_colours: cfg.appearance.record_colours,
+        }
+    }
+
     /// The whole configuration, as the settings window shows it.
     pub async fn settings(self: Arc<Self>) -> Settings {
         offload::offload(move || {

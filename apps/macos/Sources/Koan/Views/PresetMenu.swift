@@ -67,12 +67,14 @@ struct PresetMenu<Label: View>: View {
     var body: some View {
         Menu {
             if !presets.enabled {
-                Section("Processing is off") {
+                Section {
                     if let enable = presets.enable {
                         Button("Turn On Processing", action: enable)
                     } else {
                         Text("Turn it on in that device's Settings")
                     }
+                } header: {
+                    KoanSectionHeader("Processing is off")
                 }
             }
             if let title {
@@ -93,7 +95,7 @@ struct PresetMenu<Label: View>: View {
             }
         } label: {
             label()
-        }
+        }.koanControl()
         .accessibilityLabel("Preset: \(presets.summary)")
     }
 
@@ -105,7 +107,7 @@ struct PresetMenu<Label: View>: View {
             Text(presets.none).tag("")
             Divider()
             ForEach(presets.profiles, id: \.self) { Text($0).tag($0) }
-        }
+        }.koanControl()
         .pickerStyle(.inline)
     }
 }

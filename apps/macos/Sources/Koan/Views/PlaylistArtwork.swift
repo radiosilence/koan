@@ -14,9 +14,9 @@ struct PlaylistArtwork: View {
         Color.clear
             .aspectRatio(1, contentMode: .fit)
             .overlay { mosaic }
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: KoanTheme.radius(cornerRadius)))
             .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
+                RoundedRectangle(cornerRadius: KoanTheme.radius(cornerRadius))
                     .strokeBorder(.white.opacity(0.06))
             }
     }
@@ -61,6 +61,6 @@ struct PlaylistArtwork: View {
     /// No corner radius and no border on the pieces — the mosaic is one square
     /// with one edge, not four little squares in a box.
     private func tile(_ source: AlbumArtwork.Source) -> some View {
-        AlbumArtwork(source: source, cornerRadius: 0, fills: true)
+        AlbumArtwork(source: source, cornerRadius: KoanTheme.radius(0), fills: true)
     }
 }

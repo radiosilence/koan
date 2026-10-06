@@ -24,7 +24,7 @@ struct SearchResultsView: View {
 
     var body: some View {
         page
-        .navigationTitle(search.hasQuery ? "Results for “\(search.query)”" : "Search")
+        .navigationTitle(search.hasQuery ? "\(KoanTheme.label("Results for")) “\(search.query)”" : KoanTheme.label("Search"))
         // The album browser's pick, over every kind of result. It survives a
         // new query, so a pick can gather from several searches; it ends with
         // the page.
@@ -226,13 +226,13 @@ private struct SectionHeading: View {
         Button(action: open) {
             HStack(spacing: 7) {
                 Text(title)
-                    .font(.title3.weight(.semibold))
+                    .font(.role(.titleSmall, system: .title3.weight(.semibold)))
                 Text("\(total ?? UInt64(count))")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .font(.role(.fine, system: .caption.monospacedDigit()))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
                 Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption.weight(.semibold)))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
@@ -270,8 +270,8 @@ private struct SearchTrackRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.title).lineLimit(1)
                 Text("\(track.artistName) — \(track.albumTitle)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                     .lineLimit(1)
                 SourceBadges(track: track, queued: mirror.queuedByTrack[track.id])
             }
@@ -280,18 +280,18 @@ private struct SearchTrackRow: View {
 
             if track.albumId != nil && hovering && !selection.isActive {
                 Text("Go to album")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
             }
 
             Text(Format.duration(track.durationMs))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
+                .font(.role(.fine, system: .caption.monospacedDigit()))
+                .foregroundStyle(KoanTheme.style(.muted, system: .tertiary))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background {
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: KoanTheme.radius(6))
                 .fill(hovering ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear))
         }
         .rowBehaviour()

@@ -263,7 +263,7 @@ struct MixedCollection: NSViewRepresentable {
         }
 
         private func configure(_ header: SectionHeader, _ section: Section) {
-            header.title.stringValue = section.title
+            header.title.stringValue = KoanTheme.label(section.title)
             let total: UInt64? = switch section {
             case .artists: parent?.totals?.artists
             case .albums: parent?.totals?.albums
@@ -675,15 +675,15 @@ private final class SectionHeader: NSView, NSCollectionViewElement {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        title.font = .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold)
-        title.textColor = .secondaryLabelColor
-        count.font = .monospacedDigitSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular)
-        count.textColor = .tertiaryLabelColor
+        title.font = .role(.fine, system: .systemFont(ofSize: NSFont.preferredFont(forTextStyle: .subheadline).pointSize, weight: .semibold))
+        title.textColor = .koanSecondaryLabel
+        count.font = .role(.fine, system: .monospacedDigitSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .caption1).pointSize, weight: .regular))
+        count.textColor = .koanTertiaryLabel
         addSubview(title)
         addSubview(count)
         chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
-        chevron.contentTintColor = .secondaryLabelColor
+        chevron.contentTintColor = .koanSecondaryLabel
         chevron.isHidden = true
         addSubview(chevron)
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(follow)))
@@ -732,7 +732,7 @@ private final class TrackItem: NSCollectionViewItem {
     override func loadView() {
         let root = NSView()
         root.wantsLayer = true
-        highlight.cornerRadius = 6
+        highlight.cornerRadius = KoanTheme.radius(6)
         highlight.cornerCurve = .continuous
         root.layer?.addSublayer(highlight)
         root.layer?.addSublayer(separator)
@@ -748,7 +748,7 @@ private final class TrackItem: NSCollectionViewItem {
         // At the bottom edge; the view is not flipped.
         separator.frame = CGRect(x: 8, y: 0, width: view.bounds.width - 16, height: 1 / (view.window?.backingScaleFactor ?? 2))
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
-            separator.backgroundColor = NSColor.separatorColor.cgColor
+            separator.backgroundColor = NSColor.koanSeparator.cgColor
         }
         CATransaction.commit()
         row.frame = view.bounds.insetBy(dx: 8, dy: 0)
@@ -762,7 +762,7 @@ private final class TrackItem: NSCollectionViewItem {
         let focused = view.window?.firstResponder === collectionView
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
             highlight.backgroundColor = isSelected
-                ? (focused ? NSColor.selectedContentBackgroundColor : NSColor.unemphasizedSelectedContentBackgroundColor).cgColor
+                ? (focused ? NSColor.koanSelection(.selectedContentBackgroundColor) : NSColor.koanSelection(.unemphasizedSelectedContentBackgroundColor)).cgColor
                 : nil
         }
         row.backgroundStyle = isSelected && focused ? .emphasized : .normal
@@ -773,7 +773,7 @@ private final class TrackItem: NSCollectionViewItem {
 /// plain capsule, which goes to the artist.
 private final class ArtistPillItem: NSCollectionViewItem {
     static let identifier = NSUserInterfaceItemIdentifier("ArtistPillItem")
-    private static let font = NSFont.preferredFont(forTextStyle: .callout)
+    private static let font = NSFont.role(.control, system: NSFont.preferredFont(forTextStyle: .callout))
 
     private let capsule = CALayer()
     private let mic = CALayer()
@@ -824,19 +824,19 @@ private final class ArtistPillItem: NSCollectionViewItem {
     private var micImage: CGImage? {
         let appearance = view.effectiveAppearance
         guard let coordinator, coordinator.picking, let artist else {
-            return Symbol.image("music.mic", size: 9, colours: [.tertiaryLabelColor], appearance: appearance)
+            return Symbol.image("music.mic", size: 9, colours: [.koanTertiaryLabel], appearance: appearance)
         }
-        let tint = coordinator.parent?.tileContext.tint ?? .controlAccentColor
+        let tint = coordinator.parent?.tileContext.tint ?? NSColor(KoanAccent.mint.color)
         return coordinator.isPicked(Playable.artist(id: artist.id, name: artist.name).key)
             ? Symbol.image("checkmark.circle.fill", size: 10, colours: [.white, tint], appearance: appearance)
-            : Symbol.image("circle", size: 10, colours: [.tertiaryLabelColor], appearance: appearance)
+            : Symbol.image("circle", size: 10, colours: [.koanTertiaryLabel], appearance: appearance)
     }
 
     private func restyle() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         view.effectiveAppearance.performAsCurrentDrawingAppearance {
-            capsule.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+            capsule.backgroundColor = NSColor.koanQuaternaryLabel.cgColor
         }
         capsule.opacity = hovering ? 1 : 0.8
         mic.contents = micImage
@@ -849,7 +849,7 @@ private final class ArtistPillItem: NSCollectionViewItem {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         capsule.frame = bounds
-        capsule.cornerRadius = bounds.height / 2
+        capsule.cornerRadius = KoanTheme.radius(bounds.height / 2)
         mic.contents = micImage
         mic.frame = CGRect(x: 11, y: (bounds.height - 11) / 2, width: 10, height: 11)
         CATransaction.commit()

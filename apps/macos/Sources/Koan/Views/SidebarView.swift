@@ -35,6 +35,7 @@ struct SidebarView: View {
             Section {
                 QueueRowLabel()
                     .tag(Navigator.Section.queue)
+                    .koanNavRow(selected: nav.section == .queue)
                     // Full width, so the target is the row rather than just the
                     // text — dropping onto the empty part of the row should
                     // work, and a target you have to hit precisely is no target.
@@ -48,33 +49,37 @@ struct SidebarView: View {
                     }
                     .dropHighlight(queueDropTargeted)
                 if search.hasQuery {
-                    Label("Results", systemImage: Icon.search)
+                    KoanLabel("Results", icon: Icon.search)
                         .tag(Navigator.Section.searchResults)
                 }
             }
 
-            Section("Library") {
-                Label("Albums", systemImage: Icon.album)
+            Section {
+                KoanLabel("Albums", icon: Icon.album)
                     .sidebarRow(.albums)
-                Label("Artists", systemImage: Icon.artist)
+                KoanLabel("Artists", icon: Icon.artist)
                     .sidebarRow(.artists)
-                Label("Tracks", systemImage: Icon.track)
+                KoanLabel("Tracks", icon: Icon.track)
                     .sidebarRow(.tracks)
-                Label("Favourites", systemImage: Icon.favourite)
+                KoanLabel("Favourites", icon: Icon.favourite)
                     .sidebarRow(.favourites)
-                Label("Recently Played", systemImage: Icon.recentlyPlayed)
+                KoanLabel("Recently Played", icon: Icon.recentlyPlayed)
                     .sidebarRow(.recentlyPlayed)
-                Label("Downloaded", systemImage: Icon.onDevice)
+                KoanLabel("Downloaded", icon: Icon.onDevice)
                     .sidebarRow(.onDevice)
-                Label("History", systemImage: Icon.history)
+                KoanLabel("History", icon: Icon.history)
                     .sidebarRow(.playHistory)
                 DownloadsRowLabel()
                     .sidebarRow(.downloads)
+            } header: {
+                KoanSectionHeader("Library")
             }
 
             playlistSection
         }
         .listStyle(.sidebar)
+        // The theme's sidebar is flat ground, not the system's material.
+        .koanSidebar()
         // The List's own hooks rather than per-row gestures, the same way the
         // queue and every track list does it: wired into selection, so the
         // double-click does not steal the click that selects the row. Only
@@ -123,6 +128,7 @@ struct SidebarView: View {
         .onDisappear { ui.sidebarWidth = 0 }
     }
 
+
     // MARK: - Playlists
 
     /// The playlists, in the order they were arranged, and a standing row for
@@ -136,13 +142,14 @@ struct SidebarView: View {
     /// a payload that says which playlist it is — and no button.
     @ViewBuilder
     private var playlistSection: some View {
-        Section("Playlists") {
+        Section {
             ForEach(playlists.playlists, id: \.id) { playlist in
                 PlaylistRow(
                     playlist: playlist,
                     covers: playlists.covers[playlist.id] ?? []
                 )
                     .tag(Navigator.Section.playlist(playlist.id))
+                    .koanNavRow(selected: nav.section == .playlist(playlist.id))
                     // Dragging a playlist somewhere else means its tracks —
                     // onto the queue, onto another playlist. Dropping it back
                     // into this list means where it sits.
@@ -162,6 +169,8 @@ struct SidebarView: View {
             }
 
             newPlaylistRow
+        } header: {
+            KoanSectionHeader("Playlists")
         }
     }
 
@@ -185,8 +194,9 @@ struct SidebarView: View {
     /// only because the row takes no selection — on a selectable row it would
     /// be racing the gesture that selects it.
     private var newPlaylistRow: some View {
-        Label("New Playlist…", systemImage: "plus")
-            .foregroundStyle(.secondary)
+        KoanLabel("New Playlist…", icon: "plus")
+            .foregroundStyle(KoanTheme.style(.muted))
+            .koanNavRow(selected: false)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .selectionDisabled()
@@ -273,12 +283,14 @@ private struct SidebarFooter: View {
                         Text("\(stats.cachedTracks.formatted(.number)) of \(stats.remoteTracks.formatted(.number)) remote cached")
                     }
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .koanText(.fine, .muted)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.bottom, 10)
+        // In the theme: the rows' own inset at the sides, and clear of the
+        // window's rounded corner below. The platform's look as it was.
+        .padding(.horizontal, KoanTheme.isOn ? KoanTheme.Space.l : 14)
+        .padding(.top, KoanTheme.isOn ? KoanTheme.Space.s : 0)
+        .padding(.bottom, KoanTheme.isOn ? KoanTheme.Space.xl : 10)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -291,7 +303,7 @@ private struct QueueRowLabel: View {
 
     var body: some View {
         HStack {
-            Label("Queue", systemImage: Icon.queueSection)
+            KoanLabel("Queue", icon: Icon.queueSection)
             if player.isBusy {
                 Spacer()
                 ProgressView().controlSize(.small)
@@ -305,14 +317,14 @@ private struct DownloadsRowLabel: View {
 
     var body: some View {
         HStack {
-            Label("Downloads", systemImage: Icon.downloads)
+            KoanLabel("Downloads", icon: Icon.downloads)
             // Only while something is happening. A zero sitting there
             // permanently is a number nobody reads.
             if mirror.activeTransfers > 0 {
                 Spacer()
                 Text("\(mirror.activeTransfers)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .koanText(.fine, .muted)
+                    .monospacedDigit()
             }
         }
     }
@@ -321,7 +333,7 @@ private struct DownloadsRowLabel: View {
 private extension View {
     /// Lights a row while a drop is held over it.
     func dropHighlight(_ lit: Bool) -> some View {
-        listRowBackground(lit ? RoundedRectangle(cornerRadius: 5).fill(.tint.opacity(0.25)) : nil)
+        listRowBackground(lit ? RoundedRectangle(cornerRadius: KoanTheme.radius(5)).fill(.tint.opacity(0.25)) : nil)
     }
 
     /// A row that is a place: selecting it goes there, and clicking it while
@@ -342,6 +354,7 @@ private struct SidebarRow: ViewModifier {
     func body(content: Content) -> some View {
         content
             .tag(section)
+            .koanNavRow(selected: nav.section == section)
             .simultaneousGesture(TapGesture().onEnded { nav.rewind(section) })
     }
 }
