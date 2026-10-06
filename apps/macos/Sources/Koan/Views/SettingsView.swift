@@ -30,6 +30,9 @@ struct SettingsView: View {
         NavigationLink {
             content()
                 .navigationTitle(title)
+                // Pushed here rather than by a route, so it makes room for the
+                // theme's tab bar itself, as routes do.
+                .koanHidesSystemTabBar()
                 #if os(tvOS)
                 .roomBackground()
                 #endif
@@ -853,6 +856,7 @@ struct DspSettings: View {
                     #if os(iOS)
                     NavigationLink {
                         DspProfilePage(dsp: dsp, name: p.name)
+                            .koanHidesSystemTabBar()
                     } label: {
                         ProfileRow(profile: p, active: o.active == p.name)
                     }
