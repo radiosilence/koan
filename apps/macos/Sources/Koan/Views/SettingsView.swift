@@ -357,6 +357,11 @@ private struct RemoteSettings: View {
                         Text("Password").tag(false)
                         Text("API key").tag(true)
                     }
+                    #if os(tvOS)
+                    // Two choices side by side, rather than a page of their
+                    // own to go into and come back from.
+                    .pickerStyle(.segmented)
+                    #endif
                     SecureField(
                         model.withApiKey ? "API key" : "Password",
                         text: $model.password,
