@@ -46,6 +46,24 @@ pub fn create_api_key(
     Ok((conn.last_insert_rowid(), key))
 }
 
+/// Make a key for `user_id` in place of any it already has named `name`: what
+/// a device signing in again is given, so a reinstall or a sign-out leaves no
+/// key behind that nothing holds any more.
+pub fn replace_api_key(
+    conn: &Connection,
+    user_id: i64,
+    name: &str,
+) -> Result<(i64, String), rusqlite::Error> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM api_keys WHERE user_id = ?1 AND name = ?2",
+        params![user_id, name],
+    )?;
+    let made = create_api_key(&tx, user_id, name)?;
+    tx.commit()?;
+    Ok(made)
+}
+
 /// Keys, oldest first — every user's, or one user's.
 pub fn list_api_keys(
     conn: &Connection,
