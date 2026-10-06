@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **A device whose sign-in the server refuses now says so.** When a key is revoked or a password changed, the server answers every request from that device with error 40, 41 or 44, and the apps went on showing an empty library as if a sync were still to come. The refusal is now noticed on sync or when the server is asked what it offers, and Settings → Server, the iOS Library tab and the empty Albums, Tracks and queue pages say *Your server refused kōan's sign-in. Sign in again in Settings → Server.* until the device signs in again or the server accepts the credential once more. See [Authentication](docs/guide/authentication.md).
 - **A playlist's play button played the wrong tracks.** It looked its tracks up by the playlist's entry numbers rather than the tracks' own, so it played whichever tracks happened to share those numbers, often one already queued. It now plays the playlist. The transport also names what is loading from the moment play is pressed, and play and pause wait until it has loaded rather than acting on the queue it replaces.
 - **A long Ogg track streaming from a server showed no length.** Ogg keeps its duration on its last page, which arrives last; a track opened before then now runs on the library's duration, so a nine-hour recording shows its length and progress from the start.
 
