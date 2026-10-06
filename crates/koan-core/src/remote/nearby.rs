@@ -776,6 +776,31 @@ impl Serving<'_> {
         let admitted = admit(envelope, source_of, self.answer());
         self.dispatch(admitted);
     }
+
+    /// Where answers to commands sent with an id go: back down this
+    /// connection, from whichever thread finishes each.
+    fn answer(&self) -> impl FnOnce(u64, AckOutcome) + Send + 'static {
+        let (answers, waker) = (self.answers.clone(), self.waker.clone());
+        move |ack, outcome| {
+            answers.lock().push(LinkReport::Ack { ack, outcome });
+            waker.wake();
+        }
+    }
+
+    fn dispatch(&mut self, admitted: Admitted) {
+        match admitted {
+            Admitted::Levels(on, pending) => {
+                self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
+                if let Some(pending) = pending {
+                    pending.finish(AckOutcome::Done);
+                }
+            }
+            Admitted::Command(cmd, source, pending) => {
+                (self.local.on_command)(cmd, source, pending)
+            }
+            Admitted::Neither => {}
+        }
+    }
 }
 
 impl wire::Session for Serving<'_> {
@@ -838,31 +863,6 @@ impl wire::Session for Serving<'_> {
         let full = full_control();
         let admitted = admit(envelope, |cmd| cmd.from_the_network(full), self.answer());
         self.dispatch(admitted);
-    }
-
-    /// Where answers to commands sent with an id go: back down this
-    /// connection, from whichever thread finishes each.
-    fn answer(&self) -> impl FnOnce(u64, AckOutcome) + Send + 'static {
-        let (answers, waker) = (self.answers.clone(), self.waker.clone());
-        move |ack, outcome| {
-            answers.lock().push(LinkReport::Ack { ack, outcome });
-            waker.wake();
-        }
-    }
-
-    fn dispatch(&mut self, admitted: Admitted) {
-        match admitted {
-            Admitted::Levels(on, pending) => {
-                self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
-                if let Some(pending) = pending {
-                    pending.finish(AckOutcome::Done);
-                }
-            }
-            Admitted::Command(cmd, source, pending) => {
-                (self.local.on_command)(cmd, source, pending)
-            }
-            Admitted::Neither => {}
-        }
     }
 
     fn done(&self) -> bool {
