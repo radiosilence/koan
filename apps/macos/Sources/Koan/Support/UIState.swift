@@ -85,25 +85,26 @@ final class UIState {
     /// Whether the lyrics panel is open.
     ///
     /// Observable state that writes through to defaults, rather than
-    /// `@AppStorage` on each view that reads it. A `UserDefaults` write
-    /// publishes on its own, after the transaction that caused it has gone —
-    /// so the inspector would have no animation to expand with and arrive at
-    /// full width in a single frame while everything around it was still
-    /// sliding. An observed property changes *inside* the transaction, which is
-    /// what hands the pane AppKit's own slide.
-    ///
-    /// One copy, and where you left it across a launch.
+    /// `@AppStorage` on each view that reads it: one copy, and where you left
+    /// it across a launch.
     var showLyrics: Bool = UserDefaults.standard.bool(forKey: UIState.lyricsKey) {
         didSet { UserDefaults.standard.set(showLyrics, forKey: UIState.lyricsKey) }
     }
 
     private static let lyricsKey = "showLyrics"
 
-    /// Explicitly animated: the transaction this opens reaches the inspector's
-    /// split view, so the pane slides and the
-    /// stage and transport resize with it instead of after it.
+    /// Opened and closed in one step, not animated. The pages are AppKit
+    /// tables and grids hosted in SwiftUI, which take their final frame at
+    /// once while SwiftUI interpolates everything around them: a slide moved
+    /// the split view, the transport and the pane on one clock and the page
+    /// on another, and the window tore until it settled. In one step the
+    /// column and every page are laid out together.
+    /// The transaction disables animation outright: without it the
+    /// inspector's split view runs its own slide.
     func toggleLyrics() {
-        withAnimation(.smooth(duration: 0.28)) { showLyrics.toggle() }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { showLyrics.toggle() }
     }
 }
 

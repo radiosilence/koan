@@ -19,7 +19,7 @@
   <meta property="og:image" content="https://koan.rocks/og.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="An album open in the kōan macOS app">
+  <meta property="og:image:alt" content="kōan: the macOS app playing an album, beside Now Playing on an iPhone">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="kōan">
   <meta name="twitter:description"
@@ -53,6 +53,11 @@
   </header>
 
   <main id="main">
+    <figure class="mx-auto max-w-6xl px-5 pt-4">
+      <img class="h-auto w-full" src="/screens/hero.webp" width="2800" height="1750" fetchpriority="high"
+        alt="kōan in a browser, on a Mac and on an iPhone: the web UI's search, an album playing in the macOS app, and Now Playing on the phone">
+    </figure>
+
     <section class="mx-auto max-w-2xl px-5 pt-8 pb-4">
       <h1 class="mb-8 text-6xl font-extralight sm:text-7xl">kōan</h1>
       <p>It's a music player and server, for local collections and remote ones (anything OpenSubsonic). Remote
@@ -65,6 +70,21 @@
         Rust core. Now there's a native SwiftUI macOS app (no Electron) that links that core directly, an iOS app, a
         server, and soon a tvOS app. The UX takes what I like about Apple Music and fb2k and fixes the things I thought
         were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.</p>
+
+    </section>
+
+    <div class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
+      <figure>
+        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-favourites.webp" width="1600"
+          height="1000" loading="lazy" decoding="async" alt="Favourites in the macOS app: artists, records and tracks">
+      </figure>
+      <figure>
+        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-artist.webp" width="1600"
+          height="1000" loading="lazy" decoding="async" alt="An artist page in the macOS app, with a photo and a biography from Wikipedia">
+      </figure>
+    </div>
+
+    <section class="mx-auto max-w-2xl px-5">
       <p>I wanted UX that makes it easy as hell to do what you want, while staying SUPER low on resources (and now
         battery). And I wanted the stuff you don't really see in the self-hosted space: device control and handoff, EQ
         profiles and convolution, DLNA output (with EQ!), and a cache built for a commuter who often has no signal, so
@@ -75,7 +95,7 @@
         own. You can use the macOS app with Navidrome. You can use the server with Arpeggi. Or you can use kōan all the
         way down and get the non-standard (sorry) features such as remote control. I think a shared standard like
         OpenSubsonic is incredibly important so everyone plays nicely together, but it shouldn't stop us experimenting
-        to compete with how well the professional streaming platforms hang together.</p>
+        to compete with how well the professional streaming platforms integrate.</p>
       <p>One thing I've noticed: when you mix self-hosted apps with proprietary tech, say AirPlay from the fantastically
         solid play:Sub, you're treated as a second-class citizen. The audio has to stream over the wire from your phone,
         which is laggy. With kōan's remote features, the device you send it to plays its own copy.</p>
@@ -96,11 +116,32 @@
 
     </section>
 
-    <figure class="mx-auto my-8 max-w-5xl px-5">
-      <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-album.webp" width="1600"
-        height="1000" fetchpriority="high"
-        alt="An album playing in the macOS app, the window washed in the colours of its cover, with tracks downloading ahead">
-    </figure>
+    <div class="marquee my-8" role="region" aria-label="Screenshots of the iPhone app">
+      <div class="marquee-track">
+        <div class="marquee-set">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-now-playing.webp" width="660" height="1434" loading="lazy" decoding="async" alt="Now Playing on iPhone, over the colours of the album, with the output and device rows beneath the controls">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-library.webp" width="660" height="1434" loading="lazy" decoding="async" alt="The Library tab on iPhone: albums, artists, tracks, favourites, playlists, recently played, history and downloads">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-artist.webp" width="660" height="1434" loading="lazy" decoding="async" alt="An artist page on iPhone, with a photo and the artist's records">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-queue.webp" width="660" height="1434" loading="lazy" decoding="async" alt="The queue on iPhone, grouped by album, while it controls a Mac">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-search.webp" width="660" height="1434" loading="lazy" decoding="async" alt="Search on iPhone: matching artists as pills, then their records">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-now-playing-remote.webp" width="660" height="1434" loading="lazy" decoding="async" alt="Now Playing on iPhone while it controls a Mac: the Mac's track, with the Mac and its audio interface named beneath the controls">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-albums.webp" width="660" height="1434" loading="lazy" decoding="async" alt="The album grid on iPhone">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-album.webp" width="660" height="1434" loading="lazy" decoding="async" alt="An album page on iPhone, washed in the colours of its cover">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-control.webp" width="660" height="1434" loading="lazy" decoding="async" alt="The Control sheet on iPhone, controlling a Mac, with an Apple TV and an iPad to move the music to">
+        </div>
+        <div class="marquee-set" aria-hidden="true">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-now-playing.webp" width="660" height="1434" loading="lazy" decoding="async" alt="">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-library.webp" width="660" height="1434" loading="lazy" decoding="async" alt="">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-artist.webp" width="660" height="1434" loading="lazy" decoding="async" alt="">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-queue.webp" width="660" height="1434" loading="lazy" decoding="async" alt="">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-search.webp" width="660" height="1434" loading="lazy" decoding="async" alt="">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-now-playing-remote.webp" width="660" height="1434" loading="lazy" decoding="async" alt="">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-albums.webp" width="660" height="1434" loading="lazy" decoding="async" alt="">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-album.webp" width="660" height="1434" loading="lazy" decoding="async" alt="">
+        <img class="h-[min(30rem,60vh)] w-auto flex-none rounded-[2rem] border border-rule bg-surface" src="/screens/ios-control.webp" width="660" height="1434" loading="lazy" decoding="async" alt="">
+        </div>
+      </div>
+    </div>
 
     <section class="mx-auto max-w-2xl px-5 pb-4">
       <h2>What is unusual about it</h2>
@@ -190,12 +231,36 @@
         phone, another computer or a browser, run the server where the music lives and point everything else at it.
         The apps sync its library, stream what they play and cache it, so a record you've played once plays again with
         no signal. Any Subsonic client works against it too.</p>
-      <pre><code> ┌─────────── kōan server ───────────┐
-          music ──► │ library · web UI · shares · MCP │
-          │ OpenSubsonic API │
-          └──┬──────────┬──────────┬──────────┘
-          │ │ │
-          macOS app iOS app TUI · Play:Sub · …</code></pre>
+      <svg class="my-8 h-auto w-full" viewBox="0 0 640 290" role="img" font-size="13"
+        aria-label="Music feeds a kōan server, which serves its library, web UI, shares, MCP and the OpenSubsonic API to the macOS app, the iOS app, the terminal UI and other Subsonic apps">
+        <g fill="none" stroke="var(--rule)" stroke-width="1.5">
+          <path d="M320 132 V170 M85 170 H555 M85 170 V206 M235 170 V206 M405 170 V206 M555 170 V206" />
+          <rect x="20" y="206" width="130" height="62" rx="10" fill="var(--surface)" />
+          <rect x="170" y="206" width="130" height="62" rx="10" fill="var(--surface)" />
+          <rect x="340" y="206" width="130" height="62" rx="10" fill="var(--surface)" />
+          <rect x="490" y="206" width="130" height="62" rx="10" fill="var(--surface)" />
+        </g>
+        <path d="M70 81 H138" stroke="var(--brand)" stroke-width="1.5" />
+        <path d="M132 76 L140 81 L132 86" fill="none" stroke="var(--brand)" stroke-width="1.5" />
+        <rect x="150" y="30" width="340" height="102" rx="14" fill="var(--surface)" stroke="var(--brand)"
+          stroke-width="1.5" />
+        <g fill="var(--ink)" text-anchor="middle">
+          <text x="34" y="86">music</text>
+          <text x="320" y="62" font-size="16" fill="var(--brand)">kōan server</text>
+          <text x="320" y="88">library · web UI · shares · MCP</text>
+          <text x="320" y="110" fill="var(--muted)">OpenSubsonic API</text>
+          <text x="85" y="234">macOS app</text>
+          <text x="235" y="234">iOS app</text>
+          <text x="405" y="234">terminal UI</text>
+          <text x="555" y="234">Subsonic apps</text>
+        </g>
+        <g fill="var(--muted)" text-anchor="middle" font-size="11">
+          <text x="85" y="254">SwiftUI, linked in</text>
+          <text x="235" y="254">cached for the Tube</text>
+          <text x="405" y="254">macOS and Linux</text>
+          <text x="555" y="254">Play:Sub and the rest</text>
+        </g>
+      </svg>
     </section>
 
     <section id="install" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
@@ -205,68 +270,76 @@
       <p><a href="https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg">Download
           <code>Koan.dmg</code></a>, open it and drag kōan into Applications. It's signed and notarised. Or with
         Homebrew:</p>
-      <pre><code>brew install --cask radiosilence/koan/koan-app</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">brew</span> install <span class="at">--cask</span> radiosilence/koan/koan-app</span></code></pre></div>
       <p>You might have to update Homebrew's trust settings to trust the tap.</p>
       <p>Requires macOS 26 or later.</p>
 
       <h3>iOS app</h3>
       <p>Build it from source with Xcode and put it on a phone plugged into your Mac, signed with your own
         (free) Apple developer team:</p>
-      <pre><code>git clone https://github.com/radiosilence/koan.git &amp;&amp; cd koan
-          just ios-phone</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="fu">git</span> clone https://github.com/radiosilence/koan.git <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> koan</span>
+<span><span class="ex">just</span> ios-phone</span></code></pre></div>
       <p>Needs iOS 26 or later, and a kōan, Navidrome or other Subsonic server to play from.</p>
 
       <h3>Command line and terminal UI</h3>
-      <pre><code><span class="c"># mise (recommended)</span>
-          mise use -g github:radiosilence/koan@latest
-
-          <span class="c"># homebrew</span>
-          brew install radiosilence/koan/koan
-
-          <span class="c"># or via cargo</span>
-          cargo install koan-cli
-
-          <span class="c"># or build from source</span>
-          git clone https://github.com/radiosilence/koan.git &amp;&amp; cd koan
-          cargo install --path crates/koan-cli</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="co"># mise (recommended)</span></span>
+<span><span class="ex">mise</span> use <span class="at">-g</span> github:radiosilence/koan@latest</span>
+<span></span>
+<span><span class="co"># homebrew</span></span>
+<span><span class="ex">brew</span> install radiosilence/koan/koan</span>
+<span></span>
+<span><span class="co"># or via cargo</span></span>
+<span><span class="ex">cargo</span> install koan-cli</span>
+<span></span>
+<span><span class="co"># or build from source</span></span>
+<span><span class="fu">git</span> clone https://github.com/radiosilence/koan.git <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> koan</span>
+<span><span class="ex">cargo</span> install <span class="at">--path</span> crates/koan-cli</span></code></pre></div>
       <p>It's a single binary. macOS needs nothing else; Linux needs the ALSA and D-Bus development headers:</p>
-      <pre><code><span class="c"># Debian/Ubuntu</span>
-          sudo apt install libasound2-dev libdbus-1-dev
-
-          <span class="c"># Fedora</span>
-          sudo dnf install alsa-lib-devel dbus-devel
-
-          <span class="c"># Arch</span>
-          sudo pacman -S alsa-lib dbus</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="co"># Debian/Ubuntu</span></span>
+<span><span class="fu">sudo</span> apt install libasound2-dev libdbus-1-dev</span>
+<span></span>
+<span><span class="co"># Fedora</span></span>
+<span><span class="fu">sudo</span> dnf install alsa-lib-devel dbus-devel</span>
+<span></span>
+<span><span class="co"># Arch</span></span>
+<span><span class="fu">sudo</span> pacman <span class="at">-S</span> alsa-lib dbus</span></code></pre></div>
     </section>
 
     <section id="setup" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>Setting it up</h2>
 
       <h3>One computer</h3>
+      <p>In the macOS app it's all in Settings: <strong>Library</strong> points kōan at your music and scans it,
+        and playback and devices have their own panes. No terminal needed.</p>
       <p>Or from the command line:</p>
-      <pre><code>koan config init <span class="c"># create the config dir and a commented template</span>
-          <span class="c"># edit ~/.config/koan/config.local.toml:</span>
-          <span class="c"># [library]</span>
-          <span class="c"># folders = ["/path/to/your/music"]</span>
-          koan scan <span class="c"># index your library</span>
-          koan <span class="c"># launch the TUI</span></code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">koan</span> config init   <span class="co"># create the config dir and a commented template</span></span>
+<span><span class="co"># edit ~/.config/koan/config.local.toml:</span></span>
+<span><span class="co">#   [library]</span></span>
+<span><span class="co">#   folders = [&quot;/path/to/your/music&quot;]</span></span>
+<span><span class="ex">koan</span> scan          <span class="co"># index your library</span></span>
+<span><span class="ex">koan</span>               <span class="co"># launch the TUI</span></span></code></pre></div>
       <p><kbd>space</kbd> pauses, <kbd>&lt;</kbd> and <kbd>&gt;</kbd> skip, <kbd>p</kbd> picks tracks, <kbd>a</kbd>
         picks albums, <kbd>q</kbd> quits.</p>
 
       <h3>A server for everything else</h3>
       <p>Run the container on the machine with the music. It doesn't need a sound card, keeps its config, index
         and keys in <code>/config</code>, and only ever reads the library.</p>
-      <pre><code>docker run -d --name koan -p 4000:4000 \
-          -v koan-config:/config \
-          -v /path/to/music:/music:ro \
-          -e 'KOAN_LIBRARY__FOLDERS=["/music"]' \
-          -e 'KOAN_GRAPHQL__ALLOWED_HOSTS=["music.example.com"]' \
-          -e KOAN_SHARING__PUBLIC_URL=https://music.example.com \
-          -e KOAN_SUBSONIC__ENABLED=true \
-          ghcr.io/radiosilence/koan:latest
-
-          docker exec -it koan koan auth setup <span class="c"># the admin account</span></code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">docker</span> run <span class="at">-d</span> <span class="at">--name</span> koan <span class="at">-p</span> 4000:4000 <span class="dt">\</span></span>
+<span>  <span class="at">-v</span> koan-config:/config <span class="dt">\</span></span>
+<span>  <span class="at">-v</span> /path/to/music:/music:ro <span class="dt">\</span></span>
+<span>  <span class="at">-e</span> <span class="st">&#39;KOAN_LIBRARY__FOLDERS=[&quot;/music&quot;]&#39;</span> <span class="dt">\</span></span>
+<span>  <span class="at">-e</span> <span class="st">&#39;KOAN_GRAPHQL__ALLOWED_HOSTS=[&quot;music.example.com&quot;]&#39;</span> <span class="dt">\</span></span>
+<span>  <span class="at">-e</span> KOAN_SHARING__PUBLIC_URL=https://music.example.com <span class="dt">\</span></span>
+<span>  <span class="at">-e</span> KOAN_SUBSONIC__ENABLED=true <span class="dt">\</span></span>
+<span>  ghcr.io/radiosilence/koan:latest</span>
+<span></span>
+<span><span class="ex">docker</span> exec <span class="at">-it</span> koan koan auth setup   <span class="co"># the admin account</span></span></code></pre></div>
       <p>Stick it behind a reverse proxy with TLS at the hostname you listed, or use the <a
           href="/docs/headless-server/#docker-compose">Docker Compose file</a>, which runs Caddy in front and sorts the
         certificate out itself. The server refuses any <code>Host</code> it wasn't given, and share links are built on
@@ -292,16 +365,18 @@
       <p>Each release publishes a Pulumi component at the same version, <a
           href="https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi"><code>@radiosilence/koan-pulumi</code></a>,
         on GitHub Packages. It builds the Deployment, its Service and a NetworkPolicy that only lets your ingress in:</p>
-      <pre><code><span class="c"># .npmrc (GitHub Packages wants a token even for public packages)</span>
-          @radiosilence:registry=https://npm.pkg.github.com</code></pre>
-      <pre><code>import { createKoan } from "@radiosilence/koan-pulumi";
-
-          createKoan(provider, "media", {
-          hostname: "music.example.com",
-          library: { hostPath: "/mnt/music" },
-          state: { hostPath: "/var/lib/koan" },
-          nodeSelector: { "kubernetes.io/hostname": "media-node" },
-          });</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode ini"><code class="sourceCode ini"><span><span class="co"># .npmrc (GitHub Packages wants a token even for public packages)</span></span>
+<span><span class="dt">@radiosilence:registry</span><span class="ot">=</span><span class="st">https://npm.pkg.github.com</span></span></code></pre></div>
+      <div class="sourceCode"><pre
+class="sourceCode typescript"><code class="sourceCode typescript"><span><span class="im">import</span> { createKoan } <span class="im">from</span> <span class="st">&quot;@radiosilence/koan-pulumi&quot;</span><span class="op">;</span></span>
+<span></span>
+<span><span class="fu">createKoan</span>(provider<span class="op">,</span> <span class="st">&quot;media&quot;</span><span class="op">,</span> {</span>
+<span>  hostname<span class="op">:</span> <span class="st">&quot;music.example.com&quot;</span><span class="op">,</span></span>
+<span>  library<span class="op">:</span> { hostPath<span class="op">:</span> <span class="st">&quot;/mnt/music&quot;</span> }<span class="op">,</span></span>
+<span>  state<span class="op">:</span> { hostPath<span class="op">:</span> <span class="st">&quot;/var/lib/koan&quot;</span> }<span class="op">,</span></span>
+<span>  nodeSelector<span class="op">:</span> { <span class="st">&quot;kubernetes.io/hostname&quot;</span><span class="op">:</span> <span class="st">&quot;media-node&quot;</span> }<span class="op">,</span></span>
+<span>})<span class="op">;</span></span></code></pre></div>
       <p>Route the hostname to the <code>koan</code> Service with whatever ingress you run. Pin the package version and
         the server follows it, since the image tag is the package's version.</p>
 
@@ -310,20 +385,10 @@
           href="https://github.com/radiosilence/sift">sift</a>, a separate tool I wrote: it matches a download against
         MusicBrainz, tags it, embeds the cover and files it into the library, reading an existing beets config. A server
         watching that folder picks the album up on its own.</p>
-      <pre><code>mise use -g github:radiosilence/sift
-          sift import ~/Downloads/some-album</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mise</span> use <span class="at">-g</span> github:radiosilence/sift</span>
+<span><span class="ex">sift</span> import ~/Downloads/some-album</span></code></pre></div>
     </section>
-
-    <div class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-favourites.webp" width="1600"
-          height="1000" loading="lazy" decoding="async" alt="Favourites in the macOS app: artists, records and tracks">
-      </figure>
-      <figure>
-        <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/mac-artist.webp" width="1600"
-          height="1000" loading="lazy" decoding="async" alt="An artist page in the macOS app, with a photo and a biography from Wikipedia">
-      </figure>
-    </div>
 
     <section id="features" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>What it does</h2>
@@ -389,9 +454,13 @@
       <p class="text-muted">Not there yet: tag editing. It's planned.</p>
     </section>
 
-    <figure class="mx-auto my-8 max-w-5xl px-5">
-      <img class="h-auto w-full" src="/screens/mac-output.webp" width="1600" height="990" loading="lazy" decoding="async"
-        alt="The Output menu in the macOS app: the Mac's own devices and UPnP amplifiers on the network, each with an EQ button">
+    <figure class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
+      <img class="h-auto w-full" src="/screens/mac-output.webp" width="2194" height="1044" loading="lazy"
+        decoding="async" alt="The Output menu in the macOS app: the Mac's own devices and UPnP amplifiers on the network, each with an EQ button">
+      <img class="h-auto w-full" src="/screens/mac-control.webp" width="2164" height="1074" loading="lazy"
+        decoding="async" alt="The Control menu in the macOS app, listing an Apple TV, an iPad and an iPhone with what each is playing">
+      <figcaption class="text-muted md:col-span-2">Output and Control in the Mac's transport bar: where the sound goes,
+        with an EQ per output, and every other kōan you can drive or send the music to.</figcaption>
     </figure>
 
     <section id="app" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
@@ -428,21 +497,6 @@
         thing only, sorry. EQ and convolution profiles follow the route, so your AirPods and your wired headphones each
         get their own.</p>
     </section>
-
-    <figure class="mx-auto my-8 max-w-5xl px-5">
-      <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/ios.webp" width="1600" height="817"
-        loading="lazy" decoding="async" alt="Now Playing, lyrics, a record and the queue on iPhone">
-    </figure>
-
-    <figure class="mx-auto my-8 grid max-w-5xl items-end gap-6 px-5 md:grid-cols-[3fr_1fr]">
-      <img class="h-auto w-full" src="/screens/mac-control.webp" width="1600" height="794" loading="lazy"
-        decoding="async" alt="The Control menu in the macOS app, listing an Apple TV, an iPad and an iPhone with what each is playing">
-      <img class="mx-auto h-auto w-full max-w-[260px] rounded-[2rem] shadow-2xl shadow-black/40" src="/screens/ios-control.webp"
-        width="600" height="1299" loading="lazy" decoding="async"
-        alt="The Control sheet on iPhone, listing a Mac that is playing, two Apple TVs, an iPad and an iPhone, each with Move here">
-      <figcaption class="text-muted md:col-span-2">Control, on a Mac and on a phone: every kōan device on your account and your network, what each
-        one is playing, and Move here to send the music over. The asleep ones get woken up when you pick them.</figcaption>
-    </figure>
 
     <section id="tui" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>The terminal UI</h2>
@@ -581,6 +635,20 @@
         href="https://github.com/radiosilence/koan/releases">Releases</a> · <a href="/docs/changelog/">Changelog</a></p>
     <p>This site has no tracking, analytics or cookies. <a href="/privacy.html">Privacy</a></p>
   </footer>
+  <dialog id="zoom" class="zoom" aria-label="Screenshot, full size"><img src="" alt=""></dialog>
+  <script>
+    // Any screenshot opens full size; a click anywhere, or Escape, closes it.
+    const zoom = document.getElementById("zoom");
+    const zoomed = zoom.querySelector("img");
+    document.querySelector("main").addEventListener("click", (event) => {
+      const shot = event.target.closest("figure img, .marquee img");
+      if (!shot) return;
+      zoomed.src = shot.currentSrc || shot.src;
+      zoomed.alt = shot.alt;
+      zoom.showModal();
+    });
+    zoom.addEventListener("click", () => zoom.close());
+  </script>
 </body>
 
 </html>

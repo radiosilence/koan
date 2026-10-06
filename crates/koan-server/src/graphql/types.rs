@@ -391,10 +391,12 @@ pub(super) struct GqlSleep {
     pub remaining_ms: Option<u64>,
     /// The end of the track or record playing.
     pub end_of: Option<GqlSleepEnd>,
+    /// Fading playback out now, in the run-up to going off.
+    pub fading: bool,
 }
 
-impl From<Sleep> for GqlSleep {
-    fn from(s: Sleep) -> Self {
+impl GqlSleep {
+    pub(super) fn of(s: Sleep, fading: bool) -> Self {
         match s {
             Sleep::At { unix_ms } => {
                 let now = std::time::SystemTime::now()
@@ -405,17 +407,20 @@ impl From<Sleep> for GqlSleep {
                     ends_at_ms: Some(unix_ms),
                     remaining_ms: Some(unix_ms.saturating_sub(now)),
                     end_of: None,
+                    fading,
                 }
             }
             Sleep::EndOfTrack => Self {
                 ends_at_ms: None,
                 remaining_ms: None,
                 end_of: Some(GqlSleepEnd::Track),
+                fading,
             },
             Sleep::EndOfRecord => Self {
                 ends_at_ms: None,
                 remaining_ms: None,
                 end_of: Some(GqlSleepEnd::Record),
+                fading,
             },
         }
     }
@@ -531,7 +536,7 @@ impl GqlNowPlaying {
                 queue_item_id: None,
                 shuffle: mode.shuffle,
                 repeat: mode.repeat.into(),
-                sleep: state.sleep().map(Into::into),
+                sleep: state.sleep().map(|s| GqlSleep::of(s, state.sleep_fading())),
             };
         };
 
@@ -563,7 +568,7 @@ impl GqlNowPlaying {
             queue_item_id: Some(info.id.0.to_string()),
             shuffle: mode.shuffle,
             repeat: mode.repeat.into(),
-            sleep: state.sleep().map(Into::into),
+            sleep: state.sleep().map(|s| GqlSleep::of(s, state.sleep_fading())),
         }
     }
 }
@@ -736,7 +741,7 @@ impl From<crate::clients::ClientInfo> for GqlClient {
             notified: c.notified,
             shuffle: c.state.shuffle,
             repeat: c.state.repeat.into(),
-            sleep: c.state.sleep.map(Into::into),
+            sleep: c.state.sleep.map(|s| GqlSleep::of(s, c.state.sleep_fading)),
         }
     }
 }

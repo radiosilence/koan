@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.54.2
+
+### Changed
+
+- **The sleep timer eases you to sleep.** A timer set for a time now fades over a tenth of its length, between one and five minutes (90 seconds for 15 minutes, 5 minutes for an hour), reaching silence at the deadline; the end of a track or record fades over the track's last minute. The level falls evenly in decibels rather than over six seconds, and the timer shows *Fading* meanwhile. Playback is not bit-perfect during the fade, since it is a gain on the samples; a UPnP renderer's own volume is stepped down instead and put back after. Cancelling or changing the timer mid-fade brings the level back over a second, and pausing by hand cancels it. See [Sleep timer](docs/guide/sleep-timer.md#the-fade).
+
+### Fixed
+
+- **Seeking or skipping at the end of the queue could freeze playback.** When the player was busy, the decoder reporting the end of the queue and the player stopping that decoder could wait on each other indefinitely.
+- **A rare crash when the Mac or iOS app changes track or output.** When CoreAudio could not confirm the output had fully stopped, its playback data was freed while the audio thread might still read it. It is now kept instead.
+- **One failed command no longer stops the Mac and iOS apps' controls.** An error such as importing a malformed EQ or convolution file stopped every later play, queue and transport command until the app was relaunched; the failing command now reports an error and the rest carry on.
+- **The iOS Live Activity no longer busies the app for a record without art.** Controlling another device playing a record with no cover, or whose cover could not be fetched, asked for the cover again continuously.
+- **The Mac's lyrics panel opens without tearing the window.** Opening or closing it slid the panel while the album grid and track lists jumped to their new width at once, so for a moment the two halves of the window were out of step and the sidebar was pushed off the left edge. The panel now opens and closes in one step, with every page laid out alongside it.
+- **The sleep timer's moon is lit only while a timer is set.** On the Mac it showed in the accent colour with no timer set.
+
 ## 0.54.1
 
 ### Added
@@ -18,6 +33,10 @@
 
 - **The Mac's shelf, search and album grid follow the window when it widens.** Opened in a narrow window, Recently Played, Favourites, search and the album grid kept their narrow layout when the window grew.
 - **The web UI on a phone.** A favourite track shows its heart beside the row's ⋯ again, as a mark; the heart to press is in the menu. History rows give the title the width the tick boxes took: on a phone a play is removed with Remove from History in its menu, as in the apps, and the time is set smaller. On a wide screen the Tracks browser's name field is wide enough for its hint.
+
+### Changed
+
+- **Signing in to a kōan server with a password ends in an API key** ([#819](https://github.com/radiosilence/koan/issues/819)). The apps and terminal UI send the password once, over plain HTTP too, to the new `/rest/koanSignIn`, and keep the API key it returns for the device in place of the password, as an invite does. Signing in again from the same device replaces its key rather than adding one. An app password or the shared secret typed in place of the password is kept as before. Signing in over plain HTTP no longer fails with error 41. Other Subsonic servers are unchanged, and error 41 from one now reads as needing an app password or API key. Servers list the `koanSignIn` extension.
 
 ## 0.54.0
 
