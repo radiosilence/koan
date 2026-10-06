@@ -1127,6 +1127,12 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
             Credential::Password(p) => (p.clone(), String::new()),
             Credential::ApiKey(k) => (String::new(), k.clone()),
         };
+        // A new keypair with each sign-in, registered against the new API
+        // key; a password has no key row to register it on.
+        cfg.remote.device_key = match &credential {
+            Credential::ApiKey(_) => crate::remote::proof::new_device_key().unwrap_or_default(),
+            Credential::Password(_) => String::new(),
+        };
     })?;
     // The link rests for up to a minute while signed out; the profile Settings
     // shows is probed when it wakes.

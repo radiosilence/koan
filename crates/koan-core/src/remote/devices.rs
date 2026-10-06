@@ -1319,6 +1319,7 @@ mod tests {
             name: id.into(),
             platform: "ios".into(),
             library: None,
+            nonce: None,
         }
     }
 
@@ -2059,6 +2060,7 @@ mod tests {
                 name: "Mac".into(),
                 platform: "macos".into(),
                 library: None,
+                nonce: None,
             },
             "mac.local:5626",
         );
@@ -2068,6 +2070,7 @@ mod tests {
                 name: "Living room".into(),
                 platform: "macos".into(),
                 library: Some("elsewhere".into()),
+                nonce: None,
             },
             "10.0.0.9:5626",
         );

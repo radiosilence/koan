@@ -2887,6 +2887,7 @@ impl KoanEngine {
                 cfg.remote.enabled = false;
                 cfg.remote.password = String::new();
                 cfg.remote.api_key = String::new();
+                cfg.remote.device_key = String::new();
             })
             .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),

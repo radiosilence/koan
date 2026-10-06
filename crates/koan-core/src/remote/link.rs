@@ -595,6 +595,10 @@ pub struct LinkHello {
     /// when it is signed in to none. Two devices with the same one share track
     /// ids, so music can be handed between them.
     pub library: Option<String>,
+    /// From a listener that proves itself and asks the same of whoever
+    /// dialled it: the nonce to sign over. See `remote::proof`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
 }
 
 /// The server this client plays from, as something two devices can compare
@@ -824,6 +828,10 @@ fn link_url(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<String, Stri
         return Err(format!("not an http(s) server: {}", auth.base_url));
     };
     let mut query = auth.query().map_err(|e| e.to_string())?;
+    // What this device proves itself with on the local network, registered
+    // against the API key the link signs in with. A server that predates
+    // device keys ignores it.
+    let device_key = crate::remote::proof::public_key().unwrap_or_default();
     for (k, v) in [
         ("client", identity.name.as_str()),
         ("platform", identity.platform.as_str()),
@@ -831,7 +839,11 @@ fn link_url(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<String, Stri
         // Send this link the account's other devices. A server that predates
         // them ignores it.
         ("devices", "1"),
+        ("deviceKey", device_key.as_str()),
     ] {
+        if v.is_empty() {
+            continue;
+        }
         query.push('&');
         query.push_str(k);
         query.push('=');
@@ -919,9 +931,9 @@ impl wire::Session for LinkSession<'_> {
             Ok(LinkCommand::Devices { devices }) => {
                 crate::remote::devices::set_account(devices);
             }
-            // Sent only to a link that registered a key, which this one does
-            // not yet.
-            Ok(LinkCommand::DeviceKeys { .. }) => {}
+            Ok(LinkCommand::DeviceKeys { keys }) => {
+                crate::remote::proof::keep(keys);
+            }
             Ok(LinkCommand::Shares {
                 grantees,
                 error,
