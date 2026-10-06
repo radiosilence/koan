@@ -2959,6 +2959,15 @@ impl KoanEngine {
 
     // --- Settings ----------------------------------------------------------
 
+    /// The kōan theme, or the platform's look. Saved at once; it takes effect
+    /// on the next launch, since every view is drawn in the theme read at start.
+    pub fn set_theme(&self, koan: bool) {
+        let theme = if koan { "koan" } else { "system" };
+        if let Err(e) = Config::persist(|cfg| cfg.appearance.theme = theme.into()) {
+            log::warn!("appearance: theme not saved: {e}");
+        }
+    }
+
     /// Show icons beside labels in the kōan theme, or not. Saved at once;
     /// the app redraws from its own copy.
     pub fn set_theme_icons(&self, on: bool) {

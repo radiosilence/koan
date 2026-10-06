@@ -1,6 +1,6 @@
 # The kōan theme
 
-The look koan.rocks and the web UI have, set down so a native app can be drawn in it: the tokens, and the few components every screen is made of. The Mac, iPhone and Apple TV apps follow it when `appearance.theme = "koan"`; it is also the reference for a future Android app. The tokens come from `site/src/theme.css`, except where noted: `muted` is lighter here, to meet AA on `surface`, and the site should follow.
+The look koan.rocks and the web UI have, set down so a native app can be drawn in it: the tokens, and the few components every screen is made of. The Mac, iPhone and Apple TV apps are drawn in it by default (`appearance.theme = "koan"`; Settings → Appearance → Theme offers the platform's look instead); it is also the reference for a future Android app. The tokens come from `site/src/theme.css`, except where noted: `muted` is lighter here, to meet AA on `surface`, and the site should follow.
 
 Two variants differ only in icons. **Plain** has labels alone. **With icons**, the default, has the app's icons beside them, drawn as described under [Icons](#icons). "Show icons" in Settings → Appearance (`appearance.theme_icons`) chooses between them.
 
@@ -62,7 +62,7 @@ One face, Geist Mono (variable, weights 100–900), bundled with the app. Sizes 
 
 ### Accent
 
-The accent follows the record playing. Its hue is the sleeve's, from the analysis the wash already runs (`Color.dominant`: a mean of hue weighted by how colourful each sample is). Its lightness and chroma are moved into a band per appearance, in OKLCH, so a dark or muddy sleeve gives a clean, bright version of its hue and light mode never goes pastel:
+The accent follows the record playing, and is tone-mapped the same way in both themes: the platform's look tints its controls with the same colour. Its hue is the sleeve's, from the analysis the wash already runs (`Color.dominant`: a mean of hue weighted by how colourful each sample is). Its lightness and chroma are moved into a band per appearance, in OKLCH, so a dark or muddy sleeve gives a clean, bright version of its hue and light mode never goes pastel:
 
 | Token | Dark | Light |
 |-------|------|-------|
@@ -81,7 +81,7 @@ The accent follows the record playing. Its hue is the sleeve's, from the analysi
 
 The playing record's sleeve, blurred to colour fields and drifting, behind the ground. It is the one element that is not flat, and it carries data. Surfaces stay flat tokens drawn over it; it shows where the design leaves the ground bare: the Mac's content column, and Now Playing and page backgrounds on iOS and tvOS. Nothing glass sits on it.
 
-Each sample of the baked sleeve is held to a luminance limit before it is drawn: in dark mode no brighter, and in light mode no darker, than the level at which `muted` text keeps 4.6:1. The wash so carries the record's hue and never its brightness, and every text token passes over any sleeve. `wash` is its strength, the share of the toned sleeve over `bg`: 0.6 on the Mac and iPhone, 0.5 on a television.
+Each sample of the baked sleeve is held to a luminance limit before it is drawn: in dark mode no brighter, and in light mode no darker, than the level at which `muted` text keeps 4.6:1. The wash so carries the record's hue and never its brightness, and every text token passes over any sleeve. `wash` is its strength, the share of the toned sleeve over `bg`: 0.6 on the Mac and iPhone, 0.5 on a television. The graphics level in Settings → Appearance governs it as in the platform's look: lower levels stop the drift, then remove the wash.
 
 ## Components
 
@@ -132,5 +132,5 @@ The Apple apps keep the SF Symbols they name today (`Icon.*`). On Android, Mater
 
 ## On the platforms
 
-- **macOS, iOS and tvOS:** `Support/KoanTheme.swift`. Views name roles and never a colour or font: `.koanText(role, tone)`, `.koanSurface()`, `.koanRule()`, `.koanButton(kind)`, `.koanToggle()`, `KoanSegmentedPicker`, `.koanRow(selected:)`, `KoanSectionHeader`, `.koanSheet()`, `.koanFocus()`, and `KoanLabel(title, icon:)` for every label with an icon. Each draws the platform's nearest equivalent when the theme is off. The accent is the environment's tint, with `koanAccent` beside it saying whether it reads as text; whether icons are drawn is `koanIcons`, set at each scene's root by `.koanTheme(_:)`. AppKit-drawn views read `NSColor.koan*` and `NSFont.koan`. The setting is `appearance.theme`, `"system"` or `"koan"`, read at launch.
+- **macOS, iOS and tvOS:** `Support/KoanTheme.swift`. Views name roles and never a colour or font: `.koanText(role, tone)`, `.koanSurface()`, `.koanRule()`, `.koanButton(kind)`, `.koanToggle()`, `KoanSegmentedPicker`, `.koanRow(selected:)`, `KoanSectionHeader`, `.koanSheet()`, `.koanFocus()`, and `KoanLabel(title, icon:)` for every label with an icon. Each draws the platform's nearest equivalent when the theme is off. The accent is the environment's tint, with `koanAccent` beside it saying whether it reads as text; whether icons are drawn is `koanIcons`, set at each scene's root by `.koanTheme(_:)`. AppKit-drawn views read `NSColor.koan*` and `NSFont.koan`. The setting is `appearance.theme`, `"koan"` (the default) or `"system"`, read at launch; the Theme picker in Settings → Appearance writes it, and "Show icons" appears there only with the kōan theme.
 - **Android:** the colour tokens map to a Material 3 `ColorScheme` (`bg` → `background`, `surface` → `surface`, `accent` → `primary`, `ink` → `onBackground`, `muted` → `onSurfaceVariant`, `rule` → `outlineVariant`, `bad` → `error`), the type roles to `Typography`, and `Shapes` are all zero-radius. The components above replace Material's own where they differ: outlined rather than filled buttons, the underlined segmented control, and the flat tab bar.
