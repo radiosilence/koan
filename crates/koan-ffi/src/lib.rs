@@ -3171,10 +3171,13 @@ impl KoanEngine {
                 cfg.remote.enabled = false;
                 cfg.remote.password = String::new();
                 cfg.remote.api_key = String::new();
+                cfg.remote.device_key = String::new();
             })
             .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })?;
+            koan_core::remote::proof::forget();
+            koan_core::remote::link::relink();
             koan_core::remote::nearby::readvertise();
             Ok(())
         })
@@ -4970,6 +4973,7 @@ impl KoanEngine {
             }
             // Answered by the link session itself, which holds the watch.
             LinkCommand::Devices { .. }
+            | LinkCommand::DeviceKeys { .. }
             | LinkCommand::Shares { .. }
             | LinkCommand::Forgotten { .. }
             | LinkCommand::WatchLevels { .. }

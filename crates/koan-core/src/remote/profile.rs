@@ -54,6 +54,12 @@ pub const MCP: &str = "koanMcp";
 /// answers `koanCommand` with how it went: see `remote::acks`.
 pub const ACK: &str = "koanAck";
 
+/// Devices proving to each other on the local network that they belong to
+/// the same account: a linking device registers its public key with
+/// `deviceKey`, and links that did are sent the account's keys as
+/// `LinkCommand::DeviceKeys`.
+pub const DEVICE_KEYS: &str = "koanDeviceKeys";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerProfile {
     /// OpenSubsonic's `type`: `koan`, `navidrome`. `None` from a server that

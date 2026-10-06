@@ -642,6 +642,11 @@ fn refuse_dangling_references(conn: &Connection) -> rusqlite::Result<()> {
 /// `organize_log.size_bytes`/`mtime` are checked against the file before undo
 /// moves it back, so a file replaced since the organize is left alone.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    // The device a key signed in, and the public key that device proves
+    // itself with to the account's other devices on the local network. On the
+    // key's row, so revoking the key drops it. See `api_keys::device_keys`.
+    ("api_keys", "device", "TEXT"),
+    ("api_keys", "device_key", "TEXT"),
     ("tracks", "cache_size_bytes", "INTEGER"),
     ("tracks", "cache_download_date", "INTEGER"),
     // Downloaded because someone asked for the file, not to play it: evicted

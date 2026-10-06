@@ -13,6 +13,7 @@ pub mod offline;
 pub mod outputs;
 pub mod pair;
 pub mod profile;
+pub mod proof;
 pub mod queue;
 pub mod refusal;
 pub mod sync;

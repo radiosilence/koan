@@ -165,6 +165,13 @@ pub struct RemoteConfig {
     /// joining with a koan invite stores. config.local.toml, like the password.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub api_key: String,
+    /// The keypair this device proves itself with to the account's other
+    /// devices on the local network: base64 of its Ed25519 PKCS#8. Made at
+    /// each sign-in with an API key and dropped at sign-out, so the server's
+    /// copy of the public key goes with the API key it is kept on. A secret,
+    /// kept with the credentials. See `remote::proof`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_key: String,
     /// Defaults to config_dir()/cache if empty.
     pub cache_dir: Option<PathBuf>,
     /// Parallel download workers for remote tracks (default: 5).
@@ -282,6 +289,7 @@ impl Default for RemoteConfig {
             username: String::new(),
             password: String::new(),
             api_key: String::new(),
+            device_key: String::new(),
             cache_dir: None,
             download_workers: 5,
             cache_limit: None,
@@ -763,6 +771,7 @@ pub fn layer_of(path: &str) -> Layer {
         // Secrets.
         "remote.password"
         | "remote.api_key"
+        | "remote.device_key"
         | "subsonic.password"
         | "auth.refresh_token"
         | "push.key"

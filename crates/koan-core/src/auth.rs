@@ -510,6 +510,21 @@ pub fn account_mark() -> u64 {
     *account_changes().count.borrow()
 }
 
+/// Resolves once any account has changed after `mark`, with the mark it now
+/// stands at, to wait from next.
+pub async fn any_account_changed_since(mark: u64) -> u64 {
+    let mut count = account_changes().count.subscribe();
+    loop {
+        let now = *count.borrow_and_update();
+        if now > mark {
+            return now;
+        }
+        if count.changed().await.is_err() {
+            return std::future::pending().await;
+        }
+    }
+}
+
 /// Resolves once `user_id`'s account has changed after `mark`.
 pub async fn account_changed_since(user_id: i64, mark: u64) {
     let changes = account_changes();

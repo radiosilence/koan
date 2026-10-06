@@ -1553,6 +1553,7 @@ mod tests {
             platform: "ios".into(),
             library: None,
             acks: false,
+            nonce: None,
         }
     }
 
@@ -2380,6 +2381,7 @@ mod tests {
                 platform: "macos".into(),
                 library: None,
                 acks: false,
+                nonce: None,
             },
             "mac.local:5626",
         );
@@ -2390,6 +2392,7 @@ mod tests {
                 platform: "macos".into(),
                 library: Some("elsewhere".into()),
                 acks: false,
+                nonce: None,
             },
             "10.0.0.9:5626",
         );

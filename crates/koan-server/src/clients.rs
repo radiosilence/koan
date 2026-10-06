@@ -67,6 +67,9 @@ struct Entry {
     /// Sent the account's other devices whenever one changes. Asked for by
     /// the client; one that predates them would log each as a bad command.
     wants_devices: bool,
+    /// Sent `LinkCommand::DeviceKeys`: it registered a key of its own, so it
+    /// knows the command.
+    wants_keys: bool,
 }
 
 /// A command relayed with an id, and what to do with the answer: `None` when
@@ -248,6 +251,7 @@ impl Registry {
             device: device.to_string(),
             tx,
             wants_devices,
+            wants_keys: false,
         });
         drop(entries);
         // Always, empty or not: an app signed in elsewhere before holds that
@@ -265,6 +269,50 @@ impl Registry {
             self.send_live(username, device, LinkCommand::WatchLevels { on: true });
         }
         id
+    }
+
+    /// Send the link `id` the account's device keys from now on.
+    pub fn wants_keys(&self, id: &str) {
+        if let Some(e) = self.entries.lock().iter_mut().find(|e| e.info.id == id) {
+            e.wants_keys = true;
+        }
+    }
+
+    /// Hand `username`'s links that take them the device keys they check the
+    /// local network against.
+    pub fn publish_keys(&self, username: &str, keys: Vec<koan_core::remote::link::LinkDeviceKey>) {
+        for e in self
+            .entries
+            .lock()
+            .iter()
+            .filter(|e| e.info.username == username && e.wants_keys)
+        {
+            let _ = e.tx.send(LinkCommand::DeviceKeys { keys: keys.clone() });
+        }
+    }
+
+    /// Every account with a link that takes device keys.
+    pub fn keyed_accounts(&self) -> Vec<String> {
+        let mut accounts: Vec<String> = self
+            .entries
+            .lock()
+            .iter()
+            .filter(|e| e.wants_keys)
+            .map(|e| e.info.username.clone())
+            .collect();
+        accounts.sort();
+        accounts.dedup();
+        accounts
+    }
+
+    /// The accounts `owner` shares `device` with.
+    pub fn grantees_of(&self, owner: &str, device: &str) -> Vec<String> {
+        self.grants
+            .lock()
+            .iter()
+            .filter(|g| g.owner == owner && g.device == device)
+            .map(|g| g.grantee.clone())
+            .collect()
     }
 
     /// Record what a client says it is doing.
@@ -760,18 +808,10 @@ impl Registry {
         command: LinkCommand,
         acking: Option<Acking>,
     ) -> Result<ClientInfo, String> {
-        // Levels are relayed only between live links, by `watch_levels` and
-        // `levels`: never queued for a device that is away, never a push.
-        if matches!(
-            command,
-            LinkCommand::Devices { .. }
-                | LinkCommand::Forgotten { .. }
-                | LinkCommand::HistoryChanged
-                | LinkCommand::Levels { .. }
-                | LinkCommand::WatchLevels { .. }
-                | LinkCommand::Shares { .. }
-                | LinkCommand::Shared { .. }
-        ) {
+        // What one device may have another do, and nothing the server says
+        // itself: relayed, a forged device list or key list would reach the
+        // device as the server's own.
+        if !command.relayable() {
             return Err("not a command".into());
         }
         // A device shared with `username` takes the playback set, marked as
