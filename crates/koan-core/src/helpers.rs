@@ -57,17 +57,28 @@ pub fn remote_credential(cfg: &Config) -> Option<Credential> {
 /// it. The kernel drops the lock when the process ends, however it ends, so a
 /// killed server cannot keep it.
 pub fn try_watch_lock(db_path: &Path) -> std::io::Result<Option<std::fs::File>> {
-    let path = db_path.with_file_name("watch.lock");
-    let file = std::fs::File::options()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(path)?;
+    let file = watch_lock_file(db_path)?;
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
         Err(std::fs::TryLockError::WouldBlock) => Ok(None),
         Err(std::fs::TryLockError::Error(e)) => Err(e),
     }
+}
+
+/// [`try_watch_lock`], waiting as long as another process holds it. The
+/// kernel wakes the waiter when the holder lets go; nothing polls.
+pub fn watch_lock(db_path: &Path) -> std::io::Result<std::fs::File> {
+    let file = watch_lock_file(db_path)?;
+    file.lock()?;
+    Ok(file)
+}
+
+fn watch_lock_file(db_path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(db_path.with_file_name("watch.lock"))
 }
 
 pub fn spawn_library_watch(
@@ -99,32 +110,25 @@ pub fn spawn_library_watch(
         .spawn(move || {
             // Another process watching this library, as an outgoing server
             // does while its replacement starts, keeps the watch until it
-            // exits. Serving does not wait for it.
-            const TAKE_OVER: Duration = Duration::from_secs(10);
-            let mut waited = false;
-            let _lock = loop {
-                match try_watch_lock(&db_path) {
-                    Ok(Some(lock)) => {
-                        if waited {
-                            log::info!("library watch: taken over");
-                        }
-                        break Some(lock);
+            // exits; this thread sleeps in the kernel until then. Serving
+            // does not wait for it. A directory that cannot hold the lock
+            // file is one koan is not sharing, so it watches as before.
+            let _lock = match try_watch_lock(&db_path) {
+                Ok(Some(lock)) => Some(lock),
+                Ok(None) => {
+                    log::info!(
+                        "another koan is watching this library; serving, and waiting to take over"
+                    );
+                    let lock = watch_lock(&db_path);
+                    if lock.is_ok() {
+                        log::info!("library watch: taken over");
                     }
-                    Ok(None) => {
-                        if !waited {
-                            log::info!(
-                                "another koan is watching this library; serving, and waiting to take over"
-                            );
-                            waited = true;
-                        }
-                        std::thread::sleep(TAKE_OVER);
-                    }
-                    // A directory that cannot hold the lock file is one koan
-                    // is not sharing; watch as before.
-                    Err(e) => {
-                        log::warn!("library watch: no lock beside the database: {e}");
-                        break None;
-                    }
+                    lock.inspect_err(|e| log::warn!("library watch: lock: {e}"))
+                        .ok()
+                }
+                Err(e) => {
+                    log::warn!("library watch: no lock beside the database: {e}");
+                    None
                 }
             };
             let scan = |reason: &str, folders: &[PathBuf], dirs: Option<&[PathBuf]>| {
@@ -2813,6 +2817,28 @@ mod watch_lock_tests {
         assert!(dir.path().join("watch.lock").exists());
         drop(first);
         assert!(try_watch_lock(&db).unwrap().is_some(), "and then takes it");
+    }
+
+    /// The waiting side blocks in the kernel and wakes when the holder lets
+    /// go, with no retry interval to sit out.
+    #[test]
+    fn a_waiting_watcher_wakes_when_the_lock_is_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("koan.db");
+        let first = try_watch_lock(&db).unwrap().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let waiting = db.clone();
+        std::thread::spawn(move || {
+            let lock = watch_lock(&waiting);
+            let _ = tx.send(lock.is_ok());
+        });
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(200))
+                .is_err(),
+            "it waits while the lock is held"
+        );
+        drop(first);
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(true));
     }
 
     #[test]
