@@ -96,6 +96,65 @@ pub fn fuzzy_corpus(conn: &Connection, kind: CorpusKind) -> Result<Vec<(i64, Str
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
+/// How closely `column` matches a search, as SQL: 0 when it is the query, 1
+/// when it starts with it, 2 when a later word does, 3 otherwise. Takes the
+/// three parameters [`match_rank_binds`] gives, in order.
+pub(crate) fn match_rank(column: &str) -> String {
+    format!(
+        "CASE WHEN {column} LIKE ? ESCAPE '\\' THEN 0
+              WHEN {column} LIKE ? ESCAPE '\\' THEN 1
+              WHEN {column} LIKE ? ESCAPE '\\' THEN 2 ELSE 3 END"
+    )
+}
+
+pub(crate) fn match_rank_binds(query: &str) -> [String; 3] {
+    let q = super::artists::escape_like(query.trim());
+    [q.clone(), format!("{q}%"), format!("% {q}%")]
+}
+
+/// How far below the best fuzzy score a match may fall and still be listed.
+///
+/// Nucleo matches any run of the query's letters in order, however scattered:
+/// "Black Country, New Road" holds k, r, e and w. Scores are dominated by how
+/// contiguous a match is and whether it starts words, so a fraction of the
+/// best keeps the near misses of a typo and drops the scattered ones.
+const FUZZY_FLOOR: f64 = 0.6;
+
+/// The rows of `kind` closest to `query` by fuzzy match, best first, those
+/// scoring under [`FUZZY_FLOOR`] of the best left out.
+///
+/// What a search falls back on when nothing holds the query as typed, so a
+/// typo still finds what was meant. Read from the database each time: it runs
+/// only for a search that otherwise finds nothing.
+pub fn fuzzy_ids(conn: &Connection, kind: CorpusKind, query: &str) -> Result<Vec<i64>, DbError> {
+    use nucleo::pattern::{CaseMatching, Normalization, Pattern};
+    use nucleo::{Config, Matcher, Utf32Str};
+
+    // Case-insensitive: a phone keyboard capitalises the first letter.
+    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let mut buf = Vec::new();
+    let mut scored: Vec<(u32, usize, i64)> = fuzzy_corpus(conn, kind)?
+        .into_iter()
+        .filter_map(|(id, text)| {
+            pattern
+                .score(Utf32Str::new(&text, &mut buf), &mut matcher)
+                .map(|score| (score, text.len(), id))
+        })
+        .collect();
+    // Ties to the shorter text: the closer of two equal matches.
+    scored.sort_by_key(|&(score, len, id)| (std::cmp::Reverse(score), len, id));
+    let Some(&(best, ..)) = scored.first() else {
+        return Ok(Vec::new());
+    };
+    let floor = (best as f64 * FUZZY_FLOOR) as u32;
+    Ok(scored
+        .into_iter()
+        .take_while(|&(score, ..)| score >= floor)
+        .map(|(.., id)| id)
+        .collect())
+}
+
 /// A corpus per kind, read again only when the library has moved.
 ///
 /// A search field asks on every keystroke, and the library is the same between

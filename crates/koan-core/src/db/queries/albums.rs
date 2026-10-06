@@ -226,6 +226,10 @@ pub enum AlbumOrder {
     /// Fully on this device first, then by how much is, then the most
     /// recently downloaded.
     Downloaded,
+    /// The closest match to `AlbumQuery::search` first, by title or artist
+    /// (see `search::match_rank`), then as `ArtistThenDate`. Without a search,
+    /// in the order of `AlbumQuery::ids`; without either, `RecentlyAdded`.
+    Relevance,
 }
 
 impl AlbumOrder {
@@ -235,7 +239,7 @@ impl AlbumOrder {
             Self::Date => "al.date, al.title COLLATE LIBRARY",
             // Albums predating the added_at column sort last rather than first,
             // which is what a NULL would do.
-            Self::RecentlyAdded => {
+            Self::RecentlyAdded | Self::Relevance => {
                 "COALESCE(al.added_at, '') DESC, a.name COLLATE LIBRARY, al.title COLLATE LIBRARY"
             }
             Self::Title => "al.title COLLATE LIBRARY, a.name COLLATE LIBRARY, al.date",
@@ -347,6 +351,8 @@ pub struct AlbumQuery<'a> {
     pub ids: Option<&'a [i64]>,
     pub artist_id: Option<i64>,
     /// Case-insensitive substring over the album title and the artist name.
+    /// When no album holds it, the closest fuzzy matches instead
+    /// (`search::fuzzy_ids`).
     pub search: Option<&'a str>,
     pub order: AlbumOrder,
     /// Only records this user has favourited.
@@ -368,6 +374,16 @@ pub struct AlbumQuery<'a> {
 /// fold accented letters, so `MOTLEY` finds `Motley` but `MÖTLEY` does not find
 /// `Mötley`.
 pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, DbError> {
+    if let Some(ids) = fuzzy_fallback(conn, q)? {
+        return list_albums(
+            conn,
+            &AlbumQuery {
+                search: None,
+                ids: Some(&ids),
+                ..*q
+            },
+        );
+    }
     let (body, mut params) = album_body(conn, q)?;
     let counted = q.filter.on_device || q.order == AlbumOrder::Downloaded;
     let mut sql = format!(
@@ -381,10 +397,32 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
         AlbumOrder::LastPlayed if q.played.is_none() => AlbumOrder::RecentlyAdded,
         order => order,
     };
-    if let AlbumOrder::Random(seed) = order {
-        params.push(Box::new(seed));
+    match (order, q.search, q.ids) {
+        (AlbumOrder::Random(seed), ..) => {
+            params.push(Box::new(seed));
+            sql.push_str(order.clause());
+        }
+        (AlbumOrder::Relevance, Some(query), _) => {
+            let binds = super::search::match_rank_binds(query);
+            params.extend(
+                binds
+                    .iter()
+                    .chain(&binds)
+                    .map(|b| Box::new(b.clone()) as Box<dyn rusqlite::ToSql>),
+            );
+            sql.push_str(&format!(
+                "min({}, {}), {}",
+                super::search::match_rank("al.title"),
+                super::search::match_rank("a.name"),
+                AlbumOrder::ArtistThenDate.clause()
+            ));
+        }
+        (AlbumOrder::Relevance, None, Some(ids)) => {
+            params.push(Box::new(super::json_list(ids)));
+            sql.push_str("(SELECT key FROM json_each(?) WHERE value = al.id)");
+        }
+        _ => sql.push_str(order.clause()),
     }
-    sql.push_str(order.clause());
 
     if let Some(limit) = q.limit {
         params.push(Box::new(limit as i64));
@@ -411,6 +449,16 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
 /// How many albums `list_albums` would list for `q`, ignoring its paging: what
 /// a "See all" says, from the same narrowing as the list it opens.
 pub fn count_albums(conn: &Connection, q: &AlbumQuery) -> Result<u64, DbError> {
+    if let Some(ids) = fuzzy_fallback(conn, q)? {
+        return count_albums(
+            conn,
+            &AlbumQuery {
+                search: None,
+                ids: Some(&ids),
+                ..*q
+            },
+        );
+    }
     let (body, params) = album_body(conn, q)?;
     let n: i64 = conn.query_row(
         &format!("SELECT COUNT(*) {body}"),
@@ -418,6 +466,28 @@ pub fn count_albums(conn: &Connection, q: &AlbumQuery) -> Result<u64, DbError> {
         |r| r.get(0),
     )?;
     Ok(n as u64)
+}
+
+/// What `q`'s search lists when no album holds it: the fuzzy matches, best
+/// first. `None` when it has no search or the search finds something.
+fn fuzzy_fallback(conn: &Connection, q: &AlbumQuery) -> Result<Option<Vec<i64>>, DbError> {
+    let Some(query) = q.search else {
+        return Ok(None);
+    };
+    let (body, params) = album_body(conn, q)?;
+    let found: bool = conn.query_row(
+        &format!("SELECT EXISTS (SELECT 1 {body})"),
+        rusqlite::params_from_iter(params.iter()),
+        |r| r.get(0),
+    )?;
+    if found {
+        return Ok(None);
+    }
+    let mut ids = super::search::fuzzy_ids(conn, super::search::CorpusKind::Album, query)?;
+    if let Some(only) = q.ids {
+        ids.retain(|id| only.contains(id));
+    }
+    Ok(Some(ids))
 }
 
 /// The FROM and WHERE that `list_albums` and `count_albums` share, and their

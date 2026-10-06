@@ -326,12 +326,19 @@ pub enum TrackOrder {
     Duration,
     /// When last played, by `TrackFilter::played`; without it, `Title`.
     LastPlayed,
+    /// The closest match to `TrackFilter::search` first, by title, artist or
+    /// album (see `search::match_rank`), then as `ArtistAlbumDiscTrack`.
+    /// Without a search, in the order of `TrackFilter::ids`; without either,
+    /// `ArtistAlbumDiscTrack`.
+    Relevance,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct TrackFilter {
     pub ids: Option<Vec<i64>>,
     /// FTS5 query. Applied as a subquery so it composes with the other filters.
+    /// When no track matches it, the closest fuzzy matches instead
+    /// (`search::fuzzy_ids`).
     pub search: Option<String>,
     pub album_id: Option<i64>,
     pub artist_ids: Option<Vec<i64>>,
@@ -368,6 +375,9 @@ pub fn filter_tracks(
     limit: u32,
     offset: u32,
 ) -> Result<Vec<TrackRow>, DbError> {
+    if let Some(fallback) = fuzzy_fallback(conn, filter)? {
+        return filter_tracks(conn, &fallback, order, descending, limit, offset);
+    }
     let Some((body, mut binds)) = track_body(conn, filter)? else {
         return Ok(Vec::new());
     };
@@ -376,10 +386,29 @@ pub fn filter_tracks(
         order => order,
     };
     let dir = if descending { "DESC" } else { "ASC" };
+    let shelved =
+        format!("a.name {dir}, al.date {dir}, al.title {dir}, t.disc {dir}, t.track_number {dir}");
     let order_by = match order {
-        TrackOrder::ArtistAlbumDiscTrack => format!(
-            "a.name {dir}, al.date {dir}, al.title {dir}, t.disc {dir}, t.track_number {dir}"
-        ),
+        TrackOrder::ArtistAlbumDiscTrack => shelved,
+        TrackOrder::Relevance => match (&filter.search, &filter.ids) {
+            (Some(query), _) => {
+                let rank = super::search::match_rank_binds(query);
+                for _ in 0..3 {
+                    binds.extend(rank.iter().map(|b| Box::new(b.clone()) as Box<dyn ToSql>));
+                }
+                format!(
+                    "min({}, {}, {}) {dir}, {shelved}",
+                    super::search::match_rank("t.title"),
+                    super::search::match_rank("a.name"),
+                    super::search::match_rank("al.title"),
+                )
+            }
+            (None, Some(ids)) => {
+                binds.push(Box::new(json_list(ids)));
+                format!("(SELECT key FROM json_each(?) WHERE value = t.id) {dir}")
+            }
+            (None, None) => shelved,
+        },
         TrackOrder::Title => format!("t.title {dir}"),
         TrackOrder::Artist => {
             format!("a.name {dir}, al.date {dir}, t.disc {dir}, t.track_number {dir}")
@@ -404,6 +433,9 @@ pub fn filter_tracks(
 
 /// How many tracks `filter_tracks` would list for `filter`, ignoring paging.
 pub fn count_tracks(conn: &Connection, filter: &TrackFilter) -> Result<u64, DbError> {
+    if let Some(fallback) = fuzzy_fallback(conn, filter)? {
+        return count_tracks(conn, &fallback);
+    }
     let Some((body, binds)) = track_body(conn, filter)? else {
         return Ok(0);
     };
@@ -413,6 +445,35 @@ pub fn count_tracks(conn: &Connection, filter: &TrackFilter) -> Result<u64, DbEr
         |r| r.get(0),
     )?;
     Ok(n as u64)
+}
+
+/// What `filter` lists when its search matches no track: the same filter with
+/// the fuzzy matches in place of the search, best first. `None` when it has
+/// no search or the search finds something.
+fn fuzzy_fallback(conn: &Connection, filter: &TrackFilter) -> Result<Option<TrackFilter>, DbError> {
+    let Some(query) = &filter.search else {
+        return Ok(None);
+    };
+    let Some((body, binds)) = track_body(conn, filter)? else {
+        return Ok(None);
+    };
+    let found: bool = conn.query_row(
+        &format!("SELECT EXISTS (SELECT 1 {body})"),
+        params_from_iter(binds.iter()),
+        |r| r.get(0),
+    )?;
+    if found {
+        return Ok(None);
+    }
+    let mut ids = super::search::fuzzy_ids(conn, super::search::CorpusKind::Track, query)?;
+    if let Some(only) = &filter.ids {
+        ids.retain(|id| only.contains(id));
+    }
+    Ok(Some(TrackFilter {
+        search: None,
+        ids: Some(ids),
+        ..filter.clone()
+    }))
 }
 
 /// The FROM and WHERE that `filter_tracks` and `count_tracks` share, and their

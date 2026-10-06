@@ -743,7 +743,8 @@ private struct AlbumSortControls: View {
                     set: { library.albumSort = $0 }
                 )) {
                     ForEach(AlbumSort.offered(
-                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded
+                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded,
+                    searching: !library.filter.isEmpty
                 ), id: \.self) { sort in
                         Text(sort.label).tag(sort)
                     }
@@ -784,7 +785,7 @@ private struct TrackSortControls: View {
                 get: { library.trackSort },
                 set: { library.trackSort = $0 }
             )) {
-                ForEach(TrackBrowseSort.offered(recent: library.browseFilter.recent), id: \.self) { sort in
+                ForEach(TrackBrowseSort.offered(recent: library.browseFilter.recent, searching: !library.filter.isEmpty), id: \.self) { sort in
                     Text(sort.label).tag(sort)
                 }
             }

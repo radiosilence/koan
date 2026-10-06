@@ -67,6 +67,10 @@ const TRACK_SORTS: [(&str, &str); 4] = [
 /// sort by otherwise.
 const PLAYED: (&str, &str) = ("played", "Last played");
 
+/// Offered only while a search narrows the listing: the closest matches
+/// first, the search shelf's order.
+const BEST: (&str, &str) = ("best", "Best match");
+
 /// Which browser.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Kind {
@@ -146,6 +150,7 @@ impl Browse {
             "year" => AlbumOrder::YearDesc,
             "random" => AlbumOrder::Random(self.seed.unwrap_or(0)),
             "played" => AlbumOrder::LastPlayed,
+            "best" => AlbumOrder::Relevance,
             _ => AlbumOrder::RecentlyAdded,
         };
         AlbumQuery {
@@ -166,6 +171,7 @@ impl Browse {
             "albums" => ArtistOrder::AlbumCount,
             "recent" => ArtistOrder::RecentlyAdded,
             "played" => ArtistOrder::LastPlayed,
+            "best" => ArtistOrder::Relevance,
             _ => ArtistOrder::Name,
         };
         ArtistQuery {
@@ -189,6 +195,7 @@ impl Browse {
             "album" => (TrackOrder::Album, false),
             "duration" => (TrackOrder::Duration, false),
             "played" => (TrackOrder::LastPlayed, true),
+            "best" => (TrackOrder::Relevance, false),
             _ => (TrackOrder::ArtistAlbumDiscTrack, false),
         };
         let shelf = |s: Shelf| s.tracks(user, now).filter;
@@ -266,9 +273,9 @@ pub(super) fn shelf_browser(shelf: Shelf, kind: Kind) -> String {
     let mut b = Browse::default();
     let sort = match (shelf, kind) {
         (Shelf::Recent, _) => PLAYED.0,
-        (Shelf::Favourites, Kind::Artists) | (Shelf::Search(_), Kind::Artists) => "name",
-        (Shelf::Favourites, _) | (Shelf::Search(_), Kind::Tracks) => "artist",
-        (Shelf::Search(_), Kind::Albums) => "recent",
+        (Shelf::Search(_), _) => BEST.0,
+        (Shelf::Favourites, Kind::Artists) => "name",
+        (Shelf::Favourites, _) => "artist",
         (Shelf::Downloaded, Kind::Artists) => "name",
         (Shelf::Downloaded, _) => "artist",
     };
@@ -329,6 +336,9 @@ pub(super) fn toolbar(b: &Browse, kind: Kind, codecs: &[String], genres: &[Strin
     .collect();
     if b.recent_on() {
         sorts.insert(0, (PLAYED.0.into(), PLAYED.1.into()));
+    }
+    if set(&b.q).is_some() {
+        sorts.insert(0, (BEST.0.into(), BEST.1.into()));
     }
     let sort = b.sort_or(kind.default_sort()).to_owned();
     let any = || vec![(String::new(), "Any".to_string())];

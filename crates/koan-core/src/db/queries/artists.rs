@@ -67,12 +67,16 @@ pub enum ArtistOrder {
     /// Most recently played first. Only with `ArtistQuery::played`, which is
     /// what knows when; without it, `Name`.
     LastPlayed,
+    /// The closest match to `ArtistQuery::search` first (see
+    /// `search::match_rank`), then by name. Without a search, in the order of
+    /// `ArtistQuery::ids`; without either, `Name`.
+    Relevance,
 }
 
 impl ArtistOrder {
     fn clause(self) -> &'static str {
         match self {
-            Self::Name => "a.name COLLATE LIBRARY",
+            Self::Name | Self::Relevance => "a.name COLLATE LIBRARY",
             Self::AlbumCount => "COUNT(DISTINCT al.id) DESC, a.name COLLATE LIBRARY",
             Self::RecentlyAdded => "COALESCE(MAX(al.added_at), '') DESC, a.name COLLATE LIBRARY",
             Self::Id => "a.id",
@@ -87,7 +91,8 @@ impl ArtistOrder {
 pub struct ArtistQuery<'a> {
     /// Only these artists.
     pub ids: Option<&'a [i64]>,
-    /// Case-insensitive substring over the name.
+    /// Case-insensitive substring over the name. When no artist's name holds
+    /// it, the closest fuzzy matches instead (`search::fuzzy_ids`).
     pub search: Option<&'a str>,
     /// Only artists this user has favourited.
     pub favourites_of: Option<i64>,
@@ -108,6 +113,16 @@ pub struct ArtistQuery<'a> {
 /// Artists with their album and track counts, narrowed, ordered and paged by
 /// the database.
 pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>, DbError> {
+    if let Some(ids) = fuzzy_fallback(conn, q)? {
+        return list_artists(
+            conn,
+            &ArtistQuery {
+                search: None,
+                ids: Some(&ids),
+                ..*q
+            },
+        );
+    }
     let columns = if q.without_track_counts {
         "a.id, a.name, a.sort_name, a.remote_id, COUNT(al.id), 0"
     } else {
@@ -118,7 +133,24 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
         ArtistOrder::LastPlayed if q.played.is_none() => ArtistOrder::Name,
         order => order,
     };
-    let mut sql = format!("SELECT {columns} {body} ORDER BY {}", order.clause());
+    let order_by = match (order, q.search, q.ids) {
+        (ArtistOrder::Relevance, Some(query), _) => {
+            params.extend(
+                super::search::match_rank_binds(query)
+                    .map(|b| Box::new(b) as Box<dyn rusqlite::ToSql>),
+            );
+            format!(
+                "{}, a.name COLLATE LIBRARY",
+                super::search::match_rank("a.name")
+            )
+        }
+        (ArtistOrder::Relevance, None, Some(ids)) => {
+            params.push(Box::new(super::json_list(ids)));
+            "(SELECT key FROM json_each(?) WHERE value = a.id)".into()
+        }
+        (order, ..) => order.clause().into(),
+    };
+    let mut sql = format!("SELECT {columns} {body} ORDER BY {order_by}");
     if let Some(limit) = q.limit {
         params.push(Box::new(limit as i64));
         params.push(Box::new(q.offset as i64));
@@ -134,6 +166,16 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
 
 /// How many artists `list_artists` would list for `q`, ignoring its paging.
 pub fn count_artists(conn: &Connection, q: &ArtistQuery) -> Result<u64, DbError> {
+    if let Some(ids) = fuzzy_fallback(conn, q)? {
+        return count_artists(
+            conn,
+            &ArtistQuery {
+                search: None,
+                ids: Some(&ids),
+                ..*q
+            },
+        );
+    }
     let (body, params) = artist_body(conn, q)?;
     let n: i64 = conn.query_row(
         &format!("SELECT COUNT(*) FROM (SELECT a.id {body})"),
@@ -141,6 +183,28 @@ pub fn count_artists(conn: &Connection, q: &ArtistQuery) -> Result<u64, DbError>
         |r| r.get(0),
     )?;
     Ok(n as u64)
+}
+
+/// What `q`'s search lists when no artist's name holds it: the fuzzy matches,
+/// best first. `None` when it has no search or the search finds something.
+fn fuzzy_fallback(conn: &Connection, q: &ArtistQuery) -> Result<Option<Vec<i64>>, DbError> {
+    let Some(query) = q.search else {
+        return Ok(None);
+    };
+    let (body, params) = artist_body(conn, q)?;
+    let found: bool = conn.query_row(
+        &format!("SELECT EXISTS (SELECT 1 {body})"),
+        rusqlite::params_from_iter(params.iter()),
+        |r| r.get(0),
+    )?;
+    if found {
+        return Ok(None);
+    }
+    let mut ids = super::search::fuzzy_ids(conn, super::search::CorpusKind::Artist, query)?;
+    if let Some(only) = q.ids {
+        ids.retain(|id| only.contains(id));
+    }
+    Ok(Some(ids))
 }
 
 /// The FROM, WHERE and GROUP BY that `list_artists` and `count_artists`
