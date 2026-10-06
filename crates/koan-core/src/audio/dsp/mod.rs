@@ -86,6 +86,68 @@ pub fn response(filters: &[DspFilter], freqs: &[f64], rate: u32) -> Vec<f64> {
 
 /// The filters `profile` plays: each layer that is on, in order, as that
 /// layer plays it, then its own, then the step moving it to another target.
+/// What `device` plays, built from its two choices: the correction, the
+/// profile that lists it, and the tuning chosen for it on top. Where the
+/// tuning names the target it was made against and the correction aims at
+/// another, the difference between the two plays with the tuning, so it
+/// sounds as made whatever corrects the headphones: dynamic baking. A
+/// tuning is skipped on a correction with one baked in.
+///
+/// The correction keeps its own name, folder, filters and responses; the
+/// tuning joins it as a layer, played before its filters, which bands and
+/// curves, commuting, do not hear the difference of. With it, the profiles
+/// to resolve among, the tuning included under a name no profile can take.
+pub fn output_chain(
+    dsp: &crate::config::DspConfig,
+    device: &str,
+) -> Option<(DspProfile, Vec<DspProfile>)> {
+    use crate::config::{DspLayer, DspRole};
+    let correction = dsp.profile_for(device);
+    let all = &dsp.profiles;
+    let tuning = (dsp.enabled)
+        .then(|| dsp.tunings.iter().find(|t| t.device == device))
+        .flatten()
+        .and_then(|t| all.iter().find(|p| p.name == t.tuning))
+        .filter(|t| profiles::shown_role(t, all) == DspRole::Tuning)
+        .filter(|_| correction.is_none_or(|c| profiles::shown_role(c, all) != DspRole::Baked));
+    let Some(tuning) = tuning else {
+        return correction.map(|c| (c.clone(), all.clone()));
+    };
+    let mut on_top = tuning.clone();
+    // Control characters are taken out of every name, so none is this.
+    on_top.name = format!("\u{1}{}", tuning.name);
+    on_top.devices.clear();
+    let aim = correction.and_then(|c| profiles::aims_at(c, all));
+    if let (Some(aim), Some(made)) = (aim, tuning.tuned_for.as_deref())
+        && aim != made
+        && targets::same_ear(&aim, made)
+        && let (Some(from), Some(to)) = (targets::choice_curve(&aim), targets::choice_curve(made))
+    {
+        on_top
+            .filters
+            .insert(0, DspFilter::Graphic(targets::difference(&from, &to)));
+    }
+    let layer = DspLayer {
+        profile: on_top.name.clone(),
+        on: true,
+    };
+    let chain = match correction {
+        Some(c) => {
+            let mut c = c.clone();
+            c.layers.push(layer);
+            c
+        }
+        None => DspProfile {
+            name: on_top.name.clone(),
+            layers: vec![layer],
+            ..Default::default()
+        },
+    };
+    let mut among = all.clone();
+    among.push(on_top);
+    Some((chain, among))
+}
+
 /// `stack` holds the profiles being resolved, which a cycle would come back
 /// to. A layer is EQ alone: impulse responses belong to the profile that
 /// plays them, and two stacks of responses would make one profile's rates

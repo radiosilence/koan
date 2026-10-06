@@ -1033,6 +1033,91 @@ pub fn shown_role(profile: &DspProfile, all: &[DspProfile]) -> DspRole {
         .map_or(DspRole::Tuning, role)
 }
 
+/// The target the chain `profile` corrects to: its correction's chosen
+/// target, or the one it was made for or is built from a measurement to.
+/// None for a correction with a tuning baked in, whose target is not only a
+/// target, or one whose target is not known.
+pub fn aims_at(profile: &DspProfile, all: &[DspProfile]) -> Option<String> {
+    let first = corrections_in(profile, all).into_iter().next()?;
+    let c = all.iter().find(|p| p.name == first)?;
+    if role(c) != DspRole::Correction {
+        return None;
+    }
+    c.measurement
+        .as_ref()
+        .map(|m| m.target.clone())
+        .or_else(|| {
+            c.target
+                .as_ref()
+                .map(|t| t.chosen.clone().unwrap_or_else(|| t.made_for.clone()))
+        })
+}
+
+/// The tuning `device` plays on top of its correction.
+pub fn tuning_for(device: &str) -> Option<String> {
+    Config::cached()
+        .dsp
+        .tunings
+        .iter()
+        .find(|t| t.device == device)
+        .map(|t| t.tuning.clone())
+}
+
+/// Play `tuning` on top of `device`'s correction, or none. Only a tuning,
+/// and not on a correction with one baked in, which would add taste twice.
+pub fn set_tuning(device: &str, tuning: Option<&str>) -> Result<(), String> {
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    if let Some(name) = tuning {
+        let t = all
+            .iter()
+            .find(|p| p.name == name)
+            .ok_or_else(|| format!("No profile called {name}"))?;
+        if shown_role(t, all) != DspRole::Tuning {
+            return Err(format!(
+                "{name} corrects headphones: choose it as the correction instead"
+            ));
+        }
+        if let Some(c) = cfg.dsp.profile_for(device)
+            && shown_role(c, all) == DspRole::Baked
+        {
+            return Err(baked_already(&c.name));
+        }
+    }
+    persist(|cfg| {
+        cfg.dsp.tunings.retain(|t| t.device != device);
+        if let Some(name) = tuning {
+            cfg.dsp.tunings.push(crate::config::DspOutputTuning {
+                device: device.to_owned(),
+                tuning: name.to_owned(),
+            });
+        }
+    })
+}
+
+/// Why no tuning goes on top of `correction`.
+pub fn baked_already(correction: &str) -> String {
+    format!("{correction} already has a tuning baked in. Split it to swap tunings.")
+}
+
+/// Say which target the tuning `name` was made against, or that it is not
+/// known: a target that ships or one added.
+pub fn set_tuned_for(name: &str, target: Option<&str>) -> Result<(), String> {
+    if !Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Err(format!("No profile called {name}"));
+    }
+    if let Some(t) = target
+        && super::targets::choice_curve(t).is_none()
+    {
+        return Err(format!("No target called {t}"));
+    }
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.tuned_for = target.map(str::to_owned);
+        }
+    })
+}
+
 /// The corrections a chain plays, `profile` and its layers switched on, in
 /// the order they play.
 pub fn corrections_in(profile: &DspProfile, all: &[DspProfile]) -> Vec<String> {
