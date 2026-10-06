@@ -935,10 +935,17 @@ impl Player {
             return self.try_open_on_renderer(id, source, info, seek_ms, start);
         }
         self.stop_engine();
-        let info = match info {
+        let mut info = match info {
             Some(info) => info,
             None => buffer::probe_file(source.path())?,
         };
+        // A stream opened before its container says how long it is (an Ogg
+        // whose last page has not arrived) runs on the library's duration.
+        if info.duration_ms == 0
+            && let Some(known) = self.shared_state.get_item(id).and_then(|i| i.duration_ms)
+        {
+            info.duration_ms = known;
+        }
         let path = source.path().to_path_buf();
         let streaming = matches!(source, Source::Stream(_));
 
@@ -5537,6 +5544,143 @@ mod tests {
                 "{kind}: {before} → {after}, not halved"
             );
         }
+    }
+
+    /// Replacing the queue while the track playing is paused, with a track
+    /// that has still to arrive: nothing sounds until the new one can open,
+    /// the old one is never reopened, and the new one is what is published
+    /// from the start. The iOS report this answers: a playlist's play button,
+    /// pressed over a paused track, was heard as that track carrying on.
+    #[test]
+    fn a_replaced_queue_never_sounds_the_track_it_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.wav");
+        crate::test_utils::generate_wav_tone(&a, 44100, 440.0, 5.0);
+        let consumers = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut player = Player::new();
+        player.backend = Box::new(CaptureBackend {
+            consumers: consumers.clone(),
+        });
+        let engines = || consumers.lock().unwrap().len();
+
+        let item_a = PlaylistItem {
+            path: a,
+            ..make_item("paused")
+        };
+        let a_id = item_a.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item_a]));
+        player.process_command(PlayerCommand::Play(a_id));
+        player.process_command(PlayerCommand::Pause);
+        assert_eq!(engines(), 1);
+
+        let landed = dir.path().join("long.opus");
+        let item_b = PlaylistItem {
+            db_id: Some(77),
+            state: ItemState::Pending,
+            duration_ms: Some(32_523_781),
+            path: landed.clone(),
+            ..make_item("long")
+        };
+        let b_id = item_b.id;
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items: vec![item_b],
+            start: 0,
+            position_ms: 0,
+            play: true,
+        });
+        player.publish();
+        let state = player.shared_state.clone();
+        assert_eq!(state.cursor(), Some(b_id), "the new track, at once");
+        assert!(
+            state.is_waiting(),
+            "waiting for it, which a client shows as loading"
+        );
+        assert_eq!(state.playback_state(), PlaybackState::Stopped);
+        assert_eq!(
+            state.track_info(),
+            None,
+            "the paused track is no longer published"
+        );
+        assert_eq!(engines(), 1, "nothing opened while it is on its way");
+
+        // Its download lands.
+        let store = state.downloads().clone();
+        store.claim(77, Some(b_id));
+        std::fs::write(&landed, include_bytes!("testdata/thirty-seconds.opus")).unwrap();
+        // Told to the player below, as the download queue would.
+        let _settled = crate::remote::downloads::settle(&state, 77, &Ok(landed));
+        player.process_command(PlayerCommand::TrackReady(b_id));
+        player.publish();
+
+        assert_eq!(
+            engines(),
+            2,
+            "one engine for the new track, none for the old"
+        );
+        assert_eq!(state.track_info().map(|t| t.id), Some(b_id));
+        assert_eq!(state.playback_state(), PlaybackState::Playing);
+        player.process_command(PlayerCommand::Stop);
+    }
+
+    /// A long Ogg is opened before its last page has arrived, which is where
+    /// Ogg keeps its length, so the stream itself cannot say how long it is.
+    /// The library can: a nine-hour remote track showed no duration until
+    /// the whole file had downloaded.
+    #[test]
+    fn a_stream_opened_without_a_length_takes_the_librarys_duration() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = include_bytes!("testdata/thirty-seconds.opus");
+        let half = bytes.len() / 2;
+        let part = dir.path().join("long.opus.part");
+        std::fs::write(&part, &bytes[..half]).unwrap();
+        let feed = crate::remote::downloads::ByteFeed::new();
+        feed.set(half as u64);
+
+        let mut player = Player::new();
+        player.backend = Box::new(CaptureBackend {
+            consumers: Default::default(),
+        });
+        let item = PlaylistItem {
+            db_id: Some(9),
+            state: ItemState::Pending,
+            duration_ms: Some(32_523_781),
+            path: dir.path().join("long.opus"),
+            ..make_item("long")
+        };
+        let id = item.id;
+        player.shared_state.add_items(vec![item]);
+        player.shared_state.set_cursor(Some(id));
+
+        let lengthless = buffer::StreamInfo {
+            codec: "Opus".into(),
+            sample_rate: 48_000,
+            channels: 1,
+            bit_depth: None,
+            bitrate_kbps: None,
+            duration_ms: 0,
+        };
+        player
+            .try_open_session(
+                id,
+                Source::Stream(StreamSource {
+                    path: part,
+                    bytes_written: feed,
+                    total: bytes.len() as u64,
+                    mode: streaming::ProbeMode::Lengthless,
+                }),
+                Some(lengthless),
+                0,
+                Run::Playing,
+            )
+            .unwrap();
+        player.publish();
+
+        assert_eq!(player.shared_state.duration_ms(), 32_523_781);
+        assert_eq!(
+            player.shared_state.track_info().map(|t| t.duration_ms),
+            Some(32_523_781)
+        );
+        player.stop_engine();
     }
 
     fn engine_format_for(source_rate: u32, channels: u16, device_rate: f64) -> (f64, u32) {

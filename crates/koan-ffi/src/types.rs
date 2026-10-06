@@ -759,11 +759,12 @@ pub enum QueueLock {
 
 /// One row of a playlist: the track, and the entry it sits in.
 ///
-/// The id is the entry's. It is what a queue item remembers, so a client can
-/// tell which of two copies of a song is the one playing.
+/// `entry_id` is the entry's own, not the track's: it is what a queue item
+/// remembers, so a client can tell which of two copies of a song is the one
+/// playing. Named so that a list of them cannot be read as track ids.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct PlaylistEntry {
-    pub id: i64,
+    pub entry_id: i64,
     pub track: Track,
 }
 

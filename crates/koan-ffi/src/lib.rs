@@ -1580,7 +1580,7 @@ impl KoanEngine {
             Ok(ids
                 .into_iter()
                 .zip(tracks)
-                .map(|(id, track)| PlaylistEntry { id, track })
+                .map(|(entry_id, track)| PlaylistEntry { entry_id, track })
                 .collect())
         })
         .await
