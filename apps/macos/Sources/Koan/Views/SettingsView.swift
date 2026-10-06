@@ -321,6 +321,10 @@ private struct RemoteSettings: View {
                         "Tracks",
                         value: Format.count(Int64(model.settings.remoteTracks), "track")
                     )
+                    if mirror.signInRefused {
+                        Label(EngineMirror.signInRefusedDetail, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    }
                     HStack {
                         // Only the syncs wait on the database writer. Signing
                         // out is a config write, and greying it out while a
@@ -345,8 +349,10 @@ private struct RemoteSettings: View {
                     // prompt, so an example there leaves the field unlabelled.
                     TextField("Server URL", text: $url, prompt: Text("Server URL"))
                         .verbatimEntry(.url)
+                        .accessibilityIdentifier("server-url")
                     TextField("Username", text: $username, prompt: Text("Username"))
                         .verbatimEntry()
+                        .accessibilityIdentifier("username")
                     Picker("Sign in with", selection: $model.withApiKey) {
                         Text("Password").tag(false)
                         Text("API key").tag(true)
@@ -357,6 +363,7 @@ private struct RemoteSettings: View {
                         prompt: Text(model.withApiKey ? "API key" : "Password")
                     )
                     .verbatimEntry()
+                    .accessibilityIdentifier("secret")
                     HStack {
                         Button("Sign In") { model.signIn(url: url, username: username) }
                             .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)

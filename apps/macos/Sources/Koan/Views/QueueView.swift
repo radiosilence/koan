@@ -17,6 +17,9 @@ struct QueueView: View {
     /// A phone's library is a server's, so an empty one means not signed in
     /// yet: the first thing anyone opening the app sees, App Review included.
     private var emptyDetail: String {
+        if mirror.signInRefused {
+            return EngineMirror.signInRefusedDetail
+        }
         #if os(iOS) || os(tvOS)
         if library.stats?.totalTracks == 0 {
             return library.emptyLibraryDetail

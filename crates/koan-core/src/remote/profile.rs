@@ -74,7 +74,9 @@ pub fn for_auth(auth: &SubsonicAuth) -> Option<ServerProfile> {
         return Some(profile.clone());
     }
     let client = crate::remote::client::SubsonicClient::from_auth(auth.clone());
-    let profile = match client.profile() {
+    let probed = client.profile();
+    crate::remote::refusal::observe(auth, &probed);
+    let profile = match probed {
         Ok(p) => p,
         Err(e) => {
             log::info!("profile: {} did not answer: {e}", auth.base_url);

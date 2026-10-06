@@ -16,7 +16,12 @@ struct LibraryTab: View {
 
     var body: some View {
         List {
-            if let connection = mirror.connection, connection.offline {
+            if mirror.signInRefused {
+                Section {
+                    Label(EngineMirror.signInRefusedDetail, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                }
+            } else if let connection = mirror.connection, connection.offline {
                 offline(manual: connection.offlineManual)
             }
             row("Albums", Icon.album, .page(.section(.albums)))

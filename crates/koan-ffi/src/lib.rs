@@ -1068,23 +1068,16 @@ impl KoanEngine {
         .await
     }
 
-    /// Why the configured server cannot be used, if it cannot.
+    /// Why the configured server cannot be used, if it cannot: no credential,
+    /// or one the server has refused since.
     ///
     /// `None` means there is nothing to say: either no server is configured, or
     /// the one that is works. A client should not have to watch playback fail
     /// and artwork come back empty to work out that it is signed out — the
-    /// engine already knows, and every front end asks the same question.
+    /// engine already knows, and every front end asks the same question. A
+    /// refusal heard later reaches the app as `ConnectionInfo::sign_in_refused`.
     pub async fn remote_problem(self: Arc<Self>) -> Option<String> {
-        offload::offload(move || {
-            let cfg = Config::cached();
-            if !cfg.remote.enabled || cfg.remote.url.is_empty() {
-                return None;
-            }
-            koan_core::helpers::subsonic_auth(&cfg)
-                .is_none()
-                .then(|| koan_core::helpers::remote_unavailable(&cfg))
-        })
-        .await
+        offload::offload(move || koan_core::helpers::remote_problem(&Config::cached())).await
     }
 
     /// Cached lyrics only — this never hits the network, so it is safe to call
@@ -1580,7 +1573,7 @@ impl KoanEngine {
             Ok(ids
                 .into_iter()
                 .zip(tracks)
-                .map(|(id, track)| PlaylistEntry { id, track })
+                .map(|(entry_id, track)| PlaylistEntry { entry_id, track })
                 .collect())
         })
         .await
@@ -5032,6 +5025,7 @@ fn connection_info() -> ConnectionInfo {
         share_accounts: devices::accounts(),
         offline: koan_core::remote::offline::active(),
         offline_manual: koan_core::remote::offline::manual(),
+        sign_in_refused: koan_core::helpers::sign_in_refused(&Config::cached()),
     }
 }
 
