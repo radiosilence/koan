@@ -11,6 +11,18 @@
 - **An account's name could run script on an admin's Users page.** The Delete button's confirmation put the escaped name inside a Datastar expression, which the browser decodes before evaluating. The name is now passed as data.
 - **Sockets close when their account changes.** A GraphQL subscription socket or an app's link kept the access it opened with: a demoted admin kept admin over `/graphql/ws`, and a deleted account, a new password or a revoked key or app password left both open. They now close when anything about the account that can narrow its access changes, and a subscription socket also closes when its token expires. Clients reconnect and are authenticated as things then stand; kōan's apps treat it as any dropped link.
 
+### Changed
+
+- **The sleep timer eases you to sleep.** A timer set for a time now fades over a tenth of its length, between one and five minutes (90 seconds for 15 minutes, 5 minutes for an hour), reaching silence at the deadline; the end of a track or record fades over the track's last minute. The level falls evenly in decibels rather than over six seconds, and the timer shows *Fading* meanwhile. Playback is not bit-perfect during the fade, since it is a gain on the samples; a UPnP renderer's own volume is stepped down instead and put back after. Cancelling or changing the timer mid-fade brings the level back over a second, and pausing by hand cancels it. See [Sleep timer](docs/guide/sleep-timer.md#the-fade).
+
+### Fixed
+
+- **Seeking or skipping at the end of the queue could freeze playback.** When the player was busy, the decoder reporting the end of the queue and the player stopping that decoder could wait on each other indefinitely.
+- **A rare crash when the Mac or iOS app changes track or output.** When CoreAudio could not confirm the output had fully stopped, its playback data was freed while the audio thread might still read it. It is now kept instead.
+- **One failed command no longer stops the Mac and iOS apps' controls.** An error such as importing a malformed EQ or convolution file stopped every later play, queue and transport command until the app was relaunched; the failing command now reports an error and the rest carry on.
+- **The iOS Live Activity no longer busies the app for a record without art.** Controlling another device playing a record with no cover, or whose cover could not be fetched, asked for the cover again continuously.
+- **The sleep timer's moon is lit only while a timer is set.** On the Mac it showed in the accent colour with no timer set.
+
 ## 0.54.1
 
 ### Added

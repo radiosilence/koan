@@ -158,11 +158,15 @@ pub struct TransportBar<'a> {
     output_rate: Option<u32>,
     dsp: Option<DspStatus>,
     sleep: Option<Sleep>,
+    sleep_fading: bool,
 }
 
 /// The sleep timer as the transport shows it: what is left, or what it
 /// waits for.
-fn sleep_label(sleep: Sleep) -> String {
+fn sleep_label(sleep: Sleep, fading: bool) -> String {
+    if fading {
+        return "\u{263E} fading".into();
+    }
     match sleep {
         Sleep::At { unix_ms } => {
             let now = std::time::SystemTime::now()
@@ -195,6 +199,7 @@ impl<'a> TransportBar<'a> {
             output_rate: None,
             dsp: None,
             sleep: None,
+            sleep_fading: false,
         }
     }
 
@@ -218,8 +223,9 @@ impl<'a> TransportBar<'a> {
         self
     }
 
-    pub fn with_sleep(mut self, sleep: Option<Sleep>) -> Self {
+    pub fn with_sleep(mut self, sleep: Option<Sleep>, fading: bool) -> Self {
         self.sleep = sleep;
+        self.sleep_fading = fading;
         self
     }
 
@@ -419,7 +425,7 @@ impl Widget for TransportBar<'_> {
                 album_spans.push(Span::styled(format_info, self.theme.hint_desc));
                 if let Some(sleep) = self.sleep {
                     album_spans.push(Span::styled(
-                        format!(" \u{00B7} {}", sleep_label(sleep)),
+                        format!(" \u{00B7} {}", sleep_label(sleep, self.sleep_fading)),
                         self.theme.hint_desc,
                     ));
                 }

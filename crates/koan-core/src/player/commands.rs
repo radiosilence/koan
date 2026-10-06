@@ -1,6 +1,8 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender, bounded};
+use crossbeam_channel::{Receiver, SendTimeoutError, Sender, bounded};
 
 use super::state::{PlayMode, PlaylistItem, QueueItemId, Repeat, SleepTimer};
 
@@ -192,6 +194,23 @@ impl CommandChannel {
     }
 }
 
+/// Sends `command` from a thread the player may be about to join.
+///
+/// A plain send blocks while the channel is full, and the player, which is
+/// the channel's only reader, does not read while it joins: the two would wait
+/// on each other for good. This waits for room only until `stop` is set, which
+/// the player does before joining; a command given up then belonged to a
+/// session the player has already ended.
+pub fn send_unless_stopped(tx: &Sender<PlayerCommand>, command: PlayerCommand, stop: &AtomicBool) {
+    let mut command = command;
+    while !stop.load(Ordering::Relaxed) {
+        match tx.send_timeout(command, Duration::from_millis(10)) {
+            Err(SendTimeoutError::Timeout(unsent)) => command = unsent,
+            Ok(()) | Err(SendTimeoutError::Disconnected(_)) => return,
+        }
+    }
+}
+
 impl PlayerCommand {
     /// Whether it asks for something to be heard.
     pub fn asks_to_play(&self) -> bool {
@@ -216,5 +235,69 @@ pub fn release_renderer(
     let (tx, rx) = crossbeam_channel::bounded(1);
     if player.send(PlayerCommand::ReleaseRenderer(tx)).is_ok() {
         let _ = rx.recv_timeout(timeout);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use super::*;
+    use crate::audio::buffer::{self, PlaybackTimeline, Processing, SourceEntry};
+
+    #[test]
+    fn a_full_channel_never_holds_up_stopping_the_decoder() {
+        let channel = CommandChannel::new();
+        while channel.tx.try_send(PlayerCommand::Stop).is_ok() {}
+        let tx = channel.tx.clone();
+        let (producer, _consumer) = rtrb::RingBuffer::new(1024);
+        // An unreadable file ends the session at once, so the decode thread
+        // reaches the full channel straight away.
+        let mut decode = buffer::start_decode(
+            SourceEntry::from_file(QueueItemId::new(), "/nonexistent/koan.flac".into()),
+            producer,
+            0,
+            || None,
+            PlaybackTimeline::new(),
+            None,
+            Processing::default(),
+            move |stop| send_unless_stopped(&tx, PlayerCommand::DecodeFinished(1), stop),
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            decode.stop();
+            done_tx.send(()).ok();
+        });
+        let started = Instant::now();
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("stopping the decoder waited on the full channel");
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(channel.rx.len(), 16);
+    }
+
+    #[test]
+    fn a_natural_end_waits_for_room() {
+        let channel = CommandChannel::new();
+        while channel.tx.try_send(PlayerCommand::Stop).is_ok() {}
+        let stop = Arc::new(AtomicBool::new(false));
+        let tx = channel.tx.clone();
+        let flag = stop.clone();
+        let sender = std::thread::spawn(move || {
+            send_unless_stopped(&tx, PlayerCommand::DecodeFinished(7), &flag)
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        for _ in 0..16 {
+            channel.rx.recv().unwrap();
+        }
+        sender.join().unwrap();
+        assert!(matches!(
+            channel.rx.try_recv(),
+            Ok(PlayerCommand::DecodeFinished(7))
+        ));
     }
 }
