@@ -35,7 +35,7 @@ struct LyricsPanel: View {
 
             content
         }
-        .background(KoanTheme.ground(.background.secondary))
+        .background { Rectangle().fill(KoanTheme.ground(.background.secondary)) }
         .koanRule(.leading)
         .task(id: player.currentTrackId) { await load() }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { ui.lyricsWidth = $0 }
