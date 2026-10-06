@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.55.0
 
 ### Added
 
@@ -8,6 +8,10 @@
 - **Signing in with an API key.** The account form takes an OpenSubsonic API key in place of a password, on every platform: one key per device, revocable on its own.
 - **`devices.nearby`.** Off, a device takes no part in the local network: it neither listens nor announces itself, and neither looks for other devices nor dials them, reaching them only through the server. For a shared network, and for test runs that relaunch an app over and over, which would otherwise announce it to every device in the house each time; the television's UI tests set it.
 - **Sign an Apple TV in by pairing.** Signed out, the TV asks for its server's address and shows a QR code and a code. Scanning the QR code with kōan on a phone signed in to that server, typing the code under Settings → Server → Pair a device on a phone or Mac, or entering it on the server's `/pair` page signs the TV in at once. Every ending says what happened and offers a way back: a declined or lapsed code is asked for again, and a server without pairing is pointed to the account form, which takes a password, an API key or an invite as before.
+
+### Changed
+
+- **Signing in to a kōan server with a password ends in an API key** ([#819](https://github.com/radiosilence/koan/issues/819)). The apps and terminal UI send the password once, over plain HTTP too, to the new `/rest/koanSignIn`, and keep the API key it returns for the device in place of the password, as an invite does. Signing in again from the same device replaces its key rather than adding one. An app password or the shared secret typed in place of the password is kept as before. Signing in over plain HTTP no longer fails with error 41. Other Subsonic servers are unchanged, and error 41 from one now reads as needing an app password or API key. Servers list the `koanSignIn` extension.
 
 ### Fixed
 
@@ -48,10 +52,6 @@
 
 - **The Mac's shelf, search and album grid follow the window when it widens.** Opened in a narrow window, Recently Played, Favourites, search and the album grid kept their narrow layout when the window grew.
 - **The web UI on a phone.** A favourite track shows its heart beside the row's ⋯ again, as a mark; the heart to press is in the menu. History rows give the title the width the tick boxes took: on a phone a play is removed with Remove from History in its menu, as in the apps, and the time is set smaller. On a wide screen the Tracks browser's name field is wide enough for its hint.
-
-### Changed
-
-- **Signing in to a kōan server with a password ends in an API key** ([#819](https://github.com/radiosilence/koan/issues/819)). The apps and terminal UI send the password once, over plain HTTP too, to the new `/rest/koanSignIn`, and keep the API key it returns for the device in place of the password, as an invite does. Signing in again from the same device replaces its key rather than adding one. An app password or the shared secret typed in place of the password is kept as before. Signing in over plain HTTP no longer fails with error 41. Other Subsonic servers are unchanged, and error 41 from one now reads as needing an app password or API key. Servers list the `koanSignIn` extension.
 
 ## 0.54.0
 
