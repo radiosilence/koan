@@ -4,6 +4,7 @@ import AppKit
 import UIKit
 #endif
 import CoreText
+import os
 import KoanFFI
 import SwiftUI
 
@@ -319,6 +320,11 @@ struct KoanAccent: Equatable, Sendable {
 
     let dark: Shade
     let light: Shade
+    /// Built once, here: a dynamic colour made afresh on each read is a new
+    /// value each time, and every view reading the tint would re-run with it.
+    let color: Color
+
+    static func == (a: KoanAccent, b: KoanAccent) -> Bool { a.dark == b.dark && a.light == b.light }
 
     static let mint = KoanAccent(
         dark: Shade(red: 0x7D / 255, green: 0xD3 / 255, blue: 0xA7 / 255, readsAsText: true),
@@ -340,7 +346,7 @@ struct KoanAccent: Equatable, Sendable {
 
     func shade(_ scheme: ColorScheme) -> Shade { scheme == .dark ? dark : light }
 
-    var color: Color {
+    private static func color(dark: Shade, light: Shade) -> Color {
         #if canImport(AppKit)
         Color(nsColor: NSColor(name: nil) { appearance in
             let s = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
@@ -355,8 +361,22 @@ struct KoanAccent: Equatable, Sendable {
     }
 
     /// The accent for a record's colour, as `Color.dominant` gives it; `nil`
-    /// is no record, or none with a colour.
-    init(record: Color?) {
+    /// is no record, or none with a colour. Worked out once per colour: the
+    /// room asks on every pass, and the same record must give the same value.
+    static func of(_ record: Color?) -> KoanAccent {
+        guard let record else { return .mint }
+        return cache.withLock { known in
+            if let hit = known[record] { return hit }
+            if known.count >= 64 { known.removeAll() }
+            let made = KoanAccent(record: record)
+            known[record] = made
+            return made
+        }
+    }
+
+    private static let cache = OSAllocatedUnfairLock(initialState: [Color: KoanAccent]())
+
+    private init(record: Color?) {
         guard let record else { self = .mint; return }
         let resolved = record.resolve(in: EnvironmentValues())
         let (_, c, h) = OKLCH.from(
@@ -366,13 +386,13 @@ struct KoanAccent: Equatable, Sendable {
               let dark = Self.shade(hue: h, chroma: c, band: Self.darkBand, bad: 0xEF6B73, bg: 0x1E1E1E, surface: 0x2A2A2A),
               let light = Self.shade(hue: h, chroma: c, band: Self.lightBand, bad: 0xC43F3F, bg: 0xFFFFFF, surface: 0xF2F2F2)
         else { self = .mint; return }
-        self.dark = dark
-        self.light = light
+        self.init(dark: dark, light: light)
     }
 
     private init(dark: Shade, light: Shade) {
         self.dark = dark
         self.light = light
+        self.color = Self.color(dark: dark, light: light)
     }
 
     /// The most vivid lightness in the band that reads as text — the darkest in

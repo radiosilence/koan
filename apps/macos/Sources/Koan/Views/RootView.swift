@@ -281,7 +281,7 @@ struct RecordRoom: ViewModifier {
     }
 
     /// The accent for that record, tone-mapped to its bands — in either look.
-    private var accent: KoanAccent { KoanAccent(record: record) }
+    private var accent: KoanAccent { KoanAccent.of(record) }
 
     /// The colour to put on.
     private var tint: Color { accent.color }

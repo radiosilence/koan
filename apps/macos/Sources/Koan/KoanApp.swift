@@ -244,6 +244,9 @@ struct KoanApp: App {
                     .environment(state.activity)
                     .environment(state.art)
                     .environment(state.mirror)
+                    // The window has no record to take a colour from: koan's own.
+                    .tint(.koanAccent)
+                    .environment(\.roomTint, .koanAccent)
                     .koanTheme(state.appearance)
             }
         }

@@ -321,11 +321,14 @@ private extension CALayer {
 enum WashTone: Sendable, Equatable {
     case dark, light
 
-    /// Relative luminance of `muted`: `#919191` dark, `#666666` light.
+    /// Dark: no brighter than `muted` (`#919191`) at 4.6:1 allows. Light: no
+    /// darker than keeps the wash, drawn at `KoanTheme.wash` over white, at
+    /// least as light as `surface` (Y 0.888) — so anything that reads on
+    /// `surface`, the accent and `bad` included, reads over the wash.
     private var limit: Double {
         switch self {
         case .dark: (0.2831 + 0.05) / 4.6 - 0.05
-        case .light: 4.6 * (0.1329 + 0.05) - 0.05
+        case .light: 0.86
         }
     }
 
