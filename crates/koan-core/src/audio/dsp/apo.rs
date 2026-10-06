@@ -109,7 +109,8 @@ fn parse_into(
 
     for (n, line) in text.lines().enumerate() {
         let line = line.trim().trim_start_matches('\u{feff}');
-        if line.is_empty() || line.starts_with('#') {
+        // `//` opens a comment in Qudelix's exports, as `#` does in APO's.
+        if line.is_empty() || line.starts_with('#') || line.starts_with("//") {
             continue;
         }
         let is_filter = line.split_once(':').is_some_and(|(c, _)| {
@@ -200,6 +201,15 @@ fn parse_into(
             "EndIf" => conditional = conditional.saturating_sub(1),
             // Which device the settings are for is koan's to decide.
             "Device" => {}
+            // Qudelix's export: what kind of preset it is, ahead of the
+            // filters, and the headphone's impedance and sensitivity after.
+            "TYPE" if rest.eq_ignore_ascii_case("PEQ") => {}
+            "TYPE" => {
+                return Err(fail(&format!(
+                    "a {rest} preset is not supported, only a PEQ one"
+                )));
+            }
+            "IMPEDANCE" | "SENSITIVITY" => {}
             other => return Err(fail(&format!("{other} is not supported"))),
         }
     }
@@ -567,6 +577,58 @@ mod tests {
             (2, 2),
             "a gain band and a peak on each side"
         );
+    }
+
+    /// A Qudelix 5K preset export: a type line, `//` comments, a preamp and
+    /// ten filters for each channel, trailing spaces, and the headphone's
+    /// impedance and sensitivity at the end.
+    #[test]
+    fn a_qudelix_export_is_read() {
+        let qudelix = "TYPE: PEQ\r\n\r\n// SPK EQ - L\r\nChannel: L\r\nPreamp: -2.3 dB \r\n\
+            Filter 1: ON LS Fc 91 Hz Gain 0.0 dB Q 0.722 \r\n\
+            Filter 2: ON PK Fc 120 Hz Gain -1.2 dB Q 1.08 \r\n\
+            Filter 3: ON PK Fc 380 Hz Gain 0.8 dB Q 2.1 \r\n\
+            Filter 4: ON PK Fc 950 Hz Gain -0.5 dB Q 1.4 \r\n\
+            Filter 5: ON PK Fc 1800 Hz Gain 1.6 dB Q 3.2 \r\n\
+            Filter 6: ON PK Fc 2900 Hz Gain -2.3 dB Q 4.0 \r\n\
+            Filter 7: ON PK Fc 4200 Hz Gain 1.1 dB Q 5.5 \r\n\
+            Filter 8: ON PK Fc 5600 Hz Gain -1.9 dB Q 6.0 \r\n\
+            Filter 9: ON PK Fc 8100 Hz Gain 0.7 dB Q 2.2 \r\n\
+            Filter 10: ON HS Fc 6906 Hz Gain 0.0 dB Q 0.658 \r\n\r\n\
+            // SPK EQ - R\r\nChannel: R\r\nPreamp: -1.9 dB \r\n\
+            Filter 1: ON LS Fc 91 Hz Gain 0.0 dB Q 0.722 \r\n\
+            Filter 2: ON PK Fc 125 Hz Gain -1.0 dB Q 1.1 \r\n\
+            Filter 3: ON PK Fc 380 Hz Gain 0.8 dB Q 2.1 \r\n\
+            Filter 4: ON PK Fc 950 Hz Gain -0.5 dB Q 1.4 \r\n\
+            Filter 5: ON PK Fc 1800 Hz Gain 1.6 dB Q 3.2 \r\n\
+            Filter 6: ON PK Fc 2900 Hz Gain -2.3 dB Q 4.0 \r\n\
+            Filter 7: ON PK Fc 4200 Hz Gain 1.1 dB Q 5.5 \r\n\
+            Filter 8: ON PK Fc 5600 Hz Gain -1.9 dB Q 6.0 \r\n\
+            Filter 9: ON PK Fc 8100 Hz Gain 0.7 dB Q 2.2 \r\n\
+            Filter 10: ON HS Fc 6906 Hz Gain 0.0 dB Q 0.658 \r\n\r\n\
+            IMPEDANCE: 0.0 ohm\r\nSENSITIVITY: 0.0 dBSPL/mW\r\n";
+        let p = parse(qudelix).unwrap();
+        // Each side's preamp is a gain band on that side, then its ten.
+        for c in [0u16, 1] {
+            let side: Vec<&EqFilter> = p
+                .filters
+                .iter()
+                .filter(|f| f.channels() == [c])
+                .map(|f| match f {
+                    DspFilter::Band(b) => b,
+                    other => panic!("{other:?}"),
+                })
+                .collect();
+            assert_eq!(side.len(), 11, "channel {c}");
+            assert_eq!(side[0].kind, EqFilterKind::Gain);
+            assert_eq!(side[0].gain_db, if c == 0 { -2.3 } else { -1.9 });
+            assert_eq!(side[1].kind, EqFilterKind::LowShelf);
+            assert_eq!((side[1].freq, side[1].q), (91.0, 0.722));
+            assert_eq!(side[10].kind, EqFilterKind::HighShelf);
+            assert_eq!((side[10].freq, side[10].q), (6906.0, 0.658));
+        }
+        let geq = parse("TYPE: GEQ\nChannel: L\n").unwrap_err();
+        assert!(geq.contains("a GEQ preset is not supported"), "{geq}");
     }
 
     fn bands(p: Parsed) -> Vec<EqFilter> {

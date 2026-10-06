@@ -158,7 +158,7 @@ room's responses and a headphone EQ can live in one profile.
 | Roon zip | Roon, Home Audio Fidelity | Unpacked and read as the files inside: responses as above, or `.cfg` files |
 | Convolver `.cfg` | Roon, JRiver, Acourate, Audiolense | The header's rate; routes say which response feeds which channel, at what weight and delay. Crossfeed works; a crossover to more outputs than inputs is refused |
 | CamillaDSP YAML | CamillaDSP | `devices.samplerate`. Biquads, gains, delays and mixers keep their place in the pipeline, on the channels it gives them; `Conv` filters become responses |
-| Equalizer APO `config.txt`, AutoEQ `ParametricEQ.txt` and `GraphicEQ.txt`, squig.link exports, REW filter settings | Equalizer APO, AutoEQ, squig.link, REW | Bands, `Delay:`, `Copy:` and `GraphicEQ:` in order, on the channels `Channel:` selects; `Convolution:` responses at their own rate; `Include:` followed. REW's per-speaker files go to the channel their name says |
+| Equalizer APO `config.txt`, AutoEQ `ParametricEQ.txt` and `GraphicEQ.txt`, squig.link exports, REW filter settings, Qudelix PEQ preset exports | Equalizer APO, AutoEQ, squig.link, REW, Qudelix | Bands, `Delay:`, `Copy:` and `GraphicEQ:` in order, on the channels `Channel:` selects; `Convolution:` responses at their own rate; `Include:` followed. REW's per-speaker files go to the channel their name says |
 | Raw or text coefficients | CamillaDSP, BruteFIR, REW text export | A rate in the file name (`room-48k.txt`), or asked for |
 
 Filters run in the order the configuration lists them, because a mixer makes
