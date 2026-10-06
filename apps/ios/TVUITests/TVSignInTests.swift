@@ -56,25 +56,35 @@ final class TVSignInTests: XCTestCase {
         let user = try XCTUnwrap(env["KOAN_SIGNIN_USER"])
         let secret = expectSuccess ? try XCTUnwrap(env["KOAN_SIGNIN_SECRET"]) : "not-the-password"
 
-        XCTAssertTrue(focus(app.buttons["Use a Password or API Key"]))
+        // Buttons drawn in the television's own styles take focus without
+        // saying so to accessibility, so they are reached by known moves and
+        // each move checked by what it opens. The address field has focus on
+        // arrival, and Get a Code is disabled while it is empty.
+        remote.press(.down)
         remote.press(.select)
-        XCTAssertTrue(focus(app.buttons["Server"]), "the account form's settings open")
+        XCTAssertTrue(app.buttons["Server"].firstMatch.waitForExistence(timeout: 10), "the account form's settings open")
         remote.press(.select)
+        let address = app.textFields["server-url"]
+        XCTAssertTrue(address.waitForExistence(timeout: 10), "on the Server page")
 
-        type(server, into: app.textFields["server-url"])
+        type(server, into: address)
         type(user, into: app.textFields["username"])
+        // Below the username: the picker, then the secret, then Sign In.
         if apiKey {
-            // tvOS lists a form's picker twice over.
-            let picker = app.buttons["Sign in with"].firstMatch
-            XCTAssertTrue(focus(picker))
-            remote.press(.select)
-            XCTAssertTrue(focus(app.buttons["API key"].firstMatch))
+            remote.press(.down)
             remote.press(.select)
             sleep(1)
+            remote.press(.down)
+            remote.press(.select)
+            sleep(1)
+            XCTAssertEqual(
+                app.buttons["Sign in with"].firstMatch.value as? String, "API key",
+                "the form asks for an API key"
+            )
         }
         type(secret, into: app.secureTextFields["secret"])
         snap("\(route)-02-form")
-        XCTAssertTrue(focus(app.buttons["Sign In"]))
+        remote.press(.down)
         remote.press(.select)
 
         if expectSuccess {
@@ -100,17 +110,23 @@ final class TVSignInTests: XCTestCase {
     }
 
     private func signOut(route: String) {
-        XCTAssertTrue(focus(app.buttons["Settings"]), "the Settings tab")
-        remote.press(.select)
-        sleep(1)
+        // Along the tab bar from a fresh launch, as `TVWalkTests` goes: the
+        // Settings tab is the fifth, its Server pane the first row, and on
+        // that pane Sign Out sits beside Sync, the first control.
+        app.terminate()
+        app.launch()
+        sleep(5)
+        for _ in 0..<4 { remote.press(.right); Thread.sleep(forTimeInterval: 0.6) }
+        sleep(2)
         remote.press(.down)
-        XCTAssertTrue(focus(app.buttons["Server"]))
         remote.press(.select)
-        XCTAssertTrue(focus(app.buttons["Sign Out"]))
+        XCTAssertTrue(app.buttons["Sign Out"].waitForExistence(timeout: 10), "on the Server pane")
+        remote.press(.right)
         remote.press(.select)
         let keep = app.buttons["Sign Out, Keep Them in the Library"]
-        XCTAssertTrue(focus(keep), "sign-out asks what to keep")
+        XCTAssertTrue(keep.waitForExistence(timeout: 10), "sign-out asks what to keep")
         snap("\(route)-04-confirm")
+        remote.press(.down)
         remote.press(.select)
         XCTAssertTrue(app.buttons["Get a Code"].waitForExistence(timeout: 20), "signed out, the sign-in page is back")
         snap("\(route)-05-signed-out")
