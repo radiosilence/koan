@@ -634,6 +634,200 @@ pub struct DspProfile {
     pub uid: Option<String>,
 }
 
+/// The bounds a profile must keep to be played: what any real correction
+/// asks, and nothing that would deafen a listener, starve the decode thread
+/// or exhaust memory. `DspProfile::sanitize` brings every profile within
+/// them, wherever it came from. The one place they are set.
+pub mod dsp_bounds {
+    use std::ops::RangeInclusive;
+    pub const FREQ_HZ: RangeInclusive<f64> = 1.0..=48_000.0;
+    pub const GAIN_DB: RangeInclusive<f64> = -30.0..=30.0;
+    pub const Q: RangeInclusive<f64> = 0.01..=100.0;
+    pub const DELAY_MS: RangeInclusive<f64> = 0.0..=2_000.0;
+    /// Two seconds at 384 kHz.
+    pub const DELAY_SAMPLES: RangeInclusive<f64> = 0.0..=768_000.0;
+    /// A mix's linear gain: ±30 dB.
+    pub const MIX_GAIN: f64 = 31.63;
+    pub const CHANNELS: u16 = 64;
+    /// Parametric bands applying to any one channel.
+    pub const BANDS_PER_CHANNEL: usize = 64;
+    pub const FILTERS: usize = 256;
+    pub const GRAPHIC_POINTS: usize = 2_048;
+    pub const LAYERS: usize = 32;
+    pub const NAME: usize = 128;
+}
+
+impl DspProfile {
+    /// Bring the profile within `dsp_bounds`, saying what was changed: values
+    /// past a bound are clamped to it, ones that are not finite are dropped
+    /// with what holds them, and filters, bands, layers and points past a
+    /// cap are cut off at it. Every profile is played as this leaves it,
+    /// wherever it came from, so one that would deafen a listener, starve
+    /// the decode thread or exhaust memory still plays, adjusted, and its
+    /// page says how.
+    pub fn sanitize(&mut self) -> Vec<String> {
+        use dsp_bounds as b;
+        let mut notes: Vec<String> = Vec::new();
+        let mut note = |n: String| {
+            if !notes.contains(&n) {
+                notes.push(n);
+            }
+        };
+        let mut clamp = |what: &str, v: &mut f64, r: &std::ops::RangeInclusive<f64>, unit: &str| {
+            let c = v.clamp(*r.start(), *r.end());
+            if c != *v {
+                note(format!(
+                    "{what} clamped to {}{unit}",
+                    if *v > *r.end() { r.end() } else { r.start() }
+                ));
+                *v = c;
+            }
+        };
+        let finite = |v: f64| v.is_finite();
+        let mut dropped = Vec::new();
+
+        let cleaned: String = self
+            .name
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(b::NAME)
+            .collect();
+        let cleaned = if cleaned.trim().is_empty() {
+            "Profile".to_owned()
+        } else {
+            cleaned
+        };
+        if cleaned != self.name {
+            dropped.push("name shortened".to_owned());
+            self.name = cleaned;
+        }
+        if let Some(db) = self.preamp_db.as_mut() {
+            if finite(*db) {
+                clamp("preamp", db, &b::GAIN_DB, " dB");
+            } else {
+                self.preamp_db = None;
+                dropped.push("preamp dropped".to_owned());
+            }
+        }
+        let bad_channel = |cs: &[u16]| cs.iter().any(|c| *c >= b::CHANNELS);
+        let mut per_channel = [0usize; b::CHANNELS as usize];
+        let before = self.filters.len();
+        let mut kept = Vec::with_capacity(before.min(b::FILTERS));
+        for mut filter in std::mem::take(&mut self.filters) {
+            if kept.len() == b::FILTERS {
+                dropped.push(format!("filters past {} dropped", b::FILTERS));
+                break;
+            }
+            let keep = match &mut filter {
+                DspFilter::Band(f) => {
+                    if ![f.freq, f.gain_db, f.q].into_iter().all(finite) || bad_channel(&f.channels)
+                    {
+                        false
+                    } else {
+                        let on =
+                            |c: usize| f.channels.is_empty() || f.channels.contains(&(c as u16));
+                        if (0..b::CHANNELS as usize)
+                            .any(|c| on(c) && per_channel[c] == b::BANDS_PER_CHANNEL)
+                        {
+                            dropped.push(format!(
+                                "bands past {} a channel dropped",
+                                b::BANDS_PER_CHANNEL
+                            ));
+                            continue;
+                        } else {
+                            for (c, n) in per_channel.iter_mut().enumerate() {
+                                if on(c) {
+                                    *n += 1;
+                                }
+                            }
+                            clamp("a band's frequency", &mut f.freq, &b::FREQ_HZ, " Hz");
+                            clamp("a band's gain", &mut f.gain_db, &b::GAIN_DB, " dB");
+                            clamp("a band's Q", &mut f.q, &b::Q, "");
+                            true
+                        }
+                    }
+                }
+                DspFilter::Delay(d) => {
+                    if !finite(d.ms) || !finite(d.samples) || bad_channel(&d.channels) {
+                        false
+                    } else {
+                        clamp("delay", &mut d.ms, &b::DELAY_MS, " ms");
+                        clamp("delay", &mut d.samples, &b::DELAY_SAMPLES, " samples");
+                        true
+                    }
+                }
+                DspFilter::Mix(m) => {
+                    m.outputs.truncate(b::CHANNELS as usize);
+                    for o in &mut m.outputs {
+                        o.retain(|(c, g)| *c < b::CHANNELS && finite(*g));
+                        o.truncate(b::CHANNELS as usize);
+                        for (_, g) in o.iter_mut() {
+                            clamp("a mix's gain", g, &(-b::MIX_GAIN..=b::MIX_GAIN), "");
+                        }
+                    }
+                    true
+                }
+                DspFilter::Graphic(g) => {
+                    if bad_channel(&g.channels) {
+                        false
+                    } else {
+                        g.points.retain(|(hz, db)| finite(*hz) && finite(*db));
+                        if g.points.len() > b::GRAPHIC_POINTS {
+                            g.points.truncate(b::GRAPHIC_POINTS);
+                            dropped.push(format!(
+                                "graphic EQ points past {} dropped",
+                                b::GRAPHIC_POINTS
+                            ));
+                        }
+                        for (hz, db) in &mut g.points {
+                            clamp(
+                                "a graphic EQ's frequency",
+                                hz,
+                                &(0.0..=*b::FREQ_HZ.end()),
+                                " Hz",
+                            );
+                            clamp("a graphic EQ's gain", db, &b::GAIN_DB, " dB");
+                        }
+                        true
+                    }
+                }
+            };
+            if keep {
+                kept.push(filter);
+            } else {
+                dropped.push("a filter that could not play dropped".to_owned());
+            }
+        }
+        self.filters = kept;
+        if self.layers.len() > b::LAYERS {
+            self.layers.truncate(b::LAYERS);
+            dropped.push(format!("layers past {} dropped", b::LAYERS));
+        }
+        self.layers.retain(|l| l.profile.chars().count() <= b::NAME);
+        if let Some(t) = &mut self.target {
+            let long = |s: &str| s.chars().count() > b::NAME;
+            if long(&t.made_for) {
+                self.target = None;
+                dropped.push("target dropped".to_owned());
+            } else if t.chosen.as_deref().is_some_and(long) {
+                t.chosen = None;
+                dropped.push("chosen target dropped".to_owned());
+            }
+        }
+        for d in dropped {
+            note(d);
+        }
+        notes
+    }
+
+    /// As played: `sanitize`d, leaving this one as it is.
+    pub fn sanitized(&self) -> Self {
+        let mut p = self.clone();
+        p.sanitize();
+        p
+    }
+}
+
 /// Where a profile is kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -2246,6 +2440,79 @@ fps = 30
                 .map(|p| p.name.as_str()),
             Some("HD 600")
         );
+    }
+
+    /// Every bound holds, whatever a profile says: values clamped, ones
+    /// that are not numbers dropped, counts cut off, each change noted.
+    #[test]
+    fn a_profile_is_played_within_bounds() {
+        let band = |freq: f64, gain_db: f64, q: f64| {
+            DspFilter::Band(EqFilter {
+                kind: EqFilterKind::Peaking,
+                freq,
+                gain_db,
+                q,
+                channels: vec![],
+            })
+        };
+        let mut p = DspProfile {
+            name: "Loud\u{7}".into(),
+            preamp_db: Some(60.0),
+            filters: vec![
+                DspFilter::Delay(Delay {
+                    ms: 1e12,
+                    ..Default::default()
+                }),
+                band(0.5, 200.0, 0.0),
+                band(f64::NAN, 0.0, 1.0),
+                DspFilter::Band(EqFilter {
+                    kind: EqFilterKind::Peaking,
+                    freq: 1000.0,
+                    gain_db: 0.0,
+                    q: 1.0,
+                    channels: vec![99],
+                }),
+                DspFilter::Mix(Mix {
+                    outputs: vec![vec![(0, 1e9), (1, f64::INFINITY)]],
+                }),
+                DspFilter::Graphic(GraphicEq {
+                    points: (0..3000).map(|i| (i as f64, 1.0)).collect(),
+                    channels: vec![],
+                }),
+            ],
+            ..Default::default()
+        };
+        p.filters.extend((0..300).map(|_| band(1000.0, 1.0, 1.0)));
+        let notes = p.sanitize();
+        let has = |n: &str| notes.iter().any(|x| x == n);
+        assert!(has("delay clamped to 2000 ms"), "{notes:?}");
+        assert!(has("preamp clamped to 30 dB"), "{notes:?}");
+        assert!(has("a band's gain clamped to 30 dB"), "{notes:?}");
+        assert!(has("a band's frequency clamped to 1 Hz"), "{notes:?}");
+        assert!(has("a filter that could not play dropped"), "{notes:?}");
+        assert!(has("bands past 64 a channel dropped"), "{notes:?}");
+        assert!(has("graphic EQ points past 2048 dropped"), "{notes:?}");
+        assert_eq!(p.name, "Loud");
+        assert_eq!(p.preamp_db, Some(30.0));
+        assert_eq!(
+            p.filters[0],
+            DspFilter::Delay(Delay {
+                ms: 2000.0,
+                ..Default::default()
+            })
+        );
+        assert_eq!(p.filters[1], band(1.0, 30.0, 0.01));
+        let DspFilter::Mix(m) = &p.filters[2] else {
+            panic!("{:?}", p.filters[2])
+        };
+        assert_eq!(m.outputs, vec![vec![(0, dsp_bounds::MIX_GAIN)]]);
+        let bands = p
+            .filters
+            .iter()
+            .filter(|f| matches!(f, DspFilter::Band(_)))
+            .count();
+        assert_eq!(bands, dsp_bounds::BANDS_PER_CHANNEL);
+        assert!(p.clone().sanitize().is_empty(), "within bounds now");
     }
 
     #[test]

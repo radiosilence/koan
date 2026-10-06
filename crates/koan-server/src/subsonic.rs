@@ -3872,32 +3872,35 @@ async fn koan_dsp_profile_save(
                 .ok_or_else(|| SubsonicError::missing_param("doc"))?;
             let doc = SyncDoc::parse(json)
                 .map_err(|e| SubsonicError::new(SubsonicErrorCode::Generic, e))?;
-            let (kept, known) = queries::dsp::count(&db.conn, user, &uid).map_err(dsp_failed)?;
-            if !known && kept >= koan_core::remote::dsp_sync::MAX_PROFILES {
-                return Err(SubsonicError::new(
-                    SubsonicErrorCode::Generic,
-                    "The account keeps as many EQ profiles as it may",
-                ));
-            }
-            let named =
-                dsp_named_files(&db.conn, user, Some(&uid), Some(&doc)).map_err(dsp_failed)?;
-            if named.values().sum::<u64>() > MAX_ACCOUNT {
-                return Err(SubsonicError::new(
-                    SubsonicErrorCode::Generic,
-                    format!(
-                        "Too large to keep: the account's EQ files would pass {} MB",
-                        MAX_ACCOUNT >> 20
-                    ),
-                ));
-            }
+            // The caps are checked inside the write transaction: two saves at
+            // once each see the other's.
             let saved = queries::atomically(&db.conn, || {
-                let saved = queries::dsp::save(&db.conn, user, &uid, edited_at, Some(&doc.json()))?;
-                if saved.stored {
-                    dsp_collect(&db.conn, user)?;
+                let (kept, known) =
+                    queries::dsp::count(&db.conn, user, &uid).map_err(dsp_failed)?;
+                if !known && kept >= koan_core::remote::dsp_sync::MAX_PROFILES {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::Generic,
+                        "The account keeps as many EQ profiles as it may",
+                    ));
                 }
-                Ok::<_, koan_core::db::connection::DbError>(saved)
-            })
-            .map_err(dsp_failed)?;
+                let named =
+                    dsp_named_files(&db.conn, user, Some(&uid), Some(&doc)).map_err(dsp_failed)?;
+                if named.values().sum::<u64>() > MAX_ACCOUNT {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::Generic,
+                        format!(
+                            "Too large to keep: the account's EQ files would pass {} MB",
+                            MAX_ACCOUNT >> 20
+                        ),
+                    ));
+                }
+                let saved = queries::dsp::save(&db.conn, user, &uid, edited_at, Some(&doc.json()))
+                    .map_err(dsp_failed)?;
+                if saved.stored {
+                    dsp_collect(&db.conn, user).map_err(dsp_failed)?;
+                }
+                Ok(saved)
+            })?;
             let held = queries::dsp::files(&db.conn, user).map_err(dsp_failed)?;
             let missing: Vec<String> = if saved.stored {
                 let mut m: Vec<String> = doc
@@ -4069,14 +4072,18 @@ async fn koan_dsp_file_upload(
                 ));
             }
             let db = state.open_db()?;
-            let named = dsp_named_files(&db.conn, user, None, None).map_err(dsp_failed)?;
-            if named.get(sha) != Some(&(bytes.len() as u64)) {
-                return Err(SubsonicError::new(
-                    SubsonicErrorCode::Generic,
-                    "No profile of the account names this file",
-                ));
-            }
-            queries::dsp::store_file(&db.conn, user, sha, &bytes).map_err(dsp_failed)
+            // Named and stored in one transaction: a deletion's collection
+            // cannot land between, leaving a file no profile names.
+            queries::atomically(&db.conn, || {
+                let named = dsp_named_files(&db.conn, user, None, None).map_err(dsp_failed)?;
+                if named.get(sha) != Some(&(bytes.len() as u64)) {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::Generic,
+                        "No profile of the account names this file",
+                    ));
+                }
+                queries::dsp::store_file(&db.conn, user, sha, &bytes).map_err(dsp_failed)
+            })
         })();
         match stored {
             Ok(()) => {

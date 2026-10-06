@@ -57,11 +57,21 @@ pub struct SyncFile {
 
 impl SyncDoc {
     /// Read and check a document from another device or the server.
+    /// The profile is brought within `config::dsp_bounds`, and stripped of
+    /// what is each device's own: which outputs use it, where it is kept,
+    /// its uid, what it was imported from. A server keeps it so, and a
+    /// device applies it so.
     pub fn parse(json: &str) -> Result<Self, String> {
         if json.len() > MAX_DOC {
             return Err(format!("A profile may hold at most {} KB", MAX_DOC >> 10));
         }
-        let doc: Self = serde_json::from_str(json).map_err(|e| format!("Not a profile: {e}"))?;
+        let mut doc: Self =
+            serde_json::from_str(json).map_err(|e| format!("Not a profile: {e}"))?;
+        doc.profile.sanitize();
+        doc.profile.devices.clear();
+        doc.profile.scope = None;
+        doc.profile.uid = None;
+        doc.profile.source.clear();
         doc.check()?;
         Ok(doc)
     }
@@ -160,6 +170,19 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 pub fn doc_of(profile: &DspProfile) -> Result<(SyncDoc, HashMap<String, PathBuf>), String> {
     let base = config::config_dir();
     let dir = crate::audio::dsp::profiles::dir(&profile.name);
+    // A folder two profiles' names map to holds both their files; sending
+    // it would send the other's, which may be kept here alone.
+    if let Some(other) = Config::cached()
+        .dsp
+        .profiles
+        .iter()
+        .find(|p| p.name != profile.name && crate::audio::dsp::profiles::dir(&p.name) == dir)
+    {
+        return Err(format!(
+            "{} shares its folder with {}; rename one of them to sync it",
+            profile.name, other.name
+        ));
+    }
     let mut files = Vec::new();
     let mut paths = HashMap::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -184,6 +207,7 @@ pub fn doc_of(profile: &DspProfile) -> Result<(SyncDoc, HashMap<String, PathBuf>
     travelling.devices.clear();
     travelling.scope = None;
     travelling.uid = None;
+    travelling.source.clear();
     travelling.impulses = profile
         .impulses
         .iter()
@@ -683,13 +707,17 @@ fn adopt(
         .profiles
         .iter()
         .find(|p| p.uid.as_deref() == Some(uid));
+    // Another profile whose folder this one's name maps to gives the name
+    // up, so its files are never written over: folders are keyed by the
+    // name's slug, not the name.
+    let folder = profiles::dir(&name);
     if let Some(holder) = cfg
         .dsp
         .profiles
         .iter()
-        .find(|p| p.name == name && p.uid.as_deref() != Some(uid))
+        .find(|p| profiles::dir(&p.name) == folder && p.uid.as_deref() != Some(uid))
     {
-        let free = free_name(&cfg.dsp.profiles, &name);
+        let free = free_name(&cfg.dsp.profiles, &holder.name);
         profiles::rename(&holder.name, &free).map_err(io_failed)?;
     }
     if let Some(current) = current
@@ -761,16 +789,28 @@ fn drop_profile(uid: &str) -> Result<(), Failed> {
         // Kept here by choice since: the deletion was this device's own.
         return Ok(());
     }
-    let name = profile.name.clone();
+    let dir = crate::audio::dsp::profiles::dir(&profile.name);
+    let shared =
+        cfg.dsp.profiles.iter().any(|p| {
+            p.uid.as_deref() != Some(uid) && crate::audio::dsp::profiles::dir(&p.name) == dir
+        });
     Config::persist(|c| c.dsp.profiles.retain(|p| p.uid.as_deref() != Some(uid)))?;
-    let _ = std::fs::remove_dir_all(crate::audio::dsp::profiles::dir(&name));
+    if !shared {
+        let _ = std::fs::remove_dir_all(dir);
+    }
     Ok(())
 }
 
+/// `name` numbered, until neither the name nor its folder is taken.
 fn free_name(profiles: &[DspProfile], name: &str) -> String {
+    use crate::audio::dsp::profiles::dir;
     (2..)
         .map(|n| format!("{name} {n}"))
-        .find(|candidate| profiles.iter().all(|p| &p.name != candidate))
+        .find(|candidate| {
+            profiles
+                .iter()
+                .all(|p| &p.name != candidate && dir(&p.name) != dir(candidate))
+        })
         .expect("some number is free")
 }
 
@@ -1136,5 +1176,97 @@ mod tests {
         huge.files[0].size = MAX_FILE + 1;
         assert!(SyncDoc::parse(&huge.json()).is_err());
         assert!(SyncDoc::parse(&doc("x.wav").json()).is_ok());
+    }
+
+    /// A profile another device or the server sends out of bounds arrives
+    /// within them, assigned to no output here, and plays.
+    #[test]
+    fn a_profile_out_of_bounds_arrives_within_them() {
+        let _guard = lock();
+        let server = Server::new();
+        let b = Device::new();
+        let hostile = r#"{"profile":{"name":"Loud","devices":["Built-in Output"],
+            "filters":[{"type":"delay","ms":1e12},{"type":"peaking","freq":1000.0,"gain_db":200.0,"q":1.0}],
+            "impulses":[]},"files":[]}"#;
+        rows::save(
+            &server.conn,
+            USER,
+            "0199b5a2-6c1e-7cc3-9d2a-3f5b1e0c4d21",
+            1,
+            Some(hostile),
+        )
+        .unwrap();
+        b.sync(&server);
+        let loud = b.profile("Loud").expect("applied");
+        assert!(loud.devices.is_empty(), "assigned to nothing here");
+        assert_eq!(
+            loud.filters[0],
+            DspFilter::Delay(crate::config::Delay {
+                ms: 2000.0,
+                ..Default::default()
+            })
+        );
+        b.on();
+        let cfg = Config::cached();
+        let setup = crate::audio::dsp::Setup::load(&loud, &cfg.dsp.profiles, &config::config_dir());
+        assert!(setup.is_ok(), "it plays");
+    }
+
+    /// Folders go by the slug of a name: a profile from elsewhere whose name
+    /// maps to a folder of one kept here takes the name, and the one here is
+    /// renamed with its files, never overwritten or sent.
+    #[test]
+    fn a_folder_is_never_shared() {
+        let _guard = lock();
+        let server = Server::new();
+        let (a, b) = (Device::new(), Device::new());
+        b.on();
+        let room = crate::audio::dsp::profiles::dir("Room");
+        std::fs::create_dir_all(&room).unwrap();
+        std::fs::write(room.join("48000.wav"), b"kept here").unwrap();
+        Config::persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Room".into(),
+                impulses: vec![Path::new("dsp/room/48000.wav").into()],
+                scope: Some(DspScope::Device),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        b.sync(&server);
+        a.on();
+        Config::persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "ROOM".into(),
+                filters: vec![band(1.0)],
+                scope: Some(DspScope::Everywhere),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        a.sync(&server);
+        b.sync(&server);
+        let renamed = b.profile("Room 2").expect("renamed, files and all");
+        assert_eq!(renamed.scope, Some(DspScope::Device));
+        b.on();
+        assert_eq!(
+            std::fs::read(config::config_dir().join(&renamed.impulses[0])).unwrap(),
+            b"kept here"
+        );
+        assert!(b.profile("ROOM").is_some());
+
+        // Two profiles here whose names share a folder: neither is sent.
+        Config::persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "room!".into(),
+                filters: vec![band(1.0)],
+                scope: Some(DspScope::Everywhere),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+        let cfg = Config::cached();
+        let shared = cfg.dsp.profiles.iter().find(|p| p.name == "room!").unwrap();
+        assert!(doc_of(shared).unwrap_err().contains("shares its folder"));
     }
 }

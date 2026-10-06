@@ -153,7 +153,8 @@ fn resolve(
             return Err(too_many(stack));
         }
     }
-    out.extend(profile.filters.iter().cloned());
+    // As played: within `config::dsp_bounds`, whatever the config says.
+    out.extend(profile.sanitized().filters);
     // Another target than the one the correction was made for: their
     // difference, after the correction.
     if let Some(t) = &profile.target
@@ -214,7 +215,7 @@ impl Setup {
         }
         Ok(Some(Self {
             name: profile.name.clone(),
-            preamp_db: profile.preamp_db,
+            preamp_db: profile.sanitized().preamp_db,
             filters,
             impulses,
         }))

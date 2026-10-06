@@ -232,6 +232,12 @@ pub fn detail(name: &str) -> Option<Detail> {
     if let Err(e) = super::chain(profile, &cfg.dsp.profiles, &mut Vec::new()) {
         problem = Some(e.to_string());
     }
+    // What it plays is adjusted to stay within bounds: say how.
+    let adjusted = profile.clone().sanitize();
+    if !adjusted.is_empty() {
+        let note = format!("Adjusted: {}", adjusted.join("; "));
+        problem = Some(problem.map_or(note.clone(), |p| format!("{p}. {note}")));
+    }
     let preamp_db = Setup::load(profile, &cfg.dsp.profiles, &base)
         .ok()
         .flatten()
@@ -309,10 +315,8 @@ pub fn rename(old: &str, new: &str) -> Result<(), String> {
 /// Write the profiles, and say so: what each output plays through is shown
 /// on every device that can choose it, here and on the devices controlling
 /// this one.
-fn persist(
-    mutate: impl FnOnce(&mut crate::config::Config),
-) -> Result<(), crate::config::ConfigError> {
-    Config::persist(mutate)?;
+fn persist(mutate: impl FnOnce(&mut crate::config::Config)) -> Result<(), String> {
+    Config::persist(mutate).map_err(|e| e.to_string())?;
     crate::signal::engine_changed().bump();
     crate::remote::dsp_sync::changed();
     Ok(())
@@ -800,8 +804,16 @@ pub fn remove(name: &str) -> Result<(), String> {
             stacks.join(", ")
         ));
     }
+    let shared = Config::cached()
+        .dsp
+        .profiles
+        .iter()
+        .any(|p| p.name != name && slug(&p.name) == slug(name));
     persist(|cfg| cfg.dsp.profiles.retain(|p| p.name != name)).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_dir_all(config::config_dir().join("dsp").join(slug(name)));
+    // Another profile's name may map to the same folder: its files stay.
+    if !shared {
+        let _ = std::fs::remove_dir_all(dir(name));
+    }
     Ok(())
 }
 
