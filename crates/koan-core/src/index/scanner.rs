@@ -336,10 +336,15 @@ struct Walked {
 ///
 /// A path that is not UTF-8 is left out: the database stores paths as text, so
 /// it would be stored under a name no stat finds, and the same scan would
-/// remove it again along with its play history.
+/// remove it again along with its play history. So is anything under a name
+/// the watcher ignores (see [`super::watch::is_ignored`]), below `path` itself.
 fn walk(path: &Path, result: &mut ScanResult) -> Walked {
     let mut found = Walked::default();
-    for entry in walkdir::WalkDir::new(path).follow_links(true) {
+    let entries = walkdir::WalkDir::new(path)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|e| e.depth() == 0 || !super::watch::is_ignored(e.file_name()));
+    for entry in entries {
         match entry {
             Ok(e) if e.path().to_str().is_none() => {
                 if e.file_type().is_file() {
@@ -936,6 +941,55 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap()
+    }
+
+    #[test]
+    fn a_forgotten_folder_added_back_is_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        test_utils::generate_wav(&music.join("kept.wav"), 8000, 1, 0.1, 16);
+        let db = test_db(dir.path());
+        assert_eq!(
+            scan_folder(&db, &music, ScanOptions::default(), None).added,
+            1
+        );
+
+        assert_eq!(crate::helpers::forget_folder(&db, &music).unwrap(), 1);
+        assert!(track_paths(&db).is_empty());
+
+        let again = scan_folder(&db, &music, ScanOptions::default(), None);
+        assert_eq!((again.added, again.skipped), (1, 0), "{:?}", again.errors);
+        assert_eq!(track_paths(&db).len(), 1);
+    }
+
+    #[test]
+    fn scans_skip_what_the_watcher_ignores() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        let album = music.join("Artist/Album");
+        for sub in [".stversions", ".hidden"] {
+            std::fs::create_dir_all(album.join(sub)).unwrap();
+        }
+        let wav = |p: PathBuf| test_utils::generate_wav(&p, 8000, 1, 0.1, 16);
+        wav(album.join("01.wav"));
+        wav(album.join(".stversions/01~20261006-120000.wav"));
+        wav(album.join(".hidden/02.wav"));
+        wav(album.join("03.wav.part"));
+        wav(album.join("~syncthing~04.wav.tmp"));
+        let db = test_db(dir.path());
+
+        let full = scan_folder(&db, &music, ScanOptions::default(), None);
+        assert_eq!(full.added, 1, "{:?}", full.errors);
+        let dirs = scan_dirs(
+            &db,
+            std::slice::from_ref(&music),
+            std::slice::from_ref(&album),
+            ScanOptions::default(),
+            None,
+        );
+        assert_eq!(dirs.added, 0, "{:?}", dirs.errors);
+        assert_eq!(track_paths(&db), [album.join("01.wav").to_string_lossy()]);
     }
 
     #[test]

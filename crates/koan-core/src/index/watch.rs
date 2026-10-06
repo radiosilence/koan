@@ -110,7 +110,7 @@ fn is_file_event(kind: &EventKind) -> bool {
 /// covers Syncthing's `.stfolder`, `.stversions` and `.syncthing.*.tmp`,
 /// Syncthing's `~syncthing~*.tmp` from Windows peers, and downloads still in
 /// progress.
-fn is_ignored(name: &std::ffi::OsStr) -> bool {
+pub(crate) fn is_ignored(name: &std::ffi::OsStr) -> bool {
     let name = name.to_string_lossy();
     name.starts_with('.')
         || name.starts_with("~syncthing~")

@@ -6,6 +6,11 @@
 
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
+### Fixed
+
+- **A library folder removed and added back left its tracks without files.** Forgetting a folder kept its files' scan cache entries, so a scan after re-adding it took every file as already read and skipped it. Forgetting a folder now clears them.
+- **Full scans indexed what the folder watcher ignores.** Hidden files and directories (Syncthing's `.stversions` among them) and Syncthing's temporary files were indexed by a full scan and by a rescan of a directory, though the watcher skips them. Both now skip the same names. Tracks already indexed from such paths stay until their files go.
+
 ## 0.56.0
 
 ### Added

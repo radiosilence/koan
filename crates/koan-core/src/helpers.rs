@@ -517,6 +517,12 @@ pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::con
     for path in &paths {
         queries::sources::remove(&tx, queries::sources::Kind::Local, path)?;
     }
+    // Otherwise the folder added back would find its files cached as read and
+    // skip them, leaving their tracks without a file.
+    tx.execute(
+        "DELETE FROM scan_cache WHERE path >= ?1 AND path < ?2",
+        [&lower, &upper],
+    )?;
     tx.commit()?;
     Ok(paths.len() as u64)
 }
