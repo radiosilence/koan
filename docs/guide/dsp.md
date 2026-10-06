@@ -245,6 +245,15 @@ The server keeps the profiles in its database, per account, and offers them as
 the `koanDspProfiles` extension. Against a server without it, profiles stay on
 each device as before.
 
+## Bounds
+
+Whatever a profile says, it plays within bounds: gains and the preamp within
+±30 dB, a delay at most two seconds, Q from 0.01 to 100 and frequencies from
+1 Hz to 48 kHz, at most 64 bands on a channel and 256 filters in all. A value
+past a bound is clamped to it, one that is not a number is dropped with its
+filter, and the profile's page says what was adjusted. The config keeps what
+was written; profiles synced from another device arrive already adjusted.
+
 ## Sample rates
 
 An impulse response is only correct at the rate it was designed for. When a
