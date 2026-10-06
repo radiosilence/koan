@@ -322,8 +322,8 @@ final class TransferBarView: LayerView, TransferGauge {
 
     override func layoutLayers() {
         let height = bounds.height
-        track.cornerRadius = height / 2
-        filled.cornerRadius = height / 2
+        track.cornerRadius = KoanTheme.radius(height / 2)
+        filled.cornerRadius = KoanTheme.radius(height / 2)
         track.frame = bounds
         filled.frame = CGRect(x: 0, y: 0, width: bounds.width * fraction.clamped(), height: height)
     }

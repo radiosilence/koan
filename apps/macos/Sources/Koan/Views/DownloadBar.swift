@@ -21,8 +21,8 @@ final class DownloadBarLayer: CALayer {
 
     override init() {
         super.init()
-        cornerRadius = 1.5
-        fill.cornerRadius = 1.5
+        cornerRadius = KoanTheme.radius(1.5)
+        fill.cornerRadius = KoanTheme.radius(1.5)
         addSublayer(fill)
         isHidden = true
     }

@@ -266,7 +266,7 @@ final class QueueTableRow: NSTableCellView, TableRow {
     }
 
     private func showSleeve(_ source: AlbumArtwork.Source?, art: CoverArtCache, corner: CGFloat) {
-        sleeve.cornerRadius = corner
+        sleeve.cornerRadius = KoanTheme.radius(corner)
         guard source != shownSleeve || sleeve.contents == nil else { return }
         shownSleeve = source
         sleeveLoad?.cancel()

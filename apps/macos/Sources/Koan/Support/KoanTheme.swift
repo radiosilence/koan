@@ -21,8 +21,10 @@ import SwiftUI
 /// the old one.
 @MainActor
 enum KoanTheme {
-    /// The kōan theme, rather than the platform's look.
-    private(set) static var isOn = false
+    /// The kōan theme, rather than the platform's look. Written once, as the
+    /// app opens and before any view is drawn, and only read after: so read
+    /// from anywhere, layer code off the main actor included.
+    nonisolated(unsafe) private(set) static var isOn = false
 
     static func apply(_ appearance: Appearance) {
         isOn = appearance.koan
@@ -81,10 +83,10 @@ enum KoanTheme {
 
     /// A corner as whichever look is on: square in the theme, the given
     /// radius otherwise.
-    static func radius(_ system: CGFloat) -> CGFloat { isOn ? 0 : system }
+    nonisolated static func radius(_ system: CGFloat) -> CGFloat { isOn ? 0 : system }
 
     /// A shadow's opacity as whichever look is on: none in the theme.
-    static func shadow(_ system: Float) -> Float { isOn ? 0 : system }
+    nonisolated static func shadow(_ system: Float) -> Float { isOn ? 0 : system }
 
     /// One rule's width: a point, not a pixel, which at `rule`'s contrast is too
     /// faint on a 2× display.

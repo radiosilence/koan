@@ -127,7 +127,7 @@ final class TrackTableRow: NSTableCellView, TableRow {
         super.init(frame: .zero)
         wantsLayer = true
         for layer in [mark, sleeve, availability, heart, note] { self.layer?.addSublayer(layer) }
-        sleeve.cornerRadius = 3
+        sleeve.cornerRadius = KoanTheme.radius(3)
         sleeve.masksToBounds = true
         sleeve.contentsGravity = .resizeAspectFill
         placeholder.fillColor = nil

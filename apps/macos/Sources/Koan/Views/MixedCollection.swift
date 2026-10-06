@@ -732,7 +732,7 @@ private final class TrackItem: NSCollectionViewItem {
     override func loadView() {
         let root = NSView()
         root.wantsLayer = true
-        highlight.cornerRadius = 6
+        highlight.cornerRadius = KoanTheme.radius(6)
         highlight.cornerCurve = .continuous
         root.layer?.addSublayer(highlight)
         root.layer?.addSublayer(separator)
@@ -849,7 +849,7 @@ private final class ArtistPillItem: NSCollectionViewItem {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         capsule.frame = bounds
-        capsule.cornerRadius = bounds.height / 2
+        capsule.cornerRadius = KoanTheme.radius(bounds.height / 2)
         mic.contents = micImage
         mic.frame = CGRect(x: 11, y: (bounds.height - 11) / 2, width: 10, height: 11)
         CATransaction.commit()

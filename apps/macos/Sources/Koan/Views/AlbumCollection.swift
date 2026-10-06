@@ -917,7 +917,14 @@ private final class HeartButton: NSButton {
 
     init(glassy: Bool) {
         self.glassy = glassy
-        if glassy {
+        if KoanTheme.isOn {
+            // The theme's heart sits on `surface`, square, with no material.
+            let flat = NSView()
+            flat.wantsLayer = true
+            flat.layer?.backgroundColor = NSColor.koanSurface.cgColor
+            flat.addSubview(glyph)
+            ground = flat
+        } else if glassy {
             let glass = NSGlassEffectView()
             glass.style = .clear
             glass.contentView = glyph
@@ -944,9 +951,9 @@ private final class HeartButton: NSButton {
         ground.frame = bounds
         glyph.frame = bounds
         if let glass = ground as? NSGlassEffectView {
-            glass.cornerRadius = bounds.height / 2
+            glass.cornerRadius = KoanTheme.radius(bounds.height / 2)
         } else {
-            ground.layer?.cornerRadius = bounds.height / 2
+            ground.layer?.cornerRadius = KoanTheme.radius(bounds.height / 2)
         }
     }
 }

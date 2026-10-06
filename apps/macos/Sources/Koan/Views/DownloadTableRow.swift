@@ -37,11 +37,11 @@ final class DownloadTableRow: NSTableCellView, TableRow, TransferGauge {
         super.init(frame: .zero)
         wantsLayer = true
         for layer in [sleeve, track, filled] { self.layer?.addSublayer(layer) }
-        sleeve.cornerRadius = 3
+        sleeve.cornerRadius = KoanTheme.radius(3)
         sleeve.masksToBounds = true
         sleeve.contentsGravity = .resizeAspectFill
-        track.cornerRadius = 2
-        filled.cornerRadius = 2
+        track.cornerRadius = KoanTheme.radius(2)
+        filled.cornerRadius = KoanTheme.radius(2)
         for label in [title, figure, subtitle, link] {
             label.lineBreakMode = .byTruncatingTail
             label.maximumNumberOfLines = 1
