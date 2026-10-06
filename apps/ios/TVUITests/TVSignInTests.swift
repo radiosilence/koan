@@ -174,7 +174,9 @@ final class TVSignInTests: XCTestCase {
 
     // MARK: - The remote
 
-    /// Select a field, type into the keyboard it opens, and return.
+    /// Select a field, type into the keyboard it opens, and come back out.
+    /// Menu leaves a television's keyboard with what was typed; its return
+    /// key moves on to the next field instead, keyboard and all.
     private func type(_ text: String, into field: XCUIElement) {
         XCTAssertTrue(focus(field), "\(field) can be focused")
         remote.press(.select)
@@ -182,7 +184,9 @@ final class TVSignInTests: XCTestCase {
         // Whatever the field held: an address the app already knew.
         let existing = (field.value as? String) ?? ""
         let clear = String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count)
-        app.typeText(clear + text + "\n")
+        app.typeText(clear + text)
+        sleep(1)
+        remote.press(.menu)
         sleep(1)
     }
 
