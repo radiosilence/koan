@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Tapping the server's address in Settings → Server copies it,** in the Mac and iOS apps, for signing another app or device in to the same server. The row reads *Copied* for a moment.
+
 ## 0.55.0
 
 ### Added

@@ -309,6 +309,7 @@ private struct RemoteSettings: View {
     @State private var url = ""
     @State private var username = ""
     @State private var confirmingSignOut = false
+    @State private var copiedServer = false
     /// The cache limit as typed, committed whole: "5" on the way to "50GB" is
     /// not a limit anyone set.
     @State private var cacheLimit: String?
@@ -327,7 +328,26 @@ private struct RemoteSettings: View {
         Form {
             if model.settings.remoteSignedIn {
                 Section("Signed in") {
+                    #if os(tvOS)
                     LabeledContent("Server", value: model.settings.remoteUrl)
+                    #else
+                    // The address is what another device or app asks for, so a
+                    // tap copies it.
+                    Button {
+                        Pasteboard.write(text: model.settings.remoteUrl)
+                        copiedServer = true
+                    } label: {
+                        LabeledContent("Server", value: copiedServer ? "Copied" : model.settings.remoteUrl)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy the server's address")
+                    .task(id: copiedServer) {
+                        guard copiedServer else { return }
+                        try? await Task.sleep(for: .seconds(1.5))
+                        copiedServer = false
+                    }
+                    #endif
                     LabeledContent("User", value: model.settings.remoteUsername)
                     LabeledContent(
                         "Tracks",
