@@ -3260,7 +3260,12 @@ mod tests {
         .unwrap();
         r.pump_until(|p| p.renderer.is_none());
         assert_eq!(r.state(), PlaybackState::Paused, "paused, as it was");
-        assert_eq!(r.player.shared_state.position_ms(), 5_000, "where it was");
+        // The playhead reads the 5s asked for until the local decoder has
+        // queued the track, then the start of the packet holding 5s, where
+        // playback resumes. Waiting makes the read the same on every run.
+        r.pump_until(|p| p.timeline.playhead().is_some());
+        let at = r.player.shared_state.position_ms();
+        assert!((4_800..=5_000).contains(&at), "where it was, at {at}ms");
         assert_eq!(
             outputs::local(&r.player.shared_state).current,
             OutputChoice::Default
