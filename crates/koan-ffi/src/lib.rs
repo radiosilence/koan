@@ -35,6 +35,7 @@ use uuid::Uuid;
 use koan_core::db::queries::RECENT_LIMIT;
 
 mod offload;
+mod queue_slice;
 mod server_queue;
 mod state;
 mod types;
@@ -4315,6 +4316,7 @@ impl KoanEngine {
                 let mut last_library = u64::MAX;
                 let mut last_devices = u64::MAX;
                 let mut last_target: Option<String> = None;
+                let mut queue = queue_slice::QueueSender::default();
                 // The playhead as a client last heard it, and when. What it
                 // would believe now is derived from these two, which is what
                 // makes publishing again unnecessary until it would be wrong.
@@ -4353,6 +4355,7 @@ impl KoanEngine {
                         last_queue = u64::MAX;
                         last_library = u64::MAX;
                         last_devices = u64::MAX;
+                        queue.reset();
                     }
                     let devices_version = koan_core::remote::devices::version();
                     if devices_version != last_devices {
@@ -4536,11 +4539,14 @@ impl KoanEngine {
                     let library_moved = library != last_library;
                     last_queue = queue_version;
                     last_library = library;
-                    if queue_moved && target.is_none() {
-                        out.publish(StateSlice::Queue {
-                            items: engine.queue_blocking(),
-                            version: queue_version,
-                        });
+                    if (queue_moved || library_moved) && target.is_none() {
+                        let slices =
+                            queue.update(&engine.state, queue_version, library_moved, |ids| {
+                                engine.queue_joins(ids)
+                            });
+                        for slice in slices {
+                            out.publish(slice);
+                        }
                     }
                     // A playlist edit moves the library version, and following
                     // means an edit there is an edit to what is playing — so
@@ -4762,30 +4768,22 @@ impl KoanEngine {
             .collect()
     }
 
-    /// The queue as a client sees it: derived, then joined against the library
-    /// in two statements rather than one per row.
+    /// The library's reading of the queue's tracks, in two statements rather
+    /// than one per row.
     ///
     /// A client draws one sleeve per album, and without an ID to group by it
     /// asks for artwork per track — the same image fetched once for every track
     /// on the record. A queue with no database behind it has no album IDs; the
     /// art falls back to the per-track lookup.
-    fn queue_blocking(&self) -> Vec<QueueItem> {
-        let entries = self.state.derive_visible_queue().entries;
-        let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
-        let db = self.db().ok();
-        let album_ids = db
-            .as_ref()
-            .and_then(|db| queries::batch::album_ids_for_tracks(&db.conn, &track_ids).ok())
-            .unwrap_or_default();
-        let sources = db
-            .as_ref()
-            .and_then(|db| queries::batch::sources_for_tracks(&db.conn, &track_ids).ok())
-            .unwrap_or_default();
-
-        entries
-            .iter()
-            .map(|e| QueueItem::from_entry(e, &album_ids, &sources))
-            .collect()
+    fn queue_joins(&self, track_ids: &[i64]) -> queue_slice::Joins {
+        let Ok(db) = self.db() else {
+            return queue_slice::Joins::default();
+        };
+        queue_slice::Joins {
+            album_ids: queries::batch::album_ids_for_tracks(&db.conn, track_ids)
+                .unwrap_or_default(),
+            sources: queries::batch::sources_for_tracks(&db.conn, track_ids).unwrap_or_default(),
+        }
     }
 
     /// What the queue still is, if it is still something.
@@ -6180,12 +6178,7 @@ fn saved_by(changed_by: &str) -> String {
 /// most `LINK_QUEUE_MAX` entries, from a few before the current one.
 fn link_queue(state: &SharedPlayerState) -> Vec<koan_core::remote::link::LinkQueueEntry> {
     const LINK_QUEUE_MAX: usize = 300;
-    let (items, cursor) = state.snapshot_playlist();
-    let at = cursor
-        .and_then(|c| items.iter().position(|i| i.id == c))
-        .unwrap_or(0);
-    let start = at.saturating_sub(20);
-    let window = &items[start..items.len().min(start + LINK_QUEUE_MAX)];
+    let (window, cursor) = state.playlist_window(20, LINK_QUEUE_MAX);
 
     let remote: std::collections::HashMap<i64, String> = koan_core::db::pool::shared()
         .get()

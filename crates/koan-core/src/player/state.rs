@@ -411,6 +411,18 @@ pub struct VisibleQueueSnapshot {
     pub queue_count: usize,
 }
 
+/// The part of a visible queue row that moves while the queue stands still.
+/// See `SharedPlayerState::queue_readings`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueueReading {
+    pub id: QueueItemId,
+    pub db_id: Option<i64>,
+    pub status: QueueEntryStatus,
+    pub duration_ms: Option<u64>,
+    pub download_progress: Option<(u64, u64)>,
+    pub error: Option<String>,
+}
+
 /// Shared player state — atomics for lock-free reads from UI thread.
 ///
 /// The engine writes these, the UI reads them. No mutexes in the hot path.
@@ -1245,19 +1257,33 @@ impl SharedPlayerState {
         duration_ms: Option<u64>,
     ) {
         let mut pl = self.playlist.write();
+        let mut changed = false;
         if let Some(item) = pl.items.iter_mut().find(|item| item.id == id) {
             if item.db_id.is_none() {
+                changed = item.title != title
+                    || item.artist != artist
+                    || item.album_artist != album_artist
+                    || item.album != album;
                 item.title = title;
                 item.artist = artist;
                 item.album_artist = album_artist;
                 item.album = album;
             }
-            if let Some(dur) = duration_ms {
+            if let Some(dur) = duration_ms
+                && item.duration_ms != Some(dur)
+            {
                 item.duration_ms = Some(dur);
+                changed = true;
             }
         }
         drop(pl);
-        self.bump_content();
+        // Every download landing comes through here, and for a library track
+        // its tags usually say what the queue already held. A content change
+        // rewrites the saved queue and has every client read the queue again,
+        // which on a long queue is not something to do per track for nothing.
+        if changed {
+            self.bump_content();
+        }
     }
 
     /// Get the playback source for an item if it's ready to play.
@@ -1652,9 +1678,65 @@ impl SharedPlayerState {
 
     // --- Called from UI thread (read lock) ---
 
-    /// Derive the visible queue from the playlist + cursor. O(n).
-    /// Called once per UI tick.
+    /// Derive the visible queue from the playlist + cursor. O(n), and a copy
+    /// of every row's text: for a front end that draws the whole queue. One
+    /// that only needs to know what moved reads `queue_readings`.
     pub fn derive_visible_queue(&self) -> VisibleQueueSnapshot {
+        let mut entries = Vec::new();
+        let mut finished_count = 0;
+        let mut has_playing = false;
+        let mut queue_count = 0;
+        self.each_visible(|item, place, reading| {
+            match place {
+                Place::Before => finished_count += 1,
+                Place::Cursor => has_playing = true,
+                Place::After => queue_count += 1,
+            }
+            entries.push(QueueEntry {
+                id: item.id,
+                db_id: item.db_id,
+                playlist_entry_id: item.playlist_entry_id,
+                path: item.path.clone(),
+                title: item.title.clone(),
+                artist: item.artist.clone(),
+                album_artist: item.album_artist.clone(),
+                album: item.album.clone(),
+                year: item.year.clone(),
+                codec: item.codec.clone(),
+                track_number: item.track_number,
+                disc: item.disc,
+                duration_ms: reading.duration_ms,
+                status: reading.status,
+                download_progress: reading.download_progress,
+                error: reading.error,
+            });
+        });
+
+        VisibleQueueSnapshot {
+            entries,
+            finished_count,
+            has_playing,
+            queue_count,
+        }
+    }
+
+    /// What each row of the visible queue says that can change without the
+    /// queue being edited — its status, its duration, why it failed — in
+    /// queue order, and none of its text.
+    ///
+    /// The cursor moving and a download landing change these and nothing
+    /// else. A front end holding the rows already can find what moved from
+    /// this at a small fraction of what deriving the whole queue costs.
+    pub fn queue_readings(&self) -> Vec<QueueReading> {
+        let mut readings = Vec::new();
+        self.each_visible(|_, _, reading| readings.push(reading));
+        readings
+    }
+
+    /// Walk the playlist under its read lock, with each item's place relative
+    /// to the cursor and its reading. The one place a row's status is decided,
+    /// so the derived queue and its readings cannot disagree.
+    fn each_visible(&self, mut f: impl FnMut(&PlaylistItem, Place, QueueReading)) {
         // Read before the playlist lock — see current_download_fraction.
         let playing_duration_ms = self.track_info.read().as_ref().map(|ti| ti.duration_ms);
         // One pass over the transfers rather than one lookup, and a path
@@ -1672,30 +1754,25 @@ impl SharedPlayerState {
             None => None,
         };
 
-        let mut entries = Vec::with_capacity(pl.items.len());
-        let mut finished_count = 0;
-        let mut has_playing = false;
-        let mut queue_count = 0;
-
         for (i, item) in pl.items.iter().enumerate() {
-            let is_cursor = cursor_pos == Some(i);
-            let is_before_cursor = cursor_pos.is_some_and(|cp| i < cp);
+            let place = match cursor_pos {
+                Some(cp) if i == cp => Place::Cursor,
+                Some(cp) if i < cp => Place::Before,
+                _ => Place::After,
+            };
 
             // The byte count is the download thread's own counter, written per
             // chunk without the playlist lock, so a transfer never bumps the
             // playlist version.
-            let dl_progress = match item.state {
+            let download_progress = match item.state {
                 ItemState::Pending => item.db_id.and_then(|id| transfers.get(&id).copied()),
                 _ => None,
             };
-            let transferring = dl_progress.is_some();
+            let transferring = download_progress.is_some();
 
-            let status = if is_cursor {
-                has_playing = true;
-                QueueEntryStatus::at_cursor(&item.state, transferring)
-            } else if is_before_cursor {
-                finished_count += 1;
-                match &item.state {
+            let status = match place {
+                Place::Cursor => QueueEntryStatus::at_cursor(&item.state, transferring),
+                Place::Before => match &item.state {
                     ItemState::Ready => QueueEntryStatus::Played,
                     // A spinner only while bytes are moving: a track skipped
                     // past is not being fetched just for being behind the
@@ -1703,58 +1780,70 @@ impl SharedPlayerState {
                     ItemState::Pending if transferring => QueueEntryStatus::Downloading,
                     ItemState::Pending => QueueEntryStatus::Queued,
                     ItemState::Failed(_) => QueueEntryStatus::Failed,
-                }
-            } else {
-                queue_count += 1;
-                match &item.state {
+                },
+                Place::After => match &item.state {
                     ItemState::Ready => QueueEntryStatus::Queued,
                     ItemState::Pending if transferring => QueueEntryStatus::Downloading,
                     // Waiting its turn, not arriving: a spinner on every one
                     // of these read as the whole album downloading at once.
                     ItemState::Pending => QueueEntryStatus::Queued,
                     ItemState::Failed(_) => QueueEntryStatus::Failed,
-                }
+                },
             };
 
-            // Override duration from TrackInfo if we have it and this is playing.
-            let duration_ms =
-                if has_playing && status == QueueEntryStatus::Playing && item.duration_ms.is_none()
-                {
-                    playing_duration_ms
-                } else {
-                    item.duration_ms
-                };
+            // The playing track's duration from its stream, when the item
+            // had none of its own.
+            let duration_ms = if status == QueueEntryStatus::Playing && item.duration_ms.is_none() {
+                playing_duration_ms
+            } else {
+                item.duration_ms
+            };
 
-            entries.push(QueueEntry {
-                id: item.id,
-                db_id: item.db_id,
-                playlist_entry_id: item.playlist_entry_id,
-                path: item.path.clone(),
-                title: item.title.clone(),
-                artist: item.artist.clone(),
-                album_artist: item.album_artist.clone(),
-                album: item.album.clone(),
-                year: item.year.clone(),
-                codec: item.codec.clone(),
-                track_number: item.track_number,
-                disc: item.disc,
-                duration_ms,
-                status,
-                download_progress: dl_progress,
-                error: match &item.state {
-                    ItemState::Failed(reason) => Some(reason.clone()),
-                    _ => None,
+            f(
+                item,
+                place,
+                QueueReading {
+                    id: item.id,
+                    db_id: item.db_id,
+                    status,
+                    duration_ms,
+                    download_progress,
+                    error: match &item.state {
+                        ItemState::Failed(reason) => Some(reason.clone()),
+                        _ => None,
+                    },
                 },
-            });
-        }
-
-        VisibleQueueSnapshot {
-            entries,
-            finished_count,
-            has_playing,
-            queue_count,
+            );
         }
     }
+
+    /// At most `max` items from `before` ahead of the cursor, and the cursor.
+    ///
+    /// What a window of the queue needs, without copying the rest of it: on a
+    /// queue of tens of thousands, `snapshot_playlist` is a copy of every row
+    /// for the sake of a few hundred.
+    pub fn playlist_window(
+        &self,
+        before: usize,
+        max: usize,
+    ) -> (Vec<PlaylistItem>, Option<QueueItemId>) {
+        let pl = self.playlist.read();
+        let at = pl
+            .cursor
+            .and_then(|c| pl.items.iter().position(|i| i.id == c))
+            .unwrap_or(0);
+        let start = at.saturating_sub(before);
+        let end = pl.items.len().min(start + max);
+        (pl.items[start..end].to_vec(), pl.cursor)
+    }
+}
+
+/// Where a row stands relative to the cursor.
+#[derive(Clone, Copy)]
+enum Place {
+    Before,
+    Cursor,
+    After,
 }
 
 #[cfg(test)]
@@ -2600,6 +2689,38 @@ mod tests {
         assert_eq!(pl.items[0].title, "Teachers");
         assert_eq!(pl.items[0].album, "Nite Versions");
         assert_eq!(pl.items[0].duration_ms, Some(148_000));
+    }
+
+    /// A download landing with tags that say what the queue already held is
+    /// not an edit: nothing is saved again and no client reads the queue again.
+    #[test]
+    fn test_update_item_metadata_that_changes_nothing_is_not_an_edit() {
+        let state = SharedPlayerState::new();
+        let mut item = make_album_item("A1", "Nite Versions", "Soulwax");
+        item.db_id = Some(1);
+        let id = item.id;
+        state.add_items(vec![item]);
+        let before = (state.content_version(), state.playlist_version());
+
+        state.update_item_metadata(
+            id,
+            "A1".into(),
+            "Soulwax".into(),
+            "Soulwax".into(),
+            "Nite Versions".into(),
+            Some(200_000),
+        );
+        assert_eq!((state.content_version(), state.playlist_version()), before);
+
+        state.update_item_metadata(
+            id,
+            "A1".into(),
+            "Soulwax".into(),
+            "Soulwax".into(),
+            "Nite Versions".into(),
+            Some(201_000),
+        );
+        assert_ne!(state.content_version(), before.0);
     }
 
     // --- move_item_to ---
