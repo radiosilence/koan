@@ -5607,7 +5607,8 @@ mod tests {
         let store = state.downloads().clone();
         store.claim(77, Some(b_id));
         std::fs::write(&landed, include_bytes!("testdata/thirty-seconds.opus")).unwrap();
-        crate::remote::downloads::settle(&state, 77, &Ok(landed));
+        // Told to the player below, as the download queue would.
+        let _settled = crate::remote::downloads::settle(&state, 77, &Ok(landed));
         player.process_command(PlayerCommand::TrackReady(b_id));
         player.publish();
 
