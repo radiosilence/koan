@@ -691,6 +691,12 @@ struct EqSettings: View {
     @Environment(AppState.self) private var app
     @State private var response: DspResponse?
     @State private var detail: DspProfileDetail?
+    // What the page presents is held here and presented from the form: a
+    // modifier on a section of a list is applied to each of its rows, and
+    // the presentation ends when that row is made again.
+    @State private var importing = false
+    @State private var finding: AutoEqFind?
+    @State private var showing: String?
 
     private var active: String? { app.dsp.overview?.active }
 
@@ -707,28 +713,63 @@ struct EqSettings: View {
                 }
                 BandTable(dsp: app.dsp, profile: active, bands: detail.bands)
             }
-            DspSettings()
+            DspSettings(importing: $importing, finding: $finding, showing: $showing)
         }
         .formStyle(.grouped)
         .task(id: "\(active ?? "")\u{0}\(app.dsp.version)") {
             response = if let active { await app.dsp.response(active) } else { nil }
             detail = if let active { await app.dsp.detail(active) } else { nil }
         }
+        .task { app.dsp.reload() }
+        .filePicker(
+            isPresented: $importing,
+            allowedContentTypes: [.item, .folder],
+            allowsMultipleSelection: true
+        ) { result in
+            if case let .success(urls) = result, !urls.isEmpty {
+                app.dsp.importFiles(urls)
+            }
+        }
+        #if !os(tvOS)
+        .sheet(item: $finding) { find in
+            AutoEqSearch(dsp: app.dsp, query: find.query)
+        }
+        #endif
+        #if os(macOS)
+        .sheet(item: Binding(
+            get: { showing.map(ShownProfile.init) },
+            set: { showing = $0?.name }
+        )) { shown in
+            NavigationStack {
+                DspProfilePage(dsp: app.dsp, name: shown.name)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showing = nil }
+                        }
+                    }
+            }
+            .frame(minWidth: 480, minHeight: 440)
+        }
+        #endif
     }
+}
+
+/// Find in AutoEQ, open: empty from its button, a model from an offer for
+/// the output in use.
+private struct AutoEqFind: Identifiable {
+    let id = UUID()
+    let query: String
 }
 
 /// Correction for the output in use: a profile of bands, impulse responses or
 /// both, imported from what other tools write.
 struct DspSettings: View {
     @Environment(AppState.self) private var app
-    @State private var importing = false
-    @State private var findingAutoEq = false
-    /// What Find in AutoEQ opens searching for: empty from its button, a
-    /// model from an offer for the output in use.
-    @State private var findQuery = ""
+    @Binding var importing: Bool
+    @Binding fileprivate var finding: AutoEqFind?
     /// The profile whose page is open, on the Mac, where settings has no
     /// navigation stack to push it onto.
-    @State private var showing: String?
+    @Binding var showing: String?
 
     var body: some View {
         let dsp = app.dsp
@@ -753,8 +794,7 @@ struct DspSettings: View {
                 #if !os(tvOS)
                 if let offer = dsp.suggestion, o.device != nil {
                     AutoEqSuggestion(offer: offer, dsp: dsp) { query in
-                        findQuery = query
-                        findingAutoEq = true
+                        finding = AutoEqFind(query: query)
                     }
                 }
                 #endif
@@ -785,10 +825,7 @@ struct DspSettings: View {
             // imported on another device, and the TV picks them by output.
             #if !os(tvOS)
             Button("Import…") { importing = true }
-            Button("Find in AutoEQ…") {
-                findQuery = ""
-                findingAutoEq = true
-            }
+            Button("Find in AutoEQ…") { finding = AutoEqFind(query: "") }
             #endif
             if let error = dsp.lastError {
                 Text(error)
@@ -802,37 +839,6 @@ struct DspSettings: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
-        .filePicker(
-            isPresented: $importing,
-            allowedContentTypes: [.item, .folder],
-            allowsMultipleSelection: true
-        ) { result in
-            if case let .success(urls) = result, !urls.isEmpty {
-                dsp.importFiles(urls)
-            }
-        }
-        .task { dsp.reload() }
-        #if !os(tvOS)
-        .sheet(isPresented: $findingAutoEq) {
-            AutoEqSearch(dsp: dsp, query: findQuery)
-        }
-        #endif
-        #if os(macOS)
-        .sheet(item: Binding(
-            get: { showing.map(ShownProfile.init) },
-            set: { showing = $0?.name }
-        )) { shown in
-            NavigationStack {
-                DspProfilePage(dsp: dsp, name: shown.name)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { showing = nil }
-                        }
-                    }
-            }
-            .frame(minWidth: 480, minHeight: 440)
-        }
-        #endif
     }
 }
 

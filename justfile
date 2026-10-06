@@ -644,6 +644,28 @@ ios-use device="koan-dev": (ios-ffi "iphonesimulator") ios-project
     echo "screenshots in $out"
     exit $status
 
+# Open Find in AutoEQ on a fresh install, where the first open fetches
+# AutoEQ's index, and check the sheet stays open while it arrives.
+ios-autoeq-sheet device="koan-dev": (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/ios-autoeq-sheet
+    rm -rf "$out" && mkdir -p "$out"
+    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    xcrun simctl bootstatus "$udid" -b >/dev/null
+    trap 'xcrun simctl shutdown "$udid"' EXIT
+    xcrun simctl uninstall "$udid" cc.blit.koan 2>/dev/null || true
+    status=0
+    xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "id=$udid" \
+        -only-testing:KoanUITests/AutoEqSheetTests \
+        -resultBundlePath "$out/sheet.xcresult" || status=$?
+    xcrun xcresulttool export attachments --path "$out/sheet.xcresult" --output-path "$out" >/dev/null
+    echo "screenshots in $out"
+    exit $status
+
 # Walk the app on a simulator and export a screenshot of every page.
 #
 # Runs `WalkTests` against whatever library that simulator holds, so sign it in
