@@ -895,6 +895,18 @@ private struct KoanButtonRole: ViewModifier {
 /// motion of their own.
 struct KoanButtonStyle: ButtonStyle {
     let kind: KoanButtonKind
+
+    func makeBody(configuration: Configuration) -> some View {
+        KoanButtonBody(kind: kind, configuration: configuration)
+    }
+}
+
+/// A theme button as drawn. A view of its own rather than the style's body:
+/// focus is the button's, and only a view inside the button sees it in
+/// `isFocused`; the style itself reads the environment the button sits in.
+private struct KoanButtonBody: View {
+    let kind: KoanButtonKind
+    let configuration: ButtonStyleConfiguration
     @Environment(\.isEnabled) private var enabled
     @Environment(\.koanAccent) private var accent
     @Environment(\.colorScheme) private var scheme
@@ -902,7 +914,7 @@ struct KoanButtonStyle: ButtonStyle {
     @Environment(\.isFocused) private var focused
     #endif
 
-    func makeBody(configuration: Configuration) -> some View {
+    var body: some View {
         typed(configuration)
             .padding(padding)
             .frame(minWidth: hit, minHeight: hit)
@@ -921,7 +933,7 @@ struct KoanButtonStyle: ButtonStyle {
     /// a title the app writes is lowercased where it is written
     /// (`KoanTheme.label`, `KoanLabel`), and library text keeps its own.
     @ViewBuilder
-    private func typed(_ configuration: Configuration) -> some View {
+    private func typed(_ configuration: ButtonStyleConfiguration) -> some View {
         if kind == .card {
             configuration.label
         } else if kind.setsType {
@@ -943,7 +955,7 @@ struct KoanButtonStyle: ButtonStyle {
         #endif
     }
 
-    private func foreground(_ configuration: Configuration) -> AnyShapeStyle {
+    private func foreground(_ configuration: ButtonStyleConfiguration) -> AnyShapeStyle {
         switch kind {
         case .primary:
             accent.shade(scheme).readsAsText ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.koanInk)
@@ -1187,12 +1199,29 @@ private struct KoanFocusRole: ViewModifier {
 }
 
 extension View {
-    /// The ring tvOS focus draws in the theme: 2 points of the accent, outside
-    /// the control. No lift, no shadow, no glass.
+    /// The ring tvOS focus draws in the theme: the accent, outside the
+    /// control. No lift, no shadow, no glass.
     fileprivate func koanFocusRing(_ on: Bool) -> some View {
-        overlay {
+        modifier(KoanFocusRing(on: on))
+    }
+}
+
+/// The accent's own colour rather than `.tint`, which a television never
+/// sets: the system's default there is white on white platters. Heavier
+/// than a pointer's ring, to be found from across the room.
+private struct KoanFocusRing: ViewModifier {
+    let on: Bool
+    @Environment(\.koanAccent) private var accent
+
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        let (width, gap): (CGFloat, CGFloat) = (4, 8)
+        #else
+        let (width, gap): (CGFloat, CGFloat) = (2, 4)
+        #endif
+        content.overlay {
             if on {
-                Rectangle().strokeBorder(.tint, lineWidth: 2).padding(-4)
+                Rectangle().strokeBorder(accent.color, lineWidth: width).padding(-gap)
             }
         }
     }
@@ -1297,6 +1326,12 @@ private struct KoanListRole: ViewModifier {
 }
 
 private struct KoanFieldRole: ViewModifier {
+    #if os(tvOS)
+    /// A plain field draws no focus of its own on a television; the ring is
+    /// all that says which field the remote is on.
+    @FocusState private var focused: Bool
+    #endif
+
     func body(content: Content) -> some View {
         if KoanTheme.isOn {
             content
@@ -1306,6 +1341,10 @@ private struct KoanFieldRole: ViewModifier {
                 .padding(.horizontal, KoanTheme.Space.m)
                 .padding(.vertical, KoanTheme.Space.s)
                 .background(Color.koanSurface)
+                #if os(tvOS)
+                .focused($focused)
+                .koanFocusRing(focused)
+                #endif
         } else {
             content
         }
