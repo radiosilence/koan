@@ -272,6 +272,11 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         log::info!("CORS: no origins configured — browsers get no cross-origin access");
     }
 
+    let proxy_auth = crate::ui::ProxyAuth::from_config(
+        &cfg.graphql.proxy_auth_header,
+        &cfg.graphql.proxy_auth_from,
+    )?;
+
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
         // GraphQL routes — protected by auth middleware.
@@ -306,6 +311,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             covers.clone(),
             cfg.sharing.public_url.clone(),
             cfg.mcp.redirect_hosts.clone(),
+            proxy_auth,
         );
 
         // Auth routes — always accessible (no auth middleware).

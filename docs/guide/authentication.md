@@ -287,7 +287,7 @@ refresh_token_ttl = "30d" # refresh token lifetime
 
 The TUI runs in the same process as the player and bypasses auth entirely. `koan mcp` does too, but executes at `user` role rather than admin — its transport carries no credential, so anything it can reach is reachable by whoever can talk to the MCP process. A server's `/mcp` acts as the signed-in account, with an admin account capped the same way. That leaves out the mutations that move files (`organize*`), rewrite config, trigger scans, or change the output device. Set `KOAN_MCP_ADMIN=1` to opt back in.
 
-Auth otherwise applies to HTTP API clients (GraphQL, web UI). The Subsonic REST API is separate — see below.
+Auth otherwise applies to HTTP API clients (GraphQL, web UI). The web UI can also take the account from an authenticating reverse proxy; see [Behind an authenticating proxy](headless-server.md#behind-an-authenticating-proxy). The Subsonic REST API is separate — see below.
 
 ## Cookies
 

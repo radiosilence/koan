@@ -378,6 +378,16 @@ pub struct GraphqlConfig {
     /// over HTTPS — browsers silently discard `Secure` cookies sent over plain
     /// `http://` to anything but localhost.
     pub cookie_secure: bool,
+    /// A request header an authenticating reverse proxy (Authelia, Authentik,
+    /// oauth2-proxy) sets to the signed-in username, e.g. `Remote-User`. The
+    /// web UI signs that account in without asking for its password. Honoured
+    /// only on connections from `proxy_auth_from`; empty turns it off.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub proxy_auth_header: String,
+    /// The addresses or CIDR ranges the authenticating proxy connects from.
+    /// The header is ignored on a connection from anywhere else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proxy_auth_from: Vec<String>,
     /// Expose the `organize*` mutations, which physically move files on disk.
     pub allow_organize: bool,
 }
@@ -403,6 +413,8 @@ impl Default for GraphqlConfig {
             cors_origins: Vec::new(),
             allowed_hosts: Vec::new(),
             cookie_secure: false,
+            proxy_auth_header: String::new(),
+            proxy_auth_from: Vec::new(),
             allow_organize: false,
         }
     }
