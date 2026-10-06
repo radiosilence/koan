@@ -2480,6 +2480,8 @@ mod tests {
         let newer = tmp.path().join("src/newer.flac");
         let mut meta = sample_meta("Lucky", "Radiohead", "OK Computer");
         meta.path = Some(newer.to_string_lossy().into_owned());
+        // The first run emptied src/, and organize removes a directory it empties.
+        std::fs::create_dir_all(newer.parent().unwrap()).unwrap();
         std::fs::write(&newer, b"lucky").unwrap();
         queries::upsert_track(&db.conn, &meta).unwrap();
         let result = run(
