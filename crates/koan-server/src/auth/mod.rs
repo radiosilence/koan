@@ -70,6 +70,38 @@ pub(crate) async fn current_user(pool: &Arc<Pool>, claims: Claims) -> Option<Aut
     .flatten()
 }
 
+/// What a socket opened with a credential is held under: its account as of
+/// `mark` (see `koan_core::auth::account_mark`), and for a token, when it
+/// lapses.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Lease {
+    pub user_id: i64,
+    pub mark: u64,
+    /// Unix seconds.
+    pub expires: Option<u64>,
+}
+
+impl Lease {
+    /// Resolves when a socket held under this lease must close: its account
+    /// changed, or its token lapsed. The client reconnects and authenticates
+    /// again, so it holds no more than its credential now gives it.
+    pub(crate) async fn ended(self) {
+        let lapsed = async {
+            match self.expires {
+                Some(at) => {
+                    let left = at.saturating_sub(koan_core::auth::now_unix());
+                    tokio::time::sleep(std::time::Duration::from_secs(left)).await;
+                }
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            _ = koan_core::auth::account_changed_since(self.user_id, self.mark) => {}
+            _ = lapsed => {}
+        }
+    }
+}
+
 impl AuthUser {
     /// Anonymous admin user for when auth is disabled.
     pub fn anonymous_admin() -> Self {
@@ -78,5 +110,42 @@ impl AuthUser {
             username: koan_core::auth::ANONYMOUS.into(),
             role: Role::Admin,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn a_lease_ends_when_its_account_changes_and_no_other() {
+        let lease = Lease {
+            user_id: 9001,
+            mark: koan_core::auth::account_mark(),
+            expires: None,
+        };
+        koan_core::auth::account_changed(9002);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), lease.ended())
+                .await
+                .is_err()
+        );
+        koan_core::auth::account_changed(9001);
+        tokio::time::timeout(Duration::from_secs(1), lease.ended())
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_lease_ends_when_its_token_lapses() {
+        let lease = Lease {
+            user_id: 9003,
+            mark: koan_core::auth::account_mark(),
+            expires: Some(koan_core::auth::now_unix()),
+        };
+        tokio::time::timeout(Duration::from_secs(1), lease.ended())
+            .await
+            .unwrap();
     }
 }

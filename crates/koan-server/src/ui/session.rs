@@ -1,5 +1,7 @@
 //! Signing in and out of the web UI, on koan's own login and refresh tokens.
 
+use std::net::IpAddr;
+
 use axum::Form;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -9,7 +11,7 @@ use serde::Deserialize;
 use koan_core::db::queries::auth as auth_queries;
 
 use super::{UiState, encode, html, pages, see_other};
-use crate::auth::routes::{authenticate, refresh_token_from, rotate};
+use crate::auth::routes::{ClientIp, authenticate, refresh_token_from, rotate};
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -67,6 +69,7 @@ pub(super) async fn login_form(State(s): State<UiState>, Query(q): Query<NextPar
 
 pub(super) async fn login(
     State(s): State<UiState>,
+    ClientIp(from): ClientIp,
     headers: HeaderMap,
     Form(f): Form<LoginForm>,
 ) -> Response {
@@ -74,7 +77,7 @@ pub(super) async fn login(
         return cross_site();
     }
     let next = local_path(&f.next);
-    match authenticate(&s.auth, &f.username, &f.password).await {
+    match authenticate(&s.auth, &f.username, &f.password, from).await {
         Ok((_, access, refresh)) => (
             StatusCode::SEE_OTHER,
             [(header::LOCATION, next.to_owned())],
@@ -83,10 +86,12 @@ pub(super) async fn login(
             .into_response(),
         Err(resp) => {
             let status = resp.status();
-            let message = if status == StatusCode::UNAUTHORIZED {
-                "Wrong username or password."
-            } else {
-                "Signing in failed. Try again."
+            let message = match status {
+                StatusCode::UNAUTHORIZED => "Wrong username or password.",
+                StatusCode::TOO_MANY_REQUESTS => {
+                    "Too many failed sign-ins for this account. Try again in a minute."
+                }
+                _ => "Signing in failed. Try again.",
             };
             html(status, pages::login(next, Some(message)))
         }
@@ -97,6 +102,7 @@ pub(super) async fn login(
 /// access cookie has lapsed.
 pub(super) async fn resume(
     State(s): State<UiState>,
+    ClientIp(from): ClientIp,
     Query(q): Query<NextParam>,
     headers: HeaderMap,
 ) -> Response {
@@ -104,7 +110,7 @@ pub(super) async fn resume(
     if !s.auth_enabled {
         return see_other(&next);
     }
-    match rotate_from(&s, &headers).await {
+    match rotate_from(&s, &headers, from).await {
         Some((access, refresh)) => (
             StatusCode::SEE_OTHER,
             [
@@ -121,14 +127,18 @@ pub(super) async fn resume(
 /// Keep an open page's session alive past the access token's lifetime. Unlike
 /// `/auth/refresh` it answers with cookies only, so the tokens stay out of
 /// page script.
-pub(super) async fn renew(State(s): State<UiState>, headers: HeaderMap) -> Response {
+pub(super) async fn renew(
+    State(s): State<UiState>,
+    ClientIp(from): ClientIp,
+    headers: HeaderMap,
+) -> Response {
     if !same_origin(&headers) {
         return cross_site();
     }
     if !s.auth_enabled {
         return StatusCode::NO_CONTENT.into_response();
     }
-    match rotate_from(&s, &headers).await {
+    match rotate_from(&s, &headers, from).await {
         Some((access, refresh)) => (
             StatusCode::NO_CONTENT,
             s.auth.session_cookies(&access, &refresh),
@@ -138,10 +148,10 @@ pub(super) async fn renew(State(s): State<UiState>, headers: HeaderMap) -> Respo
     }
 }
 
-async fn rotate_from(s: &UiState, headers: &HeaderMap) -> Option<(String, String)> {
+async fn rotate_from(s: &UiState, headers: &HeaderMap, from: IpAddr) -> Option<(String, String)> {
     let supplied = refresh_token_from(None, headers)?;
     let auth = s.auth.clone();
-    tokio::task::spawn_blocking(move || rotate(&auth, &supplied).ok())
+    tokio::task::spawn_blocking(move || rotate(&auth, &supplied, Some(from)).ok())
         .await
         .ok()
         .flatten()

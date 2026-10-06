@@ -6,6 +6,15 @@
 
 - **An Apple TV finds its server on its own.** kōan on a phone or Mac announces the server it is signed in to on the local network, without the account, and a signed-out TV lists each server it hears of on its sign-in page, a press away from a pairing code. It keeps looking while the page is open and asks for kōan to be opened on a signed-in device; typing the address stays as the fallback. A device that is not discoverable announces nothing.
 
+### Security
+
+- **Password guessing is limited per account, whatever the address.** The per-address limits on failed sign-ins did not stop a guesser with many addresses. A username now has 60 failed password sign-ins a minute across every address and every door that takes a password: Subsonic `p=` and token sign-ins against app passwords, `/auth/login` and the web UI's form. That is far more than a person mistyping reaches. So that an outsider spending the budget cannot lock an account out, the networks it signed in from in the last week (by password, or by a browser refreshing its session) are spared it. API keys and the Subsonic shared secret are random and not counted, so a flood of wrong passwords cannot lock out apps signed in with them.
+- **A Subsonic password guess could skip the sign-in limits.** A request for the shared username carrying `t` but no `s` was exempted as a shared-secret token, while the server checked its `p=` instead. The exemption now requires both, exactly as the check does.
+- **Per-address limits count an IPv6 client by its /64.** One subscriber is usually given a whole /64, so keying on the full address gave a client a fresh allowance per address. IPv4-mapped IPv6 addresses now count as the IPv4 address they carry.
+- **The web UI's sign-in shares the server's ceiling on password checks.** It ran argon2 with only a per-address limit, so requests from many addresses could run any number of checks at once. It now goes through the same verifier as the Subsonic API and `/auth/login`.
+- **An account's name could run script on an admin's Users page.** The Delete button's confirmation put the escaped name inside a Datastar expression, which the browser decodes before evaluating. The name is now passed as data.
+- **Sockets close when their account changes.** A GraphQL subscription socket or an app's link kept the access it opened with: a demoted admin kept admin over `/graphql/ws`, and a deleted account, a new password, a revoked key or app password, or a device's key replaced when it signs in again left both open. They now close when anything about the account that can narrow its access changes, and a subscription socket also closes when its token expires. Clients reconnect and are authenticated as things then stand; kōan's apps treat it as any dropped link.
+
 ### Changed
 
 - **Tapping the server's address in Settings → Server copies it,** in the Mac and iOS apps, for signing another app or device in to the same server. The row reads *Copied* for a moment.

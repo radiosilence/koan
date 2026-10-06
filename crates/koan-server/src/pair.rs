@@ -21,7 +21,7 @@ use koan_core::remote::pair::PairMessage;
 use parking_lot::Mutex;
 use tokio::sync::oneshot;
 
-use crate::auth::routes::RateLimiter;
+use crate::auth::routes::{RateLimiter, network};
 
 /// How long a pairing waits for someone to approve it.
 pub const TTL: Duration = Duration::from_secs(600);
@@ -121,15 +121,6 @@ fn is_local(ip: IpAddr) -> bool {
                 || (v6.segments()[0] & 0xfe00) == 0xfc00
                 || (v6.segments()[0] & 0xffc0) == 0xfe80
         }
-    }
-}
-
-/// The network an address counts against the per-address cap as: itself, or
-/// for IPv6 its /64, which one subscriber is usually given whole.
-fn network(ip: IpAddr) -> IpAddr {
-    match ip {
-        IpAddr::V4(_) => ip,
-        IpAddr::V6(v6) => IpAddr::V6((u128::from(v6) & !((1u128 << 64) - 1)).into()),
     }
 }
 
