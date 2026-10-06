@@ -24,7 +24,7 @@ enum EvidenceRenderer {
         try? await Task.sleep(for: .seconds(2))
 
         var pages: [(name: String, size: CGSize, view: AnyView)] = [
-            ("dsp-settings", CGSize(width: 620, height: 560), AnyView(
+            ("dsp-settings", CGSize(width: 620, height: 330), AnyView(
                 Form { DspSettings() }
                     .formStyle(.grouped)
                     .environment(state)
@@ -57,6 +57,8 @@ enum EvidenceRenderer {
             backing: .buffered,
             defer: false
         )
+        // Held by this function, not released by `close()` as well.
+        window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         window.contentView = host
         // Each page's own `.task` reads what it shows.
