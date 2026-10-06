@@ -263,7 +263,7 @@ struct MixedCollection: NSViewRepresentable {
         }
 
         private func configure(_ header: SectionHeader, _ section: Section) {
-            header.title.stringValue = section.title
+            header.title.stringValue = KoanTheme.label(section.title)
             let total: UInt64? = switch section {
             case .artists: parent?.totals?.artists
             case .albums: parent?.totals?.albums

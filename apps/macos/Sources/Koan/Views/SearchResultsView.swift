@@ -24,7 +24,7 @@ struct SearchResultsView: View {
 
     var body: some View {
         page
-        .navigationTitle(search.hasQuery ? "Results for “\(search.query)”" : "Search")
+        .navigationTitle(search.hasQuery ? "\(KoanTheme.label("Results for")) “\(search.query)”" : KoanTheme.label("Search"))
         // The album browser's pick, over every kind of result. It survives a
         // new query, so a pick can gather from several searches; it ends with
         // the page.

@@ -90,6 +90,18 @@ enum EvidenceRenderer {
         if let album = state.player.currentAlbumId {
             windows.append(("window-album", { nav.open(album: album) }))
         }
+        // The website's Mac screenshots (`just site-screens`), with the record
+        // the scratch library has cued.
+        let ui = state.ui, search = state.search, player = state.player
+        let plain = { ui.showLyrics = false; search.query = "" }
+        windows += [
+            ("site-mac-queue", { plain(); nav.show(.queue) }),
+            ("site-mac-album", { plain(); if let id = player.currentAlbumId { nav.open(album: id) } }),
+            ("site-mac-artist", { plain(); if let id = player.currentArtistId { nav.open(artist: id) } }),
+            ("site-mac-favourites", { plain(); nav.show(.favourites) }),
+            ("site-mac-lyrics", { plain(); ui.showLyrics = true; nav.show(.queue) }),
+            ("site-mac-search", { plain(); search.query = "low"; nav.show(.searchResults) }),
+        ]
         // The sidebar on its own as well: a split view's sidebar column is not
         // drawn in a window that is never shown.
         windows.append(("window-sidebar", { nav.show(.albums) }))
@@ -111,9 +123,13 @@ enum EvidenceRenderer {
                 size: $0
             )
         }
+        // `KOAN_RENDER_SCHEMES=dark` (or `light`) draws one appearance only.
+        let schemes = ProcessInfo.processInfo.environment["KOAN_RENDER_SCHEMES"].map {
+            $0 == "dark" ? [true] : [false]
+        } ?? [false, true]
         for window in windows {
             window.go()
-            for dark in [false, true] {
+            for dark in schemes {
                 let file = dir.appending(path: "\(window.name)-\(dark ? "dark" : "light").png")
                 if let frame {
                     await frame.capture(dark: dark, to: file)
