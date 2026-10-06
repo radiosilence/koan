@@ -39,7 +39,7 @@ fn client_name() -> String {
     }
 }
 
-fn client() -> Option<SubsonicClient> {
+fn client() -> Option<Arc<SubsonicClient>> {
     koan_core::helpers::subsonic_client(&Config::load().unwrap_or_default())
 }
 
