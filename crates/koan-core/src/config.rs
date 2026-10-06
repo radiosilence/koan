@@ -165,6 +165,13 @@ pub struct RemoteConfig {
     /// joining with a koan invite stores. config.local.toml, like the password.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub api_key: String,
+    /// The keypair this device proves itself with to the account's other
+    /// devices on the local network: base64 of its Ed25519 PKCS#8. Made at
+    /// each sign-in with an API key and dropped at sign-out, so the server's
+    /// copy of the public key goes with the API key it is kept on. A secret,
+    /// kept with the credentials. See `remote::proof`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub device_key: String,
     /// Defaults to config_dir()/cache if empty.
     pub cache_dir: Option<PathBuf>,
     /// Parallel download workers for remote tracks (default: 5).
@@ -182,6 +189,12 @@ pub struct RemoteConfig {
     pub auto_sync: bool,
     /// Minutes between automatic syncs. 0 runs one at startup and no more.
     pub auto_sync_interval_mins: u64,
+    /// Keep this device's queue in the account's play queue on the server,
+    /// where Subsonic clients save theirs, so a queue can be picked up in
+    /// another client or on another kōan device after a restart. Off by
+    /// default: between kōan devices the queue already moves live over the
+    /// link. Per device.
+    pub play_queue: bool,
 }
 
 impl Default for LibraryConfig {
@@ -276,11 +289,13 @@ impl Default for RemoteConfig {
             username: String::new(),
             password: String::new(),
             api_key: String::new(),
+            device_key: String::new(),
             cache_dir: None,
             download_workers: 5,
             cache_limit: None,
             auto_sync: true,
             auto_sync_interval_mins: 60,
+            play_queue: false,
         }
     }
 }
@@ -505,6 +520,10 @@ pub struct DevicesConfig {
     /// What a kōan on the local network may have this device do, whoever is
     /// signed in there.
     pub nearby_control: NearbyControl,
+    /// Keep the Mac app running in the menu bar once its window is closed, so
+    /// other devices can still see and control this one. Quitting it then
+    /// means this Mac is out of reach until it is opened again.
+    pub keep_running: bool,
 }
 
 /// What devices on the local network may do with this one.
@@ -528,6 +547,7 @@ impl Default for DevicesConfig {
             port: DEVICES_PORT,
             addresses: Vec::new(),
             nearby_control: NearbyControl::Full,
+            keep_running: false,
         }
     }
 }
@@ -545,6 +565,10 @@ pub struct DspConfig {
     /// Off bypasses every profile without forgetting any of them.
     pub enabled: bool,
     pub profiles: Vec<DspProfile>,
+    /// Output devices whose AutoEQ suggestion was turned down. See
+    /// `audio::dsp::autoeq::suggest`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub autoeq_dismissed: Vec<String>,
 }
 
 impl Default for DspConfig {
@@ -552,6 +576,7 @@ impl Default for DspConfig {
         Self {
             enabled: true,
             profiles: Vec::new(),
+            autoeq_dismissed: Vec::new(),
         }
     }
 }
@@ -589,6 +614,38 @@ pub struct DspProfile {
     /// from. Nothing reads them again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source: Vec<String>,
+    /// For a correction installed from AutoEQ: the target it was made for,
+    /// and another to move it to. See `audio::dsp::targets`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<DspTarget>,
+    /// Other profiles played first, in order: a headphone's correction and
+    /// then taste on top of it, each switched on or off. A profile with
+    /// layers is a stack. See `audio::dsp::Setup::load`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<DspLayer>,
+}
+
+/// One profile played as part of another.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DspLayer {
+    pub profile: String,
+    #[serde(default = "layer_on")]
+    pub on: bool,
+}
+
+fn layer_on() -> bool {
+    true
+}
+
+/// The target a correction was made for, and the one chosen in its place.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DspTarget {
+    /// One of the targets koan ships, by id.
+    pub made_for: String,
+    /// A target koan ships, or one added (`added:<name>`). Unset, or the same
+    /// as `made_for`, the correction plays as it was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen: Option<String>,
 }
 
 /// One step of a profile's processing. Bands on different channels commute;
@@ -756,6 +813,7 @@ pub fn layer_of(path: &str) -> Layer {
         // Secrets.
         "remote.password"
         | "remote.api_key"
+        | "remote.device_key"
         | "subsonic.password"
         | "auth.refresh_token"
         | "push.key"
@@ -769,6 +827,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "remote.username"
         | "remote.cache_dir"
         | "remote.cache_limit"
+        // Whether this device follows the account's saved play queue.
+        | "remote.play_queue"
         // This machine's hardware.
         | "playback.output_device"
         | "playback.renderer"
@@ -789,6 +849,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "devices.port"
         | "devices.addresses"
         | "devices.nearby_control"
+        | "devices.keep_running"
         // Which koan server this machine signs in to.
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.
@@ -2143,6 +2204,8 @@ fps = 30
             ],
             impulses: vec![],
             source: vec![],
+            target: None,
+            layers: vec![],
         };
         Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
 

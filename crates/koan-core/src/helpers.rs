@@ -138,6 +138,11 @@ pub fn spawn_library_watch(
                 let Ok(db) = Database::open_existing(&db_path) else {
                     return;
                 };
+                // A newer koan sharing the database has upgraded it: what
+                // this build would write is no longer its shape.
+                if crate::db::pool::understood(&db.conn).is_err() {
+                    return;
+                }
                 on_state(true);
                 let result = match dirs {
                     Some(dirs) => {
@@ -1120,6 +1125,18 @@ pub fn set_remote_api_key(url: &str, username: &str, api_key: &str) -> Result<()
     remember_remote(url, username, credential)
 }
 
+/// Change the signed-in account's password on its koan server, keeping this
+/// device signed in. The change revokes every key the account had, so the
+/// server answers with a new one for this device, which is kept as a sign-in's
+/// is.
+pub fn change_own_password(current: &str, password: &str) -> Result<(), SignInError> {
+    let cfg = Config::load()?;
+    let client = subsonic_client(&cfg).ok_or(SignInError::Rejected(SubsonicError::BadResponse))?;
+    let device = crate::remote::link::LinkIdentity::this_device(None).name;
+    let joined = client.koan_change_own_password(current, password, &device)?;
+    adopt_api_key(&cfg.remote.url, &joined.username, &joined.api_key)
+}
+
 /// A server's refusal, with error 41 told apart: see `SignInError::NeedsKey`.
 fn rejected(e: SubsonicError) -> SignInError {
     match e {
@@ -1185,10 +1202,17 @@ fn remember_remote(url: &str, username: &str, credential: Credential) -> Result<
             Credential::Password(p) => (p.clone(), String::new()),
             Credential::ApiKey(k) => (String::new(), k.clone()),
         };
+        // A new keypair with each sign-in, registered against the new API
+        // key; a password has no key row to register it on.
+        cfg.remote.device_key = match &credential {
+            Credential::ApiKey(_) => crate::remote::proof::new_device_key().unwrap_or_default(),
+            Credential::Password(_) => String::new(),
+        };
     })?;
-    // The link rests for up to a minute while signed out; the profile Settings
-    // shows is probed when it wakes.
-    crate::remote::link::nudge();
+    // Whatever account was here before, its devices are not this one's, and
+    // the link it had open closes, to open again as this one.
+    crate::remote::proof::forget();
+    crate::remote::link::relink();
     // This device's announcement names the server it is signed in to.
     crate::remote::nearby::readvertise();
     Ok(())

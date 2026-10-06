@@ -862,9 +862,9 @@ fn merge(conn: &Connection, winner: i64, loser: i64) -> Result<(), DbError> {
 }
 
 /// Move everything pointing at `loser` to `winner`, then delete it: sources,
-/// favourites, ratings, bookmarks, history, scan cache, organize log, playlist
-/// and share entries, lyrics where the winner has none, and the download where
-/// the winner has none.
+/// favourites, ratings, bookmarks, history, scan cache, organize log, playlist,
+/// share and saved play queue entries, lyrics where the winner has none, and
+/// the download where the winner has none.
 pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite::Result<()> {
     for table in ["favourites", "track_ratings", "bookmarks"] {
         conn.prepare_cached(&format!(
@@ -880,6 +880,7 @@ pub(crate) fn fold_rows(conn: &Connection, winner: i64, loser: i64) -> rusqlite:
         "organize_log",
         "playlist_tracks",
         "share_tracks",
+        "play_queue_entries",
     ] {
         conn.prepare_cached(&format!(
             "UPDATE {table} SET track_id = ?1 WHERE track_id = ?2"

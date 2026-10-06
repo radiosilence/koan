@@ -15,7 +15,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use koan_core::auth::Role;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
@@ -48,6 +48,7 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     ("apiKeyAuthentication", &[1]),
     ("formPost", &[1]),
     ("songLyrics", &[1]),
+    ("indexBasedQueue", &[1]),
     // koan's own. See `koan_core::remote::profile`.
     (koan_core::remote::profile::LINK, &[1]),
     (koan_core::remote::profile::DEVICES, &[1]),
@@ -56,6 +57,10 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     (koan_core::remote::profile::PAIR, &[1]),
     (koan_core::remote::profile::HISTORY, &[1]),
     (koan_core::remote::profile::SIGN_IN, &[1]),
+    (koan_core::remote::profile::PASSWORDS, &[1]),
+    (koan_core::remote::profile::API_KEYS, &[1]),
+    (koan_core::remote::profile::ACK, &[1]),
+    (koan_core::remote::profile::DEVICE_KEYS, &[1]),
 ];
 
 /// Articles clients strip when sorting the artist index. Every real server
@@ -90,6 +95,9 @@ struct AppState {
     last_modified: parking_lot::Mutex<Option<LibraryModified>>,
     /// `ffmpeg`, where transcoding is on and it was found at startup.
     transcoder: Option<crate::transcode::Transcoder>,
+    /// `sharing.public_url`, trimmed: where an assistant reaches `/mcp`.
+    /// Without it, MCP's sign-in cannot work, so none is offered.
+    public_url: Option<String>,
 }
 
 /// When the library last changed, as far as this process has seen.
@@ -2350,6 +2358,11 @@ async fn get_bookmarks(
 /// client never reads back something other than what it saved.
 const MAX_BOOKMARK_COMMENT: usize = 1024;
 
+/// The most songs a saved play queue holds. Longer is refused rather than cut,
+/// so a client never reads back something other than what it saved; each song
+/// is a lookup and a row written in one transaction.
+const MAX_PLAY_QUEUE: usize = 5000;
+
 /// `createBookmark`: save where the caller is in the song `id` names, as
 /// `position` milliseconds and an optional `comment`. One per song; a second
 /// replaces the first.
@@ -2393,6 +2406,175 @@ async fn delete_bookmark(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
                 .map_err(|e| SubsonicError::internal(e.to_string()))?;
             Ok(b)
         })
+    })
+    .await
+}
+
+/// A saved play queue belongs to an account; the shared secret is no
+/// account's, and every client signed in with it would share the one queue.
+fn queue_owner(caller: &Caller) -> Result<i64, SubsonicError> {
+    if caller.via == Via::SharedSecret {
+        return Err(SubsonicError::new(
+            SubsonicErrorCode::NotAuthorized,
+            "sign in with an account to save a play queue",
+        ));
+    }
+    Ok(caller.user_id)
+}
+
+/// `getPlayQueue` and `getPlayQueueByIndex`: the queue a client saved for the
+/// caller, as far as its tracks are still in the library. Nothing saved
+/// answers with no `playQueue`, as Navidrome does. `by_index` names the
+/// current entry by its place, so a track queued twice is unambiguous.
+fn play_queue_response(state: &AppState, params: &RawParams, by_index: bool) -> Response {
+    respond_db_caller(state, &params.auth(), Role::Readonly, |db, caller, b| {
+        let user = queue_owner(caller)?;
+        let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+        let Some(queue) = queries::play_queue(&db.conn, user).map_err(internal)? else {
+            return Ok(b);
+        };
+        let rows: HashMap<i64, queries::TrackRow> =
+            queries::tracks_by_ids(&db.conn, &queue.track_ids)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .into_iter()
+                .map(|t| (t.id, t))
+                .collect();
+        let extras = song_extras(db, user, rows.values())?;
+        let tag = if by_index {
+            "playQueueByIndex"
+        } else {
+            "playQueue"
+        };
+        let mut node = XmlNode::new(tag)
+            .attr_int("position", queue.position_ms)
+            .attr("username", &caller.username)
+            .attr("changed", &iso(queue.changed_at))
+            .attr("changedBy", &queue.changed_by);
+        node = if by_index {
+            node.attr_int("currentIndex", queue.current as i64)
+        } else {
+            node.attr(
+                "current",
+                &extras.uids.track(queue.track_ids[queue.current]),
+            )
+        };
+        Ok(b.child(
+            node.list(
+                "entry",
+                queue
+                    .track_ids
+                    .iter()
+                    .filter_map(|id| rows.get(id))
+                    .map(|track| track_node(track, "entry", &extras)),
+            ),
+        ))
+    })
+}
+
+async fn get_play_queue(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || play_queue_response(&state, &RawParams::parse(raw.as_deref()), false))
+        .await
+}
+
+async fn get_play_queue_by_index(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || play_queue_response(&state, &RawParams::parse(raw.as_deref()), true))
+        .await
+}
+
+/// `savePlayQueue` and `savePlayQueueByIndex`: replace the caller's saved
+/// queue with the songs `id` names, in order, `position` milliseconds into the
+/// current one. The current one is `current`, a song id (its first place in
+/// the queue), or with `by_index` `currentIndex`, its place. No `id` clears
+/// the queue. A song the library does not have is left out, and the current
+/// place follows the songs that stay.
+fn save_play_queue_response(state: &AppState, params: &RawParams, by_index: bool) -> Response {
+    respond_db_caller(state, &params.auth(), Role::User, |db, caller, b| {
+        let user = queue_owner(caller)?;
+        if params.all("id").count() > MAX_PLAY_QUEUE {
+            return Err(SubsonicError::new(
+                SubsonicErrorCode::MissingParameter,
+                format!("a play queue holds at most {MAX_PLAY_QUEUE} songs"),
+            ));
+        }
+        let asked: Vec<Option<i64>> = params
+            .all("id")
+            .map(|raw| resolve_as(db, raw, EntityKind::Song, "id").ok())
+            .collect();
+        let known: std::collections::HashSet<i64> = queries::tracks_by_ids(
+            &db.conn,
+            &asked.iter().flatten().copied().collect::<Vec<_>>(),
+        )
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+        // Each kept song with its place in the queue as asked.
+        let kept: Vec<(usize, i64)> = asked
+            .iter()
+            .enumerate()
+            .filter_map(|(at, id)| id.filter(|id| known.contains(id)).map(|id| (at, id)))
+            .collect();
+        let current = if by_index {
+            match params.get("currentIndex").filter(|raw| !raw.is_empty()) {
+                Some(raw) => {
+                    let at = raw
+                        .parse::<usize>()
+                        .map_err(|_| SubsonicError::bad_param("currentIndex"))?;
+                    if at >= asked.len() && !asked.is_empty() {
+                        return Err(SubsonicError::bad_param("currentIndex"));
+                    }
+                    // The first kept song from the one named on: a song left
+                    // out leaves the place to the next that stays.
+                    kept.iter().position(|(asked_at, _)| *asked_at >= at)
+                }
+                None if asked.is_empty() => None,
+                None => return Err(SubsonicError::missing_param("currentIndex")),
+            }
+        } else {
+            params
+                .get("current")
+                .and_then(|raw| resolve_as(db, raw, EntityKind::Song, "current").ok())
+                .and_then(|current| kept.iter().position(|(_, id)| *id == current))
+        };
+        // An empty position is the start, as OpenSubsonic says.
+        let position = match params.get("position").filter(|raw| !raw.is_empty()) {
+            Some(raw) => raw
+                .parse::<i64>()
+                .ok()
+                .filter(|p| *p >= 0)
+                .ok_or_else(|| SubsonicError::bad_param("position"))?,
+            None => 0,
+        };
+        let ids: Vec<i64> = kept.into_iter().map(|(_, id)| id).collect();
+        queries::save_play_queue(
+            &db.conn,
+            user,
+            &ids,
+            current,
+            position,
+            params.get("c").unwrap_or_default(),
+        )
+        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        Ok(b)
+    })
+}
+
+async fn save_play_queue(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        save_play_queue_response(&state, &RawParams::parse(raw.as_deref()), false)
+    })
+    .await
+}
+
+async fn save_play_queue_by_index(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        save_play_queue_response(&state, &RawParams::parse(raw.as_deref()), true)
     })
     .await
 }
@@ -3523,19 +3705,28 @@ async fn get_open_subsonic_extensions(
     } else {
         &[]
     };
+    let mcp: &[(&str, &[i64])] = if state.public_url.is_some() {
+        &[(koan_core::remote::profile::MCP, &[1])]
+    } else {
+        &[]
+    };
     SubsonicResponse::ok(params.wants_json())
         .list(
             "openSubsonicExtensions",
-            EXTENSIONS.iter().chain(transcode).map(|(name, versions)| {
-                XmlNode::new("openSubsonicExtensions")
-                    .attr("name", name)
-                    .list(
-                        "versions",
-                        versions
-                            .iter()
-                            .map(|v| XmlNode::scalar("versions", AttrValue::Int(*v))),
-                    )
-            }),
+            EXTENSIONS
+                .iter()
+                .chain(transcode)
+                .chain(mcp)
+                .map(|(name, versions)| {
+                    XmlNode::new("openSubsonicExtensions")
+                        .attr("name", name)
+                        .list(
+                            "versions",
+                            versions
+                                .iter()
+                                .map(|v| XmlNode::scalar("versions", AttrValue::Int(*v))),
+                        )
+                }),
         )
         .build()
 }
@@ -4277,6 +4468,208 @@ async fn koan_invite(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery
     .await
 }
 
+/// Set an account's password: an admin any account's, anyone else their own,
+/// given the current one as `current`. The account's sessions, keys, app
+/// passwords and links all end, as with any password change. Changing one's
+/// own answers as `koanSignIn` does, with a new key named `name`: the key the
+/// request came with is among those revoked.
+///
+/// Signed with an API key or the account's own password only: an app password
+/// is a credential handed to one client, and the shared secret is no account's.
+///
+/// A wrong `current` counts against the account's sign-in budget, as a wrong
+/// password at sign-in does, and a spent budget refuses the check from every
+/// network, the account's own included: the sign-in throttle spares those, and
+/// a check that is not a sign-in must not be repeatable from one without limit.
+/// The request is usually signed with a key, which that throttle leaves alone,
+/// so the budget is checked here.
+///
+/// POST only, so the passwords never sit in a URL, where a proxy in front of
+/// the server would log them.
+async fn koan_set_user_password(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let username = params
+                .get("username")
+                .map_or(caller.username.as_str(), str::trim);
+            let own = username == caller.username;
+            if caller.role != Role::Admin {
+                if !own {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::NotAuthorized,
+                        "only an admin can set another account's password",
+                    ));
+                }
+                let current = params
+                    .get("current")
+                    .ok_or_else(|| SubsonicError::missing_param("current"))?;
+                if state.users.exhausted(username) {
+                    return Err(SubsonicError::new(
+                        SubsonicErrorCode::Generic,
+                        "Too many failed sign-ins for this account; try again in a minute",
+                    ));
+                }
+                use crate::auth::password::Refused;
+                match state.users.verify(username, current) {
+                    Ok(_) => {}
+                    Err(Refused::Busy) => return Err(SubsonicError::busy()),
+                    Err(Refused::Wrong) => {
+                        state.users.failed(username);
+                        // Not error 40, which an app reads as its own sign-in
+                        // failing.
+                        return Err(SubsonicError::new(
+                            SubsonicErrorCode::Generic,
+                            "the current password is wrong",
+                        ));
+                    }
+                }
+            }
+            let password = params
+                .get("password")
+                .ok_or_else(|| SubsonicError::missing_param("password"))?;
+            koan_core::invite::set_password(&db.conn, username, Some(password))
+                .map_err(account_error)?;
+            crate::clients::registry().disconnect(username);
+            if !own {
+                return Ok(b);
+            }
+            let name = koan_core::invite::device_name(params.get("name").unwrap_or_default());
+            let (_, api_key) = queries::api_keys::replace_api_key(&db.conn, caller.user_id, &name)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("join")
+                    .attr("username", &caller.username)
+                    .attr("apiKey", &api_key),
+            ))
+        })
+    })
+    .await
+}
+
+/// Where an assistant connects to this server (`/mcp`), and the page that says
+/// how (`/connect`). Signing in is MCP's own OAuth, through this server's web
+/// pages; this only says where.
+async fn koan_mcp(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    offload_response(move || {
+        respond_db_caller(&state, &params, Role::Readonly, |_, _, b| {
+            let base = state
+                .public_url
+                .as_deref()
+                .ok_or_else(|| SubsonicError::not_found("An address for assistants"))?;
+            Ok(b.child(
+                XmlNode::new("mcp")
+                    .attr("url", &format!("{base}/mcp"))
+                    .attr("connect", &format!("{base}/connect")),
+            ))
+        })
+    })
+    .await
+}
+
+/// The caller's API keys, with the one the request signed in with marked
+/// `current`. Never the keys: only their hashes are kept.
+async fn koan_api_keys(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let keys = queries::api_keys::list_api_keys(&db.conn, Some(caller.user_id))
+                .map_err(internal)?;
+            let current = match auth.api_key.as_deref() {
+                Some(key) => queries::api_keys::id_of(&db.conn, key).map_err(internal)?,
+                None => None,
+            };
+            Ok(b.child(XmlNode::new("apiKeys").list(
+                "apiKey",
+                keys.iter().map(|k| api_key_node(k, current == Some(k.id))),
+            )))
+        })
+    })
+    .await
+}
+
+fn api_key_node(key: &queries::api_keys::ApiKeyRow, current: bool) -> XmlNode {
+    XmlNode::new("apiKey")
+        .attr_int("id", key.id)
+        .attr("name", &key.name)
+        .attr("created", &iso(key.created_at))
+        .attr_opt("lastUsed", key.last_used_at.map(iso).as_deref())
+        .attr_bool("current", current)
+}
+
+/// Make an API key named `name` for the caller, for another Subsonic app. The
+/// answer carries the key, once.
+async fn koan_create_api_key(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        respond_db_caller(&state, &params.auth(), Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let name = params
+                .get("name")
+                .map(koan_core::invite::device_name)
+                .ok_or_else(|| SubsonicError::missing_param("name"))?;
+            let (id, key) = queries::api_keys::create_api_key(&db.conn, caller.user_id, &name)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("apiKey")
+                    .attr_int("id", id)
+                    .attr("name", &name)
+                    .attr("key", &key),
+            ))
+        })
+    })
+    .await
+}
+
+/// Revoke one of the caller's API keys, by `id`. Not the one the request is
+/// signed in with: that is signing out, which the app does itself.
+async fn koan_revoke_api_key(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_caller(&state, &auth, Role::Readonly, |db, caller, b| {
+            caller.may_manage_credentials()?;
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let id: i64 = params
+                .get("id")
+                .ok_or_else(|| SubsonicError::missing_param("id"))?
+                .parse()
+                .map_err(|_| SubsonicError::bad_param("id"))?;
+            if let Some(key) = auth.api_key.as_deref()
+                && queries::api_keys::id_of(&db.conn, key).map_err(internal)? == Some(id)
+            {
+                return Err(SubsonicError::new(
+                    SubsonicErrorCode::Generic,
+                    "this device signs in with that key; sign out instead",
+                ));
+            }
+            if !queries::api_keys::revoke_api_key(&db.conn, id, Some(caller.user_id))
+                .map_err(internal)?
+            {
+                return Err(SubsonicError::not_found("API key"));
+            }
+            Ok(b)
+        })
+    })
+    .await
+}
+
 /// Revoke the API key the request is signed in with: for an app giving up a
 /// key it no longer holds, such as the one a join replaced.
 async fn koan_revoke_key(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
@@ -4519,6 +4912,7 @@ async fn koan_link(
     let mark = koan_core::auth::account_mark();
     let caller = {
         let auth = params.auth();
+        let state = state.clone();
         match tokio::task::spawn_blocking(move || validate_auth(&auth, &state)).await {
             Ok(Ok(caller)) => caller,
             Ok(Err(e)) => return SubsonicResponse::error(json, &e),
@@ -4533,6 +4927,29 @@ async fn koan_link(
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let wants_devices = params.get("devices") == Some("1");
+    // It answers commands sent with an id: see `koan_core::remote::acks`.
+    let acks = params.get("acks") == Some("1");
+    // The public key the device proves itself with on the local network,
+    // kept on the API key that signed it in, so revoking the key drops it.
+    // A link signed with a password or the shared secret has no key row to
+    // keep it on, and stays unproven there.
+    let device_key = params.get("deviceKey").map(str::to_owned);
+    if let Some(public) = &device_key {
+        if !koan_core::remote::link::valid_device_key(public) {
+            log::warn!("link: {device} sent a device key that is not one; ignored");
+        } else if let Some(raw) = params.auth().api_key {
+            let (st, dev, public) = (state.clone(), device.clone(), public.clone());
+            let kept = tokio::task::spawn_blocking(move || {
+                let db = st.open_db().ok()?;
+                koan_core::db::queries::api_keys::set_device_key(&db.conn, &raw, &dev, &public).ok()
+            })
+            .await;
+            if !matches!(kept, Ok(Some(true))) {
+                log::warn!("link: could not keep the device key for {device}");
+            }
+        }
+    }
+    let pool = state.pool.clone();
     let lease = crate::auth::Lease {
         user_id: caller.user_id,
         mark,
@@ -4548,8 +4965,11 @@ async fn koan_link(
                 platform,
                 device,
                 wants_devices,
+                acks,
+                wants_keys: device_key.is_some(),
                 addr,
             },
+            pool,
         )
     })
 }
@@ -4560,8 +4980,61 @@ struct LinkPeer {
     platform: String,
     device: String,
     wants_devices: bool,
+    acks: bool,
+    /// It sent a device key, so it understands `LinkCommand::DeviceKeys`.
+    wants_keys: bool,
     /// The client's address, through a trusted proxy if there is one.
     addr: std::net::IpAddr,
+}
+
+/// Keep every keyed link's list current as accounts change. A revoked key,
+/// a signed-out device or a deleted account takes its public key with it,
+/// and the accounts it was shared with are linked on their own, so nothing
+/// else would tell them. Account changes are rare, and each sends every
+/// keyed account its list again.
+fn spawn_key_publisher(pool: Arc<Pool>) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        let mut mark = koan_core::auth::account_mark();
+        loop {
+            mark = koan_core::auth::any_account_changed_since(mark).await;
+            let pool = pool.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                for username in crate::clients::registry().keyed_accounts() {
+                    publish_device_keys(&pool, &username);
+                }
+            })
+            .await;
+        }
+    });
+}
+
+/// Send `username`'s links that asked for them the device keys they check
+/// the network against: the account's own, and devices shared with it.
+/// Nothing for an account this database does not have: the registry is the
+/// process's, and a link may be another database's.
+fn publish_device_keys(pool: &Pool, username: &str) {
+    let Ok(db) = pool.get() else { return };
+    if !matches!(
+        queries::auth::get_user_by_username(&db.conn, username),
+        Ok(Some(_))
+    ) {
+        return;
+    }
+    let Ok(keys) = queries::api_keys::device_keys(&db.conn, username) else {
+        return;
+    };
+    let keys = keys
+        .into_iter()
+        .map(|k| koan_core::remote::link::LinkDeviceKey {
+            id: k.device,
+            key: k.key,
+            owner: k.owner,
+        })
+        .collect();
+    crate::clients::registry().publish_keys(username, keys);
 }
 
 /// Hand a link command to another of the caller's devices, in one request:
@@ -4580,13 +5053,80 @@ async fn koan_command(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
                 .get("command")
                 .and_then(|c| koan_core::remote::link::parse_command(c).ok())
                 .ok_or_else(|| SubsonicError::bad_param("command"))?;
+            // The client's id when it sent one, so a device the command
+            // reaches by another way too acts on it once.
+            let ack = params
+                .get("ack")
+                .and_then(|a| a.parse::<u64>().ok())
+                .unwrap_or_else(koan_core::remote::acks::next_id);
+            let (tx, answer) = crossbeam_channel::bounded(1);
             crate::clients::registry()
-                .relay(&caller.username, to, command)
+                .relay_acked(
+                    &caller.username,
+                    None,
+                    to,
+                    command,
+                    Some(crate::clients::Acking {
+                        id: ack,
+                        reply: Box::new(move |outcome| {
+                            let _ = tx.send(outcome);
+                        }),
+                    }),
+                )
                 .map_err(|e| SubsonicError::not_found(&e))?;
-            Ok(b)
+            // A device that gives no answers, or none in time, gets no
+            // `koanCommand`: sent, as a server before answers said.
+            Ok(match answer.recv_timeout(COMMAND_ANSWER).ok().flatten() {
+                Some(outcome) => b.child(ack_node(&outcome)),
+                None => b,
+            })
         })
     })
     .await
+}
+
+/// How long `koanCommand` waits for the device's answer: its first look, and
+/// a push to wake it if its link has gone quiet.
+const COMMAND_ANSWER: Duration = Duration::from_secs(4);
+
+/// An answer as `koanCommand` gives it, the same shape as the link's.
+fn ack_node(outcome: &koan_core::remote::acks::AckOutcome) -> XmlNode {
+    use koan_core::remote::acks::AckOutcome;
+    let node = XmlNode::new("koanCommand");
+    match outcome {
+        AckOutcome::Done => node.attr("result", "done"),
+        AckOutcome::Queued => node.attr("result", "queued"),
+        AckOutcome::Refused { reason } => node.attr("result", "refused").attr("reason", reason),
+        AckOutcome::Failed { error } => node.attr("result", "failed").attr("error", error),
+    }
+}
+
+/// Hand `to`'s answer to the command `device` sent under `ack` back to
+/// `device`, as `Acked`: the first answer only, however many ways it comes.
+fn answer_once(
+    username: &str,
+    device: &str,
+    to: &str,
+    ack: u64,
+) -> std::sync::Arc<dyn Fn(koan_core::remote::acks::AckOutcome) + Send + Sync> {
+    let (username, device, to) = (username.to_owned(), device.to_owned(), to.to_owned());
+    let answered = std::sync::atomic::AtomicBool::new(false);
+    std::sync::Arc::new(move |outcome| {
+        if answered.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return;
+        }
+        // News, like levels: to the asker's link if it is still there, and
+        // never a push to wake it for.
+        crate::clients::registry().send_live(
+            &username,
+            &device,
+            koan_core::remote::link::LinkCommand::Acked {
+                from: to.clone(),
+                ack,
+                outcome,
+            },
+        );
+    })
 }
 
 const LINK_CHECK: Duration = Duration::from_secs(15);
@@ -4601,6 +5141,7 @@ async fn link_session(
     username: String,
     lease: crate::auth::Lease,
     peer: LinkPeer,
+    pool: Arc<Pool>,
 ) {
     use axum::extract::ws::{CloseFrame, Message, close_code};
     let LinkPeer {
@@ -4608,6 +5149,8 @@ async fn link_session(
         platform,
         device,
         wants_devices,
+        acks,
+        wants_keys,
         addr,
     } = peer;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -4622,10 +5165,28 @@ async fn link_session(
             platform.clone(),
             device.clone(),
         );
+        let pool = pool.clone();
         let registered = tokio::task::spawn_blocking(move || {
-            let id = registry.register(&username, &name, &platform, &device, tx, wants_devices);
+            let id = registry.register(
+                &username,
+                &name,
+                &platform,
+                &device,
+                tx,
+                wants_devices,
+                acks,
+            );
             // After `register`, which records the device the address is kept on.
             registry.seen_at(&device, &username, addr);
+            if wants_keys {
+                registry.wants_keys(&id);
+            }
+            // Its key may be new: the account hears it, and so does every
+            // account this device is shared with.
+            publish_device_keys(&pool, &username);
+            for grantee in registry.grantees_of(&username, &device) {
+                publish_device_keys(&pool, &grantee);
+            }
             id
         })
         .await;
@@ -4689,6 +5250,7 @@ async fn link_session(
                             Ok(LinkReport::Command {
                                 to,
                                 command: koan_core::remote::link::LinkCommand::WatchLevels { on },
+                                ..
                             }) => {
                                 registry.watch_levels(&username, &device, &to, on);
                             }
@@ -4697,13 +5259,36 @@ async fn link_session(
                             Ok(LinkReport::Levels { f }) => {
                                 registry.levels(&username, &device, f);
                             }
-                            Ok(LinkReport::Command { to, command }) => {
+                            Ok(LinkReport::Command { to, command, ack }) => {
                                 // Relaying may push to a phone, which blocks.
                                 let (username, device) = (username.clone(), device.clone());
                                 tokio::task::spawn_blocking(move || {
-                                    if let Err(e) = registry.relay_from(&username, Some(&device), &to, command) {
+                                    // The answer goes back to this device as `Acked`,
+                                    // once, however the relay ends.
+                                    let reply = ack.map(|ack| answer_once(&username, &device, &to, ack));
+                                    let acking = reply.clone().map(|reply| crate::clients::Acking {
+                                        id: ack.unwrap_or_default(),
+                                        reply: Box::new(move |outcome| {
+                                            if let Some(outcome) = outcome {
+                                                reply(outcome);
+                                            }
+                                        }),
+                                    });
+                                    if let Err(e) = registry.relay_acked(&username, Some(&device), &to, command, acking) {
                                         log::info!("link: relay to {to}: {e}");
+                                        if let Some(reply) = reply {
+                                            reply(koan_core::remote::acks::AckOutcome::Refused { reason: e });
+                                        }
                                     }
+                                });
+                            }
+                            Ok(LinkReport::Received { ack }) => {
+                                registry.received(&device, ack);
+                            }
+                            Ok(LinkReport::Ack { ack, outcome }) => {
+                                let device = device.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    registry.answered(&device, ack, outcome);
                                 });
                             }
                             Ok(LinkReport::Activity { token, device: shown, sandbox }) => {
@@ -4723,6 +5308,7 @@ async fn link_session(
                                 // Only ever about the device sending it: an
                                 // owner shares a device from that device.
                                 let (username, device) = (username.clone(), device.clone());
+                                let pool = pool.clone();
                                 tokio::task::spawn_blocking(move || {
                                     let known = koan_core::db::pool::shared()
                                         .get()
@@ -4745,7 +5331,10 @@ async fn link_session(
                                     if let Err(e) = registry.share(&username, &device, &grantee, allow) {
                                         log::info!("share: {e}");
                                         registry.send_shares(&username, &device, Some(e));
+                                        return;
                                     }
+                                    // The grantee now checks this device's key, or no longer does.
+                                    publish_device_keys(&pool, &grantee);
                                 });
                             }
                             Ok(LinkReport::Forget { device: forgotten }) => {
@@ -4792,6 +5381,11 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             get(koan_create_user).post(koan_create_user),
         )
         .route("/rest/koanInvite", get(koan_invite).post(koan_invite))
+        .route("/rest/koanApiKeys", get(koan_api_keys).post(koan_api_keys))
+        .route("/rest/koanMcp", get(koan_mcp).post(koan_mcp))
+        .route("/rest/koanCreateApiKey", post(koan_create_api_key))
+        .route("/rest/koanRevokeApiKey", post(koan_revoke_api_key))
+        .route("/rest/koanSetUserPassword", post(koan_set_user_password))
         .route("/rest/koanJoin", get(koan_join).post(koan_join))
         .route("/rest/koanSignIn", get(koan_sign_in).post(koan_sign_in))
         .route(
@@ -4922,6 +5516,38 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route(
             "/rest/getStarred2.view",
             get(get_starred2).post(get_starred2),
+        )
+        .route(
+            "/rest/getPlayQueue",
+            get(get_play_queue).post(get_play_queue),
+        )
+        .route(
+            "/rest/getPlayQueue.view",
+            get(get_play_queue).post(get_play_queue),
+        )
+        .route(
+            "/rest/savePlayQueue",
+            get(save_play_queue).post(save_play_queue),
+        )
+        .route(
+            "/rest/savePlayQueue.view",
+            get(save_play_queue).post(save_play_queue),
+        )
+        .route(
+            "/rest/getPlayQueueByIndex",
+            get(get_play_queue_by_index).post(get_play_queue_by_index),
+        )
+        .route(
+            "/rest/getPlayQueueByIndex.view",
+            get(get_play_queue_by_index).post(get_play_queue_by_index),
+        )
+        .route(
+            "/rest/savePlayQueueByIndex",
+            get(save_play_queue_by_index).post(save_play_queue_by_index),
+        )
+        .route(
+            "/rest/savePlayQueueByIndex.view",
+            get(save_play_queue_by_index).post(save_play_queue_by_index),
         )
         .route("/rest/getBookmarks", get(get_bookmarks).post(get_bookmarks))
         .route(
@@ -5094,7 +5720,16 @@ pub fn subsonic_router(
         covers,
         last_modified: Default::default(),
         transcoder,
+        public_url: cfg
+            .sharing
+            .public_url
+            .as_deref()
+            .map(|u| u.trim().trim_end_matches('/').to_owned())
+            .filter(|u| !u.is_empty()),
     });
+    // Once per process, though the router may be built for two ports.
+    static KEYS: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    KEYS.get_or_init(|| spawn_key_publisher(state.pool.clone()));
 
     Some(subsonic_app(state))
 }
@@ -5136,6 +5771,7 @@ mod tests {
             covers: Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
             last_modified: Default::default(),
             transcoder: None,
+            public_url: None,
         });
         (state, dir)
     }
@@ -5328,6 +5964,215 @@ mod tests {
             .await
             .unwrap();
         assert!(String::from_utf8_lossy(&bytes).contains("from this address"));
+    }
+
+    /// Link `device` at `url` and read until the server sends device keys.
+    fn keys_sent(url: String) -> Vec<koan_core::remote::link::LinkDeviceKey> {
+        let (mut socket, _) = tungstenite::connect(url.as_str()).unwrap();
+        if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = socket.get_ref() {
+            tcp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        }
+        loop {
+            let tungstenite::Message::Text(text) = socket.read().unwrap() else {
+                continue;
+            };
+            if let Ok(koan_core::remote::link::LinkCommand::DeviceKeys { keys }) =
+                serde_json::from_str(&text)
+            {
+                return keys;
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_device_key_is_kept_on_its_api_key_and_published_to_the_account() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let (state, _dir) = test_state();
+        // Not `mate`: account changes are announced by user id process-wide,
+        // and another test changes `mate`'s while its link is open.
+        let key = api_key(&state, "owner");
+        let pool = state.pool.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        let public = b64.encode([1u8; 32]);
+        let link = |auth: &str, device: &str, public: &str| {
+            let public = public
+                .replace('+', "%2B")
+                .replace('/', "%2F")
+                .replace('=', "%3D");
+            format!(
+                "ws://{addr}/rest/koanLink?{auth}&v=1.16.1&c=test&device={device}&deviceKey={public}"
+            )
+        };
+
+        // Signed in with its key: kept, and the device hears its own.
+        let url = link(&format!("apiKey={key}"), "dev-keyed", &public);
+        let keys = tokio::task::spawn_blocking(move || keys_sent(url))
+            .await
+            .unwrap();
+        assert!(
+            keys.iter()
+                .any(|k| k.id == "dev-keyed" && k.key == public && k.owner.is_none()),
+            "{keys:?}"
+        );
+
+        // Signed in with the password, or sending what is not a key: nothing
+        // is kept, though the link still hears the account's keys.
+        let other = b64.encode([2u8; 32]);
+        let url = link("u=owner&p=sesame", "dev-password", &other);
+        let keys = tokio::task::spawn_blocking(move || keys_sent(url))
+            .await
+            .unwrap();
+        assert!(keys.iter().all(|k| k.id != "dev-password"), "{keys:?}");
+        let url = link(&format!("apiKey={key}"), "dev-bad", "not-a-key");
+        let keys = tokio::task::spawn_blocking(move || keys_sent(url))
+            .await
+            .unwrap();
+        assert!(keys.iter().all(|k| k.key != "not-a-key"), "{keys:?}");
+
+        // Revoking the API key takes the public key with it.
+        let db = pool.get().unwrap();
+        db.conn.execute("DELETE FROM api_keys", []).unwrap();
+        assert!(
+            queries::api_keys::device_keys(&db.conn, "owner")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// jo's phone, shared with kim, is revoked while kim's device is linked:
+    /// kim's device is sent a list without it, though neither the phone nor
+    /// any device of kim's links again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_revoked_shared_device_leaves_its_grantees_list() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let (state, _dir) = test_state();
+        let pool = state.pool.clone();
+        // Accounts of this test's own: account changes are announced by user
+        // id process-wide.
+        let raw = {
+            let db = pool.get().unwrap();
+            queries::auth::create_user(&db.conn, "keyowner", "pw-owner", Role::User).unwrap();
+            queries::auth::create_user(&db.conn, "keygrantee", "pw-grantee", Role::User).unwrap();
+            db.conn
+                .execute(
+                    "INSERT INTO link_grants (device, owner, grantee, created_at)
+                     VALUES ('kdev-phone', 'keyowner', 'keygrantee', 0)",
+                    [],
+                )
+                .unwrap();
+            let owner = queries::auth::get_user_by_username(&db.conn, "keyowner")
+                .unwrap()
+                .unwrap();
+            queries::api_keys::create_api_key(&db.conn, owner.id, "phone")
+                .unwrap()
+                .1
+        };
+        crate::clients::registry()
+            .share("keyowner", "kdev-phone", "keygrantee", true)
+            .unwrap();
+        spawn_key_publisher(pool.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, build_test_router(state)).await });
+        let encode = |k: String| {
+            k.replace('+', "%2B")
+                .replace('/', "%2F")
+                .replace('=', "%3D")
+        };
+        let phone_key = b64.encode([3u8; 32]);
+        let url = format!(
+            "ws://{addr}/rest/koanLink?apiKey={raw}&v=1.16.1&c=test&device=kdev-phone&deviceKey={}",
+            encode(phone_key.clone())
+        );
+        tokio::task::spawn_blocking(move || keys_sent(url))
+            .await
+            .unwrap();
+
+        let url = format!(
+            "ws://{addr}/rest/koanLink?u=keygrantee&p=pw-grantee&v=1.16.1&c=test&device=kdev-grantee&deviceKey={}",
+            encode(b64.encode([4u8; 32]))
+        );
+        let (revoke_tx, revoke_rx) = std::sync::mpsc::channel::<()>();
+        let grantee = tokio::task::spawn_blocking(move || {
+            let (mut socket, _) = tungstenite::connect(url.as_str()).unwrap();
+            if let tungstenite::stream::MaybeTlsStream::Plain(tcp) = socket.get_ref() {
+                tcp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            }
+            let mut saw_phone = false;
+            loop {
+                let tungstenite::Message::Text(text) = socket.read().unwrap() else {
+                    continue;
+                };
+                let Ok(koan_core::remote::link::LinkCommand::DeviceKeys { keys }) =
+                    serde_json::from_str(&text)
+                else {
+                    continue;
+                };
+                let has_phone = keys
+                    .iter()
+                    .any(|k| k.id == "kdev-phone" && k.owner.as_deref() == Some("keyowner"));
+                if !saw_phone {
+                    assert!(has_phone, "shared before the revocation: {keys:?}");
+                    saw_phone = true;
+                    revoke_tx.send(()).unwrap();
+                } else if !has_phone {
+                    return true;
+                }
+            }
+        });
+        tokio::task::spawn_blocking(move || {
+            revoke_rx.recv().unwrap();
+            let db = pool.get().unwrap();
+            assert!(queries::api_keys::revoke_api_key_value(&db.conn, &raw).unwrap());
+        })
+        .await
+        .unwrap();
+        assert!(grantee.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn device_keys_are_never_relayed() {
+        let reg = crate::clients::registry();
+        let forged = koan_core::remote::link::LinkCommand::DeviceKeys {
+            keys: vec![koan_core::remote::link::LinkDeviceKey {
+                id: "evil".into(),
+                key: "AAAA".into(),
+                owner: None,
+            }],
+        };
+        assert!(
+            reg.relay_from("relay-jo", Some("dev-a"), "dev-b", forged.clone())
+                .is_err()
+        );
+        assert!(reg.relay("relay-jo", "dev-b", forged).is_err());
+
+        // And over HTTP, as any credential for the account could send it.
+        let (state, _dir) = test_state();
+        let command = r#"{"type":"deviceKeys","keys":[{"id":"evil","key":"AAAA"}]}"#;
+        let command: String = form_urlencoded::byte_serialize(command.as_bytes()).collect();
+        let (_, body) = get_response(
+            build_test_router(state),
+            &format!(
+                "/rest/koanCommand?u=mate&p=hunter22&v=1.16.1&c=test&f=json&to=dev-b&command={command}"
+            ),
+        )
+        .await;
+        assert!(body.contains("\"failed\""), "{body}");
+    }
+
+    #[tokio::test]
+    async fn the_server_lists_device_keys() {
+        let (state, _dir) = test_state();
+        let (_, body) = get_response(
+            build_test_router(state),
+            "/rest/getOpenSubsonicExtensions?f=json",
+        )
+        .await;
+        assert!(body.contains("koanDeviceKeys"), "{body}");
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -6050,6 +6895,376 @@ mod tests {
         ))
         .await;
         assert!(body.contains("Den TV"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn passwords_are_set_by_admins_and_changed_by_their_owners() {
+        let (state, _dir) = test_state();
+        let set = |form: String| {
+            let state = state.clone();
+            async move {
+                let body =
+                    post_form(build_test_router(state), "/rest/koanSetUserPassword", &form).await;
+                serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"]
+                    .clone()
+            }
+        };
+        let ping = |query: String| {
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/ping?{query}&v=1.16.1&c=test"),
+                )
+                .await
+                .1
+            }
+        };
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let (_, key) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
+        let as_mate = format!("apiKey={key}&v=1.16.1&c=test&f=json");
+
+        // POST only: the passwords never sit in a URL.
+        let (status, _) = get_response(
+            build_test_router(state.clone()),
+            &format!(
+                "/rest/koanSetUserPassword?current=hunter22&password=correct%20horse&{as_mate}"
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+        // Only their own, and only with the current password.
+        let v = set(format!("username=owner&password=taken%20over&{as_mate}")).await;
+        assert_eq!(v["error"]["code"], 50, "{v}");
+        let v = set(format!("password=new%20enough&{as_mate}")).await;
+        assert_eq!(v["error"]["code"], 10, "{v}");
+        let v = set(format!("current=wrong&password=new%20enough&{as_mate}")).await;
+        assert_eq!(
+            v["error"]["code"], 0,
+            "not 40, which reads as the app signed out: {v}"
+        );
+        assert!(
+            ping(format!("apiKey={key}"))
+                .await
+                .contains("status=\"ok\"")
+        );
+
+        // Changed: every old credential ends, and the device gets a new key.
+        let v = set(format!(
+            "current=hunter22&password=correct%20horse&name=phone&{as_mate}"
+        ))
+        .await;
+        assert_eq!(v["join"]["username"], "mate", "{v}");
+        let fresh = v["join"]["apiKey"].as_str().unwrap().to_owned();
+        assert!(ping(format!("apiKey={key}")).await.contains("code=\"44\""));
+        assert!(
+            ping(format!("apiKey={fresh}"))
+                .await
+                .contains("status=\"ok\"")
+        );
+        assert!(
+            ping("u=mate&p=hunter22".into())
+                .await
+                .contains("code=\"40\"")
+        );
+        assert!(
+            ping("u=mate&p=correct%20horse".into())
+                .await
+                .contains("status=\"ok\"")
+        );
+
+        // An admin sets anyone's, without theirs, and says nothing back.
+        let owner = "u=owner&p=sesame&v=1.16.1&c=test&f=json";
+        let v = set(format!("username=mate&password=battery%20staple&{owner}")).await;
+        assert_eq!(v["status"], "ok", "{v}");
+        assert!(v.get("join").is_none(), "{v}");
+        assert!(
+            ping(format!("apiKey={fresh}"))
+                .await
+                .contains("code=\"44\"")
+        );
+        assert!(
+            ping("u=mate&p=battery%20staple".into())
+                .await
+                .contains("status=\"ok\"")
+        );
+        let v = set(format!("username=mate&password=short&{owner}")).await;
+        assert_eq!(v["error"]["code"], 0, "too short: {v}");
+    }
+
+    /// An app password is one client's credential and the shared secret is no
+    /// account's: neither may set a password, nor try current passwords.
+    #[tokio::test]
+    async fn only_a_key_or_the_password_itself_may_set_a_password() {
+        let (state, _dir) = test_state();
+        let set = |auth: String| {
+            let state = state.clone();
+            async move {
+                post_form(
+                    build_test_router(state),
+                    "/rest/koanSetUserPassword",
+                    &format!("current=hunter22&password=correct%20horse&{auth}&v=1.16.1&c=test"),
+                )
+                .await
+            }
+        };
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let app_password = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            mate.id,
+            "arpeggi",
+        )
+        .unwrap()
+        .1;
+        let salt = "c0ffee";
+        let token = format!("{:x}", md5::compute(format!("{app_password}{salt}")));
+
+        let body = set(format!("u=mate&p={app_password}")).await;
+        assert!(body.contains("code=\"50\""), "app password as p: {body}");
+        let body = set(format!("u=mate&t={token}&s={salt}")).await;
+        assert!(
+            body.contains("code=\"50\""),
+            "app password as a token: {body}"
+        );
+        let body = set(auth_query("")).await;
+        assert!(body.contains("code=\"50\""), "the shared secret: {body}");
+        assert!(
+            queries::auth::get_user_by_username(&db.conn, "mate")
+                .unwrap()
+                .is_some_and(
+                    |u| koan_core::auth::verify_password("hunter22", &u.password_hash).is_ok()
+                ),
+            "unchanged"
+        );
+    }
+
+    /// Checked in the handler, from every network: the request is signed with
+    /// a key, which the sign-in throttle leaves alone, and that throttle spares
+    /// networks the account signed in from, which must not make guessing here
+    /// free.
+    #[tokio::test]
+    async fn a_wrong_current_password_spends_the_sign_in_budget() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let (_, key) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
+        let change = |current: &str| {
+            let state = state.clone();
+            let form =
+                format!("current={current}&password=another%20one&apiKey={key}&v=1.16.1&c=test");
+            async move { post_form(build_test_router(state), "/rest/koanSetUserPassword", &form).await }
+        };
+        // Signing in by password makes this network one the account is known on.
+        let app = subsonic_app(state.clone());
+        let body = get_response(app, "/rest/ping?u=mate&p=hunter22&v=1.16.1&c=test")
+            .await
+            .1;
+        assert!(body.contains("status=\"ok\""), "{body}");
+
+        let body = change("wrong").await;
+        assert!(body.contains("the current password is wrong"), "{body}");
+        for _ in 1..crate::auth::password::FAILURES_PER_USERNAME_PER_MINUTE {
+            state.users.failed("mate");
+        }
+        let body = change("hunter22").await;
+        assert!(body.contains("Too many failed sign-ins"), "{body}");
+        let body = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(
+            body.contains("status=\"ok\""),
+            "the key still works: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_account_lists_makes_and_revokes_its_own_api_keys() {
+        let (state, _dir) = test_state();
+        let phone = api_key(&state, "mate");
+        let owners = api_key(&state, "owner");
+        let auth = format!("apiKey={phone}&v=1.16.1&c=test&f=json");
+        let json = |body: String| -> serde_json::Value {
+            serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"].clone()
+        };
+        let post = |path: &str, form: String| {
+            let state = state.clone();
+            let path = path.to_owned();
+            async move { json(post_form(build_test_router(state), &path, &form).await) }
+        };
+        let list = || {
+            let state = state.clone();
+            let auth = auth.clone();
+            async move {
+                json(
+                    get_response(
+                        build_test_router(state),
+                        &format!("/rest/koanApiKeys?{auth}"),
+                    )
+                    .await
+                    .1,
+                )
+            }
+        };
+
+        let made = post("/rest/koanCreateApiKey", format!("name=Feishin&{auth}")).await;
+        let key = made["apiKey"]["key"].as_str().unwrap().to_owned();
+        let id = made["apiKey"]["id"].as_i64().unwrap();
+        assert_eq!(made["apiKey"]["name"], "Feishin", "{made}");
+        let pinged = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(pinged.contains("status=\"ok\""), "{pinged}");
+
+        // Only this account's, the request's own marked, and never a key.
+        let v = list().await;
+        let keys = v["apiKeys"]["apiKey"].as_array().unwrap();
+        assert_eq!(keys.len(), 2, "{v}");
+        assert_eq!(keys[0]["name"], "test");
+        assert_eq!(keys[0]["current"], true);
+        assert_eq!(keys[1]["current"], false);
+        assert!(keys[0]["created"].as_str().unwrap().ends_with('Z'), "{v}");
+        assert!(
+            !v.to_string().contains(&phone) && !v.to_string().contains(&key),
+            "{v}"
+        );
+
+        // Making and revoking take POST.
+        let (status, _) = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/koanCreateApiKey?name=x&{auth}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+
+        // Not this device's own key, and not another account's.
+        let db = state.open_db().unwrap();
+        let own = queries::api_keys::id_of(&db.conn, &phone).unwrap().unwrap();
+        let v = post("/rest/koanRevokeApiKey", format!("id={own}&{auth}")).await;
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("sign out"),
+            "{v}"
+        );
+        let theirs = queries::api_keys::id_of(&db.conn, &owners)
+            .unwrap()
+            .unwrap();
+        let v = post("/rest/koanRevokeApiKey", format!("id={theirs}&{auth}")).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
+
+        let v = post("/rest/koanRevokeApiKey", format!("id={id}&{auth}")).await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let pinged = get_response(
+            build_test_router(state.clone()),
+            &format!("/rest/ping?apiKey={key}&v=1.16.1&c=test"),
+        )
+        .await
+        .1;
+        assert!(pinged.contains("code=\"44\""), "{pinged}");
+        assert_eq!(
+            list().await["apiKeys"]["apiKey"].as_array().unwrap().len(),
+            1
+        );
+    }
+
+    /// Assistants are offered only where the server knows the address it is
+    /// reached at: MCP's sign-in goes through it.
+    #[tokio::test]
+    async fn assistants_are_offered_with_a_public_address() {
+        let extensions = |state: Arc<AppState>| async move {
+            get_response(
+                build_test_router(state),
+                "/rest/getOpenSubsonicExtensions?f=json",
+            )
+            .await
+            .1
+        };
+        let mcp = |state: Arc<AppState>, auth: &str| {
+            let path = format!("/rest/koanMcp?{auth}&v=1.16.1&c=test&f=json");
+            async move {
+                let body = get_response(build_test_router(state), &path).await.1;
+                serde_json::from_str::<serde_json::Value>(&body).unwrap()["subsonic-response"]
+                    .clone()
+            }
+        };
+        let mate = "u=mate&p=hunter22";
+
+        let (state, _dir) = test_state();
+        assert!(!extensions(state.clone()).await.contains("koanMcp"));
+        let v = mcp(state.clone(), mate).await;
+        assert_eq!(v["error"]["code"], 70, "{v}");
+
+        let (state, _dir) = test_state();
+        let mut inner = Arc::try_unwrap(state).ok().unwrap();
+        inner.public_url = Some("https://koan.example.com".into());
+        let state = Arc::new(inner);
+        assert!(extensions(state.clone()).await.contains("koanMcp"));
+        let v = mcp(state.clone(), mate).await;
+        assert_eq!(v["mcp"]["url"], "https://koan.example.com/mcp", "{v}");
+        assert_eq!(
+            v["mcp"]["connect"], "https://koan.example.com/connect",
+            "{v}"
+        );
+        let v = mcp(state, "u=mate&p=wrong").await;
+        assert_eq!(v["error"]["code"], 40, "signed in only: {v}");
+    }
+
+    /// An app password must not mint keys that outlive it, nor revoke the
+    /// account's devices; the shared secret is no account's.
+    #[tokio::test]
+    async fn only_a_key_or_the_password_itself_may_manage_api_keys() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let mate = queries::auth::get_user_by_username(&db.conn, "mate")
+            .unwrap()
+            .unwrap();
+        let (phone, _) = queries::api_keys::replace_api_key(&db.conn, mate.id, "phone").unwrap();
+        let app_password = queries::app_passwords::create_app_password(
+            &db.conn,
+            state.app_key.as_ref().unwrap(),
+            mate.id,
+            "arpeggi",
+        )
+        .unwrap()
+        .1;
+        let salt = "c0ffee";
+        let token = format!("{:x}", md5::compute(format!("{app_password}{salt}")));
+        let callers = [
+            ("app password as p", format!("u=mate&p={app_password}")),
+            (
+                "app password as a token",
+                format!("u=mate&t={token}&s={salt}"),
+            ),
+            ("the shared secret", auth_query("")),
+        ];
+        for (who, auth) in &callers {
+            let auth = format!("{auth}&v=1.16.1&c=test");
+            for (path, form) in [
+                ("/rest/koanCreateApiKey", format!("name=x&{auth}")),
+                ("/rest/koanRevokeApiKey", format!("id={phone}&{auth}")),
+                ("/rest/koanApiKeys", auth.clone()),
+            ] {
+                let body = post_form(build_test_router(state.clone()), path, &form).await;
+                assert!(body.contains("code=\"50\""), "{who} on {path}: {body}");
+            }
+        }
+        let keys = queries::api_keys::list_api_keys(&db.conn, None).unwrap();
+        assert_eq!(keys.len(), 1, "none made, none revoked");
+        assert_eq!(keys[0].id, phone);
     }
 
     #[tokio::test]
@@ -6863,6 +8078,160 @@ mod tests {
         let body = xml(format!("getMusicDirectory?id={artist}")).await;
         assert_eq!(body.matches(" starred=\"").count(), 1, "{body}");
         assert_eq!(body.matches(" userRating=\"4\"").count(), 1, "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_saved_play_queue_reads_back_by_id_and_by_index() {
+        let (state, _dir) = test_state();
+        let [ra, rb, rc] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let [a, b, c] = [ra, rb, rc].map(|t| uid_of(&state, queries::UidKind::Track, t));
+        let call = |as_who: &str, path: String| {
+            let state = state.clone();
+            let auth = format!("{as_who}&v=1.16.1&c=Feishin&f=json");
+            async move { json_of(build_test_router(state), &format!("/rest/{path}&{auth}")).await }
+        };
+        let owner = "u=owner&p=sesame";
+        let ids = |list: &serde_json::Value| -> Vec<String> {
+            list.as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["id"].as_str().unwrap().to_owned())
+                .collect()
+        };
+
+        // By index: the same track twice, the second current.
+        let v = call(
+            owner,
+            format!("savePlayQueueByIndex.view?id={a}&id={b}&id={a}&currentIndex=2&position=1500"),
+        )
+        .await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        let q = &v["playQueueByIndex"];
+        assert_eq!(
+            ids(&q["entry"]),
+            [a.as_str(), b.as_str(), a.as_str()],
+            "{v}"
+        );
+        assert_eq!(q["currentIndex"], 2, "{v}");
+        assert_eq!(q["position"], 1500);
+        assert_eq!(q["username"], "owner");
+        assert_eq!(q["changedBy"], "Feishin");
+        assert!(
+            q["changed"].as_str().is_some_and(|s| s.ends_with('Z')),
+            "{v}"
+        );
+        let v = call(owner, "getPlayQueue?".into()).await;
+        assert_eq!(v["playQueue"]["current"], a, "{v}");
+
+        // By id: an unknown song is left out, and the current one follows.
+        let v = call(
+            owner,
+            format!("savePlayQueue?id={a}&id=999999&id={c}&current={c}&position=7"),
+        )
+        .await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(
+            ids(&v["playQueueByIndex"]["entry"]),
+            [a.as_str(), c.as_str()],
+            "{v}"
+        );
+        assert_eq!(v["playQueueByIndex"]["currentIndex"], 1, "{v}");
+
+        // A song gone from the library since is dropped on reading.
+        {
+            let db = Database::open(state.pool.path()).unwrap();
+            db.conn
+                .execute("DELETE FROM tracks WHERE id = ?1", [rc])
+                .unwrap();
+        }
+        let v = call(owner, "getPlayQueue?".into()).await;
+        assert_eq!(ids(&v["playQueue"]["entry"]), [a.as_str()], "{v}");
+        assert_eq!(
+            v["playQueue"]["current"], a,
+            "a current entry while there are any: {v}"
+        );
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(v["playQueueByIndex"]["currentIndex"], 0, "{v}");
+
+        // By index the current place is required with songs; an empty
+        // position is the start.
+        let v = call(owner, format!("savePlayQueueByIndex?id={a}")).await;
+        assert_eq!(v["error"]["code"], 10, "{v}");
+        let v = call(
+            owner,
+            format!("savePlayQueueByIndex?id={a}&id={b}&currentIndex=1&position="),
+        )
+        .await;
+        assert_eq!(v["status"], "ok", "{v}");
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(
+            (
+                v["playQueueByIndex"]["currentIndex"].clone(),
+                v["playQueueByIndex"]["position"].clone()
+            ),
+            (1.into(), 0.into()),
+            "{v}"
+        );
+
+        // Past the limit, refused whole. Asked of the handler directly: a
+        // request this long is past what a URI holds, and a form is turned
+        // into one before any endpoint sees it.
+        let query = format!(
+            "u=owner&p=sesame&v=1.16.1&c=x&f=json&{}",
+            std::iter::repeat_n(format!("id={a}"), MAX_PLAY_QUEUE + 1)
+                .collect::<Vec<_>>()
+                .join("&")
+        );
+        let resp = save_play_queue_response(&state, &RawParams::parse(Some(&query)), false);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("\"code\":10"), "{body}");
+        let v = call(owner, "getPlayQueueByIndex?".into()).await;
+        assert_eq!(
+            v["playQueueByIndex"]["entry"].as_array().unwrap().len(),
+            2,
+            "unchanged: {v}"
+        );
+
+        // Another account has none; the shared secret is refused.
+        let v = call("u=mate&p=hunter22", "getPlayQueue?".into()).await;
+        assert_eq!(v["status"], "ok", "{v}");
+        assert!(v.get("playQueue").is_none(), "{v}");
+        let v = json_of(
+            build_test_router(state.clone()),
+            &format!("/rest/getPlayQueue?{}", auth_query("f=json")),
+        )
+        .await;
+        assert_eq!(v["error"]["code"], 50, "{v}");
+
+        // No songs clears it.
+        call(owner, "savePlayQueue?".into()).await;
+        let v = call(owner, "getPlayQueue?".into()).await;
+        assert!(v.get("playQueue").is_none(), "{v}");
+
+        // XML carries the same.
+        call(owner, format!("savePlayQueue?id={b}&current={b}")).await;
+        let body = get_response(
+            build_test_router(state.clone()),
+            "/rest/getPlayQueue?u=owner&p=sesame&v=1.16.1&c=x",
+        )
+        .await
+        .1;
+        assert!(body.contains(&format!(" current=\"{b}\"")), "{body}");
+        assert_eq!(body.matches("<entry ").count(), 1, "{body}");
+
+        let v = json_of(
+            build_test_router(state.clone()),
+            "/rest/getOpenSubsonicExtensions?f=json",
+        )
+        .await;
+        assert!(v.to_string().contains("indexBasedQueue"), "{v}");
     }
 
     #[tokio::test]

@@ -3,11 +3,10 @@ import SwiftUI
 
 @main
 struct KoanApp: App {
-    @State private var state: AppState?
-
-    @State private var startupError: String?
-    /// A link opened before the engine was up, handled once it is.
-    @State private var pendingURL: URL?
+    @NSApplicationDelegateAdaptor private var delegate: AppDelegate
+    /// Started by the delegate at launch rather than by the window, which a
+    /// kōan resident in the menu bar may never open.
+    private var state: AppState? { delegate.state }
 
     var body: some Scene {
         Window("kōan", id: MainWindow.id) {
@@ -32,7 +31,7 @@ struct KoanApp: App {
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
                         .tint(.koanAccent)
-                } else if let startupError {
+                } else if let startupError = delegate.startupError {
                     StartupErrorView(message: startupError)
                 } else {
                     ProgressView().controlSize(.small)
@@ -57,21 +56,7 @@ struct KoanApp: App {
             // window that jumps is worse than a window that is wide.
             .frame(minWidth: 1260, minHeight: 620)
             .onOpenURL { url in
-                if let state { state.open(url: url) } else { pendingURL = url }
-            }
-            .task {
-                guard state == nil, startupError == nil else { return }
-                do {
-                    let created = try await AppState()
-                    await created.start()
-                    state = created
-                    if let pendingURL {
-                        created.open(url: pendingURL)
-                        self.pendingURL = nil
-                    }
-                } catch {
-                    startupError = String(describing: error)
-                }
+                if let state { state.open(url: url) } else { delegate.pendingURL = url }
             }
         }
         .windowToolbarStyle(.unified(showsTitle: false))
@@ -244,6 +229,17 @@ struct KoanApp: App {
         .defaultSize(width: 940, height: 640)
         .keyboardShortcut(nil)
 
+        // With "Keep running in the menu bar" on, closing the window leaves
+        // kōan here, still linked and listening, so other devices can control
+        // this Mac.
+        MenuBarExtra(
+            isInserted: Binding(get: { state?.residency.keepRunning ?? false }, set: { _ in })
+        ) {
+            if let state { MenuBarMenu(state: state) }
+        } label: {
+            MenuBarLabel(residency: state?.residency)
+        }
+
         Settings {
             if let state {
                 SettingsView()
@@ -259,6 +255,46 @@ struct KoanApp: App {
                     .environment(state.mirror)
             }
         }
+    }
+}
+
+/// The menu bar item's icon, and what opens the main window when AppKit asks
+/// for it: the item is on screen whenever kōan is resident, and the delegate
+/// has no `openWindow` of its own.
+private struct MenuBarLabel: View {
+    let residency: Residency?
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Image(systemName: Icon.track)
+            .onChange(of: residency?.wantsWindow ?? false, initial: true) { _, wants in
+                if wants { residency?.showWindow(with: openWindow) }
+            }
+    }
+}
+
+/// The menu bar item's menu: what is playing, play and pause, next, and the
+/// way back to the window.
+private struct MenuBarMenu: View {
+    let state: AppState
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        let entry = state.mirror.playback.entry
+        if let entry {
+            Text(entry.title)
+            Text(entry.artist)
+        } else {
+            Text("Nothing playing")
+        }
+        Divider()
+        Button(state.player.isPlaying ? "Pause" : "Play") { state.player.togglePlayPause() }
+            .disabled(entry == nil)
+        Button("Next") { state.player.next() }
+            .disabled(entry == nil)
+        Divider()
+        Button("Open kōan") { state.residency.showWindow(with: openWindow) }
+        Button("Quit kōan") { NSApp.terminate(nil) }
     }
 }
 

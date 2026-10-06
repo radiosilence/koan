@@ -45,6 +45,9 @@ pub fn cmd_dsp_list() {
         if !p.devices.is_empty() {
             println!("  {} {}", "devices:".dimmed(), p.devices.join(", "));
         }
+        if p.layers > 0 {
+            println!("  {} {}", "layers:".dimmed(), p.layers);
+        }
         if p.bands > 0 {
             println!("  {} {}", "filters:".dimmed(), p.bands);
         }
@@ -165,6 +168,68 @@ pub fn cmd_dsp_autoeq_install(wanted: &str, source: Option<&str>, device: Option
     if let Some(device) = device {
         cmd_dsp_use(&name, Some(device));
     }
+}
+
+/// Show the targets `name` can move to, or move it.
+pub fn cmd_dsp_target(name: &str, target: Option<&str>, reset: bool) {
+    if target.is_some() || reset {
+        profiles::choose_target(name, target).unwrap_or_else(|e| fail(e));
+    }
+    let Some(t) = profiles::target_choices(name) else {
+        fail(format!(
+            "{name} has no known target: only corrections installed from AutoEQ can move"
+        ));
+    };
+    let current = t.chosen.clone().unwrap_or_else(|| t.made_for.id.into());
+    println!("{} {}", "made for:".cyan(), t.made_for.name.bold());
+    for c in &t.choices {
+        let marker = if c.id == current {
+            "*".yellow().bold().to_string()
+        } else {
+            " ".into()
+        };
+        println!("{marker} {}  {}", c.id.bold(), c.name.dimmed());
+        if !c.character.is_empty() {
+            println!("    {}", c.character.dimmed());
+        }
+    }
+}
+
+/// Make `name` a stack of `layers`, all on.
+pub fn cmd_dsp_stack(name: &str, layers: &[String]) {
+    let layers = layers
+        .iter()
+        .map(|l| koan_core::config::DspLayer {
+            profile: l.clone(),
+            on: true,
+        })
+        .collect();
+    profiles::set_layers(name, layers).unwrap_or_else(|e| fail(e));
+    println!("{} '{}'", "stacked".green(), name.bold());
+}
+
+/// Switch `layer` of `stack` on or off.
+pub fn cmd_dsp_layer(stack: &str, layer: &str, on: bool) {
+    let mut layers = profiles::detail(stack)
+        .unwrap_or_else(|| fail(format!("no profile called {stack}")))
+        .layers;
+    let Some(l) = layers.iter_mut().find(|l| l.profile == layer) else {
+        fail(format!("{layer} is not a layer of {stack}"));
+    };
+    l.on = on;
+    profiles::set_layers(stack, layers).unwrap_or_else(|e| fail(e));
+    println!("{layer} {} in {stack}", if on { "on" } else { "off" });
+}
+
+/// Add a target to choose from.
+pub fn cmd_dsp_add_target(path: &std::path::Path) {
+    let added = koan_core::audio::dsp::targets::add(path).unwrap_or_else(|e| fail(e));
+    println!(
+        "{} '{}' as {}",
+        "added".green(),
+        added.name.bold(),
+        added.id
+    );
 }
 
 pub fn cmd_dsp_remove(name: &str) {

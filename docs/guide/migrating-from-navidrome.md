@@ -18,7 +18,7 @@ These Navidrome features have no kōan equivalent today:
 - **Scrobbling to Last.fm** ([#773](https://github.com/radiosilence/koan/issues/773)). kōan forwards plays to ListenBrainz (see [Scrobbling](headless-server.md#scrobbling)), not to Last.fm.
 - **Serving under a sub-path** (`ND_BASEURL`, [#760](https://github.com/radiosilence/koan/issues/760)). kōan expects its own hostname.
 - **Per-library permissions** ([#762](https://github.com/radiosilence/koan/issues/762)). Every account sees the whole library.
-- **Server-side play queues** (`getPlayQueue`, `savePlayQueue`, [#764](https://github.com/radiosilence/koan/issues/764)) **and internet radio**, which is not planned. Clients that use these lose the feature against kōan; the rest of the client works.
+- **Internet radio**, which is not planned. Clients that use it lose the feature against kōan; the rest of the client works.
 
 ## Translating a Navidrome setup
 

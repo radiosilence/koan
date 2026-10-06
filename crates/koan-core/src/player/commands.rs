@@ -24,6 +24,11 @@ pub enum PlayerCommand {
     /// Pause, and answer with the playhead once the output has gone silent:
     /// after the fade, where one runs. What a hand-off resumes from.
     PauseAndReport(Sender<u64>),
+    /// Answer once every command sent before this one has been applied and
+    /// published: the queue, the cursor and the playback state all as they
+    /// left them. For a caller that must look at what it asked for, not at
+    /// what was there before.
+    Barrier(Sender<()>),
     Resume,
     Stop,
     Seek(u64), // position in ms

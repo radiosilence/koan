@@ -31,6 +31,7 @@ final class AppState {
     #if os(macOS)
     let textFocus = TextFocus()
     let hotkeys: Hotkeys
+    let residency = Residency()
     #endif
     private var nowPlaying: NowPlayingCentre?
 
@@ -125,5 +126,8 @@ final class AppState {
     func start() async {
         await player.start()
         await player.restoreSession()
+        #if os(macOS)
+        await residency.load(engine: engine)
+        #endif
     }
 }

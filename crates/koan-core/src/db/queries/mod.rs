@@ -8,6 +8,7 @@ mod bookmarks;
 mod favourites;
 pub mod history;
 pub mod lyrics;
+mod play_queues;
 pub mod playback_state;
 pub mod playlists;
 mod ratings;
@@ -32,6 +33,7 @@ pub use bookmarks::*;
 pub use favourites::*;
 pub use history::*;
 pub use lyrics::*;
+pub use play_queues::*;
 pub use playback_state::*;
 pub use playlists::*;
 pub use ratings::*;
@@ -79,7 +81,14 @@ pub fn atomically<T, E: From<rusqlite::Error>>(
     let result = f();
     match &result {
         Ok(_) => conn.execute_batch(commit)?,
-        Err(_) => conn.execute_batch(rollback)?,
+        // The work's own error is what the caller needs. A rollback that
+        // fails, as one does after something inside ended the transaction
+        // already, is logged rather than put in its place.
+        Err(_) => {
+            if let Err(e) = conn.execute_batch(rollback) {
+                log::warn!("rollback after a failed transaction: {e}");
+            }
+        }
     }
     result
 }

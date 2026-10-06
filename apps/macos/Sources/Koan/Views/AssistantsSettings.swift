@@ -1,0 +1,56 @@
+import KoanFFI
+import SwiftUI
+
+/// Where an AI assistant connects to the server: its MCP address, and the
+/// server's own page on adding it. Signing the assistant in happens there, in
+/// MCP's OAuth, not here.
+struct AssistantsSettings: View {
+    static let extensionName = "koanMcp"
+
+    @Environment(LibraryModel.self) private var library
+    @State private var assistants: Assistants?
+    @State private var error: String?
+    @State private var copied = false
+
+    var body: some View {
+        Section {
+            if let assistants {
+                LabeledContent("Address", value: assistants.mcpUrl)
+                    .selectableText()
+                #if !os(tvOS)
+                Button {
+                    Pasteboard.write(text: assistants.mcpUrl)
+                    copied = true
+                } label: {
+                    Label(copied ? "Copied" : "Copy Address", systemImage: "doc.on.doc")
+                }
+                .task(id: copied) {
+                    guard copied else { return }
+                    try? await Task.sleep(for: .seconds(1.5))
+                    copied = false
+                }
+                if let connect = URL(string: assistants.connectUrl) {
+                    Link(destination: connect) {
+                        Label("How to Connect an Assistant", systemImage: "arrow.up.right.square")
+                    }
+                }
+                #endif
+            } else if error == nil {
+                ProgressView()
+            }
+        } header: {
+            Text("Assistants")
+        } footer: {
+            Text(error ?? "Add the address to Claude or another assistant that speaks MCP as a custom connector. It signs in through your server, and can then search your library, make playlists and play music on your devices, as you.")
+                .font(.caption)
+                .foregroundStyle(error == nil ? .tertiary : .primary)
+        }
+        .task {
+            do {
+                assistants = try await library.engine.assistants()
+            } catch {
+                self.error = SettingsModel.describe(error)
+            }
+        }
+    }
+}

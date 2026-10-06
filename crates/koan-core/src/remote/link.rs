@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::net::TcpStream;
 use std::os::fd::RawFd;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -138,6 +139,14 @@ pub enum LinkCommand {
     Devices {
         devices: Vec<LinkDevice>,
     },
+    /// The public keys the account's devices, and devices shared with it,
+    /// prove themselves with on the local network (`koanDeviceKeys`). News,
+    /// as `Devices` is: sent when a device that registered a key links, and
+    /// whenever the account's keys change. From the server alone, never from
+    /// the network: it is what the network's claims are checked against.
+    DeviceKeys {
+        keys: Vec<LinkDeviceKey>,
+    },
     /// The accounts this device lets control it. News, as `Devices` is: sent
     /// when it links and whenever the list changes.
     Shares {
@@ -190,6 +199,13 @@ pub enum LinkCommand {
         from: String,
         f: crate::remote::levels::Frame,
     },
+    /// The device `from` answered the command this device sent it under
+    /// `ack`: see `remote::acks`. Relayed by the server; news, like `Levels`.
+    Acked {
+        from: String,
+        ack: u64,
+        outcome: crate::remote::acks::AckOutcome,
+    },
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -238,11 +254,13 @@ impl LinkCommand {
             Self::Sync { .. }
             | Self::Evict { .. }
             | Self::Devices { .. }
+            | Self::DeviceKeys { .. }
             | Self::Shares { .. }
             | Self::Shared { .. }
             | Self::Forgotten { .. }
             | Self::HistoryChanged
-            | Self::Levels { .. } => false,
+            | Self::Levels { .. }
+            | Self::Acked { .. } => false,
         }
     }
 
@@ -254,6 +272,52 @@ impl LinkCommand {
             self.allowed_playback().then_some(CommandSource::Nearby)
         } else {
             self.allowed_nearby().then_some(CommandSource::Stranger)
+        }
+    }
+
+    /// Whether a client may have the server relay this to another device:
+    /// the commands one device gives another. The server's own news (the
+    /// device list, the device keys, shares, forgettings, history) it alone
+    /// originates; relayed, a forged copy would read as the server's. Levels
+    /// go only between live links, by their own route. Exhaustive, so a new
+    /// variant is relayable only once someone decides it is.
+    pub fn relayable(&self) -> bool {
+        match self {
+            Self::Play { .. }
+            | Self::Enqueue { .. }
+            | Self::PlayNext { .. }
+            | Self::Remove { .. }
+            | Self::Clear
+            | Self::Sync { .. }
+            | Self::Evict { .. }
+            | Self::JumpTo { .. }
+            | Self::Seek { .. }
+            | Self::Pause
+            | Self::Resume
+            | Self::Next
+            | Self::Previous
+            | Self::PlayItem { .. }
+            | Self::RemoveItems { .. }
+            | Self::MoveItems { .. }
+            | Self::Insert { .. }
+            | Self::Undo
+            | Self::Redo
+            | Self::Shuffle { .. }
+            | Self::Repeat { .. }
+            | Self::SleepTimer { .. }
+            | Self::HandOff { .. }
+            | Self::SetOutput { .. }
+            | Self::SetRendererVolume { .. }
+            | Self::SetPreset { .. } => true,
+            Self::Devices { .. }
+            | Self::DeviceKeys { .. }
+            | Self::Acked { .. }
+            | Self::Shares { .. }
+            | Self::Shared { .. }
+            | Self::Forgotten { .. }
+            | Self::HistoryChanged
+            | Self::WatchLevels { .. }
+            | Self::Levels { .. } => false,
         }
     }
 
@@ -269,9 +333,11 @@ impl LinkCommand {
             Self::Sync { .. }
                 | Self::Evict { .. }
                 | Self::Devices { .. }
+                | Self::DeviceKeys { .. }
                 | Self::Forgotten { .. }
                 | Self::HistoryChanged
                 | Self::Levels { .. }
+                | Self::Acked { .. }
                 | Self::SetOutput { .. }
                 | Self::SetRendererVolume { .. }
                 | Self::SetPreset { .. }
@@ -314,6 +380,28 @@ pub enum CommandSource {
     Stranger,
 }
 
+/// A device's public key, as `LinkCommand::DeviceKeys` carries it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkDeviceKey {
+    /// The device's id.
+    pub id: String,
+    /// Base64 of its 32-byte Ed25519 public key.
+    pub key: String,
+    /// The account it belongs to, for a device shared with this one's: `None`
+    /// for the account's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+}
+
+/// Whether `key` is a public key a device may register: base64 of 32 bytes,
+/// the size of an Ed25519 public key.
+pub fn valid_device_key(key: &str) -> bool {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(key)
+        .is_ok_and(|bytes| bytes.len() == 32)
+}
+
 /// Another device on the same account, as the server sends it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -340,6 +428,10 @@ pub struct LinkDevice {
     /// for the account's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
+    /// It answers commands sent with an id, which the server relays: see
+    /// `remote::acks`. False from a server or a device that predates that.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub acks: bool,
 }
 
 impl LinkCommand {
@@ -365,11 +457,13 @@ impl LinkCommand {
             | Self::SleepTimer { .. }
             | Self::HandOff { .. }
             | Self::Devices { .. }
+            | Self::DeviceKeys { .. }
             | Self::Shares { .. }
             | Self::Forgotten { .. }
             | Self::HistoryChanged
             | Self::WatchLevels { .. }
             | Self::Levels { .. }
+            | Self::Acked { .. }
             | Self::SetOutput { .. }
             | Self::SetRendererVolume { .. }
             | Self::SetPreset { .. }
@@ -465,10 +559,25 @@ pub enum LinkReport {
         token: String,
         sandbox: bool,
     },
-    /// Send `command` to the device `to` on the same account.
+    /// Send `command` to the device `to` on the same account. `ack` asks the
+    /// server to relay `to`'s answer: see `remote::acks`. A server that
+    /// predates it ignores it.
     Command {
         to: String,
         command: LinkCommand,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ack: Option<u64>,
+    },
+    /// A command sent under `ack` has come off this device's link, before
+    /// it is acted on: what tells the server the link is alive, however long
+    /// the command then takes.
+    Received {
+        ack: u64,
+    },
+    /// This device's answer to a command sent to it under `ack`.
+    Ack {
+        ack: u64,
+        outcome: crate::remote::acks::AckOutcome,
     },
     /// Where to push updates to a Live Activity showing the device `device`;
     /// `None` for both when the activity has ended.
@@ -517,6 +626,14 @@ pub struct LinkHello {
     /// when it is signed in to none. Two devices with the same one share track
     /// ids, so music can be handed between them.
     pub library: Option<String>,
+    /// It answers commands sent with an id: see `remote::acks`. False from a
+    /// device that predates that.
+    #[serde(default)]
+    pub acks: bool,
+    /// From a listener that proves itself and asks the same of whoever
+    /// dialled it: the nonce to sign over. See `remote::proof`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
 }
 
 /// The server this client plays from, as something two devices can compare
@@ -603,7 +720,10 @@ impl LinkIdentity {
 pub struct Local {
     pub identity: LinkIdentity,
     pub state: Arc<dyn Fn() -> LinkState + Send + Sync>,
-    pub on_command: Arc<dyn Fn(LinkCommand, CommandSource) + Send + Sync>,
+    /// Act on a command. With a `Pending`, the sender waits for the answer:
+    /// finish it with the outcome once the command has been acted on.
+    pub on_command:
+        Arc<dyn Fn(LinkCommand, CommandSource, Option<crate::remote::acks::Pending>) + Send + Sync>,
 }
 
 /// Keep a link open to the configured server for as long as the process runs,
@@ -624,11 +744,30 @@ pub fn spawn(local: Local) {
 const RETRY_MIN: Duration = Duration::from_secs(2);
 const RETRY_MAX: Duration = Duration::from_secs(60);
 
+/// Moved at every sign-in and sign-out. A link opened under an earlier one
+/// is the last account's, and closes, to open again as whoever is signed in.
+static SIGN_IN: AtomicU64 = AtomicU64::new(0);
+
+/// The account changed: close the link that is up, which was opened for the
+/// last one, and link again now as the new one. A link carries an account's
+/// news, its device keys among them, and none of it is the next account's.
+pub fn relink() {
+    SIGN_IN.fetch_add(1, Ordering::SeqCst);
+    if let Some(up) = LINK.lock().as_ref() {
+        up.waker.wake();
+    }
+    nudge();
+}
+
 fn run(local: Local) {
     let mut wait = RETRY_MIN;
     loop {
         crate::quiet::wait_until_awake();
+        // Before the config is read: a sign-in after this closes the link
+        // about to open with what it read.
+        let signed_in = SIGN_IN.load(Ordering::SeqCst);
         let cfg = Config::load().unwrap_or_default();
+        let account = crate::remote::proof::account_of(&cfg);
         let Some(auth) = subsonic_auth(&cfg) else {
             rest(RETRY_MAX);
             continue;
@@ -656,7 +795,7 @@ fn run(local: Local) {
                     client.outage().retry_now();
                 }
                 wait = RETRY_MIN;
-                if let Err(e) = serve(&mut socket, fd, &local) {
+                if let Err(e) = serve(&mut socket, fd, &local, signed_in, account) {
                     log::info!("link: closed: {e}");
                 }
                 *LINK.lock() = None;
@@ -746,6 +885,10 @@ fn link_url(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<String, Stri
         return Err(format!("not an http(s) server: {}", auth.base_url));
     };
     let mut query = auth.query().map_err(|e| e.to_string())?;
+    // What this device proves itself with on the local network, registered
+    // against the API key the link signs in with. A server that predates
+    // device keys ignores it.
+    let device_key = crate::remote::proof::public_key().unwrap_or_default();
     for (k, v) in [
         ("client", identity.name.as_str()),
         ("platform", identity.platform.as_str()),
@@ -753,7 +896,14 @@ fn link_url(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<String, Stri
         // Send this link the account's other devices. A server that predates
         // them ignores it.
         ("devices", "1"),
+        // Answer commands sent with an id. A server that predates it ignores
+        // it, and relays none.
+        ("acks", "1"),
+        ("deviceKey", device_key.as_str()),
     ] {
+        if v.is_empty() {
+            continue;
+        }
         query.push('&');
         query.push_str(k);
         query.push('=');
@@ -762,7 +912,13 @@ fn link_url(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<String, Stri
     Ok(format!("{base}/rest/koanLink?{query}"))
 }
 
-fn serve(socket: &mut Socket, fd: RawFd, local: &Local) -> Result<(), String> {
+fn serve(
+    socket: &mut Socket,
+    fd: RawFd,
+    local: &Local,
+    signed_in: u64,
+    account: Option<String>,
+) -> Result<(), String> {
     let waker = Waker::new().map_err(|e| e.to_string())?;
     let watcher = waker.clone();
     wire::wake_on_engine_change(&waker);
@@ -778,6 +934,8 @@ fn serve(socket: &mut Socket, fd: RawFd, local: &Local) -> Result<(), String> {
         sent_activity: None,
         waker: watcher,
         levels: None,
+        signed_in,
+        account,
     };
     wire::drive(socket, fd, &waker, &mut session)
 }
@@ -791,6 +949,11 @@ struct LinkSession<'a> {
     /// Set while the server says a device of the account is watching this
     /// one's levels. It counts the watchers; this link holds one watch.
     levels: Option<crate::remote::levels::Watch>,
+    /// `SIGN_IN` when the config this link signed in with was read.
+    signed_in: u64,
+    /// The account it signed in as, which the device keys it is sent are
+    /// for (`proof::account_of`).
+    account: Option<String>,
 }
 
 impl wire::Session for LinkSession<'_> {
@@ -837,42 +1000,68 @@ impl wire::Session for LinkSession<'_> {
     }
 
     fn incoming(&mut self, text: &str) {
-        match serde_json::from_str::<LinkCommand>(text) {
-            Ok(LinkCommand::Devices { devices }) => {
+        let envelope = match serde_json::from_str::<crate::remote::acks::Envelope>(text) {
+            Ok(envelope) => envelope,
+            Err(e) => {
+                log::warn!("link: not a command ({e}): {text}");
+                return;
+            }
+        };
+        if let Some(ack) = envelope.ack {
+            report(LinkReport::Received { ack });
+        }
+        // Answered up this link, whichever thread finishes it.
+        let Some((command, pending)) = crate::remote::acks::take(envelope, |ack, outcome| {
+            report(LinkReport::Ack { ack, outcome });
+        }) else {
+            return;
+        };
+        match command {
+            LinkCommand::Acked { ack, outcome, .. } => {
+                crate::remote::acks::resolve(ack, outcome);
+            }
+            LinkCommand::Devices { devices } => {
                 crate::remote::devices::set_account(devices);
             }
-            Ok(LinkCommand::Shares {
+            LinkCommand::DeviceKeys { keys } => {
+                crate::remote::proof::keep(keys, self.account.clone());
+            }
+            LinkCommand::Shares {
                 grantees,
                 error,
                 accounts,
-            }) => {
+            } => {
                 crate::remote::devices::set_shares(grantees, error, accounts);
             }
-            Ok(LinkCommand::Shared { command }) => {
+            LinkCommand::Shared { command } => {
                 // Checked by the server, and again here: this device decides
                 // what another account may have it do.
                 if command.allowed_playback() {
-                    (self.local.on_command)(*command, CommandSource::Shared);
+                    (self.local.on_command)(*command, CommandSource::Shared, pending);
                 } else {
                     log::warn!("link: refused from a shared account: {command:?}");
+                    if let Some(pending) = pending {
+                        pending.finish(crate::remote::acks::AckOutcome::Refused {
+                            reason: "not allowed from another account".into(),
+                        });
+                    }
                 }
             }
-            Ok(LinkCommand::Forgotten { device }) => {
+            LinkCommand::Forgotten { device } => {
                 crate::remote::devices::forgotten(&device);
             }
-            Ok(LinkCommand::WatchLevels { on }) => {
+            LinkCommand::WatchLevels { on } => {
                 self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
             }
-            Ok(LinkCommand::Levels { from, f }) => {
+            LinkCommand::Levels { from, f } => {
                 crate::remote::levels::remote().received(&from, f);
             }
-            Ok(cmd) => (self.local.on_command)(cmd, CommandSource::Account),
-            Err(e) => log::warn!("link: not a command ({e}): {text}"),
+            cmd => (self.local.on_command)(cmd, CommandSource::Account, pending),
         }
     }
 
     fn done(&self) -> bool {
-        !crate::quiet::awake()
+        !crate::quiet::awake() || SIGN_IN.load(Ordering::SeqCst) != self.signed_in
     }
 }
 
@@ -1268,6 +1457,7 @@ mod tests {
         let report = LinkReport::Command {
             to: "phone".into(),
             command: LinkCommand::HandOff { to: "mac".into() },
+            ack: None,
         };
         let json = serde_json::to_string(&report).unwrap();
         assert_eq!(
@@ -1299,5 +1489,48 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let first = device_id(dir.path());
         assert_eq!(device_id(dir.path()), first);
+    }
+}
+
+#[cfg(test)]
+mod device_key_tests {
+    use super::*;
+
+    /// The keys are what a network peer's claims are checked against, so no
+    /// peer may send them: not a stranger, not under Full control, not a
+    /// shared account.
+    #[test]
+    fn device_keys_come_from_the_server_alone() {
+        let cmd = LinkCommand::DeviceKeys { keys: vec![] };
+        assert!(!cmd.allowed_nearby());
+        assert!(!cmd.allowed_playback());
+        assert_eq!(cmd.from_the_network(true), None);
+        assert_eq!(cmd.from_the_network(false), None);
+    }
+
+    #[test]
+    fn the_server_never_relays_its_own_news() {
+        for news in [
+            LinkCommand::DeviceKeys { keys: vec![] },
+            LinkCommand::Devices { devices: vec![] },
+            LinkCommand::HistoryChanged,
+            LinkCommand::Shared {
+                command: Box::new(LinkCommand::Pause),
+            },
+        ] {
+            assert!(!news.relayable(), "{news:?}");
+        }
+        assert!(LinkCommand::Pause.relayable());
+    }
+
+    #[test]
+    fn a_device_key_is_32_bytes_of_base64() {
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        assert!(valid_device_key(&b64.encode([7u8; 32])));
+        assert!(!valid_device_key(&b64.encode([7u8; 31])));
+        assert!(!valid_device_key(&b64.encode([7u8; 33])));
+        assert!(!valid_device_key("not base64!"));
+        assert!(!valid_device_key(""));
     }
 }

@@ -47,6 +47,29 @@ final class SettingsModel {
         try engine.shareDevice(grantee: account, allow: allow)
     }
 
+    // MARK: - Play queue on the server
+
+    /// What the server holds, asked before keeping the queue there: that
+    /// replaces this device's queue with it.
+    func serverQueue() async -> ServerQueue? {
+        do {
+            return try await engine.serverQueue()
+        } catch {
+            lastError = Self.describe(error)
+            return nil
+        }
+    }
+
+    func setServerQueue(_ on: Bool) async {
+        do {
+            try await engine.setServerQueue(on: on)
+            lastError = nil
+        } catch {
+            lastError = Self.describe(error)
+        }
+        settings = await engine.settings()
+    }
+
     // MARK: - Editing
 
     /// Mutate a field and write the result. Every control commits through here,
@@ -244,6 +267,20 @@ final class SettingsModel {
                 lastError = Self.describe(e)
             }
             reload()
+        }
+    }
+
+    /// Change the signed-in account's password. This device stays signed in;
+    /// the account's others have to sign in again.
+    func changePassword(current: String, new: String) async -> Bool {
+        do {
+            try await engine.changeOwnPassword(current: current, password: new)
+            lastError = nil
+            lastResult = "Password changed. Your other devices will have to sign in again."
+            return true
+        } catch {
+            lastError = Self.describe(error)
+            return false
         }
     }
 
