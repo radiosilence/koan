@@ -3,6 +3,7 @@ pub mod client;
 pub mod devices;
 pub mod download;
 pub mod downloads;
+pub mod dsp_sync;
 pub mod history;
 pub mod levels;
 pub mod link;

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use super::import::Imported;
 use super::{Setup, convolver, raw};
-use crate::config::{self, Config, DspProfile};
+use crate::config::{self, Config, DspProfile, DspScope};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Summary {
@@ -189,6 +189,10 @@ pub struct Detail {
     pub problem: Option<String>,
     /// Profiles it plays first, for a stack.
     pub layers: Vec<crate::config::DspLayer>,
+    /// Kept on every device of the account, rather than this one alone.
+    pub everywhere: bool,
+    /// Where it is kept was chosen, rather than following from what it is.
+    pub scope_set: bool,
 }
 
 /// Everything in the profile `name`.
@@ -243,6 +247,8 @@ pub fn detail(name: &str) -> Option<Detail> {
         preamp_set: profile.preamp_db.is_some(),
         layers: profile.layers.clone(),
         problem,
+        everywhere: scope(profile, &cfg.dsp.profiles) == DspScope::Everywhere,
+        scope_set: profile.scope.is_some(),
     })
 }
 
@@ -308,6 +314,7 @@ fn persist(
 ) -> Result<(), crate::config::ConfigError> {
     Config::persist(mutate)?;
     crate::signal::engine_changed().bump();
+    crate::remote::dsp_sync::changed();
     Ok(())
 }
 
@@ -639,9 +646,118 @@ fn stacks_of(cfg: &Config, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// Where `profile` is kept: as set, or as follows from what it is. A room
+/// or speaker correction, with impulse responses, or one for an output that
+/// stays put (built in, or an amplifier on the network) is this device's; a
+/// headphone correction from AutoEQ is the account's, since headphones move
+/// between devices; a stack is the account's when every layer is.
+pub fn scope(profile: &DspProfile, all: &[DspProfile]) -> DspScope {
+    scope_in(profile, all, &mut Vec::new())
+}
+
+fn scope_in(profile: &DspProfile, all: &[DspProfile], seen: &mut Vec<String>) -> DspScope {
+    if let Some(scope) = profile.scope {
+        return scope;
+    }
+    if !profile.impulses.is_empty() {
+        return DspScope::Device;
+    }
+    if profile.target.is_some() {
+        return DspScope::Everywhere;
+    }
+    if !profile.layers.is_empty() {
+        if seen.contains(&profile.name) {
+            return DspScope::Device;
+        }
+        seen.push(profile.name.clone());
+        let everywhere = profile.layers.iter().all(|l| {
+            all.iter()
+                .find(|p| p.name == l.profile)
+                .is_some_and(|p| scope_in(p, all, seen) == DspScope::Everywhere)
+        });
+        return if everywhere {
+            DspScope::Everywhere
+        } else {
+            DspScope::Device
+        };
+    }
+    if profile.devices.iter().any(|d| stays_put(d)) {
+        return DspScope::Device;
+    }
+    DspScope::Everywhere
+}
+
+/// An output that does not travel: built in, an amplifier on the network
+/// (named by its UDN), or a phone's own speaker.
+fn stays_put(device: &str) -> bool {
+    device.starts_with("uuid:")
+        || device == "Speaker"
+        || crate::audio::list_output_devices().is_ok_and(|devices| {
+            devices
+                .iter()
+                .any(|d| d.name == device && d.kind == crate::audio::backend::OutputKind::BuiltIn)
+        })
+}
+
+/// The first of `layers` kept on this device alone, which a stack kept
+/// everywhere cannot play on the account's other devices.
+fn local_layer<'a>(layers: &'a [crate::config::DspLayer], all: &[DspProfile]) -> Option<&'a str> {
+    layers
+        .iter()
+        .find(|l| {
+            all.iter()
+                .find(|p| p.name == l.profile)
+                .is_some_and(|p| scope(p, all) == DspScope::Device)
+        })
+        .map(|l| l.profile.as_str())
+}
+
+fn kept_here(stack: &str, layer: &str) -> String {
+    format!(
+        "{layer} is kept on this device, so {stack}, which is kept everywhere, \
+         could not play it on your other devices. Keep {layer} everywhere, or {stack} on this device"
+    )
+}
+
+/// Keep `name` everywhere or on this device alone. A stack kept everywhere
+/// cannot have a layer kept here: refused either way round.
+pub fn set_scope(name: &str, to: DspScope) -> Result<(), String> {
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    let profile = all
+        .iter()
+        .find(|p| p.name == name)
+        .ok_or_else(|| format!("No profile called {name}"))?;
+    match to {
+        DspScope::Everywhere => {
+            if let Some(layer) = local_layer(&profile.layers, all) {
+                return Err(kept_here(name, layer));
+            }
+        }
+        DspScope::Device => {
+            if let Some(stack) = all.iter().find(|p| {
+                p.layers.iter().any(|l| l.profile == name) && scope(p, all) == DspScope::Everywhere
+            }) {
+                return Err(format!(
+                    "{name} is a layer of {}, which is kept everywhere and would lose it on \
+                     your other devices. Keep {} on this device first",
+                    stack.name, stack.name
+                ));
+            }
+        }
+    }
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.scope = Some(to);
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
 /// Make `name` a stack of `layers`, in order, creating it if there is none.
 /// Refused where it could not play: a layer missing, a layer of itself, one
-/// with impulse responses.
+/// with impulse responses, one kept on this device under a stack kept
+/// everywhere.
 pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() {
@@ -665,6 +781,11 @@ pub fn set_layers(name: &str, layers: Vec<crate::config::DspLayer>) -> Result<()
         l.on = true;
     }
     super::chain(&check, &all, &mut Vec::new()).map_err(|e| e.to_string())?;
+    if everywhere_by_choice(&all, name)
+        && let Some(layer) = local_layer(&layers, &all)
+    {
+        return Err(kept_here(name, layer));
+    }
     persist(|cfg| profile_mut(&mut cfg.dsp.profiles, name).layers = layers)
         .map_err(|e| e.to_string())
 }
@@ -686,6 +807,14 @@ pub fn remove(name: &str) -> Result<(), String> {
 
 pub fn set_enabled(enabled: bool) -> Result<(), String> {
     persist(|cfg| cfg.dsp.enabled = enabled).map_err(|e| e.to_string())
+}
+
+/// Whether `name` is kept everywhere by choice: a stack kept so only because
+/// its layers are follows them instead.
+fn everywhere_by_choice(all: &[DspProfile], name: &str) -> bool {
+    all.iter()
+        .find(|p| p.name == name)
+        .is_some_and(|p| p.scope == Some(DspScope::Everywhere))
 }
 
 fn profile_mut<'a>(profiles: &'a mut Vec<DspProfile>, name: &str) -> &'a mut DspProfile {
@@ -1102,5 +1231,88 @@ mod tests {
         assert_eq!(filters().len(), 1);
         assert!(remove_filter("Mine", 3).is_err());
         assert!(add_band("Nobody").is_err());
+    }
+
+    /// A headphone correction travels and a room correction stays; a stack
+    /// follows its layers unless set; a stack kept everywhere cannot have a
+    /// layer kept here, either way round.
+    #[test]
+    fn where_a_profile_is_kept() {
+        use crate::config::{DspLayer, DspTarget};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 650".into(),
+                filters: vec![band(1000.0)],
+                target: Some(DspTarget {
+                    made_for: "harman-over-ear-2018".into(),
+                    chosen: None,
+                }),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Room".into(),
+                impulses: vec!["dsp/room/48000.wav".into()],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Bass".into(),
+                filters: vec![band(80.0)],
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Amp".into(),
+                filters: vec![band(80.0)],
+                devices: vec!["uuid:5f9ec1b3-ed59-79bb-4530-745e2b1d1b10".into()],
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let kept = |name: &str| {
+            let cfg = Config::cached();
+            let p = cfg
+                .dsp
+                .profiles
+                .iter()
+                .find(|p| p.name == name)
+                .unwrap()
+                .clone();
+            scope(&p, &cfg.dsp.profiles)
+        };
+        assert_eq!(kept("HD 650"), DspScope::Everywhere);
+        assert_eq!(kept("Room"), DspScope::Device);
+        assert_eq!(kept("Bass"), DspScope::Everywhere);
+        assert_eq!(
+            kept("Amp"),
+            DspScope::Device,
+            "an amplifier stays where it is"
+        );
+
+        let layer = |p: &str| DspLayer {
+            profile: p.into(),
+            on: true,
+        };
+        set_layers("Desk", vec![layer("HD 650"), layer("Bass")]).unwrap();
+        assert_eq!(kept("Desk"), DspScope::Everywhere);
+        set_layers("Speakers", vec![layer("Amp"), layer("Bass")]).unwrap();
+        assert_eq!(
+            kept("Speakers"),
+            DspScope::Device,
+            "a stack here may use shared layers"
+        );
+
+        set_scope("Desk", DspScope::Everywhere).unwrap();
+        let refused = set_layers("Desk", vec![layer("HD 650"), layer("Amp")]).unwrap_err();
+        assert!(refused.contains("Amp is kept on this device"), "{refused}");
+        let refused = set_scope("Bass", DspScope::Device).unwrap_err();
+        assert!(refused.contains("Bass is a layer of Desk"), "{refused}");
+        set_scope("Speakers", DspScope::Everywhere).unwrap_err();
+        set_scope("Desk", DspScope::Device).unwrap();
+        set_scope("Bass", DspScope::Device).unwrap();
+        assert_eq!(kept("Bass"), DspScope::Device);
     }
 }

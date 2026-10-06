@@ -55,6 +55,7 @@ struct DspProfilePage: View {
                 }
 
                 LayersSection(dsp: dsp, detail: d)
+                ScopeSection(dsp: dsp, detail: d)
 
                 if let t = targets {
                     TargetSection(dsp: dsp, profile: d.name, targets: t, adding: $addingTarget)
@@ -315,6 +316,37 @@ private struct ImpulseRow: View {
         if ir.mixes { parts.append("mixes channels") }
         if ir.delayed { parts.append("delays channels") }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Where a profile is kept: on every device signed in to the account's kōan
+/// server, or on this one alone.
+private struct ScopeSection: View {
+    let dsp: DspModel
+    let detail: DspProfileDetail
+
+    var body: some View {
+        Section {
+            Picker("Kept", selection: Binding(
+                get: { detail.everywhere },
+                set: { dsp.setScope(detail.name, everywhere: $0) }
+            )) {
+                Text("On every device").tag(true)
+                Text("On this device").tag(false)
+            }
+            if let problem = detail.syncProblem {
+                Label(problem, systemImage: "exclamationmark.icloud")
+                    .foregroundStyle(.orange)
+            }
+        } header: {
+            Text("Kept")
+        } footer: {
+            Text(detail.everywhere
+                 ? "Synced through your kōan server to every device signed in to the account. Which output plays it stays each device's own."
+                 : "Never leaves this device. Moving a profile here from every device removes it from the others.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
     }
 }
 

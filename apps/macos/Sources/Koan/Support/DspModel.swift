@@ -242,6 +242,11 @@ final class DspModel {
         act { try await $0.dspSetLayers(name: name, layers: layers) }
     }
 
+    /// Keep `name` on every device of the account, or on this one alone.
+    func setScope(_ name: String, everywhere: Bool) {
+        act { try await $0.dspSetScope(name: name, everywhere: everywhere) }
+    }
+
     /// Set band `index` of `name`.
     func setBand(_ name: String, _ index: Int, kind: String, freq: Double, gain: Double, q: Double) {
         act {

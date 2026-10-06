@@ -205,6 +205,46 @@ Q to 0.1–20. Delays, mixes and graphic curves are shown but not edited here,
 and a correction's measurement is not changed by editing its bands, so the
 Headphone view shows the effect of each edit on it.
 
+## On every device
+
+Signed in to a kōan server, a profile can be kept on every device of the
+account. Each profile is kept either **On every device** or **On this device**,
+chosen on its page. One kept on every device is synced through the server:
+filters, preamp, target, layers and the files in its folder (impulse responses,
+a routing `.cfg`, AutoEQ's measurement). Which output plays it is not synced,
+since the headphones on a Mac's DAC are not the AirPods on a phone; each device
+assigns it to its own outputs.
+
+Where it is kept follows from what it is until chosen. A correction installed
+from AutoEQ, a profile of bands made by hand, and a stack whose layers are all
+kept everywhere go everywhere: headphones move between devices. A profile with
+impulse responses, a room or speaker correction, stays on its device, as does
+one assigned to a built-in output or a network amplifier. The first time a
+device syncs, the profiles it already had stay on it unless they came from
+AutoEQ, so nothing leaves a device that was not made to travel or chosen to.
+
+A stack kept everywhere cannot have a layer kept on one device, since the other
+devices would not have it: adding one is refused, as is moving a layer of such
+a stack to one device. A stack kept on one device may layer profiles kept
+everywhere, such as a speaker correction with a shared bass shelf on top.
+
+Each profile carries an id of its own, so a rename reaches every device. When
+two devices change one profile, the later change wins, counted from when it
+was made, so a change made offline keeps its time. A deletion reaches every
+device; so does moving a profile to one device, which removes it from the
+others. A stack elsewhere that layered it reports the missing layer. The same
+profile made on two devices before either synced, such as one headphone
+installed from AutoEQ on both, becomes one profile; two different profiles of
+one name keep both, the second renamed with a number.
+
+A file may be up to 32 MB, and an account's files up to 256 MB together. A
+profile past either stays on its device, and its page says it could not be
+kept. Turning down AutoEQ's suggestion for an output holds on every device.
+
+The server keeps the profiles in its database, per account, and offers them as
+the `koanDspProfiles` extension. Against a server without it, profiles stay on
+each device as before.
+
 ## Sample rates
 
 An impulse response is only correct at the rate it was designed for. When a

@@ -623,6 +623,25 @@ pub struct DspProfile {
     /// layers is a stack. See `audio::dsp::Setup::load`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<DspLayer>,
+    /// Whether it is the account's, kept on every device signed in to its
+    /// kōan server, or this device's alone. Unset, it follows from what the
+    /// profile is: see `audio::dsp::profiles::scope`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<DspScope>,
+    /// What every device calls it, made when it is first shared. Its name may
+    /// change; this does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
+}
+
+/// Where a profile is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DspScope {
+    /// The account's: synced through its kōan server to its other devices.
+    Everywhere,
+    /// This device's: never uploaded.
+    Device,
 }
 
 /// One profile played as part of another.
@@ -2206,6 +2225,8 @@ fps = 30
             source: vec![],
             target: None,
             layers: vec![],
+            scope: None,
+            uid: None,
         };
         Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
 

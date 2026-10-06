@@ -617,7 +617,9 @@ pub fn dismiss(device: &str) -> Result<(), String> {
             cfg.dsp.autoeq_dismissed.push(device.to_owned());
         }
     })
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    crate::remote::dsp_sync::changed();
+    Ok(())
 }
 
 /// `entry`'s parametric EQ, as AutoEQ writes it, made into a profile import

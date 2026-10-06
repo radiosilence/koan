@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+The library database moves from schema 20 to 21. The upgrade only adds tables: the EQ profiles a server keeps for its accounts, and a device's record of what it synced. Every existing row is kept as it was, and the upgrade runs in one transaction. Builds older than this one refuse a schema-21 database, so going back means restoring a copy taken before upgrading.
+
 ### Added
+
+- **EQ profiles on every device.** Signed in to a kōan server, a profile kept On every device is synced to the account's other devices: filters, preamp, target, layers and its files, but not which output plays it. AutoEQ corrections and profiles of bands go everywhere until chosen otherwise; room and speaker corrections stay on their device, as does everything a device had before it first synced, unless it came from AutoEQ. The later change to a profile wins, deletions reach every device, and a stack kept everywhere cannot layer a profile kept on one device. The server offers this as `koanDspProfiles`, reached only with the account's password or an API key.
 
 - **Scrobbling is set up in the apps.** Settings → Server → Scrobbling in the Mac and iOS apps connects the account's ListenBrainz with its user token, shows how many plays are waiting and any token ListenBrainz stopped accepting, and disconnects; the Apple TV shows the connection. It is offered where the server lists the `koanScrobbling` extension, through which the server checks and keeps the token and never returns it. The web UI's Scrobbling page does the same.
 - **Assistants in the apps.** Settings → Server shows the server's MCP address to copy and links to its page on connecting Claude or another assistant, where the server knows its public address (`sharing.public_url`). The server offers this as `koanMcp`.
