@@ -6,6 +6,10 @@
 
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
+### Fixed
+
+- **Subsonic clients showed no hearts outside the starred list.** Songs, albums and artists never carried `starred`, so a client that reads it on album pages, search results and album lists showed nothing as favourited. They now carry the time the account favourited them, as `getStarred2` always implied.
+
 ## 0.56.0
 
 ### Added

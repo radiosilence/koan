@@ -1286,6 +1286,10 @@ fn track_node(track: &queries::TrackRow, tag: &str, extras: &SongExtras) -> XmlN
             "played",
             extras.played.get(&track.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt(
+            "starred",
+            extras.starred.get(&track.id).map(|&at| iso(at)).as_deref(),
+        )
         .attr_opt_int(
             "userRating",
             extras.rating.get(&track.id).map(|&r| r.into()),
@@ -1370,6 +1374,10 @@ fn album_to_xml_node(album: &queries::AlbumRow, extras: &AlbumExtras) -> XmlNode
             "played",
             extras.played.get(&album.id).map(|&at| iso(at)).as_deref(),
         )
+        .attr_opt(
+            "starred",
+            extras.starred.get(&album.id).map(|&at| iso(at)).as_deref(),
+        )
         .attr_opt_int(
             "userRating",
             extras.rating.get(&album.id).map(|&r| r.into()),
@@ -1409,6 +1417,10 @@ fn artist_id3_node(id: i64, name: &str, extras: &ArtistExtras) -> XmlNode {
         .attr("musicBrainzId", mbid.unwrap_or_default())
         .attr("sortName", sort_name.unwrap_or_default())
         .attr_opt_int("userRating", extras.rating.get(&id).map(|&r| r.into()))
+        .attr_opt(
+            "starred",
+            extras.starred.get(&id).map(|&at| iso(at)).as_deref(),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -1454,6 +1466,8 @@ struct SongExtras {
     played: HashMap<i64, i64>,
     /// The caller's rating, 1 to 5.
     rating: HashMap<i64, u8>,
+    /// When the caller favourited it, seconds since the epoch.
+    starred: HashMap<i64, i64>,
 }
 
 /// The caller's own history: when someone else last played a track is theirs
@@ -1505,6 +1519,7 @@ fn song_extras<'a>(
             queries::RatingKind::Track,
             tracks.iter().map(|t| t.id),
         )?,
+        starred: starred(db, user, Favourite::Track, &ids)?,
     })
 }
 
@@ -1518,6 +1533,41 @@ fn rated(
     queries::ratings(&db.conn, user, kind, ids).map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
+enum Favourite {
+    Track,
+    Album,
+    Artist,
+}
+
+/// When the caller favourited these rows (`ids` as from [`json_ids`]), seconds
+/// since the epoch. `user` is already resolved.
+fn starred(
+    db: &Database,
+    user: i64,
+    kind: Favourite,
+    ids: &str,
+) -> Result<HashMap<i64, i64>, SubsonicError> {
+    let sql = match kind {
+        Favourite::Track => {
+            "SELECT track_id, COALESCE(unixepoch(created_at), 0) FROM favourites
+             WHERE track_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
+        }
+        Favourite::Album => {
+            "SELECT album_id, COALESCE(unixepoch(created_at), 0) FROM favourite_albums
+             WHERE album_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
+        }
+        Favourite::Artist => {
+            "SELECT artist_id, COALESCE(unixepoch(created_at), 0) FROM favourite_artists
+             WHERE artist_id IN (SELECT value FROM json_each(?1)) AND user_id = ?2"
+        }
+    };
+    Ok(by_id(db, sql, rusqlite::params![ids, user], |r| {
+        Ok((r.get(0)?, r.get(1)?))
+    })?
+    .into_iter()
+    .collect())
+}
+
 /// What `AlbumID3` carries beyond `AlbumRow`.
 #[derive(Default)]
 struct AlbumExtras {
@@ -1528,6 +1578,7 @@ struct AlbumExtras {
     stats: HashMap<i64, queries::AlbumStats>,
     played: HashMap<i64, i64>,
     rating: HashMap<i64, u8>,
+    starred: HashMap<i64, i64>,
 }
 
 /// `tracks`, when the caller already read every track of these albums, is
@@ -1599,6 +1650,7 @@ fn album_extras<'a>(
             queries::RatingKind::Album,
             album_ids.iter().copied(),
         )?,
+        starred: starred(db, user, Favourite::Album, &ids)?,
     })
 }
 
@@ -1631,6 +1683,7 @@ struct ArtistExtras {
     /// MusicBrainz artist id and sort name.
     names: HashMap<i64, (Option<String>, Option<String>)>,
     rating: HashMap<i64, u8>,
+    starred: HashMap<i64, i64>,
 }
 
 fn artist_extras(
@@ -1639,13 +1692,15 @@ fn artist_extras(
     ids: impl IntoIterator<Item = i64>,
 ) -> Result<ArtistExtras, SubsonicError> {
     let ids: Vec<i64> = ids.into_iter().collect();
+    let json = json_ids(ids.iter().copied());
     Ok(ArtistExtras {
         uids: Uids::load(db, ids.iter().copied(), [], [])?,
         rating: rated(db, user, queries::RatingKind::Artist, ids.iter().copied())?,
+        starred: starred(db, history_user(db, user)?, Favourite::Artist, &json)?,
         names: by_id(
             db,
             "SELECT id, mbid, sort_name FROM artists WHERE id IN (SELECT value FROM json_each(?1))",
-            [json_ids(ids)],
+            [&json],
             |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))),
         )?
         .into_iter()
@@ -6414,6 +6469,80 @@ mod tests {
 
         rate(gamma_album, "0").await;
         assert_eq!(album_list2(&state, "type=highest").await, ["Alpha"]);
+    }
+
+    #[tokio::test]
+    async fn favourites_carry_starred_in_json_and_xml() {
+        let (state, _dir) = test_state();
+        let [alpha, beta, _] = seed_shelves(&state)[..] else {
+            unreachable!()
+        };
+        let uids = |track| {
+            let db = Database::open(state.pool.path()).unwrap();
+            let row = queries::get_track_row(&db.conn, track).unwrap().unwrap();
+            (
+                uid_of(&state, queries::UidKind::Track, track),
+                uid_of(&state, queries::UidKind::Album, row.album_id.unwrap()),
+                uid_of(&state, queries::UidKind::Artist, row.artist_id.unwrap()),
+            )
+        };
+        let (song, album, artist) = uids(alpha);
+        let (_, other_album, other_artist) = uids(beta);
+        json_of(
+            build_test_router(state.clone()),
+            &format!(
+                "/rest/star?{}&id={song}&albumId={album}&artistId={artist}",
+                auth_query("f=json")
+            ),
+        )
+        .await;
+        let get = |path: String| {
+            let state = state.clone();
+            async move {
+                json_of(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("f=json")),
+                )
+                .await
+            }
+        };
+        let is_iso = |v: &serde_json::Value| {
+            v.as_str()
+                .is_some_and(|s| s.len() == 24 && s.contains('T') && s.ends_with('Z'))
+        };
+
+        let v = get(format!("getAlbum?id={album}")).await;
+        assert!(is_iso(&v["album"]["starred"]), "{v}");
+        assert!(is_iso(&v["album"]["song"][0]["starred"]), "{v}");
+        let v = get(format!("getArtist?id={artist}")).await;
+        assert!(is_iso(&v["artist"]["starred"]), "{v}");
+        assert!(is_iso(&v["artist"]["album"][0]["starred"]), "{v}");
+        let v = get("search3?query=Alpha".to_owned()).await;
+        assert!(is_iso(&v["searchResult3"]["song"][0]["starred"]), "{v}");
+
+        let v = get(format!("getAlbum?id={other_album}")).await;
+        assert!(v["album"]["starred"].is_null(), "{v}");
+        assert!(v["album"]["song"][0]["starred"].is_null(), "{v}");
+        let v = get(format!("getArtist?id={other_artist}")).await;
+        assert!(v["artist"]["starred"].is_null(), "{v}");
+
+        let xml = |path: String| {
+            let state = state.clone();
+            async move {
+                get_response(
+                    build_test_router(state),
+                    &format!("/rest/{path}&{}", auth_query("")),
+                )
+                .await
+                .1
+            }
+        };
+        let body = xml(format!("getAlbum?id={album}")).await;
+        assert_eq!(body.matches(" starred=\"").count(), 2, "{body}");
+        let body = xml(format!("getArtist?id={artist}")).await;
+        assert_eq!(body.matches(" starred=\"").count(), 2, "{body}");
+        let body = xml(format!("getAlbum?id={other_album}")).await;
+        assert!(!body.contains(" starred=\""), "{body}");
     }
 
     #[tokio::test]
