@@ -24,6 +24,16 @@ final class DspModel {
     var lastError: String?
     /// An import waiting on the rate of what it was given.
     var needsRate: Pending?
+    /// AutoEQ's results for the last search.
+    private(set) var autoEqResults: [AutoEqEntry] = []
+    /// The makers in AutoEQ's index, to browse when nothing is typed.
+    private(set) var autoEqMakers: [AutoEqMaker] = []
+    /// Moves with every search, so one that returns after a newer one began
+    /// is dropped rather than shown for the wrong query.
+    private var autoEqSearch = 0
+    /// AutoEQ's profile for the output in use, by its name, while the output
+    /// has none and the offer has not been turned down.
+    private(set) var suggestion: AutoEqOffer?
 
     enum Pending {
         case files([URL], name: String?)
@@ -35,7 +45,10 @@ final class DspModel {
     }
 
     func reload() {
-        Task { overview = await engine.dspOverview() }
+        Task {
+            overview = await engine.dspOverview()
+            suggestion = await engine.autoeqSuggestion()
+        }
     }
 
     /// The route changed: what the Now Playing preset names and assigns to
@@ -96,6 +109,66 @@ final class DspModel {
         version += 1
     }
 
+    // MARK: - AutoEQ
+
+    /// Search AutoEQ by headphone name. The view debounces; this runs once
+    /// per settled query.
+    func searchAutoEq(_ query: String) async {
+        autoEqSearch += 1
+        let search = autoEqSearch
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else {
+            autoEqResults = []
+            return
+        }
+        do {
+            let found = try await engine.autoeqSearch(query: trimmed, limit: 40)
+            guard search == autoEqSearch else { return }
+            autoEqResults = found
+        } catch {
+            guard search == autoEqSearch else { return }
+            lastError = SettingsModel.describe(error)
+        }
+    }
+
+    /// The makers to browse, read once and kept for as long as the model:
+    /// the index changes daily at most.
+    func loadAutoEqMakers() async {
+        guard autoEqMakers.isEmpty else { return }
+        do {
+            autoEqMakers = try await engine.autoeqMakers()
+        } catch {
+            lastError = SettingsModel.describe(error)
+        }
+    }
+
+    /// `maker`'s results, by model.
+    func autoEqModels(_ maker: String) async -> [AutoEqEntry] {
+        do {
+            return try await engine.autoeqModels(maker: maker)
+        } catch {
+            lastError = SettingsModel.describe(error)
+            return []
+        }
+    }
+
+    /// Install `entry` as a profile and play the output in use through it.
+    func installAutoEq(_ entry: AutoEqEntry) {
+        let device = overview?.device
+        act {
+            _ = try await $0.autoeqInstall(
+                name: entry.name, measuredBy: entry.measuredBy, device: device
+            )
+        }
+        suggestion = nil
+    }
+
+    /// Stop offering AutoEQ's profile for the output in use.
+    func dismissSuggestion() {
+        suggestion = nil
+        act { try await $0.autoeqDismiss() }
+    }
+
     // MARK: - Choosing
 
     /// Play the output in use through `profile`, or untouched.
@@ -140,6 +213,57 @@ final class DspModel {
         }
     }
 
+    /// The targets `name`'s correction can be moved to.
+    func targets(_ name: String) async -> DspTargets? {
+        await engine.dspTargets(name: name)
+    }
+
+    /// Move `name`'s correction to `id`, or with nil back to its own target.
+    func chooseTarget(_ name: String, _ id: String?) {
+        act { try await $0.dspChooseTarget(name: name, id: id) }
+    }
+
+    /// Add a target from a file, picked or shared: security-scoped, readable
+    /// only while held open.
+    func addTarget(_ url: URL) async {
+        let held = url.startAccessingSecurityScopedResource()
+        defer { if held { url.stopAccessingSecurityScopedResource() } }
+        do {
+            _ = try await engine.dspAddTarget(path: url.path)
+            lastError = nil
+            await changed()
+        } catch {
+            lastError = SettingsModel.describe(error)
+        }
+    }
+
+    /// Make `name` a stack of `layers`, in order; creates it if there is none.
+    func setLayers(_ name: String, _ layers: [DspLayerInfo]) {
+        act { try await $0.dspSetLayers(name: name, layers: layers) }
+    }
+
+    /// Set band `index` of `name`.
+    func setBand(_ name: String, _ index: Int, kind: String, freq: Double, gain: Double, q: Double) {
+        act {
+            try await $0.dspSetBand(
+                name: name, index: UInt32(index), kind: kind, freq: freq, gainDb: gain, q: q
+            )
+        }
+    }
+
+    func addBand(_ name: String) {
+        act { _ = try await $0.dspAddBand(name: name) }
+    }
+
+    func removeFilter(_ name: String, _ index: Int) {
+        act { try await $0.dspRemoveFilter(name: name, index: UInt32(index)) }
+    }
+
+    /// What `name` does to the sound, at 48 kHz, for the graph.
+    func response(_ name: String) async -> DspResponse? {
+        await engine.dspResponse(name: name, rate: 48000)
+    }
+
     func detail(_ name: String) async -> DspProfileDetail? {
         await engine.dspDetail(name: name)
     }
@@ -162,6 +286,7 @@ final class DspModel {
 
     static func describe(_ p: DspProfileSummary) -> String {
         var parts: [String] = []
+        if p.layers > 0 { parts.append("\(p.layers) \(p.layers == 1 ? "layer" : "layers")") }
         if p.bands > 0 { parts.append("\(p.bands) \(p.bands == 1 ? "filter" : "filters")") }
         if !p.rates.isEmpty {
             parts.append(p.rates.map(khz).joined(separator: ", ") + " kHz")

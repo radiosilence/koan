@@ -62,6 +62,8 @@ struct SettingsView: View {
                         .tabItem { Label("Server", systemImage: "server.rack") }
                     PlaybackSettings(model: model)
                         .tabItem { Label("Playback", systemImage: "hifispeaker") }
+                    EqSettings()
+                        .tabItem { Label("EQ", systemImage: "slider.vertical.3") }
                     DevicesSettings(model: model)
                         .tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
                     AppearanceSettings()
@@ -86,6 +88,10 @@ struct SettingsView: View {
                     }
                     pane("Playback", "hifispeaker") {
                         PlaybackSettings(model: model)
+                            .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                    }
+                    pane("EQ", "slider.vertical.3") {
+                        EqSettings()
                             .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                     }
                     pane("Devices", "laptopcomputer.and.iphone") {
@@ -672,18 +678,53 @@ private struct PlaybackSettings: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-
-            DspSettings()
         }
         .formStyle(.grouped)
     }
 }
 
+/// EQ for the output in use: what its profile does to the sound, drawn,
+/// then the profiles and where they come from. A page of its own: the graph
+/// wants the room, and a correction is chosen, shaped and checked here.
+struct EqSettings: View {
+    @Environment(AppState.self) private var app
+    @State private var response: DspResponse?
+    @State private var detail: DspProfileDetail?
+
+    private var active: String? { app.dsp.overview?.active }
+
+    var body: some View {
+        Form {
+            if let active, let response, let detail {
+                Section {
+                    EqGraph(response: response, handles: BandTable.handles(detail.bands)) { index, hz, db in
+                        let b = detail.bands[index]
+                        app.dsp.setBand(active, index, kind: b.kind, freq: hz, gain: db, q: b.q)
+                    }
+                } header: {
+                    Text(active)
+                }
+                BandTable(dsp: app.dsp, profile: active, bands: detail.bands)
+            }
+            DspSettings()
+        }
+        .formStyle(.grouped)
+        .task(id: "\(active ?? "")\u{0}\(app.dsp.version)") {
+            response = if let active { await app.dsp.response(active) } else { nil }
+            detail = if let active { await app.dsp.detail(active) } else { nil }
+        }
+    }
+}
+
 /// Correction for the output in use: a profile of bands, impulse responses or
 /// both, imported from what other tools write.
-private struct DspSettings: View {
+struct DspSettings: View {
     @Environment(AppState.self) private var app
     @State private var importing = false
+    @State private var findingAutoEq = false
+    /// What Find in AutoEQ opens searching for: empty from its button, a
+    /// model from an offer for the output in use.
+    @State private var findQuery = ""
     /// The profile whose page is open, on the Mac, where settings has no
     /// navigation stack to push it onto.
     @State private var showing: String?
@@ -708,6 +749,14 @@ private struct DspSettings: View {
                     }
                     .disabled(!o.enabled)
                 }
+                #if !os(tvOS)
+                if let offer = dsp.suggestion, o.device != nil {
+                    AutoEqSuggestion(offer: offer, dsp: dsp) { query in
+                        findQuery = query
+                        findingAutoEq = true
+                    }
+                }
+                #endif
                 ForEach(o.profiles, id: \.name) { p in
                     #if os(iOS)
                     NavigationLink {
@@ -735,6 +784,10 @@ private struct DspSettings: View {
             // imported on another device, and the TV picks them by output.
             #if !os(tvOS)
             Button("Import…") { importing = true }
+            Button("Find in AutoEQ…") {
+                findQuery = ""
+                findingAutoEq = true
+            }
             #endif
             if let error = dsp.lastError {
                 Text(error)
@@ -744,7 +797,7 @@ private struct DspSettings: View {
         } header: {
             Text("EQ and convolution")
         } footer: {
-            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs. Importing into a profile of the same name adds to it. An output without a profile plays untouched.")
+            Text("AutoEQ and Equalizer APO text, impulse WAVs, Roon zips, Convolver .cfg and CamillaDSP configs, or a headphone found in AutoEQ by name. Importing into a profile of the same name adds to it. An output without a profile plays untouched.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
@@ -758,6 +811,11 @@ private struct DspSettings: View {
             }
         }
         .task { dsp.reload() }
+        #if !os(tvOS)
+        .sheet(isPresented: $findingAutoEq) {
+            AutoEqSearch(dsp: dsp, query: findQuery)
+        }
+        #endif
         #if os(macOS)
         .sheet(item: Binding(
             get: { showing.map(ShownProfile.init) },
@@ -776,6 +834,146 @@ private struct DspSettings: View {
         #endif
     }
 }
+
+#if !os(tvOS)
+/// The output in use, recognised by its name as a headphone AutoEQ has
+/// measured, or roughly so: its profile, or a search for its model to pick
+/// the right one from. Offered once, quietly; nothing is applied until asked.
+private struct AutoEqSuggestion: View {
+    let offer: AutoEqOffer
+    let dsp: DspModel
+    let find: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch offer {
+            case let .profile(entry):
+                Text("AutoEQ has a profile for \(entry.name). Use it?")
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("Use") { dsp.installAutoEq(entry) }
+                    dismiss
+                    Spacer()
+                }
+            case let .search(query):
+                HStack {
+                    Button("Find \(query) in AutoEQ…") { find(query) }
+                    dismiss
+                    Spacer()
+                }
+            }
+        }
+        .buttonStyle(.borderless)
+        .font(.callout)
+    }
+
+    private var dismiss: some View {
+        Button("Not for This Device") { dsp.dismissSuggestion() }
+            .foregroundStyle(.secondary)
+    }
+}
+
+/// AutoEQ's results by headphone name. Choosing one installs it and plays the
+/// output in use through it.
+private struct AutoEqSearch: View {
+    let dsp: DspModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var query: String
+
+    init(dsp: DspModel, query: String = "") {
+        self.dsp = dsp
+        _query = State(initialValue: query)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if query.isEmpty {
+                    // Nothing typed: the makers, each opening its models.
+                    List(dsp.autoEqMakers, id: \.name) { maker in
+                        NavigationLink {
+                            AutoEqModels(dsp: dsp, maker: maker.name) { dismiss() }
+                        } label: {
+                            LabeledContent(maker.name, value: "\(maker.results)")
+                        }
+                    }
+                    .task { await dsp.loadAutoEqMakers() }
+                } else {
+                    List(dsp.autoEqResults, id: \.profileName) { entry in
+                        AutoEqRow(entry: entry) {
+                            dsp.installAutoEq(entry)
+                            dismiss()
+                        }
+                    }
+                    .overlay {
+                        if dsp.autoEqResults.isEmpty {
+                            ContentUnavailableView.search(text: query)
+                        }
+                    }
+                }
+            }
+            .searchable(text: $query, prompt: "Headphone")
+            .navigationTitle("AutoEQ")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            // Debounced: a search runs once typing pauses, not per keystroke.
+            .task(id: query) {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                await dsp.searchAutoEq(query)
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 420, minHeight: 460)
+        #endif
+    }
+}
+#endif
+
+#if !os(tvOS)
+/// One AutoEQ result: the headphone, and who measured it.
+private struct AutoEqRow: View {
+    let entry: AutoEqEntry
+    let choose: () -> Void
+
+    var body: some View {
+        Button(action: choose) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.name)
+                Text(entry.measuredBy)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A maker's results, by model; where several people measured one, the one
+/// AutoEQ recommends comes first. Choosing one installs it and closes the
+/// search.
+private struct AutoEqModels: View {
+    let dsp: DspModel
+    let maker: String
+    let done: () -> Void
+    @State private var models: [AutoEqEntry] = []
+
+    var body: some View {
+        List(models, id: \.profileName) { entry in
+            AutoEqRow(entry: entry) {
+                dsp.installAutoEq(entry)
+                done()
+            }
+        }
+        .navigationTitle(maker)
+        .task { models = await dsp.autoEqModels(maker) }
+    }
+}
+#endif
 
 private struct ShownProfile: Identifiable {
     let name: String

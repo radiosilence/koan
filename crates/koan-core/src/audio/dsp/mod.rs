@@ -25,6 +25,7 @@ pub mod impulse;
 pub mod profiles;
 pub mod raw;
 mod steps;
+pub mod targets;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -45,6 +46,128 @@ use crate::config::{DspFilter, DspProfile};
 pub enum DspError {
     #[error("{}: {reason}", path.display())]
     Impulse { path: PathBuf, reason: String },
+    /// A target the profile was made for or moved to that cannot be read.
+    #[error("no target called {0}")]
+    Target(String),
+    /// A layer that cannot be played: missing, a layer of itself, or one
+    /// with impulse responses.
+    #[error("{0}")]
+    Layer(String),
+}
+
+/// How deep layers may nest: a stack of stacks of stacks, and so on.
+const MAX_LAYER_DEPTH: usize = 8;
+/// The most filters a stack may expand to. A layer played twice, or a
+/// diamond of stacks sharing layers, copies its filters each time; past this
+/// the stack is refused rather than grown without bound.
+const MAX_CHAIN_FILTERS: usize = 256;
+/// The most layers a stack may visit while resolving, however few filters
+/// they hold: a diamond of empty stacks costs time if not memory.
+const MAX_LAYER_VISITS: usize = 1024;
+
+/// The level `filters` leave channel 0 at, in dB, at each of `freqs`, as
+/// the DSP runs them at `rate`: the same plan, and the same gain the derived
+/// preamp is worked out from. A graphic curve counts as its design, which
+/// its minimum-phase FIR follows; delays change no level.
+pub fn response(filters: &[DspFilter], freqs: &[f64], rate: u32) -> Vec<f64> {
+    let plan = steps::plan(filters, rate, 2);
+    freqs
+        .iter()
+        .map(|&hz| {
+            let w = std::f64::consts::TAU * hz / rate as f64;
+            let gain: f64 = steps::gain_matrix(&plan, 2, w, rate)[0].iter().sum();
+            20.0 * gain.max(1e-6).log10()
+        })
+        .collect()
+}
+
+/// The filters `profile` plays: each layer that is on, in order, as that
+/// layer plays it, then its own, then the step moving it to another target.
+/// `stack` holds the profiles being resolved, which a cycle would come back
+/// to. A layer is EQ alone: impulse responses belong to the profile that
+/// plays them, and two stacks of responses would make one profile's rates
+/// another's. Refused past `MAX_LAYER_DEPTH`, `MAX_CHAIN_FILTERS` or
+/// `MAX_LAYER_VISITS`, so no stack, however edited, can grow the chain
+/// without bound.
+pub fn chain(
+    profile: &DspProfile,
+    all: &[DspProfile],
+    stack: &mut Vec<String>,
+) -> Result<Vec<DspFilter>, DspError> {
+    let mut visits = 0;
+    resolve(profile, all, stack, &mut visits)
+}
+
+fn resolve(
+    profile: &DspProfile,
+    all: &[DspProfile],
+    stack: &mut Vec<String>,
+    visits: &mut usize,
+) -> Result<Vec<DspFilter>, DspError> {
+    if stack.contains(&profile.name) {
+        return Err(DspError::Layer(format!(
+            "{} is a layer of itself, through {}",
+            profile.name,
+            stack.join(" → ")
+        )));
+    }
+    if stack.len() >= MAX_LAYER_DEPTH {
+        return Err(DspError::Layer(format!(
+            "{} nests layers more than {MAX_LAYER_DEPTH} deep",
+            stack[0]
+        )));
+    }
+    *visits += 1;
+    if *visits > MAX_LAYER_VISITS {
+        return Err(DspError::Layer(format!(
+            "{} reaches its layers more than {MAX_LAYER_VISITS} times over",
+            stack.first().unwrap_or(&profile.name)
+        )));
+    }
+    stack.push(profile.name.clone());
+    let mut out = Vec::new();
+    let too_many = |stack: &[String]| {
+        DspError::Layer(format!(
+            "{} comes to more than {MAX_CHAIN_FILTERS} filters with its layers",
+            stack[0]
+        ))
+    };
+    for layer in profile.layers.iter().filter(|l| l.on) {
+        let p = all
+            .iter()
+            .find(|p| p.name == layer.profile)
+            .ok_or_else(|| {
+                DspError::Layer(format!(
+                    "{} has no profile {} to layer",
+                    profile.name, layer.profile
+                ))
+            })?;
+        if !p.impulses.is_empty() {
+            return Err(DspError::Layer(format!(
+                "{} has impulse responses, and only EQ can be a layer",
+                p.name
+            )));
+        }
+        out.extend(resolve(p, all, stack, visits)?);
+        if out.len() > MAX_CHAIN_FILTERS {
+            return Err(too_many(stack));
+        }
+    }
+    out.extend(profile.filters.iter().cloned());
+    // Another target than the one the correction was made for: their
+    // difference, after the correction.
+    if let Some(t) = &profile.target
+        && let Some(chosen) = t.chosen.as_ref().filter(|c| **c != t.made_for)
+    {
+        let curve = |id: &str| targets::choice_curve(id).ok_or(DspError::Target(id.into()));
+        let (from, to) = (curve(&t.made_for)?, curve(chosen)?);
+        out.push(DspFilter::Graphic(targets::difference(&from, &to)));
+    }
+    if out.len() > MAX_CHAIN_FILTERS && stack.len() > 1 {
+        return Err(too_many(stack));
+    }
+    stack.pop();
+    Ok(out)
 }
 
 /// What is being done to the audio, for the format badge.
@@ -73,23 +196,26 @@ pub struct Setup {
 
 impl Setup {
     /// `None` for a profile that would leave the audio as it is.
-    pub fn load(profile: &DspProfile, base: &Path) -> Result<Option<Self>, DspError> {
+    /// `all` is every profile, which a stack's layers are found among.
+    pub fn load(
+        profile: &DspProfile,
+        all: &[DspProfile],
+        base: &Path,
+    ) -> Result<Option<Self>, DspError> {
         let mut impulses: BTreeMap<u32, Vec<Impulse>> = BTreeMap::new();
         for path in &profile.impulses {
             for impulse in load_impulses(path, base)? {
                 impulses.entry(impulse.rate).or_default().push(impulse);
             }
         }
-        if profile.filters.is_empty()
-            && impulses.is_empty()
-            && profile.preamp_db.unwrap_or(0.0) == 0.0
-        {
+        let filters = chain(profile, all, &mut Vec::new())?;
+        if filters.is_empty() && impulses.is_empty() && profile.preamp_db.unwrap_or(0.0) == 0.0 {
             return Ok(None);
         }
         Ok(Some(Self {
             name: profile.name.clone(),
             preamp_db: profile.preamp_db,
-            filters: profile.filters.clone(),
+            filters,
             impulses,
         }))
     }
@@ -105,6 +231,71 @@ impl Setup {
             let plan = plan(&self.filters, rate, channels);
             -20.0 * peak_gain(&plan, impulse, channels, rate).log10().max(0.0)
         })
+    }
+
+    /// What the profile does at each of `freqs`, in dB, on the first of two
+    /// channels, for a source at `rate`: its filters, then its impulse
+    /// response at the rate it plays at. Routes add by magnitude, as for the
+    /// derived preamp; the preamp itself is not included.
+    pub fn response(&self, freqs: &[f64], rate: u32) -> Vec<f64> {
+        let rate = self.output_rate(rate);
+        let Some(impulse) = self
+            .impulses
+            .get(&rate)
+            .and_then(|at_rate| at_rate.iter().find(|i| i.fits(2)))
+        else {
+            return response(&self.filters, freqs, rate);
+        };
+        let plan = plan(&self.filters, rate, 2);
+        let routes = impulse.routes_for(2);
+        let size = impulse.taps().next_power_of_two().max(8192);
+        let fft = RealFftPlanner::<f64>::new().plan_fft_forward(size);
+        let magnitudes: Vec<Vec<f64>> = routes
+            .iter()
+            .map(|r| {
+                let mut input = fft.make_input_vec();
+                for (d, &s) in input.iter_mut().zip(&r.ir) {
+                    *d = s as f64;
+                }
+                let mut spectrum = fft.make_output_vec();
+                if fft.process(&mut input, &mut spectrum).is_err() {
+                    return vec![0.0; spectrum.len()];
+                }
+                spectrum.iter().map(|b| b.norm()).collect()
+            })
+            .collect();
+        freqs
+            .iter()
+            .map(|&hz| {
+                let w = std::f64::consts::TAU * hz / rate as f64;
+                let gains: Vec<f64> = gain_matrix(&plan, 2, w, rate)
+                    .iter()
+                    .map(|row| row.iter().sum())
+                    .collect();
+                // Between the two bins either side of `hz`.
+                let k = hz * size as f64 / rate as f64;
+                let gain: f64 = routes
+                    .iter()
+                    .zip(&magnitudes)
+                    .map(|(r, m)| {
+                        let i = (k.floor() as usize).min(m.len() - 1);
+                        let next = m[(i + 1).min(m.len() - 1)];
+                        let at = m[i] + (next - m[i]) * (k - i as f64).clamp(0.0, 1.0);
+                        let fed: f64 = r
+                            .inputs
+                            .iter()
+                            .map(|&(c, g)| g.abs() as f64 * gains.get(c).copied().unwrap_or(1.0))
+                            .sum();
+                        r.outputs
+                            .iter()
+                            .filter(|&&(o, _)| o == 0)
+                            .map(|&(_, g)| at * fed * g.abs() as f64)
+                            .sum::<f64>()
+                    })
+                    .sum();
+                20.0 * gain.max(1e-6).log10()
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -617,7 +808,11 @@ mod tests {
             name: "flat".into(),
             ..Default::default()
         };
-        assert!(Setup::load(&profile, Path::new("/")).unwrap().is_none());
+        assert!(
+            Setup::load(&profile, &[], Path::new("/"))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -659,6 +854,23 @@ mod tests {
         let mut ir = vec![0.0; delay * 2 + 1];
         ir[delay] = 1.0;
         Impulse::from_channels(rate, vec![ir])
+    }
+
+    /// The drawn response carries the impulse response, after the filters.
+    #[test]
+    fn a_response_includes_the_impulse() {
+        let half = Impulse::from_channels(48000, vec![vec![0.5]]);
+        let peak = DspFilter::Band(crate::config::EqFilter {
+            kind: crate::config::EqFilterKind::Peaking,
+            freq: 1000.0,
+            gain_db: 3.0,
+            q: 1.0,
+            channels: vec![],
+        });
+        let setup = Setup::new(vec![peak], vec![half]);
+        let db = setup.response(&[20.0, 1000.0], 48000);
+        assert!((db[0] + 6.02).abs() < 0.05, "{db:?}");
+        assert!((db[1] + 3.02).abs() < 0.1, "{db:?}");
     }
 
     #[test]
@@ -816,7 +1028,7 @@ mod tests {
             impulses: vec!["ir.wav".into()],
             ..Default::default()
         };
-        let setup = Setup::load(&profile, &dir).unwrap().unwrap();
+        let setup = Setup::load(&profile, &[], &dir).unwrap().unwrap();
         let impulse = &setup.impulses[&96000][0];
         assert_eq!(impulse.channels, Some(2));
         assert_eq!(impulse.routes[0].ir, vec![0.0, 0.5, 0.0, 0.0]);
@@ -826,6 +1038,6 @@ mod tests {
             impulses: vec!["nope.wav".into()],
             ..profile
         };
-        assert!(Setup::load(&missing, &dir).is_err());
+        assert!(Setup::load(&missing, &[], &dir).is_err());
     }
 }

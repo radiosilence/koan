@@ -1094,6 +1094,73 @@ pub enum KoanError {
     NeedsSampleRate { message: String },
 }
 
+/// What to offer the output in use about AutoEQ.
+#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
+pub enum AutoEqOffer {
+    /// Its profile: the name says which headphone it is.
+    Profile { entry: AutoEqEntry },
+    /// A search to pick from: the name says only roughly.
+    Search { query: String },
+}
+
+/// A headphone target a correction can be moved to.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspTargetOption {
+    /// What `dspChooseTarget` takes.
+    pub id: String,
+    pub name: String,
+    /// What it sounds like, in a line; empty for one a person added.
+    pub character: String,
+}
+
+/// The target a correction was made for, the one chosen, and the others.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspTargets {
+    pub made_for: DspTargetOption,
+    /// Unset when it plays as made.
+    pub chosen: Option<String>,
+    pub choices: Vec<DspTargetOption>,
+}
+
+impl From<koan_core::audio::dsp::profiles::TargetChoice> for DspTargetOption {
+    fn from(c: koan_core::audio::dsp::profiles::TargetChoice) -> Self {
+        Self {
+            id: c.id,
+            name: c.name,
+            character: c.character,
+        }
+    }
+}
+
+/// A maker in AutoEQ's index.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct AutoEqMaker {
+    pub name: String,
+    /// How many results it has, sources counted apart.
+    pub results: u32,
+}
+
+/// A headphone's result in AutoEQ's index.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct AutoEqEntry {
+    pub name: String,
+    /// Who measured it, and on which rig where they used several: what tells
+    /// two results for one headphone apart, and what installing names.
+    pub measured_by: String,
+    /// What the profile installed from it is called.
+    pub profile_name: String,
+}
+
+impl From<&koan_core::audio::dsp::autoeq::Entry> for AutoEqEntry {
+    fn from(e: &koan_core::audio::dsp::autoeq::Entry) -> Self {
+        Self {
+            name: e.name.clone(),
+            measured_by: e.measured_by(),
+            profile_name: e.profile_name(),
+        }
+    }
+}
+
 /// The DSP profiles, and which the current output plays through.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct DspOverview {
@@ -1113,10 +1180,74 @@ pub struct DspProfileSummary {
     pub name: String,
     pub devices: Vec<String>,
     pub bands: u32,
+    /// Profiles it plays first, for a stack.
+    pub layers: u32,
     /// Rates there are impulse responses for.
     pub rates: Vec<u32>,
     /// Why it would not load, if it would not.
     pub problem: Option<String>,
+}
+
+/// A curve on `DspResponse.freqs`, in dB.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspCurve {
+    pub db: Vec<f64>,
+}
+
+/// A layer of a stack, as it plays alone.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspLayerCurve {
+    pub name: String,
+    pub on: bool,
+    pub db: Vec<f64>,
+}
+
+/// What a profile does to the sound, computed from the filters the DSP
+/// runs, for drawing.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspResponse {
+    pub freqs: Vec<f64>,
+    /// Everything it plays.
+    pub total: Vec<f64>,
+    /// Each of its own parametric bands alone.
+    pub bands: Vec<DspCurve>,
+    pub layers: Vec<DspLayerCurve>,
+    /// For an AutoEQ correction: the headphone as measured, its target, and
+    /// the measurement with everything applied.
+    pub measurement: Option<Vec<f64>>,
+    pub target: Option<Vec<f64>>,
+    pub predicted: Option<Vec<f64>>,
+    pub preamp_db: f64,
+}
+
+impl From<koan_core::audio::dsp::profiles::Response> for DspResponse {
+    fn from(r: koan_core::audio::dsp::profiles::Response) -> Self {
+        Self {
+            freqs: r.freqs,
+            total: r.total,
+            bands: r.bands.into_iter().map(|db| DspCurve { db }).collect(),
+            layers: r
+                .layers
+                .into_iter()
+                .map(|l| DspLayerCurve {
+                    name: l.name,
+                    on: l.on,
+                    db: l.db,
+                })
+                .collect(),
+            measurement: r.measurement,
+            target: r.target,
+            predicted: r.predicted,
+            preamp_db: r.preamp_db,
+        }
+    }
+}
+
+/// A profile played as part of a stack.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspLayerInfo {
+    pub profile: String,
+    pub on: bool,
 }
 
 /// Everything in one profile, for its page in Settings.
@@ -1133,6 +1264,8 @@ pub struct DspProfileDetail {
     pub preamp_rate: u32,
     pub preamp_set: bool,
     pub problem: Option<String>,
+    /// Profiles it plays first, in order.
+    pub layers: Vec<DspLayerInfo>,
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1267,6 +1400,14 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
             preamp_rate: d.preamp_rate,
             preamp_set: d.preamp_set,
             problem: d.problem,
+            layers: d
+                .layers
+                .into_iter()
+                .map(|l| DspLayerInfo {
+                    profile: l.profile,
+                    on: l.on,
+                })
+                .collect(),
         }
     }
 }
@@ -1285,6 +1426,7 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     name: p.name,
                     devices: p.devices,
                     bands: p.bands as u32,
+                    layers: p.layers as u32,
                     rates: p.rates,
                     problem: p.problem,
                 })

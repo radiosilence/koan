@@ -10,6 +10,9 @@ struct DspProfilePage: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var detail: DspProfileDetail?
+    @State private var response: DspResponse?
+    @State private var targets: DspTargets?
+    @State private var addingTarget = false
     @State private var editingName = ""
     @State private var confirmingDelete = false
 
@@ -21,6 +24,14 @@ struct DspProfilePage: View {
             }
 
             if let d = detail {
+                if let r = response {
+                    Section {
+                        EqGraph(response: r, handles: BandTable.handles(d.bands)) { index, hz, db in
+                            let b = d.bands[index]
+                            dsp.setBand(name, index, kind: b.kind, freq: hz, gain: db, q: b.q)
+                        }
+                    }
+                }
                 if let problem = d.problem {
                     Section {
                         Label(problem, systemImage: "exclamationmark.triangle.fill")
@@ -43,6 +54,12 @@ struct DspProfilePage: View {
                     }
                 }
 
+                LayersSection(dsp: dsp, detail: d)
+
+                if let t = targets {
+                    TargetSection(dsp: dsp, profile: d.name, targets: t, adding: $addingTarget)
+                }
+
                 if !d.impulses.isEmpty {
                     Section {
                         ForEach(Array(d.impulses.enumerated()), id: \.offset) { _, ir in
@@ -57,13 +74,7 @@ struct DspProfilePage: View {
                     }
                 }
 
-                if !d.bands.isEmpty {
-                    Section("Filters") {
-                        ForEach(Array(d.bands.enumerated()), id: \.offset) { _, band in
-                            BandRow(band: band)
-                        }
-                    }
-                }
+                BandTable(dsp: dsp, profile: name, bands: d.bands)
 
                 Section {
                     LabeledContent("Preamp", value: "\(String(format: "%.1f", d.preampDb)) dB")
@@ -93,6 +104,17 @@ struct DspProfilePage: View {
         .formStyle(.grouped)
         .navigationTitle(name)
         .task(id: dsp.version) { await load() }
+        #if !os(tvOS)
+        .filePicker(
+            isPresented: $addingTarget,
+            allowedContentTypes: [.commaSeparatedText, .plainText, .text, .item],
+            allowsMultipleSelection: false
+        ) { result in
+            if case let .success(urls) = result, let url = urls.first {
+                Task { await dsp.addTarget(url) }
+            }
+        }
+        #endif
         .confirmationDialog(
             "Delete \(name)?",
             isPresented: $confirmingDelete,
@@ -109,6 +131,8 @@ struct DspProfilePage: View {
 
     private func load() async {
         detail = await dsp.detail(name)
+        response = await dsp.response(name)
+        targets = await dsp.targets(name)
         editingName = name
     }
 
@@ -124,6 +148,131 @@ struct DspProfilePage: View {
             } else {
                 editingName = name
             }
+        }
+    }
+}
+
+/// The profiles a stack plays first, in order, each switched on or off: a
+/// headphone's correction, then taste on top of it. Any profile can become a
+/// stack; one with impulse responses cannot be a layer.
+private struct LayersSection: View {
+    let dsp: DspModel
+    let detail: DspProfileDetail
+
+    private var layers: [DspLayerInfo] { detail.layers }
+
+    /// Profiles that could be added: not this one, not already in, and EQ
+    /// alone.
+    private var addable: [DspProfileSummary] {
+        (dsp.overview?.profiles ?? []).filter { p in
+            p.name != detail.name
+                && p.rates.isEmpty
+                && !layers.contains { $0.profile == p.name }
+        }
+    }
+
+    var body: some View {
+        Section {
+            ForEach(Array(layers.enumerated()), id: \.element.profile) { index, layer in
+                Toggle(isOn: Binding(
+                    get: { layer.on },
+                    set: { on in
+                        var changed = layers
+                        changed[index].on = on
+                        dsp.setLayers(detail.name, changed)
+                    }
+                )) {
+                    Text(layer.profile)
+                }
+                #if !os(tvOS)
+                .contextMenu {
+                    Button("Move Up") { move(index, by: -1) }
+                        .disabled(index == 0)
+                    Button("Move Down") { move(index, by: 1) }
+                        .disabled(index == layers.count - 1)
+                    Button("Remove from Stack", role: .destructive) { remove(index) }
+                }
+                #endif
+            }
+            #if os(iOS)
+            .onMove { from, to in
+                var changed = layers
+                changed.move(fromOffsets: from, toOffset: to)
+                dsp.setLayers(detail.name, changed)
+            }
+            .onDelete { offsets in
+                var changed = layers
+                changed.remove(atOffsets: offsets)
+                dsp.setLayers(detail.name, changed)
+            }
+            #endif
+            if !addable.isEmpty {
+                Menu("Add a Layer") {
+                    ForEach(addable, id: \.name) { p in
+                        Button(p.name) {
+                            dsp.setLayers(detail.name, layers + [DspLayerInfo(profile: p.name, on: true)])
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Layers")
+        } footer: {
+            Text(layers.isEmpty
+                 ? "Play other profiles first, in order, each switched on or off: a headphone's correction, then a bass shelf or a tilt on top."
+                 : "Played in order, before this profile's own filters. A layer switched off plays nothing.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func move(_ index: Int, by step: Int) {
+        var changed = layers
+        changed.swapAt(index, index + step)
+        dsp.setLayers(detail.name, changed)
+    }
+
+    private func remove(_ index: Int) {
+        var changed = layers
+        changed.remove(at: index)
+        dsp.setLayers(detail.name, changed)
+    }
+}
+
+/// The target an AutoEQ correction was made for, and another to move it to:
+/// their difference plays after the correction.
+private struct TargetSection: View {
+    let dsp: DspModel
+    let profile: String
+    let targets: DspTargets
+    @Binding var adding: Bool
+
+    private var current: String { targets.chosen ?? targets.madeFor.id }
+
+    var body: some View {
+        Section {
+            Picker("Correct to", selection: Binding(
+                get: { current },
+                set: { id in dsp.chooseTarget(profile, id == targets.madeFor.id ? nil : id) }
+            )) {
+                ForEach(targets.choices, id: \.id) { c in
+                    Text(c.name).tag(c.id)
+                }
+            }
+            if let c = targets.choices.first(where: { $0.id == current }), !c.character.isEmpty {
+                Text(c.character)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            #if !os(tvOS)
+            Button("Add a Target…") { adding = true }
+            #endif
+        } header: {
+            Text("Target")
+        } footer: {
+            Text("Made for \(targets.madeFor.name). Another target plays as the difference between the two, after the correction. A target you add is a CSV of frequency and level, or a squig.link export.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
         }
     }
 }
@@ -169,7 +318,7 @@ private struct ImpulseRow: View {
     }
 }
 
-private struct BandRow: View {
+struct BandRow: View {
     let band: DspBand
 
     var body: some View {

@@ -2635,6 +2635,257 @@ impl KoanEngine {
         .await
     }
 
+    /// AutoEQ's results whose names match `query`, best first. The first
+    /// search of the day may fetch the index.
+    pub async fn autoeq_search(
+        self: Arc<Self>,
+        query: String,
+        limit: u32,
+    ) -> Result<Vec<AutoEqEntry>, KoanError> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Daily)
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(autoeq::search(&entries, &query, limit as usize)
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// The makers in AutoEQ's index, alphabetically, with how many results
+    /// each has.
+    pub async fn autoeq_makers(self: Arc<Self>) -> Result<Vec<AutoEqMaker>, KoanError> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Daily)
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(autoeq::makers(&entries)
+                .into_iter()
+                .map(|(name, results)| AutoEqMaker {
+                    name,
+                    results: results as u32,
+                })
+                .collect())
+        })
+        .await
+    }
+
+    /// `maker`'s results, by model, AutoEQ's preferred source first within
+    /// each.
+    pub async fn autoeq_models(
+        self: Arc<Self>,
+        maker: String,
+    ) -> Result<Vec<AutoEqEntry>, KoanError> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Daily)
+                .map_err(|message| KoanError::Remote { message })?;
+            Ok(autoeq::models(&entries, &maker)
+                .into_iter()
+                .map(Into::into)
+                .collect())
+        })
+        .await
+    }
+
+    /// Install the AutoEQ result `name`, measured by `measured_by`, as a
+    /// profile, and play `device` through it if given. Answers with the
+    /// profile's name.
+    pub async fn autoeq_install(
+        self: Arc<Self>,
+        name: String,
+        measured_by: String,
+        device: Option<String>,
+    ) -> Result<String, KoanError> {
+        // The download can take as long as GitHub does, so it stays off the
+        // lane transport commands queue on; only the assignment goes there.
+        let profile = offload::offload(move || {
+            use koan_core::audio::dsp::autoeq;
+            let entries = autoeq::index(autoeq::Freshness::Kept)
+                .map_err(|message| KoanError::Remote { message })?;
+            let entry = autoeq::find(&entries, &name, Some(&measured_by)).ok_or_else(|| {
+                KoanError::NotFound {
+                    message: format!("{name} is no longer in AutoEQ's index"),
+                }
+            })?;
+            autoeq::install(entry).map_err(|message| KoanError::Remote { message })
+        })
+        .await?;
+        offload::sequenced(move || {
+            match device {
+                Some(device) => self.assign_dsp(Some(profile.clone()), &device)?,
+                None => self.send_local(PlayerCommand::ReloadDsp)?,
+            }
+            Ok(profile)
+        })
+        .await
+    }
+
+    /// The AutoEQ result the output in use is, by its name, while it has no
+    /// profile and the suggestion has not been turned down. `None` for a
+    /// renderer, whose name is the user's to choose.
+    pub async fn autoeq_suggestion(self: Arc<Self>) -> Option<AutoEqOffer> {
+        use koan_core::audio::dsp::autoeq::{self, Offer};
+        offload::offload(move || {
+            if self.state.renderer().is_some() {
+                return None;
+            }
+            let device = koan_core::audio::dsp::profiles::current_device()?;
+            Some(match autoeq::suggestion(&device).ok().flatten()? {
+                Offer::Profile(e) => AutoEqOffer::Profile { entry: (&e).into() },
+                Offer::Search(query) => AutoEqOffer::Search { query },
+            })
+        })
+        .await
+    }
+
+    /// Stop suggesting an AutoEQ profile for the output in use.
+    pub async fn autoeq_dismiss(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            let device = self.dsp_device().ok_or(KoanError::Audio {
+                message: "no output device".into(),
+            })?;
+            koan_core::audio::dsp::autoeq::dismiss(&device)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// The targets `name`'s correction can be moved to, for one installed
+    /// from AutoEQ whose target is known.
+    pub async fn dsp_targets(self: Arc<Self>, name: String) -> Option<DspTargets> {
+        offload::offload(move || {
+            let t = koan_core::audio::dsp::profiles::target_choices(&name)?;
+            Some(DspTargets {
+                made_for: DspTargetOption {
+                    id: t.made_for.id.into(),
+                    name: t.made_for.name.into(),
+                    character: t.made_for.character.into(),
+                },
+                chosen: t.chosen,
+                choices: t.choices.into_iter().map(Into::into).collect(),
+            })
+        })
+        .await
+    }
+
+    /// Move `name`'s correction to the target `id`, or with `None` back to the
+    /// one it was made for.
+    pub async fn dsp_choose_target(
+        self: Arc<Self>,
+        name: String,
+        id: Option<String>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::choose_target(&name, id.as_deref())
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Add a target from a CSV of frequency and level, or a squig.link
+    /// export, to choose from for every correction of its kind.
+    pub async fn dsp_add_target(
+        self: Arc<Self>,
+        path: String,
+    ) -> Result<DspTargetOption, KoanError> {
+        offload::offload(move || {
+            let added = koan_core::audio::dsp::targets::add(std::path::Path::new(&path))
+                .map_err(|message| KoanError::BadArgument { message })?;
+            Ok(DspTargetOption {
+                id: added.id,
+                name: added.name,
+                character: String::new(),
+            })
+        })
+        .await
+    }
+
+    /// Make `name` a stack of `layers`, in order, creating it if there is
+    /// none. Refused where it could not play.
+    pub async fn dsp_set_layers(
+        self: Arc<Self>,
+        name: String,
+        layers: Vec<DspLayerInfo>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            let layers = layers
+                .into_iter()
+                .map(|l| koan_core::config::DspLayer {
+                    profile: l.profile,
+                    on: l.on,
+                })
+                .collect();
+            koan_core::audio::dsp::profiles::set_layers(&name, layers)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Set filter `index` of `name`, a parametric band, to `kind` at `freq`,
+    /// `gain_db` and `q`, held within the ranges a band may have.
+    pub async fn dsp_set_band(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+        kind: String,
+        freq: f64,
+        gain_db: f64,
+        q: f64,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_band(
+                &name,
+                index as usize,
+                &kind,
+                freq,
+                gain_db,
+                q,
+            )
+            .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Add a flat band at 1 kHz to `name`; its index among the filters.
+    pub async fn dsp_add_band(self: Arc<Self>, name: String) -> Result<u32, KoanError> {
+        offload::sequenced(move || {
+            let index = koan_core::audio::dsp::profiles::add_band(&name)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)?;
+            Ok(index as u32)
+        })
+        .await
+    }
+
+    /// Take filter `index` out of `name`.
+    pub async fn dsp_remove_filter(
+        self: Arc<Self>,
+        name: String,
+        index: u32,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::remove_filter(&name, index as usize)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// What `name` does to the sound at `rate`, for drawing. `None` for a
+    /// profile that is not there or would not play.
+    pub async fn dsp_response(self: Arc<Self>, name: String, rate: u32) -> Option<DspResponse> {
+        offload::offload(move || {
+            koan_core::audio::dsp::profiles::response(&name, rate).map(Into::into)
+        })
+        .await
+    }
+
     pub async fn dsp_detail(self: Arc<Self>, name: String) -> Option<DspProfileDetail> {
         offload::offload(move || koan_core::audio::dsp::profiles::detail(&name).map(Into::into))
             .await

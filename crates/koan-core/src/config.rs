@@ -565,6 +565,10 @@ pub struct DspConfig {
     /// Off bypasses every profile without forgetting any of them.
     pub enabled: bool,
     pub profiles: Vec<DspProfile>,
+    /// Output devices whose AutoEQ suggestion was turned down. See
+    /// `audio::dsp::autoeq::suggest`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub autoeq_dismissed: Vec<String>,
 }
 
 impl Default for DspConfig {
@@ -572,6 +576,7 @@ impl Default for DspConfig {
         Self {
             enabled: true,
             profiles: Vec::new(),
+            autoeq_dismissed: Vec::new(),
         }
     }
 }
@@ -609,6 +614,38 @@ pub struct DspProfile {
     /// from. Nothing reads them again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source: Vec<String>,
+    /// For a correction installed from AutoEQ: the target it was made for,
+    /// and another to move it to. See `audio::dsp::targets`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<DspTarget>,
+    /// Other profiles played first, in order: a headphone's correction and
+    /// then taste on top of it, each switched on or off. A profile with
+    /// layers is a stack. See `audio::dsp::Setup::load`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<DspLayer>,
+}
+
+/// One profile played as part of another.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DspLayer {
+    pub profile: String,
+    #[serde(default = "layer_on")]
+    pub on: bool,
+}
+
+fn layer_on() -> bool {
+    true
+}
+
+/// The target a correction was made for, and the one chosen in its place.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DspTarget {
+    /// One of the targets koan ships, by id.
+    pub made_for: String,
+    /// A target koan ships, or one added (`added:<name>`). Unset, or the same
+    /// as `made_for`, the correction plays as it was made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen: Option<String>,
 }
 
 /// One step of a profile's processing. Bands on different channels commute;
@@ -2167,6 +2204,8 @@ fps = 30
             ],
             impulses: vec![],
             source: vec![],
+            target: None,
+            layers: vec![],
         };
         Config::persist(|cfg| cfg.dsp.profiles.push(profile.clone())).unwrap();
 
