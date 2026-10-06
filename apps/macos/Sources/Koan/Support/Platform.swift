@@ -386,6 +386,9 @@ extension View {
     func washedRow() -> some View {
         #if os(macOS)
         self
+        #elseif os(tvOS)
+        // A television's list draws no rules.
+        listRowBackground(Color.clear)
         #else
         if KoanTheme.isOn {
             listRowBackground(Color.clear)

@@ -140,7 +140,7 @@ struct TrackListView: View {
                         if headerScrolls {
                             header
                                 .padding(.vertical, KoanTheme.Space.s)
-                                .listRowSeparator(.hidden)
+                                .rowSeparator(.hidden)
                                 .selectionDisabled()
                                 .washedRow()
                                 .onAppear { headerShown = true }

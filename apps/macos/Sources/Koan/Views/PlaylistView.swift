@@ -97,7 +97,7 @@ struct PlaylistView: View {
                     if headerScrolls {
                         header(rows)
                             .padding(.vertical, KoanTheme.Space.s)
-                            .listRowSeparator(.hidden)
+                            .rowSeparator(.hidden)
                             .selectionDisabled()
                             .washedRow()
                             .onAppear { headerShown = true }
