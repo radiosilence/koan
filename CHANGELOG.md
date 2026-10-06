@@ -9,6 +9,7 @@
 ### Fixed
 
 - **Subsonic clients showed no hearts outside the starred list.** Songs, albums and artists never carried `starred`, so a client that reads it on album pages, search results and album lists showed nothing as favourited. They now carry the time the account favourited them, as `getStarred2` always implied.
+- **Folder-browse Subsonic clients get hearts and ratings too.** `getIndexes`' artists and the albums `getMusicDirectory` lists under an artist carried no `starred`, `userRating` or `played`, so a client browsing by folder (DSub and similar) showed none of the account's favourites or ratings there. They now carry the caller's own, read for the whole listing at once ([#864](https://github.com/radiosilence/koan/issues/864)).
 
 ## 0.56.0
 
