@@ -378,7 +378,7 @@ final class PlayerModel {
     /// The most a tap on a row queues from the listing it is in. A listing can
     /// be the whole library; one longer than this is queued from the row
     /// tapped, this many tracks of it.
-    static let listingWindow = 500
+    nonisolated static let listingWindow = 500
 
     /// Replace the queue with `trackIds` and play. With `index`, a row tapped
     /// in a listing: it plays from there, with the listing around it, the
