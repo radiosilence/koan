@@ -95,7 +95,7 @@ just ios-store-shots SRC OUT [captions-ipad] # frame a walk's screenshots for th
 just ios-store [iphone=DIR ipad=DIR] # push apps/ios/store/listing.toml (+ screenshots) to App Store Connect
 just tv-run         # build and launch on an Apple TV simulator
 just tv-device      # install on the Apple TV paired with Xcode
-just tv-walk        # UI test that walks every page with the remote, into target/tv-walk
+just tv-walk [LIBRARY] # walk every page with the remote, into target/tv-walk; a folder is served from a throwaway koan
 just tv-join LINK [tv] # sign the simulator, or the paired Apple TV, in through an invite
 just tv-kept        # clear Caches/koan-config as tvOS does, check the TV is still signed in
 just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (needs the ASC key)
