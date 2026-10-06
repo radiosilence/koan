@@ -26,7 +26,10 @@ struct LibraryTab: View {
             }
             row("Albums", Icon.album, .page(.section(.albums)))
             row("Artists", Icon.artist, .page(.section(.artists)))
-            row("Tracks", Icon.track, .page(.section(.tracks)))
+            // No Tracks: the whole library as one list is tens of thousands of
+            // rows a phone or a television draws and plays from at once. The
+            // track browser is reached filtered, from a shelf's or a search's
+            // "See all"; the Mac, which draws only the rows on screen, keeps it.
             row("Favourites", Icon.favourite, .page(.section(.favourites)))
             row("Playlists", Icon.playlist, .playlists)
             row("Recently Played", Icon.recentlyPlayed, .page(.section(.recentlyPlayed)))
