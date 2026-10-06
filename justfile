@@ -946,6 +946,10 @@ tv-discover: (tv-ffi "appletvsimulator") (ios-ffi "iphonesimulator") ios-project
     url=$(just _demo-server "" "$out")
     cleanup+=("just _demo-server-stop '$out'")
     password=$(cat "$out/server.password")
+    # By the Mac's address on the network, which both simulators reach: a
+    # loopback address is never announced.
+    lan=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
+    url=${url/127.0.0.1/$lan}
     for sim in "$tv" "$phone"; do
         xcrun simctl boot "$sim" 2>/dev/null || true
         xcrun simctl bootstatus "$sim" -b >/dev/null

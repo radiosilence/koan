@@ -111,17 +111,39 @@ pub fn servers() -> Vec<(String, Vec<String>)> {
     out
 }
 
-/// An announced address worth offering: http or https, and nothing more than
-/// an address. Anyone on the network can announce anything.
+/// An address worth offering as a server: http or https, nothing more than an
+/// address, and not this machine's own. Checked on both sides: anyone on the
+/// network can announce anything, and what this device announces is heard by
+/// everyone on it.
 fn is_server(s: &str) -> bool {
     url::Url::parse(s).is_ok_and(|u| {
         matches!(u.scheme(), "http" | "https")
-            && u.host_str().is_some()
             && u.username().is_empty()
             && u.password().is_none()
             && u.query().is_none()
             && u.fragment().is_none()
+            && match u.host() {
+                Some(url::Host::Domain(d)) => {
+                    let d = d.trim_end_matches('.').to_ascii_lowercase();
+                    d != "localhost" && !d.ends_with(".localhost")
+                }
+                Some(url::Host::Ipv4(ip)) => !ip.is_loopback() && !ip.is_unspecified(),
+                Some(url::Host::Ipv6(ip)) => !ip.is_loopback() && !ip.is_unspecified(),
+                None => false,
+            }
     })
+}
+
+/// The longest a TXT entry can be. An address that does not fit is not
+/// announced: cut short, it could still read as a different, valid address.
+const TXT_ENTRY_MAX: usize = 255;
+
+/// What this device would announce for the server it is signed in to: the
+/// address if it is one to offer and fits whole in the announcement, and
+/// nothing otherwise.
+fn announceable(url: &str) -> Option<String> {
+    let url = url.trim().trim_end_matches('/');
+    (is_server(url) && "server=".len() + url.len() <= TXT_ENTRY_MAX).then(|| url.to_string())
 }
 
 /// The server this device announces: the one it is signed in to, without the
@@ -132,7 +154,7 @@ fn announced_server() -> String {
     if crate::helpers::remote_credential(&cfg).is_none() {
         return String::new();
     }
-    cfg.remote.url.trim_end_matches('/').to_string()
+    announceable(&cfg.remote.url).unwrap_or_default()
 }
 
 /// This device's announcement, while it is listening.
@@ -156,7 +178,14 @@ pub fn readvertise() {
         // Withdrawn first: the responder would rename a second registration
         // under the same name rather than replace the first.
         *advert = None;
-        *advert = bonjour::advertise(port, &identity, &announced_server());
+        let server = announced_server();
+        *advert = bonjour::advertise(port, &identity, &server);
+        // Silent until the next launch would be worse than announcing without
+        // the server.
+        if advert.is_none() && !server.is_empty() {
+            log::warn!("nearby: cannot announce the server; announcing this device without it");
+            *advert = bonjour::advertise(port, &identity, "");
+        }
     }
 }
 
@@ -1500,6 +1529,27 @@ mod server_tests {
     /// What another device announces is offered as a server to sign in to,
     /// so only a bare http(s) address is.
     #[test]
+    fn a_device_announces_only_an_address_fit_to_offer() {
+        use super::announceable;
+        assert_eq!(
+            announceable("https://music.example.com/").as_deref(),
+            Some("https://music.example.com")
+        );
+        for url in [
+            "",
+            "https://user:secret@music.example.com",
+            "https://music.example.com/?u=me&p=secret",
+            "http://127.0.0.1:4799",
+            "http://localhost:4799",
+        ] {
+            assert_eq!(announceable(url), None, "{url}");
+        }
+        // Too long to announce whole, so not announced at all.
+        let long = format!("https://music.example.com/{}", "a".repeat(240));
+        assert_eq!(announceable(&long), None);
+    }
+
+    #[test]
     fn only_a_bare_web_address_is_offered() {
         assert!(is_server("https://music.example.com"));
         assert!(is_server("http://192.168.1.20:4533/koan"));
@@ -1511,6 +1561,11 @@ mod server_tests {
             "https://user:secret@music.example.com",
             "https://music.example.com/?u=me&p=secret",
             "https://music.example.com/#p=secret",
+            "http://127.0.0.1:4799",
+            "http://localhost:4799",
+            "http://music.localhost",
+            "http://[::1]:4799",
+            "http://0.0.0.0:4799",
         ] {
             assert!(!is_server(s), "{s}");
         }
