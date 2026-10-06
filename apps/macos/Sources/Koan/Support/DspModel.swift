@@ -2,6 +2,14 @@ import Foundation
 import KoanFFI
 import Observation
 
+/// Files chosen together, and what importing them will do.
+struct PendingImport: Identifiable {
+    let id = UUID()
+    let urls: [URL]
+    let plan: DspImportPlan
+    let rate: UInt32?
+}
+
 /// EQ and convolution profiles, and importing them.
 ///
 /// What Settings shows, and what a file opened in or shared to the app goes
@@ -28,6 +36,10 @@ final class DspModel {
     /// phone. Set on each route change; nil on the Mac.
     private(set) var route: String?
     var lastError: String?
+    /// What the last import of several files did.
+    var importSummary: String?
+    /// Several files planned for import, waiting to be confirmed and named.
+    var pendingImport: PendingImport?
     /// An import waiting on the rate of what it was given.
     var needsRate: Pending?
     /// AutoEQ's results for the last search.
@@ -66,17 +78,74 @@ final class DspModel {
 
     // MARK: - Importing
 
-    /// Files, folders or zips, as one profile. Picked or shared ones are
+    /// Files, folders or zips. Several are first planned and shown to be
+    /// confirmed (`pendingImport`): whole presets become a group, parts of
+    /// one profile combine into one. Picked or shared ones are
     /// security-scoped and readable only while held open.
     func importFiles(_ urls: [URL], name: String? = nil, rate: UInt32? = nil) {
         let engine = self.engine
         Task {
-            let held = urls.filter { $0.startAccessingSecurityScopedResource() }
-            defer { held.forEach { $0.stopAccessingSecurityScopedResource() } }
-            await finish(.files(urls, name: name)) {
-                try await engine.dspImport(paths: urls.map(\.path), name: name, rate: rate)
+            if urls.count > 1, name == nil {
+                let held = urls.filter { $0.startAccessingSecurityScopedResource() }
+                let plan = await engine.dspImportPlan(paths: urls.map(\.path))
+                held.forEach { $0.stopAccessingSecurityScopedResource() }
+                pendingImport = PendingImport(urls: urls, plan: plan, rate: rate)
+                return
             }
+            await run(urls, name: name, rate: rate)
         }
+    }
+
+    /// Import what `pendingImport` planned, under `name`.
+    func confirmImport(name: String) {
+        guard let pending = pendingImport else { return }
+        pendingImport = nil
+        Task { await run(pending.urls, name: name, rate: pending.rate) }
+    }
+
+    private func run(_ urls: [URL], name: String?, rate: UInt32?) async {
+        let held = urls.filter { $0.startAccessingSecurityScopedResource() }
+        defer { held.forEach { $0.stopAccessingSecurityScopedResource() } }
+        do {
+            let summary = try await engine.dspImportFiles(paths: urls.map(\.path), name: name, rate: rate)
+            imported = summary.group ?? summary.imported.first
+            lastError = nil
+            importSummary = Self.describe(summary, files: urls.count)
+        } catch KoanError.NeedsSampleRate {
+            needsRate = .files(urls, name: name)
+        } catch {
+            importSummary = nil
+            lastError = SettingsModel.describe(error)
+        }
+        await changed()
+    }
+
+    /// What an import did, in a sentence or two: nothing to say for one
+    /// file made into one profile.
+    static func describe(_ summary: DspImportSummary, files: Int) -> String? {
+        var lines: [String] = []
+        if let group = summary.group {
+            let playing = summary.imported.first.map { " “\($0)” is playing; pick another on the group's page or in an output's preset menu." } ?? ""
+            lines.append("Imported \(summary.imported.count) presets as the group “\(group)”.\(playing)")
+        } else if files > 1, let one = summary.imported.first {
+            lines.append("Combined \(files) files into “\(one)”.")
+        }
+        if !summary.refused.isEmpty {
+            let why = summary.refused.map { "\($0.file): \($0.reason)" }.joined(separator: "; ")
+            lines.append("\(summary.refused.count) refused: \(why)")
+        }
+        lines.append(contentsOf: summary.notes)
+        return lines.isEmpty ? nil : lines.joined(separator: " ")
+    }
+
+    /// Play `member` of the group `group`.
+    func select(_ group: String, _ member: String) {
+        act { try await $0.dspSelect(group: group, member: member) }
+    }
+
+    /// Make `name` a group, one layer playing, or a stack of layers.
+    func setGroup(_ name: String, _ group: Bool) {
+        act { try await $0.dspSetGroup(name: name, group: group) }
     }
 
     func importText(_ text: String, rate: UInt32? = nil) {

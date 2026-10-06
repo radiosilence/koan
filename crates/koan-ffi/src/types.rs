@@ -1113,6 +1113,37 @@ pub struct DspTargetOption {
     pub character: String,
 }
 
+/// What importing a selection of files did: the profiles it made or added
+/// to, and each file it refused, with why.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspImportSummary {
+    pub imported: Vec<String>,
+    pub refused: Vec<DspImportRefusal>,
+    /// Files imported under another name than their own, and files left
+    /// out, each with what happened.
+    pub notes: Vec<String>,
+    /// The group the presets became, where they became one.
+    pub group: Option<String>,
+}
+
+/// What importing a selection will do, shown before it is done.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspImportPlan {
+    /// A group of presets, one playing at a time, rather than one profile
+    /// combined from them all.
+    pub group: bool,
+    pub files: Vec<String>,
+    /// A name to suggest: the group's, from what the files' names share, or
+    /// the one profile's.
+    pub name: String,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DspImportRefusal {
+    pub file: String,
+    pub reason: String,
+}
+
 /// The target a correction was made for, the one chosen, and the others.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct DspTargets {
@@ -1186,6 +1217,9 @@ pub struct DspProfileSummary {
     pub rates: Vec<u32>,
     /// Why it would not load, if it would not.
     pub problem: Option<String>,
+    /// For a group: its members, in order, and the one playing.
+    pub members: Vec<String>,
+    pub playing: Option<String>,
 }
 
 /// A curve on `DspResponse.freqs`, in dB.
@@ -1266,6 +1300,8 @@ pub struct DspProfileDetail {
     pub problem: Option<String>,
     /// Profiles it plays first, in order.
     pub layers: Vec<DspLayerInfo>,
+    /// A group: one of `layers` plays, the one switched on.
+    pub group: bool,
     /// Kept on every device of the account through its kōan server, rather
     /// than this one alone.
     pub everywhere: bool,
@@ -1417,6 +1453,7 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
                     on: l.on,
                 })
                 .collect(),
+            group: d.group,
             everywhere: d.everywhere,
             scope_set: d.scope_set,
             sync_problem: None,
@@ -1442,6 +1479,8 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
                     layers: p.layers as u32,
                     rates: p.rates,
                     problem: p.problem,
+                    members: p.members,
+                    playing: p.playing,
                 })
                 .collect(),
         }
