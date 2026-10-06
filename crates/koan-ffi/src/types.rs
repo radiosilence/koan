@@ -1326,6 +1326,8 @@ pub struct Settings {
     /// (playback, outputs, presets, volume, hand-off) or `playback` (play and
     /// the queue only).
     pub devices_nearby_control: String,
+    /// The Mac app stays in the menu bar with its window closed.
+    pub devices_keep_running: bool,
 }
 
 /// A scanned folder, and what it contributed.

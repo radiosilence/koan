@@ -2499,6 +2499,7 @@ impl KoanEngine {
                     config::NearbyControl::Full => "full".into(),
                     config::NearbyControl::Playback => "playback".into(),
                 },
+                devices_keep_running: cfg.devices.keep_running,
             }
         })
         .await
@@ -2541,6 +2542,7 @@ impl KoanEngine {
                     "playback" => config::NearbyControl::Playback,
                     _ => config::NearbyControl::Full,
                 };
+                cfg.devices.keep_running = s.devices_keep_running;
                 cfg.devices.addresses = s
                     .devices_addresses
                     .iter()

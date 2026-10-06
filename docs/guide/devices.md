@@ -101,8 +101,22 @@ if it can be woken.
   can be chosen, and choosing it wakes it. That takes a push key on the
   server; without one, the phone is listed but cannot be woken.
 - **One that cannot be woken from here**, such as a stranger's phone on the
-  network or a Mac that has gone to sleep, is shown asleep and cannot be
-  chosen.
+  network, is shown asleep and cannot be chosen. A Mac is one of these: macOS
+  does not open a quit app for a push, so a Mac whose kōan was quit, or that is
+  off or asleep, is shown as not running until someone opens kōan there.
+
+### Keeping a Mac reachable
+
+A Mac can be controlled from your other devices only while kōan is running on
+it. With **Keep running in the menu bar** (Settings ▸ Devices ▸ In the
+background), closing the window leaves kōan running: it stays signed in to the
+server and listening on the network, leaves the Dock and ⌘-Tab, and keeps an
+item in the menu bar with what is playing, play and pause, next, **Open kōan**
+and **Quit kōan**. Opening the window puts it back in the Dock. Quitting it
+from the menu bar takes the Mac out of reach. **Open at login** has macOS open
+kōan when you log in, so the Mac is reachable again after a restart; it is
+listed, and can be turned off, in System Settings ▸ General ▸ Login Items. The
+setting is off by default, and with it off, closing the window quits kōan.
 
 An asleep device you have used stays listed until you forget it: right-click it in the
 Control menu on the Mac, or press and hold it on iOS, and choose **Forget**.

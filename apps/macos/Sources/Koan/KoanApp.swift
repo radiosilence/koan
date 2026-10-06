@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct KoanApp: App {
+    @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     @State private var state: AppState?
 
     @State private var startupError: String?
@@ -64,6 +65,7 @@ struct KoanApp: App {
                 do {
                     let created = try await AppState()
                     await created.start()
+                    delegate.residency = created.residency
                     state = created
                     if let pendingURL {
                         created.open(url: pendingURL)
@@ -244,6 +246,16 @@ struct KoanApp: App {
         .defaultSize(width: 940, height: 640)
         .keyboardShortcut(nil)
 
+        // With "Keep running in the menu bar" on, closing the window leaves
+        // kōan here, still linked and listening, so other devices can control
+        // this Mac.
+        MenuBarExtra(
+            "kōan", systemImage: Icon.track,
+            isInserted: Binding(get: { state?.residency.keepRunning ?? false }, set: { _ in })
+        ) {
+            if let state { MenuBarMenu(state: state) }
+        }
+
         Settings {
             if let state {
                 SettingsView()
@@ -259,6 +271,35 @@ struct KoanApp: App {
                     .environment(state.mirror)
             }
         }
+    }
+}
+
+/// The menu bar item's menu: what is playing, play and pause, next, and the
+/// way back to the window.
+private struct MenuBarMenu: View {
+    let state: AppState
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        let entry = state.mirror.playback.entry
+        if let entry {
+            Text(entry.title)
+            Text(entry.artist)
+        } else {
+            Text("Nothing playing")
+        }
+        Divider()
+        Button(state.player.isPlaying ? "Pause" : "Play") { state.player.togglePlayPause() }
+            .disabled(entry == nil)
+        Button("Next") { state.player.next() }
+            .disabled(entry == nil)
+        Divider()
+        Button("Open kōan") {
+            NSApp.setActivationPolicy(.regular)
+            openWindow(id: MainWindow.id)
+            NSApp.activate()
+        }
+        Button("Quit kōan") { NSApp.terminate(nil) }
     }
 }
 

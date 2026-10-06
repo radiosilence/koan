@@ -4,6 +4,8 @@
 
 ### Added
 
+- **The Mac app can keep running in the menu bar.** A Mac cannot be woken from another device, so a closed kōan was out of reach. With **Keep running in the menu bar** on (Settings ▸ Devices, off by default), closing the window leaves kōan running, signed in and listening, out of the Dock, with a menu bar item for what is playing, play and pause, next, opening the window and quitting. **Open at login** beside it brings the Mac back within reach after a restart. The Control menu now lists a Mac it cannot reach as not running, rather than asleep.
+
 - **`playback.muted` and `playback.renderers`.** Muted, playback runs as usual and plays silence; with renderers off, no UPnP renderer is looked for. The iOS and tvOS UI tests set both, so a walk on a shared machine is not heard through its speakers and cannot reach a renderer on its network.
 
 ## 0.56.0

@@ -493,6 +493,10 @@ pub struct DevicesConfig {
     /// What a kōan on the local network may have this device do, whoever is
     /// signed in there.
     pub nearby_control: NearbyControl,
+    /// Keep the Mac app running in the menu bar once its window is closed, so
+    /// other devices can still see and control this one. Quitting it then
+    /// means this Mac is out of reach until it is opened again.
+    pub keep_running: bool,
 }
 
 /// What devices on the local network may do with this one.
@@ -516,6 +520,7 @@ impl Default for DevicesConfig {
             port: DEVICES_PORT,
             addresses: Vec::new(),
             nearby_control: NearbyControl::Full,
+            keep_running: false,
         }
     }
 }
@@ -777,6 +782,7 @@ pub fn layer_of(path: &str) -> Layer {
         | "devices.port"
         | "devices.addresses"
         | "devices.nearby_control"
+        | "devices.keep_running"
         // Which koan server this machine signs in to.
         | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.
