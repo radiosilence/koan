@@ -100,6 +100,11 @@ struct OutputEqSection: View {
                 }
                 .koanControl()
             }
+            // A choice that does not play says so, and why.
+            if let leftOut = overview.leftOut {
+                Label(leftOut, systemImage: "exclamationmark.triangle")
+                    .koanText(.meta, .bad)
+            }
         } header: {
             Text(dsp.label(device))
         } footer: {
@@ -116,7 +121,7 @@ struct OutputEqSection: View {
         }
         var parts = [name]
         if let aim { parts.append("corrected to \(aim.name)") }
-        if let tuning { parts.append("tuned with \(tuning.name)") }
+        if let tuning, overview.tuningPlays { parts.append("tuned with \(tuning.name)") }
         var text = parts.joined(separator: ", ") + "."
         if tuning == nil, correction?.role == .correction {
             text += " Optional: add a tuning (your taste) on top."

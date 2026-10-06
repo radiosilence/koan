@@ -39,6 +39,11 @@ pub struct Overview {
     pub active: Option<String>,
     /// The tuning it plays on top.
     pub tuning: Option<String>,
+    /// Whether that tuning plays: not on a baked correction, nor where the
+    /// chain cannot hold it.
+    pub tuning_plays: bool,
+    /// What of that device's choices does not play, and why.
+    pub left_out: Option<String>,
     /// Every output's tuning, by device.
     pub tunings: Vec<(String, String)>,
     pub profiles: Vec<Summary>,
@@ -66,12 +71,17 @@ pub fn overview() -> Overview {
 pub fn overview_for(device: Option<String>) -> Overview {
     let cfg = Config::cached();
     let base = config::config_dir();
+    let chain = device
+        .as_deref()
+        .and_then(|d| super::output_chain(&cfg.dsp, d));
     Overview {
         enabled: cfg.dsp.enabled,
         active: device
             .as_deref()
             .and_then(|d| cfg.dsp.profile_for(d))
             .map(|p| p.name.clone()),
+        tuning_plays: chain.as_ref().is_some_and(|c| c.tuning_plays),
+        left_out: chain.and_then(|c| c.left_out),
         tunings: cfg
             .dsp
             .tunings
@@ -2565,6 +2575,69 @@ mod tests {
             .unwrap();
         assert_eq!(played.len(), 2, "the tuning's curve and the correction's");
         assert_eq!(played.last(), curved.filters.first());
+        let o = overview_for(Some(dac.into()));
+        assert!(o.tuning_plays);
+        assert!(
+            o.left_out
+                .as_deref()
+                .is_some_and(|l| l.starts_with("Tilt plays without the target difference")),
+            "{:?}",
+            o.left_out
+        );
+        set_tuning(dac, Some("Warm")).unwrap();
+
+        // A chain past the filters one may hold loses the tuning, never the
+        // correction, and says so. Each is within bounds, a channel's bands
+        // spread over four; the layers together are not.
+        let spread = |n: usize, from: f64| -> Vec<DspFilter> {
+            (0..n)
+                .map(|i| {
+                    DspFilter::Band(crate::config::EqFilter {
+                        kind: crate::config::EqFilterKind::Peaking,
+                        freq: from + i as f64,
+                        gain_db: 1.0,
+                        q: 1.0,
+                        channels: vec![(i % 4) as u16],
+                    })
+                })
+                .collect()
+        };
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Busy".into(),
+                filters: spread(200, 100.0),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Base".into(),
+                filters: spread(100, 1000.0),
+                ..Default::default()
+            });
+            let hd = c
+                .dsp
+                .profiles
+                .iter_mut()
+                .find(|p| p.name == "HD 600")
+                .unwrap();
+            hd.layers = vec![crate::config::DspLayer {
+                profile: "Base".into(),
+                on: true,
+            }];
+        })
+        .unwrap();
+        assign(Some("HD 600"), dac).unwrap();
+        set_tuning(dac, Some("Busy")).unwrap();
+        assert_eq!(plays().len(), 101, "the correction alone");
+        let o = overview_for(Some(dac.into()));
+        assert!(!o.tuning_plays);
+        assert!(
+            o.left_out
+                .as_deref()
+                .is_some_and(|l| l.starts_with("Busy is left out")),
+            "{:?}",
+            o.left_out
+        );
+        assign(Some("Curved"), dac).unwrap();
         set_tuning(dac, Some("Warm")).unwrap();
 
         // No correction: the tuning alone, called by its name.
