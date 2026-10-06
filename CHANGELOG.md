@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.54.2
 
 ### Changed
 
@@ -12,6 +12,7 @@
 - **A rare crash when the Mac or iOS app changes track or output.** When CoreAudio could not confirm the output had fully stopped, its playback data was freed while the audio thread might still read it. It is now kept instead.
 - **One failed command no longer stops the Mac and iOS apps' controls.** An error such as importing a malformed EQ or convolution file stopped every later play, queue and transport command until the app was relaunched; the failing command now reports an error and the rest carry on.
 - **The iOS Live Activity no longer busies the app for a record without art.** Controlling another device playing a record with no cover, or whose cover could not be fetched, asked for the cover again continuously.
+- **The Mac's lyrics panel opens without tearing the window.** Opening or closing it slid the panel while the album grid and track lists jumped to their new width at once, so for a moment the two halves of the window were out of step and the sidebar was pushed off the left edge. The panel now opens and closes in one step, with every page laid out alongside it.
 - **The sleep timer's moon is lit only while a timer is set.** On the Mac it showed in the accent colour with no timer set.
 
 ## 0.54.1
