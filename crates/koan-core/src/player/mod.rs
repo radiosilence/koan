@@ -5583,7 +5583,13 @@ mod tests {
                 t0.elapsed().as_millis(),
                 state.playback_state(),
                 state.is_waiting(),
-                state.track_info().map(|t| t.title),
+                state.track_info().map(|t| if t.id == b_id {
+                    "B"
+                } else if t.id == a_id {
+                    "A"
+                } else {
+                    "?"
+                }),
                 if state.cursor() == Some(b_id) {
                     "B"
                 } else if state.cursor() == Some(a_id) {
