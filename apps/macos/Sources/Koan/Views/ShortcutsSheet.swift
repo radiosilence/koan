@@ -42,7 +42,7 @@ struct ShortcutsSheet: View {
 
             HStack {
                 Spacer()
-                Button("Done") { dismiss() }
+                Button(KoanTheme.label("Done")) { dismiss() }
                     .keyboardShortcut(.defaultAction)
                     .koanButton(.secondary)
             }

@@ -82,8 +82,8 @@ struct InviteConfirmation: ViewModifier {
             ),
             presenting: state.ui.pendingInvite
         ) { invite in
-            Button("Switch") { state.join(invite) }
-            Button("Cancel", role: .cancel) {}
+            Button(KoanTheme.label("Switch")) { state.join(invite) }
+            Button(KoanTheme.label("Cancel"), role: .cancel) {}
         } message: { invite in
             Text(
                 "kōan is signed in to another account. This invite signs in as \(invite.username) on \(AppState.host(of: invite)); tracks already synced stay in the library."

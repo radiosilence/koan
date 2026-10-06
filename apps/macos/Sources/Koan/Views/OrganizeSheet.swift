@@ -81,16 +81,16 @@ struct OrganizeSheet: View {
                     // While editing, the two keys everyone reaches for belong
                     // to the field: Esc abandons the edit, Return commits it.
                     // They are handed back to Close and Move on the way out.
-                    Button("Cancel") { organize.cancelEditing() }
+                    Button(KoanTheme.label("Cancel")) { organize.cancelEditing() }
                         .shortcut(.cancelAction)
                         .koanButton(.secondary)
-                    Button("Save") { organize.saveEditing() }
+                    Button(KoanTheme.label("Save")) { organize.saveEditing() }
                         .shortcut(.defaultAction)
                         .koanButton(.primary)
                         .disabled(!organize.isModified)
                         .help("Store this pattern in config.toml under its name")
                 } else {
-                    Button("Edit") { organize.beginEditing() }
+                    Button(KoanTheme.label("Edit")) { organize.beginEditing() }
                         .koanButton(.secondary)
                         .disabled(organize.patternName == nil)
                 }
@@ -99,6 +99,7 @@ struct OrganizeSheet: View {
             if organize.editing {
                 TextField("Format string", text: $organize.draft)
                     .verbatimEntry()
+                    .koanField()
                     .borderedField()
                     .koanText(.meta)
                     .monospaced()
@@ -184,7 +185,7 @@ struct OrganizeSheet: View {
         HStack(spacing: 12) {
             counts
             Spacer(minLength: 0)
-            Button("Close") {
+            Button(KoanTheme.label("Close")) {
                 organize.dismiss()
                 dismiss()
             }

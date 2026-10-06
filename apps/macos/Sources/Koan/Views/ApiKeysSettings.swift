@@ -64,7 +64,8 @@ struct ApiKeysSettings: View {
                 HStack {
                     TextField("Name", text: $name, prompt: Text("The app it is for"))
                         .verbatimEntry()
-                    Button("New Key") {
+                        .koanField()
+                    Button(KoanTheme.label("New Key")) {
                         Task {
                             if await model.create(name: name.trimmingCharacters(in: .whitespaces)) {
                                 name = ""
@@ -94,7 +95,7 @@ struct ApiKeysSettings: View {
             "Revoke \u{201C}\(revoking?.name ?? "")\u{201D}?",
             isPresented: Binding(get: { revoking != nil }, set: { if !$0 { revoking = nil } })
         ) {
-            Button("Revoke", role: .destructive) {
+            Button(KoanTheme.label("Revoke"), role: .destructive) {
                 if let key = revoking { Task { await model?.revoke(key) } }
             }
         } message: {
@@ -121,7 +122,7 @@ struct ApiKeysSettings: View {
                     .koanText(.body, .muted)
                     .help("To stop using it, sign out")
             } else {
-                Button("Revoke", role: .destructive) { revoking = key }
+                Button(KoanTheme.label("Revoke"), role: .destructive) { revoking = key }
                     .koanButton(.text)
             }
         }
@@ -150,7 +151,7 @@ private struct NewKeySheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            KoanForm {
                 Section {
                     LabeledContent("Key", value: key.key)
                         .selectableText()
@@ -170,12 +171,11 @@ private struct NewKeySheet: View {
                         .koanText(.fine, .muted)
                 }
             }
-            .koanForm()
             .koanSheet()
             .navigationTitle(KoanTheme.label("New Key"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button(KoanTheme.label("Done")) { dismiss() }
                 }
             }
         }

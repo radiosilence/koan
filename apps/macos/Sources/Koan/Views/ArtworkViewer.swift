@@ -33,7 +33,7 @@ struct ArtworkViewer: View {
         VStack(spacing: 16) {
             AlbumArtwork(source: source, size: .full, cornerRadius: KoanTheme.radius(10))
                 .frame(width: side, height: side)
-                .shadow(color: .black.opacity(0.45), radius: 32, y: 14)
+                .shadow(color: .black.opacity(Double(KoanTheme.shadow(0.45))), radius: 32, y: 14)
 
             VStack(spacing: 3) {
                 Text(title)

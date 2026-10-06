@@ -29,7 +29,7 @@ struct ShareCode: View {
                     .koanText(.meta, .muted)
                     .monospaced()
                     .lineLimit(2)
-                Button("Done") { dismiss() }
+                Button(KoanTheme.label("Done")) { dismiss() }
                     .koanButton(.secondary)
                     .padding(.top, 24)
             }

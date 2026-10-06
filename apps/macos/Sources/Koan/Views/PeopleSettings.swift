@@ -99,12 +99,13 @@ struct PeopleSettings: View {
                     HStack {
                         TextField("Username", text: $newUsername, prompt: Text("Username"))
                             .verbatimEntry()
+                            .koanField()
                         Picker("Access", selection: $newRole) {
                             ForEach(AccountRole.all, id: \.self) { Text($0.label).tag($0) }
                         }.koanControl()
                         .labelsHidden()
                         .fixedSize()
-                        Button("Add") {
+                        Button(KoanTheme.label("Add")) {
                             Task {
                                 if await model.create(username: newUsername, role: newRole) {
                                     newUsername = ""
@@ -134,10 +135,10 @@ struct PeopleSettings: View {
                         set: { if !$0 { model.resetting = nil } }
                     )
                 ) {
-                    Button("New Password") {
+                    Button(KoanTheme.label("New Password")) {
                         if let name = model.resetting { Task { await model.invite(name, reset: true) } }
                     }
-                    Button("Cancel", role: .cancel) {}
+                    Button(KoanTheme.label("Cancel"), role: .cancel) {}
                 } message: {
                     Text("The invite carries the new password. Their devices will have to sign in again.")
                 }
@@ -149,14 +150,14 @@ struct PeopleSettings: View {
                     )
                 ) {
                     SecureField("New password", text: $password)
-                    Button("Set") {
+                    Button(KoanTheme.label("Set")) {
                         if let name = settingPassword {
                             let chosen = password
                             Task { await model.setPassword(name, chosen) }
                         }
                         password = ""
                     }
-                    Button("Cancel", role: .cancel) { password = "" }
+                    Button(KoanTheme.label("Cancel"), role: .cancel) { password = "" }
                 } message: {
                     Text("Their devices will have to sign in again with it.")
                 }
@@ -164,7 +165,7 @@ struct PeopleSettings: View {
                     "Delete \(deleting ?? "")?",
                     isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })
                 ) {
-                    Button("Delete", role: .destructive) {
+                    Button(KoanTheme.label("Delete"), role: .destructive) {
                         if let name = deleting { Task { await model.delete(name) } }
                     }
                 } message: {
@@ -195,14 +196,14 @@ struct PeopleSettings: View {
             .labelsHidden()
             .fixedSize()
             Menu {
-                Button("Invite") { Task { await model.invite(account.username) } }
+                Button(KoanTheme.label("Invite")) { Task { await model.invite(account.username) } }
                 // Not for this account: a new password signs this app out too.
                 if account.username != signedInAs {
                     if mirror.offers(PasswordChange.extensionName) {
-                        Button("Set Password…") { settingPassword = account.username }
+                        Button(KoanTheme.label("Set Password…")) { settingPassword = account.username }
                     }
-                    Button("New Password and Invite…") { model.resetting = account.username }
-                    Button("Delete", role: .destructive) { deleting = account.username }
+                    Button(KoanTheme.label("New Password and Invite…")) { model.resetting = account.username }
+                    Button(KoanTheme.label("Delete"), role: .destructive) { deleting = account.username }
                 }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -228,7 +229,7 @@ struct InviteSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
+            KoanForm {
                 Section {
                     Text("Opening the link on a phone, tablet or Mac with kōan installed signs in and loads the library, on each device, for a week.")
                         .koanText(.body, .muted)
@@ -276,12 +277,11 @@ struct InviteSheet: View {
                     .selectableText()
                 }
             }
-            .koanForm()
             .koanSheet()
             .navigationTitle(KoanTheme.label("Invite"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button(KoanTheme.label("Done")) { dismiss() }
                 }
             }
         }

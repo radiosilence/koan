@@ -17,10 +17,13 @@ struct DspProfilePage: View {
     @State private var confirmingDelete = false
 
     var body: some View {
-        Form {
+        KoanForm {
             Section {
-                TextField("Name", text: $editingName)
-                    .onSubmit(rename)
+                LabeledContent("Name") {
+                    TextField("Name", text: $editingName)
+                        .onSubmit(rename)
+                        .koanField()
+                }
             }
 
             if let d = detail {
@@ -47,9 +50,9 @@ struct DspProfilePage: View {
                     ForEach(d.devices, id: \.self) { Text(dsp.label($0)) }
                     if let device = dsp.overview?.device {
                         if d.devices.contains(device) {
-                            Button("Stop using for \(dsp.label(device))") { dsp.use(nil) }
+                            Button(KoanTheme.label("Stop using for") + " " + dsp.label(device)) { dsp.use(nil) }
                         } else {
-                            Button("Use for \(dsp.label(device))") { dsp.use(d.name) }
+                            Button(KoanTheme.label("Use for") + " " + dsp.label(device)) { dsp.use(d.name) }
                         }
                     }
                 } header: {
@@ -97,13 +100,12 @@ struct DspProfilePage: View {
                 }
 
                 Section {
-                    Button("Delete Profile", role: .destructive) { confirmingDelete = true }
+                    Button(KoanTheme.label("Delete Profile"), role: .destructive) { confirmingDelete = true }
                 }
             } else {
                 ProgressView()
             }
         }
-        .koanForm()
         .koanSheet()
         .navigationTitle(name)
         .task(id: dsp.version) { await load() }
@@ -123,7 +125,7 @@ struct DspProfilePage: View {
             isPresented: $confirmingDelete,
             titleVisibility: .visible
         ) {
-            Button("Delete", role: .destructive) {
+            Button(KoanTheme.label("Delete"), role: .destructive) {
                 dsp.remove(name)
                 dismiss()
             }
@@ -189,11 +191,11 @@ private struct LayersSection: View {
                 }.koanToggle()
                 #if !os(tvOS)
                 .contextMenu {
-                    Button("Move Up") { move(index, by: -1) }
+                    Button(KoanTheme.label("Move Up")) { move(index, by: -1) }
                         .disabled(index == 0)
-                    Button("Move Down") { move(index, by: 1) }
+                    Button(KoanTheme.label("Move Down")) { move(index, by: 1) }
                         .disabled(index == layers.count - 1)
-                    Button("Remove from Stack", role: .destructive) { remove(index) }
+                    Button(KoanTheme.label("Remove from Stack"), role: .destructive) { remove(index) }
                 }
                 #endif
             }
@@ -266,7 +268,7 @@ private struct TargetSection: View {
                     .koanText(.meta, .muted)
             }
             #if !os(tvOS)
-            Button("Add a Target…") { adding = true }
+            Button(KoanTheme.label("Add a Target…")) { adding = true }
             #endif
         } header: {
             KoanSectionHeader("Target")

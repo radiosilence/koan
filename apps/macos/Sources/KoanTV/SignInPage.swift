@@ -56,10 +56,10 @@ struct SignInPage: View {
 
             HStack(spacing: 32) {
                 if pairing != nil {
-                    Button("Another Server") { cancel() }
+                    Button(KoanTheme.label("Another Server")) { cancel() }
                         .koanButton(.secondary)
                 }
-                Button("Use a Password or API Key") { manual = true }
+                Button(KoanTheme.label("Use a Password or API Key")) { manual = true }
                     .koanButton(.secondary)
             }
         }
@@ -110,7 +110,7 @@ struct SignInPage: View {
                     .frame(minWidth: 700)
                     .padding(.vertical, 8)
                 }
-                .koanButton(.secondary)
+                .koanButton(.card)
                 .disabled(connecting)
                 .accessibilityIdentifier("found-server")
             }
@@ -155,11 +155,12 @@ struct SignInPage: View {
                 .frame(width: 900)
                 .onSubmit(start)
                 .disabled(connecting)
+                .koanField()
             if connecting {
                 ProgressView()
                     .frame(width: 240)
             } else {
-                Button("Get a Code", action: start)
+                Button(KoanTheme.label("Get a Code"), action: start)
                     .koanButton(.primary)
                     .disabled(server.trimmingCharacters(in: .whitespaces).isEmpty)
             }

@@ -186,7 +186,7 @@ private struct LibrarySettings: View {
     @State private var choosingFolder = false
 
     var body: some View {
-        Form {
+        KoanForm {
             Section {
                 if model.settings.libraryFolders.isEmpty {
                     Text("No folders yet — kōan has nothing to scan.")
@@ -209,12 +209,12 @@ private struct LibrarySettings: View {
                         } label: {
                             Image(systemName: "minus.circle")
                         }
-                        .koanButton(.text)
+                        .koanButton(.icon)
                         .help("Stop scanning this folder")
                     }
                 }
                 // Adding a folder starts a scan, so it waits for the one running.
-                Button("Add Folder…") { choosingFolder = true }
+                Button(KoanTheme.label("Add Folder…")) { choosingFolder = true }
                     .koanButton(.secondary)
                     .disabled(activity.conflicts(with: .localLibrary))
             } header: {
@@ -226,9 +226,9 @@ private struct LibrarySettings: View {
 
             Section {
                 HStack {
-                    Button("Scan") { model.scan() }
+                    Button(KoanTheme.label("Scan")) { model.scan() }
                         .koanButton(.secondary)
-                    Button("Rescan Everything") { model.scan(force: true) }
+                    Button(KoanTheme.label("Rescan Everything")) { model.scan(force: true) }
                         .koanButton(.secondary)
                         .help("Re-read every file's tags, ignoring the scan cache")
                 }
@@ -248,7 +248,7 @@ private struct LibrarySettings: View {
 
             Section {
                 // Empties every table, so it waits for everything.
-                Button("Clear Library Index…", role: .destructive) {
+                Button(KoanTheme.label("Clear Library Index…"), role: .destructive) {
                     confirmingRebuild = true
                 }
                 .koanButton(.secondary)
@@ -265,15 +265,14 @@ private struct LibrarySettings: View {
                     .koanText(.fine, .muted)
             }
         }
-        .koanForm()
         .koanSheet()
         .confirmationDialog(
             "Clear the library index?",
             isPresented: $confirmingRebuild,
             titleVisibility: .visible
         ) {
-            Button("Clear Index", role: .destructive) { model.rebuildIndex() }
-            Button("Cancel", role: .cancel) {}
+            Button(KoanTheme.label("Clear Index"), role: .destructive) { model.rebuildIndex() }
+            Button(KoanTheme.label("Cancel"), role: .cancel) {}
         } message: {
             Text("Play counts, lyrics and audio analysis are lost. Favourites are kept. Your music files are not touched.")
         }
@@ -282,15 +281,15 @@ private struct LibrarySettings: View {
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
             titleVisibility: .visible
         ) {
-            Button("Remove and Forget Its Tracks", role: .destructive) {
+            Button(KoanTheme.label("Remove and Forget Its Tracks"), role: .destructive) {
                 if let folder = removing { model.removeFolder(folder.path, forgetTracks: true) }
                 removing = nil
             }
-            Button("Remove, Keep Them in the Library") {
+            Button(KoanTheme.label("Remove, Keep Them in the Library")) {
                 if let folder = removing { model.removeFolder(folder.path, forgetTracks: false) }
                 removing = nil
             }
-            Button("Cancel", role: .cancel) { removing = nil }
+            Button(KoanTheme.label("Cancel"), role: .cancel) { removing = nil }
         } message: {
             Text("Your files are not touched either way. Keeping them leaves records in the library that kōan will not scan again.")
         }
@@ -336,7 +335,7 @@ private struct RemoteSettings: View {
     }
 
     var body: some View {
-        Form {
+        KoanForm {
             if model.settings.remoteSignedIn {
                 Section {
                     #if os(tvOS)
@@ -373,17 +372,17 @@ private struct RemoteSettings: View {
                         // out is a config write, and greying it out while a
                         // sync runs strands you on a server you are trying to
                         // leave.
-                        Button("Sync") { model.syncNow() }
+                        Button(KoanTheme.label("Sync")) { model.syncNow() }
                             .koanButton(.secondary)
                             .disabled(activity.conflicts(with: [.remoteTracks]))
                         #if !os(tvOS)
                         if mirror.offers(PasswordChange.extensionName) {
-                            Button("Change Password…") { changingPassword = true }
+                            Button(KoanTheme.label("Change Password…")) { changingPassword = true }
                                 .koanButton(.secondary)
                         }
                         #endif
                         Spacer()
-                        Button("Sign Out", role: .destructive) { confirmingSignOut = true }
+                        Button(KoanTheme.label("Sign Out"), role: .destructive) { confirmingSignOut = true }
                             .koanButton(.secondary)
                     }
                     .rowButtons()
@@ -394,13 +393,13 @@ private struct RemoteSettings: View {
                 .alert("Change your password", isPresented: $changingPassword) {
                     SecureField("Current password", text: $currentPassword)
                     SecureField("New password", text: $newPassword)
-                    Button("Change") {
+                    Button(KoanTheme.label("Change")) {
                         let (current, new) = (currentPassword, newPassword)
                         currentPassword = ""
                         newPassword = ""
                         Task { _ = await model.changePassword(current: current, new: new) }
                     }
-                    Button("Cancel", role: .cancel) {
+                    Button(KoanTheme.label("Cancel"), role: .cancel) {
                         currentPassword = ""
                         newPassword = ""
                     }
@@ -424,12 +423,18 @@ private struct RemoteSettings: View {
                 Section {
                     // The prompt names the field: an iOS form shows only the
                     // prompt, so an example there leaves the field unlabelled.
-                    TextField("Server URL", text: $url, prompt: Text("Server URL"))
-                        .verbatimEntry(.url)
-                        .accessibilityIdentifier("server-url")
-                    TextField("Username", text: $username, prompt: Text("Username"))
-                        .verbatimEntry()
-                        .accessibilityIdentifier("username")
+                    LabeledContent("Server URL") {
+                        TextField("Server URL", text: $url, prompt: Text("Server URL"))
+                            .verbatimEntry(.url)
+                            .accessibilityIdentifier("server-url")
+                            .koanField()
+                    }
+                    LabeledContent("Username") {
+                        TextField("Username", text: $username, prompt: Text("Username"))
+                            .verbatimEntry()
+                            .accessibilityIdentifier("username")
+                            .koanField()
+                    }
                     Picker("Sign in with", selection: $model.withApiKey) {
                         Text("Password").tag(false)
                         Text("API key").tag(true)
@@ -439,15 +444,18 @@ private struct RemoteSettings: View {
                     // own to go into and come back from.
                     .pickerStyle(.segmented)
                     #endif
-                    SecureField(
-                        model.withApiKey ? "API key" : "Password",
-                        text: $model.password,
-                        prompt: Text(model.withApiKey ? "API key" : "Password")
-                    )
-                    .verbatimEntry()
-                    .accessibilityIdentifier("secret")
+                    LabeledContent(model.withApiKey ? "API key" : "Password") {
+                        SecureField(
+                            model.withApiKey ? "API key" : "Password",
+                            text: $model.password,
+                            prompt: Text(model.withApiKey ? "API key" : "Password")
+                        )
+                        .verbatimEntry()
+                        .accessibilityIdentifier("secret")
+                        .koanField()
+                    }
                     HStack {
-                        Button("Sign In") { model.signIn(url: url, username: username) }
+                        Button(KoanTheme.label("Sign In")) { model.signIn(url: url, username: username) }
                             .koanButton(.primary)
                             .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                         Spacer()
@@ -550,20 +558,23 @@ private struct RemoteSettings: View {
                     in: 1...16
                 ).koanControl()
                 #endif
-                TextField("Cache limit, e.g. 50GB — blank for no limit", text: Binding(
-                    get: { cacheLimit ?? model.settings.cacheLimit },
-                    set: { cacheLimit = $0 }
-                ))
-                .verbatimEntry()
-                .focused($cacheLimitFocused)
-                .onSubmit(commitCacheLimit)
-                .onChange(of: cacheLimitFocused) { _, focused in
-                    if !focused { commitCacheLimit() }
+                LabeledContent("Cache limit") {
+                    TextField("Cache limit", text: Binding(
+                        get: { cacheLimit ?? model.settings.cacheLimit },
+                        set: { cacheLimit = $0 }
+                    ), prompt: Text("e.g. 50GB — blank for no limit"))
+                    .verbatimEntry()
+                    .focused($cacheLimitFocused)
+                    .onSubmit(commitCacheLimit)
+                    .onChange(of: cacheLimitFocused) { _, focused in
+                        if !focused { commitCacheLimit() }
+                    }
+                    .koanField()
                 }
                 LabeledContent("Using") {
                     HStack {
                         Text(Format.bytes(Int64(model.settings.cacheBytes)))
-                        Button("Clear") { model.clearCache() }
+                        Button(KoanTheme.label("Clear")) { model.clearCache() }
                             .koanButton(.text)
                             .disabled(activity.conflicts(with: [.downloads]))
                     }
@@ -572,7 +583,6 @@ private struct RemoteSettings: View {
                 KoanSectionHeader("Downloads")
             }
         }
-        .koanForm()
         .koanSheet()
         .onAppear {
             url = model.settings.remoteUrl
@@ -583,13 +593,13 @@ private struct RemoteSettings: View {
             isPresented: $confirmingSignOut,
             titleVisibility: .visible
         ) {
-            Button("Sign Out and Forget Its Tracks", role: .destructive) {
+            Button(KoanTheme.label("Sign Out and Forget Its Tracks"), role: .destructive) {
                 model.signOut(forgetTracks: true)
             }
-            Button("Sign Out and Keep Its Tracks") {
+            Button(KoanTheme.label("Sign Out and Keep Its Tracks")) {
                 model.signOut(forgetTracks: false)
             }
-            Button("Cancel", role: .cancel) {}
+            Button(KoanTheme.label("Cancel"), role: .cancel) {}
         } message: {
             Text("Tracks you also have as local files are kept either way. Keeping the rest leaves records in the library that cannot be played until you sign in again.")
         }
@@ -602,10 +612,10 @@ private struct RemoteSettings: View {
             titleVisibility: .visible,
             presenting: replacingQueue
         ) { _ in
-            Button("Replace With the Server's Queue", role: .destructive) {
+            Button(KoanTheme.label("Replace With the Server's Queue"), role: .destructive) {
                 Task { await model.setServerQueue(true) }
             }
-            Button("Cancel", role: .cancel) {}
+            Button(KoanTheme.label("Cancel"), role: .cancel) {}
         } message: { saved in
             Text("Your server has a queue of \(saved.savedTracks) \(saved.savedTracks == 1 ? "track" : "tracks") saved by \(saved.savedBy). Keeping the queue on the server replaces the one on this device with it.")
         }
@@ -625,7 +635,7 @@ private struct PlaybackSettings: View {
     @Environment(PlayerModel.self) private var player
 
     var body: some View {
-        Form {
+        KoanForm {
             Section {
                 Picker("Output", selection: Binding(
                     get: { player.currentDevice ?? "" },
@@ -681,7 +691,6 @@ private struct PlaybackSettings: View {
                     .koanText(.fine, .muted)
             }
         }
-        .koanForm()
         .koanSheet()
     }
 }
@@ -697,7 +706,7 @@ struct EqSettings: View {
     private var active: String? { app.dsp.overview?.active }
 
     var body: some View {
-        Form {
+        KoanForm {
             if let active, let response, let detail {
                 Section {
                     EqGraph(response: response, handles: BandTable.handles(detail.bands)) { index, hz, db in
@@ -711,7 +720,6 @@ struct EqSettings: View {
             }
             DspSettings()
         }
-        .koanForm()
         .koanSheet()
         .task(id: "\(active ?? "")\u{0}\(app.dsp.version)") {
             response = if let active { await app.dsp.response(active) } else { nil }
@@ -769,7 +777,7 @@ struct DspSettings: View {
                         ProfileRow(profile: p, active: o.active == p.name)
                     }
                     .swipeActions {
-                        Button("Delete", role: .destructive) { dsp.remove(p.name) }
+                        Button(KoanTheme.label("Delete"), role: .destructive) { dsp.remove(p.name) }
                     }
                     #else
                     Button {
@@ -779,7 +787,7 @@ struct DspSettings: View {
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
-                        Button("Delete", role: .destructive) { dsp.remove(p.name) }
+                        Button(KoanTheme.label("Delete"), role: .destructive) { dsp.remove(p.name) }
                     }
                     #endif
                 }
@@ -787,9 +795,9 @@ struct DspSettings: View {
             // Profiles come in as files, and a television has none: they are
             // imported on another device, and the TV picks them by output.
             #if !os(tvOS)
-            Button("Import…") { importing = true }
+            Button(KoanTheme.label("Import…")) { importing = true }
                 .koanButton(.secondary)
-            Button("Find in AutoEQ…") {
+            Button(KoanTheme.label("Find in AutoEQ…")) {
                 findQuery = ""
                 findingAutoEq = true
             }
@@ -829,7 +837,7 @@ struct DspSettings: View {
                 DspProfilePage(dsp: dsp, name: shown.name)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { showing = nil }
+                            Button(KoanTheme.label("Done")) { showing = nil }
                         }
                     }
             }
@@ -855,14 +863,14 @@ private struct AutoEqSuggestion: View {
                 Text("AutoEQ has a profile for \(entry.name). Use it?")
                     .koanText(.body, .muted)
                 HStack {
-                    Button("Use") { dsp.installAutoEq(entry) }
+                    Button(KoanTheme.label("Use")) { dsp.installAutoEq(entry) }
                         .koanButton(.primary)
                     dismiss
                     Spacer()
                 }
             case let .search(query):
                 HStack {
-                    Button("Find \(query) in AutoEQ…") { find(query) }
+                    Button(KoanTheme.label("Find") + " \(query) " + KoanTheme.label("in AutoEQ…")) { find(query) }
                         .koanButton(.secondary)
                     dismiss
                     Spacer()
@@ -874,7 +882,7 @@ private struct AutoEqSuggestion: View {
     }
 
     private var dismiss: some View {
-        Button("Not for This Device") { dsp.dismissSuggestion() }
+        Button(KoanTheme.label("Not for This Device")) { dsp.dismissSuggestion() }
             .koanButton(.text)
     }
 }
@@ -922,7 +930,7 @@ private struct AutoEqSearch: View {
             .navigationTitle(KoanTheme.label("AutoEQ"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button(KoanTheme.label("Cancel")) { dismiss() }
                 }
             }
             // Debounced: a search runs once typing pauses, not per keystroke.
@@ -1033,7 +1041,7 @@ struct DspImportPrompts: ViewModifier {
                 ForEach(DspModel.rates, id: \.self) { rate in
                     Button("\(DspModel.khz(rate)) kHz") { dsp.retry(rate: rate) }
                 }
-                Button("Cancel", role: .cancel) { dsp.needsRate = nil }
+                Button(KoanTheme.label("Cancel"), role: .cancel) { dsp.needsRate = nil }
             } message: {
                 Text("These coefficients carry no rate of their own. Use the one the filter was designed at.")
             }
@@ -1046,9 +1054,9 @@ struct DspImportPrompts: ViewModifier {
                 presenting: dsp.imported
             ) { name in
                 if let device = dsp.overview?.device, dsp.overview?.active != name {
-                    Button("Use for \(device)") { dsp.use(name) }
+                    Button(KoanTheme.label("Use for") + " \(device)") { dsp.use(name) }
                 }
-                Button("Done", role: .cancel) {}
+                Button(KoanTheme.label("Done"), role: .cancel) {}
             } message: { _ in
                 if let device = dsp.overview?.device, dsp.overview?.active == nil {
                     Text("\(device) plays untouched until it has a profile.")
@@ -1071,7 +1079,8 @@ private struct PairDevice: View {
                     TextField("Code", text: $code, prompt: Text("XXXX-XXXX"))
                         .verbatimEntry()
                         .onSubmit(approve)
-                    Button("Approve", action: approve)
+                        .koanField()
+                    Button(KoanTheme.label("Approve"), action: approve)
                         .koanButton(.primary)
                         .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -1165,7 +1174,7 @@ private struct DevicesSettings: View {
     @State private var shareError: String?
 
     var body: some View {
-        Form {
+        KoanForm {
             Section {
                 Toggle("Discoverable on this network", isOn: model.binding(\.devicesDiscoverable)).koanToggle()
                 Picker("Devices on this network", selection: model.binding(\.devicesNearbyControl)) {
@@ -1195,7 +1204,7 @@ private struct DevicesSettings: View {
                     HStack {
                         Text(addr).koanText(.meta).monospaced()
                         Spacer()
-                        Button("Remove", role: .destructive) {
+                        Button(KoanTheme.label("Remove"), role: .destructive) {
                             model.edit { $0.devicesAddresses.removeAll { $0 == addr } }
                         }
                         .koanButton(.text)
@@ -1205,7 +1214,8 @@ private struct DevicesSettings: View {
                     TextField("Address", text: $address, prompt: Text("host or host:port"))
                         .verbatimEntry(.url)
                         .onSubmit(add)
-                    Button("Add", action: add)
+                        .koanField()
+                    Button(KoanTheme.label("Add"), action: add)
                         .koanButton(.secondary)
                         .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -1222,7 +1232,7 @@ private struct DevicesSettings: View {
                         HStack {
                             Text(account)
                             Spacer()
-                            Button("Stop sharing", role: .destructive) { share(account, allow: false) }
+                            Button(KoanTheme.label("Stop sharing"), role: .destructive) { share(account, allow: false) }
                                 .koanButton(.text)
                         }
                     }
@@ -1237,7 +1247,8 @@ private struct DevicesSettings: View {
                             }
                             #endif
                             .onSubmit { share(grantee, allow: true) }
-                        Button("Share") { share(grantee, allow: true) }
+                            .koanField()
+                        Button(KoanTheme.label("Share")) { share(grantee, allow: true) }
                             .koanButton(.secondary)
                             .disabled(grantee.trimmingCharacters(in: .whitespaces).isEmpty)
                     }
@@ -1262,7 +1273,6 @@ private struct DevicesSettings: View {
                 }
             }
         }
-        .koanForm()
         .koanSheet()
     }
 
@@ -1306,7 +1316,7 @@ private struct AppearanceSettings: View {
 
     var body: some View {
         @Bindable var appearance = appearance
-        Form {
+        KoanForm {
             Section {
                 KoanSegmentedPicker(
                     options: [("kōan", true), ("System", false)],
@@ -1360,7 +1370,6 @@ private struct AppearanceSettings: View {
                     .koanText(.fine, .muted)
             }
         }
-        .koanForm()
         .koanSheet()
     }
 }

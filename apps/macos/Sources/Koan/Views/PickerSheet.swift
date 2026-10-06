@@ -61,7 +61,7 @@ struct PickerSheet: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                 }
-                .koanButton(.text)
+                .koanButton(.icon)
             }
         }
         .padding(.horizontal, 18)
@@ -136,7 +136,7 @@ struct PickerSheet: View {
             } else {
                 Text("\(picked.count) selected")
                     .koanText(.fine, .muted)
-                Button("Clear") { picked = [] }
+                Button(KoanTheme.label("Clear")) { picked = [] }
                     .koanButton(.text)
             }
 
@@ -146,13 +146,13 @@ struct PickerSheet: View {
                 ProgressView().controlSize(.small)
             }
 
-            Button("Replace Queue") { commit(.replace) }
+            Button(KoanTheme.label("Replace Queue")) { commit(.replace) }
                 .shortcut(.return, modifiers: [.command, .shift])
                 .koanButton(.secondary)
-            Button("Add") { commit(.append) }
+            Button(KoanTheme.label("Add")) { commit(.append) }
                 .shortcut(.return, modifiers: [])
                 .koanButton(.secondary)
-            Button("Add & Play") { commit(.appendAndPlay) }
+            Button(KoanTheme.label("Add & Play")) { commit(.appendAndPlay) }
                 .shortcut(.return, modifiers: .command)
                 .koanButton(.primary)
         }

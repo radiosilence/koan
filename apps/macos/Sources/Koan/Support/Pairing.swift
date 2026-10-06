@@ -94,8 +94,8 @@ struct PairingConfirmation: ViewModifier {
             ),
             presenting: state.ui.pendingPairing
         ) { request in
-            Button("Allow") { state.settle(request, approve: true) }
-            Button("Decline", role: .cancel) { state.settle(request, approve: false) }
+            Button(KoanTheme.label("Allow")) { state.settle(request, approve: true) }
+            Button(KoanTheme.label("Decline"), role: .cancel) { state.settle(request, approve: false) }
         } message: { request in
             Text(
                 "\(request.origin)\n\nIt will be signed in as \(request.username) on \(request.host). Allow only a device you are setting up yourself: anyone can give a device any name."
