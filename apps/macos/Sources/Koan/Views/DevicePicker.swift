@@ -110,8 +110,13 @@ private struct DeviceRow: View {
             if let failed = device.wakeFailed {
                 return "\(failed) Asleep\(seen)."
             }
-            return device.wakeable
-                ? "Asleep\(seen). Choosing it wakes it; music sent here arrives as a notification to tap."
+            if device.wakeable {
+                return "Asleep\(seen). Choosing it wakes it; music sent here arrives as a notification to tap."
+            }
+            // A Mac drops out when kōan is quit or the Mac is off, and nothing
+            // reaches it until someone opens kōan there.
+            return device.platform == "macos"
+                ? "Not running\(seen). It can't be woken from here."
                 : "Asleep\(seen)"
         }
         let playing = [device.title, device.artist].compactMap { $0 }.joined(separator: " — ")

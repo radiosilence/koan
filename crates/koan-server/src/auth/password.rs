@@ -153,6 +153,14 @@ impl PasswordVerifier {
                 .is_some_and(|at| at.elapsed() < KNOWN_FOR)
     }
 
+    /// Whether `username` has spent its failures for the minute, from any
+    /// network: for a password check that is not a sign-in, which the sparing
+    /// of known networks would otherwise let a guesser on one of them repeat
+    /// without limit.
+    pub(crate) fn exhausted(&self, username: &str) -> bool {
+        self.failures.exhausted(&username.to_owned())
+    }
+
     /// Count a failed sign-in for `username`.
     pub(crate) fn failed(&self, username: &str) {
         self.failures.record(username.to_owned());

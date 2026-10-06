@@ -141,7 +141,9 @@ max-wide:aria-[current=page]:bg-transparent max-wide:aria-[current=page]:text-br
 const ACCOUNT_LINK: &str = "rounded-md px-1.5 py-1 text-meta whitespace-nowrap text-muted hover:text-ink \
 hover:no-underline aria-[current=page]:bg-rule aria-[current=page]:text-ink";
 
-fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> String {
+/// `proxied`: an authenticating proxy is trusted, so the page renews its
+/// session from the proxy rather than a refresh cookie.
+fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool, proxied: bool) -> String {
     // On a wide screen the sidebar ends with who is signed in and the version;
     // the account page has everything else. A phone has an Account tab instead.
     let signed_in = if auth_enabled {
@@ -166,7 +168,7 @@ href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></d
     format!(
         "{head}<script type=module src=\"{datastar}\"></script>\
 <script src=\"{player}\" defer></script><script src=\"{ui}\" defer></script>\
-</head><body><nav class=\"fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r \
+</head><body{proxied}><nav class=\"fixed top-0 bottom-(--bar-h) left-0 z-4 flex w-(--side-w) flex-col gap-0.5 border-r \
 border-rule bg-surface px-2.5 py-4 wide:overflow-y-auto pt-[max(16px,env(safe-area-inset-top))] max-wide:top-auto max-wide:right-0 \
 max-wide:bottom-0 max-wide:h-[calc(var(--tabs-h)+env(safe-area-inset-bottom))] max-wide:w-auto \
 max-wide:flex-row max-wide:gap-0 max-wide:border-t max-wide:border-r-0 max-wide:p-0 \
@@ -207,6 +209,7 @@ max-wide:block [&::-moz-progress-bar]:bg-brand [&::-webkit-progress-bar]:bg-rule
         ui = super::ASSETS.ui_js,
         buttons = buttons(false),
         scrub = scrub("max-wide:hidden"),
+        proxied = if proxied { " data-proxied" } else { "" },
     )
 }
 
@@ -225,7 +228,16 @@ pub(super) fn respond(
     if headers.contains_key(PARTIAL) {
         html(StatusCode::OK, content)
     } else {
-        html(StatusCode::OK, shell(title, &content, user, s.auth_enabled))
+        html(
+            StatusCode::OK,
+            shell(
+                title,
+                &content,
+                user,
+                s.auth_enabled,
+                s.proxy_auth.is_some(),
+            ),
+        )
     }
 }
 

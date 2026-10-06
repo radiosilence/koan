@@ -103,12 +103,74 @@ The server answers `http://host:4000/` with a browser UI: albums, artists, playl
 
 Sign in with a kōan account (`koan auth create-user`). The session is the same pair of `HttpOnly` cookies the JSON login sets, so behind plain HTTP the UI needs `cookie_secure = false`, and a hostname it is reached by must be in `allowed_hosts`. The access cookie lasts `access_token_ttl`; an open page renews it from the refresh cookie, and a page loaded after it lapsed renews on the way in. With `auth_enabled = false` the UI is open to anyone who can reach the port. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
 
+### Behind an authenticating proxy
+
+When a proxy such as Authelia, Authentik or oauth2-proxy signs people in before they reach kōan, the web UI can take the account from the header the proxy sets instead of asking for a password:
+
+```toml
+[graphql]
+proxy_auth_header = "Remote-User"
+proxy_auth_from = ["172.18.0.5"]     # the proxy's own address
+```
+
+The header is believed only on a connection whose address is in `proxy_auth_from`, which names the proxy itself, not the clients behind it, and only when it carries a single value. The account must already exist in kōan with exactly that name, byte for byte and case included: a name the server has no account for is refused, not created. A header from the proxy that names no one account (sent twice, merged, or not UTF-8) is refused too, and signs the browser out rather than leaving it on the session it had. A session through the proxy is an access cookie alone, with no refresh cookie, and each page load and each renewal derives it again from the header. It therefore lasts no longer than the proxy's say-so: a browser whose proxy sign-in changes to another account is handed over on its next page load, and once the proxy stops naming an account (sign-out, or removal at the identity provider), what kōan issued for it lapses within `access_token_ttl`. Signing out is done at the proxy. A password sign-in made without the proxy, such as `koan auth login`, keeps its refresh token as usual. Turning proxy mode on does not end sessions signed in with a password before it: their refresh tokens still rotate at `/auth/refresh`. To end them, have each person sign out of the web UI once, or reset the account's password (`koan auth reset-password`, or Users in the web UI), which also revokes its API keys and app passwords and so signs its apps out too.
+
+Proxy sign-in is on only when both settings are set. The server refuses to start, naming the problem, when one is set without the other, when the header is not a header name or an entry is neither an address nor a range, and when an entry covers every address (`0.0.0.0/0`, `::/0`). When it is on, the server logs the header and the addresses it believes it from.
+
+Name the proxy's own address rather than its network where you can. Anything else that connects from inside `proxy_auth_from` can name any account. Under Docker that includes the network's gateway (`172.18.0.1` on `172.18.0.0/16`), through which connections to a published port can arrive: from the host itself through `docker-proxy`, and from every client under rootless Docker or Docker Desktop. Do not publish kōan's port when it sits behind the proxy, and give the proxy a fixed address on the network (`ipv4_address` in Compose).
+
+kōan reads the header only on web UI pages and the MCP consent page (`/oauth/authorize`), which the proxy must cover. Subsonic clients, kōan's apps and MCP clients cannot pass through an interactive proxy sign-in, so the proxy must let these through without its sign-in, and no others:
+
+| Path | Used by |
+|------|---------|
+| `/rest` | Subsonic clients and kōan's apps, including the `koanLink` WebSocket |
+| `/graphql` | GraphQL clients |
+| `/mcp` | MCP clients |
+| `/auth/login`, `/auth/refresh`, `/auth/logout` | `koan auth login` and other token clients |
+| `/oauth/register`, `/oauth/token` | MCP clients signing in |
+| `/.well-known` | MCP clients discovering the OAuth server |
+| `/share` | Public share links, for people without an account |
+| `/push/cover` | Album art in iOS notifications, fetched by the app's notification extension through a signed link |
+
+Exempt these exact paths, never whole `/auth` or `/oauth` prefixes. On a path the proxy does not cover it sets no header of its own, so whatever a client sent passes through from the proxy's address. Have the proxy remove the header from every incoming request before it authenticates, so a mistaken exemption carries no header at all. With Caddy:
+
+```
+music.example.com {
+    request_header -Remote-User
+
+    @public path /rest/* /graphql /graphql/* /mcp /mcp/* /auth/login /auth/refresh /auth/logout /oauth/register /oauth/token /.well-known/* /share/* /push/cover/*
+    handle @public {
+        reverse_proxy koan:4000
+    }
+    handle {
+        forward_auth authelia:9091 {
+            uri /api/authz/forward-auth
+            copy_headers Remote-User
+        }
+        reverse_proxy koan:4000
+    }
+}
+```
+
+With Traefik, a headers middleware that clears the header, placed before the forward-auth middleware on every router to kōan:
+
+```yaml
+http:
+  middlewares:
+    strip-remote-user:
+      headers:
+        customRequestHeaders:
+          Remote-User: ""
+```
+
 ## Subsonic clients
 
 Besides playing, browsing and favourites, Subsonic clients get:
 
+- **Favourites on every listing.** A song, album or artist the account has favourited carries `starred`, the time it was favourited, in the ID3 listings (album and artist pages, search, album lists, playlists, random songs) and in the folder browse (`getIndexes`' artists, and the albums and songs `getMusicDirectory` lists), so a client shows its hearts without reading `getStarred2` first. Ratings (`userRating`) and an album's last play (`played`) are carried in the same places.
 - **Ratings.** `setRating` keeps a rating of one to five per account for songs, albums and artists, returned as `userRating`, and `getAlbumList2?type=highest` lists rated albums best first. kōan's own apps do not show ratings.
 - **Bookmarks.** `createBookmark`, `getBookmarks` and `deleteBookmark` keep one position and note per account and track, for clients that resume long tracks. kōan's own apps do not use them.
+- **A saved play queue.** `savePlayQueue` and `getPlayQueue` keep one queue per account, with its current song and position, for clients that save on pause or exit and resume on another device; the OpenSubsonic `indexBasedQueue` extension (`savePlayQueueByIndex`, `getPlayQueueByIndex`) names the current song by its place, so a song queued twice is unambiguous. Songs the library no longer has are left out when it is read. A queue holds at most 5,000 songs; a longer one is refused rather than cut. It needs an account: the shared secret is refused. kōan's own apps move their queues between devices over the link, and use it only when a device is set to keep its queue on the server (see [Remote servers](remote-servers.md#the-play-queue-on-the-server)).
 - **Transcoding.** A client that asks `stream` for a lower `maxBitRate` than the file's, or for `format=opus`, `mp3` or `aac`, gets an encode made by `ffmpeg`, so a lossless library does not cost full bandwidth on mobile data. `format=raw` and `download` return the original. The limits, formats and fallbacks are in [Configuration](../reference/configuration.md#subsonic).
 - **Smart playlists**, read-only, as ordinary playlists. See [Smart playlists](smart-playlists.md).
 
@@ -220,7 +282,7 @@ Unknown options are rejected rather than ignored, so a stack carrying options a 
 
 Two koan processes can share one state directory on one node for the minutes an upgrade overlaps them: SQLite's WAL lets both read and write. The state directory must be on a local filesystem, which WAL needs anyway and the lock below relies on. Only one scans and watches the library, whichever holds `watch.lock` beside the database; the other serves and waits on the lock, taking over the moment the first exits, however it exits. A build older than the database refuses to start, naming the schema versions, rather than serving errors.
 
-What an overlap does not cover is a release that changes the schema. The new server migrates on start, and the old one keeps serving the migrated database until it stops. For those releases the old server must stop before the new one starts, as `Recreate` does, which is what the Pulumi package still uses. Devices linked to the outgoing server reconnect to the new one, as after any restart.
+A release that changes the schema is covered too. The new server migrates on start in one transaction, so the old one, mid-request, sees the old schema or the new one and never a mixture, and a migration that fails leaves the database as it was. From the moment it commits, the old server refuses every database connection it is asked for, drains as it would on SIGTERM and exits, so it never writes the old shape into the new schema; what fails is the requests it had in flight at that moment. Devices linked to the outgoing server reconnect to the new one, as after any restart.
 
 Once it is running, create the admin account in the pod:
 

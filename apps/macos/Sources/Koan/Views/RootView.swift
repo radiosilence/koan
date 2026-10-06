@@ -111,6 +111,9 @@ struct RootView: View {
         // Offline narrows every listing to what can play here; going online
         // widens it again.
         .onChange(of: mirror.connection?.offline ?? false) { _, _ in library.libraryChanged() }
+        .onChange(of: mirror.connection?.commandNotice?.seq) { _, _ in
+            player.show(mirror.connection?.commandNotice)
+        }
         // The toolbar paints its own ground over whatever is behind it, a hard
         // grey strip across the top of a queue washed in the colour of the
         // record. Hidden, the glass controls sit in that colour and the scroll
@@ -133,7 +136,7 @@ struct RootView: View {
         .onReceive(
             NotificationCenter.default.publisher(for: .appResignsActive)
         ) { _ in
-            Task { await player.saveSession() }
+            Task { await player.saveOnLeaving() }
         }
         // On the window rather than inside the detail column, padded clear of
         // both columns: glass floating on glass reads as neither, and over the

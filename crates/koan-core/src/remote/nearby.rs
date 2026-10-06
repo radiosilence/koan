@@ -9,6 +9,12 @@
 //! state as it changes; the connecting end sends `LinkCommand`s, less the ones
 //! that touch the library (`LinkCommand::allowed_nearby`), since anyone on the
 //! network can connect.
+//!
+//! A peer that proves it is one of this account's devices, or one shared with
+//! it, is trusted as that rather than by the connection it came over: the
+//! listener's `Hello` carries a nonce, and the two ends sign each other's
+//! (`remote::proof`). After that every command is signed. A peer that proves
+//! nothing is a stranger or, under Full control, a nearby device, as before.
 
 use std::collections::HashMap;
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -20,15 +26,52 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
 use crate::config::{Config, DEVICES_PORT};
+use crate::remote::acks::{AckOutcome, Envelope};
 use crate::remote::devices;
-use crate::remote::link::{LinkCommand, LinkHello, LinkReport, LinkState, Local};
+use crate::remote::link::{CommandSource, LinkCommand, LinkHello, LinkReport, LinkState, Local};
+use crate::remote::proof::{self, Peer, Proven};
 use crate::remote::wire::{self, Waker};
 
 pub const SERVICE: &str = "_koan._tcp";
 
+/// The proof's frames, beside the link's messages on a nearby connection.
+/// Tagged apart from every `LinkCommand` and `LinkReport`, and sent only to a
+/// peer whose part in the handshake shows it knows them: the listener's
+/// `Hello` nonce, the dialler's `NearbyAuth`.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum ProofFrame {
+    /// The dialler: who it is, its nonce, and its signature over both nonces.
+    #[serde(rename = "nearbyAuth")]
+    Auth {
+        id: String,
+        nonce: String,
+        sig: String,
+    },
+    /// The listener's answer: whether it took the dialler for the account's
+    /// or a shared device, and its own signature, when it has a key.
+    #[serde(rename = "nearbyProof")]
+    Proof {
+        verified: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sig: Option<String>,
+    },
+    /// A command from a proven dialler, as JSON, signed for this session.
+    #[serde(rename = "nearbySigned")]
+    Signed {
+        seq: u64,
+        sig: String,
+        command: String,
+    },
+}
+
+fn frame(f: &ProofFrame) -> Option<String> {
+    serde_json::to_string(f).ok()
+}
+
 /// A connection this app made to another, once it has said who it is.
 struct Conn {
-    outbox: Vec<LinkCommand>,
+    outbox: Vec<Envelope>,
     waker: Arc<Waker>,
 }
 
@@ -499,11 +542,26 @@ pub fn listening_port() -> Option<u16> {
 /// Queue `cmd` for the device `id` on its local connection. False when there
 /// is none.
 pub fn send(id: &str, cmd: LinkCommand) -> bool {
+    send_envelope(id, cmd.into())
+}
+
+/// As `send`, asking `id` to answer under `ack`: see `remote::acks`.
+pub fn send_acked(id: &str, cmd: LinkCommand, ack: u64) -> bool {
+    send_envelope(
+        id,
+        Envelope {
+            command: cmd,
+            ack: Some(ack),
+        },
+    )
+}
+
+fn send_envelope(id: &str, envelope: Envelope) -> bool {
     let mut conns = CONNS.lock();
     let Some(conn) = conns.as_mut().and_then(|c| c.get_mut(id)) else {
         return false;
     };
-    conn.outbox.push(cmd);
+    conn.outbox.push(envelope);
     conn.waker.wake();
     true
 }
@@ -631,6 +689,11 @@ fn serve(stream: TcpStream, local: &Local, stop: &Arc<Stop>) -> Result<(), Strin
         sent: None,
         waker: waker.clone(),
         levels: None,
+        answers: Default::default(),
+        nonce: proof::nonce(),
+        answered: false,
+        proven: None,
+        pending: Vec::new(),
     };
     wire::drive(&mut socket, fd, &waker, &mut session)
 }
@@ -644,6 +707,100 @@ struct Serving<'a> {
     /// Set while the device at the other end has bars on screen for this
     /// one. Dropped with the connection, which stops the frames.
     levels: Option<crate::remote::levels::Watch>,
+    /// Answers to commands sent with an id, waiting to go back down this
+    /// connection; filled from whichever thread finishes each.
+    answers: Arc<Mutex<Vec<LinkReport>>>,
+    /// What the dialler is asked to sign over: `None` asks for no proof, as
+    /// when the system has no random bytes to give.
+    nonce: Option<String>,
+    /// Its `NearbyAuth` has been answered; a second is ignored.
+    answered: bool,
+    /// The dialler, once proven, and the session its commands are signed for.
+    proven: Option<(Proven, proof::Session)>,
+    /// Proof frames to send.
+    pending: Vec<String>,
+}
+
+impl Serving<'_> {
+    fn proof(&mut self, frame_in: ProofFrame) {
+        match frame_in {
+            ProofFrame::Auth { id, nonce, sig } => {
+                if std::mem::replace(&mut self.answered, true) {
+                    return;
+                }
+                let Some(listen_nonce) = self.nonce.clone() else {
+                    return;
+                };
+                let me = &self.local.identity.device_id;
+                let proven = proof::verify_dial(me, &id, &listen_nonce, &nonce, &sig);
+                let verified = proven.is_some();
+                match &proven {
+                    Some(p) => log::info!("nearby: {id} proved itself: {:?}", p.peer),
+                    None => log::info!("nearby: {id} proved nothing; trusted as the network is"),
+                }
+                self.proven =
+                    proven.map(|p| (p, proof::Session::new(me, &id, &listen_nonce, &nonce)));
+                let sig = proof::sign_listen(&id, me, &nonce, &listen_nonce, verified);
+                self.pending
+                    .extend(frame(&ProofFrame::Proof { verified, sig }));
+            }
+            ProofFrame::Signed { seq, sig, command } => {
+                let Some((by, session)) = self.proven.as_mut() else {
+                    log::warn!("nearby: a signed command from a peer that proved nothing; refused");
+                    return;
+                };
+                if !session.accept(by, seq, &sig, &command) {
+                    log::warn!("nearby: a command not signed for this connection; refused");
+                    return;
+                }
+                let envelope = match serde_json::from_str::<Envelope>(&command) {
+                    Ok(envelope) => envelope,
+                    Err(e) => return log::warn!("nearby: not a command ({e}): {command}"),
+                };
+                let peer = by.peer.clone();
+                self.run(envelope, &peer);
+            }
+            ProofFrame::Proof { .. } => {}
+        }
+    }
+
+    /// A command from a proven peer: from one of the account's devices,
+    /// what one device may have another do, with the account's powers; from a
+    /// shared device, the playback set, as that account's request.
+    fn run(&mut self, envelope: Envelope, peer: &Peer) {
+        let source_of = |cmd: &LinkCommand| match peer {
+            Peer::Own if cmd.relayable() => Some(CommandSource::Account),
+            Peer::Shared(_) if cmd.allowed_playback() => Some(CommandSource::Shared),
+            _ => None,
+        };
+        let admitted = admit(envelope, source_of, self.answer());
+        self.dispatch(admitted);
+    }
+
+    /// Where answers to commands sent with an id go: back down this
+    /// connection, from whichever thread finishes each.
+    fn answer(&self) -> impl FnOnce(u64, AckOutcome) + Send + 'static {
+        let (answers, waker) = (self.answers.clone(), self.waker.clone());
+        move |ack, outcome| {
+            answers.lock().push(LinkReport::Ack { ack, outcome });
+            waker.wake();
+        }
+    }
+
+    fn dispatch(&mut self, admitted: Admitted) {
+        match admitted {
+            Admitted::Levels(on, pending) => {
+                self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
+                if let Some(pending) = pending {
+                    pending.finish(AckOutcome::Done);
+                }
+            }
+            Admitted::Command(cmd, source, pending) => {
+                (self.local.on_command)(cmd, source, pending)
+            }
+            Admitted::Neither => {}
+        }
+    }
 }
 
 impl wire::Session for Serving<'_> {
@@ -657,9 +814,12 @@ impl wire::Session for Serving<'_> {
                 name: id.name.clone(),
                 platform: id.platform.clone(),
                 library: crate::remote::link::library_fingerprint(&cfg),
+                acks: true,
+                nonce: self.nonce.clone(),
             }));
             self.greeted = true;
         }
+        out.append(&mut self.answers.lock());
         let now = for_the_network((self.local.state)(), full_control());
         if self
             .sent
@@ -672,26 +832,91 @@ impl wire::Session for Serving<'_> {
         if let Some(f) = self.levels.as_mut().and_then(|w| w.take()) {
             out.push(LinkReport::Levels { f });
         }
-        out.iter()
+        let mut out: Vec<String> = out
+            .iter()
             .filter_map(|r| serde_json::to_string(r).ok())
-            .collect()
+            .collect();
+        out.append(&mut self.pending);
+        out
     }
 
     fn incoming(&mut self, text: &str) {
-        match serde_json::from_str::<LinkCommand>(text) {
-            Ok(LinkCommand::WatchLevels { on }) => {
-                self.levels = on.then(|| crate::remote::levels::feed().watch(&self.waker));
-            }
-            Ok(cmd) => match cmd.from_the_network(full_control()) {
-                Some(source) => (self.local.on_command)(cmd, source),
-                None => log::warn!("nearby: refused {cmd:?}"),
-            },
-            Err(e) => log::warn!("nearby: not a command ({e}): {text}"),
+        if let Ok(f) = serde_json::from_str::<ProofFrame>(text) {
+            return self.proof(f);
         }
+        let envelope = match serde_json::from_str::<Envelope>(text) {
+            Ok(envelope) => envelope,
+            Err(e) => {
+                log::warn!("nearby: not a command ({e}): {text}");
+                return;
+            }
+        };
+        // A proven peer signs everything; an unsigned command on its
+        // connection is one slipped into the stream.
+        if self.proven.is_some() {
+            log::warn!(
+                "nearby: an unsigned command on a proven connection; refused: {:?}",
+                envelope.command
+            );
+            return;
+        }
+        let full = full_control();
+        let admitted = admit(envelope, |cmd| cmd.from_the_network(full), self.answer());
+        self.dispatch(admitted);
     }
 
     fn done(&self) -> bool {
         self.stop.stopped()
+    }
+}
+
+/// What a command from the network comes to here.
+enum Admitted {
+    Levels(bool, Option<crate::remote::acks::Pending>),
+    Command(
+        LinkCommand,
+        crate::remote::link::CommandSource,
+        Option<crate::remote::acks::Pending>,
+    ),
+    /// Refused, or a repeat already answered.
+    Neither,
+}
+
+/// Admit a command from the network: checked against what this device lets
+/// the network do (`full` control or a stranger's set) before its id is
+/// taken, so a refused command answers `refused` and leaves the id free. A
+/// stranger who has seen one of this person's ids then cannot spend it ahead
+/// of the real command.
+fn admit(
+    envelope: Envelope,
+    source_of: impl FnOnce(&LinkCommand) -> Option<crate::remote::link::CommandSource>,
+    answer: impl FnOnce(u64, AckOutcome) + Send + 'static,
+) -> Admitted {
+    let source = match &envelope.command {
+        LinkCommand::WatchLevels { .. } => None,
+        cmd => match source_of(cmd) {
+            Some(source) => Some(source),
+            None => {
+                log::warn!("nearby: refused {cmd:?}");
+                if let Some(ack) = envelope.ack {
+                    answer(
+                        ack,
+                        AckOutcome::Refused {
+                            reason: "not allowed from this network".into(),
+                        },
+                    );
+                }
+                return Admitted::Neither;
+            }
+        },
+    };
+    let Some((command, pending)) = crate::remote::acks::take(envelope, answer) else {
+        return Admitted::Neither;
+    };
+    match (command, source) {
+        (LinkCommand::WatchLevels { on }, _) => Admitted::Levels(on, pending),
+        (cmd, Some(source)) => Admitted::Command(cmd, source, pending),
+        (_, None) => Admitted::Neither,
     }
 }
 
@@ -777,6 +1002,8 @@ fn dial(key: String, at: Arc<Mutex<String>>, stop: Arc<Stop>, redial: Arc<Atomic
                     id: None,
                     this_device: false,
                     duplicate: false,
+                    handshake: Handshake::Plain,
+                    pending: Vec::new(),
                 };
                 let result = wire::drive(&mut socket, fd, &waker, &mut session);
                 served = session
@@ -883,26 +1110,121 @@ struct Controlling<'a> {
     this_device: bool,
     /// Already connected to this device another way: announced and typed in.
     duplicate: bool,
+    handshake: Handshake,
+    /// Proof frames to send.
+    pending: Vec<String>,
+}
+
+/// Where this end of a connection is in proving itself.
+enum Handshake {
+    /// Nothing proven, as with a listener that predates proofs or a device
+    /// with no key: commands go as they are, and are trusted as the network
+    /// is.
+    Plain,
+    /// Signed and sent; commands wait for the answer, so none goes out
+    /// before the connection is settled.
+    Awaiting {
+        listener: String,
+        me: String,
+        listen_nonce: String,
+        dial_nonce: String,
+    },
+    /// Proven: every command is signed for this session.
+    Signed(proof::Session),
+}
+
+impl Controlling<'_> {
+    /// Answer a listener that asked for proof, if this device has one to give.
+    fn prove(&mut self, listener: &str, listen_nonce: String) {
+        let Some(me) = devices::this_id() else { return };
+        let Some(dial_nonce) = proof::nonce() else {
+            return;
+        };
+        let Some(sig) = proof::sign_dial(listener, &me, &listen_nonce, &dial_nonce) else {
+            return;
+        };
+        self.pending.extend(frame(&ProofFrame::Auth {
+            id: me.clone(),
+            nonce: dial_nonce.clone(),
+            sig,
+        }));
+        self.handshake = Handshake::Awaiting {
+            listener: listener.to_owned(),
+            me,
+            listen_nonce,
+            dial_nonce,
+        };
+    }
+
+    fn answered(&mut self, verified: bool, sig: Option<String>) {
+        let Handshake::Awaiting {
+            listener,
+            me,
+            listen_nonce,
+            dial_nonce,
+        } = &self.handshake
+        else {
+            return;
+        };
+        let listener_is = sig.and_then(|sig| {
+            proof::verify_listen(me, listener, dial_nonce, listen_nonce, verified, &sig)
+        });
+        log::info!(
+            "nearby: {listener} {} us; it proved itself: {:?}",
+            if verified { "took" } else { "did not take" },
+            listener_is.map(|p| p.peer)
+        );
+        self.handshake = if verified {
+            Handshake::Signed(proof::Session::new(listener, me, listen_nonce, dial_nonce))
+        } else {
+            Handshake::Plain
+        };
+    }
 }
 
 impl wire::Session for Controlling<'_> {
     fn outgoing(&mut self) -> Vec<String> {
+        let mut out = std::mem::take(&mut self.pending);
+        if matches!(self.handshake, Handshake::Awaiting { .. }) {
+            return out;
+        }
         let Some(id) = &self.id else {
-            return Vec::new();
+            return out;
         };
-        let mut conns = CONNS.lock();
-        let Some(conn) = conns.as_mut().and_then(|c| c.get_mut(id)) else {
-            return Vec::new();
+        let commands = {
+            let mut conns = CONNS.lock();
+            let Some(conn) = conns.as_mut().and_then(|c| c.get_mut(id)) else {
+                return out;
+            };
+            std::mem::take(&mut conn.outbox)
         };
-        std::mem::take(&mut conn.outbox)
-            .iter()
-            .filter_map(|c| serde_json::to_string(c).ok())
-            .collect()
+        for command in commands {
+            let Ok(json) = serde_json::to_string(&command) else {
+                continue;
+            };
+            match &mut self.handshake {
+                Handshake::Signed(session) => match session.sign(&json) {
+                    Some((seq, sig)) => out.extend(frame(&ProofFrame::Signed {
+                        seq,
+                        sig,
+                        command: json,
+                    })),
+                    // Signed out since: a proven listener refuses anything
+                    // unsigned, so there is nothing to send it.
+                    None => log::warn!("nearby: no key to sign with; {command:?} dropped"),
+                },
+                _ => out.push(json),
+            }
+        }
+        out
     }
 
     fn incoming(&mut self, text: &str) {
+        if let Ok(ProofFrame::Proof { verified, sig }) = serde_json::from_str(text) {
+            return self.answered(verified, sig);
+        }
         match serde_json::from_str::<LinkReport>(text) {
-            Ok(LinkReport::Hello(hello)) => {
+            Ok(LinkReport::Hello(mut hello)) => {
                 if devices::this_id().as_deref() == Some(hello.id.as_str()) {
                     self.this_device = true;
                     return;
@@ -924,6 +1246,10 @@ impl wire::Session for Controlling<'_> {
                 );
                 self.id = Some(hello.id.clone());
                 log::info!("nearby: found {} ({})", hello.name, hello.platform);
+                // The nonce is this connection's, and not to be remembered.
+                if let Some(nonce) = hello.nonce.take() {
+                    self.prove(&hello.id, nonce);
+                }
                 drop(guard);
                 set_blocked(false);
                 {
@@ -946,6 +1272,7 @@ impl wire::Session for Controlling<'_> {
                     crate::remote::levels::remote().received(id, f);
                 }
             }
+            Ok(LinkReport::Ack { ack, outcome }) => crate::remote::acks::resolve(ack, outcome),
             Ok(_) => {}
             Err(e) => log::debug!("nearby: not a report ({e})"),
         }
@@ -1589,5 +1916,276 @@ mod tests {
         let playback = super::for_the_network(state, false);
         assert!(playback.playing);
         assert_eq!(playback.outputs, None);
+    }
+
+    // --- Proof, from the listening end -------------------------------------
+
+    use super::*;
+    use crate::remote::link::LinkDeviceKey;
+    use crate::remote::wire::Session as _;
+
+    /// A listener "mac", signed in and holding a key list, with what it ran.
+    struct Rig {
+        _dir: tempfile::TempDir,
+        local: Local,
+        stop: Arc<Stop>,
+        ran: Arc<Mutex<Vec<(LinkCommand, CommandSource)>>>,
+    }
+
+    /// This process's keypair stands for every device: `keys` lists who holds
+    /// it, as the server would.
+    fn rig(keys: &[(&str, Option<&str>)]) -> Rig {
+        let dir = tempfile::tempdir().unwrap();
+        crate::config::set_config_dir(dir.path());
+        Config::persist(|c| {
+            c.remote.enabled = true;
+            c.remote.url = "http://koan.test".into();
+            c.remote.username = "jo".into();
+            c.remote.api_key = "key".into();
+            c.remote.device_key = proof::new_device_key().unwrap();
+        })
+        .unwrap();
+        let public = proof::public_key().unwrap();
+        proof::keep(
+            keys.iter()
+                .map(|(id, owner)| LinkDeviceKey {
+                    id: (*id).into(),
+                    key: public.clone(),
+                    owner: owner.map(Into::into),
+                })
+                .collect(),
+            proof::account_of(&Config::cached()),
+        );
+        let ran = Arc::new(Mutex::new(Vec::new()));
+        let seen = ran.clone();
+        Rig {
+            _dir: dir,
+            local: Local {
+                identity: crate::remote::link::LinkIdentity {
+                    name: "Mac".into(),
+                    platform: "macos".into(),
+                    device_id: "mac".into(),
+                },
+                state: Arc::new(LinkState::default),
+                on_command: Arc::new(move |cmd, source, _| seen.lock().push((cmd, source))),
+            },
+            stop: Stop::new().unwrap(),
+            ran,
+        }
+    }
+
+    fn serving<'a>(r: &'a Rig) -> Serving<'a> {
+        Serving {
+            local: &r.local,
+            stop: &r.stop,
+            greeted: false,
+            sent: None,
+            waker: Waker::new().unwrap(),
+            levels: None,
+            answers: Default::default(),
+            nonce: proof::nonce(),
+            answered: false,
+            proven: None,
+            pending: Vec::new(),
+        }
+    }
+
+    fn json(f: &ProofFrame) -> String {
+        frame(f).unwrap()
+    }
+
+    /// The dialler `dialer`'s half of the handshake, from this process's key.
+    fn auth(s: &mut Serving, dialer: &str) -> (String, proof::Session) {
+        let dial_nonce = proof::nonce().unwrap();
+        let listen_nonce = s.nonce.clone().unwrap();
+        let sig = proof::sign_dial("mac", dialer, &listen_nonce, &dial_nonce).unwrap();
+        let session = proof::Session::new("mac", dialer, &listen_nonce, &dial_nonce);
+        s.incoming(&json(&ProofFrame::Auth {
+            id: dialer.into(),
+            nonce: dial_nonce.clone(),
+            sig,
+        }));
+        (dial_nonce, session)
+    }
+
+    fn signed(session: &mut proof::Session, cmd: &LinkCommand) -> String {
+        let command = serde_json::to_string(cmd).unwrap();
+        let (seq, sig) = session.sign(&command).unwrap();
+        json(&ProofFrame::Signed { seq, sig, command })
+    }
+
+    fn answer(s: &mut Serving) -> (bool, Option<String>) {
+        let out = wire::Session::outgoing(s);
+        out.iter()
+            .find_map(|t| match serde_json::from_str::<ProofFrame>(t) {
+                Ok(ProofFrame::Proof { verified, sig }) => Some((verified, sig)),
+                _ => None,
+            })
+            .expect("an answer")
+    }
+
+    #[test]
+    fn an_own_device_that_proves_itself_runs_with_the_accounts_powers() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let r = rig(&[("phone", None), ("mac", None)]);
+        let mut s = serving(&r);
+        let hello = wire::Session::outgoing(&mut s);
+        let listen_nonce = s.nonce.clone().unwrap();
+        assert!(
+            hello[0].contains(&listen_nonce),
+            "the Hello carries the nonce"
+        );
+
+        let (dial_nonce, mut session) = auth(&mut s, "phone");
+        let (verified, sig) = answer(&mut s);
+        assert!(verified);
+        // The listener proves itself back.
+        let proven = proof::verify_listen(
+            "phone",
+            "mac",
+            &dial_nonce,
+            &listen_nonce,
+            true,
+            &sig.unwrap(),
+        );
+        assert_eq!(proven.map(|p| p.peer), Some(proof::Peer::Own));
+
+        let sync = LinkCommand::Sync { full: true };
+        let frame = signed(&mut session, &sync);
+        s.incoming(&frame);
+        // Replayed: refused.
+        s.incoming(&frame);
+        // Unsigned, on a proven connection: refused, whatever it is.
+        s.incoming(&serde_json::to_string(&LinkCommand::Pause).unwrap());
+        // The server's news, signed by the account's own device: refused.
+        s.incoming(&signed(
+            &mut session,
+            &LinkCommand::DeviceKeys { keys: vec![] },
+        ));
+        s.incoming(&signed(&mut session, &LinkCommand::Next));
+
+        let ran = r.ran.lock();
+        assert_eq!(
+            *ran,
+            vec![
+                (sync, CommandSource::Account),
+                (LinkCommand::Next, CommandSource::Account),
+            ]
+        );
+    }
+
+    /// A connection is proven once. A second `nearbyAuth`, from a device
+    /// that holds a key the first did not, changes nothing.
+    #[test]
+    fn a_second_proof_on_one_connection_is_ignored() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let r = rig(&[("phone", Some("kim"))]);
+        let mut s = serving(&r);
+        let (_, _) = auth(&mut s, "stranger");
+        assert!(!answer(&mut s).0);
+        let (_, mut session) = auth(&mut s, "phone");
+        assert!(
+            wire::Session::outgoing(&mut s)
+                .iter()
+                .all(|t| !t.contains("nearbyProof")),
+            "no second answer"
+        );
+        s.incoming(&signed(&mut session, &LinkCommand::Pause));
+        assert!(r.ran.lock().is_empty(), "still unproven");
+    }
+
+    #[test]
+    fn a_shared_device_gets_the_playback_set_as_its_account() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let r = rig(&[("phone", Some("kim"))]);
+        let mut s = serving(&r);
+        let (_, mut session) = auth(&mut s, "phone");
+        assert!(answer(&mut s).0);
+        s.incoming(&signed(&mut session, &LinkCommand::Sync { full: false }));
+        s.incoming(&signed(&mut session, &LinkCommand::Pause));
+        assert_eq!(
+            *r.ran.lock(),
+            vec![(LinkCommand::Pause, CommandSource::Shared)]
+        );
+    }
+
+    #[test]
+    fn a_peer_that_proves_nothing_is_trusted_as_the_network_is() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // The list does not hold the dialler's id.
+        let r = rig(&[("mac", None)]);
+        Config::persist(|c| c.devices.nearby_control = crate::config::NearbyControl::Playback)
+            .unwrap();
+        let mut s = serving(&r);
+        let (_, mut session) = auth(&mut s, "phone");
+        assert!(!answer(&mut s).0);
+        // Its signed frames are refused; plain commands are a stranger's.
+        s.incoming(&signed(&mut session, &LinkCommand::Pause));
+        s.incoming(&serde_json::to_string(&LinkCommand::Sync { full: false }).unwrap());
+        s.incoming(&serde_json::to_string(&LinkCommand::Pause).unwrap());
+        assert_eq!(
+            *r.ran.lock(),
+            vec![(LinkCommand::Pause, CommandSource::Stranger)]
+        );
+    }
+
+    #[test]
+    fn a_peer_that_never_asks_is_trusted_as_before() {
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let r = rig(&[("phone", None)]);
+        let mut s = serving(&r);
+        // An older dialler: no NearbyAuth, plain commands.
+        s.incoming(&serde_json::to_string(&LinkCommand::Pause).unwrap());
+        assert_eq!(r.ran.lock().len(), 1);
+        assert_ne!(r.ran.lock()[0].1, CommandSource::Account);
+    }
+}
+
+#[cfg(test)]
+mod admit_tests {
+    use super::*;
+    use crate::remote::acks;
+
+    /// A stranger who has seen one of this person's ids sends a command it may
+    /// not, under that id. It is refused, and the id is still free for the
+    /// person's own command when it comes.
+    #[test]
+    fn a_stranger_cannot_spend_an_id_ahead_of_the_real_command() {
+        let id = acks::next_id();
+        let refused = std::sync::Arc::new(parking_lot::Mutex::new(None));
+        let got = refused.clone();
+        let forged = Envelope {
+            command: LinkCommand::Sync { full: true },
+            ack: Some(id),
+        };
+        assert!(matches!(
+            admit(
+                forged,
+                |cmd| cmd.from_the_network(false),
+                move |_, o| *got.lock() = Some(o)
+            ),
+            Admitted::Neither
+        ));
+        assert!(matches!(*refused.lock(), Some(AckOutcome::Refused { .. })));
+
+        // The real one, under the same id, is acted on.
+        let real = Envelope {
+            command: LinkCommand::Pause,
+            ack: Some(id),
+        };
+        assert!(matches!(
+            admit(real, |cmd| cmd.from_the_network(false), |_, _| {}),
+            Admitted::Command(LinkCommand::Pause, _, Some(_))
+        ));
     }
 }

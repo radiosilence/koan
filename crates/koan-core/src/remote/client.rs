@@ -215,6 +215,23 @@ impl SubsonicClient {
         resp.subsonic_response.ok()
     }
 
+    /// As `get_with_params`, sent as a form POST (OpenSubsonic `formPost`): for
+    /// endpoints that change something and take only POST, and for anything
+    /// that must not sit in a URL.
+    fn post_with_params(
+        &self,
+        endpoint: &str,
+        extra: &[(&str, &str)],
+    ) -> Result<SubsonicResponse, SubsonicError> {
+        let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
+        let mut params = self.auth_params()?;
+        for (k, v) in extra {
+            params.insert((*k).to_string(), (*v).to_string());
+        }
+        let resp: SubsonicResponseWrapper = self.http.post(&url).form(&params).send()?.json()?;
+        resp.subsonic_response.ok()
+    }
+
     /// As `get_with_params`, for a parameter given more than once: Subsonic
     /// batches by repeating `id` and `time`.
     fn get_with_pairs(
@@ -796,6 +813,69 @@ impl SubsonicClient {
             .ok_or(SubsonicError::BadResponse)
     }
 
+    /// Give `username` a password (`koanSetUserPassword`): an admin's call for
+    /// another account. Its devices sign out.
+    pub fn koan_set_user_password(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<(), SubsonicError> {
+        self.post_with_params(
+            "koanSetUserPassword",
+            &[("username", username), ("password", password)],
+        )?;
+        Ok(())
+    }
+
+    /// Change this account's own password, proving the current one. Every key
+    /// the account had is revoked, this client's included, so the server
+    /// answers with a new one named `device`.
+    pub fn koan_change_own_password(
+        &self,
+        current: &str,
+        password: &str,
+        device: &str,
+    ) -> Result<KoanJoined, SubsonicError> {
+        self.post_with_params(
+            "koanSetUserPassword",
+            &[
+                ("current", current),
+                ("password", password),
+                ("name", device),
+            ],
+        )?
+        .join
+        .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Where assistants connect to this server, and the page saying how: koan
+    /// servers offering `koanMcp`.
+    pub fn koan_mcp(&self) -> Result<KoanMcp, SubsonicError> {
+        self.get("koanMcp")?.mcp.ok_or(SubsonicError::BadResponse)
+    }
+
+    // -- API keys: koan servers offering `koanApiKeys`, the account's own --
+
+    pub fn koan_api_keys(&self) -> Result<Vec<KoanApiKey>, SubsonicError> {
+        Ok(self
+            .get("koanApiKeys")?
+            .api_keys
+            .map(|k| k.api_key)
+            .unwrap_or_default())
+    }
+
+    /// A new key named `name`, with the key itself, which is never shown again.
+    pub fn koan_create_api_key(&self, name: &str) -> Result<KoanApiKey, SubsonicError> {
+        self.post_with_params("koanCreateApiKey", &[("name", name)])?
+            .api_key
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    pub fn koan_revoke_api_key(&self, id: i64) -> Result<(), SubsonicError> {
+        self.post_with_params("koanRevokeApiKey", &[("id", &id.to_string())])?;
+        Ok(())
+    }
+
     pub fn koan_set_user_role(&self, username: &str, role: &str) -> Result<(), SubsonicError> {
         self.get_with_params("koanSetUserRole", &[("username", username), ("role", role)])?;
         Ok(())
@@ -808,9 +888,21 @@ impl SubsonicClient {
 
     /// Have the server hand `command` (a link command, as JSON) to the device
     /// `to` on this account: a koan extension, `koanDevices`.
-    pub fn koan_command(&self, to: &str, command: &str) -> Result<(), SubsonicError> {
-        self.get_with_params("koanCommand", &[("to", to), ("command", command)])?;
-        Ok(())
+    /// Ask the server to get `command` (JSON) to the device `to`. With `ack`,
+    /// a server offering `koanAck` waits a moment for the device and says how
+    /// it went; one that does not answers `None`.
+    pub fn koan_command(
+        &self,
+        to: &str,
+        command: &str,
+        ack: Option<u64>,
+    ) -> Result<Option<crate::remote::acks::AckOutcome>, SubsonicError> {
+        let ack = ack.map(|a| a.to_string());
+        let mut params = vec![("to", to), ("command", command)];
+        if let Some(ack) = &ack {
+            params.push(("ack", ack));
+        }
+        Ok(self.get_with_params("koanCommand", &params)?.koan_command)
     }
 
     // -- Play history: koan servers offering `koanHistory` --
@@ -846,6 +938,73 @@ impl SubsonicClient {
     pub fn koan_forget_plays_through(&self, at_ms: i64) -> Result<(), SubsonicError> {
         self.get_with_params("koanForgetPlays", &[("through", &at_ms.to_string())])?;
         Ok(())
+    }
+
+    /// The account's saved play queue, `None` when there is none. `by_index`
+    /// for a server listing `indexBasedQueue`.
+    pub fn get_play_queue(&self, by_index: bool) -> Result<Option<SavedPlayQueue>, SubsonicError> {
+        let resp = self.get(if by_index {
+            "getPlayQueueByIndex"
+        } else {
+            "getPlayQueue"
+        })?;
+        Ok(resp.play_queue_by_index.or(resp.play_queue))
+    }
+
+    /// Replace the account's saved play queue with `song_ids`, `position_ms`
+    /// into the entry at `current`, as the client `client`: what a later
+    /// `get_play_queue` reports as `changedBy`. `form` posts it as a form, for
+    /// a server listing `formPost`, since a long queue does not fit in a URL;
+    /// otherwise it goes in the query. `by_index` for a server listing
+    /// `indexBasedQueue`; otherwise the current entry goes by its song's id,
+    /// which is ambiguous for a song queued twice.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_play_queue(
+        &self,
+        song_ids: &[String],
+        current: Option<usize>,
+        position_ms: u64,
+        by_index: bool,
+        form: bool,
+        client: &str,
+    ) -> Result<(), SubsonicError> {
+        let endpoint = if by_index {
+            "savePlayQueueByIndex"
+        } else {
+            "savePlayQueue"
+        };
+        let url = format!("{}/rest/{endpoint}", self.auth.base_url);
+        let mut params = self.auth_params()?;
+        params.insert("c".into(), client.to_string());
+        let mut form_pairs: Vec<(String, String)> = params.into_iter().collect();
+        form_pairs.extend(song_ids.iter().map(|id| ("id".to_string(), id.clone())));
+        // With songs, a current one is required by index; the first will do
+        // when none is known.
+        if !song_ids.is_empty() {
+            let at = current.filter(|at| *at < song_ids.len()).unwrap_or(0);
+            form_pairs.push(if by_index {
+                ("currentIndex".into(), at.to_string())
+            } else {
+                ("current".into(), song_ids[at].clone())
+            });
+            form_pairs.push(("position".into(), position_ms.to_string()));
+        }
+        let request = if form {
+            let body = url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(&form_pairs)
+                .finish();
+            self.http
+                .post(&url)
+                .header(
+                    reqwest::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(body)
+        } else {
+            self.http.get(&url).query(&form_pairs)
+        };
+        let resp: SubsonicResponseWrapper = request.send()?.json()?;
+        resp.subsonic_response.ok().map(|_| ())
     }
 
     pub fn auth(&self) -> &SubsonicAuth {
@@ -891,10 +1050,45 @@ struct SubsonicResponse {
     scan_status: Option<SubsonicScanStatus>,
     indexes: Option<SubsonicIndexes>,
     users: Option<KoanUsers>,
+    api_keys: Option<KoanApiKeys>,
+    api_key: Option<KoanApiKey>,
+    mcp: Option<KoanMcp>,
     invite: Option<KoanInvite>,
     join: Option<KoanJoined>,
     pair: Option<KoanPair>,
     koan_history: Option<KoanHistoryPage>,
+    play_queue: Option<SavedPlayQueue>,
+    play_queue_by_index: Option<SavedPlayQueue>,
+    koan_command: Option<crate::remote::acks::AckOutcome>,
+}
+
+/// The play queue the account saved on the server: `getPlayQueue` names the
+/// current song by id, `getPlayQueueByIndex` by its place.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedPlayQueue {
+    #[serde(default)]
+    pub entry: Vec<SubsonicSong>,
+    pub current: Option<String>,
+    pub current_index: Option<usize>,
+    #[serde(default)]
+    pub position: u64,
+    #[serde(default)]
+    pub changed_by: String,
+    pub changed: Option<String>,
+}
+
+impl SavedPlayQueue {
+    /// The current entry's place, by index when the server gave one, else
+    /// the first entry with the current song's id.
+    pub fn current_at(&self) -> Option<usize> {
+        self.current_index
+            .filter(|at| *at < self.entry.len())
+            .or_else(|| {
+                let current = self.current.as_deref()?;
+                self.entry.iter().position(|e| e.id == current)
+            })
+    }
 }
 
 /// A page of a koan server's play history (`koanHistory`).
@@ -940,6 +1134,36 @@ pub struct KoanPair {
     pub from: String,
     #[serde(default)]
     pub local: bool,
+}
+
+/// A koan server's MCP endpoint and its page on connecting an assistant.
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanMcp {
+    pub url: String,
+    pub connect: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KoanApiKeys {
+    #[serde(default)]
+    api_key: Vec<KoanApiKey>,
+}
+
+/// One of the account's API keys, as `koanApiKeys` lists it; `key` is there
+/// only in the answer to making one.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KoanApiKey {
+    pub id: i64,
+    pub name: String,
+    /// ISO 8601.
+    pub created: Option<String>,
+    pub last_used: Option<String>,
+    /// The key this client signs in with.
+    #[serde(default)]
+    pub current: bool,
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1307,6 +1531,35 @@ fn random_salt() -> Result<String, getrandom::Error> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_saved_play_queue_reads_by_index_or_by_id() {
+        let parse = |json: &str| {
+            serde_json::from_str::<SubsonicResponseWrapper>(json)
+                .unwrap()
+                .subsonic_response
+        };
+        let entries = r#"[{"id":"a","title":"A"},{"id":"b","title":"B"},{"id":"a","title":"A"}]"#;
+        let by_index = parse(&format!(
+            r#"{{"subsonic-response":{{"status":"ok","playQueueByIndex":{{"entry":{entries},"currentIndex":2,"position":1500,"changedBy":"koan d1"}}}}}}"#
+        ));
+        let q = by_index.play_queue_by_index.unwrap();
+        assert_eq!(
+            (q.current_at(), q.position, q.changed_by.as_str()),
+            (Some(2), 1500, "koan d1")
+        );
+
+        // By id, the first entry with that song; a song not queued is none.
+        let by_id = parse(&format!(
+            r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"entry":{entries},"current":"a"}}}}}}"#
+        ));
+        assert_eq!(by_id.play_queue.unwrap().current_at(), Some(0));
+        let gone = parse(&format!(
+            r#"{{"subsonic-response":{{"status":"ok","playQueue":{{"entry":{entries},"current":"z"}}}}}}"#
+        ));
+        assert_eq!(gone.play_queue.unwrap().current_at(), None);
+    }
+
     use super::*;
 
     fn response(json: &str) -> SubsonicResponse {

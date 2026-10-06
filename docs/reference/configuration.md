@@ -28,7 +28,7 @@ Three kinds of setting are machine-scoped and always land in
 | Kind | Settings |
 |------|----------|
 | Secrets | `remote.password`, `subsonic.password` |
-| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device/renderers/muted`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control`, everything under `dsp` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device/renderers/muted`, `subsonic.enabled/port/username/transcode/ffmpeg`, `devices.nearby/discoverable/port/addresses/nearby_control/keep_running`, everything under `dsp` |
 | Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
 
 Everything else is taste, travels between machines, and goes in `config.toml`.
@@ -329,6 +329,8 @@ refresh_token_ttl = "30d"     # refresh token lifetime (default: 30d)
 cors_origins = []             # origins allowed to call the API from a browser
 allowed_hosts = []            # extra Host: values to answer to (see below)
 cookie_secure = false         # mark cookies Secure — only with HTTPS in front
+proxy_auth_header = ""        # header an authenticating proxy names the user in
+proxy_auth_from = []          # addresses or ranges that proxy connects from
 allow_organize = false        # expose the organize* mutations, which move files
 ```
 
@@ -341,6 +343,8 @@ Auth is enabled by default. Run `koan auth setup` to create a keypair and admin 
 `allowed_hosts` names the hostnames this server answers to, on top of `localhost` and any bare IP address. A request arriving with any other `Host` is refused: without that check, a page whose DNS flips to `127.0.0.1` after loading reaches the API as same-origin and CORS stops applying. Set it if you reach kōan through a name like `koan.lan`.
 
 `cookie_secure` should stay `false` unless clients reach kōan over HTTPS. Browsers discard `Secure` cookies delivered over plain `http://` to anything but localhost, so setting it on a LAN deployment silently breaks cookie auth.
+
+`proxy_auth_header` and `proxy_auth_from` sign the web UI in through an authenticating reverse proxy. Both are set or neither: the server refuses to start with only one, with an entry it cannot parse, or with a range covering every address. See [Behind an authenticating proxy](../guide/headless-server.md#behind-an-authenticating-proxy).
 
 `allow_organize` gates `organizePreview`, `organizeExecute` and `organizeUndo`. They rename and move files on disk, which is not something a network API should offer by default.
 
@@ -437,6 +441,7 @@ discoverable = true                 # listen, and announce this device (and its 
 port = 5626                         # fixed, so a typed address keeps working
 addresses = ["mac-mini:5626"]       # dialled directly: for a tailnet, which carries no Bonjour
 nearby_control = "full"             # "full" or "playback": what devices on the network may do here
+keep_running = false                # the Mac app stays in the menu bar with its window closed
 ```
 
 A discoverable device can be seen and controlled by any koan app on the
