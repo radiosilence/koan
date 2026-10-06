@@ -683,6 +683,12 @@ extension View {
         modifier(KoanBadgeRole())
     }
 
+    /// A chip that is a choice — a device, a preset, an artist: a `muted`
+    /// outline, square, in the theme. A filled capsule in the platform's look.
+    func koanChip() -> some View {
+        modifier(KoanChipRole())
+    }
+
     /// A bar along the window's foot, such as the transport: flat `bg` with a
     /// rule along its top, full width. In the platform's look, a floating slab
     /// of glass with the given corner radius, inset from the window's edges.
@@ -1117,6 +1123,22 @@ private struct KoanBadgeRole: ViewModifier {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
+                .background(.quaternary, in: Capsule())
+        }
+    }
+}
+
+private struct KoanChipRole: ViewModifier {
+    func body(content: Content) -> some View {
+        if KoanTheme.isOn {
+            content
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .overlay { Rectangle().strokeBorder(Color.koanMuted, lineWidth: KoanTheme.hairline) }
+        } else {
+            content
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
                 .background(.quaternary, in: Capsule())
         }
     }

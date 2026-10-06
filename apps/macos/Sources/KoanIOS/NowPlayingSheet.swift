@@ -39,7 +39,11 @@ struct NowPlayingSheet: View {
         // over — this is the one screen that is only about that record.
         .presentationBackground {
             ZStack {
-                Rectangle().fill(.background)
+                if KoanTheme.isOn {
+                    Rectangle().fill(Color.koanBg)
+                } else {
+                    Rectangle().fill(.background)
+                }
                 ArtworkBleed(source: player.currentArtwork, drifts: player.isPlaying)
             }
         }
@@ -79,9 +83,10 @@ struct NowPlayingSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(player.resolving ?? player.currentEntry?.title ?? "Nothing playing")
                     .font(.role(.titleSmall, system: .title3.weight(.semibold)))
+                    .foregroundStyle(KoanTheme.style(.strong, system: .primary))
                     .lineLimit(1)
                 if player.resolving != nil {
-                    Text("Loading…")
+                    Text(KoanTheme.label("Loading…"))
                         .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
                 } else if let entry = player.currentEntry {
                     LinkText(
@@ -126,12 +131,13 @@ struct NowPlayingSheet: View {
                         ProgressView().controlSize(.large)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
-                            .font(.system(size: 46))
+                            .font(.system(size: KoanTheme.isOn ? 24 : 46))
                             .contentTransition(.symbolEffect(.replace))
                     }
                 }
                 .frame(width: 56, height: 56)
             }
+            .koanButtons(.iconOutlined)
             .accessibilityLabel(player.isWaitingForTrack ? "Loading" : player.isPlaying ? "Pause" : "Play")
             Spacer()
             Button { player.next() } label: {
@@ -165,12 +171,8 @@ struct NowPlayingSheet: View {
             if let format = player.currentFormat {
                 Spacer(minLength: 12)
                 Text(Format.quality(format))
-                    .font(.role(.fine, system: .caption.monospaced()))
                     .lineLimit(1)
-                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.quaternary, in: Capsule())
+                    .koanBadge()
             }
 
             // This phone's own route; nothing it chooses reaches another device.
@@ -259,15 +261,13 @@ private struct Pill: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: systemImage)
-                .foregroundStyle(tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .foregroundStyle(KoanTheme.style(tinted ? .accent : .muted, system: tinted ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary)))
             Text(text)
                 .lineLimit(1)
                 .foregroundStyle(KoanTheme.style(.ink, system: .primary))
         }
         .font(.role(.meta, system: .subheadline))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.quaternary, in: Capsule())
+        .koanChip()
     }
 }
 
@@ -290,8 +290,8 @@ struct RoutePicker: UIViewRepresentable {
     func makeUIView(context: Context) -> AVRoutePickerView {
         let picker = AVRoutePickerView()
         picker.prioritizesVideoDevices = false
-        picker.tintColor = .secondaryLabel
-        picker.activeTintColor = .label
+        picker.tintColor = KoanTheme.isOn ? .koanMuted : .secondaryLabel
+        picker.activeTintColor = KoanTheme.isOn ? .koanInk : .label
         return picker
     }
 
