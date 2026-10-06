@@ -392,7 +392,7 @@ extension View {
         #else
         if KoanTheme.isOn {
             listRowBackground(Color.clear)
-                .listRowSeparatorTint(Color.koanRule)
+                .listRowSeparatorTint(Color.koanRowRule)
                 .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
         } else {
             listRowBackground(Color.clear)

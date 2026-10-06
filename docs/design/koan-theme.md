@@ -125,7 +125,7 @@ A 1-point `rule` track with a 3-point `accent` fill up to the value, and a squar
 
 ### List row
 
-The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-aligned in `meta`, `muted`. A 1-point `rule` below each row, inset to the content's leading edge. Hover: `hover` at 30 % behind the row. The playing row's title and number are `accent`. A selected row has a `surface` fill.
+The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-aligned in `meta`, `muted`. A 1-point rule below each row in `ink` at 12 % opacity, so it takes on the wash beneath it rather than drawing a grey grid over it, starting at the content's leading edge. The same rule on every list, on every platform. Hover: `hover` at 30 % behind the row. The playing row's title and number are `accent`. A selected row has a `surface` fill.
 
 ### Navigation row (sidebar)
 

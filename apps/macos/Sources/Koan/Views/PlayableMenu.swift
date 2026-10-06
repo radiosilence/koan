@@ -501,6 +501,7 @@ struct QueueButtons: View {
             }
         }
         .disabled(playable == nil || working)
+        .koanButtons(.compact)
     }
 
     /// An artist is thousands of tracks and resolving them is a database read,

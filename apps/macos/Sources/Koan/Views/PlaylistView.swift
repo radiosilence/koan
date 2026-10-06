@@ -333,6 +333,7 @@ struct PlaylistView: View {
         }
         .help("Reorder the playlist itself, for good")
         .disabled(entries.count < 2)
+        .koanButton(.compact)
     }
 
     private var layoutControls: some View {

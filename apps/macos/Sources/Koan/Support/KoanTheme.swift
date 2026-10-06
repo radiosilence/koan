@@ -69,6 +69,9 @@ enum KoanTheme {
     /// else the case changes only on screen (`.koanCase()`, and the theme's
     /// button and label styles), so accessibility labels, and the UI tests
     /// that find things by them, keep the words as written.
+    /// How strongly the rule between rows shows: `ink` at this opacity.
+    nonisolated static let rowRuleOpacity: CGFloat = 0.12
+
     nonisolated static func label(_ text: String) -> String {
         isOn ? text.lowercased() : text
     }
@@ -254,12 +257,15 @@ extension Color {
     static let koanStrong = Color.koan(dark: 0xFFFFFF, light: 0x111111)
     static let koanMuted = Color.koan(dark: 0x919191, light: 0x666666)
     static let koanBad = Color.koan(dark: 0xEF6B73, light: 0xC43F3F)
+    /// The rule between rows: `ink` at low opacity, so it takes on the wash
+    /// beneath it instead of drawing a grey grid over it.
+    static let koanRowRule = Color.koan(dark: 0xCCCCCC, light: 0x333333, alpha: KoanTheme.rowRuleOpacity)
 
-    fileprivate static func koan(dark: UInt32, light: UInt32) -> Color {
+    fileprivate static func koan(dark: UInt32, light: UInt32, alpha: CGFloat = 1) -> Color {
         #if canImport(AppKit)
-        Color(nsColor: NSColor.koan(dark: dark, light: light))
+        Color(nsColor: NSColor.koan(dark: dark, light: light, alpha: alpha))
         #else
-        Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? .rgb(dark) : .rgb(light) })
+        Color(uiColor: UIColor.koan(dark: dark, light: light, alpha: alpha))
         #endif
     }
 }
@@ -267,9 +273,10 @@ extension Color {
 #if canImport(AppKit)
 extension NSColor {
     /// A token, following the appearance it is drawn in.
-    static func koan(dark: UInt32, light: UInt32) -> NSColor {
+    static func koan(dark: UInt32, light: UInt32, alpha: CGFloat = 1) -> NSColor {
         NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .rgb(dark) : .rgb(light)
+            (appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? NSColor.rgb(dark) : .rgb(light))
+                .withAlphaComponent(alpha)
         }
     }
 
@@ -293,8 +300,9 @@ extension NSColor {
     /// Errors, warnings and hearts: `bad` in the theme, the given system
     /// colour otherwise.
     @MainActor static func koanBad(_ system: NSColor) -> NSColor { KoanTheme.isOn ? koanBadToken : system }
-    /// Hairlines between rows: `rule` in the theme.
-    @MainActor static var koanSeparator: NSColor { KoanTheme.isOn ? koanRule : .separatorColor }
+    static let koanRowRule = koan(dark: 0xCCCCCC, light: 0x333333, alpha: KoanTheme.rowRuleOpacity)
+    /// Hairlines between rows: `ink` at low opacity in the theme.
+    @MainActor static var koanSeparator: NSColor { KoanTheme.isOn ? koanRowRule : .separatorColor }
     /// A selected item's ground: `surface` in the theme.
     @MainActor static func koanSelection(_ system: NSColor) -> NSColor { KoanTheme.isOn ? koanSurface : system }
 
@@ -310,8 +318,8 @@ extension NSColor {
 #else
 extension UIColor {
     /// A token, following the appearance it is drawn in.
-    static func koan(dark: UInt32, light: UInt32) -> UIColor {
-        UIColor { $0.userInterfaceStyle == .dark ? .rgb(dark) : .rgb(light) }
+    static func koan(dark: UInt32, light: UInt32, alpha: CGFloat = 1) -> UIColor {
+        UIColor { ($0.userInterfaceStyle == .dark ? UIColor.rgb(dark) : .rgb(light)).withAlphaComponent(alpha) }
     }
 
     /// The tokens layer-drawn views read, as on the Mac.
@@ -1422,7 +1430,7 @@ private struct KoanListRole: ViewModifier {
             content
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
-                .listRowSeparatorTint(Color.koanRule)
+                .listRowSeparatorTint(Color.koanRowRule)
                 .font(.koan(.body))
             #endif
         } else {
