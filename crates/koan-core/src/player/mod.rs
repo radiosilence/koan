@@ -5546,140 +5546,79 @@ mod tests {
         }
     }
 
-    /// A reproduction, not a regression test: run with `KOAN_LONG_OPUS` naming
-    /// a long Ogg Opus file and `--ignored --nocapture`. Track A plays and
-    /// pauses; the queue is replaced with B, whose download lands at
-    /// `KOAN_STREAM_RATE` bytes a second, as a remote track does; what the
-    /// player publishes and what reaches the device is logged as it happens.
+    /// Replacing the queue while the track playing is paused, with a track
+    /// that has still to arrive: nothing sounds until the new one can open,
+    /// the old one is never reopened, and the new one is what is published
+    /// from the start. The iOS report this answers: a playlist's play button,
+    /// pressed over a paused track, was heard as that track carrying on.
     #[test]
-    #[ignore = "reproduction: needs KOAN_LONG_OPUS"]
-    fn reproduce_replacing_a_paused_track_with_a_long_opus_stream() {
-        use std::io::{Read as _, Write as _};
-        let long = PathBuf::from(std::env::var("KOAN_LONG_OPUS").expect("KOAN_LONG_OPUS"));
-        let rate: u64 = std::env::var("KOAN_STREAM_RATE")
-            .ok()
-            .and_then(|r| r.parse().ok())
-            .unwrap_or(200_000);
+    fn a_replaced_queue_never_sounds_the_track_it_replaced() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a.wav");
-        crate::test_utils::generate_wav_tone(&a, 44100, 440.0, 30.0);
-
+        crate::test_utils::generate_wav_tone(&a, 44100, 440.0, 5.0);
         let consumers = Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut player = Player::new();
         player.backend = Box::new(CaptureBackend {
             consumers: consumers.clone(),
         });
-        let state = player.shared_state.clone();
-        let tx = player.commands.tx.clone();
-        let mut item_a = make_item("A");
-        item_a.path = a.clone();
+        let engines = || consumers.lock().unwrap().len();
+
+        let item_a = PlaylistItem {
+            path: a,
+            ..make_item("paused")
+        };
         let a_id = item_a.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item_a]));
+        player.process_command(PlayerCommand::Play(a_id));
+        player.process_command(PlayerCommand::Pause);
+        assert_eq!(engines(), 1);
+
+        let landed = dir.path().join("long.opus");
         let item_b = PlaylistItem {
-            db_id: Some(4242),
+            db_id: Some(77),
             state: ItemState::Pending,
-            path: dir.path().join("b.opus"),
-            ..make_item("B")
+            duration_ms: Some(32_523_781),
+            path: landed.clone(),
+            ..make_item("long")
         };
         let b_id = item_b.id;
-        thread::spawn(move || player.run());
-
-        let t0 = std::time::Instant::now();
-        let log = |what: &str| {
-            println!(
-                "{:>6}ms {what}: state {:?} waiting {} track {:?} cursor {} engines {}",
-                t0.elapsed().as_millis(),
-                state.playback_state(),
-                state.is_waiting(),
-                state.track_info().map(|t| if t.id == b_id {
-                    "B"
-                } else if t.id == a_id {
-                    "A"
-                } else {
-                    "?"
-                }),
-                if state.cursor() == Some(b_id) {
-                    "B"
-                } else if state.cursor() == Some(a_id) {
-                    "A"
-                } else {
-                    "-"
-                },
-                consumers.lock().unwrap().len(),
-            )
-        };
-        tx.send(PlayerCommand::AddToPlaylist(vec![item_a])).unwrap();
-        tx.send(PlayerCommand::Play(a_id)).unwrap();
-        thread::sleep(std::time::Duration::from_millis(500));
-        tx.send(PlayerCommand::Pause).unwrap();
-        thread::sleep(std::time::Duration::from_millis(300));
-        log("A paused");
-        let engines_before = consumers.lock().unwrap().len();
-
-        tx.send(PlayerCommand::ReplacePlaylist {
+        player.process_command(PlayerCommand::ReplacePlaylist {
             items: vec![item_b],
             start: 0,
             position_ms: 0,
             play: true,
-        })
-        .unwrap();
-        thread::sleep(std::time::Duration::from_millis(50));
-        log("replaced");
-
-        // The download, as `remote::download` runs one: a `.part` growing at
-        // `rate`, its bytes announced, the player told once it can stream.
-        let store = state.downloads().clone();
-        store.claim(4242, Some(b_id));
-        let part = dir.path().join("b.opus.part");
-        let feed = store.announce(
-            4242,
-            "B".into(),
-            String::new(),
-            part.clone(),
-            dir.path().join("b.opus"),
+        });
+        player.publish();
+        let state = player.shared_state.clone();
+        assert_eq!(state.cursor(), Some(b_id), "the new track, at once");
+        assert!(
+            state.is_waiting(),
+            "waiting for it, which a client shows as loading"
         );
-        let total = std::fs::metadata(&long).unwrap().len();
-        store.started(4242, total);
-        let writer = {
-            let (long, part, feed, tx) = (long.clone(), part.clone(), feed.clone(), tx.clone());
-            thread::spawn(move || {
-                let mut src = std::fs::File::open(&long).unwrap();
-                let mut out = std::fs::File::create(&part).unwrap();
-                let mut buf = vec![0u8; (rate / 10) as usize];
-                let mut written = 0u64;
-                let mut announced = false;
-                loop {
-                    let n = src.read(&mut buf).unwrap();
-                    if n == 0 {
-                        break;
-                    }
-                    out.write_all(&buf[..n]).unwrap();
-                    out.flush().unwrap();
-                    written += n as u64;
-                    feed.set(written);
-                    if !announced && written >= crate::player::state::STREAM_THRESHOLD {
-                        announced = true;
-                        tx.send(PlayerCommand::TrackStreamReady(b_id)).ok();
-                    }
-                    thread::sleep(std::time::Duration::from_millis(100));
-                }
-            })
-        };
+        assert_eq!(state.playback_state(), PlaybackState::Stopped);
+        assert_eq!(
+            state.track_info(),
+            None,
+            "the paused track is no longer published"
+        );
+        assert_eq!(engines(), 1, "nothing opened while it is on its way");
 
-        let secs: u64 = std::env::var("KOAN_REPRO_SECS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(20);
-        let mut seen = engines_before;
-        while t0.elapsed() < std::time::Duration::from_secs(secs) {
-            thread::sleep(std::time::Duration::from_millis(250));
-            let n = consumers.lock().unwrap().len();
-            if n != seen {
-                seen = n;
-                log("an engine was made");
-            }
-        }
-        log("end");
-        drop(writer);
+        // Its download lands.
+        let store = state.downloads().clone();
+        store.claim(77, Some(b_id));
+        std::fs::write(&landed, include_bytes!("testdata/thirty-seconds.opus")).unwrap();
+        crate::remote::downloads::settle(&state, 77, &Ok(landed));
+        player.process_command(PlayerCommand::TrackReady(b_id));
+        player.publish();
+
+        assert_eq!(
+            engines(),
+            2,
+            "one engine for the new track, none for the old"
+        );
+        assert_eq!(state.track_info().map(|t| t.id), Some(b_id));
+        assert_eq!(state.playback_state(), PlaybackState::Playing);
+        player.process_command(PlayerCommand::Stop);
     }
 
     /// A long Ogg is opened before its last page has arrived, which is where
