@@ -594,11 +594,11 @@ extension KoanTheme {
     /// nearest semantic style otherwise. Text takes `.koanText`, which also
     /// keeps a record's accent off text that it cannot reach 4.5:1 as.
     /// A tone in the theme, and exactly the given style in the platform's look.
-    static func style(_ tone: KoanTone, system: some ShapeStyle) -> AnyShapeStyle {
+    nonisolated static func style(_ tone: KoanTone, system: some ShapeStyle) -> AnyShapeStyle {
         isOn ? style(tone) : AnyShapeStyle(system)
     }
 
-    static func style(_ tone: KoanTone) -> AnyShapeStyle {
+    nonisolated static func style(_ tone: KoanTone) -> AnyShapeStyle {
         switch (isOn, tone) {
         case (true, .ink): AnyShapeStyle(Color.koanInk)
         case (true, .strong): AnyShapeStyle(Color.koanStrong)

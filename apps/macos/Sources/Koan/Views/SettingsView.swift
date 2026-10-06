@@ -714,6 +714,19 @@ struct EqSettings: View {
 
     var body: some View {
         KoanForm {
+            if let active, let detail, detail.group {
+                Section {
+                    Picker("Playing", selection: Binding(
+                        get: { detail.layers.first(where: \.on)?.profile ?? detail.layers.first?.profile ?? "" },
+                        set: { app.dsp.select(active, $0) }
+                    )) {
+                        ForEach(detail.layers, id: \.profile) { Text($0.profile).tag($0.profile) }
+                    }
+                    .koanControl()
+                } header: {
+                    KoanSectionHeader("Group: pick one")
+                }
+            }
             if let active, let response, let detail {
                 Section {
                     EqGraph(response: response, handles: BandTable.handles(detail.bands)) { index, hz, db in
@@ -741,6 +754,7 @@ struct DspSettings: View {
     @Environment(AppState.self) private var app
     @State private var importing = false
     @State private var findingAutoEq = false
+    @State private var measuring = false
     /// What Find in AutoEQ opens searching for: empty from its button, a
     /// model from an offer for the output in use.
     @State private var findQuery = ""
@@ -809,7 +823,14 @@ struct DspSettings: View {
                 findingAutoEq = true
             }
             .koanButton(.secondary)
+            Button("Use a Measurement…") { measuring = true }
+                .koanButton(.secondary)
             #endif
+            if let summary = dsp.importSummary {
+                Text(summary)
+                    .font(.role(.fine, system: .caption))
+                    .foregroundStyle(KoanTheme.style(.muted, system: .secondary))
+            }
             if let error = dsp.lastError {
                 Text(error)
                     .koanText(.fine, .bad)
@@ -833,6 +854,24 @@ struct DspSettings: View {
         #if !os(tvOS)
         .sheet(isPresented: $findingAutoEq) {
             AutoEqSearch(dsp: dsp, query: findQuery)
+        }
+        .sheet(isPresented: $measuring) {
+            MeasurementFlow(dsp: dsp)
+        }
+        // A profile imported from a file: a neutral correction, one with a
+        // tuning already in it, or taste to add on top? kōan cannot tell,
+        // and a chain corrects once.
+        .confirmationDialog(
+            dsp.askRole?.count ?? 0 > 1 ? "What are these EQs?" : "What is this EQ?",
+            isPresented: Binding(get: { dsp.askRole != nil }, set: { if !$0 { dsp.askRole = nil } }),
+            titleVisibility: .visible,
+            presenting: dsp.askRole
+        ) { names in
+            Button("A neutral correction for these headphones") { dsp.setRole(names, .correction) }
+            Button("A correction with a sound already in it") { dsp.setRole(names, .baked) }
+            Button("A tuning to add on top") { dsp.setRole(names, .tuning) }
+        } message: { _ in
+            Text("A correction makes your headphones neutral; a stack holds one. Most presets named for a sound, like “Lush”, are a correction with a tuning baked in. A tuning is taste, like more bass, and plays on top of a correction.")
         }
         #endif
         #if os(macOS)
@@ -900,6 +939,7 @@ private struct AutoEqSearch: View {
     let dsp: DspModel
     @Environment(\.dismiss) private var dismiss
     @State private var query: String
+    @State private var measuring = false
 
     init(dsp: DspModel, query: String = "") {
         self.dsp = dsp
@@ -928,13 +968,22 @@ private struct AutoEqSearch: View {
                     }
                     .overlay {
                         if dsp.autoEqResults.isEmpty {
-                            ContentUnavailableView.search(text: query)
+                            ContentUnavailableView {
+                                Label("Not in AutoEQ", systemImage: "magnifyingglass")
+                            } description: {
+                                Text("AutoEQ has nothing for “\(query)”. A measurement of your headphones works too: kōan builds the correction from it.")
+                            } actions: {
+                                Button("Use a measurement instead") { measuring = true }
+                            }
                         }
                     }
                 }
             }
             .searchable(text: $query, prompt: "Headphone")
             .navigationTitle(KoanTheme.label("AutoEQ"))
+            .sheet(isPresented: $measuring) {
+                MeasurementFlow(dsp: dsp, name: query) { _ in dismiss() }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
@@ -1009,7 +1058,10 @@ private struct ProfileRow: View {
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text(profile.name)
+                HStack(spacing: 6) {
+                    Text(profile.name)
+                    RoleTag(role: ProfileRole(profile.role))
+                }
                 if let problem = profile.problem {
                     Text(problem)
                         .koanText(.fine, .bad)
@@ -1065,10 +1117,15 @@ struct DspImportPrompts: ViewModifier {
                 }
                 Button("Done", role: .cancel) {}
             } message: { _ in
-                if let device = dsp.overview?.device, dsp.overview?.active == nil {
+                if let summary = dsp.importSummary {
+                    Text(summary)
+                } else if let device = dsp.overview?.device, dsp.overview?.active == nil {
                     Text("\(device) plays untouched until it has a profile.")
                 }
             }
+            #if !os(tvOS)
+            .dspImportConfirmation(dsp)
+            #endif
     }
 }
 

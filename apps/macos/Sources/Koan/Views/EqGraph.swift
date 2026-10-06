@@ -16,6 +16,8 @@ struct EqGraph: View {
     let response: DspResponse
     var handles: [Handle] = []
     var onDrag: ((Int, Double, Double) -> Void)?
+    /// The view to open on, where there is a measurement to show.
+    var startOn: Shown = .eq
 
     /// A band's point: its index among the profile's filters, and where it is.
     struct Handle: Identifiable, Equatable {
@@ -41,6 +43,10 @@ struct EqGraph: View {
     private var showingEq: Bool { view == .eq || !measured }
 
     var body: some View {
+        content.onAppear { view = startOn }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             if measured {
                 KoanSegmentedPicker(
@@ -76,6 +82,14 @@ struct EqGraph: View {
                             ? AnyShapeStyle(Color.koanMuted.opacity(0.15))
                             : AnyShapeStyle(.tint.opacity(0.13))
                     )
+                }
+                // A chain with a correction and tuning: each in its role's
+                // colour, under the two together.
+                if let correction = response.correction, let tuning = response.tuning {
+                    lines(curves: [Curve(name: "Correction", db: correction)],
+                          color: AnyShapeStyle(ProfileRole.correction.color.opacity(0.7)), width: 1.2, dashed: true)
+                    lines(curves: [Curve(name: "Tuning", db: tuning)],
+                          color: AnyShapeStyle(ProfileRole.tuning.color), width: 1.2)
                 }
                 lines(curves: [Curve(name: "EQ", db: response.total)], color: AnyShapeStyle(.tint), width: 2)
                 ForEach(shownHandles) { h in
@@ -198,7 +212,14 @@ struct EqGraph: View {
     @ViewBuilder private var legend: some View {
         HStack(spacing: 14) {
             if showingEq {
-                key("EQ", AnyShapeStyle(.tint))
+                if response.correction != nil, response.tuning != nil {
+                    key("Correction", AnyShapeStyle(ProfileRole.correction.color.opacity(0.7)), dashed: true)
+                    key("Tuning", AnyShapeStyle(ProfileRole.tuning.color))
+                    key("Total", AnyShapeStyle(.tint))
+                } else {
+                    key("EQ", AnyShapeStyle(.tint))
+                }
+                key("No change", KoanTheme.style(.rule, system: Color.secondary.opacity(0.4)), thin: true)
                 if !response.bands.isEmpty {
                     key("Each band", KoanTheme.isOn
                         ? AnyShapeStyle(Color.koanMuted.opacity(0.3))
@@ -216,10 +237,10 @@ struct EqGraph: View {
         .koanText(.fine, .muted)
     }
 
-    private func key(_ name: String, _ color: AnyShapeStyle, dashed: Bool = false) -> some View {
+    private func key(_ name: String, _ color: AnyShapeStyle, dashed: Bool = false, thin: Bool = false) -> some View {
         HStack(spacing: 5) {
             Capsule()
-                .stroke(color, style: StrokeStyle(lineWidth: 2, dash: dashed ? [3, 2] : []))
+                .stroke(color, style: StrokeStyle(lineWidth: thin ? 1 : 2, dash: dashed ? [3, 2] : []))
                 .frame(width: 14, height: 2)
             Text(name)
         }
@@ -257,7 +278,10 @@ struct EqGraph: View {
     }
 
     private var shown: [[Double]] {
-        if showingEq { return [response.total] + response.bands.map(\.db) + [handles.map(\.db)] }
+        if showingEq {
+            return [response.total, response.correction ?? [], response.tuning ?? []]
+                + response.bands.map(\.db) + [handles.map(\.db)]
+        }
         return [response.measurement, response.target, response.predicted].compactMap { $0 }
     }
 

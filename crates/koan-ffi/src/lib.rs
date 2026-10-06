@@ -2635,6 +2635,139 @@ impl KoanEngine {
         .await
     }
 
+    /// What importing `paths` will do: a group of presets, or one profile
+    /// combined from them all, with a name to suggest.
+    pub async fn dsp_import_plan(self: Arc<Self>, paths: Vec<String>) -> DspImportPlan {
+        offload::offload(move || {
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            let plan = koan_core::audio::dsp::import::plan(&paths);
+            DspImportPlan {
+                group: plan.group,
+                files: plan.files,
+                name: plan.name,
+            }
+        })
+        .await
+    }
+
+    /// Import a selection of files. Whole presets become a profile each and
+    /// a group of them called `name`, the first playing; parts of one
+    /// profile combine into one called `name`. A file refused does not stop
+    /// the others; each refusal is reported, and logged.
+    pub async fn dsp_import_files(
+        self: Arc<Self>,
+        paths: Vec<String>,
+        name: Option<String>,
+        rate: Option<u32>,
+    ) -> Result<DspImportSummary, KoanError> {
+        offload::sequenced(move || {
+            use koan_core::audio::dsp::{
+                import::{self, Batch, Outcome},
+                profiles,
+            };
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            let taken: Vec<String> = koan_core::config::Config::cached()
+                .dsp
+                .profiles
+                .iter()
+                .map(|p| p.name.clone())
+                .collect();
+            let batch = import::import_batch(&paths, rate, &taken).map_err(|e| {
+                log::warn!("dsp import: {e}");
+                dsp_error(e)
+            })?;
+            let mut summary = DspImportSummary {
+                imported: Vec::new(),
+                refused: Vec::new(),
+                notes: Vec::new(),
+                group: None,
+            };
+            match batch {
+                Batch::One(imported) => {
+                    // Never written over: a name already taken is numbered.
+                    let wanted = name
+                        .filter(|n| !n.trim().is_empty())
+                        .unwrap_or_else(|| imported.name.clone());
+                    let free = profiles::free_name(&wanted);
+                    if free != wanted {
+                        summary
+                            .notes
+                            .push(format!("{wanted} is taken; imported as {free}"));
+                    }
+                    summary.imported.push(self.save_dsp(imported, Some(free))?)
+                }
+                Batch::Group(each) => {
+                    for item in each {
+                        let file = item.file;
+                        let saved = match item.outcome {
+                            Outcome::Skipped(why) => {
+                                summary.notes.push(format!("{file} left out: {why}"));
+                                continue;
+                            }
+                            Outcome::Refused(e) => Err(e.to_string()),
+                            Outcome::Imported(i, note) => {
+                                summary.notes.extend(note.map(|n| format!("{file}: {n}")));
+                                self.save_dsp(i, None).map_err(|e| e.to_string())
+                            }
+                        };
+                        match saved {
+                            Ok(name) => summary.imported.push(name),
+                            Err(reason) => {
+                                log::warn!("dsp import: {file}: {reason}");
+                                summary.refused.push(DspImportRefusal { file, reason });
+                            }
+                        }
+                    }
+                    if summary.imported.len() > 1 {
+                        let wanted = name
+                            .filter(|n| !n.trim().is_empty())
+                            .unwrap_or_else(|| import::group_name(&summary.imported));
+                        let group = profiles::free_name(&wanted);
+                        if group != wanted {
+                            summary
+                                .notes
+                                .push(format!("{wanted} is taken; the group is {group}"));
+                        }
+                        profiles::make_group(&group, &summary.imported)
+                            .map_err(|message| KoanError::BadArgument { message })?;
+                        self.send_local(PlayerCommand::ReloadDsp)?;
+                        summary.group = Some(group);
+                    }
+                }
+            }
+            Ok(summary)
+        })
+        .await
+    }
+
+    /// Play `member` of the group `group`, and none of the others.
+    pub async fn dsp_select(
+        self: Arc<Self>,
+        group: String,
+        member: String,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::select(&group, &member)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// Make `name` a group, one layer playing, or a stack of layers.
+    pub async fn dsp_set_group(
+        self: Arc<Self>,
+        name: String,
+        group: bool,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_group(&name, group)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
     /// Import text: shared from another app, or pasted.
     pub async fn dsp_import_text(
         self: Arc<Self>,
@@ -2774,14 +2907,107 @@ impl KoanEngine {
         offload::offload(move || {
             let t = koan_core::audio::dsp::profiles::target_choices(&name)?;
             Some(DspTargets {
-                made_for: DspTargetOption {
-                    id: t.made_for.id.into(),
-                    name: t.made_for.name.into(),
-                    character: t.made_for.character.into(),
-                },
+                made_for: t.made_for.map(|m| DspTargetOption {
+                    id: m.id.into(),
+                    name: m.name.into(),
+                    does: m.does.into(),
+                    character: m.character.into(),
+                }),
                 chosen: t.chosen,
                 choices: t.choices.into_iter().map(Into::into).collect(),
             })
+        })
+        .await
+    }
+
+    /// Say what `name` is for. A second correction in a chain is refused,
+    /// naming the first.
+    pub async fn dsp_set_role(
+        self: Arc<Self>,
+        name: String,
+        role: crate::types::DspRole,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_role(&name, role.into())
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// The target a ready-made EQ was made for, by id, or `None` when it is
+    /// not known, which leaves target switching off.
+    pub async fn dsp_set_made_for(
+        self: Arc<Self>,
+        name: String,
+        target: Option<String>,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            koan_core::audio::dsp::profiles::set_made_for(&name, target.as_deref())
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)
+        })
+        .await
+    }
+
+    /// The targets for a kind of headphone, in-ear or over-ear, with what
+    /// each sounds like: shipped ones, then those added.
+    pub async fn dsp_targets_for(self: Arc<Self>, in_ear: bool) -> Vec<DspTargetOption> {
+        offload::offload(move || {
+            use koan_core::audio::dsp::targets::{self, Ear};
+            let ear = if in_ear { Ear::In } else { Ear::Over };
+            let mut out: Vec<DspTargetOption> = targets::TARGETS
+                .iter()
+                .filter(|t| t.ear == ear)
+                .map(|t| DspTargetOption {
+                    id: t.id.into(),
+                    name: t.name.into(),
+                    does: t.does.into(),
+                    character: t.character.into(),
+                })
+                .collect();
+            out.extend(targets::added().into_iter().map(|a| DspTargetOption {
+                id: a.id,
+                name: a.name,
+                does: String::new(),
+                character: String::new(),
+            }));
+            out
+        })
+        .await
+    }
+
+    /// What correcting the measurement in `text` to `target` would do, before
+    /// it is saved: the measurement, the target, the predicted response and
+    /// the EQ itself.
+    pub async fn dsp_preview_measurement(
+        self: Arc<Self>,
+        text: String,
+        target: String,
+    ) -> Result<DspResponse, KoanError> {
+        offload::offload(move || {
+            koan_core::audio::dsp::profiles::preview_measurement(&text, &target, 48000)
+                .map(Into::into)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
+    }
+
+    /// Save the headphone `name`, measured as `text`, corrected to `target`.
+    pub async fn dsp_save_measured(
+        self: Arc<Self>,
+        name: String,
+        text: String,
+        in_ear: bool,
+        target: String,
+    ) -> Result<String, KoanError> {
+        offload::sequenced(move || {
+            use koan_core::config::DspEar;
+            let ear = if in_ear { DspEar::In } else { DspEar::Over };
+            let name = koan_core::audio::dsp::profiles::save_measured(&name, &text, ear, &target)
+                .map_err(|message| KoanError::BadArgument { message })?;
+            self.send_local(PlayerCommand::ReloadDsp)?;
+            Ok(name)
         })
         .await
     }
@@ -2813,6 +3039,7 @@ impl KoanEngine {
             Ok(DspTargetOption {
                 id: added.id,
                 name: added.name,
+                does: String::new(),
                 character: String::new(),
             })
         })
