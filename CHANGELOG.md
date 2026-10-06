@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Playing a playlist, record or artist could resume the paused track instead.** The app reads the tracks before it replaces the queue, and a press of play or pause in that moment, on the mini player, the lock screen or headphones, reached the player first and resumed what was paused. Requests now reach the player in the order they were made, and the transport names what is loading from the moment it is tapped rather than leaving the paused track on show.
+- **A long Ogg track streaming from a server showed no length.** Ogg keeps its duration on its last page, which arrives last; a track opened before then now runs on the library's duration, so a nine-hour recording shows its length and progress from the start.
+
 ## 0.54.2
 
 ### Changed
