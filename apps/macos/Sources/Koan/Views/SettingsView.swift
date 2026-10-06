@@ -956,6 +956,10 @@ private struct ServerOffers: View {
 private struct DevicesSettings: View {
     @Bindable var model: SettingsModel
     @Environment(EngineMirror.self) private var mirror
+    #if os(macOS)
+    @Environment(AppState.self) private var app
+    @Environment(\.openWindow) private var openWindow
+    #endif
     @State private var address = ""
     @State private var grantee = ""
     @State private var shareError: String?
@@ -983,6 +987,10 @@ private struct DevicesSettings: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+
+            #if os(macOS)
+            background
+            #endif
 
             Section {
                 ForEach(model.settings.devicesAddresses, id: \.self) { addr in
@@ -1139,3 +1147,51 @@ private struct AppearanceSettings: View {
         .formStyle(.grouped)
     }
 }
+
+#if os(macOS)
+extension DevicesSettings {
+    /// Staying reachable with the window closed. The setting is written
+    /// through the model, which would otherwise write its own copy back.
+    private var background: some View {
+        let residency = app.residency
+        return Section {
+            Toggle(
+                "Keep running in the menu bar",
+                isOn: Binding(
+                    get: { model.settings.devicesKeepRunning },
+                    set: { on in
+                        model.edit { $0.devicesKeepRunning = on }
+                        residency.keepRunning = on
+                        // Turned off from the menu bar, with the window
+                        // closed: closing Settings would otherwise quit kōan
+                        // and leave it to reopen with no window.
+                        if !on, !Residency.mainWindowShown {
+                            openWindow(id: MainWindow.id)
+                        }
+                    }))
+            Toggle(
+                "Open at login",
+                isOn: Binding(
+                    get: { residency.opensAtLogin || residency.loginNeedsApproval },
+                    set: { residency.setOpensAtLogin($0) }))
+            if residency.loginNeedsApproval {
+                Text("Allow kōan in System Settings ▸ General ▸ Login Items.")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+            if let error = residency.loginError {
+                Text(error)
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+        } header: {
+            Text("In the background")
+        } footer: {
+            Text("With its window closed, kōan stays in the menu bar, signed in to your server and listening on this network, so your other devices can see and control this Mac. A Mac cannot be woken from another device: once kōan is quit, it is out of reach until kōan is opened again.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .onAppear { residency.refreshLogin() }
+    }
+}
+#endif
