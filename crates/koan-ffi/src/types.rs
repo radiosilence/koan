@@ -1266,6 +1266,15 @@ pub struct DspProfileDetail {
     pub problem: Option<String>,
     /// Profiles it plays first, in order.
     pub layers: Vec<DspLayerInfo>,
+    /// Kept on every device of the account through its kōan server, rather
+    /// than this one alone.
+    pub everywhere: bool,
+    /// Where it is kept was chosen, rather than following from what it is.
+    pub scope_set: bool,
+    /// Why the server would not keep it, while it would not.
+    pub sync_problem: Option<String>,
+    /// What syncing did to it: a rename, and why.
+    pub sync_note: Option<String>,
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1408,6 +1417,10 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
                     on: l.on,
                 })
                 .collect(),
+            everywhere: d.everywhere,
+            scope_set: d.scope_set,
+            sync_problem: None,
+            sync_note: None,
         }
     }
 }

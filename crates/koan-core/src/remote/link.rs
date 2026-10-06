@@ -172,6 +172,10 @@ pub enum LinkCommand {
     /// forgotten on one of its devices. The device reads what changed
     /// (`remote::history::sync`).
     HistoryChanged,
+    /// The account's EQ profiles kept everywhere moved on the server: one
+    /// changed or deleted on another of its devices. The device reads what
+    /// changed (`remote::dsp_sync::sync`).
+    DspProfilesChanged,
     /// Play through this output from now on, carrying on from where the music
     /// is, as the device's own output menu would.
     SetOutput {
@@ -259,6 +263,7 @@ impl LinkCommand {
             | Self::Shared { .. }
             | Self::Forgotten { .. }
             | Self::HistoryChanged
+            | Self::DspProfilesChanged
             | Self::Levels { .. }
             | Self::Acked { .. } => false,
         }
@@ -316,6 +321,7 @@ impl LinkCommand {
             | Self::Shared { .. }
             | Self::Forgotten { .. }
             | Self::HistoryChanged
+            | Self::DspProfilesChanged
             | Self::WatchLevels { .. }
             | Self::Levels { .. } => false,
         }
@@ -336,6 +342,7 @@ impl LinkCommand {
                 | Self::DeviceKeys { .. }
                 | Self::Forgotten { .. }
                 | Self::HistoryChanged
+                | Self::DspProfilesChanged
                 | Self::Levels { .. }
                 | Self::Acked { .. }
                 | Self::SetOutput { .. }
@@ -461,6 +468,7 @@ impl LinkCommand {
             | Self::Shares { .. }
             | Self::Forgotten { .. }
             | Self::HistoryChanged
+            | Self::DspProfilesChanged
             | Self::WatchLevels { .. }
             | Self::Levels { .. }
             | Self::Acked { .. }
@@ -1514,6 +1522,7 @@ mod device_key_tests {
             LinkCommand::DeviceKeys { keys: vec![] },
             LinkCommand::Devices { devices: vec![] },
             LinkCommand::HistoryChanged,
+            LinkCommand::DspProfilesChanged,
             LinkCommand::Shared {
                 command: Box::new(LinkCommand::Pause),
             },

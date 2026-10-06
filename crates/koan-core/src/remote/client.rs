@@ -963,6 +963,94 @@ impl SubsonicClient {
             .ok_or(SubsonicError::BadResponse)
     }
 
+    // -- EQ profiles: koan servers offering `koanDspProfiles` --
+
+    /// The account's profiles changed after revision `since`.
+    pub fn koan_dsp_profiles(&self, since: i64) -> Result<KoanDspProfiles, SubsonicError> {
+        self.get_with_params("koanDspProfiles", &[("since", &since.to_string())])?
+            .koan_dsp_profiles
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Keep `doc` as profile `uid`'s, edited at `edited_at` (ms).
+    pub fn koan_dsp_profile_save(
+        &self,
+        uid: &str,
+        edited_at: i64,
+        doc: &str,
+    ) -> Result<KoanDspSaved, SubsonicError> {
+        self.post_with_params(
+            "koanDspProfileSave",
+            &[
+                ("uid", uid),
+                ("editedAt", &edited_at.to_string()),
+                ("doc", doc),
+            ],
+        )?
+        .koan_dsp_saved
+        .ok_or(SubsonicError::BadResponse)
+    }
+
+    pub fn koan_dsp_profile_delete(
+        &self,
+        uid: &str,
+        edited_at: i64,
+    ) -> Result<KoanDspSaved, SubsonicError> {
+        self.post_with_params(
+            "koanDspProfileDelete",
+            &[("uid", uid), ("editedAt", &edited_at.to_string())],
+        )?
+        .koan_dsp_saved
+        .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Turn the AutoEQ suggestion for `output` down on every device.
+    pub fn koan_dsp_dismiss(&self, output: &str) -> Result<(), SubsonicError> {
+        self.post_with_params("koanDspDismiss", &[("output", output)])?;
+        Ok(())
+    }
+
+    /// A file a profile names, by its SHA-256.
+    pub fn koan_dsp_file(&self, sha256: &str) -> Result<Vec<u8>, SubsonicError> {
+        let url = format!("{}/rest/koanDspFile", self.auth.base_url);
+        let mut params = self.auth_params()?;
+        params.insert("sha256".into(), sha256.into());
+        let resp = self
+            .http
+            .get(&url)
+            .query(&params)
+            .timeout(DSP_FILE_TIMEOUT)
+            .send()?;
+        let binary = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .is_some_and(|t| t.as_bytes().starts_with(b"application/octet-stream"));
+        if !binary {
+            let resp: SubsonicResponseWrapper = resp.json()?;
+            resp.subsonic_response.ok()?;
+            return Err(SubsonicError::BadResponse);
+        }
+        Ok(resp.bytes()?.to_vec())
+    }
+
+    /// Send a file a saved profile names and the server lacks.
+    pub fn koan_dsp_upload(&self, sha256: &str, data: Vec<u8>) -> Result<(), SubsonicError> {
+        let url = format!("{}/rest/koanDspFile", self.auth.base_url);
+        let mut params = self.auth_params()?;
+        params.insert("sha256".into(), sha256.into());
+        let resp: SubsonicResponseWrapper = self
+            .http
+            .post(&url)
+            .query(&params)
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .body(data)
+            .timeout(DSP_FILE_TIMEOUT)
+            .send()?
+            .json()?;
+        resp.subsonic_response.ok()?;
+        Ok(())
+    }
+
     /// The account's saved play queue, `None` when there is none. `by_index`
     /// for a server listing `indexBasedQueue`.
     pub fn get_play_queue(&self, by_index: bool) -> Result<Option<SavedPlayQueue>, SubsonicError> {
@@ -1084,6 +1172,8 @@ struct SubsonicResponse {
     play_queue_by_index: Option<SavedPlayQueue>,
     koan_command: Option<crate::remote::acks::AckOutcome>,
     koan_scrobbling: Option<KoanScrobbling>,
+    koan_dsp_profiles: Option<KoanDspProfiles>,
+    koan_dsp_saved: Option<KoanDspSaved>,
 }
 
 /// The play queue the account saved on the server: `getPlayQueue` names the
@@ -1113,6 +1203,53 @@ impl SavedPlayQueue {
                 self.entry.iter().position(|e| e.id == current)
             })
     }
+}
+
+/// How long a profile's file may take to move: up to 32 MiB on a slow
+/// connection.
+const DSP_FILE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The account's EQ profiles changed after a revision (`koanDspProfiles`).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct KoanDspProfiles {
+    /// The revision to read from next.
+    pub cursor: i64,
+    #[serde(default)]
+    pub profile: Vec<KoanDspProfile>,
+    /// Outputs the account turned AutoEQ down for.
+    #[serde(default)]
+    pub dismissed: Vec<KoanDspDismissed>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KoanDspProfile {
+    pub uid: String,
+    pub rev: i64,
+    pub edited_at: i64,
+    /// `remote::dsp_sync::SyncDoc` as JSON; absent once deleted.
+    pub doc: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanDspDismissed {
+    pub output: String,
+}
+
+/// What a save or deletion did (`koanDspSaved`).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct KoanDspSaved {
+    pub rev: i64,
+    /// False when the server kept a copy edited later.
+    pub stored: bool,
+    /// Files the profile names that the server lacks, to send.
+    #[serde(default)]
+    pub missing: Vec<KoanDspMissing>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct KoanDspMissing {
+    pub sha256: String,
 }
 
 /// The services a koan server forwards the account's plays to

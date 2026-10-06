@@ -5,6 +5,7 @@ mod artists;
 pub mod auth;
 pub mod batch;
 mod bookmarks;
+pub mod dsp;
 mod favourites;
 pub mod history;
 pub mod lyrics;

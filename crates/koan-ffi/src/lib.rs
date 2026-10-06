@@ -551,6 +551,7 @@ impl KoanEngine {
             cmd,
             koan_core::remote::link::LinkCommand::Sync { .. }
                 | koan_core::remote::link::LinkCommand::HistoryChanged
+                | koan_core::remote::link::LinkCommand::DspProfilesChanged
         ) {
             return offload::offload(move || {
                 self.handle_link(
@@ -2887,8 +2888,37 @@ impl KoanEngine {
     }
 
     pub async fn dsp_detail(self: Arc<Self>, name: String) -> Option<DspProfileDetail> {
-        offload::offload(move || koan_core::audio::dsp::profiles::detail(&name).map(Into::into))
-            .await
+        offload::offload(move || {
+            let mut detail: DspProfileDetail =
+                koan_core::audio::dsp::profiles::detail(&name)?.into();
+            if let Ok(db) = self.db() {
+                if detail.everywhere {
+                    detail.sync_problem = koan_core::remote::dsp_sync::refusal(&db, &name);
+                }
+                detail.sync_note = koan_core::remote::dsp_sync::note(&db, &name);
+            }
+            Some(detail)
+        })
+        .await
+    }
+
+    /// Keep `name` on every device of the account, or on this one alone.
+    pub async fn dsp_set_scope(
+        self: Arc<Self>,
+        name: String,
+        everywhere: bool,
+    ) -> Result<(), KoanError> {
+        offload::sequenced(move || {
+            use koan_core::config::DspScope;
+            let to = if everywhere {
+                DspScope::Everywhere
+            } else {
+                DspScope::Device
+            };
+            koan_core::audio::dsp::profiles::set_scope(&name, to)
+                .map_err(|message| KoanError::BadArgument { message })
+        })
+        .await
     }
 
     pub async fn dsp_rename(self: Arc<Self>, old: String, new: String) -> Result<(), KoanError> {
@@ -4714,6 +4744,8 @@ impl KoanEngine {
             .provide(engine.viz.clone(), move || playhead.position_ms());
         let held =
             std::sync::Mutex::new(None::<(u64, Vec<koan_core::remote::link::LinkQueueEntry>)>);
+        // Profiles of one name from two devices are told apart by it.
+        koan_core::remote::dsp_sync::set_device_name(device_name.clone());
         koan_core::remote::devices::start(koan_core::remote::link::Local {
             identity: koan_core::remote::link::LinkIdentity::this_device(device_name),
             // What a command may cost, and where it may go, depends on who
@@ -5358,6 +5390,14 @@ impl KoanEngine {
                 if koan_core::remote::history::sync(&db).library_synced {
                     self.library_changed();
                 }
+            }),
+            LinkCommand::DspProfilesChanged => self.db().and_then(|db| {
+                if koan_core::remote::dsp_sync::sync(&db).changed() {
+                    // Pages showing profiles follow the library's version.
+                    self.library_changed();
+                    self.send_local(PlayerCommand::ReloadDsp)?;
+                }
+                Ok(())
             }),
             LinkCommand::Sync { full } => self.db().map(|db| {
                 let walk = if full {

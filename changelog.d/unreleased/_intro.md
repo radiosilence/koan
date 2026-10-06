@@ -1,0 +1,1 @@
+The library database moves from schema 20 to 21. The upgrade only adds tables: the EQ profiles a server keeps for its accounts, and a device's record of what it synced. Every existing row is kept as it was, and the upgrade runs in one transaction. Builds older than this one refuse a schema-21 database, so going back means restoring a copy taken before upgrading.
