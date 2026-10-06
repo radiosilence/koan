@@ -414,6 +414,33 @@ pub fn remove_stale_tracks(
     Ok(stale)
 }
 
+/// Give files gone from under `folder` their tracks back where a scan has
+/// just found them at new paths: `arrived` is the tracks it made. See
+/// `sources::adopt_moved`. Returns how many were given back.
+pub fn adopt_moved_files(
+    conn: &Connection,
+    folder: &Path,
+    arrived: &[i64],
+) -> Result<usize, DbError> {
+    if arrived.is_empty() {
+        return Ok(0);
+    }
+    let (lower, upper) = super::folder_prefix_range(folder);
+    let paths: Vec<String> = conn
+        .prepare("SELECT path FROM local_files WHERE path >= ?1 AND path < ?2")?
+        .query_map(params![lower, upper], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut adopted = 0;
+    for path in paths {
+        if crate::index::known_missing(Path::new(&path))
+            && sources::adopt_moved(conn, &path, arrived)?
+        {
+            adopted += 1;
+        }
+    }
+    Ok(adopted)
+}
+
 /// Get all tracks for an artist, ordered chronologically (album date, disc, track#).
 ///
 /// The album-artist half is a subquery on `albums` rather than `al.artist_id =

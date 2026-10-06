@@ -1006,50 +1006,62 @@ fn as_kind(meta: &TrackMeta, kind: Kind) -> TrackMeta {
     meta
 }
 
-/// The file a new path is, moved there: a file held at another path that is
-/// no longer there, with the same MusicBrainz recording on the same release
-/// when both name one, or else the same slot and the same size or length, or
-/// failing that the same size, length and modification time, which a rename
-/// keeps and an untagged file's title (its name) does not. Only when exactly
-/// one such file is gone; several is ambiguity, and declined.
-fn moved_from(conn: &Connection, key: &str, meta: &TrackMeta) -> Result<Option<String>, DbError> {
-    let gone: Vec<String> = conn
+/// Give a file gone from `old` back its track, if it is one of `arrived`:
+/// tracks a scan has just made for files at new paths. The same file moved
+/// is the same MusicBrainz recording on the same release when both name
+/// one, or else the same slot and the same size or length, or failing that
+/// the same size, length and modification time, which a rename keeps and an
+/// untagged file's title (its name) does not. Only when exactly one arrival
+/// fits; several is ambiguity, and declined. Whether it was given back.
+///
+/// The old track survives, with its id, uid, history, favourites, ratings,
+/// playlist places and server partner; the arrival's file becomes its source
+/// and the arrival is folded into it.
+pub(crate) fn adopt_moved(conn: &Connection, old: &str, arrived: &[i64]) -> Result<bool, DbError> {
+    if arrived.is_empty() {
+        return Ok(false);
+    }
+    let Some((track, meta)) = load(conn, Kind::Local, old)? else {
+        return Ok(false);
+    };
+    let found: Vec<(String, i64)> = conn
         .prepare_cached(
-            "SELECT path FROM local_files
-              WHERE path != ?1
-                AND ((?2 IS NOT NULL AND ?3 IS NOT NULL AND mbid = ?2 AND album_mbid IS ?3)
-                  OR ((?2 IS NULL OR mbid IS NULL) AND slot_key = ?4
-                      AND (size_bytes = ?5 OR duration_ms = ?6))
-                  OR (size_bytes = ?5 AND duration_ms = ?6 AND mtime = ?7))",
+            "SELECT f.path, f.track_id FROM local_files f
+              WHERE f.track_id IN (SELECT value FROM json_each(?1)) AND f.track_id != ?2
+                AND NOT EXISTS (SELECT 1 FROM remote_entries r WHERE r.track_id = f.track_id)
+                AND ((?3 IS NOT NULL AND ?4 IS NOT NULL AND f.mbid = ?3 AND f.album_mbid IS ?4)
+                  OR ((?3 IS NULL OR f.mbid IS NULL) AND f.slot_key = ?5
+                      AND (f.size_bytes = ?6 OR f.duration_ms = ?7))
+                  OR (f.size_bytes = ?6 AND f.duration_ms = ?7 AND f.mtime = ?8))",
         )?
         .query_map(
             params![
-                key,
+                super::json_list(arrived),
+                track,
                 nonempty(&meta.mbid),
                 nonempty(&meta.album_mbid),
-                slot_key(meta),
+                slot_key(&meta),
                 meta.size_bytes,
                 meta.duration_ms,
                 meta.mtime,
             ],
-            |r| r.get::<_, String>(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?
-        .collect::<rusqlite::Result<Vec<_>>>()?
-        .into_iter()
-        .filter(|path| crate::index::known_missing(std::path::Path::new(path)))
-        .collect();
-    Ok(match <[String; 1]>::try_from(gone) {
-        Ok([only]) => Some(only),
-        Err(_) => None,
-    })
+        .collect::<rusqlite::Result<_>>()?;
+    let [(path, arrival)] = found.as_slice() else {
+        return Ok(false);
+    };
+    conn.prepare_cached("DELETE FROM local_files WHERE path = ?1")?
+        .execute(params![old])?;
+    conn.prepare_cached("DELETE FROM scan_cache WHERE path = ?1")?
+        .execute(params![old])?;
+    merge(conn, track, *arrival)?;
+    log::info!("{old} moved to {path}; it keeps track {track}");
+    Ok(true)
 }
 
 /// Record what a source says, linking and deriving as needed. Returns the
 /// track and whether this source made a new one.
-///
-/// A file at a new path that is a file gone from another (see [`moved_from`])
-/// takes over that file's source, so a move or rename outside koan keeps the
-/// track, its id and uid, and everything attached to it.
 ///
 /// `seen` is the server ids a sync has listed so far. An entry the sync has
 /// not listed, in the same slot, is taken to be this one under the id it had
@@ -1089,17 +1101,6 @@ pub(crate) fn record(
                 .execute(params![key, old])?;
             stored = load(conn, kind, key)?;
         }
-    }
-
-    if stored.is_none()
-        && kind == Kind::Local
-        && let Some(old) = moved_from(conn, key, &meta)?
-    {
-        log::info!("{old} moved to {key}; it keeps its track");
-        conn.prepare_cached("DELETE FROM scan_cache WHERE path = ?1")?
-            .execute(params![old])?;
-        rename_file(conn, &old, key)?;
-        stored = load(conn, kind, key)?;
     }
 
     if let Some((track, old)) = stored {

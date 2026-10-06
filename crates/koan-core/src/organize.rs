@@ -2527,7 +2527,13 @@ mod tests {
             .filter_map(PlanEntry::as_move)
             .find(|m| m.ancillary.iter().any(|(from, _)| from == &list))
             .expect("the list travels with one of the moves");
-        execute_single_move(&db, &first, "batch-interrupted", &[base.clone()]).unwrap();
+        execute_single_move(
+            &db,
+            &first,
+            "batch-interrupted",
+            std::slice::from_ref(&base),
+        )
+        .unwrap();
 
         let undone = undo_within(&db, &[base]).unwrap();
         assert!(undone.errors.is_empty(), "{:?}", undone.errors);

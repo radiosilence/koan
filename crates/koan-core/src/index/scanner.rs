@@ -18,6 +18,9 @@ pub struct ScanResult {
     pub added: usize,
     pub updated: usize,
     pub removed: usize,
+    /// Files found at a new path that kept the track they had at the old one,
+    /// and so are counted neither as added nor as removed.
+    pub moved: usize,
     pub skipped: usize,
     /// Directory entries walkdir could not read — unreadable subtrees, symlink
     /// loops. Their contents are absent from the scan entirely.
@@ -30,6 +33,9 @@ pub struct ScanResult {
     pub errors: Vec<(PathBuf, String)>,
     /// Stopped early because someone asked. What it had done is still done.
     pub cancelled: bool,
+    /// Tracks this scan made, which a file gone from elsewhere may turn out to
+    /// be (see `queries::adopt_moved_files`).
+    arrived: Vec<i64>,
 }
 
 /// How a scan should behave.
@@ -137,16 +143,22 @@ pub fn scan_folders(
         indexed.push((path, found.playlists, settled, prune, result));
     }
 
+    let arrived: Vec<i64> = indexed
+        .iter()
+        .flat_map(|(.., result)| result.arrived.iter().copied())
+        .collect();
     let mut total = ScanResult::default();
     for (path, playlists, settled, prune, mut result) in indexed {
         if prune && !cancelled {
-            remove_stale(db, &path, opts.force_remove, &mut result);
+            remove_stale(db, &path, opts.force_remove, &arrived, &mut result);
         }
         if !result.cancelled {
             result.playlists += super::playlist_files::import(db, &playlists, &settled);
         }
         merge(&mut total, result);
     }
+    // A moved file was counted as added when its new path was indexed.
+    total.added = total.added.saturating_sub(total.moved);
     if total.added > 0 {
         super::playlist_files::refresh_m3u(db);
     }
@@ -261,14 +273,16 @@ pub fn scan_dirs(
     if !index_files(db, files, &opts, on_track, &mut result, Path::new("")) || result.cancelled {
         return result;
     }
+    let arrived = std::mem::take(&mut result.arrived);
     for dir in &settled {
-        remove_stale(db, dir, true, &mut result);
+        remove_stale(db, dir, true, &arrived, &mut result);
         // A cover image changing is a reason to be here that no row records.
         if let Err(e) = queries::evict_art_under(&db.conn, dir) {
             log::warn!("cover art under {} not refreshed: {e}", dir.display());
         }
     }
     result.playlists += super::playlist_files::import(db, &playlists, &settled);
+    result.added = result.added.saturating_sub(result.moved);
     if result.added > 0 {
         super::playlist_files::refresh_m3u(db);
     }
@@ -300,6 +314,7 @@ fn merge(total: &mut ScanResult, r: ScanResult) {
     total.added += r.added;
     total.updated += r.updated;
     total.removed += r.removed;
+    total.moved += r.moved;
     total.skipped += r.skipped;
     total.unreadable += r.unreadable;
     total.playlists += r.playlists;
@@ -469,12 +484,14 @@ fn index_files(
         };
 
         let (mut added, mut updated) = (0usize, 0usize);
+        let mut arrived = Vec::new();
         for (file_path, meta_result) in batch {
             match meta_result {
                 Ok(meta) => match queries::upsert_track_status(&tx, &meta) {
                     Ok((track_id, is_new)) => {
                         if is_new {
                             added += 1;
+                            arrived.push(track_id);
                         } else {
                             updated += 1;
                         }
@@ -512,6 +529,7 @@ fn index_files(
             Ok(()) => {
                 result.added += added;
                 result.updated += updated;
+                result.arrived.extend(arrived);
             }
             Err(e) => {
                 log::error!("failed to commit scan transaction: {}", e);
@@ -533,8 +551,15 @@ fn index_files(
     true
 }
 
-/// Remove the rows under `path` whose files are gone, in one transaction.
-fn remove_stale(db: &Database, path: &Path, force_remove: bool, result: &mut ScanResult) {
+/// Remove the rows under `path` whose files are gone, in one transaction,
+/// after giving those that moved (to one of `arrived`) their tracks back.
+fn remove_stale(
+    db: &Database,
+    path: &Path,
+    force_remove: bool,
+    arrived: &[i64],
+    result: &mut ScanResult,
+) {
     let tx = match crate::db::queries::write_transaction(&db.conn) {
         Ok(tx) => tx,
         Err(e) => {
@@ -545,6 +570,15 @@ fn remove_stale(db: &Database, path: &Path, force_remove: bool, result: &mut Sca
             return;
         }
     };
+    let moved = match queries::adopt_moved_files(&tx, path, arrived) {
+        Ok(moved) => moved,
+        Err(e) => {
+            log::error!("failed to match moved files: {}", e);
+            result.errors.push((path.to_path_buf(), e.to_string()));
+            return;
+        }
+    };
+    result.moved += moved;
     match queries::remove_stale_tracks(&tx, path, force_remove) {
         Ok(removed) => {
             if let Err(e) = tx.commit() {
@@ -560,6 +594,13 @@ fn remove_stale(db: &Database, path: &Path, force_remove: bool, result: &mut Sca
         Err(e) => {
             log::error!("failed to remove stale tracks: {}", e);
             result.errors.push((path.to_path_buf(), e.to_string()));
+            // The brake refuses before removing anything; the moves found
+            // stand.
+            if matches!(e, crate::db::connection::DbError::UnsafeBulkDelete(_))
+                && let Err(e) = tx.commit()
+            {
+                log::error!("failed to commit moved files: {}", e);
+            }
         }
     }
 }
@@ -823,8 +864,8 @@ mod tests {
         let result = scan_folder(&db, &music, ScanOptions::default(), None);
 
         assert_eq!(
-            (result.added, result.removed),
-            (0, 0),
+            (result.added, result.removed, result.moved),
+            (0, 0, 3),
             "{:?}",
             result.errors
         );
@@ -867,7 +908,7 @@ mod tests {
 
         std::fs::rename(one.join("Album"), two.join("Album")).unwrap();
         let r = scan_folders(&db, &folders, ScanOptions::default(), None, None);
-        assert_eq!((r.added, r.removed), (0, 0), "{:?}", r.errors);
+        assert_eq!((r.added, r.removed, r.moved), (0, 0, 1), "{:?}", r.errors);
         let after = tracks_with_uids(&db);
         assert_eq!(
             before.iter().map(|t| (t.0, &t.1)).collect::<Vec<_>>(),
