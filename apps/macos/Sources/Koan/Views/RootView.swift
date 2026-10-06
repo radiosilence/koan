@@ -73,10 +73,6 @@ struct RootView: View {
         .inspector(isPresented: $ui.showLyrics) {
             LyricsPanel()
                 .inspectorColumnWidth(min: 260, ideal: 280, max: 460)
-                // The column animates on its own; its contents do not come
-                // with it. Without this the stage slides over and the pane
-                // then appears whole in one frame, a fifth of a second later.
-                .transition(.move(edge: .trailing))
                 // The toggle belongs to the inspector rather than the window, so
                 // it sits at the pane's leading edge and moves with it. In the
                 // window's trailing group the pane would open out from
@@ -111,6 +107,9 @@ struct RootView: View {
         // A play recorded, or plays forgotten: the pages derived from
         // history ask again.
         .onChange(of: mirror.historyVersion) { _, _ in library.historyChanged() }
+        // Offline narrows every listing to what can play here; going online
+        // widens it again.
+        .onChange(of: mirror.connection?.offline ?? false) { _, _ in library.libraryChanged() }
         // The toolbar paints its own ground over whatever is behind it, a hard
         // grey strip across the top of a queue washed in the colour of the
         // record. Hidden, the glass controls sit in that colour and the scroll
@@ -349,9 +348,9 @@ struct RecordRoom: ViewModifier {
 
 /// The transport, padded clear of the columns.
 ///
-/// Its own view because the widths it reads move while the sidebar is being
-/// dragged and on every frame the lyrics panel slides — read in the root, each
-/// of those frames would re-run the window.
+/// Its own view because the widths it reads move on every frame the sidebar
+/// is being dragged — read in the root, each of those frames would re-run
+/// the window.
 private struct TransportOverlay: View {
     let columns: NavigationSplitViewVisibility
 
@@ -493,6 +492,7 @@ private struct StageView: View {
         case .searchResults: SearchResultsView()
         case .favourites: FavouritesView()
         case .recentlyPlayed: RecentlyPlayedView()
+        case .onDevice: OnDeviceView()
         case .playHistory: HistoryView()
         case .downloads: DownloadsView()
         case .playlist(let id): PlaylistView(playlistId: id)
@@ -704,7 +704,9 @@ private struct AlbumSortControls: View {
                     get: { library.albumSort },
                     set: { library.albumSort = $0 }
                 )) {
-                    ForEach(AlbumSort.offered(recent: library.browseFilter.recent), id: \.self) { sort in
+                    ForEach(AlbumSort.offered(
+                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded
+                ), id: \.self) { sort in
                         Text(sort.label).tag(sort)
                     }
                 }

@@ -650,14 +650,7 @@ struct OutputButton: View {
     /// "Controlling MacBook · playing through Arcam", or where this device
     /// plays.
     private var help: String {
-        let current: String? = {
-            guard let outputs = player.outputs else { return nil }
-            switch outputs.current {
-            case .renderer(let udn): return outputs.renderers.first { $0.id == udn }?.name
-            case .device(let name): return name
-            case .default: return outputs.owner == nil ? player.currentDevice : nil
-            }
-        }()
+        let current = player.outputName
         var parts: [String] = []
         if player.isControllingAnother {
             parts.append("Controlling \(player.controlled?.name ?? "another device")")
@@ -669,6 +662,24 @@ struct OutputButton: View {
             parts.append("through \u{201C}\(processing)\u{201D}")
         }
         return parts.isEmpty ? "Output" : parts.joined(separator: " · ")
+    }
+}
+
+extension PlayerModel {
+    /// What the device in view plays through, by name: a renderer, a device
+    /// chosen by name, or this device's own default. `None` for another
+    /// device's default, which it does not name.
+    var outputName: String? {
+        guard let outputs else { return nil }
+        switch outputs.current {
+        case .renderer(let udn): return outputs.renderers.first { $0.id == udn }?.name
+        case .device(let name): return name
+        // A phone's one device is its route, named even before the engine
+        // has reported a current device.
+        case .default:
+            guard outputs.owner == nil else { return nil }
+            return currentDevice ?? (outputs.devices.count == 1 ? outputs.devices.first?.name : nil)
+        }
     }
 }
 

@@ -43,6 +43,13 @@ struct AlbumGridCell: View {
                             .padding(6)
                     }
                 }
+                #if os(iOS)
+                .overlay {
+                    if album.onDevice != nil {
+                        DownloadedBar(album: album)
+                    }
+                }
+                #endif
                 .overlay(alignment: .bottomTrailing) {
                     AlbumTileHeart(albumId: album.id, hovering: hovering)
                 }

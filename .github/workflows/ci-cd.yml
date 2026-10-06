@@ -325,9 +325,10 @@ jobs:
     name: Container image
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [changes, check-version]
+    needs: [changes, check-version, fmt, clippy, test, audit]
     # check-version runs only on main, so it is skipped on pull requests and
-    # this must not require it to have succeeded.
+    # this must not require it to have succeeded. The checks are skipped when
+    # no code changed; an image is published only when none of them failed.
     if: ${{ !cancelled() && !failure() && needs.changes.outputs.docker == 'true' }}
     permissions:
       contents: read
@@ -584,8 +585,8 @@ jobs:
 
   testflight:
     name: Release (TestFlight)
-    needs: [check-version]
-    if: needs.check-version.outputs.should_release == 'true'
+    needs: [fmt, clippy, test, audit, check-version]
+    if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     uses: ./.github/workflows/ios.yml
     secrets: inherit
 

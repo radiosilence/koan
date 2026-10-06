@@ -564,6 +564,9 @@ impl Processing {
 /// `seek_ms`    — if > 0, seek to this position before decoding the first track.
 /// `next_track` — closure returning the next `SourceEntry` for gapless playback.
 ///                Called on EOF. Returns None when the playlist is exhausted.
+/// `on_finished` — called on the decode thread at a natural end, with the stop
+///                flag. The player joins this thread once it sets that flag, so
+///                the closure must return promptly after it is set.
 #[allow(clippy::too_many_arguments)]
 pub fn start_decode<N, F>(
     first: SourceEntry,
@@ -577,7 +580,7 @@ pub fn start_decode<N, F>(
 ) -> Result<DecodeHandle, DecodeError>
 where
     N: Fn() -> Option<SourceEntry> + Send + 'static,
-    F: FnOnce() + Send + 'static,
+    F: FnOnce(&AtomicBool) + Send + 'static,
 {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = stop.clone();
@@ -598,7 +601,7 @@ where
             // exhausted or error). Only fire if we weren't explicitly stopped
             // (i.e. this is a natural end, not a seek/skip teardown).
             if !stop_clone.load(Ordering::Relaxed) {
-                on_finished();
+                on_finished(&stop_clone);
             }
         })
         .map_err(DecodeError::Io)?;

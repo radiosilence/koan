@@ -75,6 +75,7 @@ private struct SectionPage: View {
         case .tracks: TrackBrowser()
         case .favourites: FavouritesView()
         case .recentlyPlayed: RecentlyPlayedView()
+        case .onDevice: OnDeviceView()
         case .playHistory: HistoryView()
         case .downloads: DownloadsView()
         case .playlist(let id): PlaylistView(playlistId: id)
@@ -90,6 +91,7 @@ private struct SectionPage: View {
         case .tracks: "Tracks"
         case .favourites: "Favourites"
         case .recentlyPlayed: "Recently Played"
+        case .onDevice: "Downloaded"
         case .playHistory: "History"
         case .downloads: "Downloads"
         case .playlist: ""
@@ -156,7 +158,9 @@ private struct AlbumSortControls: ToolbarContent {
                     get: { library.albumSort },
                     set: { library.albumSort = $0 }
                 )) {
-                    ForEach(AlbumSort.offered(recent: library.browseFilter.recent), id: \.self) { sort in
+                    ForEach(AlbumSort.offered(
+                    recent: library.browseFilter.recent, downloaded: library.browseFilter.downloaded
+                ), id: \.self) { sort in
                         Text(sort.label).tag(sort)
                     }
                 }

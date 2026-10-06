@@ -11,6 +11,8 @@ final class AvailabilityMark: CALayer {
         /// Waiting at the front of the download queue.
         case pending
         case failed
+        /// Offline, with no file here: not a failure, and drawn apart from one.
+        case notHere
         /// Downloading: how far, when the server said how big.
         case transferring(Double?)
         case stored(onServer: Bool, onDisk: Bool)
@@ -64,6 +66,8 @@ final class AvailabilityMark: CALayer {
             badgeImage = Symbol.image("arrow.down.circle", size: 11, colours: [selected ? .white : tint], appearance: appearance)
         case .failed:
             badgeImage = Symbol.image("exclamationmark.triangle.fill", size: 11, colours: [.systemOrange], appearance: appearance)
+        case .notHere:
+            badgeImage = Symbol.image("icloud.slash", size: 10, colours: [quiet], appearance: appearance)
         case .transferring(let fraction):
             badge.isHidden = true
             ring.isHidden = false
@@ -122,6 +126,7 @@ final class AvailabilityMark: CALayer {
         switch state {
         case .pending: "Queued for download"
         case .failed: failure ?? "Couldn't be fetched"
+        case .notHere: "Not on this device"
         default: nil
         }
     }

@@ -1,28 +1,30 @@
-<img width="1413" height="956" alt="An album in the macOS app" src="https://github.com/user-attachments/assets/8ec2f049-524a-4437-8bf3-91172c6b4f26" />
+<img alt="kōan in a browser, on a Mac and on an iPhone" src="site/public/screens/hero.webp" />
 
 # kōan
 
-[koan.rocks](https://koan.rocks)
+A music player and server for your own library, local or on any OpenSubsonic server: native SwiftUI apps on macOS and iOS, a terminal UI on macOS and Linux, and a server with a web UI, on one Rust core. [koan.rocks](https://koan.rocks)
 
-It's a music player. Designed for both local and remote collections (subsonic/navidrome). Remote works with a fairly aggressive local cache. It is super fast and handles 1TB+ libraries with ease and has all the things you'd want like gapless, queue management, "bit-perfect" (so much as the audio stack allows), combined search...etc. Built from 25 years of experience messing about with music and being annoyed with pretty much everything and wanting my dream application. There are some organisational features such as file renaming, which is compatible with fb2k syntax, and I plan to add a decent well thought out tagger once I have pondered the UX more.
+It's a music player and server, for local collections and remote ones (anything OpenSubsonic). Remote libraries sit behind a fairly aggressive local cache. It handles multi-terabyte libraries with ease and has all the core audio features you'd want, like gapless and bit-perfect output (where the system allows). It's built from 25 years of messing about with music, being annoyed with pretty much everything, and wanting my dream application.
 
-> Originally built as a Rust TUI and core, I've now added a beautiful macOS SwiftUI app (no Electron) that uses FFI to bridge to the rust. It's fast, it's pretty, it has these lush transitions, and the point is to do all the basics properly and well before adding features, I'm really proud of it. The UX is somewhat inspired by taking the things I like about Apple Music and fb2k, but also fixing things I thought were dumb.
->
-> Full disclaimer: AI assisted coding was used. I have been building somewhat high quality software for a long time (decades) before AI existed, and I'd like to think the decisions I've been making reflect this as opposed to just vibing slop. I probably could have written it myself, but I kind of wanted to take a step back and be more of an architect/technical lead/product owner rather than a coder for this.
->
-> — [@radiosilence](https://github.com/radiosilence)
+The idea is to be fully compatible with the existing ecosystem while bringing the decent UX and modern ideas that professionally made streaming services have. It started as a little cross-platform CLI and TUI app on a Rust core. Now there's a native SwiftUI macOS app (no Electron) that links that core directly, an iOS app, a server, and soon a tvOS app. The UX takes what I like about Apple Music and fb2k and fixes the things I thought were dumb. The point is to do the basics properly before adding features, and I'm really proud of it.
 
+I wanted UX that makes it easy as hell to do what you want, while staying SUPER low on resources (and now battery). And I wanted the stuff you don't really see in the self-hosted space: device control and handoff, EQ profiles and convolution, DLNA output (with EQ!), and a cache built for a commuter who often has no signal, so you never have to remember to download your whole queue first. The best of every world, why not?
 
-<img width="1630" height="1167" alt="The library in the macOS app" src="https://github.com/user-attachments/assets/cb7f9ca0-61eb-4e7e-bebc-43fbc11a7c78" />
+My philosophy is that you should lead with your opinions, but let people customise and tweak them to match theirs.
 
-<img width="1405" height="905" alt="The macOS app albums view" src="https://github.com/user-attachments/assets/c0ac41f2-3cde-4ad4-8aa4-e53859d6559d" />
+Because it grew organically, and I've insisted on staying compatible with OpenSubsonic, every part works on its own. You can use the macOS app with Navidrome. You can use the server with Arpeggi. Or you can use kōan all the way down and get the non-standard (sorry) features such as remote control. I think a shared standard like OpenSubsonic is incredibly important so everyone plays nicely together, but it shouldn't stop us experimenting to compete with how well the professional streaming platforms integrate.
 
-<img width="874" height="942" alt="The TUI" src="https://github.com/user-attachments/assets/99782de3-5683-4dd9-97b6-10782e8e4099" />
+One thing I've noticed: when you mix self-hosted apps with proprietary tech, say AirPlay from the fantastically solid play:Sub, you're treated as a second-class citizen. The audio has to stream over the wire from your phone, which is laggy. With kōan's remote features, the device you send it to plays its own copy.
 
-<img width="1824" height="1355" alt="Screenshot 2026-08-25 at 00 06 31" src="https://github.com/user-attachments/assets/e6d734f1-f2a7-4364-a914-ad953ead7da5" />
+I did use AI-assisted coding for this project. I've been building fairly high-quality software for a *loooong* time (decades) before AI existed, and I'd like to think the decisions reflect that rather than vibing slop. I probably could have written it myself, but I wanted to step back and be more of an architect, technical lead and product owner than the person typing out the code, as I'm just one person.
 
+If it gets traction I'll happily look at more platforms like Android, but I'm already out $99 for an Apple Developer account, so I'm not shelling out for an Android phone just yet.
 
-<img width="406" height="182" alt="Screenshot 2026-03-04 at 18 30 32" src="https://github.com/user-attachments/assets/d4fff1f7-7c1f-4aaa-87aa-41bd2b9c22f7" />
+— [@radiosilence](https://github.com/radiosilence)
+
+<img alt="Favourites in the macOS app" src="site/public/screens/mac-favourites.webp" width="49%" /> <img alt="An artist page in the macOS app" src="site/public/screens/mac-artist.webp" width="49%" />
+
+<img alt="Now Playing on iPhone" src="site/public/screens/ios-now-playing.webp" width="19%" /> <img alt="An album on iPhone" src="site/public/screens/ios-album.webp" width="19%" /> <img alt="An artist on iPhone" src="site/public/screens/ios-artist.webp" width="19%" /> <img alt="The queue on iPhone, controlling a Mac" src="site/public/screens/ios-queue.webp" width="19%" /> <img alt="The Control sheet on iPhone" src="site/public/screens/ios-control.webp" width="19%" />
 
 ## Install
 
@@ -66,6 +68,8 @@ sudo dnf install alsa-lib-devel dbus-devel
 sudo pacman -S alsa-lib dbus
 ```
 
+The iOS app is built from source for now: `just ios-phone` installs it on a plugged-in iPhone, signed with your own (free) Apple developer team. It needs iOS 26 and a kōan, Navidrome or other Subsonic server to play from.
+
 ## Quickstart (CLI)
 
 ```bash
@@ -85,34 +89,52 @@ To run a server, play from Navidrome, or move off it, see the [documentation](ht
 
 ## What it does
 
-- **Bit-perfect playback** -- CoreAudio AUHAL / ALSA via cpal, the device switched to the source rate rather than resampled to reach it. When a device refuses the switch, the format badge says the output is resampled instead of claiming otherwise
-- **Gapless transitions** -- decode thread keeps the ring buffer alive across track boundaries
-- **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV/AIFF/CAF, Ogg, MKV/WebM, MP4. Opus is decoded by `opus-decoder` rather than symphonia, which ships no Opus codec — mono and stereo, in Ogg, Matroska or WebM
-- **Native macOS app** -- SwiftUI, built out of Liquid Glass. Album-grouped queue with drag reorder, playlists, library and artist browsing, ⌘K search, synced lyrics, play history, file organization, and first-run setup
-- **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
-- **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
-- **Subsonic/Navidrome** -- library sync that runs when the server changes, unified local+remote browsing, streaming playback, two-way sync of favourites and playlists
-- **Music server** -- run headless and kōan serves the library itself: a mobile-first web UI with gapless browser playback, favourites, history and Recently played, share links (a track shares its album cued to it) that unfurl with their cover, an OpenSubsonic API for Subsonic apps, signed in with a kōan account by password, app password or API key, with ratings, bookmarks and transcoding to Opus, MP3 or AAC for clients that ask, and ListenBrainz scrobbling per account. See [Running a server](https://koan.rocks/docs/headless-server/)
-- **Playlists** -- ordered, named, reorderable; synced both ways with Navidrome, exportable as M3U8. Smart playlists hold whatever matches a set of rules, and Navidrome's `.nsp` files and `.m3u` files in the library folders are imported. See [Smart playlists](https://koan.rocks/docs/smart-playlists/)
-- **Sleep timer** -- after a set time, fading out, or at the end of the track or record; it pauses and keeps the queue, and is set on whichever device is playing. See [Sleep timer](https://koan.rocks/docs/sleep-timer/)
-- **Play history and Recently played** -- shared between an account's devices on a kōan server
-- **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
-- **EQ and convolution** -- parametric EQ (AutoEQ profiles import directly) and FIR room correction, chosen per output device. Impulse responses are used at their own rate, one per rate; a track without one is resampled to the nearest, and the badge says so. Off, or on a device without a profile, nothing runs. See [Equalisation and convolution](https://koan.rocks/docs/dsp/)
-- **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` — 59 of them — for display and file organization
-- **File organization** -- rename/reorganize your library from the macOS app or the TUI using format string patterns
-- **GraphQL API** -- alongside the app and TUI, or headless. Relay pagination, filters, and mutations for playback, the queue, favourites, playlists and the library
-- **MCP server** -- a server serves MCP at `/mcp` with its own OAuth sign-in, acting as the signed-in account; `koan mcp` runs the player for a desktop client over stdio
-- **Queue management** -- undo/redo (100-deep), multi-select, drag-reorder, Finder drag & drop, session persistence
-- **SQLite FTS5 search** -- full-text search across your entire library
-- **Media keys** -- macOS Control Center and Linux MPRIS (play/pause, next/prev, now playing info)
-- **Lyrics** -- synced (LRC) and plain lyrics from LRCLIB, current line highlighting
-- **22 visualizer modes** -- spectrum bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, terrain, moiré, kaleidoscope, julia fractal, spiral, interference, wormhole, matrix rain. Picker with live preview (`v`), matrix overlay (`X`), bass shake (`S`), configurable reactivity
+### Playback
 
-<img width="815" height="598" alt="Screenshot 2026-03-04 at 18 30 43" src="https://github.com/user-attachments/assets/9dab1d13-5d48-4e60-8625-7d72dd2e7957" />
+- **Bit-perfect output** through CoreAudio on macOS and ALSA on Linux: the device is switched to the source's sample rate rather than resampled to reach it, and the format badge says when a device refuses.
+- **Gapless**, including after the queue is edited: the decoder runs ahead across track boundaries, and an edit restarts it at the playhead.
+- **EQ and convolution per output device.** Profiles are imported as other tools write them: AutoEQ, Equalizer APO configs with their includes, CamillaDSP, REW, rePhase, Convolver `.cfg` files and Roon's zips of impulse responses, one per sample rate. An output without a profile runs nothing. See [Equalisation and convolution](https://koan.rocks/docs/dsp/).
+- **Network amplifiers and streamers** (UPnP/DLNA) get the original file, or, with a correction profile, one processed FLAC stream for the whole queue. See [Playing on another device](https://koan.rocks/docs/devices/).
+- **Formats**: FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF and CAF, in Ogg, Matroska/WebM and MP4.
+- **ReplayGain** in track and album modes, a **sleep timer**, shuffle and repeat, and media keys through Control Center and MPRIS.
+
+### Devices
+
+- **Any kōan app controls any other**, on the same network directly or anywhere through a kōan server, and moves what is playing to it. The device it moves to plays its own copy, so it carries on when the phone sleeps.
+- **A cache built for losing signal**: the queue is fetched ahead of the playhead as far as the cache limit allows, so it keeps playing underground. See [Cache management](https://koan.rocks/docs/cache-management/).
+- **Signing in without a password**: invite links, approving another device by code, and app passwords for Subsonic apps that only sign in with a token. See [Authentication](https://koan.rocks/docs/authentication/).
+
+### Library
+
+- **Local files and a Subsonic or Navidrome server in one library**, with favourites and playlists synced both ways. Compilations stay one album, and one artist is one artist whatever the case or Unicode form.
+- **Smart playlists**, including Navidrome's `.nsp` files and `.m3u` files in the library folders. See [Smart playlists](https://koan.rocks/docs/smart-playlists/).
+- **Play history and Recently played**, shared between an account's devices.
+- **Synced lyrics** from LRCLIB, and artist biographies and photos from Wikipedia.
+- **Search** with SQLite FTS5, and an album-grouped queue with 100 levels of undo that survives restarts.
+- **File organisation** with foobar2000-compatible format strings (59 `$functions()`), every move previewed first. kōan never writes your tags.
+
+### As a server
+
+`koan --headless`, or the container image, serves the library to everything else. See [Running a server](https://koan.rocks/docs/headless-server/), or [Migrating from Navidrome](https://koan.rocks/docs/migrating-from-navidrome/).
+
+- **A web UI** laid out for a phone and a desktop, with gapless playback in the browser.
+- **Share links** whose pages play without an account and unfurl with their cover.
+- **An OpenSubsonic API**, so Subsonic apps play from it too, with ratings, bookmarks and transcoding to Opus, MP3 or AAC.
+- **ListenBrainz scrobbling** per account, sent by the server.
+- **MCP** at `/mcp` with its own sign-in, so an assistant such as Claude can browse the library and drive playback on your devices. It can never move, rename or delete a file. See [MCP integration](https://koan.rocks/docs/mcp-integration/).
+- **GraphQL** for everything the apps can do.
+
+<img alt="Search in the web UI" src="site/public/screens/web-search.webp" width="74%" /> <img alt="An album in the web UI on a phone" src="site/public/screens/web-phone-album.webp" width="24%" />
+
+### The terminal UI
+
+A full-screen Ratatui player on macOS and Linux: album art, an album-grouped queue, a fuzzy picker, a library browser, a lyrics panel, mouse support and 22 visualiser modes.
+
+<img alt="The terminal UI" src="site/public/screens/tui.webp" width="49%" /> <img alt="Organising files in the terminal UI" src="site/public/screens/organize.webp" width="49%" />
 
 ## How it compares
 
-No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-style format strings, and file organization in one binary. Most either need a daemon, lack remote support, or skip the audiophile bits.
+[koan.rocks/compare](https://koan.rocks/compare/) compares kōan feature by feature with Subsonic, Jellyfin and Plex apps for iPhone and Mac, desktop players including Roon and foobar2000, room-correction software and self-hosted servers. It covers what kōan does not do as well. The table below covers terminal players, which that page leaves out.
 
 ### TUI / terminal players
 
@@ -144,26 +166,11 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Auth** | **JWT + roles** | No | No | No | No | No | No |
 | **Platforms** | macOS, Linux | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
 
+## Planned
 
-### Desktop players (GUI)
-
-| | kōan | foobar2000 | Strawberry | DeaDBeeF |
-|---|:---:|:---:|:---:|:---:|
-| **Type** | **Native GUI + TUI** | GUI | GUI (Qt) | GUI (GTK) |
-| **Bit-perfect** | **Yes** | Yes (WASAPI/ASIO) | Yes (Linux) | Yes (ALSA) |
-| **Gapless** | **Yes** | Yes | Yes | Yes |
-| **Subsonic** | **Built-in** | Plugin | **Built-in** | No |
-| **ReplayGain** | **Track + album** | Scan + apply | Yes | Scan + apply |
-| **Format strings** | **fb2k-compat** | **The original** | Organizer only | fb2k-like |
-| **File organization** | **Yes** | Yes (component) | **Yes** | No |
-| **Queue undo/redo** | **100-deep** | Partial | No | Yes |
-| **Lyrics** | **Synced + plain** | Plugin | No | Plugin |
-| **Visualizer** | **22 modes** | Plugin | No | Plugin |
-| **Tag editing** | No | **Yes** | Yes | **Yes** |
-| **DSP / EQ** | **EQ + FIR, per device** | **Yes (VST)** | Yes | Yes |
-| **Platforms** | macOS (app + TUI), Linux (TUI) | Windows/macOS | All | All |
-
-<img width="768" height="612" alt="Screenshot 2026-03-04 at 18 31 01" src="https://github.com/user-attachments/assets/0ad4879e-815f-42f3-8ebe-f6d01616bc96" />
+- **Tag editing**: inline editing, bulk operations and a vimv-style external editor.
+- **The Apple TV app**, signed in by pairing ([#752](https://github.com/radiosilence/koan/pull/752), [#782](https://github.com/radiosilence/koan/pull/782)).
+- **Similar artists**, from MusicBrainz and Last.fm.
 
 ## Documentation
 
@@ -177,47 +184,18 @@ File -> Symphonia -> f32 samples -> rtrb ring buffer -> CoreAudio/cpal callback 
 
 Five crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for native clients), and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
-## macOS app
-
-A SwiftUI app in [`apps/macos`](apps/macos). It links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the TUI.
-
-```bash
-just macos-run     # build and launch
-just macos-dmg     # package for release
-```
-
-Requires Swift 6 and macOS 26+.
-
-## iOS app
-
-<img alt="Now Playing, lyrics, a record and the queue on iPhone" src="docs/images/koan-ios.png" />
-
-The same SwiftUI app and engine in a phone's shell, playing from a server. Output crosses the system mixer, so bit-perfect is a claim for the Mac and Linux only.
-
-```bash
-just ios-run      # build and launch on a simulator
-just ios-phone    # install on the iPhone plugged in, signed with your personal team
-just ios-walk     # screenshot every page on a simulator
-```
-
-Requires iOS 26+.
-
-## Playing on another device
-
-Any kōan app can control another, and hand its queue to it. The Mac app and the TUI also play to UPnP/DLNA amplifiers and streamers: the original files, or, for an amplifier with its own EQ or convolution profile, one stream koan has processed. See [Playing on another device](https://koan.rocks/docs/devices/).
-
-## Planned
-
-- **Tag editing** -- inline editing, bulk operations, vimv-style external editor ([plan](/.claude/plans/04-tagging.md))
-- **Similar artists** -- from MusicBrainz/Last.fm ([plan](/.claude/plans/09-artist-metadata.md))
+The macOS app ([`apps/macos`](apps/macos)) links `koan-core` in-process through `koan-ffi` rather than talking to a server, and shares one library and config with the terminal UI. The iOS app is the same SwiftUI sources and engine in a phone's shell; its output crosses the system mixer, so bit-perfect is a claim for the Mac and Linux only.
 
 ## Dev
 
 ```bash
-just check    # test + clippy
-just fmt      # cargo fmt
-just cli      # cargo run -p koan-cli -- <args>
-just macos-run # build + launch the macOS app
+just check       # test + clippy
+just fmt         # cargo fmt
+just cli         # cargo run -p koan-cli -- <args>
+just macos-run   # build and launch the macOS app
+just macos-dmg   # package the macOS app for release
+just ios-run     # build and launch the iOS app on a simulator
+just ios-phone   # install on the iPhone plugged in, signed with your personal team
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

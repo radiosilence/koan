@@ -7,6 +7,7 @@
     monospace;
     --spacing: 0.25rem;
     --font-weight-extralight: 200;
+    --font-weight-normal: 400;
     --font-weight-semibold: 600;
     --font-weight-bold: 700;
     --radius-sm: 0.25rem;
@@ -342,6 +343,10 @@
     width: calc(var(--spacing) * 12);
     height: calc(var(--spacing) * 12);
   }
+  .size-\[0\.8em\] {
+    width: 0.8em;
+    height: 0.8em;
+  }
   .size-\[15px\] {
     width: 15px;
     height: 15px;
@@ -576,6 +581,9 @@
   .stroke-2 {
     stroke-width: 2;
   }
+  .stroke-\[2\.5\] {
+    stroke-width: 2.5;
+  }
   .object-cover {
     object-fit: cover;
   }
@@ -701,6 +709,10 @@
     --tw-font-weight: var(--font-weight-extralight);
     font-weight: var(--font-weight-extralight);
   }
+  .font-normal {
+    --tw-font-weight: var(--font-weight-normal);
+    font-weight: var(--font-weight-normal);
+  }
   .tracking-\[\.08em\] {
     --tw-tracking: .08em;
     letter-spacing: .08em;
@@ -713,6 +725,9 @@
   }
   .whitespace-nowrap {
     white-space: nowrap;
+  }
+  .text-\[inherit\] {
+    color: inherit;
   }
   .text-bad {
     color: var(--bad);

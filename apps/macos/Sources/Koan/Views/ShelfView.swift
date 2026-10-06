@@ -6,9 +6,9 @@ import SwiftUI
 /// tracks as a working list below them.
 ///
 /// The first few of each, as `koan_core::shelves` cuts them, with how many
-/// there are. A section with more than it shows offers See all, which opens
-/// that kind's browser filtered to the shelf: the listing the preview is the
-/// head of, with the count the shelf gave.
+/// there are. Each section's heading opens that kind's browser filtered to
+/// the shelf: the listing the preview is the head of, with the count the
+/// heading gave.
 ///
 /// Sections rather than a type picker, for the same reason search results are
 /// sections: they are all answers to one question, and a mode you have to
@@ -56,10 +56,14 @@ struct ShelfView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // On iOS the navigation bar already says what the page is; the
+            // counts go under its title.
+            #if os(macOS)
             header
                 .padding(.horizontal, 24)
                 .padding(.top, 18)
                 .padding(.bottom, 16)
+            #endif
 
             if artists.isEmpty && albums.isEmpty && tracks.isEmpty {
                 EmptyState(icon: empty.icon, title: empty.title, detail: empty.detail)
@@ -72,6 +76,9 @@ struct ShelfView: View {
                 #endif
             }
         }
+        #if os(iOS)
+        .navigationSubtitle(counts)
+        #endif
     }
 
     #if os(macOS)
@@ -86,6 +93,7 @@ struct ShelfView: View {
             AnyHashable(current), AnyHashable(playing), AnyHashable(live), AnyHashable(tint),
             AnyHashable(library.favouriteTrackIds), AnyHashable(library.favouriteAlbumIds),
             AnyHashable(queued.map { "\($0.key):\($0.value.status)" }.sorted()),
+            AnyHashable(mirror.arrivingByAlbum),
         ]
         let library = library
         let nav = nav
@@ -114,7 +122,9 @@ struct ShelfView: View {
                         },
                         toggleFavourite: { library.toggleFavourite(album: $0) }
                     ),
-                    menu: { _ in NSMenu() }
+                    menu: { _ in NSMenu() },
+                    arriving: mirror.arrivingByAlbum,
+                    meter: meter
                 ),
                 trackContext: TrackTableRow.Context(
                     showsAlbum: true,
@@ -145,7 +155,7 @@ struct ShelfView: View {
                 openArtist: { nav.open(artist: $0) },
                 primaryAction: play,
                 totals: summary.map(ShelfTotals.init),
-                seeAll: seeAll,
+                openSection: open,
                 selectAllToken: ui.selectAllToken,
                 insets: insets
             )
@@ -198,23 +208,28 @@ struct ShelfView: View {
     }
 
     /// Open the browser for `list`, filtered to this shelf.
-    private func seeAll(_ list: LibraryModel.ShelfList) {
-        nav.show(library.seeAll(list, of: shelf))
+    private func open(_ list: LibraryModel.ShelfList) {
+        nav.show(library.browse(list, of: shelf))
     }
 
-    /// A section's title, with See all when the preview is not all of it.
-    private func sectionHead(_ title: String, total: UInt64, shown: Int, list: LibraryModel.ShelfList) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            if total > UInt64(shown) {
-                Button("See all (\(total))") { seeAll(list) }
-                    .accessibilityIdentifier("see-all-\(list)")
-                    .buttonStyle(.borderless)
-                    .font(.subheadline)
-                    .textCase(nil)
+    /// A section's heading: its name, how many the shelf has in all, and a
+    /// chevron, the whole of it opening the browser filtered to the shelf.
+    /// The preview below may show fewer.
+    private func sectionHead(_ title: String, total: UInt64, list: LibraryModel.ShelfList) -> some View {
+        Button { open(list) } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                Text("\(total)")
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                Spacer(minLength: 0)
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("heading-\(list)")
     }
 
     // MARK: - Sections
@@ -229,7 +244,7 @@ struct ShelfView: View {
             .padding(.vertical, 4)
             .selectionDisabled()
         } header: {
-            sectionHead("Artists", total: summary?.artistTotal ?? 0, shown: artists.count, list: .artists)
+            sectionHead("Artists", total: summary?.artistTotal ?? 0, list: .artists)
         }
     }
 
@@ -255,7 +270,7 @@ struct ShelfView: View {
                 .selectionDisabled()
             }
         } header: {
-            sectionHead("Albums", total: summary?.albumTotal ?? 0, shown: albums.count, list: .albums)
+            sectionHead("Albums", total: summary?.albumTotal ?? 0, list: .albums)
         }
     }
 
@@ -290,7 +305,7 @@ struct ShelfView: View {
                 .accessibilityIdentifier("track-\(track.id)")
             }
         } header: {
-            sectionHead("Tracks", total: summary?.trackTotal ?? 0, shown: tracks.count, list: .tracks)
+            sectionHead("Tracks", total: summary?.trackTotal ?? 0, list: .tracks)
         }
     }
 
