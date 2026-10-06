@@ -104,7 +104,7 @@ struct DspProfilePage: View {
         }
         .formStyle(.grouped)
         .navigationTitle(name)
-        .task(id: dsp.version) { await load() }
+        .task(id: dsp.stamp) { await load() }
         #if !os(tvOS)
         .filePicker(
             isPresented: $addingTarget,

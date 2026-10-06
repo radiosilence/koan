@@ -475,6 +475,12 @@ fn pull(
     let edits = rows::local_edits(&db.conn)?;
     let mut held = false;
     for row in &page.profile {
+        // This device's own change, sent after the cursor was last moved:
+        // already here, or deleted here since, which is sent next.
+        if synced.get(&row.uid).is_some_and(|(rev, _)| *rev >= row.rev) {
+            rows::set_sync_cursor(&db.conn, url, row.rev)?;
+            continue;
+        }
         // The same profile made here before this device first synced, such
         // as one headphone installed from AutoEQ on two devices: one profile.
         if let Some(doc) = row.doc.as_deref().and_then(|j| SyncDoc::parse(j).ok()) {
@@ -598,7 +604,12 @@ fn push(
         if synced.get(uid).is_some_and(|(_, h)| *h == local.hash) {
             continue;
         }
-        let edited_at = edits.get(uid).map_or_else(now_ms, |e| e.edited_at);
+        // Never synced from here, or synced and then deleted on the server
+        // when it was kept here alone: sending it now is the edit.
+        let edited_at = match synced.get(uid) {
+            Some(_) => edits.get(uid).map_or_else(now_ms, |e| e.edited_at),
+            None => now_ms(),
+        };
         let saved = match remote.save(uid, edited_at, &local.doc.json()) {
             Ok(saved) => saved,
             Err(SubsonicError::Api { message, .. }) => {
@@ -1086,7 +1097,7 @@ mod tests {
         a.sync(&server);
         b.sync(&server);
         a.sync(&server);
-        let mut names = |d: &Device| -> Vec<String> {
+        let names = |d: &Device| -> Vec<String> {
             let mut n: Vec<String> = d.profiles().into_iter().map(|p| p.name).collect();
             n.sort();
             n

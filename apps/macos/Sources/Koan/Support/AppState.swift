@@ -72,6 +72,7 @@ final class AppState {
         library.art = art
         library.mirror = mirror
         playlists.mirror = mirror
+        dsp.mirror = mirror
         nav.playlists = playlists
         player.activity = activity
         organize.activity = activity

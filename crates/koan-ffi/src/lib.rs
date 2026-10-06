@@ -5391,6 +5391,8 @@ impl KoanEngine {
             }),
             LinkCommand::DspProfilesChanged => self.db().and_then(|db| {
                 if koan_core::remote::dsp_sync::sync(&db).changed() {
+                    // Pages showing profiles follow the library's version.
+                    self.library_changed();
                     self.send_local(PlayerCommand::ReloadDsp)?;
                 }
                 Ok(())
