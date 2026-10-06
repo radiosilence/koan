@@ -162,6 +162,7 @@ final class SettingsModel {
                 try await engine.signOutRemote()
                 lastResult = "Signed out"
                 lastError = nil
+                NotificationCenter.default.post(name: .koanSignedOut, object: nil)
             } catch {
                 lastError = Self.describe(error)
                 reload()
@@ -261,4 +262,10 @@ final class SettingsModel {
         default: error.localizedDescription
         }
     }
+}
+
+extension Notification.Name {
+    /// Posted once a sign-out has gone through: what a television, whose
+    /// signed-out state is a page of its own, waits on to show it.
+    static let koanSignedOut = Notification.Name("koanSignedOut")
 }

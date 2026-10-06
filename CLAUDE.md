@@ -98,6 +98,9 @@ just tv-device      # install on the Apple TV paired with Xcode
 just tv-walk [LIBRARY] # walk every page with the remote, into target/tv-walk; a folder is served from a throwaway koan
 just tv-join LINK [tv] # sign the simulator, or the paired Apple TV, in through an invite
 just tv-kept        # clear Caches/koan-config as tvOS does, check the TV is still signed in
+just tv-pair [OUTCOME] # pair a signed-out TV simulator, approved (or declined, or left to expire) over the API
+just tv-signin [ROUTES] # each other way onto the TV and its failures, from fresh installs, against KOAN_SIGNIN_*
+just tv-pair-qr     # the same, approved by an iPhone simulator that reads the QR code off the TV
 just tv-testflight BUILD # archive, sign and upload the tvOS app to TestFlight (needs the ASC key)
 ```
 

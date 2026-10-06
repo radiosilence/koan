@@ -21,6 +21,12 @@ struct TabShell: View {
     @Environment(EngineMirror.self) private var mirror
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(ActivityModel.self) private var activity
+    #if os(tvOS)
+    @Environment(AppState.self) private var app
+    /// Taken as signed in until the engine says otherwise, so a signed-in TV
+    /// never flashes the sign-in page on launch.
+    @State private var signedIn = true
+    #endif
     @State private var showingNowPlaying = false
     @State private var showingDevices = false
     /// Which tab is showing. Held rather than derived from the navigator: a
@@ -33,6 +39,26 @@ struct TabShell: View {
     #endif
 
     var body: some View {
+        #if os(tvOS)
+        // Signed out, the television has nothing to show but the way in: in
+        // place of the tabs rather than over them, since Menu dismisses a
+        // cover and would leave an empty room behind it.
+        Group {
+            if signedIn {
+                shell
+            } else {
+                SignInPage { joined() }
+            }
+        }
+        .toggleStyle(SystemSwitch())
+        .buttonStyle(TelevisionButton())
+        .task { await checkSignedIn() }
+        #else
+        shell
+        #endif
+    }
+
+    private var shell: some View {
         // The record's colour: the tint here, for everything below, and the wash
         // as each tab's navigation background — see `roomBackground()`. A phone
         // has no window to hang one wash on, and a stack paints its own ground
@@ -78,6 +104,11 @@ struct TabShell: View {
         // The remote's Play/Pause, wherever focus is.
         .onPlayPauseCommand { player.togglePlayPause() }
         .shareCodes(player)
+        .onChange(of: selection) { Task { await checkSignedIn() } }
+        .onChange(of: mirror.connection?.linked) { Task { await checkSignedIn() } }
+        .onReceive(NotificationCenter.default.publisher(for: .koanSignedOut)) { _ in
+            Task { await checkSignedIn() }
+        }
         #endif
         .controlSheet(isPresented: $showingDevices)
         // What the app is busy with. The Mac stacks these at the foot of the
@@ -245,6 +276,29 @@ struct TabShell: View {
         }
         paths[selection] = routes
     }
+
+    #if os(tvOS)
+    private func checkSignedIn() async {
+        signedIn = await app.engine.settings().remoteSignedIn
+    }
+
+    /// Signed in by pairing or the account form: load the library, as joining
+    /// with an invite does.
+    private func joined() {
+        signedIn = true
+        let engine = app.engine
+        Task {
+            let synced = await activity.run(
+                "Loading the library", uses: [.remoteTracks], followsSync: true
+            ) {
+                try await engine.syncRemote()
+            }
+            if case .failure(let error) = synced {
+                player.lastError = SettingsModel.describe(error)
+            }
+        }
+    }
+    #endif
 
     private var tab: Binding<TabID> {
         Binding(
