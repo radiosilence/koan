@@ -81,11 +81,11 @@ struct NowPlayingPage: View {
                 .backgroundStyle(.clear)
                 .transition(.opacity)
         } else if let source = player.currentArtwork {
-            AlbumArtwork(source: source, size: .tile, cornerRadius: 16)
+            AlbumArtwork(source: source, size: .tile, cornerRadius: KoanTheme.radius(16))
                 .shadow(color: .black.opacity(0.35), radius: 40, y: 20)
                 .transition(.opacity)
         } else {
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: KoanTheme.radius(16))
                 .fill(.quaternary)
                 .overlay { Image(systemName: "music.note").font(.system(size: 120)) }
         }
@@ -186,7 +186,7 @@ private struct Scrubber: View {
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
             .background(
-                RoundedRectangle(cornerRadius: 14)
+                RoundedRectangle(cornerRadius: KoanTheme.radius(14))
                     .fill(.white.opacity(focused ? 0.18 : 0))
                     .stroke(.white.opacity(focused ? 0.6 : 0), lineWidth: 2)
             )
@@ -223,9 +223,9 @@ private struct UpNext: View {
                                 HStack(spacing: 18) {
                                     Group {
                                         if let source = Self.artwork(of: item) {
-                                            AlbumArtwork(source: source, size: .thumb, cornerRadius: 8)
+                                            AlbumArtwork(source: source, size: .thumb, cornerRadius: KoanTheme.radius(8))
                                         } else {
-                                            RoundedRectangle(cornerRadius: 8).fill(.quaternary)
+                                            RoundedRectangle(cornerRadius: KoanTheme.radius(8)).fill(.quaternary)
                                         }
                                     }
                                     .frame(width: 96, height: 96)
