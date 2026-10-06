@@ -26,6 +26,7 @@ The library database moves from schema 20 to 21. The upgrade only adds tables: t
 
 ### Changed
 
+- **EQ profiles play within fixed bounds, and DSP output never passes full scale.** A preamp set by hand is lowered when the profile's filters or impulse response would push the peak above full scale, so a profile with a 0 dB preamp over a boost, or a room correction whose response peaks above 0 dB, plays quieter after upgrading; its page shows "preamp −X dB for headroom". Every profile is held within the bounds in [Bounds](docs/guide/dsp.md#bounds): values clamped, and at most two seconds of delay and two graphic curves a channel, eight mixes, and impulse responses of 262,145 taps. A moved target counts as a graphic curve and is the one dropped past the count. Each profile's page says what was adjusted. Whatever the chain puts out is held within full scale, with anything that is not a number turned to silence.
 - **A schema upgrade is one transaction, and stops an older server sharing the database.** A migration that fails part way leaves the database as it was, and another process reading meanwhile sees the old schema or the new one. A server whose database a newer koan has upgraded under it stops handing out connections, drains and exits, so it never writes to a schema it does not know.
 
 ### Fixed
