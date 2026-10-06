@@ -2959,6 +2959,14 @@ impl KoanEngine {
 
     // --- Settings ----------------------------------------------------------
 
+    /// Show icons beside labels in the kōan theme, or not. Saved at once;
+    /// the app redraws from its own copy.
+    pub fn set_theme_icons(&self, on: bool) {
+        if let Err(e) = Config::persist(|cfg| cfg.appearance.theme_icons = on) {
+            log::warn!("appearance: theme_icons not saved: {e}");
+        }
+    }
+
     /// How the app is drawn, from `[appearance]`. Read once, as the app opens:
     /// a change takes effect on the next launch.
     pub fn appearance(&self) -> Appearance {

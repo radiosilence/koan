@@ -12,6 +12,8 @@ import UIKit
 @Observable
 final class AppState {
     let engine: KoanEngine
+    /// How the app is drawn: the theme, and whether its labels carry icons.
+    let appearance: AppearanceModel
     /// The engine's state, mirrored. Everything that reads it reads this.
     let mirror: EngineMirror
     let player: PlayerModel
@@ -46,6 +48,10 @@ final class AppState {
         let engine = try await KoanEngine(deviceName: nil)
         #endif
         self.engine = engine
+        // Before any window draws: see `KoanTheme`.
+        let appearance = engine.appearance()
+        KoanTheme.apply(appearance)
+        self.appearance = AppearanceModel(engine: engine, appearance: appearance)
         let mirror = EngineMirror()
         self.mirror = mirror
         // Before anything else asks the engine a question: the first batch is

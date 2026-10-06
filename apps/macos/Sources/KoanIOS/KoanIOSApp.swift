@@ -40,6 +40,7 @@ struct KoanIOSApp: App {
                         .environment(state.meter)
                         .environment(state.ui)
                         .environment(state.mirror)
+                        .koanTheme(state.appearance)
                         .environment(\.powerSaving, powerSaving)
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))

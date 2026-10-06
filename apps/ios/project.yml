@@ -49,6 +49,9 @@ targets:
           - Support/MenuShortcuts.swift
           - Views/ShortcutsSheet.swift
       - path: ../macos/Resources/Assets.xcassets
+      # Geist Mono, for the kōan theme: the site's own file, read by Core Text as it is.
+      - path: ../../site/public/geist-mono.woff2
+        buildPhase: resources
       - path: PrivacyInfo.xcprivacy
     dependencies:
       - target: KoanFFI
@@ -174,6 +177,9 @@ targets:
           - Views/ShortcutsSheet.swift
           - Views/SidebarView.swift
       - path: ../macos/Resources/Assets.xcassets
+      # Geist Mono, for the kōan theme: the site's own file, read by Core Text as it is.
+      - path: ../../site/public/geist-mono.woff2
+        buildPhase: resources
     dependencies:
       - target: KoanFFITV
     settings:

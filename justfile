@@ -155,6 +155,8 @@ macos-bundle: macos-build
     cp {{app_dir}}/.build/release/Koan "$app/Contents/MacOS/koan-app"
     echo "app binary: $(lipo -archs "$app/Contents/MacOS/koan-app")"
     [ -f {{app_dir}}/Resources/AppIcon.icns ] && cp {{app_dir}}/Resources/AppIcon.icns "$app/Contents/Resources/" || true
+    # Geist Mono, for the kōan theme: the site's own file, read by Core Text as it is.
+    cp site/public/geist-mono.woff2 "$app/Contents/Resources/"
     # The accent colour. macOS paints list selection, focus rings and controls
     # from the app's accent, and reads it from a compiled asset catalog — there
     # is no way to set it from SwiftUI, which is why `.tint` leaves sidebar

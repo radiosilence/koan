@@ -4,6 +4,7 @@
 
 ### Added
 
+- **The kōan theme.** The apps on the Mac, iPhone and Apple TV can be drawn as koan.rocks is: Geist Mono, flat greys, square controls and lowercase labels, with an accent that follows the record playing and the wash kept behind the bare ground. Settings → Appearance turns its icons off. `appearance.theme = "koan"` selects it; the design is set down in `docs/design/koan-theme.md`.
 - **Assistants in the apps.** Settings → Server shows the server's MCP address to copy and links to its page on connecting Claude or another assistant, where the server knows its public address (`sharing.public_url`). The server offers this as `koanMcp`.
 - **API keys in the apps.** Settings → Server lists the account's API keys, makes one for another Subsonic app (shown once, to copy), and revokes one, which is how a lost device is signed out. The server offers this as `koanApiKeys`.
 - **Passwords from the apps.** An admin can set another account's password from Settings → Server, and anyone can change their own there, giving the current one. The device that changes its own stays signed in with a new key; every other device of the account signs out. The server offers this as `koanSetUserPassword` (extension `koanPasswords`), and a wrong current password counts against the account's sign-in limit.

@@ -1,8 +1,8 @@
 # The kōan theme
 
-The look koan.rocks and the web UI have, set down so a native app can be drawn in it: the tokens, and the few components every screen is made of. The Mac app follows it when `appearance.theme = "koan"`; it is also the reference for a future Android app. The tokens come from `site/src/theme.css`, and where the two disagree, that file wins and this one is wrong.
+The look koan.rocks and the web UI have, set down so a native app can be drawn in it: the tokens, and the few components every screen is made of. The Mac, iPhone and Apple TV apps follow it when `appearance.theme = "koan"`; it is also the reference for a future Android app. The tokens come from `site/src/theme.css`, except where noted: `muted` is lighter here, to meet AA on `surface`, and the site should follow.
 
-Two variants differ only in icons. **Plain** (Option B in #894) has labels alone. **With icons** (Option C) has the app's icons beside them, drawn as described under [Icons](#icons). `appearance.theme_icons` chooses between them.
+Two variants differ only in icons. **Plain** has labels alone. **With icons**, the default, has the app's icons beside them, drawn as described under [Icons](#icons). "Show icons" in Settings → Appearance (`appearance.theme_icons`) chooses between them.
 
 ## Tokens
 
@@ -16,19 +16,19 @@ Two variants differ only in icons. **Plain** (Option B in #894) has labels alone
 | `hover` | `#4d4d4d` | `#c4c4c4` | Pointer hover and pressed fill |
 | `ink` | `#cccccc` | `#333333` | Body text and icons |
 | `strong` | `#ffffff` | `#111111` | Titles and the playing track's name |
-| `muted` | `#8c8c8c` | `#666666` | Secondary text, unselected navigation, control outlines |
-| `brand` | `#7dd3a7` | `#1f7a50` | Selection, the primary action, progress, the playing row |
+| `muted` | `#919191` | `#666666` | Secondary text, unselected navigation, control outlines. The site's `#8c8c8c` is 4.3:1 on `surface` |
+| `accent` | `#7dd3a7` | `#1f7a50` | Selection, the primary action, progress, the playing row, toggles on, focus. Mint is its value with nothing playing; see [Accent](#accent) |
 | `bad` | `#ef6b73` | `#c43f3f` | Errors and destructive actions |
 
-`strong` is not in `theme.css`, which has no separate title colour; the apps need one for titles over long lists.
+`accent` is `--color-brand` in `theme.css`. `strong` is not in `theme.css`, which has no separate title colour; the apps need one for titles over long lists.
 
 Contrast, against `bg` unless stated (WCAG 2.2):
 
 | Pair | Dark | Light | Rule that follows |
 |------|------|-------|-------------------|
 | `ink` | 10.4 | 12.6 | Body text at any size |
-| `muted` | 5.0 | 5.7 | Secondary text on `bg`. On `surface` it is 4.3 dark (5.1 light), under 4.5: muted text sits on `bg`, or is 18 pt or larger |
-| `brand` | 9.3 | 5.3 | Text at any size |
+| `muted` | 5.3 | 5.7 | Secondary text at any size, on `bg` or `surface` (4.6 dark, 5.1 light) |
+| `accent` (mint) | 9.3 | 5.3 | Text at any size. A record's accent is held to 4.5:1 or kept off text |
 | `bad` | 5.6 | 5.1 | Text at any size |
 | `rule` | 1.4 | 1.3 | Decoration only. Under the 3:1 a control's boundary needs, so a rule never alone marks where a control is: outlines of controls use `muted` |
 
@@ -55,10 +55,33 @@ One face, Geist Mono (variable, weights 100–900), bundled with the app. Sizes 
 ### Spacing and shape
 
 - **Spacing** in steps of 4: 4, 8, 12, 16, 22, 32. Page margins are 32 on the Mac and 22 on a phone. Rows have 11–14 vertical padding.
-- **Rules** are 1 px (one device pixel on a 2× display is too faint at `rule`'s contrast; use 1 point). A selected navigation row is marked by a 2-point `brand` rule on its leading edge.
+- **Rules** are 1 px (one device pixel on a 2× display is too faint at `rule`'s contrast; use 1 point). A selected navigation row is marked by a 2-point `accent` rule on its leading edge.
 - **Corners** are square: controls, covers, sheets and the transport. The window's own corners are the system's.
-- **No materials.** No blur, glass, vibrancy or shadows. A region is told apart by a rule, or rarely by `surface`.
+- **No materials.** No blur, glass, vibrancy or shadows. A region is told apart by a rule, or rarely by `surface`. The [wash](#wash) is the one thing under the ground that is not flat.
 - **Motion.** None of its own: selection, hover and pressed states change at once. System transitions (navigation pushes, sheets) stay as the platform draws them.
+
+### Accent
+
+The accent follows the record playing. Its hue is the sleeve's, from the analysis the wash already runs (`Color.dominant`: a mean of hue weighted by how colourful each sample is). Its lightness and chroma are moved into a band per appearance, in OKLCH, so a dark or muddy sleeve gives a clean, bright version of its hue and light mode never goes pastel:
+
+| Token | Dark | Light |
+|-------|------|-------|
+| `accent-lightness` | 0.70–0.85 | 0.45–0.60 |
+| `accent-chroma` | 0.10–0.19 | 0.10–0.19 |
+| `accent-no-hue` | 0.04 | 0.04 |
+| `accent-bad-gap` | 25° | 25° |
+
+- Within the band, the accent takes the most vivid lightness that reaches 4.5:1 on `bg` and `surface`: the darkest of the band in dark mode, the lightest in light.
+- Where no lightness in the band does, the accent is used for fills, indicators and rings only, at 3:1, and text that would have been the accent is `ink`.
+- A sleeve whose chroma is under `accent-no-hue`, and no record at all, give mint.
+- A hue within `accent-bad-gap` of `bad`'s moves to the edge of that gap, so a red record never reads as an error.
+- A change of record eases to the new accent over 0.35 s, and only when the colour was not already known; one in hand lands with the record.
+
+### Wash
+
+The playing record's sleeve, blurred to colour fields and drifting, behind the ground. It is the one element that is not flat, and it carries data. Surfaces stay flat tokens drawn over it; it shows where the design leaves the ground bare: the Mac's content column, and Now Playing and page backgrounds on iOS and tvOS. Nothing glass sits on it.
+
+Each sample of the baked sleeve is held to a luminance limit before it is drawn: in dark mode no brighter, and in light mode no darker, than the level at which `muted` text keeps 4.6:1. The wash so carries the record's hue and never its brightness, and every text token passes over any sleeve. `wash` is its strength, the share of the toned sleeve over `bg`: 0.6 on the Mac and iPhone, 0.5 on a television.
 
 ## Components
 
@@ -66,36 +89,36 @@ Each is described by its parts and states, so it can be built on any platform.
 
 ### Button
 
-- **Primary:** the label in `brand`, a 1-point `brand` outline, `control` type, padding 10 × 16. Pressed: `hover` fill.
+- **Primary:** the label in `accent`, a 1-point `accent` outline, `control` type, padding 10 × 16. Pressed: `hover` fill.
 - **Secondary:** the label in `ink`, a 1-point `muted` outline. Never a `rule` outline, which is under 3:1.
 - **Text button:** the label in `muted`, no outline, used in bars ("clear", "sleep"). Hover: `ink`.
 - **Icon button** (transport): the glyph in `ink`, at least 44 × 44 pt to hit, with no outline, except play/pause, which has a square 1-point `ink` outline.
 - **Disabled:** label and outline at 40 % opacity.
-- **Focus** (keyboard): a 2-point `brand` outline outside the control.
+- **Focus** (keyboard, and tvOS): a 2-point `accent` ring outside the control. On a television, no lift, shadow or glass.
 
 ### Toggle
 
-A square box, 14 × 14 within a 44-point hit area. Off: a 1-point `muted` outline. On: filled `brand` with a `bg`-coloured check. The label sits to its trailing side in `body`.
+A square box, 14 × 14 within a 44-point hit area. Off: a 1-point `muted` outline. On: filled `accent` with a `bg`-coloured check. The label sits to its trailing side in `body`.
 
 ### Segmented control
 
-A row of text options, `control` type, 18 apart. Unselected: `muted`. Selected: `ink`, underlined with a 1-point `brand` line 5 points below the baseline. No track and no background.
+A row of text options, `control` type, 18 apart. Unselected: `muted`. Selected: `ink`, underlined with a 1-point `accent` line 5 points below the baseline. No track and no background.
 
 ### Slider
 
-A 1-point `rule` track with a 3-point `brand` fill up to the value, and a square 8 × 8 `ink` thumb shown only on hover, focus or drag. The hit area is 44 points tall. Times or values sit at either end in `fine`, `muted`.
+A 1-point `rule` track with a 3-point `accent` fill up to the value, and a square 8 × 8 `ink` thumb shown only on hover, focus or drag. The hit area is 44 points tall. Times or values sit at either end in `fine`, `muted`.
 
 ### List row
 
-The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-aligned in `meta`, `muted`. A 1-point `rule` below each row, inset to the content's leading edge. Hover: `hover` at 30 % behind the row. The playing row's title and number are `brand`. A selected row has a `surface` fill.
+The title in `body`, `ink`; secondary text in `meta`, `muted`; numbers right-aligned in `meta`, `muted`. A 1-point `rule` below each row, inset to the content's leading edge. Hover: `hover` at 30 % behind the row. The playing row's title and number are `accent`. A selected row has a `surface` fill.
 
 ### Navigation row (sidebar)
 
-The label in `body`, `muted`, lowercase; with icons, the glyph before it in the same colour. Selected: `brand`, with the 2-point leading rule. Section headings in `fine`, `ink`, with 16 points above.
+The label in `body`, `muted`, lowercase; with icons, the glyph before it in the same colour. Selected: `accent`, with the 2-point leading rule. Section headings in `fine`, `ink`, with 16 points above.
 
 ### Tab bar (phone)
 
-Flat and full-width, with a 1-point `rule` along its top and `bg` beneath, 64 points tall. Labels in `fine`, lowercase; with icons, a glyph above each. Unselected: `muted`. Selected: `brand`, the label underlined. The mini player sits directly above it as a row with its own top rule, whose first part is the playhead in a 2-point `brand` line.
+Flat and full-width, with a 1-point `rule` along its top and `bg` beneath, 64 points tall. Labels in `fine`, lowercase; with icons, a glyph above each. Unselected: `muted`. Selected: `accent`, the label underlined. The mini player sits directly above it as a row with its own top rule, whose first part is the playhead in a 2-point `accent` line.
 
 ### Transport (Mac)
 
@@ -109,5 +132,5 @@ The Apple apps keep the SF Symbols they name today (`Icon.*`). On Android, Mater
 
 ## On the platforms
 
-- **macOS and iOS:** a `KoanTheme` value in the environment carries the tokens and whether icons are drawn, and views read it rather than hard-coding a colour or font. The setting is `appearance.theme`, `"system"` (the default) or `"koan"`, and `appearance.theme_icons`.
-- **Android:** the colour tokens map to a Material 3 `ColorScheme` (`bg` → `background`, `surface` → `surface`, `brand` → `primary`, `ink` → `onBackground`, `muted` → `onSurfaceVariant`, `rule` → `outlineVariant`, `bad` → `error`), the type roles to `Typography`, and `Shapes` are all zero-radius. The components above replace Material's own where they differ: outlined rather than filled buttons, the underlined segmented control, and the flat tab bar.
+- **macOS, iOS and tvOS:** `Support/KoanTheme.swift`. Views name roles and never a colour or font: `.koanText(role, tone)`, `.koanSurface()`, `.koanRule()`, `.koanButton(kind)`, `.koanToggle()`, `KoanSegmentedPicker`, `.koanRow(selected:)`, `KoanSectionHeader`, `.koanSheet()`, `.koanFocus()`, and `KoanLabel(title, icon:)` for every label with an icon. Each draws the platform's nearest equivalent when the theme is off. The accent is the environment's tint, with `koanAccent` beside it saying whether it reads as text; whether icons are drawn is `koanIcons`, set at each scene's root by `.koanTheme(_:)`. AppKit-drawn views read `NSColor.koan*` and `NSFont.koan`. The setting is `appearance.theme`, `"system"` or `"koan"`, read at launch.
+- **Android:** the colour tokens map to a Material 3 `ColorScheme` (`bg` → `background`, `surface` → `surface`, `accent` → `primary`, `ink` → `onBackground`, `muted` → `onSurfaceVariant`, `rule` → `outlineVariant`, `bad` → `error`), the type roles to `Typography`, and `Shapes` are all zero-radius. The components above replace Material's own where they differ: outlined rather than filled buttons, the underlined segmented control, and the flat tab bar.

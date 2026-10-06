@@ -36,6 +36,23 @@ enum EvidenceRenderer {
                 NavigationStack { DspProfilePage(dsp: state.dsp, name: profile.name) }
             )))
         }
+        if KoanTheme.isOn {
+            let warm = KoanAccent(record: Color(red: 0.94, green: 0.54, blue: 0.36))
+            let navy = KoanAccent(record: Color(red: 0.04, green: 0.10, blue: 0.23))
+            for (name, accent) in [("mint", KoanAccent.mint), ("warm", warm), ("navy", navy)] {
+                pages.append(("theme-\(name)", CGSize(width: 760, height: 1100), AnyView(
+                    KoanThemeSheet(accent: accent)
+                )))
+            }
+            pages.append(("theme-no-icons", CGSize(width: 760, height: 1100), AnyView(
+                KoanThemeSheet().environment(\.koanIcons, false)
+            )))
+        }
+        // `KOAN_RENDER_PAGES`, a comma-separated list of name prefixes, narrows
+        // the run to the pages a pull request changes.
+        if let only = ProcessInfo.processInfo.environment["KOAN_RENDER_PAGES"]?.split(separator: ",") {
+            pages.removeAll { page in !only.contains { page.name.hasPrefix($0) } }
+        }
         for page in pages {
             for dark in [false, true] {
                 let file = dir.appending(path: "\(page.name)-\(dark ? "dark" : "light").png")
@@ -52,6 +69,7 @@ enum EvidenceRenderer {
             rootView: view
                 .tint(.koanAccent)
                 .environment(\.controlActiveState, .key)
+                .environment(\.koanIcons, true)
         )
         host.frame = CGRect(origin: .zero, size: size)
         // Far off every screen, and never ordered in: drawn, never shown.

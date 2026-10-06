@@ -26,6 +26,7 @@ struct KoanApp: App {
                         .environment(state.levels)
                         .environment(state.meter)
                         .environment(state.mirror)
+                        .koanTheme(state.appearance)
                         .modifier(InviteConfirmation(state: state))
                         .modifier(PairingConfirmation(state: state))
                         // One accent for the whole app, from the icon. Without
@@ -253,6 +254,7 @@ struct KoanApp: App {
                     .environment(state.activity)
                     .environment(state.art)
                     .environment(state.mirror)
+                    .koanTheme(state.appearance)
             }
         }
     }
