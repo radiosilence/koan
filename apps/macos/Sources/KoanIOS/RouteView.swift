@@ -139,6 +139,7 @@ private struct TrackSortControls: ToolbarContent {
             } label: {
                 Label("Sort", systemImage: "arrow.up.arrow.down")
             }
+            .toolbarButton()
         }
     }
 }
@@ -174,6 +175,7 @@ private struct AlbumSortControls: ToolbarContent {
             } label: {
                 Label("Sort", systemImage: "arrow.up.arrow.down")
             }
+            .toolbarButton()
         }
     }
 }
