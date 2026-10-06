@@ -1491,6 +1491,17 @@ pub struct ServerAccount {
     pub role: AccountRole,
 }
 
+/// How moving the music went.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct MoveResult {
+    /// Tracks left behind because only the device they were on has them.
+    pub left_out: u32,
+    /// The destination said it has the music. False when it has not said so
+    /// yet: the music was sent and may still arrive (a device asleep takes it
+    /// when woken), and stays paused where it was.
+    pub started: bool,
+}
+
 /// Another device koan can play on: one on the same account, or one on the
 /// local network.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
@@ -1531,8 +1542,10 @@ pub struct DeviceInfo {
     /// artwork and its heart.
     pub track_id: Option<i64>,
     pub album_id: Option<i64>,
-    /// As reported; the client runs it on from arrival while `state` is
-    /// playing.
+    /// Where the playhead is as this is published, run on from the report
+    /// while it is playing. The client runs it on from arrival in turn; a raw
+    /// report would rewind each time the list is published again for some
+    /// other device's change.
     pub position_ms: u64,
     pub duration_ms: u64,
     /// Why it cannot be reached, for a device found but not connected or
