@@ -27,6 +27,12 @@ pub enum DbError {
     /// Smart playlist rules that do not compile; the message says why.
     #[error("invalid rules: {0}")]
     InvalidRules(String),
+    /// A newer koan has migrated the database since this process opened it.
+    #[error(
+        "database schema version {0} is newer than this build understands ({schema}): a newer koan has upgraded it",
+        schema = super::schema::SCHEMA_VERSION
+    )]
+    Outdated(i64),
 }
 
 /// Wrapper around a SQLite connection with koan's schema applied.

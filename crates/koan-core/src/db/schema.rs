@@ -31,6 +31,22 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         return crate::db::queries::auth::adopt_local_rows(conn);
     }
 
+    // The whole upgrade, version included, is one transaction: another
+    // process reading the database, such as the server this one is
+    // replacing, sees the old schema or the new one and nothing between,
+    // and an upgrade that fails part way leaves the database as it was.
+    // The table rebuilds need foreign keys off, and that pragma does nothing
+    // inside a transaction, so it brackets it.
+    conn.pragma_update(None, "foreign_keys", "off")?;
+    let upgraded = crate::db::queries::atomically(conn, || upgrade(conn, found));
+    let restored = conn.pragma_update(None, "foreign_keys", "on");
+    upgraded?;
+    restored
+}
+
+/// Everything [`create_tables`] does to bring a database from version
+/// `found` to [`SCHEMA_VERSION`], inside its transaction.
+fn upgrade(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS artists (
@@ -936,7 +952,7 @@ fn per_user_favourites(conn: &Connection) -> rusqlite::Result<()> {
     // it. `apply_migrations` recreates it afterwards.
     conn.execute_batch(
         "DROP TRIGGER IF EXISTS users_personal_data;
-         BEGIN;
+         SAVEPOINT rebuild;
          CREATE TABLE favourites_new (
              user_id     INTEGER NOT NULL DEFAULT 0,
              track_path  TEXT NOT NULL,
@@ -970,7 +986,7 @@ fn per_user_favourites(conn: &Connection) -> rusqlite::Result<()> {
              SELECT artist_name, created_at FROM favourite_artists;
          DROP TABLE favourite_artists;
          ALTER TABLE favourite_artists_new RENAME TO favourite_artists;
-         COMMIT;",
+         RELEASE rebuild;",
     )
 }
 
@@ -1027,7 +1043,7 @@ fn albums_without_name_uniqueness(conn: &Connection) -> rusqlite::Result<()> {
     // Pragma changes are no-ops inside a transaction, so this must bracket it.
     conn.pragma_update(None, "foreign_keys", "off")?;
     let rebuild = conn.execute_batch(
-        "BEGIN;
+        "SAVEPOINT rebuild;
          CREATE TABLE albums_new (
              id           INTEGER PRIMARY KEY,
              title        TEXT NOT NULL,
@@ -1055,7 +1071,7 @@ fn albums_without_name_uniqueness(conn: &Connection) -> rusqlite::Result<()> {
              WHERE remote_id IS NOT NULL;
          CREATE TRIGGER IF NOT EXISTS evict_album_art AFTER DELETE ON albums
              BEGIN INSERT INTO art_evictions (kind, id) VALUES ('album', old.id); END;
-         COMMIT;",
+         RELEASE rebuild;",
     );
     conn.pragma_update(None, "foreign_keys", "on")?;
     rebuild?;
@@ -1072,7 +1088,7 @@ fn favourites_by_id(conn: &Connection) -> rusqlite::Result<()> {
     // it. `apply_migrations` recreates it afterwards.
     conn.execute_batch(
         "DROP TRIGGER IF EXISTS users_personal_data;
-         BEGIN;
+         SAVEPOINT rebuild;
          CREATE TABLE favourites_new (
              user_id     INTEGER NOT NULL DEFAULT 0,
              track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
@@ -1112,7 +1128,7 @@ fn favourites_by_id(conn: &Connection) -> rusqlite::Result<()> {
                JOIN artists ar ON ar.name_key = koan_fold(f.artist_name);
          DROP TABLE favourite_artists;
          ALTER TABLE favourite_artists_new RENAME TO favourite_artists;
-         COMMIT;",
+         RELEASE rebuild;",
     )
 }
 
@@ -1207,7 +1223,7 @@ fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
     // Recreated by `apply_migrations`; see `per_user_favourites`.
     let rebuild = conn.execute_batch(
         "DROP TRIGGER IF EXISTS users_personal_data;
-         BEGIN;
+         SAVEPOINT rebuild;
          CREATE TABLE play_history_new (
              id          INTEGER PRIMARY KEY,
              track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
@@ -1226,7 +1242,7 @@ fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
          CREATE INDEX IF NOT EXISTS idx_play_history_track_played
              ON play_history(track_id, played_at);
          CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
-         COMMIT;",
+         RELEASE rebuild;",
     );
     conn.pragma_update(None, "foreign_keys", "on")?;
     rebuild
@@ -1254,7 +1270,7 @@ fn autoincrement_play_history(conn: &Connection) -> rusqlite::Result<()> {
     // indexes, which go with the table.
     let rebuild = conn.execute_batch(
         "DROP TRIGGER IF EXISTS users_personal_data;
-         BEGIN;
+         SAVEPOINT rebuild;
          CREATE TABLE play_history_new (
              id          INTEGER PRIMARY KEY AUTOINCREMENT,
              track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
@@ -1268,7 +1284,7 @@ fn autoincrement_play_history(conn: &Connection) -> rusqlite::Result<()> {
          DROP TABLE play_history;
          ALTER TABLE play_history_new RENAME TO play_history;
          CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
-         COMMIT;",
+         RELEASE rebuild;",
     );
     if rebuild.is_err() {
         let _ = conn.execute_batch("ROLLBACK");
@@ -1300,7 +1316,7 @@ fn autoincrement_user_ids(conn: &Connection) -> rusqlite::Result<()> {
     // Recreated by `apply_migrations`; see `per_user_favourites`.
     let rebuild = conn.execute_batch(
         "DROP TRIGGER IF EXISTS users_personal_data;
-         BEGIN;
+         SAVEPOINT rebuild;
          CREATE TABLE users_new (
              id              INTEGER PRIMARY KEY AUTOINCREMENT,
              username        TEXT NOT NULL UNIQUE,
@@ -1312,7 +1328,7 @@ fn autoincrement_user_ids(conn: &Connection) -> rusqlite::Result<()> {
              SELECT id, username, password_hash, role, created_at FROM users;
          DROP TABLE users;
          ALTER TABLE users_new RENAME TO users;
-         COMMIT;",
+         RELEASE rebuild;",
     );
     if rebuild.is_err() {
         let _ = conn.execute_batch("ROLLBACK");
@@ -1717,6 +1733,69 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    /// An upgrade that fails part way leaves the database as it was found:
+    /// the steps before the failure are rolled back with it, and the version
+    /// is not bumped.
+    #[test]
+    fn a_failed_upgrade_changes_nothing() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        // An empty album, which the upgrade deletes early on, and a table in
+        // the way of an index it creates late.
+        conn.execute_batch(&format!(
+            "INSERT INTO albums (title) VALUES ('Empty');
+             DROP INDEX idx_bookmarks_track;
+             CREATE TABLE idx_bookmarks_track (x);
+             PRAGMA user_version = {};",
+            SCHEMA_VERSION - 1
+        ))
+        .unwrap();
+        assert!(create_tables(&conn).is_err());
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION - 1);
+        let albums: i64 = conn
+            .query_row("SELECT COUNT(*) FROM albums", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(albums, 1, "the album deleted before the failure is back");
+        assert!(conn.is_autocommit(), "no transaction left open");
+        let fk: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fk, 1);
+    }
+
+    /// A second connection, as another process has, sees the old version
+    /// until the upgrade commits, and the new one after.
+    #[test]
+    fn a_reader_sees_one_version_or_the_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.pragma_update(None, "journal_mode", "wal").unwrap();
+        create_tables(&conn).unwrap();
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION - 1)
+            .unwrap();
+        let reader = Connection::open(&path).unwrap();
+        let version = |c: &Connection| -> i64 {
+            c.query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap()
+        };
+        // A read under way while the upgrade runs, as a request in the
+        // older server is.
+        reader.execute_batch("BEGIN").unwrap();
+        assert_eq!(version(&reader), SCHEMA_VERSION - 1);
+        create_tables(&conn).unwrap();
+        assert_eq!(
+            version(&reader),
+            SCHEMA_VERSION - 1,
+            "a read begun before the commit keeps the old schema"
+        );
+        reader.execute_batch("COMMIT").unwrap();
+        assert_eq!(version(&reader), SCHEMA_VERSION);
     }
 
     #[test]

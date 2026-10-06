@@ -52,6 +52,36 @@ pub fn shared() -> &'static Pool {
     POOL.get_or_init(|| Pool::new(crate::config::db_path()))
 }
 
+/// Run when a connection finds the database migrated past this build. A
+/// server sets it to stop serving; an app leaves it unset and the error
+/// reaches whatever asked.
+static OUTDATED: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> = std::sync::OnceLock::new();
+
+/// What to do once the database is found migrated past this build, as it is
+/// when a newer koan sharing it has upgraded it. Set once.
+pub fn on_outdated(f: impl Fn() + Send + Sync + 'static) {
+    let _ = OUTDATED.set(Box::new(f));
+}
+
+/// Whether this build still understands the database `conn` reads, checked
+/// each time a connection is handed out.
+///
+/// Read from the database rather than cached: the migration that ends it is
+/// another process's, and its commit reaches this one through the file and
+/// nothing else. `user_version` is an integer in the header page, which a
+/// read already holds in cache, so this is a few microseconds.
+pub fn understood(conn: &rusqlite::Connection) -> Result<(), DbError> {
+    let found: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if found <= super::schema::SCHEMA_VERSION {
+        return Ok(());
+    }
+    log::error!("the database is at schema version {found}: a newer koan has upgraded it");
+    if let Some(f) = OUTDATED.get() {
+        f();
+    }
+    Err(DbError::Outdated(found))
+}
+
 impl Pool {
     /// The schema must already be applied — see [`Pool::get`].
     pub fn new(path: PathBuf) -> Self {
@@ -104,13 +134,15 @@ impl Pool {
     pub fn take(&self) -> Result<Database, DbError> {
         self.ensure_schema()?;
         let pooled = self.idle.lock().pop();
-        match pooled {
-            Some(db) => Ok(db),
+        let db = match pooled {
+            Some(db) => db,
             None => {
                 self.opened.fetch_add(1, Ordering::Relaxed);
-                Database::open_existing(&self.path)
+                Database::open_existing(&self.path)?
             }
-        }
+        };
+        understood(&db.conn)?;
+        Ok(db)
     }
 
     pub fn path(&self) -> &Path {
@@ -236,5 +268,26 @@ mod tests {
             .query_row("SELECT v FROM probe", [], |r| r.get(0))
             .unwrap();
         assert_eq!(v, 7);
+    }
+}
+
+#[cfg(test)]
+mod outdated_tests {
+    use super::*;
+
+    /// A connection handed out after another process migrated the database
+    /// past this build is refused, pooled or new.
+    #[test]
+    fn a_database_migrated_past_this_build_is_refused_at_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        let pool = Pool::new(path.clone());
+        drop(pool.get().unwrap());
+        let newer = rusqlite::Connection::open(&path).unwrap();
+        newer
+            .pragma_update(None, "user_version", crate::db::schema::SCHEMA_VERSION + 1)
+            .unwrap();
+        assert!(matches!(pool.take(), Err(DbError::Outdated(_))), "pooled");
+        assert!(matches!(pool.take(), Err(DbError::Outdated(_))), "new");
     }
 }
