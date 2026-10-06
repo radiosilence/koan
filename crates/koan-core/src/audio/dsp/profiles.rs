@@ -35,8 +35,17 @@ pub struct Overview {
     pub enabled: bool,
     /// The output device playback goes to.
     pub device: Option<String>,
-    /// The profile for that device.
+    /// The profile for that device: its correction.
     pub active: Option<String>,
+    /// The tuning it plays on top.
+    pub tuning: Option<String>,
+    /// Whether that tuning plays: not on a baked correction, nor where the
+    /// chain cannot hold it.
+    pub tuning_plays: bool,
+    /// What of that device's choices does not play, and why.
+    pub left_out: Option<String>,
+    /// Every output's tuning, by device.
+    pub tunings: Vec<(String, String)>,
     pub profiles: Vec<Summary>,
 }
 
@@ -62,12 +71,30 @@ pub fn overview() -> Overview {
 pub fn overview_for(device: Option<String>) -> Overview {
     let cfg = Config::cached();
     let base = config::config_dir();
+    let chain = device
+        .as_deref()
+        .and_then(|d| super::output_chain(&cfg.dsp, d));
     Overview {
         enabled: cfg.dsp.enabled,
         active: device
             .as_deref()
             .and_then(|d| cfg.dsp.profile_for(d))
             .map(|p| p.name.clone()),
+        tuning_plays: chain.as_ref().is_some_and(|c| c.tuning_plays),
+        left_out: chain.and_then(|c| c.left_out),
+        tunings: cfg
+            .dsp
+            .tunings
+            .iter()
+            .map(|t| (t.device.clone(), t.tuning.clone()))
+            .collect(),
+        tuning: device.as_deref().and_then(|d| {
+            cfg.dsp
+                .tunings
+                .iter()
+                .find(|t| t.device == d)
+                .map(|t| t.tuning.clone())
+        }),
         device,
         profiles: cfg
             .dsp
@@ -225,6 +252,8 @@ pub struct Detail {
     pub layer_roles: Vec<Option<DspRole>>,
     pub measured: bool,
     pub made_for: Option<String>,
+    /// For a tuning: the target it was made against.
+    pub tuned_for: Option<String>,
 }
 
 /// Everything in the profile `name`.
@@ -318,6 +347,7 @@ pub fn detail(name: &str) -> Option<Detail> {
             .collect(),
         measured: profile.measurement.is_some(),
         made_for: profile.target.as_ref().map(|t| t.made_for.clone()),
+        tuned_for: profile.tuned_for.clone(),
     })
 }
 
@@ -359,6 +389,12 @@ pub fn rename(old: &str, new: &str) -> Result<(), String> {
         {
             if l.profile == old {
                 l.profile = new.to_string();
+            }
+        }
+        // So do the outputs that play it as their tuning.
+        for t in &mut cfg.dsp.tunings {
+            if t.tuning == old {
+                t.tuning = new.to_string();
             }
         }
         if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == old) {
@@ -701,10 +737,20 @@ pub struct LayerResponse {
 /// What `name` does to the sound at `rate`, from the filters the DSP runs.
 /// `None` for a profile that is not there or would not play.
 pub fn response(name: &str, rate: u32) -> Option<Response> {
-    use super::targets;
     let cfg = Config::cached();
     let all = &cfg.dsp.profiles;
-    let profile = all.iter().find(|p| p.name == name)?;
+    response_of(all.iter().find(|p| p.name == name)?, all, rate)
+}
+
+/// What the output `device` plays at `rate`: its correction and the tuning
+/// on top, as the player builds them.
+pub fn output_response(device: &str, rate: u32) -> Option<Response> {
+    let chain = super::output_chain(&Config::cached().dsp, device)?;
+    response_of(&chain.profile, &chain.all, rate)
+}
+
+fn response_of(profile: &DspProfile, all: &[DspProfile], rate: u32) -> Option<Response> {
+    use super::targets;
     let freqs = targets::grid();
     let curve = |filters: &[crate::config::DspFilter]| super::response(filters, &freqs, rate);
     let setup = Setup::load(profile, all, &config::config_dir()).ok()?;
@@ -750,7 +796,8 @@ pub fn response(name: &str, rate: u32) -> Option<Response> {
             let p = all.iter().find(|p| p.name == l.profile)?;
             let filters = super::chain(p, all, &mut Vec::new()).ok()?;
             Some(LayerResponse {
-                name: l.profile.clone(),
+                // An output's tuning is resolved under a name of its own.
+                name: l.profile.trim_start_matches('\u{1}').to_owned(),
                 on: l.on,
                 db: curve(&filters),
             })
@@ -1031,6 +1078,96 @@ pub fn shown_role(profile: &DspProfile, all: &[DspProfile]) -> DspRole {
         .first()
         .and_then(|c| all.iter().find(|p| &p.name == c))
         .map_or(DspRole::Tuning, role)
+}
+
+/// The target the chain `profile` corrects to: its correction's chosen
+/// target, or the one it was made for or is built from a measurement to.
+/// None for a correction with a tuning baked in, whose target is not only a
+/// target, or one whose target is not known.
+pub fn aims_at(profile: &DspProfile, all: &[DspProfile]) -> Option<String> {
+    let first = corrections_in(profile, all).into_iter().next()?;
+    let c = all.iter().find(|p| p.name == first)?;
+    if role(c) != DspRole::Correction {
+        return None;
+    }
+    c.measurement
+        .as_ref()
+        .map(|m| m.target.clone())
+        .or_else(|| {
+            c.target
+                .as_ref()
+                .map(|t| t.chosen.clone().unwrap_or_else(|| t.made_for.clone()))
+        })
+}
+
+/// The tuning `device` plays on top of its correction.
+pub fn tuning_for(device: &str) -> Option<String> {
+    Config::cached()
+        .dsp
+        .tunings
+        .iter()
+        .find(|t| t.device == device)
+        .map(|t| t.tuning.clone())
+}
+
+/// Play `tuning` on top of `device`'s correction, or none. Only a tuning,
+/// and not on a correction with one baked in, which would add taste twice.
+pub fn set_tuning(device: &str, tuning: Option<&str>) -> Result<(), String> {
+    let cfg = Config::cached();
+    let all = &cfg.dsp.profiles;
+    if let Some(name) = tuning {
+        let t = all
+            .iter()
+            .find(|p| p.name == name)
+            .ok_or_else(|| format!("No profile called {name}"))?;
+        if shown_role(t, all) != DspRole::Tuning {
+            return Err(format!(
+                "{name} corrects headphones: choose it as the correction instead"
+            ));
+        }
+        if !super::responses(t, all).is_empty() {
+            return Err(format!(
+                "{name} has impulse responses, which correct a room or speakers: choose it as the correction instead"
+            ));
+        }
+        if let Some(c) = cfg.dsp.profile_for(device)
+            && shown_role(c, all) == DspRole::Baked
+        {
+            return Err(baked_already(&c.name));
+        }
+    }
+    persist(|cfg| {
+        cfg.dsp.tunings.retain(|t| t.device != device);
+        if let Some(name) = tuning {
+            cfg.dsp.tunings.push(crate::config::DspOutputTuning {
+                device: device.to_owned(),
+                tuning: name.to_owned(),
+            });
+        }
+    })
+}
+
+/// Why no tuning goes on top of `correction`.
+pub fn baked_already(correction: &str) -> String {
+    format!("{correction} already has a tuning baked in. Split it to swap tunings.")
+}
+
+/// Say which target the tuning `name` was made against, or that it is not
+/// known: a target that ships or one added.
+pub fn set_tuned_for(name: &str, target: Option<&str>) -> Result<(), String> {
+    if !Config::cached().dsp.profiles.iter().any(|p| p.name == name) {
+        return Err(format!("No profile called {name}"));
+    }
+    if let Some(t) = target
+        && super::targets::choice_curve(t).is_none()
+    {
+        return Err(format!("No target called {t}"));
+    }
+    persist(|cfg| {
+        if let Some(p) = cfg.dsp.profiles.iter_mut().find(|p| p.name == name) {
+            p.tuned_for = target.map(str::to_owned);
+        }
+    })
 }
 
 /// The corrections a chain plays, `profile` and its layers switched on, in
@@ -1378,7 +1515,11 @@ pub fn remove(name: &str) -> Result<(), String> {
         .profiles
         .iter()
         .any(|p| p.name != name && slug(&p.name) == slug(name));
-    persist(|cfg| cfg.dsp.profiles.retain(|p| p.name != name)).map_err(|e| e.to_string())?;
+    persist(|cfg| {
+        cfg.dsp.profiles.retain(|p| p.name != name);
+        cfg.dsp.tunings.retain(|t| t.tuning != name);
+    })
+    .map_err(|e| e.to_string())?;
     // Another profile's name may map to the same folder: its files stay.
     if !shared {
         let _ = std::fs::remove_dir_all(dir(name));
@@ -2267,6 +2408,277 @@ mod tests {
         assert_eq!(t.chosen, None, "an in-ear target is no move for over-ears");
         set_made_for("Preset", None).unwrap();
         assert_eq!(target(), None);
+    }
+
+    /// An output plays its tuning on top of its correction, with the
+    /// difference between the correction's target and the one the tuning was
+    /// made against: dynamic baking. Never on a correction with a tuning
+    /// baked in, and never across kinds of headphone.
+    #[test]
+    fn an_output_plays_its_tuning_on_its_correction() {
+        use crate::config::{DspFilter, DspTarget};
+        let _guard = crate::config::tests::PERSIST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        config::set_config_dir(dir.path());
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 600".into(),
+                filters: vec![band(100.0)],
+                target: Some(DspTarget {
+                    made_for: "harman-over-ear-2018".into(),
+                    chosen: None,
+                }),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Warm".into(),
+                filters: vec![band(60.0)],
+                tuned_for: Some("diffuse-field-gras-kemar".into()),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Lush".into(),
+                filters: vec![band(200.0)],
+                role: Some(DspRole::Baked),
+                ..Default::default()
+            });
+            let harman = || {
+                Some(DspTarget {
+                    made_for: "harman-over-ear-2018".into(),
+                    chosen: None,
+                })
+            };
+            c.dsp.profiles.push(DspProfile {
+                name: "HD 650".into(),
+                filters: vec![band(110.0)],
+                target: harman(),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Bright".into(),
+                filters: vec![band(8000.0)],
+                tuned_for: Some("harman-over-ear-2018".into()),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Room".into(),
+                impulses: vec!["dsp/room/48000.wav".into()],
+                ..Default::default()
+            });
+            let curve = |db: f64| {
+                DspFilter::Graphic(crate::config::GraphicEq {
+                    points: vec![(20.0, 0.0), (1000.0, db), (20_000.0, 0.0)],
+                    channels: vec![],
+                })
+            };
+            c.dsp.profiles.push(DspProfile {
+                name: "Curved".into(),
+                filters: vec![curve(2.0)],
+                target: harman(),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Tilt".into(),
+                filters: vec![curve(-1.0)],
+                tuned_for: Some("diffuse-field-gras-kemar".into()),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        let dac = "Desk DAC";
+        let shown = || {
+            super::super::output_chain(&Config::cached().dsp, dac)
+                .unwrap()
+                .name
+        };
+        let plays = || -> Vec<String> {
+            let cfg = Config::cached();
+            let Some(chain) = super::super::output_chain(&cfg.dsp, dac) else {
+                return Vec::new();
+            };
+            super::super::chain(&chain.profile, &chain.all, &mut Vec::new())
+                .unwrap()
+                .into_iter()
+                .map(|f| match f {
+                    DspFilter::Band(b) => format!("{}", b.freq),
+                    DspFilter::Graphic(_) => "step".into(),
+                    other => panic!("{other:?}"),
+                })
+                .collect()
+        };
+        assign(Some("HD 600"), dac).unwrap();
+        assert_eq!(plays(), ["100"]);
+
+        // Made against neutral, played on a correction to Harman: Harman's
+        // preference comes out first.
+        set_tuning(dac, Some("Warm")).unwrap();
+        assert_eq!(tuning_for(dac).as_deref(), Some("Warm"));
+        assert_eq!(plays(), ["step", "60", "100"]);
+        // Made against the correction's own target, or nothing said: as it is.
+        set_tuned_for("Warm", Some("harman-over-ear-2018")).unwrap();
+        assert_eq!(plays(), ["60", "100"]);
+        set_tuned_for("Warm", None).unwrap();
+        assert_eq!(plays(), ["60", "100"]);
+        // An in-ear target says nothing of over-ears.
+        set_tuned_for("Warm", Some("harman-in-ear-2019")).unwrap();
+        assert_eq!(plays(), ["60", "100"]);
+        assert!(set_tuned_for("Warm", Some("made-up")).is_err());
+
+        // A correction is not a tuning, and a baked one takes none.
+        let refused = set_tuning(dac, Some("HD 600")).unwrap_err();
+        assert!(refused.contains("corrects headphones"), "{refused}");
+        assign(Some("Lush"), dac).unwrap();
+        assert_eq!(plays(), ["200"], "the tuning waits");
+        assert_eq!(
+            set_tuning(dac, Some("Warm")).unwrap_err(),
+            "Lush already has a tuning baked in. Split it to swap tunings."
+        );
+
+        // A group corrects with its member playing, the tuning on top, and is
+        // called by its own name.
+        make_group("Cans", &["HD 600".into(), "HD 650".into()]).unwrap();
+        assign(Some("Cans"), dac).unwrap();
+        set_tuning(dac, Some("Warm")).unwrap();
+        set_tuned_for("Warm", Some("diffuse-field-gras-kemar")).unwrap();
+        assert_eq!(plays(), ["step", "60", "100"]);
+        select("Cans", "HD 650").unwrap();
+        assert_eq!(plays(), ["step", "60", "110"]);
+        assert_eq!(shown(), "Cans");
+
+        // A group of tunings is made against its playing member's target.
+        make_group("Tastes", &["Warm".into(), "Bright".into()]).unwrap();
+        set_tuning(dac, Some("Tastes")).unwrap();
+        assert_eq!(plays(), ["step", "60", "110"]);
+        select("Tastes", "Bright").unwrap();
+        assert_eq!(plays(), ["8000", "110"], "made against Harman, on Harman");
+        set_tuning(dac, Some("Warm")).unwrap();
+        remove("Tastes").unwrap();
+
+        // Impulse responses correct a room: never a tuning.
+        let refused = set_tuning(dac, Some("Room")).unwrap_err();
+        assert!(refused.contains("impulse responses"), "{refused}");
+
+        // The correction's curves come first in the chain's budget: the step
+        // is left out rather than push one out.
+        assign(Some("Curved"), dac).unwrap();
+        set_tuning(dac, Some("Tilt")).unwrap();
+        let cfg = Config::cached();
+        let chain = super::super::output_chain(&cfg.dsp, dac).unwrap();
+        let played = super::super::chain(&chain.profile, &chain.all, &mut Vec::new()).unwrap();
+        let curved = cfg
+            .dsp
+            .profiles
+            .iter()
+            .find(|p| p.name == "Curved")
+            .unwrap();
+        assert_eq!(played.len(), 2, "the tuning's curve and the correction's");
+        assert_eq!(played.last(), curved.filters.first());
+        let o = overview_for(Some(dac.into()));
+        assert!(o.tuning_plays);
+        assert!(
+            o.left_out
+                .as_deref()
+                .is_some_and(|l| l.starts_with("Tilt plays without the target difference")),
+            "{:?}",
+            o.left_out
+        );
+        set_tuning(dac, Some("Warm")).unwrap();
+
+        // A chain past the filters one may hold loses the tuning, never the
+        // correction, and says so. Each is within bounds, a channel's bands
+        // spread over four; the layers together are not.
+        let spread = |n: usize, from: f64| -> Vec<DspFilter> {
+            (0..n)
+                .map(|i| {
+                    DspFilter::Band(crate::config::EqFilter {
+                        kind: crate::config::EqFilterKind::Peaking,
+                        freq: from + i as f64,
+                        gain_db: 1.0,
+                        q: 1.0,
+                        channels: vec![(i % 4) as u16],
+                    })
+                })
+                .collect()
+        };
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Busy".into(),
+                filters: spread(200, 100.0),
+                ..Default::default()
+            });
+            c.dsp.profiles.push(DspProfile {
+                name: "Base".into(),
+                filters: spread(100, 1000.0),
+                ..Default::default()
+            });
+            let hd = c
+                .dsp
+                .profiles
+                .iter_mut()
+                .find(|p| p.name == "HD 600")
+                .unwrap();
+            hd.layers = vec![crate::config::DspLayer {
+                profile: "Base".into(),
+                on: true,
+            }];
+        })
+        .unwrap();
+        assign(Some("HD 600"), dac).unwrap();
+        set_tuning(dac, Some("Busy")).unwrap();
+        assert_eq!(plays().len(), 101, "the correction alone");
+        let o = overview_for(Some(dac.into()));
+        assert!(!o.tuning_plays);
+        assert!(
+            o.left_out
+                .as_deref()
+                .is_some_and(|l| l.starts_with("Busy is left out")),
+            "{:?}",
+            o.left_out
+        );
+        assign(Some("Curved"), dac).unwrap();
+        set_tuning(dac, Some("Warm")).unwrap();
+
+        // Nor without a correction: nothing plays, and it says why.
+        persist(|c| {
+            c.dsp.profiles.push(DspProfile {
+                name: "Heavy".into(),
+                layers: ["Busy", "Base"]
+                    .map(|p| crate::config::DspLayer {
+                        profile: p.into(),
+                        on: true,
+                    })
+                    .to_vec(),
+                ..Default::default()
+            });
+        })
+        .unwrap();
+        assign(None, dac).unwrap();
+        set_tuning(dac, Some("Heavy")).unwrap();
+        assert!(plays().is_empty());
+        let o = overview_for(Some(dac.into()));
+        assert!(!o.tuning_plays);
+        assert!(
+            o.left_out
+                .as_deref()
+                .is_some_and(|l| l.starts_with("Heavy is left out")),
+            "{:?}",
+            o.left_out
+        );
+        set_tuning(dac, Some("Warm")).unwrap();
+
+        // No correction: the tuning alone, called by its name.
+        assign(None, dac).unwrap();
+        assert_eq!(plays(), ["60"]);
+        assert_eq!(shown(), "Warm");
+
+        // It follows the profile's name, and goes with it.
+        rename("Warm", "Warm bass").unwrap();
+        assert_eq!(tuning_for(dac).as_deref(), Some("Warm bass"));
+        remove("Warm bass").unwrap();
+        assert_eq!(tuning_for(dac), None);
+        assert!(plays().is_empty());
     }
 
     /// A correction with a tuning baked in is the chain's correction. A stack

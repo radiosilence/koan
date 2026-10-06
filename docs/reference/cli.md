@@ -164,6 +164,8 @@ koan dsp layer STACK LAYER on|off
 koan dsp measure FILE --name NAME --ear in|over --target TARGET  # correct a headphone from its measurement
 koan dsp role NAME correction|tuning|baked                  # a stack holds one correction; baked counts as one
 koan dsp made-for NAME TARGET|unknown                       # the target a ready-made EQ was made for
+koan dsp tuning NAME|none [--device NAME]                   # a tuning on top of an output's correction
+koan dsp tuned-for NAME TARGET|unknown                      # the target a tuning was made against
 koan dsp off | on                               # bypass every profile, or stop bypassing
 ```
 

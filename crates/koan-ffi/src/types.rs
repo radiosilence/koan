@@ -1205,7 +1205,17 @@ pub struct DspOverview {
     /// The output device playback goes to, which profiles are chosen by. A
     /// renderer is named by its UDN.
     pub device: Option<String>,
+    /// The profile that device plays: its correction.
     pub active: Option<String>,
+    /// The tuning it plays on top of its correction.
+    pub tuning: Option<String>,
+    /// Whether that tuning plays: not on a baked correction, nor where the
+    /// chain cannot hold it.
+    pub tuning_plays: bool,
+    /// What of the output's choices does not play, and why.
+    pub left_out: Option<String>,
+    /// Every output's tuning, by device.
+    pub tunings: std::collections::HashMap<String, String>,
     pub profiles: Vec<DspProfileSummary>,
     /// What to call the devices named by a UDN, where the renderer is known.
     pub names: std::collections::HashMap<String, String>,
@@ -1375,6 +1385,8 @@ pub struct DspProfileDetail {
     /// For a ready-made correction: the target it was made for, by id, if
     /// that is known.
     pub made_for: Option<String>,
+    /// For a tuning: the target it was made against, by id, if that is known.
+    pub tuned_for: Option<String>,
 }
 
 /// One of a profile's filters, in the order they run.
@@ -1535,6 +1547,7 @@ impl From<koan_core::audio::dsp::profiles::Detail> for DspProfileDetail {
                 .collect(),
             measured: d.measured,
             made_for: d.made_for,
+            tuned_for: d.tuned_for,
         }
     }
 }
@@ -1546,6 +1559,10 @@ impl From<koan_core::audio::dsp::profiles::Overview> for DspOverview {
             names: Default::default(),
             device: o.device,
             active: o.active,
+            tuning: o.tuning,
+            tuning_plays: o.tuning_plays,
+            left_out: o.left_out,
+            tunings: o.tunings.into_iter().collect(),
             profiles: o
                 .profiles
                 .into_iter()
