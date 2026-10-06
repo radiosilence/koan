@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -97,7 +98,18 @@ pub fn scan_folder(
 pub fn scan_folders(
     db: &Database,
     folders: &[PathBuf],
-    opts: ScanOptions,
+    mut opts: ScanOptions,
+    on_started: Option<&dyn Fn(u64)>,
+    on_track: Option<&dyn Fn(ScanEvent)>,
+) -> ScanResult {
+    let _turn = super::lane::enter(folders, &mut opts);
+    scan_folders_in_lane(db, folders, &opts, on_started, on_track)
+}
+
+fn scan_folders_in_lane(
+    db: &Database,
+    folders: &[PathBuf],
+    opts: &ScanOptions,
     on_started: Option<&dyn Fn(u64)>,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
@@ -138,9 +150,10 @@ pub fn scan_folders(
         } else {
             vec![path.clone()]
         };
-        let prune = index_folder(db, &path, found.audio, &opts, on_track, &mut result);
+        let seen = stored_paths(&found.audio);
+        let prune = index_folder(db, &path, found.audio, opts, on_track, &mut result);
         cancelled |= result.cancelled;
-        indexed.push((path, found.playlists, settled, prune, result));
+        indexed.push((path, found.playlists, settled, prune, seen, result));
     }
 
     let arrived: Vec<i64> = indexed
@@ -148,9 +161,9 @@ pub fn scan_folders(
         .flat_map(|(.., result)| result.arrived.iter().copied())
         .collect();
     let mut total = ScanResult::default();
-    for (path, playlists, settled, prune, mut result) in indexed {
+    for (path, playlists, settled, prune, seen, mut result) in indexed {
         if prune && !cancelled {
-            remove_stale(db, &path, opts.force_remove, &arrived, &mut result);
+            remove_stale(db, &path, opts.force_remove, &arrived, &seen, &mut result);
         }
         if !result.cancelled {
             result.playlists += super::playlist_files::import(db, &playlists, &settled);
@@ -223,9 +236,10 @@ pub fn scan_dirs(
     db: &Database,
     library: &[PathBuf],
     dirs: &[PathBuf],
-    opts: ScanOptions,
+    mut opts: ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
+    let _turn = super::lane::enter(dirs, &mut opts);
     let mut result = ScanResult::default();
     let mut spelling = super::spelling::Spelling::default();
     let library: Vec<PathBuf> = library.iter().map(|f| spelling.on_disk(f)).collect();
@@ -240,7 +254,10 @@ pub fn scan_dirs(
             continue;
         };
         if dir == *root {
-            merge(&mut result, scan_folder(db, root, opts.clone(), on_track));
+            merge(
+                &mut result,
+                scan_folders_in_lane(db, std::slice::from_ref(root), &opts, None, on_track),
+            );
             continue;
         }
         if !is_populated(root) {
@@ -270,12 +287,13 @@ pub fn scan_dirs(
         }
     }
 
+    let seen = stored_paths(&files);
     if !index_files(db, files, &opts, on_track, &mut result, Path::new("")) || result.cancelled {
         return result;
     }
     let arrived = std::mem::take(&mut result.arrived);
     for dir in &settled {
-        remove_stale(db, dir, true, &arrived, &mut result);
+        remove_stale(db, dir, true, &arrived, &seen, &mut result);
         // A cover image changing is a reason to be here that no row records.
         if let Err(e) = queries::evict_art_under(&db.conn, dir) {
             log::warn!("cover art under {} not refreshed: {e}", dir.display());
@@ -287,6 +305,14 @@ pub fn scan_dirs(
         super::playlist_files::refresh_m3u(db);
     }
     result
+}
+
+/// Walked files as their rows store them.
+fn stored_paths(files: &[PathBuf]) -> HashSet<String> {
+    files
+        .iter()
+        .map(|f| f.to_string_lossy().into_owned())
+        .collect()
 }
 
 /// The fewest directories that cover every one given: duplicates dropped, and
@@ -336,10 +362,15 @@ struct Walked {
 ///
 /// A path that is not UTF-8 is left out: the database stores paths as text, so
 /// it would be stored under a name no stat finds, and the same scan would
-/// remove it again along with its play history.
+/// remove it again along with its play history. So is anything under a name
+/// the watcher ignores (see [`super::watch::is_ignored`]), below `path` itself.
 fn walk(path: &Path, result: &mut ScanResult) -> Walked {
     let mut found = Walked::default();
-    for entry in walkdir::WalkDir::new(path).follow_links(true) {
+    let entries = walkdir::WalkDir::new(path)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|e| e.depth() == 0 || !super::watch::is_ignored(e.file_name()));
+    for entry in entries {
         match entry {
             Ok(e) if e.path().to_str().is_none() => {
                 if e.file_type().is_file() {
@@ -553,11 +584,14 @@ fn index_files(
 
 /// Remove the rows under `path` whose files are gone, in one transaction,
 /// after giving those that moved (to one of `arrived`) their tracks back.
+/// `walked` is every audio file the walk under `path` found, as stored: those
+/// are present without asking the filesystem again.
 fn remove_stale(
     db: &Database,
     path: &Path,
     force_remove: bool,
     arrived: &[i64],
+    walked: &HashSet<String>,
     result: &mut ScanResult,
 ) {
     let tx = match crate::db::queries::write_transaction(&db.conn) {
@@ -570,7 +604,7 @@ fn remove_stale(
             return;
         }
     };
-    let moved = match queries::adopt_moved_files(&tx, path, arrived) {
+    let moved = match queries::adopt_moved_files(&tx, path, arrived, Some(walked)) {
         Ok(moved) => moved,
         Err(e) => {
             log::error!("failed to match moved files: {}", e);
@@ -579,7 +613,7 @@ fn remove_stale(
         }
     };
     result.moved += moved;
-    match queries::remove_stale_tracks(&tx, path, force_remove) {
+    match queries::remove_stale_tracks_walked(&tx, path, force_remove, Some(walked)) {
         Ok(removed) => {
             if let Err(e) = tx.commit() {
                 log::error!("failed to commit stale removals: {}", e);
@@ -674,14 +708,29 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
         return result;
     }
 
-    // Tag reads are the slow part and independent per file; the writes are not.
-    let read: Vec<(PathBuf, Result<TrackMeta, String>)> = files
-        .par_iter()
-        .map(|path| (path.clone(), isolate_read(path, metadata::read_metadata)))
-        .collect();
+    // Read and written as a scan reads and writes, so an unchanged file is not
+    // read again. Not in the lane: see `lane`.
+    let _importing = super::lane::importing();
+    let mut scanned = ScanResult::default();
+    index_files(
+        db,
+        files.clone(),
+        &ScanOptions::default(),
+        None,
+        &mut scanned,
+        Path::new(""),
+    );
+    result.added = scanned.added;
+    result.updated = scanned.updated;
+    result.errors = scanned.errors;
 
-    let tx = match crate::db::queries::write_transaction(&db.conn) {
-        Ok(tx) => tx,
+    // Every file's track, in the order walked: the ones just read and the
+    // ones the scan cache said were unchanged alike.
+    let mut track_of = match db
+        .conn
+        .prepare_cached("SELECT track_id FROM local_files WHERE path = ?1")
+    {
+        Ok(stmt) => stmt,
         Err(e) => {
             result
                 .errors
@@ -689,50 +738,16 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
             return result;
         }
     };
-
-    for (path, meta_result) in read {
-        let meta = match meta_result {
-            Ok(meta) => meta,
-            Err(e) => {
-                result.errors.push((path, e));
-                continue;
-            }
-        };
-        match queries::upsert_track_status(&tx, &meta) {
-            Ok((track_id, is_new)) => {
-                if is_new {
-                    result.added += 1;
-                } else {
-                    result.updated += 1;
-                }
-                result.track_ids.push(track_id);
-                if let Err(e) = queries::update_scan_cache(
-                    &tx,
-                    meta.path.as_deref().unwrap_or(""),
-                    meta.mtime.unwrap_or(0),
-                    meta.size_bytes.unwrap_or(0),
-                    track_id,
-                ) {
-                    // Not fatal, but every future scan re-reads this file's tags.
-                    log::warn!("failed to cache {}: {}", path.display(), e);
-                }
-            }
-            Err(e) => result.errors.push((path, format!("db error: {e}"))),
+    for file in &files {
+        if let Ok(id) = track_of.query_row([file.to_string_lossy()], |r| r.get::<_, i64>(0)) {
+            result.track_ids.push(id);
         }
     }
+    drop(track_of);
 
-    if let Err(e) = tx.commit() {
-        result.track_ids.clear();
-        result.added = 0;
-        result.updated = 0;
-        result
-            .errors
-            .push((PathBuf::new(), format!("db error: {e}")));
-    }
     if result.added > 0 {
         super::playlist_files::refresh_m3u(db);
     }
-
     result
 }
 
@@ -740,9 +755,10 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
 pub fn full_scan(
     db: &Database,
     folders: &[PathBuf],
-    opts: ScanOptions,
+    mut opts: ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
+    let _turn = super::lane::enter(folders, &mut opts);
     let existing: Vec<PathBuf> = folders
         .iter()
         .filter(|folder| {
@@ -754,7 +770,7 @@ pub fn full_scan(
         })
         .cloned()
         .collect();
-    let total = scan_folders(db, &existing, opts, None, on_track);
+    let total = scan_folders_in_lane(db, &existing, &opts, None, on_track);
     db.optimize();
     total
 }
@@ -801,6 +817,111 @@ mod tests {
             .expect("cancelled scan never returned");
         assert!(result.cancelled);
         assert!(result.added < CHUNK_SIZE * 12);
+    }
+
+    /// The folder watcher's scans carry no cancel flag of their own; the lane
+    /// gives them one, which the app's Cancel reaches.
+    #[test]
+    fn a_scan_started_without_a_cancel_flag_can_still_be_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        for i in 0..CHUNK_SIZE * 6 {
+            test_utils::generate_wav(&music.join(format!("{i:03}.wav")), 8000, 1, 0.01, 16);
+        }
+        let db = test_db(dir.path());
+        let on_track = |_: ScanEvent| super::super::lane::cancel_all();
+        let result = scan_folder(&db, &music, ScanOptions::default(), Some(&on_track));
+        assert!(result.cancelled);
+        assert!(result.added < CHUNK_SIZE * 6);
+    }
+
+    /// Forgetting a folder stops a scan of it, and only of it.
+    #[test]
+    fn a_scan_is_cancelled_by_forgetting_its_folder_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        for i in 0..CHUNK_SIZE * 6 {
+            test_utils::generate_wav(&music.join(format!("{i:03}.wav")), 8000, 1, 0.01, 16);
+        }
+        let elsewhere = dir.path().join("elsewhere");
+        let db = test_db(dir.path());
+
+        let on_track = |_: ScanEvent| super::super::lane::cancel_under(&elsewhere);
+        let result = scan_folder(&db, &music, ScanOptions::default(), Some(&on_track));
+        assert!(!result.cancelled);
+        assert_eq!(result.added, CHUNK_SIZE * 6);
+
+        let album = music.join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        for i in 0..CHUNK_SIZE * 6 {
+            test_utils::generate_wav(&album.join(format!("{i:03}.wav")), 8000, 1, 0.02, 16);
+        }
+        let on_track = |_: ScanEvent| super::super::lane::cancel_under(&album);
+        let result = scan_folder(&db, &music, ScanOptions::default(), Some(&on_track));
+        assert!(result.cancelled, "a scan of the folder it is in");
+    }
+
+    /// Scans take turns: one waits while another holds the lane, and starts
+    /// when it is let go.
+    #[test]
+    fn scans_wait_their_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        test_utils::generate_wav(&music.join("a.wav"), 8000, 1, 0.1, 16);
+        let db_root = dir.path().to_path_buf();
+
+        let held = super::super::lane::wait();
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let db = test_db(&db_root);
+            done_tx
+                .send(scan_folder(&db, &music, ScanOptions::default(), None).added)
+                .unwrap();
+        });
+        assert!(
+            done_rx
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "ran while the lane was held"
+        );
+        drop(held);
+        let added = done_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("never ran once the lane was free");
+        assert_eq!(added, 1);
+    }
+
+    /// A drop is for playing now: it does not queue behind a scan, which on a
+    /// large library can take minutes.
+    #[test]
+    fn an_import_does_not_wait_for_a_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let rip = dir.path().join("rip");
+        std::fs::create_dir_all(&rip).unwrap();
+        test_utils::generate_wav(&rip.join("a.wav"), 8000, 1, 0.1, 16);
+        let db_root = dir.path().to_path_buf();
+
+        let mut opts = ScanOptions::default();
+        let held = super::super::lane::enter(&[dir.path().join("library")], &mut opts);
+        let (done_tx, done_rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let db = test_db(&db_root);
+            done_tx
+                .send(
+                    import_paths(&db, std::slice::from_ref(&rip))
+                        .track_ids
+                        .len(),
+                )
+                .unwrap();
+        });
+        let imported = done_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("waited for the scan");
+        assert_eq!(imported, 1);
+        drop(held);
     }
 
     #[test]
@@ -936,6 +1057,74 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap()
+    }
+
+    /// A track also on the server outlives its folder being forgotten, as the
+    /// server's copy. Added back, the folder's file must be read again.
+    #[test]
+    fn a_forgotten_folder_added_back_is_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        std::fs::create_dir_all(&music).unwrap();
+        let file = music.join("kept.wav");
+        test_utils::generate_wav(&file, 8000, 1, 0.1, 16);
+        let db = test_db(dir.path());
+        let mut both = metadata::read_metadata(&file).unwrap();
+        both.remote_id = Some("sub-1".into());
+        let track = queries::upsert_track(&db.conn, &both).unwrap();
+        let local = |db: &Database| -> Option<String> {
+            db.conn
+                .query_row("SELECT path FROM tracks WHERE id = ?1", [track], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+        scan_folder(&db, &music, ScanOptions::default(), None);
+
+        assert_eq!(crate::helpers::forget_folder(&db, &music).unwrap(), 1);
+        assert_eq!(local(&db), None, "kept as the server's copy");
+
+        let again = scan_folder(&db, &music, ScanOptions::default(), None);
+        assert_eq!(again.skipped, 0, "{:?}", again.errors);
+        assert_eq!(local(&db), Some(file.to_string_lossy().into_owned()));
+    }
+
+    #[test]
+    fn scans_skip_what_the_watcher_ignores() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        let album = music.join("Artist/Album");
+        let dotted = music.join("Britney Spears/...Baby One More Time");
+        for sub in [
+            album.join(".stversions"),
+            album.join("Disc 2.part"),
+            dotted.clone(),
+        ] {
+            std::fs::create_dir_all(sub).unwrap();
+        }
+        let wav = |p: PathBuf| test_utils::generate_wav(&p, 8000, 1, 0.1, 16);
+        wav(album.join("01.wav"));
+        wav(dotted.join("01.wav"));
+        wav(album.join(".stversions/01~20261006-120000.wav"));
+        wav(album.join("._01.wav"));
+        wav(album.join("Disc 2.part/02.wav"));
+        wav(album.join("~syncthing~03.wav"));
+        let db = test_db(dir.path());
+
+        let full = scan_folder(&db, &music, ScanOptions::default(), None);
+        assert_eq!(full.added, 2, "{:?}", full.errors);
+        let dirs = scan_dirs(
+            &db,
+            std::slice::from_ref(&music),
+            std::slice::from_ref(&album),
+            ScanOptions::default(),
+            None,
+        );
+        assert_eq!(dirs.added, 0, "{:?}", dirs.errors);
+        assert_eq!(
+            track_paths(&db),
+            [album.join("01.wav"), dotted.join("01.wav")].map(|p| p.to_string_lossy().into_owned())
+        );
     }
 
     #[test]
@@ -1207,8 +1396,8 @@ mod tests {
         let second = import_paths(&db, std::slice::from_ref(&drop));
 
         assert_eq!(first.added, 1);
-        assert_eq!(second.added, 0);
-        assert_eq!(second.updated, 1);
+        // Through the scan cache: unchanged, so not read again, and still queued.
+        assert_eq!((second.added, second.updated), (0, 0));
         assert_eq!(first.track_ids, second.track_ids);
         assert_eq!(queries::library_stats(&db.conn).unwrap().total_tracks, 1);
     }

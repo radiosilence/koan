@@ -783,6 +783,21 @@ enum Via {
 }
 
 impl Caller {
+    /// Refuse a request about the account's own credentials, its password and
+    /// API keys, unless it is signed with one of them: an API key or the
+    /// account's password. An app password is a credential handed to one
+    /// client, which must not mint or revoke others; the shared secret is no
+    /// account's.
+    fn may_manage_credentials(&self) -> Result<(), SubsonicError> {
+        match self.via {
+            Via::ApiKey | Via::Password => Ok(()),
+            Via::AppPassword | Via::SharedSecret => Err(SubsonicError::new(
+                SubsonicErrorCode::NotAuthorized,
+                "sign in with the account's password or an API key to manage its credentials",
+            )),
+        }
+    }
+
     /// Whose shares the caller may list and change: their own, or everyone's
     /// for an admin.
     fn share_owner(&self) -> Option<i64> {
@@ -4082,6 +4097,9 @@ fn respond_admin(
         if caller.role != Role::Admin {
             return Err(SubsonicError::not_authorized());
         }
+        // Accounts are made, invited, promoted and deleted here: an admin's
+        // app password must not turn into an account or a key of its own.
+        caller.may_manage_credentials()?;
         let db = state.open_db()?;
         f(&db, &caller, SubsonicResponse::ok(json))
     });
@@ -4362,6 +4380,11 @@ async fn koan_pair_approve(
                 .get("pair")
                 .ok_or_else(|| SubsonicError::missing_param("pair"))?;
             let decline = params.get("decline") == Some("true");
+            // Approving mints an API key for the device: not something an app
+            // password, one client's credential, may hand out.
+            if !decline {
+                caller.may_manage_credentials()?;
+            }
             if !decline && caller.user_id == queries::LOCAL_USER {
                 return Err(SubsonicError::new(
                     SubsonicErrorCode::Generic,
@@ -5882,6 +5905,97 @@ mod tests {
             1,
             "no key made for any of them"
         );
+    }
+
+    /// An app password is one client's credential and the shared secret is no
+    /// account's: neither may make an account, an invite or a key, change who
+    /// may do what, or sign a device in.
+    #[tokio::test]
+    async fn app_passwords_and_the_shared_secret_manage_no_credentials() {
+        let (state, _dir) = test_state();
+        let db = state.open_db().unwrap();
+        let app_password_for = |username: &str| {
+            let user = queries::auth::get_user_by_username(&db.conn, username)
+                .unwrap()
+                .unwrap();
+            queries::app_passwords::create_app_password(
+                &db.conn,
+                state.app_key.as_ref().unwrap(),
+                user.id,
+                "arpeggi",
+            )
+            .unwrap()
+            .1
+        };
+        let as_app_password = |username: &str| {
+            let password = app_password_for(username);
+            let salt = "c0ffee";
+            let token = format!("{:x}", md5::compute(format!("{password}{salt}")));
+            [
+                format!("u={username}&p={password}"),
+                format!("u={username}&t={token}&s={salt}"),
+            ]
+        };
+        let call = |path: String| {
+            let state = state.clone();
+            async move { get_response(build_test_router(state), &path).await.1 }
+        };
+
+        let mut admin = as_app_password("owner").to_vec();
+        admin.push(auth_query(""));
+        for auth in &admin {
+            for path in [
+                "koanUsers?",
+                "koanCreateUser?username=mallory&role=admin&",
+                "koanInvite?username=owner&",
+                "koanInvite?username=owner&reset=true&",
+                "koanSetUserRole?username=mate&role=admin&",
+                "koanDeleteUser?username=mate&",
+            ] {
+                let body = call(format!("/rest/{path}{auth}&v=1.16.1&c=test")).await;
+                assert!(body.contains("code=\"50\""), "{path} as {auth}: {body}");
+            }
+        }
+
+        let opened = crate::pair::pairings()
+            .open("Den TV", "198.51.100.7".parse().unwrap())
+            .unwrap();
+        let mut mate = as_app_password("mate").to_vec();
+        mate.push(auth_query(""));
+        for auth in &mate {
+            let body = call(format!(
+                "/rest/koanPairApprove?pair={}&{auth}&v=1.16.1&c=test",
+                opened.id
+            ))
+            .await;
+            assert!(body.contains("code=\"50\""), "approve as {auth}: {body}");
+        }
+
+        assert!(
+            queries::auth::get_user_by_username(&db.conn, "mallory")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            queries::auth::get_user_by_username(&db.conn, "mate")
+                .unwrap()
+                .unwrap()
+                .role,
+            Role::Readonly
+        );
+        assert!(
+            queries::api_keys::list_api_keys(&db.conn, None)
+                .unwrap()
+                .is_empty(),
+            "no key made"
+        );
+        // Still waiting for someone who may approve it.
+        let body = call(format!(
+            "/rest/koanPairApprove?pair={}&u=mate&p=hunter22&v=1.16.1&c=test",
+            opened.id
+        ))
+        .await;
+        assert!(body.contains("Den TV"), "{body}");
     }
 
     #[tokio::test]

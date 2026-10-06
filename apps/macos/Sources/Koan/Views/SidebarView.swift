@@ -92,9 +92,11 @@ struct SidebarView: View {
                 play(playlist)
             }
         }
-        // The footer floats over the rows rather than being fenced off by a
-        // divider; the soft edge fades a row out as it passes underneath.
-        .scrollEdgeEffectStyle(.soft, for: .bottom)
+        // The footer is text over text, so the rows passing beneath it get the
+        // hard edge: the sidebar behind the footer and a line between them. It
+        // applies only under a bar (`safeAreaBar` below); a plain
+        // `safeAreaInset` takes no edge effect, and the rows showed through.
+        .scrollEdgeEffectStyle(.hard, for: .bottom)
         // The field belongs to the sidebar, not the window: in the toolbar it
         // would sit on top of the lyrics inspector.
         .searchable(text: $search.query, placement: .sidebar, prompt: "Search")
@@ -105,7 +107,7 @@ struct SidebarView: View {
         .onChange(of: ui.searchFocusToken) { _, _ in
             searchFocused = true
         }
-        .safeAreaInset(edge: .bottom) { SidebarFooter() }
+        .safeAreaBar(edge: .bottom) { SidebarFooter() }
         .alert("Rename Playlist", isPresented: Binding(
             get: { renaming != nil },
             set: { if !$0 { renaming = nil } }

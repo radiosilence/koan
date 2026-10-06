@@ -308,10 +308,40 @@ enum DspCommands {
     },
     /// Delete a profile
     Remove { name: String },
+    /// Find a headphone's correction in AutoEQ's results and install it
+    Autoeq {
+        #[command(subcommand)]
+        command: AutoeqCommands,
+    },
     /// Bypass every profile
     Off,
     /// Stop bypassing
     On,
+}
+
+#[derive(Subcommand)]
+enum AutoeqCommands {
+    /// Search AutoEQ's index by headphone name; numbers are what install takes
+    Search {
+        query: String,
+        /// How many matches to show
+        #[arg(long, default_value_t = 15)]
+        limit: usize,
+        /// Fetch the index again even if the copy kept is recent
+        #[arg(long)]
+        refresh: bool,
+    },
+    /// Install a result as a profile: its number from search, or its name
+    Install {
+        entry: String,
+        /// Who measured it, where several sources have the same headphone
+        /// (AutoEQ's preferred one by default)
+        #[arg(long)]
+        source: Option<String>,
+        /// Also play this output device through it
+        #[arg(long, alias = "output")]
+        device: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -554,6 +584,18 @@ fn main() {
             DspCommands::Use { name, device } => commands::cmd_dsp_use(&name, device),
             DspCommands::Clear { device } => commands::cmd_dsp_clear(device),
             DspCommands::Remove { name } => commands::cmd_dsp_remove(&name),
+            DspCommands::Autoeq { command } => match command {
+                AutoeqCommands::Search {
+                    query,
+                    limit,
+                    refresh,
+                } => commands::cmd_dsp_autoeq_search(&query, limit, refresh),
+                AutoeqCommands::Install {
+                    entry,
+                    source,
+                    device,
+                } => commands::cmd_dsp_autoeq_install(&entry, source.as_deref(), device),
+            },
             DspCommands::Off => commands::cmd_dsp_enable(false),
             DspCommands::On => commands::cmd_dsp_enable(true),
         },

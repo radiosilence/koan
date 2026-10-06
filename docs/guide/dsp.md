@@ -40,6 +40,27 @@ From the command line:
 koan dsp import "Harman 780.zip" --device "Topping E30"
 ```
 
+### From AutoEQ
+
+AutoEQ's corrections can be found by headphone name instead of downloaded by
+hand. `koan dsp autoeq search` matches names fuzzily against AutoEQ's index and
+lists each result with who measured it; `install` takes a result's number, or
+its exact name, and saves its parametric EQ as a profile named
+`<model> (AutoEQ, <source>)`:
+
+```bash
+koan dsp autoeq search hd650
+koan dsp autoeq install 6258 --device "Topping E30"
+koan dsp autoeq install "Sennheiser HD 650" --source crinacle
+```
+
+Where several sources measured the same headphone, a name alone installs the
+one AutoEQ lists first, which is the one it recommends. The index (about
+850 KB) is kept in the config directory under `autoeq/` and fetched again at
+most once a day, by ETag, so an unchanged index costs one empty response;
+`search --refresh` asks regardless. When GitHub cannot be reached, the copy
+kept is used. Numbers refer to that copy, so `install` never refreshes it.
+
 A profile is named after what it came from; rename it on its page in Settings
 (or pass `--name`). Importing into a profile of the same name adds to it, so a
 room's responses and a headphone EQ can live in one profile.
