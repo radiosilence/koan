@@ -225,11 +225,18 @@ impl SubsonicClient {
     ) -> Result<SubsonicResponse, SubsonicError> {
         let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
         let params = self.auth_params()?;
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(form)
+            .finish();
         let resp: SubsonicResponseWrapper = self
             .http
             .post(&url)
             .query(&params)
-            .form(form)
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(body)
             .send()?
             .json()?;
         resp.subsonic_response.ok()
