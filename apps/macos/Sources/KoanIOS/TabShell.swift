@@ -358,6 +358,9 @@ private struct Transport: ViewModifier {
                             .koanRule(.top)
                     }
                     .koanSurface()
+                    // What a test measures a page's last row against.
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("koan-bar")
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { barHeight = $0 }
                     .ignoresSafeArea(.keyboard, edges: .bottom)
                 }
