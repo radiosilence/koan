@@ -1,0 +1,1 @@
+- **Releases no longer queue behind stale runs.** A newer push cancels an older run of the same pull request, or an older run on main that releases nothing; release runs and manual runs are never cancelled. On main, the macOS and tvOS app builds run only when releasing, since the pull request built them already.
