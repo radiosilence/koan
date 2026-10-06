@@ -270,68 +270,76 @@
       <p><a href="https://github.com/radiosilence/koan/releases/latest/download/Koan.dmg">Download
           <code>Koan.dmg</code></a>, open it and drag kōan into Applications. It's signed and notarised. Or with
         Homebrew:</p>
-      <pre><code>brew install --cask radiosilence/koan/koan-app</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">brew</span> install <span class="at">--cask</span> radiosilence/koan/koan-app</span></code></pre></div>
       <p>You might have to update Homebrew's trust settings to trust the tap.</p>
       <p>Requires macOS 26 or later.</p>
 
       <h3>iOS app</h3>
       <p>Build it from source with Xcode and put it on a phone plugged into your Mac, signed with your own
         (free) Apple developer team:</p>
-      <pre><code>git clone https://github.com/radiosilence/koan.git &amp;&amp; cd koan
-just ios-phone</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="fu">git</span> clone https://github.com/radiosilence/koan.git <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> koan</span>
+<span><span class="ex">just</span> ios-phone</span></code></pre></div>
       <p>Needs iOS 26 or later, and a kōan, Navidrome or other Subsonic server to play from.</p>
 
       <h3>Command line and terminal UI</h3>
-      <pre><code><span class="c"># mise (recommended)</span>
-mise use -g github:radiosilence/koan@latest
-
-<span class="c"># homebrew</span>
-brew install radiosilence/koan/koan
-
-<span class="c"># or via cargo</span>
-cargo install koan-cli
-
-<span class="c"># or build from source</span>
-git clone https://github.com/radiosilence/koan.git &amp;&amp; cd koan
-cargo install --path crates/koan-cli</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="co"># mise (recommended)</span></span>
+<span><span class="ex">mise</span> use <span class="at">-g</span> github:radiosilence/koan@latest</span>
+<span></span>
+<span><span class="co"># homebrew</span></span>
+<span><span class="ex">brew</span> install radiosilence/koan/koan</span>
+<span></span>
+<span><span class="co"># or via cargo</span></span>
+<span><span class="ex">cargo</span> install koan-cli</span>
+<span></span>
+<span><span class="co"># or build from source</span></span>
+<span><span class="fu">git</span> clone https://github.com/radiosilence/koan.git <span class="kw">&amp;&amp;</span> <span class="bu">cd</span> koan</span>
+<span><span class="ex">cargo</span> install <span class="at">--path</span> crates/koan-cli</span></code></pre></div>
       <p>It's a single binary. macOS needs nothing else; Linux needs the ALSA and D-Bus development headers:</p>
-      <pre><code><span class="c"># Debian/Ubuntu</span>
-sudo apt install libasound2-dev libdbus-1-dev
-
-<span class="c"># Fedora</span>
-sudo dnf install alsa-lib-devel dbus-devel
-
-<span class="c"># Arch</span>
-sudo pacman -S alsa-lib dbus</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="co"># Debian/Ubuntu</span></span>
+<span><span class="fu">sudo</span> apt install libasound2-dev libdbus-1-dev</span>
+<span></span>
+<span><span class="co"># Fedora</span></span>
+<span><span class="fu">sudo</span> dnf install alsa-lib-devel dbus-devel</span>
+<span></span>
+<span><span class="co"># Arch</span></span>
+<span><span class="fu">sudo</span> pacman <span class="at">-S</span> alsa-lib dbus</span></code></pre></div>
     </section>
 
     <section id="setup" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>Setting it up</h2>
 
       <h3>One computer</h3>
+      <p>In the macOS app it's all in Settings: <strong>Library</strong> points kōan at your music and scans it,
+        and playback and devices have their own panes. No terminal needed.</p>
       <p>Or from the command line:</p>
-      <pre><code>koan config init   <span class="c"># create the config dir and a commented template</span>
-<span class="c"># edit ~/.config/koan/config.local.toml:</span>
-<span class="c">#   [library]</span>
-<span class="c">#   folders = ["/path/to/your/music"]</span>
-koan scan          <span class="c"># index your library</span>
-koan               <span class="c"># launch the TUI</span></code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">koan</span> config init   <span class="co"># create the config dir and a commented template</span></span>
+<span><span class="co"># edit ~/.config/koan/config.local.toml:</span></span>
+<span><span class="co">#   [library]</span></span>
+<span><span class="co">#   folders = [&quot;/path/to/your/music&quot;]</span></span>
+<span><span class="ex">koan</span> scan          <span class="co"># index your library</span></span>
+<span><span class="ex">koan</span>               <span class="co"># launch the TUI</span></span></code></pre></div>
       <p><kbd>space</kbd> pauses, <kbd>&lt;</kbd> and <kbd>&gt;</kbd> skip, <kbd>p</kbd> picks tracks, <kbd>a</kbd>
         picks albums, <kbd>q</kbd> quits.</p>
 
       <h3>A server for everything else</h3>
       <p>Run the container on the machine with the music. It doesn't need a sound card, keeps its config, index
         and keys in <code>/config</code>, and only ever reads the library.</p>
-      <pre><code>docker run -d --name koan -p 4000:4000 \
-  -v koan-config:/config \
-  -v /path/to/music:/music:ro \
-  -e 'KOAN_LIBRARY__FOLDERS=["/music"]' \
-  -e 'KOAN_GRAPHQL__ALLOWED_HOSTS=["music.example.com"]' \
-  -e KOAN_SHARING__PUBLIC_URL=https://music.example.com \
-  -e KOAN_SUBSONIC__ENABLED=true \
-  ghcr.io/radiosilence/koan:latest
-
-docker exec -it koan koan auth setup   <span class="c"># the admin account</span></code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">docker</span> run <span class="at">-d</span> <span class="at">--name</span> koan <span class="at">-p</span> 4000:4000 <span class="dt">\</span></span>
+<span>  <span class="at">-v</span> koan-config:/config <span class="dt">\</span></span>
+<span>  <span class="at">-v</span> /path/to/music:/music:ro <span class="dt">\</span></span>
+<span>  <span class="at">-e</span> <span class="st">&#39;KOAN_LIBRARY__FOLDERS=[&quot;/music&quot;]&#39;</span> <span class="dt">\</span></span>
+<span>  <span class="at">-e</span> <span class="st">&#39;KOAN_GRAPHQL__ALLOWED_HOSTS=[&quot;music.example.com&quot;]&#39;</span> <span class="dt">\</span></span>
+<span>  <span class="at">-e</span> KOAN_SHARING__PUBLIC_URL=https://music.example.com <span class="dt">\</span></span>
+<span>  <span class="at">-e</span> KOAN_SUBSONIC__ENABLED=true <span class="dt">\</span></span>
+<span>  ghcr.io/radiosilence/koan:latest</span>
+<span></span>
+<span><span class="ex">docker</span> exec <span class="at">-it</span> koan koan auth setup   <span class="co"># the admin account</span></span></code></pre></div>
       <p>Stick it behind a reverse proxy with TLS at the hostname you listed, or use the <a
           href="/docs/headless-server/#docker-compose">Docker Compose file</a>, which runs Caddy in front and sorts the
         certificate out itself. The server refuses any <code>Host</code> it wasn't given, and share links are built on
@@ -357,16 +365,18 @@ docker exec -it koan koan auth setup   <span class="c"># the admin account</span
       <p>Each release publishes a Pulumi component at the same version, <a
           href="https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi"><code>@radiosilence/koan-pulumi</code></a>,
         on GitHub Packages. It builds the Deployment, its Service and a NetworkPolicy that only lets your ingress in:</p>
-      <pre><code><span class="c"># .npmrc (GitHub Packages wants a token even for public packages)</span>
-@radiosilence:registry=https://npm.pkg.github.com</code></pre>
-      <pre><code>import { createKoan } from "@radiosilence/koan-pulumi";
-
-createKoan(provider, "media", {
-  hostname: "music.example.com",
-  library: { hostPath: "/mnt/music" },
-  state: { hostPath: "/var/lib/koan" },
-  nodeSelector: { "kubernetes.io/hostname": "media-node" },
-});</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode ini"><code class="sourceCode ini"><span><span class="co"># .npmrc (GitHub Packages wants a token even for public packages)</span></span>
+<span><span class="dt">@radiosilence:registry</span><span class="ot">=</span><span class="st">https://npm.pkg.github.com</span></span></code></pre></div>
+      <div class="sourceCode"><pre
+class="sourceCode typescript"><code class="sourceCode typescript"><span><span class="im">import</span> { createKoan } <span class="im">from</span> <span class="st">&quot;@radiosilence/koan-pulumi&quot;</span><span class="op">;</span></span>
+<span></span>
+<span><span class="fu">createKoan</span>(provider<span class="op">,</span> <span class="st">&quot;media&quot;</span><span class="op">,</span> {</span>
+<span>  hostname<span class="op">:</span> <span class="st">&quot;music.example.com&quot;</span><span class="op">,</span></span>
+<span>  library<span class="op">:</span> { hostPath<span class="op">:</span> <span class="st">&quot;/mnt/music&quot;</span> }<span class="op">,</span></span>
+<span>  state<span class="op">:</span> { hostPath<span class="op">:</span> <span class="st">&quot;/var/lib/koan&quot;</span> }<span class="op">,</span></span>
+<span>  nodeSelector<span class="op">:</span> { <span class="st">&quot;kubernetes.io/hostname&quot;</span><span class="op">:</span> <span class="st">&quot;media-node&quot;</span> }<span class="op">,</span></span>
+<span>})<span class="op">;</span></span></code></pre></div>
       <p>Route the hostname to the <code>koan</code> Service with whatever ingress you run. Pin the package version and
         the server follows it, since the image tag is the package's version.</p>
 
@@ -375,8 +385,9 @@ createKoan(provider, "media", {
           href="https://github.com/radiosilence/sift">sift</a>, a separate tool I wrote: it matches a download against
         MusicBrainz, tags it, embeds the cover and files it into the library, reading an existing beets config. A server
         watching that folder picks the album up on its own.</p>
-      <pre><code>mise use -g github:radiosilence/sift
-sift import ~/Downloads/some-album</code></pre>
+      <div class="sourceCode"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span><span class="ex">mise</span> use <span class="at">-g</span> github:radiosilence/sift</span>
+<span><span class="ex">sift</span> import ~/Downloads/some-album</span></code></pre></div>
     </section>
 
     <section id="features" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
