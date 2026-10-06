@@ -162,6 +162,79 @@
 }
 
 /*
+ * The iPhone screenshots under the introduction drift past on their own. The track holds the set twice and moves by
+ * one set's width, so the loop is seamless. It pauses under the pointer, and stands still, scrollable, for anyone who
+ * has asked for reduced motion.
+ */
+@layer components {
+  .marquee {
+    overflow: hidden;
+    mask-image: linear-gradient(to right, transparent, #000 6%, #000 94%, transparent);
+  }
+
+  .marquee-track {
+    display: flex;
+    width: max-content;
+    animation: marquee 140s linear infinite;
+  }
+
+  .marquee:hover .marquee-track {
+    animation-play-state: paused;
+  }
+
+  .marquee-set {
+    display: flex;
+    gap: 1.25rem;
+    padding-right: 1.25rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .marquee {
+      overflow-x: auto;
+    }
+
+    .marquee-track {
+      animation: none;
+    }
+
+    .marquee-set[aria-hidden] {
+      display: none;
+    }
+  }
+
+  @keyframes marquee {
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
+  /* The full-size view any screenshot opens. */
+  main :is(figure, .marquee) img {
+    cursor: zoom-in;
+  }
+
+  .zoom {
+    max-width: none;
+    max-height: none;
+    margin: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-out;
+  }
+
+  .zoom::backdrop {
+    background: rgb(0 0 0 / 0.85);
+  }
+
+  .zoom img {
+    max-width: 95vw;
+    max-height: 92vh;
+    object-fit: contain;
+  }
+}
+
+/*
  * The comparison tables at /compare/. Each scrolls in its own box, so the header row and the feature column stay in
  * view on both axes. A cell holds a mark (yes, partial, no, unknown, in an open pull request, or planned) and an optional note.
  */
